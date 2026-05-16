@@ -612,15 +612,66 @@ export const BotTypes = {
 
 // Bot capability tags. Stored as a TEXT[] column on `bots` and validated
 // against this vocabulary on read/write. New traits are added here only.
-//
-// - `interactive`: the bot is suitable for use as a conversational partner in a
-//   scratchpad-with-bot session (surfaces in the quick-switcher).
-export const BOT_TRAITS = ["interactive"] as const
+export const BOT_TRAITS = ["mentionable", "active-scratchpad"] as const
 export type BotTrait = (typeof BOT_TRAITS)[number]
 
 export const BotTraits = {
-  INTERACTIVE: "interactive",
+  MENTIONABLE: "mentionable",
+  ACTIVE_SCRATCHPAD: "active-scratchpad",
 } as const satisfies Record<string, BotTrait>
+
+export const BOT_RUNTIME_KINDS = ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"] as const
+export type BotRuntimeKind = (typeof BOT_RUNTIME_KINDS)[number]
+
+export const BotRuntimeKinds = {
+  PI_LOCAL: "pi-local",
+  HERMES: "hermes",
+  OPENCLAW: "openclaw",
+  CLAUDE_CODE_CHANNEL: "claude-code-channel",
+  CUSTOM: "custom",
+} as const satisfies Record<string, BotRuntimeKind>
+
+export const BOT_RUNTIME_STATUSES = ["available", "busy", "offline", "error"] as const
+export type BotRuntimeStatus = (typeof BOT_RUNTIME_STATUSES)[number]
+
+export const BotRuntimeStatuses = {
+  AVAILABLE: "available",
+  BUSY: "busy",
+  OFFLINE: "offline",
+  ERROR: "error",
+} as const satisfies Record<string, BotRuntimeStatus>
+
+export const BOT_INVOCATION_STATUSES = ["pending", "claimed", "completed", "failed", "cancelled", "expired"] as const
+export type BotInvocationStatus = (typeof BOT_INVOCATION_STATUSES)[number]
+
+export const BotInvocationStatuses = {
+  PENDING: "pending",
+  CLAIMED: "claimed",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  CANCELLED: "cancelled",
+  EXPIRED: "expired",
+} as const satisfies Record<string, BotInvocationStatus>
+
+export const BOT_INVOCATION_TRIGGERS = ["mention", "active-scratchpad"] as const
+export type BotInvocationTrigger = (typeof BOT_INVOCATION_TRIGGERS)[number]
+
+export const BotInvocationTriggers = {
+  MENTION: "mention",
+  ACTIVE_SCRATCHPAD: "active-scratchpad",
+} as const satisfies Record<string, BotInvocationTrigger>
+
+export const BOT_INVOCATION_CAPABILITIES = ["mentionable", "active-scratchpad"] as const
+export type BotInvocationCapability = (typeof BOT_INVOCATION_CAPABILITIES)[number]
+
+export const BotInvocationCapabilities = {
+  MENTIONABLE: "mentionable",
+  ACTIVE_SCRATCHPAD: "active-scratchpad",
+} as const satisfies Record<string, BotInvocationCapability>
+
+export function botHasCapability(bot: { traits: readonly BotTrait[] }, capability: BotInvocationCapability): boolean {
+  return bot.traits.includes(capability)
+}
 
 // Social IdPs that bypass AuthKit's hosted UI. Used by the add-account flow
 // where AuthKit silent-refreshes through its own session cookie regardless of

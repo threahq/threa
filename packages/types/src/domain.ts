@@ -42,6 +42,11 @@ import type {
   WorkspaceIntegrationStatus,
   GitHubPreviewType,
   LinearPreviewType,
+  BotRuntimeKind,
+  BotRuntimeStatus,
+  BotInvocationStatus,
+  BotInvocationTrigger,
+  BotInvocationCapability,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
 
@@ -176,6 +181,78 @@ export interface LastMessagePreview {
 /** Stream with optional last message preview, for sidebar listing */
 export interface StreamWithPreview extends Stream {
   lastMessagePreview: LastMessagePreview | null
+}
+
+export interface StreamActiveActor {
+  id: string
+  workspaceId: string
+  rootStreamId: string
+  actorType: "persona" | "bot"
+  actorId: string
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BotRuntimeInstance {
+  id: string
+  workspaceId: string
+  botId: string
+  runtimeKind: BotRuntimeKind
+  instanceId: string
+  displayName: string | null
+  status: BotRuntimeStatus
+  acceptingInvocations: boolean
+  capabilities: Record<string, unknown>
+  statusText: string | null
+  lastSeenAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BotRuntimeSessionLink {
+  id: string
+  workspaceId: string
+  botId: string
+  runtimeKind: BotRuntimeKind
+  instanceId: string
+  runtimeSessionId: string
+  rootStreamId: string
+  activeStreamId: string
+  status: "active" | "paused" | "ended"
+  linkedBy: string
+  metadata: Record<string, unknown>
+  lastSeenAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface BotInvocation {
+  id: string
+  workspaceId: string
+  rootStreamId: string
+  activeStreamId: string
+  sourceMessageId: string
+  responseStreamId: string
+  actorType: "bot"
+  actorId: string
+  trigger: BotInvocationTrigger
+  requiredCapability: BotInvocationCapability
+  promptMarkdown: string
+  authorUserId: string
+  mentionedActorSlugs: string[]
+  status: BotInvocationStatus
+  targetInstanceId: string | null
+  targetRuntimeSessionId: string | null
+  claimedByInstanceId: string | null
+  claimToken: string | null
+  claimExpiresAt: string | null
+  attempts: number
+  errorMessage: string | null
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
 }
 
 export interface StreamMember {
