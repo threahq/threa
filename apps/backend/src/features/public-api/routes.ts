@@ -7,6 +7,10 @@
  */
 import { z } from "zod"
 import {
+  BOT_INVOCATION_CAPABILITIES,
+  BOT_INVOCATION_TRIGGERS,
+  BOT_RUNTIME_KINDS,
+  BOT_RUNTIME_STATUSES,
   BOT_TRAITS,
   WORKSPACE_PERMISSION_SCOPES,
   STREAM_TYPES,
@@ -29,6 +33,10 @@ import {
   searchMemosSchema,
   searchAttachmentsSchema,
   findMessagesByMetadataSchema,
+  upsertPresenceSchema,
+  claimInvocationSchema,
+  completeInvocationSchema,
+  failInvocationSchema,
 } from "./schemas"
 
 // ---------------------------------------------------------------------------
@@ -250,6 +258,43 @@ const attachmentUrlSchema = z.object({
   expiresIn: z.number().int(),
 })
 
+const botRuntimePresenceSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  botId: z.string(),
+  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+  instanceId: z.string(),
+  displayName: z.string().nullable(),
+  status: z.enum(BOT_RUNTIME_STATUSES),
+  acceptingInvocations: z.boolean(),
+  capabilities: z.record(z.string(), z.unknown()),
+  statusText: z.string().nullable(),
+  lastSeenAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+})
+
+const claimedInvocationSchema = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  rootStreamId: z.string(),
+  activeStreamId: z.string(),
+  sourceMessageId: z.string(),
+  responseStreamId: z.string(),
+  actor: z.object({ type: z.literal("bot"), id: z.string(), slug: z.string() }),
+  trigger: z.enum(BOT_INVOCATION_TRIGGERS),
+  requiredCapability: z.enum(BOT_INVOCATION_CAPABILITIES),
+  promptMarkdown: z.string(),
+  authorUserId: z.string(),
+  mentionedActorSlugs: z.array(z.string()),
+  claimToken: z.string().nullable(),
+  claimExpiresAt: z.string().datetime().nullable(),
+  runtimeSessionId: z.string().nullable(),
+})
+
+const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
+const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema })
+
 const errorSchema = z.object({
   error: z.string(),
   details: z.record(z.string(), z.array(z.string())).optional(),
@@ -421,6 +466,64 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ],
     parameters: [workspaceIdParam, attachmentIdParam],
     responseSchema: dataEnvelope(attachmentUrlSchema),
+    canReturn404: true,
+  },
+
+  // --- Bot runtimes ---
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/presence",
+    operationId: "upsertBotRuntimePresence",
+    summary: "Heartbeat bot runtime presence",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: upsertPresenceSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(botRuntimePresenceSchema),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/claim",
+    operationId: "claimBotInvocation",
+    summary: "Claim one pending bot invocation",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ],
+    parameters: [workspaceIdParam],
+    requestSchema: claimInvocationSchema,
+    requestIn: "body",
+    responseSchema: z.object({ data: claimedInvocationSchema.nullable() }),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/complete",
+    operationId: "completeBotInvocation",
+    summary: "Complete a claimed bot invocation",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+    ],
+    requestSchema: completeInvocationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(completedInvocationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/fail",
+    operationId: "failBotInvocation",
+    summary: "Fail a claimed bot invocation",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+    ],
+    requestSchema: failInvocationSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(invocationStatusSchema),
     canReturn404: true,
   },
 

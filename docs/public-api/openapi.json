@@ -3,7 +3,7 @@
   "info": {
     "title": "Threa Public API",
     "version": "1.0.0",
-    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer thr_your_api_key_here\n```\n\nAPI keys are created by **workspace admins** in the Threa app under **Settings > API Keys**.\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
+    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer thr_your_api_key_here\n```\n\nAPI keys are created by **workspace admins** in the Threa app under **Settings > API Keys**.\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to claim pending bot invocations.\n- `bot-invocations:write` — Grants access to complete or fail claimed bot invocations.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
   "security": [{ "apiKey": [] }],
@@ -757,6 +757,504 @@
                         "expiresIn": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
                       },
                       "required": ["url", "expiresIn"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/bot-runtime/presence": {
+      "post": {
+        "operationId": "upsertBotRuntimePresence",
+        "summary": "Heartbeat bot runtime presence",
+        "tags": ["Bot runtimes"],
+        "security": [{ "apiKey": ["bot-runtime:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "runtimeKind": {
+                    "type": "string",
+                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                  },
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "displayName": { "type": "string", "maxLength": 100 },
+                  "status": { "type": "string", "enum": ["available", "busy", "offline", "error"] },
+                  "acceptingInvocations": { "type": "boolean" },
+                  "capabilities": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": { "type": "string" },
+                    "additionalProperties": {}
+                  },
+                  "statusText": { "type": "string", "maxLength": 200 }
+                },
+                "required": ["runtimeKind", "instanceId", "status", "acceptingInvocations", "capabilities"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "workspaceId": { "type": "string" },
+                        "botId": { "type": "string" },
+                        "runtimeKind": {
+                          "type": "string",
+                          "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                        },
+                        "instanceId": { "type": "string" },
+                        "displayName": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "status": { "type": "string", "enum": ["available", "busy", "offline", "error"] },
+                        "acceptingInvocations": { "type": "boolean" },
+                        "capabilities": {
+                          "type": "object",
+                          "propertyNames": { "type": "string" },
+                          "additionalProperties": {}
+                        },
+                        "statusText": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                        "lastSeenAt": { "type": "string", "format": "date-time" },
+                        "createdAt": { "type": "string", "format": "date-time" },
+                        "updatedAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": [
+                        "id",
+                        "workspaceId",
+                        "botId",
+                        "runtimeKind",
+                        "instanceId",
+                        "displayName",
+                        "status",
+                        "acceptingInvocations",
+                        "capabilities",
+                        "statusText",
+                        "lastSeenAt",
+                        "createdAt",
+                        "updatedAt"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or stream not accessible" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/claim": {
+      "post": {
+        "operationId": "claimBotInvocation",
+        "summary": "Claim one pending bot invocation",
+        "tags": ["Bot invocations"],
+        "security": [{ "apiKey": ["bot-invocations:read"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "runtimeKind": {
+                    "type": "string",
+                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                  },
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "supportedCapabilities": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": { "type": "string", "enum": ["mentionable", "active-scratchpad"] }
+                  },
+                  "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 }
+                },
+                "required": ["runtimeKind", "instanceId", "supportedCapabilities", "claimTtlSeconds"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": { "type": "string" },
+                            "workspaceId": { "type": "string" },
+                            "rootStreamId": { "type": "string" },
+                            "activeStreamId": { "type": "string" },
+                            "sourceMessageId": { "type": "string" },
+                            "responseStreamId": { "type": "string" },
+                            "actor": {
+                              "type": "object",
+                              "properties": {
+                                "type": { "type": "string", "const": "bot" },
+                                "id": { "type": "string" },
+                                "slug": { "type": "string" }
+                              },
+                              "required": ["type", "id", "slug"],
+                              "additionalProperties": false
+                            },
+                            "trigger": { "type": "string", "enum": ["mention", "active-scratchpad"] },
+                            "requiredCapability": { "type": "string", "enum": ["mentionable", "active-scratchpad"] },
+                            "promptMarkdown": { "type": "string" },
+                            "authorUserId": { "type": "string" },
+                            "mentionedActorSlugs": { "type": "array", "items": { "type": "string" } },
+                            "claimToken": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "claimExpiresAt": {
+                              "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                            },
+                            "runtimeSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+                          },
+                          "required": [
+                            "id",
+                            "workspaceId",
+                            "rootStreamId",
+                            "activeStreamId",
+                            "sourceMessageId",
+                            "responseStreamId",
+                            "actor",
+                            "trigger",
+                            "requiredCapability",
+                            "promptMarkdown",
+                            "authorUserId",
+                            "mentionedActorSlugs",
+                            "claimToken",
+                            "claimExpiresAt",
+                            "runtimeSessionId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        { "type": "null" }
+                      ]
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or stream not accessible" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/complete": {
+      "post": {
+        "operationId": "completeBotInvocation",
+        "summary": "Complete a claimed bot invocation",
+        "tags": ["Bot invocations"],
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "invocationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Invocation ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "finalMessageMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 64,
+                      "pattern": "^[a-zA-Z0-9_.\\-:]+$"
+                    },
+                    "additionalProperties": { "type": "string", "maxLength": 256 }
+                  }
+                },
+                "required": ["instanceId", "claimToken", "finalMessageMarkdown"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "invocationId": { "type": "string" },
+                        "message": {
+                          "type": "object",
+                          "properties": {
+                            "id": { "type": "string" },
+                            "streamId": { "type": "string" },
+                            "sequence": { "type": "string", "description": "Numeric sequence as string" },
+                            "authorId": { "type": "string" },
+                            "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                            "authorDisplayName": { "type": "string" },
+                            "content": { "type": "string" },
+                            "replyCount": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "threadStreamId": { "type": "string" },
+                            "clientMessageId": { "type": "string" },
+                            "sentVia": {
+                              "description": "Present when message was sent via API on behalf of a user",
+                              "type": "string"
+                            },
+                            "metadata": {
+                              "type": "object",
+                              "propertyNames": { "type": "string" },
+                              "additionalProperties": { "type": "string" },
+                              "description": "External references attached by the sender. Always present; empty when unset."
+                            },
+                            "editedAt": { "type": "string", "format": "date-time" },
+                            "createdAt": { "type": "string", "format": "date-time" }
+                          },
+                          "required": [
+                            "id",
+                            "streamId",
+                            "sequence",
+                            "authorId",
+                            "authorType",
+                            "content",
+                            "replyCount",
+                            "metadata",
+                            "createdAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": ["invocationId", "message"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/fail": {
+      "post": {
+        "operationId": "failBotInvocation",
+        "summary": "Fail a claimed bot invocation",
+        "tags": ["Bot invocations"],
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "invocationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Invocation ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "errorMessage": { "type": "string", "minLength": 1, "maxLength": 1000 }
+                },
+                "required": ["instanceId", "claimToken", "errorMessage"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": { "invocationId": { "type": "string" }, "status": { "type": "string" } },
+                      "required": ["invocationId", "status"],
                       "additionalProperties": false
                     }
                   },

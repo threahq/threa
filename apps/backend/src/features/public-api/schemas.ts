@@ -6,7 +6,16 @@
  * handlers.ts and routes.ts.
  */
 import { z } from "zod"
-import { BOT_TRAITS, STREAM_TYPES, MEMO_TYPES, KNOWLEDGE_TYPES, EXTRACTION_CONTENT_TYPES } from "@threa/types"
+import {
+  BOT_INVOCATION_CAPABILITIES,
+  BOT_RUNTIME_KINDS,
+  BOT_RUNTIME_STATUSES,
+  BOT_TRAITS,
+  STREAM_TYPES,
+  MEMO_TYPES,
+  KNOWLEDGE_TYPES,
+  EXTRACTION_CONTENT_TYPES,
+} from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 
 const PUBLIC_SEARCH_MAX_LIMIT = 50
@@ -52,6 +61,36 @@ export const listStreamsSchema = z.object({
   query: z.string().optional(),
   after: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
+})
+
+export const upsertPresenceSchema = z.object({
+  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+  instanceId: z.string().min(1).max(128),
+  displayName: z.string().max(100).optional(),
+  status: z.enum(BOT_RUNTIME_STATUSES),
+  acceptingInvocations: z.boolean(),
+  capabilities: z.record(z.string(), z.unknown()).optional().default({}),
+  statusText: z.string().max(200).optional(),
+})
+
+export const claimInvocationSchema = z.object({
+  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+  instanceId: z.string().min(1).max(128),
+  supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
+  claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
+})
+
+export const completeInvocationSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  claimToken: z.string().min(1).max(256),
+  finalMessageMarkdown: z.string().min(1).max(50_000),
+  metadata: messageMetadataSchema.optional(),
+})
+
+export const failInvocationSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  claimToken: z.string().min(1).max(256),
+  errorMessage: z.string().min(1).max(1000),
 })
 
 export const listMessagesSchema = z

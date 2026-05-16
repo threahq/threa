@@ -26,9 +26,11 @@ import {
 } from "../attachments"
 import { BotRepository, type Bot } from "./bot-repository"
 import { AttachmentSafetyStatuses, AuthorTypes, sentViaApiKey, type AuthorType } from "@threa/types"
+import { BotRuntimeService } from "../bot-runtimes"
 import { HttpError } from "@threa/backend-common"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+import { randomUUID } from "crypto"
 import { botId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -59,6 +61,10 @@ import {
   searchMemosSchema,
   searchAttachmentsSchema,
   findMessagesByMetadataSchema,
+  upsertPresenceSchema,
+  claimInvocationSchema,
+  completeInvocationSchema,
+  failInvocationSchema,
 } from "./schemas"
 
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
@@ -320,6 +326,7 @@ export function createPublicApiHandlers({
   eventService,
   pool,
 }: PublicApiDeps) {
+  const botRuntimeService = new BotRuntimeService({ pool })
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
     if (req.userApiKey) {
@@ -402,6 +409,115 @@ export function createPublicApiHandlers({
   }
 
   return {
+    async upsertBotRuntimePresence(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = upsertPresenceSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const presence = await botRuntimeService.upsertPresenceFromBotKey({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        ...result.data,
+      })
+      res.json({
+        data: {
+          ...presence,
+          lastSeenAt: presence.lastSeenAt.toISOString(),
+          createdAt: presence.createdAt.toISOString(),
+          updatedAt: presence.updatedAt.toISOString(),
+        },
+      })
+    },
+
+    async claimBotInvocation(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = claimInvocationSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const invocation = await botRuntimeService.claimNextInvocation({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        instanceId: result.data.instanceId,
+        supportedCapabilities: result.data.supportedCapabilities,
+        claimTtlSeconds: result.data.claimTtlSeconds,
+        claimToken: randomUUID(),
+      })
+      if (!invocation) return res.json({ data: null })
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      res.json({
+        data: {
+          id: invocation.id,
+          workspaceId: invocation.workspaceId,
+          rootStreamId: invocation.rootStreamId,
+          activeStreamId: invocation.activeStreamId,
+          sourceMessageId: invocation.sourceMessageId,
+          responseStreamId: invocation.responseStreamId,
+          actor: { type: "bot", id: invocation.actorId, slug: bot?.slug ?? "" },
+          trigger: invocation.trigger,
+          requiredCapability: invocation.requiredCapability,
+          promptMarkdown: invocation.promptMarkdown,
+          authorUserId: invocation.authorUserId,
+          mentionedActorSlugs: invocation.mentionedActorSlugs,
+          claimToken: invocation.claimToken,
+          claimExpiresAt: invocation.claimExpiresAt?.toISOString() ?? null,
+          runtimeSessionId: invocation.targetRuntimeSessionId,
+        },
+      })
+    },
+
+    async completeBotInvocation(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = completeInvocationSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const completed = await botRuntimeService.completeInvocation({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        instanceId: result.data.instanceId,
+        claimToken: result.data.claimToken,
+      })
+      if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      await assertStreamAccessible(req, completed.responseStreamId)
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      const contentMarkdown = normalizeMessage(result.data.finalMessageMarkdown)
+      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+      const message = await eventService.createMessage({
+        workspaceId: req.workspaceId!,
+        streamId: completed.responseStreamId,
+        authorId: bot.id,
+        authorType: AuthorTypes.BOT,
+        contentJson,
+        contentMarkdown,
+        metadata: result.data.metadata,
+      })
+      res.json({
+        data: { invocationId: completed.id, message: serializeMessage(message, { authorDisplayName: bot.name }) },
+      })
+    },
+
+    async failBotInvocation(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = failInvocationSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const failed = await botRuntimeService.failInvocation({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        instanceId: result.data.instanceId,
+        claimToken: result.data.claimToken,
+        errorMessage: result.data.errorMessage,
+      })
+      if (!failed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.json({ data: { invocationId: failed.id, status: failed.status } })
+    },
+
     /**
      * Search messages via public API.
      *

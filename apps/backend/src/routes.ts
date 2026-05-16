@@ -588,6 +588,32 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.getAttachmentDownloadUrl
   )
 
+  // Bot runtimes
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-runtime/presence",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
+    publicApi.upsertBotRuntimePresence
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/claim",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ),
+    publicApi.claimBotInvocation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/complete",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.completeBotInvocation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/fail",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.failBotInvocation
+  )
+
   // Streams
   app.get(
     "/api/v1/workspaces/:workspaceId/streams",
