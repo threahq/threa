@@ -56,4 +56,5 @@ export {
   botRuntimeInstanceId,
   botRuntimeSessionLinkId,
   botInvocationId,
+  botRuntimePairingCodeId,
 } from "@threa/backend-common"
