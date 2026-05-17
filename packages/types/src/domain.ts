@@ -43,6 +43,7 @@ import type {
   GitHubPreviewType,
   LinearPreviewType,
   BotRuntimeKind,
+  BotRuntimeSessionLinkStatus,
   BotRuntimeStatus,
   BotInvocationStatus,
   BotInvocationTrigger,
@@ -219,7 +220,7 @@ export interface BotRuntimeSessionLink {
   runtimeSessionId: string
   rootStreamId: string
   activeStreamId: string
-  status: "active" | "paused" | "ended"
+  status: BotRuntimeSessionLinkStatus
   linkedBy: string
   metadata: Record<string, unknown>
   lastSeenAt: string | null

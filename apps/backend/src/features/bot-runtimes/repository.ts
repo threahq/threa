@@ -3,17 +3,18 @@ import {
   BOT_INVOCATION_STATUSES,
   BOT_INVOCATION_TRIGGERS,
   BOT_RUNTIME_KINDS,
+  BOT_RUNTIME_SESSION_LINK_STATUSES,
   BOT_RUNTIME_STATUSES,
   type BotInvocationCapability,
   type BotInvocationStatus,
   type BotInvocationTrigger,
   type BotRuntimeKind,
+  type BotRuntimeSessionLinkStatus,
   type BotRuntimeStatus,
 } from "@threa/types"
 import { sql, type Querier } from "../../db"
 
-const RUNTIME_SESSION_LINK_STATUSES = ["active", "paused", "ended"] as const
-export type RuntimeSessionLinkStatus = (typeof RUNTIME_SESSION_LINK_STATUSES)[number]
+export type RuntimeSessionLinkStatus = BotRuntimeSessionLinkStatus
 
 export interface StreamActiveActor {
   id: string
@@ -164,7 +165,7 @@ const knownRuntimeStatuses = new Set<string>(BOT_RUNTIME_STATUSES)
 const knownInvocationStatuses = new Set<string>(BOT_INVOCATION_STATUSES)
 const knownInvocationTriggers = new Set<string>(BOT_INVOCATION_TRIGGERS)
 const knownInvocationCapabilities = new Set<string>(BOT_INVOCATION_CAPABILITIES)
-const knownLinkStatuses = new Set<string>(RUNTIME_SESSION_LINK_STATUSES)
+const knownLinkStatuses = new Set<string>(BOT_RUNTIME_SESSION_LINK_STATUSES)
 
 function assertKnown(value: string, known: Set<string>, label: string): void {
   if (!known.has(value)) throw new Error(`Unknown ${label}: ${value}`)
@@ -332,7 +333,7 @@ export const BotRuntimeSessionLinkRepository = {
     const result =
       await db.query<BotRuntimeSessionLinkRow>(sql`INSERT INTO bot_runtime_session_links (id, workspace_id, bot_id, runtime_kind, instance_id, runtime_session_id, root_stream_id, active_stream_id, linked_by, metadata, last_seen_at)
       VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.runtimeSessionId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.linkedBy}, ${params.metadata ?? {}}, NOW())
-      ON CONFLICT (workspace_id, bot_id, runtime_kind, instance_id, runtime_session_id) DO UPDATE SET root_stream_id = EXCLUDED.root_stream_id, active_stream_id = EXCLUDED.active_stream_id, status = 'active', metadata = EXCLUDED.metadata, last_seen_at = NOW(), updated_at = NOW()
+      ON CONFLICT (workspace_id, bot_id, root_stream_id, active_stream_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, instance_id = EXCLUDED.instance_id, runtime_session_id = EXCLUDED.runtime_session_id, linked_by = EXCLUDED.linked_by, status = 'active', metadata = EXCLUDED.metadata, last_seen_at = NOW(), updated_at = NOW()
       RETURNING *`)
     return mapSessionLink(result.rows[0]!)
   },
@@ -427,7 +428,7 @@ export const BotInvocationRepository = {
   ): Promise<BotInvocation | null> {
     const result =
       await db.query<BotInvocationRow>(sql`UPDATE bot_invocations SET status = 'failed', error_message = ${params.errorMessage}, updated_at = NOW()
-      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken}
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
       RETURNING *`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },

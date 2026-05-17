@@ -631,6 +631,15 @@ export const BotRuntimeKinds = {
   CUSTOM: "custom",
 } as const satisfies Record<string, BotRuntimeKind>
 
+export const BOT_RUNTIME_SESSION_LINK_STATUSES = ["active", "paused", "ended"] as const
+export type BotRuntimeSessionLinkStatus = (typeof BOT_RUNTIME_SESSION_LINK_STATUSES)[number]
+
+export const BotRuntimeSessionLinkStatuses = {
+  ACTIVE: "active",
+  PAUSED: "paused",
+  ENDED: "ended",
+} as const satisfies Record<string, BotRuntimeSessionLinkStatus>
+
 export const BOT_RUNTIME_STATUSES = ["available", "busy", "offline", "error"] as const
 export type BotRuntimeStatus = (typeof BOT_RUNTIME_STATUSES)[number]
 
