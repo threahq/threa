@@ -235,6 +235,22 @@ async function completePending(markdown: string): Promise<void> {
   await heartbeat("available")
 }
 
+async function failPending(error: unknown): Promise<void> {
+  if (!config || !pending) return
+  const invocation = pending
+  pending = undefined
+  pendingAssistantTexts = []
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      claimToken: invocation.claimToken,
+      errorMessage: String(error).slice(0, 1000),
+    }),
+  }).catch(() => undefined)
+  await heartbeat("available").catch(() => undefined)
+}
+
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("remote-control", {
     description: "Create or link a Threa scratchpad to this Pi session",
@@ -272,7 +288,7 @@ export default function (pi: ExtensionAPI): void {
       ctx.ui.setStatus(STATUS_KEY, "Threa remote: linked")
     } catch (error) {
       ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")
-      await heartbeat("error", String(error)).catch(() => undefined)
+      await failPending(error)
     }
   })
 
