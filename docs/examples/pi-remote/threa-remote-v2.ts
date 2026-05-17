@@ -37,7 +37,12 @@ let pending: ClaimedInvocation | undefined
 
 function readConfig(): Config | undefined {
   if (!existsSync(CONFIG_PATH)) return undefined
-  return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config
+  try {
+    return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config
+  } catch (error) {
+    console.error(`Failed to parse ${CONFIG_PATH}: ${String(error)}`)
+    return undefined
+  }
 }
 
 function saveConfig(): void {
@@ -151,17 +156,33 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   )
 }
 
+function textFromContent(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part
+      if (part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part) {
+        return String(part.text)
+      }
+      return ""
+    })
+    .filter(Boolean)
+    .join("\n")
+}
+
 function textFromAgentMessages(messages: unknown): string {
   if (!Array.isArray(messages)) return "Done."
-  return messages
+  const text = messages
     .map((message) => {
       if (typeof message === "string") return message
-      if (message && typeof message === "object" && "content" in message) return String(message.content)
+      if (message && typeof message === "object" && "content" in message) return textFromContent(message.content)
       return ""
     })
     .filter(Boolean)
     .join("\n\n")
     .trim()
+  return text || "Done."
 }
 
 async function completePending(markdown: string): Promise<void> {
