@@ -62,6 +62,10 @@ function ensureInstanceId(): string {
   return config.instanceId
 }
 
+function setRemoteStatus(ctx: ExtensionContext, text: string): void {
+  ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("muted", text))
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!config) throw new Error("Threa remote config not loaded")
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
@@ -123,7 +127,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   saveConfig()
 
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
-  ctx.ui.setStatus(STATUS_KEY, `Threa remote: ${displayName}`)
+  setRemoteStatus(ctx, `Threa remote: ${displayName}`)
   await heartbeat("available")
 }
 
@@ -160,7 +164,7 @@ async function disableRemote(ctx: ExtensionContext): Promise<void> {
   pending = undefined
   pendingAssistantTexts = []
   await heartbeat("offline").catch(() => undefined)
-  ctx.ui.setStatus(STATUS_KEY, "Threa remote: off")
+  setRemoteStatus(ctx, "Threa remote: off")
   ctx.ui.notify("Threa remote disabled", "info")
 }
 
@@ -199,7 +203,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   pending = body.data
   pendingAssistantTexts = []
   await heartbeat("busy", `Working on ${body.data.id}`)
-  ctx.ui.setStatus(STATUS_KEY, `Threa remote: running ${body.data.id}`)
+  setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
     [
       `Remote Threa invocation ${body.data.id}.`,
@@ -315,7 +319,7 @@ export default function (pi: ExtensionAPI): void {
     config = readConfig()
     if (!config) return
     if (!isEnabled()) {
-      ctx.ui.setStatus(STATUS_KEY, "Threa remote: off")
+      setRemoteStatus(ctx, "Threa remote: off")
       return
     }
     await heartbeat("available")
@@ -335,7 +339,7 @@ export default function (pi: ExtensionAPI): void {
       await completePending(
         pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
       )
-      ctx.ui.setStatus(STATUS_KEY, "Threa remote: linked")
+      setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {
       ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")
       await failPending(error)
