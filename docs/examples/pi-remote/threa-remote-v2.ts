@@ -35,6 +35,7 @@ type ClaimedInvocation = {
 let config: Config | undefined
 let timer: ReturnType<typeof setInterval> | undefined
 let pending: ClaimedInvocation | undefined
+let pendingAssistantTexts: string[] = []
 
 function readConfig(): Config | undefined {
   if (!existsSync(CONFIG_PATH)) return undefined
@@ -165,6 +166,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
 
   if (!body.data) return
   pending = body.data
+  pendingAssistantTexts = []
   await heartbeat("busy", `Working on ${body.data.id}`)
   ctx.ui.setStatus(STATUS_KEY, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
@@ -193,21 +195,15 @@ function textFromContent(content: unknown): string {
     .join("\n")
 }
 
+function textFromAssistantMessage(message: unknown): string {
+  if (!message || typeof message !== "object" || !("role" in message) || message.role !== "assistant") return ""
+  if (!("content" in message)) return ""
+  return textFromContent(message.content).trim()
+}
+
 function textFromAgentMessages(messages: unknown): string {
   if (!Array.isArray(messages)) return "Done."
-  const assistantMessages = messages.filter(
-    (message): message is { role: "assistant"; content: unknown } =>
-      Boolean(message) &&
-      typeof message === "object" &&
-      "role" in message &&
-      message.role === "assistant" &&
-      "content" in message
-  )
-  const text = assistantMessages
-    .map((message) => textFromContent(message.content))
-    .filter(Boolean)
-    .join("\n\n")
-    .trim()
+  const text = messages.map(textFromAssistantMessage).filter(Boolean).join("\n\n").trim()
   return text || "Done."
 }
 
@@ -235,6 +231,7 @@ async function completePending(markdown: string): Promise<void> {
     }),
   })
   pending = undefined
+  pendingAssistantTexts = []
   await heartbeat("available")
 }
 
@@ -259,10 +256,19 @@ export default function (pi: ExtensionAPI): void {
     startPolling(pi, ctx)
   })
 
+  pi.on("message_end", async (event) => {
+    if (!pending) return
+    const text = textFromAssistantMessage(event.message)
+    if (!text) return
+    pendingAssistantTexts.push(text)
+  })
+
   pi.on("agent_end", async (event, ctx) => {
     if (!pending) return
     try {
-      await completePending(textFromAgentMessages(event.messages))
+      await completePending(
+        pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
+      )
       ctx.ui.setStatus(STATUS_KEY, "Threa remote: linked")
     } catch (error) {
       ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")
