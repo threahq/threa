@@ -207,6 +207,14 @@ function textFromAgentMessages(messages: unknown): string {
   return text || "Done."
 }
 
+function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  if (timer) clearInterval(timer)
+  const poll = () =>
+    claimIfIdle(pi, ctx).catch((error) => ctx.ui.notify(`Threa remote poll failed: ${String(error)}`, "warning"))
+  timer = setInterval(poll, Math.max(1000, config?.pollMs ?? 3000))
+  setTimeout(poll, 0)
+}
+
 async function completePending(markdown: string): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
@@ -236,7 +244,7 @@ export default function (pi: ExtensionAPI): void {
         return
       }
       await createRemoteSession(ctx, args)
-      await claimIfIdle(pi, ctx)
+      startPolling(pi, ctx)
     },
   })
 
@@ -244,7 +252,7 @@ export default function (pi: ExtensionAPI): void {
     config = readConfig()
     if (!config) return
     await heartbeat("available")
-    timer = setInterval(() => void claimIfIdle(pi, ctx), Math.max(1000, config.pollMs ?? 3000))
+    startPolling(pi, ctx)
   })
 
   pi.on("agent_end", async (event, ctx) => {
