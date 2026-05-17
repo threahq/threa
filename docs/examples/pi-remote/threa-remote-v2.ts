@@ -195,12 +195,16 @@ function textFromContent(content: unknown): string {
 
 function textFromAgentMessages(messages: unknown): string {
   if (!Array.isArray(messages)) return "Done."
-  const text = messages
-    .map((message) => {
-      if (typeof message === "string") return message
-      if (message && typeof message === "object" && "content" in message) return textFromContent(message.content)
-      return ""
-    })
+  const assistantMessages = messages.filter(
+    (message): message is { role: "assistant"; content: unknown } =>
+      Boolean(message) &&
+      typeof message === "object" &&
+      "role" in message &&
+      message.role === "assistant" &&
+      "content" in message
+  )
+  const text = assistantMessages
+    .map((message) => textFromContent(message.content))
     .filter(Boolean)
     .join("\n\n")
     .trim()
