@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import { StreamTypes } from "@threa/types"
 import { BotChannelAccessRepository } from "./repository"
 import { SearchRepository } from "../search"
 import { StreamRepository } from "../streams"
@@ -24,12 +25,16 @@ export class BotChannelService {
   }
 
   async isStreamAccessibleForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
+    const stream = await StreamRepository.findById(this.pool, streamId)
+    if (!stream || stream.workspaceId !== workspaceId) return false
+
     // Check public first (fast path)
-    const isPublic = await StreamRepository.isPublic(this.pool, workspaceId, streamId)
-    if (isPublic) return true
+    if (stream.visibility === "public") return true
+
+    const grantStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
 
     // Point query for explicit grant (single EXISTS, no full scan)
-    return BotChannelAccessRepository.hasGrant(this.pool, workspaceId, botId, streamId)
+    return BotChannelAccessRepository.hasGrant(this.pool, workspaceId, botId, grantStreamId)
   }
 
   async getPublicStreamIds(workspaceId: string): Promise<string[]> {
