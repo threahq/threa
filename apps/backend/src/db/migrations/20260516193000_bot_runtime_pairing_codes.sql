@@ -10,9 +10,12 @@ CREATE TABLE bot_runtime_pairing_codes (
   consumed_at TIMESTAMPTZ,
   consumed_by_user_id TEXT,
   consumed_stream_id TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (workspace_id, bot_id, code_hash)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE UNIQUE INDEX uq_bot_runtime_pairing_codes_active_code
+  ON bot_runtime_pairing_codes (workspace_id, bot_id, code_hash)
+  WHERE consumed_at IS NULL;
 
 CREATE INDEX idx_bot_runtime_pairing_codes_lookup
   ON bot_runtime_pairing_codes (workspace_id, bot_id, code_hash)
