@@ -448,6 +448,24 @@ export function createPublicApiHandlers({
         })
       }
 
+      const existingLink = await botRuntimeService.findActivePiRemoteSession({
+        workspaceId: req.workspaceId!,
+        botId: bot.id,
+        instanceId: result.data.instanceId,
+        runtimeSessionId: result.data.runtimeSessionId,
+      })
+      if (existingLink) {
+        return res.json({
+          data: {
+            linkId: existingLink.id,
+            rootStreamId: existingLink.rootStreamId,
+            activeStreamId: existingLink.activeStreamId,
+            runtimeSessionId: existingLink.runtimeSessionId,
+            streamUrlPath: `/streams/${existingLink.activeStreamId}`,
+          },
+        })
+      }
+
       const stream = await streamService.createScratchpad({
         workspaceId: req.workspaceId!,
         displayName: result.data.displayName,

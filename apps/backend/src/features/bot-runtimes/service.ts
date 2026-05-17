@@ -63,6 +63,18 @@ export class BotRuntimeService {
     })
   }
 
+  async findActivePiRemoteSession(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId: string
+  }): Promise<BotRuntimeSessionLink | null> {
+    return BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(this.pool, {
+      ...params,
+      runtimeKind: "pi-local",
+    })
+  }
+
   async createOrLinkPiRemoteSession(params: {
     workspaceId: string
     botId: string
