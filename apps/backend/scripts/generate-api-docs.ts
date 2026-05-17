@@ -142,7 +142,7 @@ function buildSpec() {
       content: { "application/json": { schema: errorJsonSchema } },
     }
     responses["401"] = { description: "Missing or invalid API key" }
-    responses["403"] = { description: "Insufficient permissions or stream not accessible" }
+    responses["403"] = { description: "Insufficient permissions or inaccessible resource" }
 
     if (route.canReturn404) {
       responses["404"] = { description: "Resource not found" }

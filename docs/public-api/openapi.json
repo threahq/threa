@@ -3,7 +3,7 @@
   "info": {
     "title": "Threa Public API",
     "version": "1.0.0",
-    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer thr_your_api_key_here\n```\n\nAPI keys are created by **workspace admins** in the Threa app under **Settings > API Keys**.\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to claim pending bot invocations.\n- `bot-invocations:write` — Grants access to complete or fail claimed bot invocations.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
+    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer thr_your_api_key_here\n```\n\nAPI keys are created by **workspace admins** in the Threa app under **Settings > API Keys**.\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to read bot invocation state.\n- `bot-invocations:write` — Grants access to claim, complete, or fail bot invocations.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
   "security": [{ "apiKey": [] }],
@@ -131,7 +131,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -312,7 +312,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -491,7 +491,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -601,7 +601,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -713,7 +713,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -788,7 +788,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -917,7 +917,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -1054,7 +1054,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -1197,7 +1197,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -1286,7 +1286,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -1377,7 +1377,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -1459,7 +1459,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -1548,7 +1548,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -1668,7 +1668,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       },
       "post": {
@@ -1797,7 +1797,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -1928,7 +1928,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -2046,7 +2046,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       },
@@ -2096,7 +2096,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
         }
       }
@@ -2181,7 +2181,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -2285,7 +2285,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -2389,7 +2389,7 @@
             }
           },
           "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or stream not accessible" }
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     }

@@ -108,12 +108,12 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
   {
     slug: WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ,
     name: "Read bot invocations",
-    description: "Grants access to claim pending bot invocations.",
+    description: "Grants access to read bot invocation state.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
     name: "Write bot invocations",
-    description: "Grants access to complete or fail claimed bot invocations.",
+    description: "Grants access to claim, complete, or fail bot invocations.",
   },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
