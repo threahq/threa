@@ -93,14 +93,24 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return
 
     const mentionedSlugs = extractMentionSlugs(message.event.payload.contentMarkdown)
-    if (mentionedSlugs.length > 0 && bot.slug != null && !mentionedSlugs.includes(bot.slug)) return
+    const mentionedBots = await BotRepository.findBySlugs(this.pool, message.workspaceId, mentionedSlugs)
+    const explicitMentionableBot = mentionedBots.some((mentionedBot) => botHasCapability(mentionedBot, "mentionable"))
+    if (explicitMentionableBot && bot.slug != null && !mentionedSlugs.includes(bot.slug)) return
 
-    const link = await BotRuntimeSessionLinkRepository.findActiveByStream(this.pool, {
+    let link = await BotRuntimeSessionLinkRepository.findActiveByStream(this.pool, {
       workspaceId: message.workspaceId,
       botId: bot.id,
       rootStreamId: rootStream.id,
       activeStreamId: stream.id,
     })
+    if (!link && stream.id !== rootStream.id) {
+      link = await BotRuntimeSessionLinkRepository.findActiveByStream(this.pool, {
+        workspaceId: message.workspaceId,
+        botId: bot.id,
+        rootStreamId: rootStream.id,
+        activeStreamId: rootStream.id,
+      })
+    }
     if (!link) return
 
     await this.service.createInvocation({
