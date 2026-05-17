@@ -34,7 +34,9 @@ import {
   searchAttachmentsSchema,
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
+  createRuntimeSessionSchema,
   claimInvocationSchema,
+  renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
 } from "./schemas"
@@ -292,7 +294,16 @@ const claimedInvocationSchema = z.object({
   runtimeSessionId: z.string().nullable(),
 })
 
+const runtimeSessionLinkSchema = z.object({
+  linkId: z.string(),
+  rootStreamId: z.string(),
+  activeStreamId: z.string(),
+  runtimeSessionId: z.string(),
+  streamUrlPath: z.string(),
+})
+
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
+const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
 const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema })
 
 const errorSchema = z.object({
@@ -484,6 +495,18 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
   },
   {
     method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions",
+    operationId: "createBotRuntimeSession",
+    summary: "Create or link a bot runtime session",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: createRuntimeSessionSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(runtimeSessionLinkSchema),
+  },
+  {
+    method: "post",
     path: "/api/v1/workspaces/{workspaceId}/bot-invocations/claim",
     operationId: "claimBotInvocation",
     summary: "Claim one pending bot invocation",
@@ -493,6 +516,22 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: claimInvocationSchema,
     requestIn: "body",
     responseSchema: z.object({ data: claimedInvocationSchema.nullable() }),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/renew",
+    operationId: "renewBotInvocationClaim",
+    summary: "Renew a claimed bot invocation",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+    ],
+    requestSchema: renewInvocationClaimSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(renewedInvocationSchema),
+    canReturn404: true,
   },
   {
     method: "post",

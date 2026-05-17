@@ -599,10 +599,22 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.upsertBotRuntimePresence
   )
   app.post(
+    "/api/v1/workspaces/:workspaceId/bot-runtime/sessions",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE),
+    publicApi.createBotRuntimeSession
+  )
+  app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/claim",
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
     publicApi.claimBotInvocation
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/renew",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.renewBotInvocationClaim
   )
   app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/complete",

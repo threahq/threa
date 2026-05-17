@@ -62,7 +62,9 @@ import {
   searchAttachmentsSchema,
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
+  createRuntimeSessionSchema,
   claimInvocationSchema,
+  renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
 } from "./schemas"
@@ -431,6 +433,49 @@ export function createPublicApiHandlers({
       })
     },
 
+    async createBotRuntimeSession(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = createRuntimeSessionSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      if (bot.type !== "personal") {
+        throw new HttpError("Runtime sessions require a personal bot owner", {
+          status: 400,
+          code: "PERSONAL_BOT_REQUIRED",
+        })
+      }
+
+      const stream = await streamService.createScratchpad({
+        workspaceId: req.workspaceId!,
+        displayName: result.data.displayName,
+        createdBy: bot.ownerUserId,
+      })
+      await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
+      const link = await botRuntimeService.createOrLinkPiRemoteSession({
+        workspaceId: req.workspaceId!,
+        botId: bot.id,
+        instanceId: result.data.instanceId,
+        runtimeSessionId: result.data.runtimeSessionId,
+        rootStreamId: stream.id,
+        activeStreamId: stream.id,
+        linkedBy: bot.ownerUserId,
+        metadata: { displayName: result.data.displayName, localCwd: result.data.localCwd ?? null },
+      })
+
+      res.json({
+        data: {
+          linkId: link.id,
+          rootStreamId: link.rootStreamId,
+          activeStreamId: link.activeStreamId,
+          runtimeSessionId: link.runtimeSessionId,
+          streamUrlPath: `/streams/${stream.id}`,
+        },
+      })
+    },
+
     async claimBotInvocation(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const result = claimInvocationSchema.safeParse(req.body)
@@ -465,6 +510,30 @@ export function createPublicApiHandlers({
           claimToken: invocation.claimToken!,
           claimExpiresAt: invocation.claimExpiresAt!.toISOString(),
           runtimeSessionId: invocation.targetRuntimeSessionId,
+        },
+      })
+    },
+
+    async renewBotInvocationClaim(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = renewInvocationClaimSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const renewed = await botRuntimeService.renewInvocationClaim({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        instanceId: result.data.instanceId,
+        claimToken: result.data.claimToken,
+        claimTtlSeconds: result.data.claimTtlSeconds,
+      })
+      if (!renewed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      res.json({
+        data: {
+          invocationId: renewed.id,
+          status: renewed.status,
+          claimExpiresAt: renewed.claimExpiresAt?.toISOString() ?? null,
         },
       })
     },

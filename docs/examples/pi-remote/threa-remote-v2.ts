@@ -29,6 +29,7 @@ type ClaimedInvocation = {
   sourceMessageId: string
   promptMarkdown: string
   claimToken: string
+  claimExpiresAt: string | null
 }
 
 let config: Config | undefined
@@ -124,8 +125,29 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   await heartbeat("available")
 }
 
+async function renewPendingClaim(): Promise<void> {
+  if (!config || !pending) return
+  const body = await request<{ data: { claimExpiresAt: string | null } }>(
+    `/api/v1/workspaces/${config.workspaceId}/bot-invocations/${pending.id}/renew`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        instanceId: ensureInstanceId(),
+        claimToken: pending.claimToken,
+        claimTtlSeconds: 120,
+      }),
+    }
+  )
+  pending.claimExpiresAt = body.data.claimExpiresAt
+}
+
 async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-  if (!config || pending || !ctx.isIdle()) return
+  if (!config) return
+  if (pending) {
+    await renewPendingClaim()
+    return
+  }
+  if (!ctx.isIdle()) return
   await heartbeat("available")
 
   const body = await request<{ data: ClaimedInvocation | null }>(

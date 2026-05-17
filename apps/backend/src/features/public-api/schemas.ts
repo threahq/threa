@@ -73,10 +73,24 @@ export const upsertPresenceSchema = z.object({
   statusText: z.string().max(200).optional(),
 })
 
+export const createRuntimeSessionSchema = z.object({
+  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+  instanceId: z.string().min(1).max(128),
+  runtimeSessionId: z.string().min(1).max(256),
+  displayName: z.string().min(1).max(100),
+  localCwd: z.string().max(1000).optional(),
+})
+
 export const claimInvocationSchema = z.object({
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
   instanceId: z.string().min(1).max(128),
   supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
+  claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
+})
+
+export const renewInvocationClaimSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  claimToken: z.string().min(1).max(256),
   claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
 })
 

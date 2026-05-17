@@ -921,6 +921,98 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions": {
+      "post": {
+        "operationId": "createBotRuntimeSession",
+        "summary": "Create or link a bot runtime session",
+        "tags": ["Bot runtimes"],
+        "security": [{ "apiKey": ["bot-runtime:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "runtimeKind": {
+                    "type": "string",
+                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                  },
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
+                  "localCwd": { "type": "string", "maxLength": 1000 }
+                },
+                "required": ["runtimeKind", "instanceId", "runtimeSessionId", "displayName"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "linkId": { "type": "string" },
+                        "rootStreamId": { "type": "string" },
+                        "activeStreamId": { "type": "string" },
+                        "runtimeSessionId": { "type": "string" },
+                        "streamUrlPath": { "type": "string" }
+                      },
+                      "required": ["linkId", "rootStreamId", "activeStreamId", "runtimeSessionId", "streamUrlPath"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/bot-invocations/claim": {
       "post": {
         "operationId": "claimBotInvocation",
@@ -1055,6 +1147,99 @@
           },
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/renew": {
+      "post": {
+        "operationId": "renewBotInvocationClaim",
+        "summary": "Renew a claimed bot invocation",
+        "tags": ["Bot invocations"],
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "invocationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Invocation ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 }
+                },
+                "required": ["instanceId", "claimToken", "claimTtlSeconds"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "invocationId": { "type": "string" },
+                        "status": { "type": "string" },
+                        "claimExpiresAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+                      },
+                      "required": ["invocationId", "status", "claimExpiresAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
         }
       }
     },
