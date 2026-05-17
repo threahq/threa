@@ -13,6 +13,7 @@ type Config = {
   pollMs?: number
   instanceId?: string
   defaultDisplayName?: string
+  enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
 }
 
@@ -142,8 +143,38 @@ async function renewPendingClaim(): Promise<void> {
   pending.claimExpiresAt = body.data.claimExpiresAt
 }
 
-async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+function isEnabled(): boolean {
+  return config?.enabled !== false
+}
+
+function stopPolling(): void {
+  if (timer) clearInterval(timer)
+  timer = undefined
+}
+
+async function disableRemote(ctx: ExtensionContext): Promise<void> {
   if (!config) return
+  config.enabled = false
+  saveConfig()
+  stopPolling()
+  pending = undefined
+  pendingAssistantTexts = []
+  await heartbeat("offline").catch(() => undefined)
+  ctx.ui.setStatus(STATUS_KEY, "Threa remote: off")
+  ctx.ui.notify("Threa remote disabled", "info")
+}
+
+async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  if (!config) return
+  config.enabled = true
+  saveConfig()
+  await heartbeat("available")
+  startPolling(pi, ctx)
+  ctx.ui.notify("Threa remote enabled", "info")
+}
+
+async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
+  if (!config || !isEnabled()) return
   if (pending) {
     await renewPendingClaim()
     return
@@ -208,7 +239,8 @@ function textFromAgentMessages(messages: unknown): string {
 }
 
 function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
-  if (timer) clearInterval(timer)
+  if (!isEnabled()) return
+  stopPolling()
   const poll = () =>
     claimIfIdle(pi, ctx).catch((error) => ctx.ui.notify(`Threa remote poll failed: ${String(error)}`, "warning"))
   timer = setInterval(poll, Math.max(1000, config?.pollMs ?? 3000))
@@ -260,6 +292,20 @@ export default function (pi: ExtensionAPI): void {
         ctx.ui.notify(`Missing ${CONFIG_PATH}`, "warning")
         return
       }
+      const command = args.trim().toLowerCase()
+      if (command === "off" || command === "disable") {
+        await disableRemote(ctx)
+        return
+      }
+      if (command === "on" || command === "enable") {
+        await enableRemote(pi, ctx)
+        return
+      }
+      if (command === "status") {
+        ctx.ui.notify(`Threa remote is ${isEnabled() ? "on" : "off"}${pending ? ` (${pending.id})` : ""}`, "info")
+        return
+      }
+      config.enabled = true
       await createRemoteSession(ctx, args)
       startPolling(pi, ctx)
     },
@@ -268,6 +314,10 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     config = readConfig()
     if (!config) return
+    if (!isEnabled()) {
+      ctx.ui.setStatus(STATUS_KEY, "Threa remote: off")
+      return
+    }
     await heartbeat("available")
     startPolling(pi, ctx)
   })
@@ -293,8 +343,7 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (timer) clearInterval(timer)
-    timer = undefined
+    stopPolling()
     await heartbeat("offline").catch(() => undefined)
     ctx.ui.setStatus(STATUS_KEY, undefined)
   })
