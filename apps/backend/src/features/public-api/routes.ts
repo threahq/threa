@@ -488,7 +488,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "claimBotInvocation",
     summary: "Claim one pending bot invocation",
     tags: ["Bot invocations"],
-    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
     parameters: [workspaceIdParam],
     requestSchema: claimInvocationSchema,
     requestIn: "body",

@@ -146,11 +146,22 @@ export class BotRuntimeService {
     workspaceId: string
     botId: string
     instanceId: string
+    runtimeKind: BotRuntimeKind
     claimToken: string
     supportedCapabilities: BotInvocationCapability[]
     claimTtlSeconds: number
   }): Promise<BotInvocation | null> {
     return BotInvocationRepository.claimOne(this.pool, params)
+  }
+
+  async findActiveClaim(params: {
+    workspaceId: string
+    botId: string
+    invocationId: string
+    instanceId: string
+    claimToken: string
+  }): Promise<BotInvocation | null> {
+    return BotInvocationRepository.findActiveClaim(this.pool, params)
   }
 
   async completeInvocation(params: {

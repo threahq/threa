@@ -926,7 +926,7 @@
         "operationId": "claimBotInvocation",
         "summary": "Claim one pending bot invocation",
         "tags": ["Bot invocations"],
-        "security": [{ "apiKey": ["bot-invocations:read"] }],
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
         "parameters": [
           {
             "name": "workspaceId",

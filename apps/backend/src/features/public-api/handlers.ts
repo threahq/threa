@@ -312,6 +312,7 @@ export interface PublicApiDeps {
   memoExplorerService: MemoExplorerService
   attachmentService: AttachmentService
   botChannelService: BotChannelService
+  botRuntimeService: BotRuntimeService
   streamService: StreamService
   eventService: EventService
   pool: Pool
@@ -322,11 +323,11 @@ export function createPublicApiHandlers({
   memoExplorerService,
   attachmentService,
   botChannelService,
+  botRuntimeService,
   streamService,
   eventService,
   pool,
 }: PublicApiDeps) {
-  const botRuntimeService = new BotRuntimeService({ pool })
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
     if (req.userApiKey) {
@@ -439,6 +440,7 @@ export function createPublicApiHandlers({
       const invocation = await botRuntimeService.claimNextInvocation({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
+        runtimeKind: result.data.runtimeKind,
         instanceId: result.data.instanceId,
         supportedCapabilities: result.data.supportedCapabilities,
         claimTtlSeconds: result.data.claimTtlSeconds,
@@ -473,6 +475,30 @@ export function createPublicApiHandlers({
       if (!result.success) {
         return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
       }
+      const claim = await botRuntimeService.findActiveClaim({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        instanceId: result.data.instanceId,
+        claimToken: result.data.claimToken,
+      })
+      if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      await assertStreamAccessible(req, claim.responseStreamId)
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
+      const contentMarkdown = normalizeMessage(result.data.finalMessageMarkdown)
+      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
+      const attachmentIds = collectAttachmentReferenceIds(contentJson)
+      const message = await eventService.createMessage({
+        workspaceId: req.workspaceId!,
+        streamId: claim.responseStreamId,
+        authorId: bot.id,
+        authorType: AuthorTypes.BOT,
+        contentJson,
+        contentMarkdown,
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        metadata: result.data.metadata,
+      })
       const completed = await botRuntimeService.completeInvocation({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
@@ -481,20 +507,6 @@ export function createPublicApiHandlers({
         claimToken: result.data.claimToken,
       })
       if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-      await assertStreamAccessible(req, completed.responseStreamId)
-      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
-      if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-      const contentMarkdown = normalizeMessage(result.data.finalMessageMarkdown)
-      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
-      const message = await eventService.createMessage({
-        workspaceId: req.workspaceId!,
-        streamId: completed.responseStreamId,
-        authorId: bot.id,
-        authorType: AuthorTypes.BOT,
-        contentJson,
-        contentMarkdown,
-        metadata: result.data.metadata,
-      })
       res.json({
         data: { invocationId: completed.id, message: serializeMessage(message, { authorDisplayName: bot.name }) },
       })

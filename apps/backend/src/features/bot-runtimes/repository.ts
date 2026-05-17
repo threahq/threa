@@ -379,6 +379,7 @@ export const BotInvocationRepository = {
       workspaceId: string
       botId: string
       instanceId: string
+      runtimeKind: BotRuntimeKind
       claimToken: string
       supportedCapabilities: BotInvocationCapability[]
       claimTtlSeconds: number
@@ -390,6 +391,13 @@ export const BotInvocationRepository = {
           AND actor_type = 'bot'
           AND actor_id = ${params.botId}
           AND required_capability = ANY(${params.supportedCapabilities})
+          AND EXISTS (
+            SELECT 1 FROM bot_runtime_instances r
+            WHERE r.workspace_id = ${params.workspaceId}
+              AND r.bot_id = ${params.botId}
+              AND r.instance_id = ${params.instanceId}
+              AND r.runtime_kind = ${params.runtimeKind}
+          )
           AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
           AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
         ORDER BY created_at ASC, id ASC
@@ -401,6 +409,15 @@ export const BotInvocationRepository = {
       FROM candidate
       WHERE i.id = candidate.id
       RETURNING i.*`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async findActiveClaim(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 

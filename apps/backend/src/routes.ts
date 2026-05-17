@@ -35,6 +35,7 @@ import { createAgentSessionHandlers, createContextBagHandlers } from "./features
 import { createLinkPreviewHandlers } from "./features/link-previews"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
 import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
+import { BotRuntimeService } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import {
   createInternalAuthMiddleware,
@@ -540,11 +541,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   // Public API v1 — API key auth (workspace-scoped or user-scoped)
   const publicAuth = createPublicApiAuthMiddleware({ userApiKeyService, botApiKeyService, workspaceAuthzService, pool })
+  const botRuntimeService = new BotRuntimeService({ pool })
   const publicApi = createPublicApiHandlers({
     searchService,
     memoExplorerService,
     attachmentService,
     botChannelService,
+    botRuntimeService,
     streamService,
     eventService,
     pool,
@@ -598,7 +601,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/claim",
     ...publicMiddleware,
-    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ),
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
     publicApi.claimBotInvocation
   )
   app.post(
