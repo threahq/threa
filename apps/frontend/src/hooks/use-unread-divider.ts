@@ -122,9 +122,24 @@ export function useUnreadDivider({
     setIsFading(false)
   }, [streamId])
 
+  // Latch deep-link mode per stream. The `?m=` param is auto-cleared from the
+  // URL ~3s after a deep-link lands, flipping highlightMessageId to null.
+  // Without this latch the scroll-to-first-unread gate below would re-arm at
+  // that moment and yank the user off the deep-linked message down to the
+  // first unread (≈ the live tail) — the "lands right, then jumps, then snaps
+  // to the bottom" deep-link bug. A stream the user deep-linked into should
+  // never auto-scroll to unread for that view. Resets only on stream change.
+  const deepLinkedRef = useRef<{ streamId: string; seen: boolean }>({ streamId, seen: false })
+  if (deepLinkedRef.current.streamId !== streamId) {
+    deepLinkedRef.current = { streamId, seen: false }
+  }
+  if (highlightMessageId) {
+    deepLinkedRef.current.seen = true
+  }
+
   // Scroll to first unread on initial load
   useScrollToElement({
-    enabled: scrollToUnread && !isLoading && !!firstUnreadEventId && !highlightMessageId,
+    enabled: scrollToUnread && !isLoading && !!firstUnreadEventId && !deepLinkedRef.current.seen,
     selector: firstUnreadEventId ? `[data-event-id="${firstUnreadEventId}"]` : undefined,
     resetKey: streamId,
   })
