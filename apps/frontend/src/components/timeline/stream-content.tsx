@@ -107,6 +107,10 @@ export function StreamContent({
   // re-trigger the scroll — react-router generates a fresh key on every
   // navigation even when the URL is identical, which it auto-replaces.
   const jumpTriggeredKeyRef = useRef<string | null>(null)
+  // Set when a deep-link (?m=) jump can never resolve (target deleted / no
+  // access / fetch failed). Releases the deep-link mount hold so the timeline
+  // falls back to the loaded window instead of holding the skeleton forever.
+  const [deepLinkGaveUp, setDeepLinkGaveUp] = useState(false)
   const user = useUser()
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const [batchMode, setBatchMode] = useState(false)
@@ -883,7 +887,10 @@ export function StreamContent({
   useEffect(() => {
     if (!highlightMessageId || isLoading || isDraft) return
     if (jumpTriggeredKeyRef.current === location.key) return
-    jumpTriggeredKeyRef.current = location.key
+    const navigationKey = location.key
+    jumpTriggeredKeyRef.current = navigationKey
+    // Fresh navigation: re-arm the mount hold for this target.
+    setDeepLinkGaveUp(false)
 
     // Disable auto-scroll so highlight scroll-into-view isn't overridden
     disableAutoScroll()
@@ -903,12 +910,19 @@ export function StreamContent({
       pendingScrollTarget.current = highlightMessageId
       jumpToEvent(highlightMessageId)
         .then((success) => {
+          // A newer navigation may have superseded this request while it was
+          // in flight; its stale completion must not clear the new target or
+          // release the new mount hold.
+          if (jumpTriggeredKeyRef.current !== navigationKey) return
           if (!success) {
             pendingScrollTarget.current = null
+            setDeepLinkGaveUp(true)
           }
         })
         .catch(() => {
+          if (jumpTriggeredKeyRef.current !== navigationKey) return
           pendingScrollTarget.current = null
+          setDeepLinkGaveUp(true)
         })
     }
   }, [highlightMessageId, location.key, isLoading, isDraft, events, jumpToEvent, disableAutoScroll, scrollToMessage])
@@ -921,6 +935,7 @@ export function StreamContent({
     jumpTriggeredKeyRef.current = null
     scrollAbortRef.current?.()
     pendingScrollTarget.current = null
+    setDeepLinkGaveUp(false)
     exitJumpMode()
     setIsSearchOpen(false)
     clearSearch()
@@ -1006,6 +1021,30 @@ export function StreamContent({
     [editLastMessageCtx, scrollToMessage]
   )
 
+  // Deep-link (?m=) mount hold. On a push-notification / Activities deep link
+  // the latest window loads first; the jump effect then fetches the window
+  // around the target and swaps `events` wholesale. react-virtuoso only
+  // honors initialTopMostItemIndex at mount, so a Virtuoso instance mounted
+  // on the latest window can't re-anchor onto the jump window — scrollToMessage
+  // fights the stale anchor and the user lands far from the target ("scrolled
+  // to hell"). Holding the skeleton until the target is actually in the loaded
+  // window makes the single keyed mount land already-anchored on it. Uses the
+  // raw ?m= id (not the search-active id) so in-stream search is unaffected,
+  // and releases via deepLinkGaveUp / the 3s ?m= clear so it never hangs.
+  const deepLinkTargetLoaded = useMemo(
+    () =>
+      !highlightMessageId ||
+      events.some((e) => (e.payload as { messageId?: string })?.messageId === highlightMessageId),
+    [events, highlightMessageId]
+  )
+  const holdForDeepLink =
+    !!highlightMessageId &&
+    !deepLinkTargetLoaded &&
+    !deepLinkGaveUp &&
+    !isLoading &&
+    !isConfirmedEmpty &&
+    events.length > 0
+
   return (
     <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
       <QuoteReplyProvider>
@@ -1048,6 +1087,7 @@ export function StreamContent({
                   <VirtuosoMessageList
                     visibleItems={visibleItems}
                     isLoading={isLoading}
+                    holdForDeepLink={holdForDeepLink}
                     isConfirmedEmpty={isConfirmedEmpty}
                     virtuosoRef={virtuosoRef}
                     virtuosoScrollerRef={virtuosoScrollerRef}
@@ -1261,6 +1301,7 @@ export function StreamContent({
 function VirtuosoMessageList({
   visibleItems,
   isLoading,
+  holdForDeepLink,
   isConfirmedEmpty,
   virtuosoRef,
   virtuosoScrollerRef,
@@ -1290,6 +1331,9 @@ function VirtuosoMessageList({
 }: {
   visibleItems: TimelineItem[]
   isLoading: boolean
+  /** Hold the skeleton until a deep-link (?m=) target is in the loaded window
+   *  so the keyed Virtuoso instance mounts already anchored on it. */
+  holdForDeepLink: boolean
   /** True only when we've fully resolved IDB and bootstrap and the stream is
    *  actually empty. During mid-switch transitions this is false, so we avoid
    *  flashing the "No messages yet" state before useLiveQuery catches up. */
@@ -1352,6 +1396,24 @@ function VirtuosoMessageList({
   // conversation opened with. Without this, virtualized scratchpad timelines
   // would never get `isFirstMessage=true` and the badge would silently drop.
   const firstMessageId = useMemo(() => findFirstMessageId(visibleItems), [visibleItems])
+
+  // On a deep-link (?m=) jump the scroll hook returns `initialTopMostItemIndex:
+  // undefined` so it can drive the jump imperatively via scrollToMessage. But
+  // an absent prop leaves react-virtuoso's internal index stream at its `0`
+  // default, so the listState anchors the freshly-remounted (per-stream key)
+  // window at index 0 — the *top* of the loaded window — and the scroller
+  // lands far above the target, fighting scrollToMessage until it gives up.
+  // When the linked message is already in the loaded window, anchor the
+  // initial window on it so the cold-boot mount renders centered on the
+  // target; scrollToMessage then only has to refine. Falls back to the hook's
+  // value when the target isn't loaded yet (the jumpToEvent fetch path).
+  const effectiveInitialTopMostItemIndex = useMemo(() => {
+    if (highlightMessageId) {
+      const idx = findMessageItemIndex(visibleItems, highlightMessageId)
+      if (idx >= 0) return { index: idx, align: "center" } as const
+    }
+    return initialTopMostItemIndex
+  }, [highlightMessageId, visibleItems, initialTopMostItemIndex])
 
   const renderCtx = useMemo<TimelineItemRenderContext>(
     () => ({
@@ -1503,7 +1565,7 @@ function VirtuosoMessageList({
     [reservedTopSpacer]
   )
 
-  if (isLoading) {
+  if (isLoading || holdForDeepLink) {
     return (
       <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
         <div className="flex gap-3">
@@ -1568,10 +1630,13 @@ function VirtuosoMessageList({
       // safe numeric default), and a later reactive listState recompute runs
       // its index normalizer on that `undefined` -> "Cannot read properties
       // of undefined (reading 'index')", which crashes the whole route via
-      // the error boundary. During deep-link (?m=) jumps the hook
-      // intentionally returns `undefined` here, so spread the prop only when
-      // it has a value and let react-virtuoso keep its default otherwise.
-      {...(initialTopMostItemIndex !== undefined ? { initialTopMostItemIndex } : {})}
+      // the error boundary. The hook returns `undefined` on deep-link jumps;
+      // effectiveInitialTopMostItemIndex substitutes the linked message's
+      // index when it is loaded. Spread the prop only when it has a value and
+      // let react-virtuoso keep its default otherwise.
+      {...(effectiveInitialTopMostItemIndex !== undefined
+        ? { initialTopMostItemIndex: effectiveInitialTopMostItemIndex }
+        : {})}
       data={visibleItems}
       // Intentionally no defaultItemHeight: it makes Virtuoso skip the probe
       // measure and reveal the list using the estimate, so a tall code block
