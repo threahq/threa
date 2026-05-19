@@ -9,7 +9,7 @@ const TOAST_ID = "app-update"
 const IS_DEV = import.meta.env.DEV
 
 /** Cap how long the Reload action waits for the new SW before reloading anyway. */
-const UPDATE_RELOAD_FALLBACK_MS = 10_000
+export const UPDATE_RELOAD_FALLBACK_MS = 10_000
 
 /**
  * Tell the browser to check for a new service worker. The SW's install handler
@@ -36,7 +36,7 @@ async function triggerSwUpdate(): Promise<void> {
  * claimed in the background), or the update stalls — never worse than a bare
  * reload, and time-bounded.
  */
-async function reloadForUpdate(): Promise<void> {
+export async function reloadForUpdate(): Promise<void> {
   let reloaded = false
   const reloadOnce = (): void => {
     if (reloaded) return
@@ -57,24 +57,34 @@ async function reloadForUpdate(): Promise<void> {
     // before we are listening.
     navigator.serviceWorker.addEventListener("controllerchange", reloadOnce, { once: true })
 
-    await registration.update()
-
-    const pending = registration.installing ?? registration.waiting
-    if (!pending) {
-      // The new SW already installed and took control in the background — a
-      // plain reload now serves its precached shell.
-      reloadOnce()
-      return
-    }
-
-    // Backstop for controllerchange in case it does not fire for this client:
-    // reload as soon as the new SW reaches `activated`.
-    pending.addEventListener("statechange", () => {
-      if (pending.state === "activated") reloadOnce()
-    })
-
-    // Last resort so a stuck install can't strand the toast indefinitely.
+    // Arm the time-bounded reload BEFORE awaiting update(). registration.update()
+    // can hang indefinitely (stalled SW-script fetch, throttled or offline tab),
+    // and every other guarantee here used to sit behind that await — so a hung
+    // update() dismissed the toast and then stranded the user on the old build
+    // with Reload doing nothing. The reload now always happens within
+    // UPDATE_RELOAD_FALLBACK_MS regardless of how update() behaves.
     setTimeout(reloadOnce, UPDATE_RELOAD_FALLBACK_MS)
+
+    // Best effort on top of that fallback: reload the moment the new SW takes
+    // control so the reload lands on its precached build instead of waiting the
+    // fallback out. Not awaited, so a hung update() can't block the timeout.
+    void registration
+      .update()
+      .then(() => {
+        const pending = registration.installing ?? registration.waiting
+        if (!pending) {
+          // The new SW already installed and took control in the background — a
+          // plain reload now serves its precached shell.
+          reloadOnce()
+          return
+        }
+        // Backstop for controllerchange in case it does not fire for this
+        // client: reload as soon as the new SW reaches `activated`.
+        pending.addEventListener("statechange", () => {
+          if (pending.state === "activated") reloadOnce()
+        })
+      })
+      .catch(reloadOnce)
   } catch {
     reloadOnce()
   }
