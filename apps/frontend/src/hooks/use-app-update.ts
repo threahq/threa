@@ -29,12 +29,14 @@ async function triggerSwUpdate(): Promise<void> {
  * plain reload returns whatever build the *currently controlling* SW precached.
  * If the new SW hasn't installed and claimed this page yet, that is still the
  * old build and the version toast just reappears — which is why an
- * unconditional reload needed "a bunch of refreshes". So force the update now
- * and reload exactly once when the new SW takes control: it self-activates via
- * skipWaiting + clients.claim, firing `controllerchange`. Fall back to a plain
- * reload when there is no registration, no pending worker (the new SW already
- * claimed in the background), or the update stalls — never worse than a bare
- * reload, and time-bounded.
+ * unconditional reload needed "a bunch of refreshes".
+ *
+ * So the guaranteed behaviour is a single time-bounded reload, armed up front
+ * and never gated on the SW update settling. On top of that, as a best-effort
+ * optimization, force the SW update and reload the moment the new worker takes
+ * control (it self-activates via skipWaiting + clients.claim, firing
+ * `controllerchange`) so the reload lands on the new build instead of waiting
+ * the fallback out. Reloads exactly once; never worse than a bare reload.
  */
 export async function reloadForUpdate(): Promise<void> {
   let reloaded = false
