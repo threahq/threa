@@ -654,6 +654,22 @@ export function StreamContent({
     [visibleItems]
   )
 
+  // Latch deep-link mode per stream. `?m=` is auto-cleared from the URL after
+  // 3s (see effect above), which would otherwise flip skipInitialScroll
+  // true->false mid-view and re-run useVirtuosoScroll's destructive reset
+  // (firstItemIndex + follow-output), yanking the user off the deep-linked
+  // message and snapping to the bottom. The latch only resets on streamId
+  // change, so a fresh deep-link into the same stream still re-arms (false
+  // is never written back within a stream once highlightMessageId was seen).
+  const deepLinkLatchRef = useRef<{ streamId: string; latched: boolean }>({ streamId, latched: false })
+  if (deepLinkLatchRef.current.streamId !== streamId) {
+    deepLinkLatchRef.current = { streamId, latched: false }
+  }
+  if (highlightMessageId) {
+    deepLinkLatchRef.current.latched = true
+  }
+  const skipInitialScroll = deepLinkLatchRef.current.latched
+
   // --- Virtuoso scroll (main streams, channels, scratchpads) ---
   const {
     virtuosoRef,
@@ -671,7 +687,7 @@ export function StreamContent({
     itemCount: useVirtualized ? visibleItems.length : 0,
     getItemKey: useVirtualized ? getItemKey : () => "0",
     resetKey: streamId,
-    skipInitialScroll: !!highlightMessageId,
+    skipInitialScroll,
   })
 
   // Virtuoso ref for scroll container access (search highlight, etc.)
