@@ -170,10 +170,21 @@ const ZERO_HEIGHT_EVENT_TYPES = new Set([
  * Filters out timeline items that would render as zero-height elements.
  * Must be applied before computing virtualizer count/keys to prevent overlap.
  */
-export function filterVisibleItems(items: TimelineItem[], hideSessionCards?: boolean): TimelineItem[] {
+export function filterVisibleItems(
+  items: TimelineItem[],
+  hideSessionCards?: boolean,
+  streamId?: string
+): TimelineItem[] {
   return items.filter((item) => {
     if (item.type === "session_group" && hideSessionCards) return false
+    if (item.type === "command_group" && !item.events.some((event) => event.eventType === "command_dispatched")) {
+      return false
+    }
     if (item.type === "event" && ZERO_HEIGHT_EVENT_TYPES.has(item.event.eventType)) return false
+    if (item.type === "event" && item.event.eventType === "messages:moved" && streamId) {
+      const payload = item.event.payload as { destinationStreamId?: string }
+      if (payload.destinationStreamId === streamId) return false
+    }
     return true
   })
 }

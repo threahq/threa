@@ -80,6 +80,14 @@ import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
 
 /**
+ * Render at least one full viewport ahead and behind the visible range. The
+ * scroller measures rows as they mount; Firefox in particular can otherwise
+ * show rows popping in only after their leading edge crosses the viewport.
+ */
+const TIMELINE_MIN_PRE_RENDER_PX = 1000
+const TIMELINE_MIN_OVERSCAN_ITEM_COUNT = { top: 8, bottom: 8 }
+
+/**
  * Opt-in deep-link scroll tracing. Off by default (zero console noise in
  * production). Enable from the browser console with
  * `window.__threaDeepLinkDebug = true`, then reproduce a deep-link (`?m=`)
@@ -685,8 +693,8 @@ export function StreamContent({
   // Without this, items that render as empty wrappers get measured as 0px, causing
   // subsequent items to overlap at the same Y position.
   const visibleItems = useMemo(
-    () => (useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems),
-    [timelineItems, useVirtualized, isChannel]
+    () => (useVirtualized ? filterVisibleItems(timelineItems, isChannel, streamId) : timelineItems),
+    [timelineItems, useVirtualized, isChannel, streamId]
   )
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
@@ -958,12 +966,15 @@ export function StreamContent({
         return
       }
 
-      // Message not in current window — load events around it, then scroll after load
+      // Message not in current window — load events around it, then scroll after load.
+      // The jump result replaces the timeline window; clear prepend anchors so
+      // that wholesale swap is not interpreted as incremental history loading.
       disableAutoScroll()
+      resetPrependState()
       pendingScrollTarget.current = messageId
       jumpToEvent(messageId)
     },
-    [events, jumpToEvent, disableAutoScroll, scrollToMessage]
+    [events, jumpToEvent, disableAutoScroll, resetPrependState, scrollToMessage]
   )
 
   // Highlight search matches in the DOM via CSS Custom Highlight API
@@ -1083,6 +1094,7 @@ export function StreamContent({
 
     if (events.length > 0) {
       deepLinkDebug("highlight: target out of window, jumping", highlightMessageId)
+      resetPrependState()
       pendingScrollTarget.current = highlightMessageId
       jumpToEvent(highlightMessageId)
         .then((success) => {
@@ -1103,7 +1115,17 @@ export function StreamContent({
           setDeepLinkGaveUp(true)
         })
     }
-  }, [highlightMessageId, location.key, isLoading, isDraft, events, jumpToEvent, disableAutoScroll, scrollToMessage])
+  }, [
+    highlightMessageId,
+    location.key,
+    isLoading,
+    isDraft,
+    events,
+    jumpToEvent,
+    disableAutoScroll,
+    resetPrependState,
+    scrollToMessage,
+  ])
 
   // Reset jump and search state when switching streams (component stays mounted).
   // Also abort any in-flight scrollToMessage retry loop so its stale closure
@@ -1703,12 +1725,23 @@ function VirtuosoMessageList({
   // across messages and leak per-message state (e.g. link previews).
   const computeItemKey = useCallback((_index: number, item: TimelineItem) => getTimelineItemKey(item), [])
 
+  const [viewportOverscanPx, setViewportOverscanPx] = useState(TIMELINE_MIN_PRE_RENDER_PX)
+  const updateViewportOverscan = useCallback((el: HTMLElement) => {
+    const next = Math.max(TIMELINE_MIN_PRE_RENDER_PX, Math.ceil(el.clientHeight))
+    setViewportOverscanPx((prev) => (prev === next ? prev : next))
+  }, [])
+  const increaseViewportBy = useMemo(
+    () => ({ top: viewportOverscanPx, bottom: viewportOverscanPx }),
+    [viewportOverscanPx]
+  )
+
   // Stable scroller ref callback — wrapping in useCallback avoids Virtuoso
   // calling the old callback with null and the new one with the element
   // on every render, which would disconnect/reconnect the ResizeObserver.
-  // Detaches the long-lived user-interaction listeners when the scroller is
-  // swapped (per-stream remount) or the component unmounts.
+  // Detaches the long-lived user-interaction + overscan observers when the
+  // scroller is swapped (per-stream remount) or the component unmounts.
   const userInteractionCleanupRef = useRef<(() => void) | null>(null)
+  const viewportOverscanCleanupRef = useRef<(() => void) | null>(null)
   const handleVirtuosoScrollerRef = useCallback(
     (ref: HTMLElement | Window | null) => {
       virtuosoScrollerRef.current = ref as HTMLDivElement | null
@@ -1716,8 +1749,17 @@ function VirtuosoMessageList({
 
       userInteractionCleanupRef.current?.()
       userInteractionCleanupRef.current = null
+      viewportOverscanCleanupRef.current?.()
+      viewportOverscanCleanupRef.current = null
       const el = ref as HTMLElement | null
       if (el) {
+        updateViewportOverscan(el)
+        if (typeof ResizeObserver !== "undefined") {
+          const observer = new ResizeObserver(() => updateViewportOverscan(el))
+          observer.observe(el)
+          viewportOverscanCleanupRef.current = () => observer.disconnect()
+        }
+
         // Long-lived genuine-input stamp. Deliberately listens to
         // wheel/touch/keydown (real user gestures) and NOT `scroll`, so
         // Virtuoso's own programmatic scroll-into-view never trips it. This
@@ -1738,10 +1780,16 @@ function VirtuosoMessageList({
         }
       }
     },
-    [virtuosoScrollerRef, handleScrollerRef]
+    [virtuosoScrollerRef, handleScrollerRef, updateViewportOverscan]
   )
 
-  useEffect(() => () => userInteractionCleanupRef.current?.(), [])
+  useEffect(
+    () => () => {
+      userInteractionCleanupRef.current?.()
+      viewportOverscanCleanupRef.current?.()
+    },
+    []
+  )
 
   // Virtuoso's `startReached` / `endReached` observables throttle via
   // `zt(200)` and use `distinctUntilChanged` on the emitted index, which
@@ -1753,9 +1801,12 @@ function VirtuosoMessageList({
   // items of either edge. Gated on `hasSettledRef` so transient ranges
   // during the initial scroll-to-LAST don't kick off an unwanted fetch.
   const hasRangeSettledRef = useRef(false)
-  useEffect(() => {
+  const rangeSettlementKey = `${streamId}:${isJumpMode ? "jump" : "live"}`
+  const rangeSettlementKeyRef = useRef(rangeSettlementKey)
+  if (rangeSettlementKeyRef.current !== rangeSettlementKey) {
+    rangeSettlementKeyRef.current = rangeSettlementKey
     hasRangeSettledRef.current = false
-  }, [streamId])
+  }
 
   const wrappedHandleAtBottomChange = useCallback(
     (atBottom: boolean) => {
@@ -1897,10 +1948,9 @@ function VirtuosoMessageList({
       followOutput={followOutput}
       atBottomStateChange={wrappedHandleAtBottomChange}
       rangeChanged={wrappedHandleRangeChanged}
-      startReached={handleStartReached}
-      endReached={handleEndReached}
       atBottomThreshold={30}
-      increaseViewportBy={{ top: 600, bottom: 600 }}
+      increaseViewportBy={increaseViewportBy}
+      minOverscanItemCount={TIMELINE_MIN_OVERSCAN_ITEM_COUNT}
       components={components}
       {...batchPointerHandlers}
     />
