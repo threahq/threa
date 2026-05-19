@@ -11,11 +11,11 @@ import type { MarkdownBlockKind } from "./markdown-block-context"
  * IDB reads are async, so on cold boot the in-memory cache was empty until
  * `hydrateCollapseCache()` resolved. `main.tsx` capped the wait at 500ms; on
  * users with large collapse tables or slow `db.open()` paths, React mounted
- * with an empty cache. Long code blocks render `defaultCollapsed=true`
- * (3-line preview) until the persisted override (`false` for an expanded
- * block) lands, then flip to expanded post-mount — Virtuoso compensates by
- * shifting sibling rows, which the user sees as a "down jump then back" in
- * mega threads where many tall items are above the viewport.
+ * with an empty cache. A collapsible long block renders collapsed (clamped to
+ * threshold + half a line) until the persisted override expanding it lands,
+ * then flips to fully expanded post-mount — Virtuoso compensates by shifting
+ * sibling rows, which the user sees as a "down jump then back" in mega threads
+ * where many tall items are above the viewport.
  *
  * Reading localStorage at module-import time eliminates the race entirely:
  * the in-memory cache is populated before any React component can mount, so
@@ -145,7 +145,8 @@ export function hydrateCollapseCache(): Promise<void> {
       if (blockChanged) writePersistedMap(BLOCK_COLLAPSE_LS_KEY, blockCollapse)
       if (previewChanged) writePersistedMap(LINK_PREVIEW_LS_KEY, linkPreviewExpand)
     } catch {
-      // Empty cache → consumers fall back to their `defaultCollapsed` / `false`.
+      // Empty cache → consumers fall back to their default (collapsed when
+      // collapsible, otherwise expanded).
     } finally {
       blockHydrated = true
       linkPreviewHydrated = true

@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react"
+import { useMemo, useRef, type ReactNode } from "react"
 import { Quote, ChevronDown, ChevronRight } from "lucide-react"
 import { Link, useParams } from "react-router-dom"
 import { DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD, type AuthorType } from "@threa/types"
@@ -9,8 +9,9 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
+import { useMeasuredLineCount } from "./use-measured-line-count"
 import { InsideCollapsibleBlockProvider } from "./markdown-block-context"
-import { extractBlockText, estimateBlockLines } from "./extract-block-text"
+import { extractBlockText } from "./extract-block-text"
 
 interface QuoteReplyBlockProps {
   authorName: string
@@ -38,12 +39,19 @@ export function QuoteReplyBlock({
   const { workspaceId } = useParams<{ workspaceId: string }>()
 
   const quotedText = useMemo(() => extractBlockText(children), [children])
-  const lineCount = useMemo(() => estimateBlockLines(quotedText), [quotedText])
 
   const preferencesContext = usePreferencesOptional()
   const threshold =
     preferencesContext?.preferences?.blockquoteCollapseThreshold ?? DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD
-  const defaultCollapsed = lineCount > threshold
+
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  const measured = useMeasuredLineCount(bodyRef, [quotedText])
+  const lineCount = measured.lineCount
+  // Measured by rendered line-height (handles soft wrapping) with the same
+  // "more than threshold" semantic. The +0.5 keeps barely-over quotes from
+  // sprouting a toggle that would only hide the half line we already show.
+  const collapsible = lineCount !== null && lineCount > threshold + 0.5
+  const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 
   const { collapsed, canToggle, toggle } = useBlockCollapse({
     // Quote replies are anchored by the quoted (streamId, messageId) pair, so
@@ -52,17 +60,21 @@ export function QuoteReplyBlock({
     kind: "quote-reply",
     hashNamespace: `${streamId}/${messageId}`,
     content: quotedText,
-    defaultCollapsed,
+    collapsible,
   })
 
   if (!workspaceId) return null
 
   const url = `/w/${workspaceId}/s/${streamId}?m=${messageId}`
 
-  const collapseLabel = collapsed ? `Expand ${lineCount} line${lineCount === 1 ? "" : "s"}` : "Collapse quote reply"
+  const collapseLabel = collapsed
+    ? `Expand ${displayLineCount} line${displayLineCount === 1 ? "" : "s"}`
+    : "Collapse quote reply"
+  const collapsedMaxHeight =
+    collapsed && measured.lineHeightPx !== null ? (threshold + 0.5) * measured.lineHeightPx : undefined
 
   return (
-    <InsideCollapsibleBlockProvider>
+    <InsideCollapsibleBlockProvider active={canToggle}>
       <div className="my-2 flex items-start gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm">
         <Quote className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
@@ -92,16 +104,20 @@ export function QuoteReplyBlock({
           </div>
           <Link
             to={url}
-            className="mt-0.5 block text-muted-foreground no-underline transition-colors hover:text-foreground"
+            className="relative mt-0.5 block text-muted-foreground no-underline transition-colors hover:text-foreground"
           >
-            {collapsed ? (
-              <div className="truncate text-xs italic text-muted-foreground/80">
-                {lineCount > 0
-                  ? `${lineCount} line${lineCount === 1 ? "" : "s"} — click chevron to expand`
-                  : "Quoted message"}
-              </div>
-            ) : (
-              <div className="[&_p]:mb-0">{children}</div>
+            <div
+              ref={bodyRef}
+              className={cn("[&_p]:mb-0", collapsed && "overflow-hidden")}
+              style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
+            >
+              {children}
+            </div>
+            {collapsed && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent to-muted/30"
+              />
             )}
           </Link>
         </div>

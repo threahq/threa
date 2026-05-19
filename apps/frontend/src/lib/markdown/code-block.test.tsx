@@ -7,11 +7,17 @@ import CodeBlock from "./code-block"
 import { MarkdownBlockProvider, hashMarkdownBlock, composeBlockCollapseKey } from "./markdown-block-context"
 import { hydrateCollapseCache } from "./collapse-cache"
 import * as preferencesModule from "@/contexts/preferences-context"
+import * as lineMeasureModule from "./use-measured-line-count"
 
 // Stubbable preferences mock: each test can override via `currentPrefs`.
 let currentPrefs: { codeBlockCollapseThreshold?: number } | null = {
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
 }
+
+// JSDOM has no layout engine, so `useMeasuredLineCount` can never observe a
+// real rendered height. Drive it from a mutable value the test controls so we
+// can exercise "short → no chrome" and "long → collapsed clamp" deterministically.
+let measure: lineMeasureModule.MeasuredLines = { lineCount: 2, lineHeightPx: 20 }
 
 function buildPreferencesContext() {
   if (!currentPrefs) return null
@@ -35,6 +41,12 @@ function renderCodeBlock(code: string, messageId = "msg_test", language = "types
   )
 }
 
+/** Inline `max-height` clamp the collapsed body carries, if any. */
+function clampStyle(): string | undefined {
+  const el = document.querySelector<HTMLElement>('[style*="max-height"]')
+  return el?.style.maxHeight || undefined
+}
+
 describe("CodeBlock collapse behavior", () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
@@ -44,8 +56,10 @@ describe("CodeBlock collapse behavior", () => {
       return value
     })
     vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
 
     currentPrefs = { codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD }
+    measure = { lineCount: 2, lineHeightPx: 20 }
     await db.markdownBlockCollapse.clear()
   })
 
@@ -53,88 +67,81 @@ describe("CodeBlock collapse behavior", () => {
     await db.markdownBlockCollapse.clear()
   })
 
-  it("renders short code blocks (≤ threshold) expanded by default", async () => {
-    const code = "const x = 1\nconst y = 2"
-    renderCodeBlock(code)
+  it("renders short code blocks (≤ threshold) with no collapse chrome", async () => {
+    measure = { lineCount: 2, lineHeightPx: 20 }
+    renderCodeBlock("const x = 1\nconst y = 2")
 
-    // Highlighted HTML eventually appears (expanded state invokes shiki).
-    await waitFor(() => {
-      expect(document.querySelector("pre.shiki")).toBeInTheDocument()
-    })
-    // No "click to expand" affordance shown.
     expect(screen.queryByText(/click to expand/i)).not.toBeInTheDocument()
+    expect(clampStyle()).toBeUndefined()
+    // Flush the async highlight so the trailing setState doesn't escape act().
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
   })
 
-  it("renders long code blocks (> threshold) collapsed by default with a 3-line preview and total line count", async () => {
+  it("collapses long code blocks (> threshold) by default and clamps to threshold + half a line", async () => {
+    measure = { lineCount: 25, lineHeightPx: 20 }
     const code = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n")
     renderCodeBlock(code)
 
-    // Header advertises the total count + expand affordance.
+    // Header advertises the measured total + the expand affordance.
     expect(screen.getByText(/25 lines, click to expand/i)).toBeInTheDocument()
 
-    // Preview shows the first 3 lines — not the full block.
-    const highlighted = await waitFor(() => {
-      const el = document.querySelector("pre.shiki")
-      expect(el).toBeInTheDocument()
-      return el!
-    })
-    expect(highlighted.textContent).toContain("line 1")
-    expect(highlighted.textContent).toContain("line 2")
-    expect(highlighted.textContent).toContain("line 3")
-    expect(highlighted.textContent).not.toContain("line 4")
-    expect(highlighted.textContent).not.toContain("line 25")
+    // The half-line peek: clamp = (threshold + 0.5) × line-height.
+    const expected = `${(DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD + 0.5) * 20}px`
+    await waitFor(() => expect(clampStyle()).toBe(expected))
+
+    // Full code stays mounted (clamped by CSS, never sliced).
+    const pre = document.querySelector("pre")
+    expect(pre?.textContent).toContain("line 1")
+    expect(pre?.textContent).toContain("line 25")
   })
 
-  it("expanding a collapsed block reveals the full content", async () => {
+  it("expanding a collapsed block drops the clamp and keeps the full content", async () => {
     const user = userEvent.setup()
-    const code = Array.from({ length: 8 }, (_, i) => `line ${i + 1}`).join("\n")
-    currentPrefs = { codeBlockCollapseThreshold: 3 }
+    measure = { lineCount: 25, lineHeightPx: 20 }
+    const code = Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n")
     renderCodeBlock(code, "msg_expand_full")
 
-    // Initially collapsed with preview.
-    await waitFor(() => {
-      const el = document.querySelector("pre.shiki")
-      expect(el?.textContent).not.toContain("line 8")
-    })
+    await waitFor(() => expect(clampStyle()).toBeDefined())
 
-    await user.click(screen.getByRole("button", { name: /expand 8 lines/i }))
+    await user.click(screen.getByRole("button", { name: /expand 25 lines/i }))
 
     await waitFor(() => {
-      const el = document.querySelector("pre.shiki")
-      expect(el?.textContent).toContain("line 8")
+      expect(clampStyle()).toBeUndefined()
+      expect(screen.getByRole("button", { name: /collapse code block/i })).toHaveAttribute("aria-expanded", "true")
     })
+    expect(document.querySelector("pre")?.textContent).toContain("line 25")
   })
 
-  it("uses the user's threshold override when one is set", () => {
+  it("uses the user's threshold override when one is set", async () => {
     currentPrefs = { codeBlockCollapseThreshold: 3 }
-    const code = "line 1\nline 2\nline 3\nline 4\nline 5"
-    renderCodeBlock(code)
+    measure = { lineCount: 5, lineHeightPx: 18 }
+    renderCodeBlock("line 1\nline 2\nline 3\nline 4\nline 5")
 
-    // 5 lines > threshold 3 → collapsed by default
+    // 5 measured lines > threshold 3 → collapsed by default.
     expect(screen.getByText(/5 lines, click to expand/i)).toBeInTheDocument()
+    await waitFor(() => expect(clampStyle()).toBe(`${(3 + 0.5) * 18}px`))
   })
 
-  it("treats a threshold of 0 as 'collapse all non-empty blocks'", () => {
+  it("treats a threshold of 0 as 'collapse all non-empty blocks'", async () => {
     currentPrefs = { codeBlockCollapseThreshold: 0 }
+    measure = { lineCount: 1, lineHeightPx: 20 }
     renderCodeBlock("const x = 1")
 
     expect(screen.getByText(/1 line, click to expand/i)).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
   })
 
   it("toggles collapsed → expanded on click and persists the choice to IDB", async () => {
     const user = userEvent.setup()
+    measure = { lineCount: 20, lineHeightPx: 20 }
     const code = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n")
     const messageId = "msg_toggle_expand"
     renderCodeBlock(code, messageId)
 
-    const toggle = screen.getByRole("button", { name: /expand 20 lines/i })
-    await user.click(toggle)
+    await user.click(screen.getByRole("button", { name: /expand 20 lines/i }))
 
-    await waitFor(() => {
-      expect(document.querySelector("pre.shiki")).toBeInTheDocument()
-    })
+    await waitFor(() => expect(clampStyle()).toBeUndefined())
 
-    // Persisted row reflects the expanded override.
     const key = composeBlockCollapseKey(messageId, "code", hashMarkdownBlock(code.trim(), "typescript"))
     const row = await db.markdownBlockCollapse.get(key)
     expect(row?.collapsed).toBe(false)
@@ -143,65 +150,76 @@ describe("CodeBlock collapse behavior", () => {
 
   it("toggles expanded → collapsed on click and persists the choice", async () => {
     const user = userEvent.setup()
-    const code = "const a = 1\nconst b = 2"
+    measure = { lineCount: 20, lineHeightPx: 20 }
+    const code = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n")
     const messageId = "msg_toggle_collapse"
-    renderCodeBlock(code, messageId)
-
-    await waitFor(() => {
-      expect(document.querySelector("pre.shiki")).toBeInTheDocument()
-    })
-
-    const toggle = screen.getByRole("button", { name: /collapse code block/i })
-    await user.click(toggle)
-
-    await waitFor(() => {
-      expect(screen.getByText(/2 lines, click to expand/i)).toBeInTheDocument()
-    })
-
-    const key = composeBlockCollapseKey(messageId, "code", hashMarkdownBlock(code.trim(), "typescript"))
-    const row = await db.markdownBlockCollapse.get(key)
-    expect(row?.collapsed).toBe(true)
-  })
-
-  it("restores collapsed state from IDB on subsequent renders", async () => {
-    const code = "short block\ntwo lines"
-    const messageId = "msg_persisted"
     const key = composeBlockCollapseKey(messageId, "code", hashMarkdownBlock(code.trim(), "typescript"))
 
-    // Pre-seed IDB with a user override (collapsed even though it's short).
+    // Seed an expanded override so the block starts open.
     await act(async () => {
       await db.markdownBlockCollapse.put({
         id: key,
         messageId,
         kind: "code",
-        collapsed: true,
+        collapsed: false,
         updatedAt: Date.now(),
       })
-      // Bulk-load the seeded row into the synchronous in-memory cache so
-      // `useBlockCollapse`'s first paint already reflects the persisted state.
       await hydrateCollapseCache()
     })
 
     renderCodeBlock(code, messageId)
 
+    await user.click(screen.getByRole("button", { name: /collapse code block/i }))
+
     await waitFor(() => {
-      expect(screen.getByText(/2 lines, click to expand/i)).toBeInTheDocument()
+      expect(screen.getByText(/20 lines, click to expand/i)).toBeInTheDocument()
+    })
+
+    const row = await db.markdownBlockCollapse.get(key)
+    expect(row?.collapsed).toBe(true)
+  })
+
+  it("restores a persisted expand override on subsequent renders", async () => {
+    measure = { lineCount: 30, lineHeightPx: 20 }
+    const code = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n")
+    const messageId = "msg_persisted"
+    const key = composeBlockCollapseKey(messageId, "code", hashMarkdownBlock(code.trim(), "typescript"))
+
+    await act(async () => {
+      await db.markdownBlockCollapse.put({
+        id: key,
+        messageId,
+        kind: "code",
+        collapsed: false,
+        updatedAt: Date.now(),
+      })
+      await hydrateCollapseCache()
+    })
+
+    renderCodeBlock(code, messageId)
+
+    // A collapsible block would default collapsed; the persisted override keeps
+    // it expanded (no clamp, no "click to expand" affordance).
+    await waitFor(() => {
+      expect(screen.queryByText(/click to expand/i)).not.toBeInTheDocument()
+      expect(clampStyle()).toBeUndefined()
     })
   })
 
-  it('marks the wrapper with data-native-context="true" so mobile long-press defers to native text selection', () => {
+  it('marks the wrapper with data-native-context="true" so mobile long-press defers to native text selection', async () => {
     renderCodeBlock("const x = 1\nconst y = 2")
     expect(document.querySelector('[data-native-context="true"]')).toBeInTheDocument()
+    await waitFor(() => expect(document.querySelector("pre")).toBeInTheDocument())
   })
 
   it("scopes collapse state per messageId", async () => {
     const user = userEvent.setup()
+    measure = { lineCount: 15, lineHeightPx: 20 }
     const code = Array.from({ length: 15 }, (_, i) => `line ${i + 1}`).join("\n")
 
     const { unmount } = renderCodeBlock(code, "msg_A")
-    const toggleA = screen.getByRole("button", { name: /expand 15 lines/i })
-    await user.click(toggleA)
-    await waitFor(() => expect(document.querySelector("pre.shiki")).toBeInTheDocument())
+    await user.click(screen.getByRole("button", { name: /expand 15 lines/i }))
+    await waitFor(() => expect(clampStyle()).toBeUndefined())
     unmount()
 
     // Second message with the exact same content should not inherit the expand.

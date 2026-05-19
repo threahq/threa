@@ -61,8 +61,8 @@ if ("serviceWorker" in navigator) {
 // we need to clear those cases without bailing too early; the previous 100ms
 // cap was tight enough that returning users with large collapse tables would
 // mount with an empty cache and then flip a previously-expanded long code
-// block from `defaultCollapsed=true` (small preview) to `persistedOverride=
-// false` (full block) on the next render — the "mega jump" reported in prod.
+// block from its default collapsed clamp to fully expanded once the persisted
+// override landed on the next render — the "mega jump" reported in prod.
 // At the deadline we mount with whatever the cache holds; `hydrateCollapseCache`
 // keeps running and `notify()` still wakes subscribers, so the cache heals
 // even if the deadline fired.

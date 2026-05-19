@@ -24,8 +24,13 @@ interface UseBlockCollapseOptions {
    */
   hashNamespace?: string
   content: string
-  /** Starting collapse state when no persisted user override exists. */
-  defaultCollapsed: boolean
+  /**
+   * Whether the block is long enough to be worth collapsing at all. Short
+   * blocks (≤ threshold) render plain with no fold chrome — there is nothing
+   * worth hiding. When true the block also starts collapsed unless the user
+   * has a persisted override expanding it.
+   */
+  collapsible: boolean
 }
 
 /**
@@ -39,21 +44,27 @@ export function useBlockCollapse({
   kind,
   hashNamespace = kind,
   content,
-  defaultCollapsed,
+  collapsible,
 }: UseBlockCollapseOptions): BlockCollapseState {
   const messageContext = useMarkdownBlockContext()
   const nested = useIsInsideCollapsibleBlock()
 
   const collapseKey = useMemo(() => {
-    if (!messageContext || nested) return null
+    // No key — and therefore no fold chrome — when there is nothing to persist
+    // to (standalone preview), when nested inside another foldable block, or
+    // when the block is too short to be worth collapsing.
+    if (!messageContext || nested || !collapsible) return null
     return composeBlockCollapseKey(messageContext.messageId, kind, hashMarkdownBlock(content, hashNamespace))
-  }, [messageContext, nested, kind, hashNamespace, content])
+  }, [messageContext, nested, collapsible, kind, hashNamespace, content])
 
   const persistedOverride = useBlockCollapseStore(collapseKey)
 
-  // Nested blocks render plain (always expanded, no toggle) so only the
-  // outermost foldable block folds.
-  const collapsed = nested ? false : (persistedOverride ?? defaultCollapsed)
+  // Render plain (expanded, no toggle) whenever there is nothing to fold
+  // against: nested inside another foldable block, too short to collapse, or
+  // no persistence key (standalone preview) — collapsing with no way to
+  // toggle would strand the content clamped. Otherwise start collapsed unless
+  // the user persisted an expand.
+  const collapsed = !collapseKey ? false : (persistedOverride ?? true)
 
   const toggle = useCallback(() => {
     if (!collapseKey || !messageContext) return
