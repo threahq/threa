@@ -59,12 +59,11 @@ export async function reloadForUpdate(): Promise<void> {
     // before we are listening.
     navigator.serviceWorker.addEventListener("controllerchange", reloadOnce, { once: true })
 
-    // Arm the time-bounded reload BEFORE awaiting update(). registration.update()
-    // can hang indefinitely (stalled SW-script fetch, throttled or offline tab),
-    // and every other guarantee here used to sit behind that await — so a hung
-    // update() dismissed the toast and then stranded the user on the old build
-    // with Reload doing nothing. The reload now always happens within
-    // UPDATE_RELOAD_FALLBACK_MS regardless of how update() behaves.
+    // registration.update() can hang indefinitely (stalled SW-script fetch,
+    // throttled or offline tab), so it must not gate the reload. Arming the
+    // fallback here, independent of the update() promise below, guarantees
+    // reloadOnce runs within UPDATE_RELOAD_FALLBACK_MS no matter how update()
+    // behaves.
     setTimeout(reloadOnce, UPDATE_RELOAD_FALLBACK_MS)
 
     // Best effort on top of that fallback: reload the moment the new SW takes
