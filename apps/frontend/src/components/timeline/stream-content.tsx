@@ -79,6 +79,56 @@ import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
 
+/**
+ * Opt-in deep-link scroll tracing. Off by default (zero console noise in
+ * production). Enable from the browser console with
+ * `window.__threaDeepLinkDebug = true`, then reproduce a deep-link (`?m=`)
+ * navigation — every jump result, skeleton-hold transition, scroll bail
+ * reason, and convergence decision is logged so a remaining "never scrolls
+ * into view" miss is diagnosable without another instrumentation round-trip.
+ */
+function deepLinkDebug(...args: unknown[]) {
+  if (typeof window !== "undefined" && (window as { __threaDeepLinkDebug?: boolean }).__threaDeepLinkDebug) {
+    console.debug("[deeplink]", ...args)
+  }
+}
+
+/**
+ * Per-tick terminal policy for the post-jump scroll driver.
+ *
+ * The driver re-attempts `scrollToMessage` every frame after a deep-link
+ * jump swaps the event window, because the Virtuoso scroller attaches — and
+ * the target row becomes placeable — a few frames *after* `events` updates
+ * and the `holdForDeepLink` skeleton releases. The previous one-shot
+ * `requestAnimationFrame` fired into a not-yet-mounted scroller, bailed with
+ * no retry, and the deep-link silently never landed. This function decides
+ * when the loop must stop regardless of whether the target is placeable yet:
+ *
+ *  - `superseded`  the pending target changed (new nav / stream switch /
+ *                  jump failure already cleared it) — stop, don't touch it.
+ *  - `user-abort`  a genuine wheel/touch/key gesture landed — the user's
+ *                  scroll wins; stop and clear.
+ *  - `deadline`    the bound elapsed without the target ever becoming
+ *                  placeable — stop and clear so it can't spin forever.
+ *  - `active`      keep going: caller attempts `scrollToMessage` this tick
+ *                  and, only if it engaged its own resilient refine loop,
+ *                  clears the target; otherwise it reschedules next frame.
+ */
+export type DeepLinkScrollTick = "superseded" | "user-abort" | "deadline" | "active"
+
+export function classifyDeepLinkScrollTick(args: {
+  pendingTarget: string | null
+  target: string
+  userInteractedAt: number
+  elapsedMs: number
+  deadlineMs: number
+}): DeepLinkScrollTick {
+  if (args.pendingTarget !== args.target) return "superseded"
+  if (args.userInteractedAt > 0) return "user-abort"
+  if (args.elapsedMs >= args.deadlineMs) return "deadline"
+  return "active"
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -741,13 +791,22 @@ export function StreamContent({
   const userInteractedAtRef = useRef(0)
   const scrollToMessage = useCallback(
     (messageId: string) => {
-      if (!useVirtualized) return false
-      if (findMessageItemIndex(visibleItems, messageId) < 0) return false
+      if (!useVirtualized) {
+        deepLinkDebug("scrollToMessage bail: not virtualized", messageId)
+        return false
+      }
+      if (findMessageItemIndex(visibleItems, messageId) < 0) {
+        deepLinkDebug("scrollToMessage bail: target not a timeline item yet", messageId)
+        return false
+      }
       // The user already took manual control for this scroll intent (e.g.
       // started scrolling while jumpToEvent was loading the window). Don't
       // start a retry loop that would fight them back to the target — the
       // mount anchor already placed it close enough.
-      if (userInteractedAtRef.current > 0) return false
+      if (userInteractedAtRef.current > 0) {
+        deepLinkDebug("scrollToMessage bail: user already interacting", messageId)
+        return false
+      }
 
       // Cancel any previous retry loop
       if (scrollRetryTimerRef.current !== null) {
@@ -762,7 +821,10 @@ export function StreamContent({
       disableAutoScroll()
 
       const scroller = virtuosoScrollerRef.current
-      if (!scroller) return false
+      if (!scroller) {
+        deepLinkDebug("scrollToMessage bail: scroller not attached yet", messageId)
+        return false
+      }
 
       // Abort the retry loop the moment the user takes over
       let aborted = false
@@ -856,6 +918,7 @@ export function StreamContent({
           abort()
         }
       }
+      deepLinkDebug("scrollToMessage: refine loop engaged", messageId)
       attempt()
       return true
     },
@@ -868,9 +931,12 @@ export function StreamContent({
     }
   }, [])
 
-  // After jumpToEvent loads events around a target, scroll to it once the
-  // events array updates and the target is present.
+  // Set when a jump (deep-link `?m=` or out-of-window search) has loaded a new
+  // event window and the target still needs to be scrolled into view. Stays
+  // set until scrollToMessage actually engages its own resilient refine loop
+  // — see the convergent driver below for why a one-shot attempt isn't enough.
   const pendingScrollTarget = useRef<string | null>(null)
+  const pendingScrollRafRef = useRef(0)
 
   // When a search result is selected, navigate to that message.
   // If the message is already in the loaded events, just scroll to it in the DOM —
@@ -907,19 +973,84 @@ export function StreamContent({
     streamSearch.activeMessageId,
     streamSearch.activeOccurrence
   )
+  // Convergent post-jump scroll driver.
+  //
+  // A deep-link/search jump is not a single observable React transition: the
+  // window swap updates `events`, then the `holdForDeepLink` skeleton
+  // releases, then <Virtuoso> (re)mounts and only *then* attaches its
+  // scroller — and the target row may be virtualized out or transiently
+  // grouped for the first few frames. The previous one-shot
+  // `requestAnimationFrame(scrollToMessage)` + unconditional
+  // `pendingScrollTarget = null` frequently fired into a not-yet-mounted
+  // scroller, scrollToMessage early-bailed with no retry, and the deep-link
+  // silently never landed ("some messages just never scroll into view").
+  //
+  // Instead, re-attempt every frame until scrollToMessage engages its own
+  // resilient refine loop (returns true — it then owns landing + abort), the
+  // user takes over, or a hard deadline elapses. The effect re-runs on
+  // `events`/`scrollToMessage` changes (covering the React-visible window
+  // swap) and the intra-run rAF reschedule covers the scroller-attach gap
+  // that produces no React state change.
   useEffect(() => {
     if (!pendingScrollTarget.current || isLoading) return
     const target = pendingScrollTarget.current
-    const found = events.some((e) => {
-      const payload = e.payload as { messageId?: string }
-      return payload?.messageId === target
-    })
-    if (found) {
-      // Allow one frame for Virtuoso to process the new data before scrolling
-      requestAnimationFrame(() => scrollToMessage(target))
+
+    if (!useVirtualized) {
+      // Threads use plain scroll, not this jump-then-virtualized-scroll path.
       pendingScrollTarget.current = null
+      return
     }
-  }, [events, isLoading, scrollToMessage])
+
+    const started = performance.now()
+    // Generous bound: a cold push-notification deep-link can spend ~1s in
+    // jumpToEvent + the skeleton hold before Virtuoso even mounts. Must
+    // outlast that, but still terminate if the target never resolves.
+    const DEADLINE_MS = 4000
+
+    const tick = () => {
+      pendingScrollRafRef.current = 0
+      const phase = classifyDeepLinkScrollTick({
+        pendingTarget: pendingScrollTarget.current,
+        target,
+        userInteractedAt: userInteractedAtRef.current,
+        elapsedMs: performance.now() - started,
+        deadlineMs: DEADLINE_MS,
+      })
+
+      if (phase === "superseded") return
+      if (phase === "user-abort") {
+        deepLinkDebug("post-jump: user interacted, abandoning", target)
+        pendingScrollTarget.current = null
+        return
+      }
+      if (phase === "deadline") {
+        deepLinkDebug("post-jump: deadline exceeded, giving up", target)
+        pendingScrollTarget.current = null
+        return
+      }
+
+      const inEvents = events.some((e) => (e.payload as { messageId?: string })?.messageId === target)
+      if (inEvents && scrollToMessage(target)) {
+        // scrollToMessage engaged its own resilient loop — it owns landing
+        // + user-abort from here, so this driver is done.
+        deepLinkDebug("post-jump: scrollToMessage engaged", target)
+        pendingScrollTarget.current = null
+        return
+      }
+
+      // Not placeable yet (scroller not attached, target virtualized out /
+      // transiently grouped, or window mid-swap). Retry next frame.
+      pendingScrollRafRef.current = requestAnimationFrame(tick)
+    }
+
+    pendingScrollRafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (pendingScrollRafRef.current) {
+        cancelAnimationFrame(pendingScrollRafRef.current)
+        pendingScrollRafRef.current = 0
+      }
+    }
+  }, [events, isLoading, scrollToMessage, useVirtualized])
 
   // Jump to highlighted message if it's not in the current event window.
   // The guard uses location.key so repeat clicks on the same message link
@@ -945,11 +1076,13 @@ export function StreamContent({
     })
 
     if (isVisible) {
+      deepLinkDebug("highlight: target already in window, scrolling directly", highlightMessageId)
       scrollToMessage(highlightMessageId)
       return
     }
 
     if (events.length > 0) {
+      deepLinkDebug("highlight: target out of window, jumping", highlightMessageId)
       pendingScrollTarget.current = highlightMessageId
       jumpToEvent(highlightMessageId)
         .then((success) => {
@@ -957,6 +1090,7 @@ export function StreamContent({
           // in flight; its stale completion must not clear the new target or
           // release the new mount hold.
           if (jumpTriggeredKeyRef.current !== navigationKey) return
+          deepLinkDebug("highlight: jumpToEvent resolved", highlightMessageId, "success=", success)
           if (!success) {
             pendingScrollTarget.current = null
             setDeepLinkGaveUp(true)
@@ -964,6 +1098,7 @@ export function StreamContent({
         })
         .catch(() => {
           if (jumpTriggeredKeyRef.current !== navigationKey) return
+          deepLinkDebug("highlight: jumpToEvent rejected", highlightMessageId)
           pendingScrollTarget.current = null
           setDeepLinkGaveUp(true)
         })
@@ -977,6 +1112,10 @@ export function StreamContent({
   useEffect(() => {
     jumpTriggeredKeyRef.current = null
     scrollAbortRef.current?.()
+    if (pendingScrollRafRef.current) {
+      cancelAnimationFrame(pendingScrollRafRef.current)
+      pendingScrollRafRef.current = 0
+    }
     pendingScrollTarget.current = null
     setDeepLinkGaveUp(false)
     userInteractedAtRef.current = 0
@@ -1088,6 +1227,12 @@ export function StreamContent({
     !isLoading &&
     !isConfirmedEmpty &&
     events.length > 0
+
+  const prevHoldForDeepLinkRef = useRef(holdForDeepLink)
+  if (prevHoldForDeepLinkRef.current !== holdForDeepLink) {
+    prevHoldForDeepLinkRef.current = holdForDeepLink
+    deepLinkDebug("holdForDeepLink ->", holdForDeepLink, "for", highlightMessageId)
+  }
 
   return (
     <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
