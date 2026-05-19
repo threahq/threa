@@ -714,10 +714,24 @@ export function StreamContent({
   // estimation which tends to overshoot with unmeasured items.
   const scrollRetryTimerRef = useRef<number | null>(null)
   const scrollAbortRef = useRef<(() => void) | null>(null)
+  // Sticky "user grabbed the scroller" stamp for the *current* scroll intent.
+  // Reset to 0 whenever a new intent is established (deep-link nav, search
+  // jump, stream switch) and set by long-lived input listeners on the
+  // scroller (attached in VirtuosoMessageList). The refine loop reads this so
+  // a manual scroll always wins — including a gesture that began in the rAF
+  // gap before scrollToMessage attached its own abort listeners. That gap is
+  // exactly the "I scroll up to read context, then get yanked back to the
+  // linked message" deep-link bug.
+  const userInteractedAtRef = useRef(0)
   const scrollToMessage = useCallback(
     (messageId: string) => {
       if (!useVirtualized) return false
       if (findMessageItemIndex(visibleItems, messageId) < 0) return false
+      // The user already took manual control for this scroll intent (e.g.
+      // started scrolling while jumpToEvent was loading the window). Don't
+      // start a retry loop that would fight them back to the target — the
+      // mount anchor already placed it close enough.
+      if (userInteractedAtRef.current > 0) return false
 
       // Cancel any previous retry loop
       if (scrollRetryTimerRef.current !== null) {
@@ -758,6 +772,14 @@ export function StreamContent({
 
       const attempt = () => {
         if (aborted) return
+        // A manual scroll landed after this loop began (caught by the
+        // long-lived scroller listeners even for a gesture that started
+        // before this loop's own abort listeners attached). Hand control
+        // back instead of re-centering on the target.
+        if (userInteractedAtRef.current > 0) {
+          abort()
+          return
+        }
 
         const el = scroller.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
 
@@ -840,6 +862,9 @@ export function StreamContent({
   // Only use jumpToEvent for messages outside the current window (older history).
   const handleSearchNavigate = useCallback(
     (messageId: string) => {
+      // Fresh, explicit scroll intent — clear any prior manual-control stamp
+      // so the refine loop is allowed to run for this jump.
+      userInteractedAtRef.current = 0
       const isInCurrentEvents = events.some((e) => {
         const payload = e.payload as { messageId?: string }
         return payload?.messageId === messageId
@@ -889,8 +914,10 @@ export function StreamContent({
     if (jumpTriggeredKeyRef.current === location.key) return
     const navigationKey = location.key
     jumpTriggeredKeyRef.current = navigationKey
-    // Fresh navigation: re-arm the mount hold for this target.
+    // Fresh navigation: re-arm the mount hold for this target and clear any
+    // prior manual-control stamp so the refine loop is allowed to run.
     setDeepLinkGaveUp(false)
+    userInteractedAtRef.current = 0
 
     // Disable auto-scroll so highlight scroll-into-view isn't overridden
     disableAutoScroll()
@@ -936,6 +963,7 @@ export function StreamContent({
     scrollAbortRef.current?.()
     pendingScrollTarget.current = null
     setDeepLinkGaveUp(false)
+    userInteractedAtRef.current = 0
     exitJumpMode()
     setIsSearchOpen(false)
     clearSearch()
@@ -1092,6 +1120,9 @@ export function StreamContent({
                     virtuosoRef={virtuosoRef}
                     virtuosoScrollerRef={virtuosoScrollerRef}
                     handleScrollerRef={handleScrollerRef}
+                    userInteractedAtRef={userInteractedAtRef}
+                    scrollAbortRef={scrollAbortRef}
+                    isJumpMode={isJumpMode}
                     firstItemIndex={firstItemIndex}
                     initialTopMostItemIndex={initialTopMostItemIndex}
                     shouldFollowOutput={shouldFollowOutput}
@@ -1306,6 +1337,9 @@ function VirtuosoMessageList({
   virtuosoRef,
   virtuosoScrollerRef,
   handleScrollerRef,
+  userInteractedAtRef,
+  scrollAbortRef,
+  isJumpMode,
   firstItemIndex,
   initialTopMostItemIndex,
   shouldFollowOutput,
@@ -1341,6 +1375,15 @@ function VirtuosoMessageList({
   virtuosoRef: React.RefObject<import("react-virtuoso").VirtuosoHandle | null>
   virtuosoScrollerRef: React.MutableRefObject<HTMLDivElement | null>
   handleScrollerRef: (ref: HTMLElement | Window | null) => void
+  /** Stamp set by long-lived scroller input listeners; read by the outer
+   *  scrollToMessage refine loop so manual scroll always wins. */
+  userInteractedAtRef: React.MutableRefObject<number>
+  /** Non-null while a scrollToMessage refine loop is in flight. Programmatic
+   *  scroll-into-view must not trigger edge pagination. */
+  scrollAbortRef: React.MutableRefObject<(() => void) | null>
+  /** True while reading a deep-linked / searched history window. Auto-follow
+   *  to the live tail must never arm here. */
+  isJumpMode: boolean
   firstItemIndex: number
   initialTopMostItemIndex: import("react-virtuoso").IndexLocationWithAlign | number | undefined
   shouldFollowOutput: boolean
@@ -1502,13 +1545,42 @@ function VirtuosoMessageList({
   // Stable scroller ref callback — wrapping in useCallback avoids Virtuoso
   // calling the old callback with null and the new one with the element
   // on every render, which would disconnect/reconnect the ResizeObserver.
+  // Detaches the long-lived user-interaction listeners when the scroller is
+  // swapped (per-stream remount) or the component unmounts.
+  const userInteractionCleanupRef = useRef<(() => void) | null>(null)
   const handleVirtuosoScrollerRef = useCallback(
     (ref: HTMLElement | Window | null) => {
       virtuosoScrollerRef.current = ref as HTMLDivElement | null
       handleScrollerRef(ref)
+
+      userInteractionCleanupRef.current?.()
+      userInteractionCleanupRef.current = null
+      const el = ref as HTMLElement | null
+      if (el) {
+        // Long-lived genuine-input stamp. Deliberately listens to
+        // wheel/touch/keydown (real user gestures) and NOT `scroll`, so
+        // Virtuoso's own programmatic scroll-into-view never trips it. This
+        // catches a manual scroll that began before the rAF-delayed
+        // scrollToMessage loop attached its own abort listeners.
+        const mark = () => {
+          userInteractedAtRef.current = performance.now()
+        }
+        el.addEventListener("wheel", mark, { passive: true })
+        el.addEventListener("touchstart", mark, { passive: true })
+        el.addEventListener("touchmove", mark, { passive: true })
+        el.addEventListener("keydown", mark)
+        userInteractionCleanupRef.current = () => {
+          el.removeEventListener("wheel", mark)
+          el.removeEventListener("touchstart", mark)
+          el.removeEventListener("touchmove", mark)
+          el.removeEventListener("keydown", mark)
+        }
+      }
     },
     [virtuosoScrollerRef, handleScrollerRef]
   )
+
+  useEffect(() => () => userInteractionCleanupRef.current?.(), [])
 
   // Virtuoso's `startReached` / `endReached` observables throttle via
   // `zt(200)` and use `distinctUntilChanged` on the emitted index, which
@@ -1527,15 +1599,30 @@ function VirtuosoMessageList({
   const wrappedHandleAtBottomChange = useCallback(
     (atBottom: boolean) => {
       if (visibleItems.length > 0) hasRangeSettledRef.current = true
-      handleAtBottomChange(atBottom)
+      // In jump mode the user is reading a deep-linked / searched history
+      // window. Prepend/append reflow and size measurement make Virtuoso
+      // transiently report atBottom; letting that arm followOutput (and the
+      // ResizeObserver LAST-snap) is what yanks the user to the live tail
+      // after the landing. Auto-follow only belongs on the live tail, so
+      // never let atBottom=true turn it on while in jump mode. atBottom=false
+      // still propagates so a real scroll-away keeps follow disabled.
+      handleAtBottomChange(isJumpMode ? false : atBottom)
     },
-    [handleAtBottomChange, visibleItems.length]
+    [handleAtBottomChange, visibleItems.length, isJumpMode]
   )
 
   const wrappedHandleRangeChanged = useCallback(
     (range: { startIndex: number; endIndex: number }) => {
       handleRangeChanged(range)
       if (!hasRangeSettledRef.current || visibleItems.length === 0) return
+      // A scrollToMessage refine loop is in flight: its programmatic
+      // scroll-into-view sweeps the (viewport-inflated) range across the
+      // edge thresholds and would kick off older/newer pagination, whose
+      // prepend/append reflow then fights the loop — the "loading more,
+      // flicker, then dumped at the bottom" deep-link storm. Pagination must
+      // be user-scroll driven; the loop aborts on real interaction, after
+      // which these fire normally.
+      if (scrollAbortRef.current !== null) return
       const distFromStart = range.startIndex - firstItemIndex
       if (distFromStart <= 3) handleStartReached()
       const lastVirtualIndex = firstItemIndex + visibleItems.length - 1
