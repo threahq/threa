@@ -60,7 +60,7 @@ import {
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
 import { SearchService } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
-import { EmbeddingService, MemoExplorerService } from "../../../src/features/memos"
+import { EmbeddingService, MemoExplorerService, MemoReranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { MessageRepository } from "../../../src/features/messaging"
 import { createModelRegistry } from "../../../src/lib/ai/model-registry"
@@ -297,7 +297,11 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       pool: ctx.pool,
       embeddingService,
     })
-    const memoExplorerService = new MemoExplorerService({ pool: ctx.pool, embeddingService })
+    const memoExplorerService = new MemoExplorerService({
+      pool: ctx.pool,
+      embeddingService,
+      reranker: new MemoReranker({ ai: ctx.ai }),
+    })
 
     // Stub Socket.io server for tracing - evals don't need real-time updates
     const stubIo = { to: () => ({ to: () => ({ emit: () => {} }), emit: () => {} }) } as unknown as Server

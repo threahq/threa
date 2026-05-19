@@ -7,7 +7,7 @@ import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import type { TraceSource } from "@threa/types"
 import type { EmbeddingServiceLike } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
-import { MemoRepository } from "../../memos"
+import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
 import { SearchRepository } from "../../search"
 import { StreamRepository } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
@@ -1069,17 +1069,29 @@ Each query must have:
           workspaceId,
           functionId: "ws-memo-embed",
         })
-        // DB search (single query, INV-30)
-        const semanticResults = await MemoRepository.semanticSearch(pool, {
+        // Hybrid keyword + vector with RRF fusion (B1); the intent
+        // classifier (B4) bends the per-list weights and the B2 structural
+        // boost (bypassed for temporal intent). The accessible-stream
+        // predicate is the agent-invocation scope resolved upstream and is
+        // pushed into both inner CTEs before fusion (§3.1). Single query
+        // (INV-30). The B3 reranker is intentionally not run on this
+        // latency-budgeted multi-search loop — the plan cost-gates rerank
+        // to the user-facing surface.
+        const intent = classifyMemoQueryIntent(query.query)
+        const hybridResults = await MemoRepository.hybridSearch(pool, {
           workspaceId,
+          query: query.query,
           embedding,
           filters: { streamIds: accessibleStreamIds },
           limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+          keywordWeight: intent.keywordWeight,
+          semanticWeight: intent.semanticWeight,
+          applyStructuralBoost: intent.intent !== "temporal",
           semanticDistanceThreshold: SEMANTIC_DISTANCE_THRESHOLD,
         })
         const results =
-          semanticResults.length > 0
-            ? semanticResults
+          hybridResults.length > 0
+            ? hybridResults
             : await MemoRepository.fullTextSearch(pool, {
                 workspaceId,
                 query: query.query,
@@ -1093,8 +1105,23 @@ Each query must have:
           sourceStream: r.sourceStream,
         }))
       } catch (error) {
-        logger.warn({ error, query: query.query }, "Memo semantic search failed")
-        return []
+        logger.warn({ error, query: query.query }, "Memo hybrid search failed; falling back to full-text")
+        try {
+          const fallback = await MemoRepository.fullTextSearch(pool, {
+            workspaceId,
+            query: query.query,
+            filters: { streamIds: accessibleStreamIds },
+            limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+          })
+          return fallback.map((r) => ({
+            memo: r.memo,
+            distance: r.distance,
+            sourceStream: r.sourceStream,
+          }))
+        } catch (fallbackError) {
+          logger.warn({ fallbackError, query: query.query }, "Memo full-text fallback failed")
+          return []
+        }
       }
     }
 

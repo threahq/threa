@@ -6,7 +6,7 @@
  */
 
 import { z } from "zod"
-import { KNOWLEDGE_TYPES } from "@threa/types"
+import { KNOWLEDGE_TYPES, type KnowledgeType, type StreamType } from "@threa/types"
 import { formatDate } from "../../lib/temporal"
 
 // ============================================================================
@@ -53,6 +53,90 @@ export const MEMO_GEM_CONFIDENCE_FLOOR = 0.7
  * Deferred items are retried on the next batch cycle (5-minute cap interval).
  */
 export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
+
+// ============================================================================
+// Retrieval Configuration (gbrain B2 / B3 / B7)
+// ============================================================================
+
+/**
+ * B2 structural boost. A multiplicative factor on the fused RRF score,
+ * applied in the *outer* stage of hybrid search (after the inner
+ * access-scoped scan — never before it, §3.1). The factor is structural
+ * (knowledge/stream type), not editorial, and is the single source of
+ * truth for the SQL `CASE` (INV-33). Temporal-intent queries bypass the
+ * boost so recency still surfaces recent chatter (B4 escape hatch).
+ *
+ * Decisions/procedures are durable knowledge and rank above incidental
+ * context; system streams are de-emphasised vs. human channels.
+ */
+export const MEMO_KNOWLEDGE_TYPE_BOOST: Record<KnowledgeType, number> = {
+  decision: 1.3,
+  procedure: 1.2,
+  reference: 1.1,
+  learning: 1.05,
+  context: 1.0,
+}
+
+export const MEMO_STREAM_TYPE_BOOST: Record<StreamType, number> = {
+  channel: 1.1,
+  scratchpad: 1.05,
+  dm: 1.0,
+  thread: 1.0,
+  system: 0.9,
+}
+
+/** Neutral factor for any type not present in the maps above. */
+export const MEMO_BOOST_DEFAULT = 1.0
+
+/**
+ * B3 reranker. GPT-5.4 Nano is the model-reference primary target for
+ * ranking (INV-16); rerank is a best-effort enhancer only — fixed
+ * timeout, fail-open on every failure reason, never a dependency.
+ */
+export const MEMO_RERANKER_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
+export const MEMO_RERANKER_TEMPERATURE = 0
+export const MEMO_RERANKER_TIMEOUT_MS = 4000
+/** Top-K window handed to the reranker; the un-reranked tail is appended (recall protection). */
+export const MEMO_RERANKER_CANDIDATE_LIMIT = 20
+
+export const memoRerankSchema = z.object({
+  /** Candidate indices (0-based, into the input list) in descending relevance. */
+  order: z.array(z.number().int().nonnegative()),
+})
+
+export type MemoRerankResult = z.infer<typeof memoRerankSchema>
+
+/**
+ * B7 search-mode bundles: correlated retrieval knobs behind one key.
+ *
+ * NOTE: gbrain ties these to a billing plan (free/pro/max) and adds a
+ * scope-keyed shared query cache. Threa has neither a billing-plan model
+ * nor a cache layer today, so this ships the prerequisite-free part — the
+ * knob bundle with a single default mode — structured so a plan→mode map
+ * and a §3.5 scope-keyed cache can be layered on without reshaping callers.
+ */
+export interface MemoSearchModeConfig {
+  /** Final result count returned to the caller. */
+  limit: number
+  /** Candidate pool size pulled from hybrid search before rerank/trim. */
+  candidatePoolSize: number
+  /** Whether the fail-open reranker runs for this mode. */
+  rerank: boolean
+}
+
+export const MEMO_SEARCH_MODES = {
+  fast: { limit: 30, candidatePoolSize: 30, rerank: false },
+  balanced: { limit: 30, candidatePoolSize: 50, rerank: true },
+  thorough: { limit: 50, candidatePoolSize: 80, rerank: true },
+} as const satisfies Record<string, MemoSearchModeConfig>
+
+export type MemoSearchMode = keyof typeof MEMO_SEARCH_MODES
+
+export const DEFAULT_MEMO_SEARCH_MODE: MemoSearchMode = "balanced"
+
+export function resolveMemoSearchMode(mode: MemoSearchMode = DEFAULT_MEMO_SEARCH_MODE): MemoSearchModeConfig {
+  return MEMO_SEARCH_MODES[mode]
+}
 
 // ============================================================================
 // Schemas

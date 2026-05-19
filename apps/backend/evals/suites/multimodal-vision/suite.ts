@@ -52,7 +52,7 @@ import {
 } from "../../../src/features/agents"
 import { SearchService } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
-import { EmbeddingService, MemoExplorerService } from "../../../src/features/memos"
+import { EmbeddingService, MemoExplorerService, MemoReranker } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { MessageRepository, EventService } from "../../../src/features/messaging"
 import {
@@ -287,7 +287,11 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       pool: ctx.pool,
       embeddingService,
     })
-    const memoExplorerService = new MemoExplorerService({ pool: ctx.pool, embeddingService })
+    const memoExplorerService = new MemoExplorerService({
+      pool: ctx.pool,
+      embeddingService,
+      reranker: new MemoReranker({ ai: ctx.ai }),
+    })
 
     // Mock storage provider that returns our test images
     const mockStorage = createMockStorage(mockImages)

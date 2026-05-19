@@ -39,6 +39,8 @@ import { SearchService } from "./features/search"
 import {
   MemoService,
   MemoExplorerService,
+  MemoReranker,
+  StubReranker,
   StubMemoService,
   MemoClassifier,
   Memorizer,
@@ -241,8 +243,9 @@ export async function startServer(): Promise<ServerInstance> {
 
   // Search and embedding services
   const embeddingService = config.useStubAI ? new StubEmbeddingService() : new EmbeddingService({ ai })
+  const memoReranker = config.useStubAI ? new StubReranker() : new MemoReranker({ ai })
   const searchService = new SearchService({ pool, embeddingService })
-  const memoExplorerService = new MemoExplorerService({ pool, embeddingService })
+  const memoExplorerService = new MemoExplorerService({ pool, embeddingService, reranker: memoReranker })
 
   // Job queue for durable background work (companion responses, etc.).
   //

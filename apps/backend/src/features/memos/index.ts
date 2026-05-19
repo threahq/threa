@@ -8,7 +8,11 @@ export type {
   MemoSearchResult,
   SemanticSearchParams,
   FullTextSearchParams,
+  HybridSearchParams,
 } from "./repository"
+
+export { classifyMemoQueryIntent } from "./query-intent"
+export type { MemoQueryIntent, MemoQueryIntentResult } from "./query-intent"
 
 export { PendingItemRepository } from "./pending-item-repository"
 export type { PendingMemoItem, QueuePendingItemParams } from "./pending-item-repository"
@@ -51,6 +55,11 @@ export type {
   MemoExplorerSourceMessage,
   MemoStreamRef,
 } from "./explorer-service"
+
+export { MemoReranker } from "./reranker"
+export type { RerankerLike, RerankCandidate, RerankContext, RerankerServiceConfig } from "./reranker"
+
+export { StubReranker } from "./reranker.stub"
 
 export { EmbeddingService } from "./embedding-service"
 export type { EmbeddingServiceLike, EmbeddingServiceConfig, EmbeddingContext } from "./embedding-service"
