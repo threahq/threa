@@ -1577,7 +1577,7 @@ function VirtuosoMessageList({
         }
       }
     },
-    [virtuosoScrollerRef, handleScrollerRef, userInteractedAtRef]
+    [virtuosoScrollerRef, handleScrollerRef]
   )
 
   useEffect(() => () => userInteractionCleanupRef.current?.(), [])
