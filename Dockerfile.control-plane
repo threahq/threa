@@ -12,6 +12,7 @@ COPY apps/workspace-router/package.json apps/workspace-router/
 COPY apps/control-plane/package.json apps/control-plane/
 COPY apps/backoffice/package.json apps/backoffice/
 COPY apps/backoffice-router/package.json apps/backoffice-router/
+COPY apps/db-read-proxy/package.json apps/db-read-proxy/
 COPY patches/ patches/
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production
 

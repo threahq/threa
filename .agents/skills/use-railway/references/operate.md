@@ -2,6 +2,69 @@
 
 Check health, read logs, query metrics, and troubleshoot failures.
 
+## Read-only via GraphQL (no CLI)
+
+When the CLI isn't available (Claude Code on the web) or the token is a
+project-access token (`$RAILWAY_READONLY_TOKEN`), use the GraphQL helper
+for the same operations. The token's project + environment are fixed; only
+the service varies. Discover the scope first:
+
+```bash
+scripts/railway-api.sh 'query { projectToken { projectId environmentId } }'
+```
+
+List services in the project:
+
+```bash
+scripts/railway-api.sh \
+  'query($id: String!) { project(id: $id) {
+     name
+     services { edges { node { id name } } }
+     environments { edges { node { id name } } }
+   } }' \
+  '{"id":"<project-id>"}'
+```
+
+Latest successful deployment for a service (skip `SKIPPED` rows):
+
+```bash
+scripts/railway-api.sh \
+  'query($envId: String!, $serviceId: String) {
+     deployments(input: { environmentId: $envId, serviceId: $serviceId, status: { in: [SUCCESS] } }, first: 1) {
+       edges { node { id status createdAt staticUrl } }
+     }
+   }' \
+  '{"envId":"<env-id>","serviceId":"<service-id>"}'
+```
+
+Tail recent logs for that deployment (capped — never unbounded):
+
+```bash
+scripts/railway-api.sh \
+  'query($id: String!, $limit: Int) {
+     deploymentLogs(deploymentId: $id, limit: $limit) {
+       message severity timestamp
+     }
+   }' \
+  '{"id":"<deployment-id>","limit":200}' \
+  | jq '.data.deploymentLogs[] | "\(.timestamp) [\(.severity)] \(.message)"'
+```
+
+Filter to errors:
+
+```bash
+scripts/railway-api.sh \
+  'query($id: String!, $limit: Int, $filter: String) {
+     deploymentLogs(deploymentId: $id, limit: $limit, filter: $filter) {
+       message severity timestamp
+     }
+   }' \
+  '{"id":"<deployment-id>","limit":200,"filter":"@level:error"}'
+```
+
+For metrics, the GraphQL `metrics` query works with the same project-access
+token — see the [request.md](request.md) recipe.
+
 ## Health snapshot
 
 Start broad, then narrow:

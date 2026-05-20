@@ -45,6 +45,32 @@ npm i -g @railway/cli # npm (macOS, Linux, Windows). Requires Node.js version 16
 
 If not authenticated, run `railway login`. If not linked, run `railway link --project <id-or-name>`.
 
+### Read-only access without the CLI (web sandbox)
+
+In Claude Code on the web the Railway CLI isn't installed and there's no
+`~/.railway/config.json`. For read-only ops (logs, status, deployments,
+metrics) on the production project, the runtime env exposes:
+
+- **`$RAILWAY_READONLY_TOKEN`** — a project-access token scoped to the
+  `threa` project's `production` environment. Read-only.
+
+Use the GraphQL helper directly — it auto-detects the env var:
+
+```bash
+# Verify the token's scope (project + environment it can see)
+scripts/railway-api.sh 'query { projectToken { projectId environmentId } }'
+```
+
+Project-access tokens speak the `Project-Access-Token:` header (not
+`Authorization: Bearer`) and can't call account-level queries like
+`me { ... }`. They can query `project(id)`, `deployments(input)`,
+`deploymentLogs`, `metrics`, etc. See [operate.md](references/operate.md)
+for the read-only recipes.
+
+**Do not** attempt mutations with this token — it has read-only scope and
+will fail. For deploy/configure work, ask the user to provide a write
+capable context (CLI login on their machine, or a scoped write token).
+
 If a command is not recognized (for example, `railway environment edit`), the CLI may be outdated. Upgrade with:
 
 ```bash

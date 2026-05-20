@@ -4,8 +4,10 @@ description: >-
   Call Threa's public REST API (send/list/search/update/delete messages, list
   streams/users/members, search memos/attachments) with curl or a Bun script.
   Use when asked to post messages to a stream, seed a stream with test data,
-  drive the API from automation, dedupe by metadata, or otherwise hit
-  https://staging.threa.io / https://app.threa.io endpoints with an API key.
+  drive the API from automation, dedupe by metadata, inspect a production
+  workspace (streams, messages, members) for troubleshooting, or otherwise
+  hit https://staging.threa.io / https://app.threa.io endpoints with an API
+  key. Reads from production should use the read-only prod key.
 ---
 
 # Threa Public API
@@ -26,18 +28,29 @@ the single source of truth and a pre-commit check fails on drift):
 
 ## Auth
 
-HTTP Bearer. A staging key is available in the runtime env as
-**`$THREA_STAGING_TOKEN`** (do not paste keys into committed files or chat —
-read from the env var).
+HTTP Bearer. Two keys are pre-provisioned in the runtime env — pick the one
+that matches the environment you actually want to hit (do not paste keys
+into committed files or chat — read from the env var):
 
-```
+| Env | Base URL var | Workspace var | Key var | Scopes |
+| --- | ------------ | ------------- | ------- | ------ |
+| Staging | _(use `https://staging.threa.io` directly)_ | _(from app URL)_ | `$THREA_STAGING_TOKEN` | read + write |
+| Production | `$THREA_PROD_BASE_URL` (= `https://app.threa.io`) | `$THREA_PROD_DEFAULT_WORKSPACE` | `$THREA_PROD_READ_ONLY_API_KEY` | **read-only** |
+
+```bash
+# Staging (writes OK — seeding, load tests, dogfooding)
 Authorization: Bearer $THREA_STAGING_TOKEN
+
+# Production (read-only — diagnostics, never seed/spam)
+Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY
 ```
 
 Key prefixes: `threa_bk_` = bot-scoped (sends as a bot), `threa_uk_` =
-user-scoped (sends on behalf of the key owner). The key is bound to one
-workspace; the `{workspaceId}` in the path must match it. Each endpoint
-requires a permission scope (column below) — a missing scope returns 403/404.
+user-scoped (sends on behalf of the key owner). The prod read-only key is
+`threa_uk_…` (a user key with read scopes only — calls to write endpoints
+return 403). The key is bound to one workspace; the `{workspaceId}` in the
+path must match it. Each endpoint requires a permission scope (column
+below) — a missing scope returns 403/404.
 
 ## Workspace & stream IDs
 
@@ -105,8 +118,34 @@ fire 100 requests in a tight loop — you'll get throttled mid-run.
 ### Verify the key
 
 ```bash
+# Staging
 curl -s -H "Authorization: Bearer $THREA_STAGING_TOKEN" \
   https://staging.threa.io/api/v1/workspaces/<ws>/me
+
+# Production (use the env vars — workspace is pinned by the key)
+curl -s -H "Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY" \
+  "$THREA_PROD_BASE_URL/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE/me"
+```
+
+### Production diagnostic snippets (read-only)
+
+When triaging a production issue, the API is the first stop before
+reaching for psql. Examples — all use the read-only key:
+
+```bash
+BASE="$THREA_PROD_BASE_URL/api/v1/workspaces/$THREA_PROD_DEFAULT_WORKSPACE"
+AUTH="Authorization: Bearer $THREA_PROD_READ_ONLY_API_KEY"
+
+# What's in this workspace
+curl -s -H "$AUTH" "$BASE/streams?limit=50" | jq '.data[] | {id, name, type}'
+
+# Recent messages in a stream
+curl -s -H "$AUTH" "$BASE/streams/<stream_id>/messages?limit=20" | jq '.data'
+
+# Find messages by metadata (e.g. "did our integration post this?")
+curl -sX POST -H "$AUTH" -H "Content-Type: application/json" \
+  "$BASE/messages/find-by-metadata" \
+  -d '{"metadata":{"source":"<integration>"},"limit":20}' | jq '.data | length'
 ```
 
 ### Send one message
@@ -168,9 +207,15 @@ and must not be committed.
 
 ## Safety
 
-- **Staging vs production:** `$THREA_STAGING_TOKEN` is staging-scoped. Never
-  point a bulk/seed run at `app.threa.io` without explicit instruction —
-  these endpoints write real, user-visible messages.
-- **Idempotency:** always set `clientMessageId`; before a re-run consider
-  `find-by-metadata` to check what's already posted.
+- **Staging vs production:** `$THREA_STAGING_TOKEN` is staging-scoped.
+  `$THREA_PROD_READ_ONLY_API_KEY` is production but read-only — write
+  endpoints (send/edit/delete message) will 403. Never use a write-capable
+  prod key without explicit instruction; these endpoints write real,
+  user-visible messages.
+- **The prod key is owned by a real user.** Calls show up as that user's
+  activity in audit/usage logs. Stay on `:read` endpoints unless explicitly
+  asked to do something else.
+- **Idempotency:** for write paths (staging only by default), always set
+  `clientMessageId`; before a re-run consider `find-by-metadata` to check
+  what's already posted.
 - **Never** commit or echo API keys; read them from the env var.

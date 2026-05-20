@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.db-read-proxy"
+watchPatterns = ["apps/db-read-proxy/**", "packages/**", "Dockerfile.db-read-proxy", "bun.lock"]
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+region = "europe-west4-drams3a"
