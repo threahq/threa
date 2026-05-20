@@ -1,0 +1,28 @@
+{
+  "name": "@threa/db-read-proxy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "lint": "eslint src/ tests/",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test tests/"
+  },
+  "dependencies": {
+    "@threa/backend-common": "workspace:*",
+    "express": "^5",
+    "helmet": "^8.1.0",
+    "pg": "^8",
+    "pino-http": "^10",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5",
+    "@types/pg": "^8",
+    "@typescript-eslint/parser": "^8.54.0",
+    "bun-types": "latest",
+    "eslint": "^9.39.2",
+    "typescript": "^5"
+  }
+}

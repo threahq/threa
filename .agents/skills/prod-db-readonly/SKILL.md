@@ -1,21 +1,28 @@
 ---
 name: prod-db-readonly
 description: >-
-  Query the production Postgres database read-only via psql using
-  $POSTGRESQL_PROD_READ_ONLY_CONN_STRING. Use when investigating a
-  production data inconsistency, verifying what's actually in a workspace's
+  Query the production Postgres database read-only. Use when investigating
+  a production data inconsistency, verifying what's actually in a workspace's
   rows (vs. what the API/UI shows), confirming row counts after a backfill,
   diagnosing outbox/queue backlogs, or any other read-only forensic dig
-  into the prod database. Not for writes — the role is read-only.
+  into the prod database. Two access paths: psql with
+  $POSTGRESQL_PROD_READ_ONLY_CONN_STRING from a terminal, or HTTPS via the
+  apps/db-read-proxy service when running in a Claude Code web session.
+  Not for writes — every layer is read-only.
 ---
 
 # Prod DB read-only
 
-`$POSTGRESQL_PROD_READ_ONLY_CONN_STRING` is a read-only Postgres
-connection string into the production regional backend's database. It
-authenticates as a role with `SELECT`-only grants — `INSERT`/`UPDATE`/
-`DELETE`/`CREATE`/`DROP` will fail at the DB level, so writes are
-impossible even by accident.
+Two paths to the same read-only Postgres role, depending on where you're running:
+
+| Path | Use from | Credentials |
+| ---- | -------- | ----------- |
+| **psql direct** | A terminal with raw TCP egress (your laptop, `claude --teleport`) | `$POSTGRESQL_PROD_READ_ONLY_CONN_STRING` |
+| **HTTPS proxy** | A Claude Code web session (raw TCP is blocked) | `$DB_READ_PROXY_URL` + `$DB_READ_PROXY_SECRET` |
+
+Both terminate on a Postgres role with `SELECT`-only grants — writes fail
+at the DB level. The HTTPS proxy adds extra defense in depth: read-only
+transaction, statement timeout, hard row cap, query-shape allow-list.
 
 Use this when the API doesn't expose what you need to see (raw outbox
 rows, queue state, exact column values, joins across feature tables) or
@@ -36,39 +43,33 @@ disagree.
 Reach for psql when the answer lives in columns the API doesn't return,
 or you need an aggregate / join across tables.
 
-## Network access
+## Choosing the access path
 
-The conn string points at a Railway TCP proxy (`*.proxy.rlwy.net`),
-which speaks the raw Postgres wire protocol.
+`$POSTGRESQL_PROD_READ_ONLY_CONN_STRING` points at a Railway TCP proxy
+(`*.proxy.rlwy.net`) and speaks the raw Postgres wire protocol.
 
-- **From your laptop / dev box:** works directly with `psql`.
-- **From Claude Code on the web (this sandbox):** **does not work, at any
+- **From a terminal with raw TCP egress** (your laptop or a session
+  teleported with `claude --teleport`): use `psql` directly. See
+  [Connect (psql direct)](#connect-psql-direct) below.
+- **From Claude Code on the web:** raw TCP **does not work at any
   network access level.** Web sessions route all outbound traffic through
-  an HTTP/HTTPS-only security proxy — even with the **Full** access level,
-  "any domain" means "any HTTPS domain", not "any TCP port". A direct
-  `psql` connect will hang and time out. This is a platform constraint,
-  not a setting flip.
+  an HTTP/HTTPS-only security proxy — even with the **Full** access
+  level, "any domain" means "any HTTPS domain", not "any TCP port". A
+  direct `psql` connect will hang and time out. Use the HTTPS proxy
+  instead — see [Connect (HTTPS proxy)](#connect-https-proxy).
 
-  Workarounds when in the web sandbox:
-  1. Use the [`threa-public-api`](../threa-public-api/SKILL.md) skill with
-     `$THREA_PROD_READ_ONLY_API_KEY` for anything the public API can
-     answer (messages, streams, members, memos, metadata search).
-  2. Use the [`use-railway`](../use-railway/SKILL.md) skill with
-     `$RAILWAY_READONLY_TOKEN` to read backend logs — often enough to
-     diagnose the issue without touching the DB.
-  3. Ask the user to run the query locally and paste the relevant
-     output. Provide the exact SQL.
-  4. Teleport the session to the user's terminal (`claude --teleport`)
-     where raw TCP egress is available, then run `psql` there.
-
-Quick check (timeout = web sandbox, not a misconfiguration):
+Quick check (timeout = web sandbox, switch to the HTTPS proxy):
 
 ```bash
 timeout 5 psql "$POSTGRESQL_PROD_READ_ONLY_CONN_STRING" -tAc 'SELECT 1' 2>&1
 ```
 
-If it times out, you are in the web sandbox — pick one of the workarounds
-above; do not waste cycles tweaking network access levels.
+If the proxy env vars are also missing, fall back to:
+1. [`threa-public-api`](../threa-public-api/SKILL.md) for anything the
+   public API can answer (messages, streams, members, memos, metadata).
+2. [`use-railway`](../use-railway/SKILL.md) with `$RAILWAY_READONLY_TOKEN`
+   for backend logs.
+3. Ask the user to run the SQL locally and paste the output.
 
 ## Safety
 
@@ -89,7 +90,7 @@ above; do not waste cycles tweaking network access levels.
   with `ROLLBACK` (commits would fail under the read-only role anyway,
   but explicit rollback is cleaner).
 
-## Connect
+## Connect (psql direct)
 
 ```bash
 # One-off query
@@ -98,7 +99,7 @@ psql "$POSTGRESQL_PROD_READ_ONLY_CONN_STRING" -c "SELECT current_user, current_d
 # Tuple-only, no headers (good for piping into jq / wc)
 psql "$POSTGRESQL_PROD_READ_ONLY_CONN_STRING" -tAc "SELECT count(*) FROM workspaces;"
 
-# Interactive (useful if running locally — not in the web sandbox)
+# Interactive
 psql "$POSTGRESQL_PROD_READ_ONLY_CONN_STRING"
 
 # Run a SQL file
@@ -108,6 +109,43 @@ psql "$POSTGRESQL_PROD_READ_ONLY_CONN_STRING" -f /tmp/claude/query.sql
 Useful psql flags: `-x` (expanded display for wide rows), `-A -t -F $'\t'`
 (tab-separated, no headers — easy to pipe), `--set=ON_ERROR_STOP=on` for
 scripts.
+
+## Connect (HTTPS proxy)
+
+For web sessions, the same read-only role is reachable over HTTPS through
+the `apps/db-read-proxy` service deployed in the production Railway
+project. The proxy enforces additional guards on top of the DB role:
+
+- `BEGIN READ ONLY` per query
+- `SET LOCAL statement_timeout = 5s`
+- Result set hard-capped at 5000 rows (response includes `truncated: true`
+  if more were available)
+- SQL must start with `SELECT` / `WITH` / `EXPLAIN` / `SHOW` / `VALUES` /
+  `TABLE` and be a single statement
+- Shared-secret auth via `X-Proxy-Secret` header
+
+```bash
+# One-off query
+curl -sS -X POST "$DB_READ_PROXY_URL/query" \
+  -H "Content-Type: application/json" \
+  -H "X-Proxy-Secret: $DB_READ_PROXY_SECRET" \
+  -d '{"sql":"SELECT count(*) FROM workspaces"}' | jq .
+
+# Parameterized
+curl -sS -X POST "$DB_READ_PROXY_URL/query" \
+  -H "Content-Type: application/json" \
+  -H "X-Proxy-Secret: $DB_READ_PROXY_SECRET" \
+  -d '{"sql":"SELECT id, slug FROM workspaces WHERE id = $1","params":["ws_…"]}' | jq .
+```
+
+The response shape is `{ columns: string[], rows: unknown[][], rowCount,
+truncated, durationMs }`. Rows come back as arrays (positional), so use
+`columns` to map them back when readability matters. Statement-timeout
+errors come back as HTTP 504 with `pgCode: "57014"`.
+
+If `$DB_READ_PROXY_URL` / `$DB_READ_PROXY_SECRET` aren't set in the web
+session env, the proxy hasn't been wired up yet — fall back to the public
+API / Railway logs / ask-the-user path described above.
 
 ## Schema crib-sheet
 

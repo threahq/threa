@@ -14,15 +14,13 @@ COPY apps/backoffice/package.json apps/backoffice/
 COPY apps/backoffice-router/package.json apps/backoffice-router/
 COPY apps/db-read-proxy/package.json apps/db-read-proxy/
 COPY patches/ patches/
-# Remove prepare script (husky) so post-install scripts still run (sharp needs native binaries)
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production
 
 # Copy source
 COPY packages/types/ packages/types/
-COPY packages/prosemirror/ packages/prosemirror/
 COPY packages/backend-common/ packages/backend-common/
-COPY apps/backend/ apps/backend/
+COPY apps/db-read-proxy/ apps/db-read-proxy/
 
 ENV NODE_ENV=production
-EXPOSE 3001
-CMD ["bun", "apps/backend/src/index.ts"]
+EXPOSE 3010
+CMD ["bun", "apps/db-read-proxy/src/index.ts"]
