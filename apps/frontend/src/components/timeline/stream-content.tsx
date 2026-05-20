@@ -80,14 +80,6 @@ import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
 
 /**
- * Render at least one full viewport ahead and behind the visible range. The
- * scroller measures rows as they mount; Firefox in particular can otherwise
- * show rows popping in only after their leading edge crosses the viewport.
- */
-const TIMELINE_MIN_PRE_RENDER_PX = 1000
-const TIMELINE_MIN_OVERSCAN_ITEM_COUNT = { top: 8, bottom: 8 }
-
-/**
  * Opt-in deep-link scroll tracing. Off by default (zero console noise in
  * production). Enable from the browser console with
  * `window.__threaDeepLinkDebug = true`, then reproduce a deep-link (`?m=`)
@@ -693,8 +685,8 @@ export function StreamContent({
   // Without this, items that render as empty wrappers get measured as 0px, causing
   // subsequent items to overlap at the same Y position.
   const visibleItems = useMemo(
-    () => (useVirtualized ? filterVisibleItems(timelineItems, isChannel, streamId) : timelineItems),
-    [timelineItems, useVirtualized, isChannel, streamId]
+    () => (useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems),
+    [timelineItems, useVirtualized, isChannel]
   )
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
@@ -966,15 +958,12 @@ export function StreamContent({
         return
       }
 
-      // Message not in current window — load events around it, then scroll after load.
-      // The jump result replaces the timeline window; clear prepend anchors so
-      // that wholesale swap is not interpreted as incremental history loading.
+      // Message not in current window — load events around it, then scroll after load
       disableAutoScroll()
-      resetPrependState()
       pendingScrollTarget.current = messageId
       jumpToEvent(messageId)
     },
-    [events, jumpToEvent, disableAutoScroll, resetPrependState, scrollToMessage]
+    [events, jumpToEvent, disableAutoScroll, scrollToMessage]
   )
 
   // Highlight search matches in the DOM via CSS Custom Highlight API
@@ -1094,7 +1083,6 @@ export function StreamContent({
 
     if (events.length > 0) {
       deepLinkDebug("highlight: target out of window, jumping", highlightMessageId)
-      resetPrependState()
       pendingScrollTarget.current = highlightMessageId
       jumpToEvent(highlightMessageId)
         .then((success) => {
@@ -1115,17 +1103,7 @@ export function StreamContent({
           setDeepLinkGaveUp(true)
         })
     }
-  }, [
-    highlightMessageId,
-    location.key,
-    isLoading,
-    isDraft,
-    events,
-    jumpToEvent,
-    disableAutoScroll,
-    resetPrependState,
-    scrollToMessage,
-  ])
+  }, [highlightMessageId, location.key, isLoading, isDraft, events, jumpToEvent, disableAutoScroll, scrollToMessage])
 
   // Reset jump and search state when switching streams (component stays mounted).
   // Also abort any in-flight scrollToMessage retry loop so its stale closure
@@ -1594,6 +1572,14 @@ function VirtuosoMessageList({
   const socket = useSocket()
   const abortResearch = useAbortResearch(socket)
 
+  // Tracks whether this component has ever rendered with real timeline content.
+  // Drives the empty fallback below: until the first paint, useEvents has not
+  // resolved IDB yet and the user just came off MainContentGate's skeleton —
+  // a blank frame here is the visible "skeleton, then nothing, then content"
+  // regression. Sticky across stream switches so fast switches keep the
+  // existing blank behaviour (no skeleton flash on top of prior chrome).
+  const hasRenderedContentRef = useRef(false)
+
   const { sessionLiveCounts, sessionLiveSubsteps, sessionCanAbort } = useMemo(() => {
     const counts = new Map<string, { stepCount: number; messageCount: number }>()
     const substeps = new Map<string, string | null>()
@@ -1725,23 +1711,12 @@ function VirtuosoMessageList({
   // across messages and leak per-message state (e.g. link previews).
   const computeItemKey = useCallback((_index: number, item: TimelineItem) => getTimelineItemKey(item), [])
 
-  const [viewportOverscanPx, setViewportOverscanPx] = useState(TIMELINE_MIN_PRE_RENDER_PX)
-  const updateViewportOverscan = useCallback((el: HTMLElement) => {
-    const next = Math.max(TIMELINE_MIN_PRE_RENDER_PX, Math.ceil(el.clientHeight))
-    setViewportOverscanPx((prev) => (prev === next ? prev : next))
-  }, [])
-  const increaseViewportBy = useMemo(
-    () => ({ top: viewportOverscanPx, bottom: viewportOverscanPx }),
-    [viewportOverscanPx]
-  )
-
   // Stable scroller ref callback — wrapping in useCallback avoids Virtuoso
   // calling the old callback with null and the new one with the element
   // on every render, which would disconnect/reconnect the ResizeObserver.
-  // Detaches the long-lived user-interaction + overscan observers when the
-  // scroller is swapped (per-stream remount) or the component unmounts.
+  // Detaches the long-lived user-interaction listeners when the scroller is
+  // swapped (per-stream remount) or the component unmounts.
   const userInteractionCleanupRef = useRef<(() => void) | null>(null)
-  const viewportOverscanCleanupRef = useRef<(() => void) | null>(null)
   const handleVirtuosoScrollerRef = useCallback(
     (ref: HTMLElement | Window | null) => {
       virtuosoScrollerRef.current = ref as HTMLDivElement | null
@@ -1749,17 +1724,8 @@ function VirtuosoMessageList({
 
       userInteractionCleanupRef.current?.()
       userInteractionCleanupRef.current = null
-      viewportOverscanCleanupRef.current?.()
-      viewportOverscanCleanupRef.current = null
       const el = ref as HTMLElement | null
       if (el) {
-        updateViewportOverscan(el)
-        if (typeof ResizeObserver !== "undefined") {
-          const observer = new ResizeObserver(() => updateViewportOverscan(el))
-          observer.observe(el)
-          viewportOverscanCleanupRef.current = () => observer.disconnect()
-        }
-
         // Long-lived genuine-input stamp. Deliberately listens to
         // wheel/touch/keydown (real user gestures) and NOT `scroll`, so
         // Virtuoso's own programmatic scroll-into-view never trips it. This
@@ -1780,16 +1746,10 @@ function VirtuosoMessageList({
         }
       }
     },
-    [virtuosoScrollerRef, handleScrollerRef, updateViewportOverscan]
+    [virtuosoScrollerRef, handleScrollerRef]
   )
 
-  useEffect(
-    () => () => {
-      userInteractionCleanupRef.current?.()
-      viewportOverscanCleanupRef.current?.()
-    },
-    []
-  )
+  useEffect(() => () => userInteractionCleanupRef.current?.(), [])
 
   // Virtuoso's `startReached` / `endReached` observables throttle via
   // `zt(200)` and use `distinctUntilChanged` on the emitted index, which
@@ -1801,12 +1761,9 @@ function VirtuosoMessageList({
   // items of either edge. Gated on `hasSettledRef` so transient ranges
   // during the initial scroll-to-LAST don't kick off an unwanted fetch.
   const hasRangeSettledRef = useRef(false)
-  const rangeSettlementKey = `${streamId}:${isJumpMode ? "jump" : "live"}`
-  const rangeSettlementKeyRef = useRef(rangeSettlementKey)
-  if (rangeSettlementKeyRef.current !== rangeSettlementKey) {
-    rangeSettlementKeyRef.current = rangeSettlementKey
+  useEffect(() => {
     hasRangeSettledRef.current = false
-  }
+  }, [streamId])
 
   const wrappedHandleAtBottomChange = useCallback(
     (atBottom: boolean) => {
@@ -1864,19 +1821,24 @@ function VirtuosoMessageList({
     [reservedTopSpacer]
   )
 
-  if (isLoading || holdForDeepLink) {
-    return (
-      <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
-        <div className="flex gap-3">
-          <Skeleton className="h-9 w-9 rounded-full" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </div>
+  // Single skeleton shape shared by the active-load branch and the cold-boot
+  // empty fallback so the seam between MainContentGate's skeleton and
+  // StreamContent's first paint is invisible.
+  const skeleton = (
+    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
+      <div className="flex gap-3">
+        <Skeleton className="h-9 w-9 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
         </div>
       </div>
-    )
+    </div>
+  )
+
+  if (isLoading || holdForDeepLink) {
+    return skeleton
   }
 
   // Only render the empty state when we're *certain* the stream has no events.
@@ -1896,16 +1858,30 @@ function VirtuosoMessageList({
 
   // Grace-window gap: !isLoading, !isConfirmedEmpty, but events haven't been
   // re-subscribed from IDB yet (the "render briefly blank, no skeleton flash"
-  // path in computeTimelineLoadState). Render a blank scroll area rather than
-  // mounting <Virtuoso data={[]} />. Virtuoso's hidden-until-stable reveal gate
-  // arms only at didMount, and only when initialTopMostItemIndex is set — which
-  // it is NOT while itemCount is 0 (the scroll hook returns undefined). A
-  // Virtuoso mounted empty therefore reveals immediately, so the populate +
-  // scroll-to-LAST a frame later is visible (the "loads in too low then jumps"
-  // report). Deferring the mount until data exists makes the keyed instance
-  // mount already-populated, exactly like cold boot, so the gate arms.
+  // path in computeTimelineLoadState). Two sub-cases:
+  //
+  //  - First-ever render (cold boot): MainContentGate just released its
+  //    skeleton, useLiveQuery has not resolved yet. A blank gap here lets the
+  //    skeleton→content transition show a visible "nothing" frame, which is
+  //    exactly the regression report ("skeleton, then nothing again, then
+  //    content"). Keep the skeleton on screen until IDB resolves so the
+  //    handoff is seamless.
+  //  - Subsequent renders (stream switch): we've already painted content, so
+  //    a brief blank is preferable to a skeleton flash. The previous stream's
+  //    chrome is the visible background; rendering a skeleton on top of it
+  //    would jiggle the layout.
+  //
+  // Either way we mustn't mount <Virtuoso data={[]} />: its hidden-until-stable
+  // reveal gate arms only at didMount, and only when initialTopMostItemIndex
+  // is set — which it is NOT while itemCount is 0 (the scroll hook returns
+  // undefined). A Virtuoso mounted empty therefore reveals immediately, so
+  // the populate + scroll-to-LAST a frame later is visible (the "loads in too
+  // low then jumps" report). Deferring the mount until data exists makes the
+  // keyed instance mount already-populated, exactly like cold boot, so the
+  // gate arms.
+  if (visibleItems.length > 0) hasRenderedContentRef.current = true
   if (visibleItems.length === 0) {
-    return <div className="h-full" aria-hidden />
+    return hasRenderedContentRef.current ? <div className="h-full" aria-hidden /> : skeleton
   }
 
   return (
@@ -1948,9 +1924,10 @@ function VirtuosoMessageList({
       followOutput={followOutput}
       atBottomStateChange={wrappedHandleAtBottomChange}
       rangeChanged={wrappedHandleRangeChanged}
+      startReached={handleStartReached}
+      endReached={handleEndReached}
       atBottomThreshold={30}
-      increaseViewportBy={increaseViewportBy}
-      minOverscanItemCount={TIMELINE_MIN_OVERSCAN_ITEM_COUNT}
+      increaseViewportBy={{ top: 600, bottom: 600 }}
       components={components}
       {...batchPointerHandlers}
     />

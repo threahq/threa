@@ -79,65 +79,31 @@ export function useVirtuosoScroll({
   // with the old firstItemIndex for one frame.
   const firstItemIndexRef = useRef(FIRST_ITEM_INDEX)
   const prevItemCountRef = useRef(0)
-  const prevKeyIndexMapRef = useRef<Map<string, number>>(new Map())
-  const lastResetKeyRef = useRef(resetKey)
-  const stateResetKeyRef = useRef(resetKey)
-
-  const scrollerElRef = useRef<HTMLElement | null>(null)
+  const prevFirstKeyRef = useRef<string | null>(null)
 
   // Scroller element stored in state (not a ref) so the ResizeObserver effect
   // re-runs when Virtuoso mounts its scroller asynchronously (e.g. after an
   // isLoading skeleton is replaced).
   const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null)
 
-  const resetKeyChanged = lastResetKeyRef.current !== resetKey
-  if (resetKeyChanged) {
-    lastResetKeyRef.current = resetKey
-    firstItemIndexRef.current = FIRST_ITEM_INDEX
-    prevItemCountRef.current = 0
-    prevKeyIndexMapRef.current = new Map()
-    hasSettledRef.current = false
-    isAtBottomRef.current = !skipInitialScroll
-  }
-
-  // Reset React-visible state when the stream changes. The ref-backed virtual
-  // index state resets synchronously above so the first render for the new
-  // stream already gives Virtuoso the right firstItemIndex; doing that work in
-  // this layout effect would be one render too late and can leave the new
-  // keyed Virtuoso instance mounted with the previous stream's index base.
+  // Reset all state when stream changes. Honor skipInitialScroll so deep-link
+  // navigation to a cached stream does not briefly scroll to bottom before
+  // the scrollToMessage retry loop kicks in.
   useLayoutEffect(() => {
-    if (stateResetKeyRef.current === resetKey) return
-    stateResetKeyRef.current = resetKey
+    firstItemIndexRef.current = FIRST_ITEM_INDEX
     setIsScrolledFarFromBottom(false)
     isAtBottomRef.current = !skipInitialScroll
     setShouldFollowOutput(!skipInitialScroll)
+    prevItemCountRef.current = 0
+    prevFirstKeyRef.current = null
+    hasSettledRef.current = false
   }, [resetKey, skipInitialScroll])
 
-  useLayoutEffect(() => {
-    if (!skipInitialScroll) return
-    isAtBottomRef.current = false
-    setShouldFollowOutput(false)
-  }, [skipInitialScroll])
-
-  // Detect leading insertions/removals synchronously during render. This runs
-  // in the same render pass where data changes, so Virtuoso receives the
-  // updated firstItemIndex and data array together — no one-frame-late jump.
+  // Detect prepends synchronously during render. This runs in the same
+  // render pass where data changes, so Virtuoso receives the updated
+  // firstItemIndex and data array together — no one-frame-late jump.
   if (itemCount > 0) {
-    const currentKeyIndexMap = new Map<string, number>()
-    let preservedAnchor: { previousIndex: number; currentIndex: number } | null = null
-
-    for (let index = 0; index < itemCount; index++) {
-      const key = getItemKey(index)
-      currentKeyIndexMap.set(key, index)
-
-      if (preservedAnchor === null) {
-        const previousIndex = prevKeyIndexMapRef.current.get(key)
-        if (previousIndex !== undefined) {
-          preservedAnchor = { previousIndex, currentIndex: index }
-        }
-      }
-    }
-
+    const currentFirstKey = getItemKey(0)
     // When the list goes from empty to populated (e.g. mid stream-switch
     // where the previous stream's empty result was stamped as settled),
     // Virtuoso needs to run its initial scroll again. Re-arm hasSettledRef
@@ -146,20 +112,17 @@ export function useVirtuosoScroll({
     if (prevItemCountRef.current === 0) {
       hasSettledRef.current = false
     }
-
-    if (prevItemCountRef.current > 0 && preservedAnchor !== null) {
-      const indexDelta = preservedAnchor.currentIndex - preservedAnchor.previousIndex
-      if (indexDelta !== 0) {
-        firstItemIndexRef.current -= indexDelta
-      }
+    if (
+      prevItemCountRef.current > 0 &&
+      itemCount > prevItemCountRef.current &&
+      currentFirstKey !== prevFirstKeyRef.current &&
+      prevFirstKeyRef.current !== null
+    ) {
+      const prependedCount = itemCount - prevItemCountRef.current
+      firstItemIndexRef.current -= prependedCount
     }
-
     prevItemCountRef.current = itemCount
-    prevKeyIndexMapRef.current = currentKeyIndexMap
-  } else if (prevItemCountRef.current !== 0) {
-    prevItemCountRef.current = 0
-    prevKeyIndexMapRef.current = new Map()
-    hasSettledRef.current = false
+    prevFirstKeyRef.current = currentFirstKey
   }
 
   const scrollToBottom = useCallback(
@@ -202,17 +165,6 @@ export function useVirtuosoScroll({
     [itemCount]
   )
 
-  const updateScrolledFarFromBottom = useCallback(() => {
-    const el = scrollerElRef.current
-    if (!el || itemCount === 0 || !hasSettledRef.current) return false
-
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    const avgItemHeight = el.scrollHeight / itemCount
-    const thresholdPx = JUMP_TO_LATEST_ITEM_THRESHOLD * avgItemHeight
-    setIsScrolledFarFromBottom(distanceFromBottom > thresholdPx)
-    return true
-  }, [itemCount])
-
   const handleRangeChanged = useCallback(
     (range: { startIndex: number; endIndex: number }) => {
       if (itemCount === 0) return
@@ -220,13 +172,11 @@ export function useVirtuosoScroll({
       // The transient ranges that fire during the initial scroll to LAST would
       // otherwise flash the "Jump to latest" button on long streams.
       if (!hasSettledRef.current) return
-      if (updateScrolledFarFromBottom()) return
-
       const lastVirtualIndex = firstItemIndexRef.current + itemCount - 1
       const distFromEnd = lastVirtualIndex - range.endIndex
       setIsScrolledFarFromBottom(distFromEnd > JUMP_TO_LATEST_ITEM_THRESHOLD)
     },
-    [itemCount, updateScrolledFarFromBottom]
+    [itemCount]
   )
 
   // Re-anchor scroll position when the scroll container resizes (e.g. mobile
@@ -247,7 +197,6 @@ export function useVirtuosoScroll({
 
   const handleScrollerRef = useCallback((ref: HTMLElement | Window | null) => {
     const el = ref as HTMLElement | null
-    scrollerElRef.current = el
     setScrollerEl(el)
     // Apply scroll-related CSS to Virtuoso's actual scroller element (not the outer wrapper)
     if (el) {
@@ -256,17 +205,6 @@ export function useVirtuosoScroll({
       el.style.overflowAnchor = "none"
     }
   }, [])
-
-  useEffect(() => {
-    if (!scrollerEl) return
-
-    const onScroll = () => {
-      updateScrolledFarFromBottom()
-    }
-
-    scrollerEl.addEventListener("scroll", onScroll, { passive: true })
-    return () => scrollerEl.removeEventListener("scroll", onScroll)
-  }, [scrollerEl, updateScrolledFarFromBottom])
 
   useEffect(() => {
     if (!scrollerEl) return
@@ -299,7 +237,6 @@ export function useVirtuosoScroll({
 
       window.clearTimeout(resizeTimerRef.current)
       resizeTimerRef.current = window.setTimeout(() => {
-        if (!isAtBottomRef.current) return
         virtuosoRef.current?.scrollToIndex({
           index: "LAST",
           align: "end",
@@ -317,7 +254,7 @@ export function useVirtuosoScroll({
 
   const resetPrependState = useCallback(() => {
     prevItemCountRef.current = 0
-    prevKeyIndexMapRef.current = new Map()
+    prevFirstKeyRef.current = null
   }, [])
 
   const initialTopMostItemIndex =
@@ -327,8 +264,8 @@ export function useVirtuosoScroll({
     virtuosoRef,
     firstItemIndex: firstItemIndexRef.current,
     initialTopMostItemIndex,
-    isScrolledFarFromBottom: resetKeyChanged ? false : isScrolledFarFromBottom,
-    shouldFollowOutput: resetKeyChanged ? !skipInitialScroll : shouldFollowOutput,
+    isScrolledFarFromBottom,
+    shouldFollowOutput,
     scrollToBottom,
     disableAutoScroll,
     handleAtBottomChange,
