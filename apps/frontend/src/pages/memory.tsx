@@ -586,7 +586,7 @@ export function MemoryPage() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
       {/* Header */}
       <header className="border-b bg-card/50">
         <div className="flex h-12 items-center gap-2 px-4">
@@ -706,13 +706,10 @@ export function MemoryPage() {
       <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
         {/* Delayed loading bar — covers the header/content divider */}
         <LoadingBar visible={isRefreshing} />
-        {/* Results list — full width on mobile, fixed sidebar on desktop */}
-        {/* `[&>div>div]:!block [&>div>div]:!w-full` overrides Radix ScrollArea's
-            internal `display:table` Viewport wrapper to a block sized to the
-            parent. Without this the wrapper sizes to min-content, and any
-            descendant whose intrinsic width exceeds the column (line-clamp's
-            `-webkit-box` h3, long unbreakable tokens, etc.) pushes the cards
-            past the viewport. Matches the pattern in saved/activity/scheduled. */}
+        {/* Results list — full width on mobile, fixed sidebar on desktop.
+            `[&>div>div]:!block [&>div>div]:!w-full` overrides Radix ScrollArea's
+            internal `display:table` wrapper so the cards can't be pushed past
+            the column by descendant min-content (matches saved/activity/scheduled). */}
         <ScrollArea className="min-w-0 flex-1 lg:w-[22rem] lg:flex-none lg:border-r border-border/50 [&>div>div]:!block [&>div>div]:!w-full">
           <div className="min-w-0 space-y-1.5 p-2 [overflow-wrap:anywhere]">
             {searchResponse.isLoading && (
