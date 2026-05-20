@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import { DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD } from "@threa/types"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
+import { useMeasuredLineCount } from "./use-measured-line-count"
 import { ensureHighlight, tryHighlightSync } from "./highlighter"
 
 interface CodeBlockProps {
@@ -43,19 +44,6 @@ function formatLanguage(lang: string): string {
   return displayNames[lang] || lang
 }
 
-function countLines(text: string): number {
-  const trimmed = text.replace(/\n+$/, "")
-  if (trimmed.length === 0) return 0
-  let count = 1
-  for (let i = 0; i < trimmed.length; i++) {
-    if (trimmed.charCodeAt(i) === 10) count++
-  }
-  return count
-}
-
-/** Number of leading lines shown as a preview when a block is collapsed. */
-const PREVIEW_LINE_COUNT = 3
-
 export default function CodeBlock({ language, children }: CodeBlockProps) {
   const [copied, setCopied] = useState(false)
 
@@ -64,25 +52,40 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
   const threshold = preferencesContext?.preferences?.codeBlockCollapseThreshold ?? DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD
 
   const trimmedCode = useMemo(() => children.trim(), [children])
-  const lineCount = useMemo(() => countLines(trimmedCode), [trimmedCode])
-  const defaultCollapsed = lineCount > threshold
-  const hasTruncatedPreview = lineCount > PREVIEW_LINE_COUNT
+
+  // Always render the full code (highlighted) and clamp it with CSS when
+  // collapsed — that lets us measure the real rendered height and keeps
+  // expanding instant (no re-highlight on toggle).
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+
+  // Sync-first: warmed highlighter returns HTML on first render, skipping the
+  // placeholder → highlighted swap that caused row remeasure jumps. Cold path
+  // (still booting or unknown language) falls through to the effect below.
+  const syncHtml = useMemo(() => tryHighlightSync(trimmedCode, language), [trimmedCode, language])
+  const [html, setHtml] = useState<string | null>(syncHtml)
+  // Captured once on mount: did we hit the cold path? If yes, we'll fade the
+  // highlighted output in when it eventually arrives. Hot path renders chrome
+  // and code together with no animation.
+  const renderedColdRef = useRef(syncHtml === null)
+
+  const measured = useMeasuredLineCount(bodyRef, [trimmedCode, html])
+  const lineCount = measured.lineCount
+  // Same "more than threshold" semantic as before, but measured by rendered
+  // line-height (not "\n" count). The extra half line keeps a barely-over
+  // block from sprouting a toggle that would only hide a sliver — and it is
+  // exactly the half line the collapsed view shows as the "there's more" hint.
+  const collapsible = lineCount !== null && lineCount > threshold + 0.5
+  const displayLineCount = lineCount !== null ? Math.max(1, Math.round(lineCount)) : 0
 
   const { collapsed, canToggle, toggle } = useBlockCollapse({
     kind: "code",
     hashNamespace: language,
     content: trimmedCode,
-    defaultCollapsed,
+    collapsible,
   })
 
-  // Collapsed view shows the first PREVIEW_LINE_COUNT lines so readers get a
-  // taste of the block without the full bulk. If the block is already short,
-  // previewing "all" lines is just showing the block.
-  const displayCode = useMemo(() => {
-    if (!collapsed || !hasTruncatedPreview) return trimmedCode
-    const lines = trimmedCode.split("\n")
-    return lines.slice(0, PREVIEW_LINE_COUNT).join("\n")
-  }, [collapsed, hasTruncatedPreview, trimmedCode])
+  const collapsedMaxHeight =
+    collapsed && measured.lineHeightPx !== null ? (threshold + 0.5) * measured.lineHeightPx : undefined
 
   const handleCopy = useCallback(
     async (event: React.MouseEvent) => {
@@ -98,29 +101,16 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
     [trimmedCode]
   )
 
-  // Sync-first: warmed highlighter returns HTML on first render, skipping the
-  // placeholder → highlighted swap that caused row remeasure jumps. Cold path
-  // (still booting or unknown language) falls through to the effect below.
-  const syncHtml = useMemo(() => tryHighlightSync(displayCode, language), [displayCode, language])
-  const [html, setHtml] = useState<string | null>(syncHtml)
-  // Captured once on mount: did we hit the cold path? If yes, we'll fade the
-  // highlighted output in when it eventually arrives. Hot path renders chrome
-  // and code together with no animation.
-  const renderedColdRef = useRef(syncHtml === null)
-
   useEffect(() => {
     if (syncHtml !== null) {
       setHtml(syncHtml)
       return
     }
 
-    // Re-entering the cold path (e.g. collapse toggle before shiki finishes
-    // warming) keeps showing the previous highlighted HTML until the new
-    // promise resolves; clear it so the chrome paints empty rather than stale.
     setHtml(null)
 
     let cancelled = false
-    ensureHighlight(displayCode, language).then((result) => {
+    ensureHighlight(trimmedCode, language).then((result) => {
       if (cancelled) return
       if (result !== null) {
         setHtml(result)
@@ -130,16 +120,18 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
       // singleton init failed and even the plaintext fallback threw. Render
       // escaped raw text inside the chrome so the block stays readable and
       // accessible instead of collapsing to the invisible placeholder.
-      const escaped = displayCode.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+      const escaped = trimmedCode.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
       setHtml(`<pre><code>${escaped}</code></pre>`)
     })
 
     return () => {
       cancelled = true
     }
-  }, [syncHtml, displayCode, language])
+  }, [syncHtml, trimmedCode, language])
 
-  const toggleLabel = collapsed ? `Expand ${lineCount} line${lineCount === 1 ? "" : "s"}` : "Collapse code block"
+  const toggleLabel = collapsed
+    ? `Expand ${displayLineCount} line${displayLineCount === 1 ? "" : "s"}`
+    : "Collapse code block"
 
   const header = (
     <div className="flex items-center gap-1.5 px-2.5 py-1 bg-muted/50 border-b border-border">
@@ -166,7 +158,7 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
         <span className="truncate">{formatLanguage(language)}</span>
         {collapsed && (
           <span className="text-muted-foreground/80 font-normal shrink-0">
-            — {lineCount} line{lineCount === 1 ? "" : "s"}, click to expand
+            — {displayLineCount} line{displayLineCount === 1 ? "" : "s"}, click to expand
           </span>
         )}
       </button>
@@ -188,37 +180,10 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
     </div>
   )
 
-  // When collapsed + truncated, clicking anywhere in the preview body also
-  // expands the block. Non-truncated collapsed blocks (lineCount ≤ 3) show
-  // the same content as expanded, so the body click target is unnecessary.
-  const bodyTogglesExpand = collapsed && canToggle && hasTruncatedPreview
-  const bodyClickHandler = bodyTogglesExpand ? toggle : undefined
-
-  if (!html) {
-    return (
-      <div
-        className="group my-2 rounded-md overflow-hidden border border-border bg-muted/50 select-text [-webkit-touch-callout:default]"
-        data-native-context="true"
-      >
-        {header}
-        {/* Pre matches the font sizing/line-height shiki applies to its own <pre>
-         * so the row keeps the right height while we're waiting for highlight.
-         * Text is `invisible` (kept in layout, hidden visually) so the user
-         * doesn't see unstyled raw code flash before the highlighted version
-         * fades in. */}
-        <pre
-          className={cn(
-            "px-2.5 py-2 overflow-x-auto text-xs font-mono leading-snug invisible",
-            bodyTogglesExpand && "cursor-pointer"
-          )}
-          onClick={bodyClickHandler}
-          aria-hidden="true"
-        >
-          <code>{displayCode}</code>
-        </pre>
-      </div>
-    )
-  }
+  // A collapsed block always has a toggle (collapsible ⇒ canToggle), so the
+  // clamped body is also a click target for expanding.
+  const bodyExpandable = collapsed && canToggle
+  const bodyClickHandler = bodyExpandable ? toggle : undefined
 
   return (
     <div
@@ -226,19 +191,46 @@ export default function CodeBlock({ language, children }: CodeBlockProps) {
       data-native-context="true"
     >
       {header}
-      <div
-        className={cn(
-          "[&>pre]:px-2.5 [&>pre]:py-2 [&>pre]:text-xs [&>pre]:leading-snug [&>pre]:overflow-x-auto [&>pre]:bg-transparent [&>pre]:m-0",
-          bodyTogglesExpand && "cursor-pointer",
-          // Fade in only when we previously rendered the invisible placeholder
-          // (cold path). Hot-path first render skips animation so chrome and
-          // code appear together.
-          renderedColdRef.current && "animate-in fade-in duration-200"
+      {/* py-2 lives on this non-measured wrapper so bodyRef.scrollHeight is
+       * exactly lines × line-height — see useMeasuredLineCount. */}
+      <div className="relative py-2">
+        <div
+          ref={bodyRef}
+          className={cn("text-xs leading-snug", collapsed && "overflow-hidden", bodyExpandable && "cursor-pointer")}
+          style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
+          onClick={bodyClickHandler}
+        >
+          {html ? (
+            <div
+              className={cn(
+                "[&>pre]:m-0 [&>pre]:px-2.5 [&>pre]:py-0 [&>pre]:text-xs [&>pre]:leading-snug [&>pre]:overflow-x-auto [&>pre]:bg-transparent",
+                // Fade in only when we previously rendered the invisible
+                // placeholder (cold path). Hot-path first render skips
+                // animation so chrome and code appear together.
+                renderedColdRef.current && "animate-in fade-in duration-200"
+              )}
+              // Safe: Shiki generates this HTML internally from the code string - no user HTML passthrough
+              dangerouslySetInnerHTML={{ __html: html }}
+            />
+          ) : (
+            /* Matches shiki's font sizing/line-height so the row keeps the
+             * right height (and measures correctly) while highlight loads.
+             * `invisible` keeps it in layout without flashing raw code. */
+            <pre
+              className="m-0 px-2.5 py-0 overflow-x-auto text-xs font-mono leading-snug invisible"
+              aria-hidden="true"
+            >
+              <code>{trimmedCode}</code>
+            </pre>
+          )}
+        </div>
+        {collapsed && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent to-muted/50"
+          />
         )}
-        onClick={bodyClickHandler}
-        // Safe: Shiki generates this HTML internally from the code string - no user HTML passthrough
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      </div>
     </div>
   )
 }

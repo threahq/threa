@@ -36,11 +36,24 @@ export function useMarkdownBlockContext(): MarkdownBlockContextValue | null {
 const InsideCollapsibleBlockContext = createContext<boolean>(false)
 
 interface InsideCollapsibleBlockProviderProps {
+  /**
+   * Whether *this* block is currently an active fold. Kept mounted with a
+   * dynamic value (rather than conditionally rendered) so a block that only
+   * becomes collapsible after its size is measured doesn't remount — and lose
+   * the measurement ref — when it flips. OR-ed with the parent so a short,
+   * non-folding quote doesn't suppress a long foldable nested inside it.
+   */
+  active?: boolean
   children: ReactNode
 }
 
-export function InsideCollapsibleBlockProvider({ children }: InsideCollapsibleBlockProviderProps) {
-  return <InsideCollapsibleBlockContext.Provider value={true}>{children}</InsideCollapsibleBlockContext.Provider>
+export function InsideCollapsibleBlockProvider({ active = true, children }: InsideCollapsibleBlockProviderProps) {
+  const parentInside = useContext(InsideCollapsibleBlockContext)
+  return (
+    <InsideCollapsibleBlockContext.Provider value={parentInside || active}>
+      {children}
+    </InsideCollapsibleBlockContext.Provider>
+  )
 }
 
 export function useIsInsideCollapsibleBlock(): boolean {

@@ -7,11 +7,16 @@ import { BlockquoteBlock } from "./blockquote-block"
 import { MarkdownBlockProvider, composeBlockCollapseKey, hashMarkdownBlock } from "./markdown-block-context"
 import { hydrateCollapseCache } from "./collapse-cache"
 import * as preferencesModule from "@/contexts/preferences-context"
+import * as lineMeasureModule from "./use-measured-line-count"
 
 // Stubbable preferences mock — each test can override via `currentPrefs`.
 let currentPrefs: { blockquoteCollapseThreshold?: number } | null = {
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
 }
+
+// JSDOM can't lay out text, so the rendered-height measurement is driven from
+// a mutable the test controls (short vs long → chrome / no chrome).
+let measure: lineMeasureModule.MeasuredLines = { lineCount: 1, lineHeightPx: 22 }
 
 function buildPreferencesContext() {
   if (!currentPrefs) return null
@@ -35,6 +40,12 @@ function renderBlockquote(children: React.ReactNode, messageId = "msg_quote") {
   )
 }
 
+/** Inline `max-height` clamp the collapsed body carries, if any. */
+function clampStyle(): string | undefined {
+  const el = document.querySelector<HTMLElement>('[style*="max-height"]')
+  return el?.style.maxHeight || undefined
+}
+
 describe("BlockquoteBlock collapse behavior", () => {
   beforeEach(async () => {
     vi.restoreAllMocks()
@@ -44,7 +55,9 @@ describe("BlockquoteBlock collapse behavior", () => {
       return value
     })
     vi.spyOn(preferencesModule, "usePreferencesOptional").mockImplementation(() => buildPreferencesContext())
+    vi.spyOn(lineMeasureModule, "useMeasuredLineCount").mockImplementation(() => measure)
     currentPrefs = { blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD }
+    measure = { lineCount: 1, lineHeightPx: 22 }
     await db.markdownBlockCollapse.clear()
   })
 
@@ -52,14 +65,18 @@ describe("BlockquoteBlock collapse behavior", () => {
     await db.markdownBlockCollapse.clear()
   })
 
-  it("renders short quotes expanded by default", () => {
+  it("renders short quotes with no collapse chrome", () => {
+    measure = { lineCount: 1, lineHeightPx: 22 }
     renderBlockquote(<p>A short quote.</p>)
     expect(screen.getByText("A short quote.")).toBeInTheDocument()
     expect(screen.queryByText(/click to expand/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+    expect(clampStyle()).toBeUndefined()
   })
 
-  it("collapses long quotes by default and shows a line-count affordance", () => {
+  it("collapses long quotes by default and clamps to threshold + half a line", () => {
     currentPrefs = { blockquoteCollapseThreshold: 2 }
+    measure = { lineCount: 3, lineHeightPx: 22 }
     renderBlockquote(
       <>
         <p>Paragraph one of the quote.</p>
@@ -68,38 +85,44 @@ describe("BlockquoteBlock collapse behavior", () => {
       </>
     )
     expect(screen.getByText(/3 lines, click to expand/i)).toBeInTheDocument()
+    expect(clampStyle()).toBe(`${(2 + 0.5) * 22}px`)
   })
 
-  it("a short block quote also honors an explicit low threshold", () => {
+  it("a block quote also honors an explicit low threshold", () => {
     currentPrefs = { blockquoteCollapseThreshold: 0 }
+    measure = { lineCount: 1, lineHeightPx: 20 }
     renderBlockquote(<p>Just one line.</p>)
     expect(screen.getByText(/1 line, click to expand/i)).toBeInTheDocument()
   })
 
-  it("expanding a collapsed quote reveals the full content", async () => {
+  it("expanding a collapsed quote drops the clamp; full content stays mounted", async () => {
     const user = userEvent.setup()
     currentPrefs = { blockquoteCollapseThreshold: 1 }
+    measure = { lineCount: 3, lineHeightPx: 22 }
     renderBlockquote(
       <>
         <p>First paragraph.</p>
         <p>Second paragraph.</p>
-        <p>Third paragraph revealed only after expanding.</p>
+        <p>Third paragraph stays mounted, clamped by CSS.</p>
       </>
     )
 
-    // Initially collapsed — third paragraph is not in the DOM.
-    expect(screen.queryByText("Third paragraph revealed only after expanding.")).not.toBeInTheDocument()
+    // Full content is always in the DOM; collapse is a visual clamp.
+    expect(screen.getByText("Third paragraph stays mounted, clamped by CSS.")).toBeInTheDocument()
+    expect(clampStyle()).toBe(`${(1 + 0.5) * 22}px`)
 
     await user.click(screen.getByRole("button", { name: /expand 3 lines/i }))
 
     await waitFor(() => {
-      expect(screen.getByText("Third paragraph revealed only after expanding.")).toBeInTheDocument()
+      expect(clampStyle()).toBeUndefined()
+      expect(screen.getByRole("button", { name: /collapse block quote/i })).toHaveAttribute("aria-expanded", "true")
     })
   })
 
   it("persists a user's toggle choice keyed by message + kind + content hash", async () => {
     const user = userEvent.setup()
     currentPrefs = { blockquoteCollapseThreshold: 1 }
+    measure = { lineCount: 2, lineHeightPx: 22 }
     const messageId = "msg_persist_quote"
     renderBlockquote(
       <>
@@ -119,9 +142,11 @@ describe("BlockquoteBlock collapse behavior", () => {
     })
   })
 
-  it("restores collapsed state from IDB on subsequent renders", async () => {
+  it("restores a persisted expand override on subsequent renders", async () => {
+    currentPrefs = { blockquoteCollapseThreshold: 1 }
+    measure = { lineCount: 5, lineHeightPx: 22 }
     const messageId = "msg_restore_quote"
-    const text = "Preserved quote."
+    const text = "Preserved quote that is long enough to collapse."
     const hash = hashMarkdownBlock(text, "blockquote")
     const key = composeBlockCollapseKey(messageId, "blockquote", hash)
 
@@ -130,24 +155,26 @@ describe("BlockquoteBlock collapse behavior", () => {
         id: key,
         messageId,
         kind: "blockquote",
-        collapsed: true,
+        collapsed: false,
         updatedAt: Date.now(),
       })
-      // Bulk-load the seeded row into the synchronous in-memory cache so
-      // `useBlockCollapse`'s first paint already reflects the persisted state.
       await hydrateCollapseCache()
     })
 
     renderBlockquote(<p>{text}</p>, messageId)
 
+    // Without the override a collapsible quote defaults collapsed; the override
+    // keeps it expanded (no clamp, no affordance).
     await waitFor(() => {
-      expect(screen.getByText(/click to expand/i)).toBeInTheDocument()
+      expect(screen.queryByText(/click to expand/i)).not.toBeInTheDocument()
+      expect(clampStyle()).toBeUndefined()
     })
   })
 
   it("scopes collapse state per messageId", async () => {
     const user = userEvent.setup()
     currentPrefs = { blockquoteCollapseThreshold: 1 }
+    measure = { lineCount: 4, lineHeightPx: 22 }
     const body = (
       <>
         <p>Shared quote content A.</p>
@@ -157,6 +184,7 @@ describe("BlockquoteBlock collapse behavior", () => {
 
     const { unmount } = renderBlockquote(body, "msg_quote_A")
     await user.click(screen.getByRole("button", { name: /expand/i }))
+    await waitFor(() => expect(clampStyle()).toBeUndefined())
     unmount()
 
     // Second message with the same content should still collapse by default.
@@ -167,6 +195,7 @@ describe("BlockquoteBlock collapse behavior", () => {
   it("does not collide with code-block collapse entries for the same text", async () => {
     const user = userEvent.setup()
     currentPrefs = { blockquoteCollapseThreshold: 1 }
+    measure = { lineCount: 3, lineHeightPx: 22 }
     const messageId = "msg_mixed"
 
     renderBlockquote(
@@ -179,15 +208,18 @@ describe("BlockquoteBlock collapse behavior", () => {
 
     await user.click(screen.getByRole("button", { name: /expand/i }))
 
-    const rows = await db.markdownBlockCollapse.where("messageId").equals(messageId).toArray()
-    expect(rows.every((row) => row.kind === "blockquote")).toBe(true)
+    await waitFor(async () => {
+      const rows = await db.markdownBlockCollapse.where("messageId").equals(messageId).toArray()
+      expect(rows.length).toBeGreaterThan(0)
+      expect(rows.every((row) => row.kind === "blockquote")).toBe(true)
+    })
   })
 
   it("only the outermost blockquote folds when blockquotes are nested", () => {
-    // Threshold high enough that neither block defaults to collapsed —
-    // we want to verify the inner block renders without fold chrome at all,
-    // not just that it happens to be expanded.
-    currentPrefs = { blockquoteCollapseThreshold: 100 }
+    // Outer is long enough to be collapsible, so it provides the
+    // inside-collapsible context that suppresses the inner block's chrome.
+    currentPrefs = { blockquoteCollapseThreshold: 6 }
+    measure = { lineCount: 25, lineHeightPx: 22 }
     render(
       <MarkdownBlockProvider messageId="msg_nested">
         <BlockquoteBlock>
@@ -199,8 +231,11 @@ describe("BlockquoteBlock collapse behavior", () => {
       </MarkdownBlockProvider>
     )
 
-    // Exactly one fold toggle exists — the outer one's "Collapse block quote".
-    expect(screen.getAllByRole("button", { name: /collapse block quote/i })).toHaveLength(1)
+    // Exactly one fold toggle exists — the outer one (collapsed by default).
+    const buttons = screen.getAllByRole("button")
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]).toHaveAccessibleName(/expand 25 lines/i)
+    // Both bodies stay mounted (the outer is clamped, not sliced).
     expect(screen.getByText("Outer quote line.")).toBeInTheDocument()
     expect(screen.getByText("Inner quote line.")).toBeInTheDocument()
   })
