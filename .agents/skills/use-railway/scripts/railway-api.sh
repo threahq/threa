@@ -3,10 +3,12 @@
 # Usage: railway-api.sh '<graphql-query>' ['<variables-json>']
 #
 # Authenticates against backboard.railway.com/graphql/v2. Resolves a token in
-# this order:
-#   1. $RAILWAY_TOKEN              → user/team token (Authorization: Bearer)
-#   2. $RAILWAY_READONLY_TOKEN     → project-access token (Project-Access-Token)
-#   3. $RAILWAY_PROJECT_TOKEN      → project-access token (Project-Access-Token)
+# least-privilege-first order — if both a project-scoped and a full-account
+# token are set, the project-scoped one wins so read-only diagnostics never
+# silently run with broader privileges:
+#   1. $RAILWAY_READONLY_TOKEN     → project-access token (Project-Access-Token)
+#   2. $RAILWAY_PROJECT_TOKEN      → project-access token (Project-Access-Token)
+#   3. $RAILWAY_TOKEN              → user/team token (Authorization: Bearer)
 #   4. ~/.railway/config.json      → CLI-stored user token (Authorization: Bearer)
 #
 # Project-access tokens are scoped to one project + environment and cannot
@@ -23,15 +25,15 @@ fi
 TOKEN=""
 AUTH_HEADER=""
 
-if [[ -n "$RAILWAY_TOKEN" ]]; then
-  TOKEN="$RAILWAY_TOKEN"
-  AUTH_HEADER="Authorization: Bearer $TOKEN"
-elif [[ -n "$RAILWAY_READONLY_TOKEN" ]]; then
+if [[ -n "$RAILWAY_READONLY_TOKEN" ]]; then
   TOKEN="$RAILWAY_READONLY_TOKEN"
   AUTH_HEADER="Project-Access-Token: $TOKEN"
 elif [[ -n "$RAILWAY_PROJECT_TOKEN" ]]; then
   TOKEN="$RAILWAY_PROJECT_TOKEN"
   AUTH_HEADER="Project-Access-Token: $TOKEN"
+elif [[ -n "$RAILWAY_TOKEN" ]]; then
+  TOKEN="$RAILWAY_TOKEN"
+  AUTH_HEADER="Authorization: Bearer $TOKEN"
 else
   CONFIG_FILE="$HOME/.railway/config.json"
   if [[ -f "$CONFIG_FILE" ]]; then

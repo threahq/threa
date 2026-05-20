@@ -17,8 +17,14 @@ export async function startServer(): Promise<ProxyInstance> {
   const pool = createDatabasePool(config.databaseUrl, { max: 5 })
 
   // Fail fast on a bad connection string / DNS / role rather than surfacing as
-  // 503 on the first /query request.
-  await pool.query("SELECT 1")
+  // 503 on the first /query request. Close the pool on failure so we don't
+  // leak the idle connections it already opened.
+  try {
+    await pool.query("SELECT 1")
+  } catch (err) {
+    await pool.end()
+    throw err
+  }
 
   const app = createApp({ pool, config })
   const server = createServer(app)

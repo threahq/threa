@@ -13,8 +13,14 @@ async function shutdown(code: number): Promise<void> {
     process.exit(code)
   }
 
-  await stop()
-  process.exit(code)
+  let exitCode = code
+  try {
+    await stop()
+  } catch (err) {
+    logger.error({ err }, "db-read-proxy shutdown failed")
+    exitCode = exitCode || 1
+  }
+  process.exit(exitCode)
 }
 
 process.on("SIGTERM", () => shutdown(0))
