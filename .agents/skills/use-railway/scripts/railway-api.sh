@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # Railway GraphQL API helper
 # Usage: railway-api.sh '<graphql-query>' ['<variables-json>']
+#
+# Authenticates against backboard.railway.com/graphql/v2. Resolves a token in
+# this order:
+#   1. $RAILWAY_TOKEN              → user/team token (Authorization: Bearer)
+#   2. $RAILWAY_READONLY_TOKEN     → project-access token (Project-Access-Token)
+#   3. $RAILWAY_PROJECT_TOKEN      → project-access token (Project-Access-Token)
+#   4. ~/.railway/config.json      → CLI-stored user token (Authorization: Bearer)
+#
+# Project-access tokens are scoped to one project + environment and cannot
+# call account-level queries like `me { ... }` — use `projectToken { ... }`
+# to discover their scope.
 
 set -e
 
@@ -9,17 +20,30 @@ if ! command -v jq &>/dev/null; then
   exit 1
 fi
 
-CONFIG_FILE="$HOME/.railway/config.json"
+TOKEN=""
+AUTH_HEADER=""
 
-if [[ ! -f "$CONFIG_FILE" ]]; then
-  echo '{"error": "Railway config not found. Run: railway login"}'
-  exit 1
+if [[ -n "$RAILWAY_TOKEN" ]]; then
+  TOKEN="$RAILWAY_TOKEN"
+  AUTH_HEADER="Authorization: Bearer $TOKEN"
+elif [[ -n "$RAILWAY_READONLY_TOKEN" ]]; then
+  TOKEN="$RAILWAY_READONLY_TOKEN"
+  AUTH_HEADER="Project-Access-Token: $TOKEN"
+elif [[ -n "$RAILWAY_PROJECT_TOKEN" ]]; then
+  TOKEN="$RAILWAY_PROJECT_TOKEN"
+  AUTH_HEADER="Project-Access-Token: $TOKEN"
+else
+  CONFIG_FILE="$HOME/.railway/config.json"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    TOKEN=$(jq -r '.user.token // empty' "$CONFIG_FILE")
+    if [[ -n "$TOKEN" ]]; then
+      AUTH_HEADER="Authorization: Bearer $TOKEN"
+    fi
+  fi
 fi
 
-TOKEN=$(jq -r '.user.token' "$CONFIG_FILE")
-
-if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-  echo '{"error": "No Railway token found. Run: railway login"}'
+if [[ -z "$TOKEN" ]]; then
+  echo '{"error": "No Railway credentials found. Set $RAILWAY_TOKEN (user/team), $RAILWAY_READONLY_TOKEN / $RAILWAY_PROJECT_TOKEN (project), or run: railway login"}'
   exit 1
 fi
 
@@ -36,6 +60,6 @@ else
 fi
 
 curl -s https://backboard.railway.com/graphql/v2 \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "$AUTH_HEADER" \
   -H "Content-Type: application/json" \
   -d "$PAYLOAD"
