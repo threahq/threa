@@ -38,22 +38,37 @@ or you need an aggregate / join across tables.
 
 ## Network access
 
-The conn string points at a Railway TCP proxy (`*.proxy.rlwy.net`).
+The conn string points at a Railway TCP proxy (`*.proxy.rlwy.net`),
+which speaks the raw Postgres wire protocol.
 
 - **From your laptop / dev box:** works directly with `psql`.
-- **From Claude Code on the web (this sandbox):** the network policy
-  blocks raw outbound TCP to non-allow-listed hosts, so `psql` will time
-  out. You'll need to ask the user to run the query locally, or pivot to
-  the public API for the read.
+- **From Claude Code on the web (this sandbox):** **does not work, at any
+  network access level.** Web sessions route all outbound traffic through
+  an HTTP/HTTPS-only security proxy — even with the **Full** access level,
+  "any domain" means "any HTTPS domain", not "any TCP port". A direct
+  `psql` connect will hang and time out. This is a platform constraint,
+  not a setting flip.
 
-Quick check (timeout = blocked):
+  Workarounds when in the web sandbox:
+  1. Use the [`threa-public-api`](../threa-public-api/SKILL.md) skill with
+     `$THREA_PROD_READ_ONLY_API_KEY` for anything the public API can
+     answer (messages, streams, members, memos, metadata search).
+  2. Use the [`use-railway`](../use-railway/SKILL.md) skill with
+     `$RAILWAY_READONLY_TOKEN` to read backend logs — often enough to
+     diagnose the issue without touching the DB.
+  3. Ask the user to run the query locally and paste the relevant
+     output. Provide the exact SQL.
+  4. Teleport the session to the user's terminal (`claude --teleport`)
+     where raw TCP egress is available, then run `psql` there.
+
+Quick check (timeout = web sandbox, not a misconfiguration):
 
 ```bash
 timeout 5 psql "$POSTGRESQL_PROD_READ_ONLY_CONN_STRING" -tAc 'SELECT 1' 2>&1
 ```
 
-If you see `Connection timed out`, document the query you would have run
-and ask the user to run it on their machine.
+If it times out, you are in the web sandbox — pick one of the workarounds
+above; do not waste cycles tweaking network access levels.
 
 ## Safety
 
