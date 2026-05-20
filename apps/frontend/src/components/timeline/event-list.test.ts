@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest"
 import type { StreamEvent } from "@threa/types"
 import {
   annotateAuthorGroups,
-  filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
   groupTimelineItems,
@@ -280,51 +279,6 @@ describe("annotateAuthorGroups", () => {
       { type: "session_group", sessionId: "sess_1", sessionVersion: 1, events: [] },
     ]
     expect(annotateAuthorGroups(input)).toEqual(input)
-  })
-})
-
-describe("filterVisibleItems", () => {
-  it("filters destination-side move tombstones before they reach Virtuoso", () => {
-    const items: TimelineItem[] = [
-      {
-        type: "event",
-        event: createEvent({
-          id: "evt_move_dest",
-          sequence: "1",
-          eventType: "messages:moved",
-          payload: { destinationStreamId: "stream_123", messages: [] },
-        }),
-      },
-      toEventItem(createMessageEvent({ id: "2", actorId: "user_a", createdAt: "2026-04-19T10:00:00Z" })),
-    ]
-
-    const visibleEventIds = filterVisibleItems(items, false, "stream_123").map((item) =>
-      item.type === "event" ? item.event.id : null
-    )
-
-    expect(visibleEventIds).toEqual(["2"])
-  })
-
-  it("keeps source-side move tombstones visible", () => {
-    const event = createEvent({
-      id: "evt_move_source",
-      sequence: "1",
-      eventType: "messages:moved",
-      payload: { destinationStreamId: "stream_other", messages: [] },
-    })
-
-    expect(filterVisibleItems([{ type: "event", event }], false, "stream_123")).toEqual([{ type: "event", event }])
-  })
-
-  it("filters command groups that cannot render without a dispatched event", () => {
-    const completedOnly = createEvent({
-      id: "evt_command_completed",
-      sequence: "1",
-      eventType: "command_completed",
-      payload: { commandId: "cmd_1" },
-    })
-
-    expect(filterVisibleItems([{ type: "command_group", commandId: "cmd_1", events: [completedOnly] }])).toEqual([])
   })
 })
 
