@@ -707,7 +707,13 @@ export function MemoryPage() {
         {/* Delayed loading bar — covers the header/content divider */}
         <LoadingBar visible={isRefreshing} />
         {/* Results list — full width on mobile, fixed sidebar on desktop */}
-        <ScrollArea className="min-w-0 flex-1 lg:w-[22rem] lg:flex-none lg:border-r border-border/50">
+        {/* `[&>div>div]:!block [&>div>div]:!w-full` overrides Radix ScrollArea's
+            internal `display:table` Viewport wrapper to a block sized to the
+            parent. Without this the wrapper sizes to min-content, and any
+            descendant whose intrinsic width exceeds the column (line-clamp's
+            `-webkit-box` h3, long unbreakable tokens, etc.) pushes the cards
+            past the viewport. Matches the pattern in saved/activity/scheduled. */}
+        <ScrollArea className="min-w-0 flex-1 lg:w-[22rem] lg:flex-none lg:border-r border-border/50 [&>div>div]:!block [&>div>div]:!w-full">
           <div className="min-w-0 space-y-1.5 p-2 [overflow-wrap:anywhere]">
             {searchResponse.isLoading && (
               <>
