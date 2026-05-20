@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, act } from "@testing-library/react"
 import {
@@ -14,6 +15,7 @@ import * as usePreloadImagesModule from "@/hooks/use-preload-images"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as draftStoreModule from "@/stores/draft-store"
 import * as loadingComponentsModule from "@/components/loading"
+import * as visibleStreamEventsModule from "./use-visible-stream-events-snapshot"
 
 type MockQueryResult = {
   status: "pending" | "success" | "error"
@@ -39,6 +41,9 @@ let mockBots: Array<{ id: string }> = []
 let mockUnreadState: { id: string } | undefined
 let mockMetadata: { id: string } | undefined
 let mockHasSeededDraftCache = false
+let mockLocalStreamEventsResolved = true
+let mockLocalStreamEventCounts: Record<string, number> = { stream_1: 1 }
+let mockStreamContentReady = true
 let mockSyncStatuses = new Map<string, string>()
 let mockSyncErrors = new Map<string, { status: number | null; error: Error }>()
 
@@ -98,10 +103,27 @@ function installSpies() {
   vi.spyOn(loadingComponentsModule, "StreamContentSkeleton").mockImplementation(() => (
     <div data-testid="stream-content-skeleton">Stream Content Skeleton</div>
   ))
+  vi.spyOn(visibleStreamEventsModule, "useVisibleStreamEventsSnapshot").mockImplementation((workspaceId, streamIds) => {
+    if (!mockLocalStreamEventsResolved) return undefined
+    return {
+      key: `${workspaceId}\u0000${streamIds.join("\u0000")}`,
+      eventCounts: mockLocalStreamEventCounts,
+    }
+  })
+}
+
+function useMockStreamContentReady() {
+  const { reportStreamContentReady } = useCoordinatedLoading()
+
+  useEffect(() => {
+    reportStreamContentReady("stream_1", mockStreamContentReady)
+  }, [reportStreamContentReady])
 }
 
 function TestConsumer() {
   const { phase, getStreamState, hasErrors, showLoadingIndicator } = useCoordinatedLoading()
+  useMockStreamContentReady()
+
   return (
     <div>
       <span data-testid="phase">{phase}</span>
@@ -110,6 +132,11 @@ function TestConsumer() {
       <span data-testid="show-loading-indicator">{String(showLoadingIndicator)}</span>
     </div>
   )
+}
+
+function ReadyContent() {
+  useMockStreamContentReady()
+  return <div data-testid="content">Actual Content</div>
 }
 
 async function flushEffects() {
@@ -150,6 +177,9 @@ describe("CoordinatedLoadingProvider", () => {
     mockUnreadState = undefined
     mockMetadata = undefined
     mockHasSeededDraftCache = false
+    mockLocalStreamEventsResolved = true
+    mockLocalStreamEventCounts = { stream_1: 1 }
+    mockStreamContentReady = true
     mockSyncStatuses = new Map()
     mockSyncErrors = new Map()
     installSpies()
@@ -193,7 +223,7 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("phase").textContent).toBe("skeleton")
   })
 
-  it("is ready when IDB is primed and stream record exists (no per-stream cache needed)", async () => {
+  it("is ready when IDB is primed and visible stream events are locally resolved", async () => {
     mockSeedCacheFromIdbResult = true
     mockHasSeededWorkspaceCache = true
     mockHasSeededDraftCache = true
@@ -211,8 +241,56 @@ describe("CoordinatedLoadingProvider", () => {
 
     await flushEffects()
 
-    // IDB primed + stream record exists = ready (useLiveQuery serves events from IDB)
+    // IDB primed + local stream events = ready (useLiveQuery serves events from IDB)
     expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("bypasses pending stream bootstrap when local stream events are available", async () => {
+    makeReadyWorkspaceState()
+    mockStreamsLoadState = QUERY_LOAD_STATE.FETCHING
+    mockStreamResults = [{ status: "pending", fetchStatus: "fetching", isLoading: true, isError: false, error: null }]
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("keeps the initial gate loading while the local stream event read is unresolved", async () => {
+    makeReadyWorkspaceState()
+    mockStreamsLoadState = QUERY_LOAD_STATE.FETCHING
+    mockStreamResults = [{ status: "pending", fetchStatus: "fetching", isLoading: true, isError: false, error: null }]
+    mockLocalStreamEventsResolved = false
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("loading")
+  })
+
+  it("waits for mounted stream content readiness before becoming ready", async () => {
+    makeReadyWorkspaceState()
+    mockStreamContentReady = false
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("loading")
   })
 
   it("waits for workspace metadata before becoming ready", async () => {
@@ -439,6 +517,9 @@ describe("CoordinatedLoadingGate", () => {
     mockStreams = []
     mockUnreadState = undefined
     mockMetadata = undefined
+    mockLocalStreamEventsResolved = true
+    mockLocalStreamEventCounts = { stream_1: 1 }
+    mockStreamContentReady = true
     installSpies()
   })
 
@@ -447,7 +528,7 @@ describe("CoordinatedLoadingGate", () => {
     vi.clearAllMocks()
   })
 
-  it("shows nothing during the blank loading phase", async () => {
+  it("keeps children mounted but hidden during the blank loading phase", async () => {
     render(
       <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
         <CoordinatedLoadingGate>
@@ -458,7 +539,7 @@ describe("CoordinatedLoadingGate", () => {
 
     await flushEffects()
 
-    expect(screen.queryByTestId("content")).not.toBeInTheDocument()
+    expect(screen.getByTestId("content").closest('[aria-hidden="true"]')).not.toBeNull()
   })
 
   it("renders children during the skeleton phase", async () => {
@@ -509,6 +590,9 @@ describe("MainContentGate", () => {
     mockStreams = []
     mockUnreadState = undefined
     mockMetadata = undefined
+    mockLocalStreamEventsResolved = true
+    mockLocalStreamEventCounts = { stream_1: 1 }
+    mockStreamContentReady = true
     installSpies()
   })
 
@@ -529,7 +613,7 @@ describe("MainContentGate", () => {
     await flushEffects()
 
     expect(screen.getByTestId("stream-content-skeleton")).toBeInTheDocument()
-    expect(screen.queryByTestId("content")).not.toBeInTheDocument()
+    expect(screen.getByTestId("content").closest('[aria-hidden="true"]')).not.toBeNull()
   })
 
   it("shows children once the coordinated load is ready", async () => {
@@ -538,7 +622,7 @@ describe("MainContentGate", () => {
     render(
       <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
         <MainContentGate>
-          <div data-testid="content">Actual Content</div>
+          <ReadyContent />
         </MainContentGate>
       </CoordinatedLoadingProvider>
     )

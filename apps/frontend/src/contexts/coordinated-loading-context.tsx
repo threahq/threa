@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react"
 import { usePreloadImages } from "@/hooks/use-preload-images"
 import { useCoordinatedStreamQueries } from "@/hooks/use-coordinated-stream-queries"
 import {
@@ -15,6 +15,7 @@ import {
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
 import { hasSeededDraftCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
+import { useVisibleStreamEventsSnapshot } from "./use-visible-stream-events-snapshot"
 import { useSyncSnapshot, useSyncStatus } from "@/sync/sync-status"
 import { debugBootstrap, isBootstrapDebugEnabled } from "@/lib/bootstrap-debug"
 import {
@@ -65,6 +66,9 @@ interface CoordinatedLoadingContextValue {
 
   /** True when loading indicator should be visible (after delay, same as skeleton) */
   showLoadingIndicator: boolean
+
+  /** Report when the mounted stream content has resolved its own local read/render path. */
+  reportStreamContentReady: (streamId: string, ready: boolean) => void
 }
 
 const CoordinatedLoadingContext = createContext<CoordinatedLoadingContextValue | null>(null)
@@ -97,11 +101,19 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const loadingIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loggedSuppressedStreamErrorsRef = useRef(new Set<string>())
+  const [streamContentReady, setStreamContentReady] = useState<Record<string, boolean>>({})
 
-  // Prime the in-memory cache from IndexedDB on mount. If IDB has workspace
-  // data from a previous session, this populates the cache so store hooks
-  // return real data on their first synchronous render. When successful, the
-  // gate bypasses network wait — IDB IS the source of truth.
+  const reportStreamContentReady = useCallback((streamId: string, ready: boolean) => {
+    setStreamContentReady((current) => {
+      if (current[streamId] === ready) return current
+      return { ...current, [streamId]: ready }
+    })
+  }, [])
+
+  // Prime the existing workspace store seed from IndexedDB on mount. If IDB
+  // has workspace data from a previous session, store hooks can return it on
+  // their first render. When successful, the gate can bypass network wait —
+  // IDB IS the source of truth.
   useEffect(() => {
     let cancelled = false
     seedCacheFromIdb(workspaceId).then((hasData) => {
@@ -133,6 +145,8 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     () => streamIds.filter((id) => !id.startsWith("draft_") && !id.startsWith("draft:")),
     [streamIds]
   )
+  const localEventStreamIds = useMemo(() => Array.from(new Set(serverStreamIds)), [serverStreamIds])
+  const localStreamEvents = useVisibleStreamEventsSnapshot(workspaceId, localEventStreamIds)
 
   // When bypassing via IDB cache, verify the data is actually populated —
   // don't just trust the loading flags. usePreloadImages resolves immediately
@@ -157,24 +171,34 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
         const result = results[index]
         const cachedStream = streamById.get(streamId)
         const hasStreamRecord = !!cachedStream || result?.data?.stream?.id === streamId
-        // IDB is the source of truth — if the workspace was primed from IDB,
-        // stream events are there and useLiveQuery will serve them. Otherwise
-        // wait for the bootstrap query to resolve.
-        const hasUsableLocalData = hasStreamRecord && (idbCachePrimed || result?.data !== undefined)
+        const localEventCount = localStreamEvents?.eventCounts[streamId]
+        const localEventsResolved = localEventCount !== undefined
+        const hasLocalEvents = (localEventCount ?? 0) > 0
+        // IDB is the source of truth: cached stream events are enough to show
+        // the timeline without waiting for a remote bootstrap. An unresolved
+        // local event read is still "not done" (not "no data"), so the gate
+        // stays in its coordinated blank/skeleton phase instead of revealing a
+        // second blank stream area.
+        const hasUsableLocalData = hasStreamRecord && (result?.data !== undefined || hasLocalEvents)
         return {
           streamId,
           result,
           hasStreamRecord,
+          localEventsResolved,
+          localEventCount,
           hasUsableLocalData,
           suppressError: shouldSuppressBootstrapError(result?.error, hasUsableLocalData),
         }
       }),
-    [results, serverStreamIds, streamById, idbCachePrimed]
+    [results, serverStreamIds, streamById, localStreamEvents]
   )
   const visibleStreamIdsReady = streamQueryStates.every((state) => state.hasUsableLocalData)
-  const canBypassVisibleStreamNetwork = idbCachePrimed && visibleStreamIdsReady
+  const visibleStreamEventsResolved = localStreamEvents !== undefined
+  const visibleStreamContentReady = serverStreamIds.every((streamId) => streamContentReady[streamId] === true)
+  const canBypassVisibleStreamNetwork = idbCachePrimed && visibleStreamEventsResolved && visibleStreamIdsReady
   const workspaceLoading = !workspaceDataReady && workspaceSyncStatus !== "error"
   const streamsLoading = !canBypassVisibleStreamNetwork && isQueryLoadStateLoading(streamsLoadState)
+  const streamContentLoading = !visibleStreamContentReady
   const draftsLoading = !draftDataReady
   const suppressedStreamErrors = useMemo(
     () => streamQueryStates.filter((state) => state.suppressError && state.result?.error),
@@ -192,7 +216,11 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   // (triggered by navigating to a new stream) should not re-trigger the
   // top-bar loading indicator. Individual stream loading is handled by
   // EventList's skeleton/loading state within the stream content area.
-  const isLoading = workspaceLoading || (!isReady && streamsLoading) || draftsLoading || (isReady && isAnySyncing)
+  const isLoading =
+    workspaceLoading ||
+    (!isReady && (streamsLoading || streamContentLoading)) ||
+    draftsLoading ||
+    (isReady && isAnySyncing)
 
   if (isBootstrapDebugEnabled()) {
     debugBootstrap("Coordinated loading state", {
@@ -207,6 +235,14 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       workspaceDataReady,
       draftDataReady,
       visibleStreamIdsReady,
+      visibleStreamEventsResolved,
+      visibleStreamContentReady,
+      streamContentReady,
+      localStreamEventCounts: streamQueryStates.map((state) => ({
+        streamId: state.streamId,
+        resolved: state.localEventsResolved,
+        count: state.localEventCount ?? null,
+      })),
       suppressedStreamErrors: suppressedStreamErrors.map((state) => ({
         streamId: state.streamId,
         message: state.result?.error?.message ?? "unknown error",
@@ -222,6 +258,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       hasMetadata: idbMetadata !== undefined,
       workspaceLoading,
       streamsLoading,
+      streamContentLoading,
       draftsLoading,
       isAnySyncing,
       isLoading,
@@ -388,8 +425,16 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const hasErrors = streamErrors.length > 0
 
   const value = useMemo<CoordinatedLoadingContextValue>(
-    () => ({ phase, hasErrors, getStreamState, getStreamError, isLoading, showLoadingIndicator }),
-    [phase, hasErrors, getStreamState, getStreamError, isLoading, showLoadingIndicator]
+    () => ({
+      phase,
+      hasErrors,
+      getStreamState,
+      getStreamError,
+      isLoading,
+      showLoadingIndicator,
+      reportStreamContentReady,
+    }),
+    [phase, hasErrors, getStreamState, getStreamError, isLoading, showLoadingIndicator, reportStreamContentReady]
   )
 
   return <CoordinatedLoadingContext.Provider value={value}>{children}</CoordinatedLoadingContext.Provider>
@@ -408,32 +453,45 @@ interface CoordinatedLoadingGateProps {
 }
 
 /**
- * Gate component that shows nothing during the "loading" phase (first ~300ms),
- * then renders children. Only applies during initial load.
+ * Gate component that shows nothing during the "loading" phase (first ~300ms).
+ * Children stay mounted while hidden so their IndexedDB live queries can resolve
+ * before the coordinated gate reveals the app shell.
  */
 export function CoordinatedLoadingGate({ children }: CoordinatedLoadingGateProps) {
   const { phase } = useCoordinatedLoading()
+  const hidden = phase === "loading"
 
-  if (phase === "loading") {
-    return null
-  }
-
-  return <>{children}</>
+  return (
+    <div className={hidden ? "invisible" : undefined} aria-hidden={hidden || undefined} inert={hidden || undefined}>
+      {children}
+    </div>
+  )
 }
 
 /**
  * Gate for the main content area (Outlet).
- * Shows skeleton during initial load, then renders children.
+ * Shows skeleton during initial load while keeping children mounted but hidden,
+ * so stream-level IndexedDB reads run in parallel with the app shell reads.
  * Individual stream components handle their own loading states after that.
  */
 export function MainContentGate({ children }: CoordinatedLoadingGateProps) {
   const { phase, hasErrors } = useCoordinatedLoading()
+  const gated = phase !== "ready" && !hasErrors
 
-  // During initial load, show skeleton
-  // Exception: if there are errors, render children so error pages can display
-  if (phase !== "ready" && !hasErrors) {
-    return <StreamContentSkeleton />
-  }
-
-  return <>{children}</>
+  return (
+    <div className="relative flex-1 overflow-hidden">
+      <div
+        className={gated ? "invisible h-full" : "h-full"}
+        aria-hidden={gated || undefined}
+        inert={gated || undefined}
+      >
+        {children}
+      </div>
+      {gated && (
+        <div className="absolute inset-0">
+          <StreamContentSkeleton />
+        </div>
+      )}
+    </div>
+  )
 }

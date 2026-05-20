@@ -159,6 +159,7 @@ export function StreamContent({
   const [, setSearchParams] = useSearchParams()
   const location = useLocation()
   const socket = useSocket()
+  const { reportStreamContentReady } = useCoordinatedLoading()
   const messageService = useMessageService()
   // Tracks the location key we've already handled for a highlight jump. Using
   // the key (not the message id) lets re-clicking the same message link
@@ -696,6 +697,13 @@ export function StreamContent({
     () => (useVirtualized ? filterVisibleItems(timelineItems, isChannel, streamId) : timelineItems),
     [timelineItems, useVirtualized, isChannel, streamId]
   )
+  const [virtualizedTimelineReady, setVirtualizedTimelineReady] = useState(false)
+  useEffect(() => {
+    setVirtualizedTimelineReady(false)
+  }, [streamId])
+  const handleVirtualizedItemsRendered = useCallback(() => {
+    setVirtualizedTimelineReady(true)
+  }, [])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during
@@ -773,6 +781,8 @@ export function StreamContent({
   const isScrolledFarFromBottom = useVirtualized ? virtualIsScrolledFar : plainIsScrolledFar
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
+  const hasRenderableTimelineItems = visibleItems.length > 0
+  const jumpControlsReady = !useVirtualized || virtualizedTimelineReady
 
   // Scroll to a specific message and keep re-scrolling until the target
   // element is actually visible in the scroller viewport. Items rendered
@@ -1211,21 +1221,6 @@ export function StreamContent({
     }
   }, [isJumpMode, exitJumpMode, resetPrependState, scrollToBottom])
 
-  if (error && !isDraft && events.length === 0 && !idbStream) {
-    return (
-      <ErrorView
-        className="h-full border-0"
-        title="Failed to Load Messages"
-        description="We couldn't load the messages for this stream. Please refresh the page or try again later."
-      />
-    )
-  }
-
-  const editLastMessageCtxWithScroll = useMemo(
-    () => ({ ...editLastMessageCtx, scrollToMessage }),
-    [editLastMessageCtx, scrollToMessage]
-  )
-
   // Deep-link (?m=) mount hold. On a push-notification / Activities deep link
   // the latest window loads first; the jump effect then fetches the window
   // around the target and swaps `events` wholesale. react-virtuoso only
@@ -1255,6 +1250,32 @@ export function StreamContent({
     prevHoldForDeepLinkRef.current = holdForDeepLink
     deepLinkDebug("holdForDeepLink ->", holdForDeepLink, "for", highlightMessageId)
   }
+
+  const hasResolvedDraftEvents = !isDraft || draftPendingEvents !== undefined
+  const hasResolvedTimeline = isConfirmedEmpty || events.length > 0
+  const virtualizedRenderReady = !useVirtualized || visibleItems.length === 0 || virtualizedTimelineReady
+  const streamContentReadyForCoordination = isDraft
+    ? hasResolvedDraftEvents
+    : !isLoading && !holdForDeepLink && hasResolvedTimeline && virtualizedRenderReady
+
+  useEffect(() => {
+    reportStreamContentReady(streamId, streamContentReadyForCoordination)
+  }, [reportStreamContentReady, streamId, streamContentReadyForCoordination])
+
+  if (error && !isDraft && events.length === 0 && !idbStream) {
+    return (
+      <ErrorView
+        className="h-full border-0"
+        title="Failed to Load Messages"
+        description="We couldn't load the messages for this stream. Please refresh the page or try again later."
+      />
+    )
+  }
+
+  const editLastMessageCtxWithScroll = useMemo(
+    () => ({ ...editLastMessageCtx, scrollToMessage }),
+    [editLastMessageCtx, scrollToMessage]
+  )
 
   return (
     <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
@@ -1328,6 +1349,7 @@ export function StreamContent({
                     isSearchOpen={isSearchOpen}
                     batch={batchState}
                     batchPointerHandlers={batchPointerHandlers}
+                    onItemsRendered={handleVirtualizedItemsRendered}
                   />
                   {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -1408,7 +1430,7 @@ export function StreamContent({
             </div>
             {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
               Positioned above the floating composer pill. */}
-            {(isJumpMode || isScrolledFarFromBottom) && (
+            {hasRenderableTimelineItems && jumpControlsReady && (isJumpMode || isScrolledFarFromBottom) && (
               <div
                 className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
                 style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
@@ -1545,6 +1567,7 @@ function VirtuosoMessageList({
   isSearchOpen,
   batch,
   batchPointerHandlers,
+  onItemsRendered,
 }: {
   visibleItems: TimelineItem[]
   isLoading: boolean
@@ -1589,6 +1612,7 @@ function VirtuosoMessageList({
   isSearchOpen: boolean
   batch?: BatchTimelineState
   batchPointerHandlers?: React.HTMLAttributes<HTMLElement>
+  onItemsRendered: () => void
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -1826,6 +1850,7 @@ function VirtuosoMessageList({
   const wrappedHandleRangeChanged = useCallback(
     (range: { startIndex: number; endIndex: number }) => {
       handleRangeChanged(range)
+      if (visibleItems.length > 0) onItemsRendered()
       if (!hasRangeSettledRef.current || visibleItems.length === 0) return
       // A scrollToMessage refine loop is in flight: its programmatic
       // scroll-into-view sweeps the (viewport-inflated) range across the
@@ -1841,7 +1866,7 @@ function VirtuosoMessageList({
       const distFromEnd = lastVirtualIndex - range.endIndex
       if (distFromEnd <= 3) handleEndReached()
     },
-    [handleRangeChanged, firstItemIndex, visibleItems.length, handleStartReached, handleEndReached]
+    [handleRangeChanged, firstItemIndex, visibleItems.length, handleStartReached, handleEndReached, onItemsRendered]
   )
 
   // Virtuoso positions items absolutely inside its scroller, so plain CSS
