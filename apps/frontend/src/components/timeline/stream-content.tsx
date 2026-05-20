@@ -1572,6 +1572,14 @@ function VirtuosoMessageList({
   const socket = useSocket()
   const abortResearch = useAbortResearch(socket)
 
+  // Tracks whether this component has ever rendered with real timeline content.
+  // Drives the empty fallback below: until the first paint, useEvents has not
+  // resolved IDB yet and the user just came off MainContentGate's skeleton —
+  // a blank frame here is the visible "skeleton, then nothing, then content"
+  // regression. Sticky across stream switches so fast switches keep the
+  // existing blank behaviour (no skeleton flash on top of prior chrome).
+  const hasRenderedContentRef = useRef(false)
+
   const { sessionLiveCounts, sessionLiveSubsteps, sessionCanAbort } = useMemo(() => {
     const counts = new Map<string, { stepCount: number; messageCount: number }>()
     const substeps = new Map<string, string | null>()
@@ -1813,19 +1821,24 @@ function VirtuosoMessageList({
     [reservedTopSpacer]
   )
 
-  if (isLoading || holdForDeepLink) {
-    return (
-      <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
-        <div className="flex gap-3">
-          <Skeleton className="h-9 w-9 rounded-full" />
-          <div className="flex-1 space-y-2">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
-          </div>
+  // Single skeleton shape shared by the active-load branch and the cold-boot
+  // empty fallback so the seam between MainContentGate's skeleton and
+  // StreamContent's first paint is invisible.
+  const skeleton = (
+    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
+      <div className="flex gap-3">
+        <Skeleton className="h-9 w-9 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
         </div>
       </div>
-    )
+    </div>
+  )
+
+  if (isLoading || holdForDeepLink) {
+    return skeleton
   }
 
   // Only render the empty state when we're *certain* the stream has no events.
@@ -1845,16 +1858,30 @@ function VirtuosoMessageList({
 
   // Grace-window gap: !isLoading, !isConfirmedEmpty, but events haven't been
   // re-subscribed from IDB yet (the "render briefly blank, no skeleton flash"
-  // path in computeTimelineLoadState). Render a blank scroll area rather than
-  // mounting <Virtuoso data={[]} />. Virtuoso's hidden-until-stable reveal gate
-  // arms only at didMount, and only when initialTopMostItemIndex is set — which
-  // it is NOT while itemCount is 0 (the scroll hook returns undefined). A
-  // Virtuoso mounted empty therefore reveals immediately, so the populate +
-  // scroll-to-LAST a frame later is visible (the "loads in too low then jumps"
-  // report). Deferring the mount until data exists makes the keyed instance
-  // mount already-populated, exactly like cold boot, so the gate arms.
+  // path in computeTimelineLoadState). Two sub-cases:
+  //
+  //  - First-ever render (cold boot): MainContentGate just released its
+  //    skeleton, useLiveQuery has not resolved yet. A blank gap here lets the
+  //    skeleton→content transition show a visible "nothing" frame, which is
+  //    exactly the regression report ("skeleton, then nothing again, then
+  //    content"). Keep the skeleton on screen until IDB resolves so the
+  //    handoff is seamless.
+  //  - Subsequent renders (stream switch): we've already painted content, so
+  //    a brief blank is preferable to a skeleton flash. The previous stream's
+  //    chrome is the visible background; rendering a skeleton on top of it
+  //    would jiggle the layout.
+  //
+  // Either way we mustn't mount <Virtuoso data={[]} />: its hidden-until-stable
+  // reveal gate arms only at didMount, and only when initialTopMostItemIndex
+  // is set — which it is NOT while itemCount is 0 (the scroll hook returns
+  // undefined). A Virtuoso mounted empty therefore reveals immediately, so
+  // the populate + scroll-to-LAST a frame later is visible (the "loads in too
+  // low then jumps" report). Deferring the mount until data exists makes the
+  // keyed instance mount already-populated, exactly like cold boot, so the
+  // gate arms.
+  if (visibleItems.length > 0) hasRenderedContentRef.current = true
   if (visibleItems.length === 0) {
-    return <div className="h-full" aria-hidden />
+    return hasRenderedContentRef.current ? <div className="h-full" aria-hidden /> : skeleton
   }
 
   return (
