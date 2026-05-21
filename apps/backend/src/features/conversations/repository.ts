@@ -96,31 +96,40 @@ const BASE_FIELDS = `
  * Joined into the conversation SELECT via LEFT JOIN LATERAL so each conversation
  * row gets its derived arrays in a single round trip.
  *
+ * `alias` is the outer-row alias to correlate against (`c` for the conversations
+ * table, `u` for the UPDATE...RETURNING CTE in `update()`). Callers MUST pass a
+ * literal identifier — never a value derived from user input — since it is
+ * concatenated into the SQL string.
+ *
  * - `message_ids`: primary-assignment message IDs, ordered by assigned_at.
  * - `participant_ids`: distinct authors of those primary-assigned messages.
  * - `secondary_message_ids`: message IDs assigned to this conversation but whose
  *   primary lives elsewhere.
  */
-const ASSIGNMENT_AGGREGATE_JOIN = `
-  LEFT JOIN LATERAL (
-    SELECT
-      COALESCE(
-        array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE cma.is_primary),
-        ARRAY[]::TEXT[]
-      ) AS message_ids,
-      COALESCE(
-        array_agg(DISTINCT m.author_id) FILTER (WHERE cma.is_primary AND m.author_id IS NOT NULL),
-        ARRAY[]::TEXT[]
-      ) AS participant_ids,
-      COALESCE(
-        array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE NOT cma.is_primary),
-        ARRAY[]::TEXT[]
-      ) AS secondary_message_ids
-    FROM conversation_message_assignments cma
-    LEFT JOIN messages m ON m.id = cma.message_id
-    WHERE cma.conversation_id = c.id
-  ) agg ON TRUE
-`
+function assignmentAggregateJoin(alias: string): string {
+  return `
+    LEFT JOIN LATERAL (
+      SELECT
+        COALESCE(
+          array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE cma.is_primary),
+          ARRAY[]::TEXT[]
+        ) AS message_ids,
+        COALESCE(
+          array_agg(DISTINCT m.author_id) FILTER (WHERE cma.is_primary AND m.author_id IS NOT NULL),
+          ARRAY[]::TEXT[]
+        ) AS participant_ids,
+        COALESCE(
+          array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE NOT cma.is_primary),
+          ARRAY[]::TEXT[]
+        ) AS secondary_message_ids
+      FROM conversation_message_assignments cma
+      LEFT JOIN messages m ON m.id = cma.message_id
+      WHERE cma.conversation_id = ${alias}.id
+    ) agg ON TRUE
+  `
+}
+
+const ASSIGNMENT_AGGREGATE_JOIN = assignmentAggregateJoin("c")
 
 const FULL_SELECT = `
   ${BASE_FIELDS},
@@ -340,10 +349,8 @@ export const ConversationRepository = {
   /**
    * Workspace-scoped update (INV-8). The UPDATE CTE filters by workspace_id so a
    * misrouted conversation ID from a different workspace silently no-ops rather
-   * than writing into another tenant's data.
-   *
-   * The LATERAL aggregate below mirrors `ASSIGNMENT_AGGREGATE_JOIN` byte-for-byte
-   * except for `c.id` → `u.id`. If you add a column to one, add it to both.
+   * than writing into another tenant's data. The aggregate join is produced by
+   * `assignmentAggregateJoin('u')` so it stays in sync with the read path.
    */
   async update(
     db: Querier,
@@ -411,24 +418,7 @@ export const ConversationRepository = {
         u.last_activity_at, u.created_at, u.updated_at,
         agg.message_ids, agg.participant_ids, agg.secondary_message_ids
       FROM updated u
-      LEFT JOIN LATERAL (
-        SELECT
-          COALESCE(
-            array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE cma.is_primary),
-            ARRAY[]::TEXT[]
-          ) AS message_ids,
-          COALESCE(
-            array_agg(DISTINCT m.author_id) FILTER (WHERE cma.is_primary AND m.author_id IS NOT NULL),
-            ARRAY[]::TEXT[]
-          ) AS participant_ids,
-          COALESCE(
-            array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE NOT cma.is_primary),
-            ARRAY[]::TEXT[]
-          ) AS secondary_message_ids
-        FROM conversation_message_assignments cma
-        LEFT JOIN messages m ON m.id = cma.message_id
-        WHERE cma.conversation_id = u.id
-      ) agg ON TRUE
+      ${assignmentAggregateJoin("u")}
     `
 
     const result = await db.query<ConversationRow>(query, values)

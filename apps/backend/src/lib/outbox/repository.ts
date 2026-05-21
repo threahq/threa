@@ -332,6 +332,9 @@ export interface ConversationMessageAssignedOutboxPayload extends StreamScopedPa
   conversationId: string
   isPrimary: boolean
   reason: string
+  /** For thread messages, the parent channel's stream ID so the parent-channel
+   *  room also receives the membership update. */
+  parentStreamId?: string
 }
 
 /**

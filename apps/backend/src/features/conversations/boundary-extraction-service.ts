@@ -251,6 +251,11 @@ export class BoundaryExtractionService {
       const touchedConversationIds = new Set<string>()
       const reassignmentEvents: {
         messageId: string
+        // The stream where the reassigned message actually lives. May differ from
+        // the new message's `streamId` when a context-window message originated in
+        // another stream — the outbox event must route to that stream's room, not
+        // the new message's stream.
+        streamId: string
         fromConversationId: string
         toConversationId: string
         reason: string
@@ -349,6 +354,7 @@ export class BoundaryExtractionService {
         touchedConversationIds.add(toConvId)
         reassignmentEvents.push({
           messageId: r.messageId,
+          streamId: existingPrimary.streamId,
           fromConversationId: fromConvId,
           toConversationId: toConvId,
           reason: r.reason,
@@ -407,11 +413,14 @@ export class BoundaryExtractionService {
       }
 
       // Emit per-assignment events for the new message (so the frontend knows
-      // which conv(s) the new message belongs to).
+      // which conv(s) the new message belongs to). `parentStreamId` mirrors the
+      // conversation:* events above so parent-channel subscribers receive the
+      // membership update for thread messages too.
       for (const a of resolvedAssignments) {
         await OutboxRepository.insert(client, "conversation:message_assigned", {
           workspaceId,
           streamId,
+          parentStreamId,
           messageId,
           conversationId: a.conversationId,
           isPrimary: a.isPrimary,
@@ -419,11 +428,14 @@ export class BoundaryExtractionService {
         })
       }
 
-      // Emit per-reassignment events.
+      // Emit per-reassignment events. The reassigned message may live in a
+      // different stream than the new message that triggered this extraction
+      // (e.g. a context-window message from another channel), so the event is
+      // routed to that stream — `ev.streamId` — not the outer `streamId`.
       for (const ev of reassignmentEvents) {
         await OutboxRepository.insert(client, "conversation:message_reassigned", {
           workspaceId,
-          streamId,
+          streamId: ev.streamId,
           messageId: ev.messageId,
           fromConversationId: ev.fromConversationId,
           toConversationId: ev.toConversationId,

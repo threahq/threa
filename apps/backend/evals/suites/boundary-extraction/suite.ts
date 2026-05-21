@@ -103,11 +103,13 @@ async function runBoundaryExtractionTask(
   try {
     const result = await extractor.extract(extractionContext)
     // validateResult guarantees exactly one primary; fail loudly (INV-11) if
-    // that contract breaks rather than silently using assignments[0].
-    const primary = result.assignments.find((a) => a.isPrimary)
-    if (!primary) {
-      throw new Error("Extractor returned no primary assignment")
+    // that contract breaks (zero OR multiple) rather than silently using the
+    // first primary and masking a multi-primary regression.
+    const primaries = result.assignments.filter((a) => a.isPrimary)
+    if (primaries.length !== 1) {
+      throw new Error(`Extractor returned ${primaries.length} primary assignments, expected exactly 1`)
     }
+    const primary = primaries[0]
 
     return {
       input,
