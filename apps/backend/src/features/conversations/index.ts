@@ -41,9 +41,5 @@ export type { BoundaryExtractionWorkerDeps } from "./boundary-extraction-worker"
 export { ConversationRepository } from "./repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
 
-// Assignment Repository
-export { ConversationMessageAssignmentRepository } from "./assignment-repository"
-export type { ConversationMessageAssignment, AssignmentReason } from "./assignment-repository"
-
 // Staleness
 export { addStalenessFields, computeTemporalStaleness, computeEffectiveCompleteness } from "./staleness"

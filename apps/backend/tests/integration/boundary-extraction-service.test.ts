@@ -15,8 +15,7 @@ import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { ConversationRepository, ConversationMessageAssignmentRepository } from "../../src/features/conversations"
-import { OutboxRepository } from "../../src/lib/outbox"
+import { ConversationRepository } from "../../src/features/conversations"
 import { BoundaryExtractionService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
@@ -166,13 +165,7 @@ describe("BoundaryExtractionService", () => {
           topicSummary: "Existing conversation",
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: existingConvId,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg2Id,
@@ -231,13 +224,7 @@ describe("BoundaryExtractionService", () => {
           status: ConversationStatuses.ACTIVE,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: conv1Id,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, conv1Id, msg1Id, testUserId)
 
         await ConversationRepository.insert(client, {
           id: conv2Id,
@@ -247,13 +234,7 @@ describe("BoundaryExtractionService", () => {
           status: ConversationStatuses.ACTIVE,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: conv2Id,
-          messageId: msg2Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, conv2Id, msg2Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg3Id,
@@ -362,13 +343,7 @@ describe("BoundaryExtractionService", () => {
           workspaceId: testWorkspaceId,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: existingConvId,
-          messageId: msg1Id,
-          streamId: localStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg2Id,
@@ -449,13 +424,7 @@ describe("BoundaryExtractionService", () => {
           workspaceId: testWorkspaceId,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: existingConvId,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg2Id,
@@ -523,20 +492,8 @@ describe("BoundaryExtractionService", () => {
           workspaceId: testWorkspaceId,
           topicSummary: "Topic A",
         })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convAId,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convAId,
-          messageId: msg2Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convAId, msg1Id, testUserId)
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convAId, msg2Id, testUserId)
 
         await ConversationRepository.insert(client, {
           id: convBId,
@@ -544,13 +501,7 @@ describe("BoundaryExtractionService", () => {
           workspaceId: testWorkspaceId,
           topicSummary: "Topic B",
         })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convBId,
-          messageId: msg0Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convBId, msg0Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg3Id,
@@ -617,20 +568,8 @@ describe("BoundaryExtractionService", () => {
           workspaceId: testWorkspaceId,
           topicSummary: "Existing topic",
         })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convAId,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convAId,
-          messageId: msg2Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convAId, msg1Id, testUserId)
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convAId, msg2Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg3Id,
@@ -699,26 +638,14 @@ describe("BoundaryExtractionService", () => {
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
         })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convAId,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convAId, msg1Id, testUserId)
 
         await ConversationRepository.insert(client, {
           id: convBId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
         })
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convBId,
-          messageId: msg0Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convBId, msg0Id, testUserId)
 
         await MessageRepository.insert(client, {
           id: msg2Id,

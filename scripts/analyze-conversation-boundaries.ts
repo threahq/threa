@@ -118,24 +118,11 @@ async function main() {
   log()
 
   const convsRes = await q(
-    `SELECT c.id, c.stream_id, c.topic_summary,
-            c.completeness_score, c.confidence, c.status, c.parent_conversation_id,
-            c.last_activity_at, c.created_at,
-            COALESCE(
-              (SELECT array_agg(cma.message_id ORDER BY m.sequence)
-               FROM conversation_message_assignments cma
-               JOIN messages m ON m.id = cma.message_id
-               WHERE cma.conversation_id = c.id AND cma.is_primary),
-              ARRAY[]::TEXT[]
-            ) AS message_ids,
-            COALESCE(
-              (SELECT array_agg(DISTINCT m.author_id)
-               FROM conversation_message_assignments cma
-               JOIN messages m ON m.id = cma.message_id
-               WHERE cma.conversation_id = c.id AND cma.is_primary AND m.author_id IS NOT NULL),
-              ARRAY[]::TEXT[]
-            ) AS participant_ids
-     FROM conversations c WHERE c.stream_id = $1 ORDER BY c.created_at ASC`,
+    `SELECT id, stream_id, topic_summary,
+            completeness_score, confidence, status, parent_conversation_id,
+            last_activity_at, created_at,
+            message_ids, participant_ids
+     FROM conversations WHERE stream_id = $1 ORDER BY created_at ASC`,
     [streamId]
   )
   const conversations = rowsToObjects<Conversation>(convsRes)
@@ -149,28 +136,30 @@ async function main() {
   log(`Total messages (non-deleted): ${totalMessages}`)
   log(`Message-ids referenced by conversations: ${totalAssigned}`)
 
-  // Cross-conv primary membership (should be impossible — partial unique index
-  // on (message_id) WHERE is_primary guarantees one primary per message).
+  // Cross-conv primary membership: enforced only by the service, so worth
+  // checking — a message_id appearing in two conversations' message_ids would
+  // indicate a service bug or a race.
   const dupRes = await q(
     `SELECT count(*)::int FROM (
-       SELECT cma.message_id
-       FROM conversation_message_assignments cma
-       JOIN conversations c ON c.id = cma.conversation_id
-       WHERE c.stream_id = $1 AND cma.is_primary
-       GROUP BY cma.message_id HAVING count(*) > 1
+       SELECT m.id
+       FROM messages m
+       JOIN conversations c ON c.message_ids @> ARRAY[m.id]::text[]
+       WHERE m.stream_id = $1
+       GROUP BY m.id HAVING count(*) > 1
      ) x`,
     [streamId]
   )
   log(`Messages with >1 primary conv: ${dupRes.rows[0][0]}`)
 
-  // Dangling refs
+  // Dangling refs: message_ids that no longer point at a real, non-deleted message.
   const danglingRes = await q(
-    `SELECT count(*) FILTER (WHERE m.id IS NULL)::int AS dangling,
-            count(*) FILTER (WHERE m.deleted_at IS NOT NULL)::int AS soft_deleted
-     FROM conversation_message_assignments cma
-     JOIN conversations c ON c.id = cma.conversation_id
-     LEFT JOIN messages m ON m.id = cma.message_id AND m.stream_id = $1
-     WHERE c.stream_id = $1 AND cma.is_primary`,
+    `SELECT
+       count(*) FILTER (WHERE m.id IS NULL)::int AS dangling,
+       count(*) FILTER (WHERE m.deleted_at IS NOT NULL)::int AS soft_deleted
+     FROM conversations c
+     CROSS JOIN LATERAL unnest(c.message_ids) AS msg_id
+     LEFT JOIN messages m ON m.id = msg_id AND m.stream_id = $1
+     WHERE c.stream_id = $1`,
     [streamId]
   )
   log(`Dangling message_id refs: ${danglingRes.rows[0][0]}`)

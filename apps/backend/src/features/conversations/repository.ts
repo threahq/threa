@@ -13,22 +13,23 @@ interface ConversationRow {
   last_activity_at: Date
   created_at: Date
   updated_at: Date
-  message_ids: string[] | null
-  participant_ids: string[] | null
-  secondary_message_ids: string[] | null
+  message_ids: string[]
+  participant_ids: string[]
+  secondary_message_ids: string[]
 }
 
 /**
- * Internal backend type with native Date objects.
- * The wire type in @threa/types uses ISO 8601 strings for JSON serialization.
+ * Internal backend type with native Date objects. The wire type in @threa/types
+ * uses ISO 8601 strings for JSON serialization.
  *
- * `messageIds` and `participantIds` are populated from `conversation_message_assignments`
- * (primary assignments only, ordered by assigned_at). The arrays themselves are no
- * longer stored on the conversations row — they're aggregated at read time.
+ * `messageIds` lists the messages whose PRIMARY conversation is this one,
+ * preserved in insertion order. `secondaryMessageIds` lists messages that also
+ * appear in this conversation but whose primary lives elsewhere (cross-topic
+ * references). `participantIds` are the distinct authors of `messageIds`.
  *
- * `secondaryMessageIds` lists messages that are ALSO assigned to this conversation
- * but for which the primary lives elsewhere. Empty for conversations created before
- * multi-membership.
+ * All three are stored as Postgres TEXT[] arrays on the conversation row; the
+ * service is the sole writer and uses row-level locking on the message row to
+ * keep concurrent calls from duplicating membership.
  */
 export interface Conversation {
   id: string
@@ -71,9 +72,9 @@ function mapRowToConversation(row: ConversationRow): Conversation {
     id: row.id,
     streamId: row.stream_id,
     workspaceId: row.workspace_id,
-    messageIds: row.message_ids ?? [],
-    participantIds: row.participant_ids ?? [],
-    secondaryMessageIds: row.secondary_message_ids ?? [],
+    messageIds: row.message_ids,
+    participantIds: row.participant_ids,
+    secondaryMessageIds: row.secondary_message_ids,
     topicSummary: row.topic_summary,
     completenessScore: row.completeness_score,
     confidence: row.confidence,
@@ -85,81 +86,32 @@ function mapRowToConversation(row: ConversationRow): Conversation {
   }
 }
 
-const BASE_FIELDS = `
-  c.id, c.stream_id, c.workspace_id,
-  c.topic_summary, c.completeness_score, c.confidence, c.status, c.parent_conversation_id,
-  c.last_activity_at, c.created_at, c.updated_at
-`
-
-/**
- * Subquery that aggregates the message/participant arrays for one conversation.
- * Joined into the conversation SELECT via LEFT JOIN LATERAL so each conversation
- * row gets its derived arrays in a single round trip.
- *
- * `alias` is the outer-row alias to correlate against (`c` for the conversations
- * table, `u` for the UPDATE...RETURNING CTE in `update()`). Callers MUST pass a
- * literal identifier — never a value derived from user input — since it is
- * concatenated into the SQL string.
- *
- * - `message_ids`: primary-assignment message IDs, ordered by assigned_at.
- * - `participant_ids`: distinct authors of those primary-assigned messages.
- * - `secondary_message_ids`: message IDs assigned to this conversation but whose
- *   primary lives elsewhere.
- */
-function assignmentAggregateJoin(alias: string): string {
-  return `
-    LEFT JOIN LATERAL (
-      SELECT
-        COALESCE(
-          array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE cma.is_primary),
-          ARRAY[]::TEXT[]
-        ) AS message_ids,
-        COALESCE(
-          array_agg(DISTINCT m.author_id) FILTER (WHERE cma.is_primary AND m.author_id IS NOT NULL),
-          ARRAY[]::TEXT[]
-        ) AS participant_ids,
-        COALESCE(
-          array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE NOT cma.is_primary),
-          ARRAY[]::TEXT[]
-        ) AS secondary_message_ids
-      FROM conversation_message_assignments cma
-      LEFT JOIN messages m ON m.id = cma.message_id
-      WHERE cma.conversation_id = ${alias}.id
-    ) agg ON TRUE
-  `
-}
-
-const ASSIGNMENT_AGGREGATE_JOIN = assignmentAggregateJoin("c")
-
-const FULL_SELECT = `
-  ${BASE_FIELDS},
-  agg.message_ids, agg.participant_ids, agg.secondary_message_ids
+const SELECT_FIELDS = `
+  id, stream_id, workspace_id,
+  message_ids, participant_ids, secondary_message_ids,
+  topic_summary, completeness_score, confidence, status, parent_conversation_id,
+  last_activity_at, created_at, updated_at
 `
 
 export const ConversationRepository = {
   async findById(db: Querier, id: string): Promise<Conversation | null> {
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.id = ${id}
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations WHERE id = ${id}
     `)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
   },
 
   /**
-   * Batch lookup; returns conversations in arbitrary order.
-   * Workspace-scoped (INV-8) — rows from other workspaces are filtered out at
-   * the query level even if the caller passes IDs from the wrong workspace.
+   * Batch lookup; returns conversations in arbitrary order. Workspace-scoped
+   * (INV-8) — rows from other workspaces are filtered out at the query level
+   * even if the caller passes IDs from the wrong workspace.
    */
   async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Conversation[]> {
     if (ids.length === 0) return []
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.workspace_id = ${workspaceId} AND c.id = ANY(${ids}::text[])
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
     `)
     return result.rows.map(mapRowToConversation)
   },
@@ -173,22 +125,18 @@ export const ConversationRepository = {
 
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(FULL_SELECT)}
-        FROM conversations c
-        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-        WHERE c.stream_id = ${streamId} AND c.status = ${options.status}
-        ORDER BY c.last_activity_at DESC
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+        WHERE stream_id = ${streamId} AND status = ${options.status}
+        ORDER BY last_activity_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToConversation)
     }
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.stream_id = ${streamId}
-      ORDER BY c.last_activity_at DESC
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE stream_id = ${streamId}
+      ORDER BY last_activity_at DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
@@ -196,7 +144,8 @@ export const ConversationRepository = {
 
   /**
    * Find conversations in a stream AND in any child threads of that stream.
-   * Child threads are streams where parent_message_id belongs to a message in the given stream.
+   * Child threads are streams where parent_message_id belongs to a message in
+   * the given stream.
    */
   async findByStreamIncludingThreads(
     db: Querier,
@@ -207,12 +156,10 @@ export const ConversationRepository = {
 
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(FULL_SELECT)}
-        FROM conversations c
-        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
         WHERE (
-          c.stream_id = ${streamId}
-          OR c.stream_id IN (
+          stream_id = ${streamId}
+          OR stream_id IN (
             SELECT s.id FROM streams s
             WHERE s.type = 'thread'
               AND s.parent_message_id IN (
@@ -220,26 +167,24 @@ export const ConversationRepository = {
               )
           )
         )
-        AND c.status = ${options.status}
-        ORDER BY c.last_activity_at DESC
+        AND status = ${options.status}
+        ORDER BY last_activity_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToConversation)
     }
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.stream_id = ${streamId}
-         OR c.stream_id IN (
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE stream_id = ${streamId}
+         OR stream_id IN (
            SELECT s.id FROM streams s
            WHERE s.type = 'thread'
              AND s.parent_message_id IN (
                SELECT m.id FROM messages m WHERE m.stream_id = ${streamId}
              )
          )
-      ORDER BY c.last_activity_at DESC
+      ORDER BY last_activity_at DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
@@ -251,42 +196,73 @@ export const ConversationRepository = {
 
   /**
    * Conversations that contain a specific message (primary or secondary).
-   * Workspace-scoped (INV-8).
+   * Workspace-scoped (INV-8). Uses the two GIN indexes on `message_ids` and
+   * `secondary_message_ids`.
    */
   async findByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<Conversation[]> {
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.workspace_id = ${workspaceId}
-        AND c.id IN (
-          SELECT conversation_id FROM conversation_message_assignments
-          WHERE message_id = ${messageId} AND workspace_id = ${workspaceId}
-        )
-      ORDER BY c.last_activity_at DESC
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND (message_ids @> ARRAY[${messageId}]::text[] OR secondary_message_ids @> ARRAY[${messageId}]::text[])
+      ORDER BY last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
   },
 
   /**
-   * Find conversations that contain any of the given message IDs.
-   * Returns unique conversations. Workspace-scoped (INV-8).
+   * Find conversations that contain any of the given message IDs (primary or
+   * secondary). Returns unique conversations. Workspace-scoped (INV-8).
    */
   async findByMessageIds(db: Querier, workspaceId: string, messageIds: string[]): Promise<Conversation[]> {
     if (messageIds.length === 0) return []
-
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.workspace_id = ${workspaceId}
-        AND c.id IN (
-          SELECT DISTINCT conversation_id FROM conversation_message_assignments
-          WHERE message_id = ANY(${messageIds}::text[]) AND workspace_id = ${workspaceId}
-        )
-      ORDER BY c.last_activity_at DESC
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND (message_ids && ${messageIds}::text[] OR secondary_message_ids && ${messageIds}::text[])
+      ORDER BY last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
+  },
+
+  /**
+   * Find the conversation that owns a message as PRIMARY (`message_ids`),
+   * workspace-scoped. There can be at most one — enforced by the service, not
+   * the database — so this returns a single row or null.
+   */
+  async findPrimaryByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<Conversation | null> {
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND message_ids @> ARRAY[${messageId}]::text[]
+      LIMIT 1
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToConversation(result.rows[0])
+  },
+
+  /**
+   * Batch variant: returns a Map keyed by message_id of the conversation that
+   * owns that message as primary. Missing keys → no primary. Workspace-scoped.
+   */
+  async findPrimariesByMessageIds(
+    db: Querier,
+    workspaceId: string,
+    messageIds: string[]
+  ): Promise<Map<string, Conversation>> {
+    if (messageIds.length === 0) return new Map()
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND message_ids && ${messageIds}::text[]
+    `)
+    const byMessageId = new Map<string, Conversation>()
+    for (const row of result.rows) {
+      const conv = mapRowToConversation(row)
+      for (const id of messageIds) {
+        if (conv.messageIds.includes(id)) byMessageId.set(id, conv)
+      }
+    }
+    return byMessageId
   },
 
   async findByWorkspace(
@@ -298,22 +274,18 @@ export const ConversationRepository = {
 
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(FULL_SELECT)}
-        FROM conversations c
-        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-        WHERE c.workspace_id = ${workspaceId} AND c.status = ${options.status}
-        ORDER BY c.last_activity_at DESC
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+        WHERE workspace_id = ${workspaceId} AND status = ${options.status}
+        ORDER BY last_activity_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToConversation)
     }
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(FULL_SELECT)}
-      FROM conversations c
-      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.workspace_id = ${workspaceId}
-      ORDER BY c.last_activity_at DESC
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+      ORDER BY last_activity_at DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
@@ -335,22 +307,15 @@ export const ConversationRepository = {
         ${params.status ?? "active"},
         ${params.parentConversationId ?? null}
       )
-      RETURNING
-        id, stream_id, workspace_id,
-        topic_summary, completeness_score, confidence, status, parent_conversation_id,
-        last_activity_at, created_at, updated_at,
-        ARRAY[]::TEXT[] AS message_ids,
-        ARRAY[]::TEXT[] AS participant_ids,
-        ARRAY[]::TEXT[] AS secondary_message_ids
+      RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return mapRowToConversation(result.rows[0])
   },
 
   /**
-   * Workspace-scoped update (INV-8). The UPDATE CTE filters by workspace_id so a
+   * Workspace-scoped update (INV-8). The UPDATE filters by workspace_id so a
    * misrouted conversation ID from a different workspace silently no-ops rather
-   * than writing into another tenant's data. The aggregate join is produced by
-   * `assignmentAggregateJoin('u')` so it stays in sync with the read path.
+   * than writing into another tenant's data.
    */
   async update(
     db: Querier,
@@ -387,38 +352,23 @@ export const ConversationRepository = {
       // No-op update still goes through the workspace-scoped read so a
       // cross-workspace lookup returns null instead of leaking the row.
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(FULL_SELECT)}
-        FROM conversations c
-        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-        WHERE c.workspace_id = ${workspaceId} AND c.id = ${id}
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
       `)
       if (!result.rows[0]) return null
       return mapRowToConversation(result.rows[0])
     }
 
     updates.push(`updated_at = NOW()`)
+    values.push(id, workspaceId)
     const idParamIndex = paramIndex++
     const workspaceParamIndex = paramIndex
-    values.push(id, workspaceId)
 
-    // UPDATE + LATERAL aggregate in a single round-trip via CTE.
     const query = `
-      WITH updated AS (
-        UPDATE conversations
-        SET ${updates.join(", ")}
-        WHERE id = $${idParamIndex} AND workspace_id = $${workspaceParamIndex}
-        RETURNING
-          id, stream_id, workspace_id,
-          topic_summary, completeness_score, confidence, status, parent_conversation_id,
-          last_activity_at, created_at, updated_at
-      )
-      SELECT
-        u.id, u.stream_id, u.workspace_id,
-        u.topic_summary, u.completeness_score, u.confidence, u.status, u.parent_conversation_id,
-        u.last_activity_at, u.created_at, u.updated_at,
-        agg.message_ids, agg.participant_ids, agg.secondary_message_ids
-      FROM updated u
-      ${assignmentAggregateJoin("u")}
+      UPDATE conversations
+      SET ${updates.join(", ")}
+      WHERE id = $${idParamIndex} AND workspace_id = $${workspaceParamIndex}
+      RETURNING ${SELECT_FIELDS}
     `
 
     const result = await db.query<ConversationRow>(query, values)
@@ -427,10 +377,88 @@ export const ConversationRepository = {
   },
 
   /**
-   * Bump last_activity_at on a conversation. Called when a new message is
-   * assigned to it (the assignment row itself doesn't bump the conversation's
-   * activity timestamp — that lives on the conversation row).
+   * Append a message to `message_ids` (primary membership) and also add the
+   * author to `participant_ids` if not already present. Idempotent: appending
+   * a message_id that's already present is a no-op.
+   *
+   * Also clears the message from `secondary_message_ids` if it was there —
+   * a message can be either primary or secondary in a given conversation, not
+   * both.
+   *
+   * Workspace-scoped (INV-8). Caller is responsible for ensuring any prior
+   * primary membership in another conversation has been removed first
+   * (`removePrimaryMessage`), otherwise the message will appear in two
+   * `message_ids` arrays and the "exactly one primary" invariant breaks.
    */
+  async addPrimaryMessage(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageId: string,
+    authorId: string | null
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET message_ids =
+            CASE WHEN message_ids @> ARRAY[${messageId}]::text[]
+                 THEN message_ids
+                 ELSE array_append(message_ids, ${messageId}) END,
+          participant_ids =
+            CASE WHEN ${authorId}::text IS NULL OR participant_ids @> ARRAY[${authorId}]::text[]
+                 THEN participant_ids
+                 ELSE array_append(participant_ids, ${authorId}) END,
+          secondary_message_ids = array_remove(secondary_message_ids, ${messageId}),
+          updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /**
+   * Append a message to `secondary_message_ids` (cross-topic reference). The
+   * message's primary lives in another conversation. Idempotent and a no-op if
+   * the message is already in this conversation's `message_ids` (would be a
+   * downgrade — service must not request it).
+   */
+  async addSecondaryMessage(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET secondary_message_ids =
+            CASE WHEN message_ids @> ARRAY[${messageId}]::text[]
+                  OR secondary_message_ids @> ARRAY[${messageId}]::text[]
+                 THEN secondary_message_ids
+                 ELSE array_append(secondary_message_ids, ${messageId}) END,
+          updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /**
+   * Remove a message from a conversation's `message_ids` (primary membership).
+   * Used by reassignment to clear the old home before adding to the new one.
+   * Note: `participant_ids` is NOT recomputed — author may still have other
+   * messages in this conversation. Recompute via `recomputeParticipants` if
+   * the caller wants strict bookkeeping.
+   */
+  async removePrimaryMessage(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET message_ids = array_remove(message_ids, ${messageId}),
+          updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /** Bump last_activity_at on a conversation. */
   async bumpActivity(db: Querier, id: string): Promise<void> {
     await db.query(sql`
       UPDATE conversations

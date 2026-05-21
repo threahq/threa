@@ -1,7 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { sql, withTransaction, withClient } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
-import { ConversationMessageAssignmentRepository, type AssignmentReason } from "./assignment-repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
@@ -261,34 +260,10 @@ export class BoundaryExtractionService {
         reason: string
       }[] = []
 
-      // Assign the new message.
-      for (const a of resolvedAssignments) {
-        if (a.isPrimary) {
-          await ConversationMessageAssignmentRepository.assignPrimary(client, {
-            conversationId: a.conversationId,
-            messageId,
-            streamId,
-            workspaceId,
-            reason: "initial",
-            confidence: decision.confidence,
-          })
-        } else {
-          await ConversationMessageAssignmentRepository.assignSecondary(client, {
-            conversationId: a.conversationId,
-            messageId,
-            streamId,
-            workspaceId,
-            reason: "secondary",
-            confidence: decision.confidence,
-          })
-        }
-        touchedConversationIds.add(a.conversationId)
-      }
-
-      // Apply reassignments. The extractor is trusted to only target messages
-      // it actually saw, but we defense-in-depth validate that `r.messageId`
-      // was in Phase 1's surrounding/thread window and that `toConversationId`
-      // is in `validUpdateTargets` (or null when a new conversation was created).
+      // Apply reassignments first so the LLM-flagged messages have already moved
+      // out of their old conversation before we write the new message — that
+      // way `message_ids` is never transiently doubled when the same message
+      // appears in two conversations.
       const reassignmentMessageIds = validReassignmentMessageIds ?? new Set<string>()
       const candidateReassignments = decision.reassignments.filter((r) => reassignmentMessageIds.has(r.messageId))
       const skippedOutOfWindow = decision.reassignments.length - candidateReassignments.length
@@ -299,14 +274,26 @@ export class BoundaryExtractionService {
         )
       }
 
-      const existingPrimariesByMessageId = new Map(
-        (
-          await ConversationMessageAssignmentRepository.findPrimariesByMessageIds(
-            client,
-            candidateReassignments.map((r) => r.messageId)
-          )
-        ).map((p) => [p.messageId, p])
+      // INV-20 race safety: lock the message rows we're about to (re)assign so
+      // two concurrent boundary extractions can't both write the same message
+      // into two different conversations. The (workspace_id, id) ANY clause
+      // matches the messages PK predicate and serializes per-message-id without
+      // taking a wider lock.
+      const lockMessageIds = [messageId, ...candidateReassignments.map((r) => r.messageId)]
+      await client.query(sql`
+        SELECT id FROM messages
+        WHERE workspace_id = ${workspaceId} AND id = ANY(${lockMessageIds}::text[])
+        FOR UPDATE
+      `)
+
+      const existingPrimariesByMessageId = await ConversationRepository.findPrimariesByMessageIds(
+        client,
+        workspaceId,
+        candidateReassignments.map((r) => r.messageId)
       )
+
+      // Cache message lookups (need authorId for participant_ids bookkeeping).
+      const messagesById = new Map<string, Message>([[message.id, message]])
 
       for (const r of candidateReassignments) {
         let toConvId: string
@@ -334,31 +321,56 @@ export class BoundaryExtractionService {
           logger.warn({ messageId: r.messageId }, "Reassignment target message has no existing primary - skipping")
           continue
         }
-        if (existingPrimary.conversationId === toConvId) {
+        if (existingPrimary.id === toConvId) {
           // No-op move; the LLM is asking us to move the message to where it already lives.
           continue
         }
 
-        const fromConvId = existingPrimary.conversationId
+        const fromConvId = existingPrimary.id
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: toConvId,
-          messageId: r.messageId,
-          streamId: existingPrimary.streamId,
+        let reassignedMessage = messagesById.get(r.messageId)
+        if (!reassignedMessage) {
+          const m = await MessageRepository.findById(client, r.messageId)
+          if (m) {
+            reassignedMessage = m
+            messagesById.set(r.messageId, m)
+          }
+        }
+
+        await ConversationRepository.removePrimaryMessage(client, workspaceId, fromConvId, r.messageId)
+        await ConversationRepository.addPrimaryMessage(
+          client,
           workspaceId,
-          reason: "reassigned",
-          confidence: r.confidence ?? decision.confidence,
-        })
+          toConvId,
+          r.messageId,
+          reassignedMessage?.authorId ?? null
+        )
 
         touchedConversationIds.add(fromConvId)
         touchedConversationIds.add(toConvId)
         reassignmentEvents.push({
           messageId: r.messageId,
-          streamId: existingPrimary.streamId,
+          streamId: reassignedMessage?.streamId ?? existingPrimary.streamId,
           fromConversationId: fromConvId,
           toConversationId: toConvId,
           reason: r.reason,
         })
+      }
+
+      // Now assign the new message — primary + any secondaries.
+      for (const a of resolvedAssignments) {
+        if (a.isPrimary) {
+          await ConversationRepository.addPrimaryMessage(
+            client,
+            workspaceId,
+            a.conversationId,
+            messageId,
+            message.authorId
+          )
+        } else {
+          await ConversationRepository.addSecondaryMessage(client, workspaceId, a.conversationId, messageId)
+        }
+        touchedConversationIds.add(a.conversationId)
       }
 
       // Apply completeness updates.

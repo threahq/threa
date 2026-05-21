@@ -3,8 +3,8 @@
  *
  * Tests verify:
  * 1. CRUD operations work correctly
- * 2. Message and participant associations are derived from
- *    conversation_message_assignments
+ * 2. Message and participant associations live in the arrays on the
+ *    conversations row; addPrimaryMessage / addSecondaryMessage / etc maintain them.
  * 3. Status filtering works
  */
 
@@ -14,7 +14,7 @@ import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { ConversationRepository, ConversationMessageAssignmentRepository } from "../../src/features/conversations"
+import { ConversationRepository } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
@@ -104,13 +104,7 @@ describe("ConversationRepository", () => {
           status: ConversationStatuses.ACTIVE,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convId,
-          messageId: msgId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
 
         return ConversationRepository.findById(client, convId)
       })
@@ -311,13 +305,7 @@ describe("ConversationRepository", () => {
           workspaceId: testWorkspaceId,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convId,
-          messageId: msgId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
       })
 
       const conversations = await withTransaction(pool, async (client) => {
@@ -445,13 +433,7 @@ describe("ConversationRepository", () => {
           workspaceId: testWorkspaceId,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convId,
-          messageId: msg1Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msg1Id, testUserId)
       })
 
       const originalConv = await withTransaction(pool, async (client) => {
@@ -462,13 +444,7 @@ describe("ConversationRepository", () => {
       await new Promise((r) => setTimeout(r, 10))
 
       const updated = await withTransaction(pool, async (client) => {
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convId,
-          messageId: msg2Id,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msg2Id, testUserId)
         await ConversationRepository.bumpActivity(client, convId)
         return ConversationRepository.findById(client, convId)
       })
@@ -501,13 +477,7 @@ describe("ConversationRepository", () => {
           workspaceId: testWorkspaceId,
         })
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convId,
-          messageId: msgId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, user2UserId)
 
         return ConversationRepository.findById(client, convId)
       })
@@ -608,21 +578,19 @@ describe("ConversationRepository", () => {
     })
   })
 
-  describe("exactly-one-primary deferred constraint", () => {
-    test("transient secondary-only state during a transaction commits successfully when a primary is added", async () => {
+  describe("primary/secondary array maintenance", () => {
+    test("addPrimaryMessage promotes a secondary entry in place (clears it from secondary_message_ids)", async () => {
       const convId = conversationId()
       const msgId = messageId()
 
-      // Should succeed: secondary inserted first, primary inserted second, both
-      // in the same transaction. The deferred trigger only checks at COMMIT.
-      await withTransaction(pool, async (client) => {
+      const conversation = await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(400),
           authorId: testUserId,
           authorType: "user",
-          ...testMessageContent("Multi-step assignment message"),
+          ...testMessageContent("Promotion test message"),
         })
 
         await ConversationRepository.insert(client, {
@@ -631,65 +599,74 @@ describe("ConversationRepository", () => {
           workspaceId: testWorkspaceId,
         })
 
-        await ConversationMessageAssignmentRepository.assignSecondary(client, {
-          conversationId: convId,
-          messageId: msgId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "secondary",
-        })
+        await ConversationRepository.addSecondaryMessage(client, testWorkspaceId, convId, msgId)
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
 
-        await ConversationMessageAssignmentRepository.assignPrimary(client, {
-          conversationId: convId,
-          messageId: msgId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          reason: "initial",
-        })
+        return ConversationRepository.findById(client, convId)
       })
 
-      const assignments = await withTransaction(pool, async (client) => {
-        return ConversationMessageAssignmentRepository.findByMessageId(client, msgId)
-      })
-
-      // The (conv, msg) pair existed first as secondary; assignPrimary promoted
-      // it in place via ON CONFLICT DO UPDATE.
-      expect(assignments.length).toBe(1)
-      expect(assignments[0].isPrimary).toBe(true)
+      expect(conversation?.messageIds).toEqual([msgId])
+      expect(conversation?.secondaryMessageIds).toEqual([])
     })
 
-    test("transaction commit fails when a message ends up with only secondary assignments", async () => {
+    test("addSecondaryMessage is a no-op when the message is already in message_ids", async () => {
       const convId = conversationId()
       const msgId = messageId()
 
-      await expect(
-        withTransaction(pool, async (client) => {
-          await MessageRepository.insert(client, {
-            id: msgId,
-            streamId: testStreamId,
-            sequence: BigInt(401),
-            authorId: testUserId,
-            authorType: "user",
-            ...testMessageContent("Secondary-only message"),
-          })
-
-          await ConversationRepository.insert(client, {
-            id: convId,
-            streamId: testStreamId,
-            workspaceId: testWorkspaceId,
-          })
-
-          // Only a secondary — no primary will exist at COMMIT, so the
-          // deferred constraint trigger must abort.
-          await ConversationMessageAssignmentRepository.assignSecondary(client, {
-            conversationId: convId,
-            messageId: msgId,
-            streamId: testStreamId,
-            workspaceId: testWorkspaceId,
-            reason: "secondary",
-          })
+      const conversation = await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(401),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Already-primary message"),
         })
-      ).rejects.toThrow(/exactly one primary/i)
+
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+        await ConversationRepository.addSecondaryMessage(client, testWorkspaceId, convId, msgId)
+
+        return ConversationRepository.findById(client, convId)
+      })
+
+      expect(conversation?.messageIds).toEqual([msgId])
+      expect(conversation?.secondaryMessageIds).toEqual([])
+    })
+
+    test("removePrimaryMessage strips the message but leaves participantIds intact", async () => {
+      const convId = conversationId()
+      const msgId = messageId()
+
+      const conversation = await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(402),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Removable message"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+        await ConversationRepository.removePrimaryMessage(client, testWorkspaceId, convId, msgId)
+
+        return ConversationRepository.findById(client, convId)
+      })
+
+      expect(conversation?.messageIds).toEqual([])
+      expect(conversation?.participantIds).toEqual([testUserId])
     })
   })
 
