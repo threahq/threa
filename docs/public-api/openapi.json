@@ -944,10 +944,7 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
-                  "runtimeKind": {
-                    "type": "string",
-                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
-                  },
+                  "runtimeKind": { "type": "string", "const": "pi-local" },
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
@@ -1089,10 +1086,8 @@
                             "promptMarkdown": { "type": "string" },
                             "authorUserId": { "type": "string" },
                             "mentionedActorSlugs": { "type": "array", "items": { "type": "string" } },
-                            "claimToken": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
-                            "claimExpiresAt": {
-                              "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
-                            },
+                            "claimToken": { "type": "string" },
+                            "claimExpiresAt": { "type": "string", "format": "date-time" },
                             "runtimeSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
                           },
                           "required": [
