@@ -162,48 +162,19 @@ Two new event kinds, plus retention of the existing two:
 
 Frontend conv stores (TanStack Query caches) subscribe to these and patch their local `messageIds` arrays on receipt. Per the cache-only observer pattern, the bootstrap fetch for a conv returns its message IDs as a flat array (primary-only by default; secondary memberships exposed via a separate field on `Conversation`). INV-53 holds: socket subscriptions paired with bootstrap, bootstrap invalidated on resubscribe.
 
-## Sub-PR Sequencing
+## Implementation as a Single PR
 
-Each step lands independently green. No flag gymnastics — each PR cuts over the relevant slice fully and the next PR builds on it.
+The user-base is small enough that strangler-fig dual-writes buy us nothing — the cost of a bad rollout is one revert, not a fleet of stuck clients. So this lands as one PR.
 
-### PR-1 — Types and join table, no behavior change
+Order of work inside that PR (also the natural commit order if we want bisect granularity):
 
-**Scope:** schema + types only. No service or extractor logic touched.
-
-- Add `cma_` prefix to `apps/backend/src/lib/id.ts` and `conversationMessageAssignmentId()` helper.
-- Migration: create `conversation_message_assignments`, indexes, backfill from existing `conversations.message_ids` (one row per pair, `is_primary = TRUE`, `reason = 'initial'`).
-- New `ConversationMessageAssignmentRepository` in `apps/backend/src/features/conversations/` with the read methods needed for downstream PRs (`findByMessageId`, `findPrimaryByConversation`, `findByConversation` with `includeSecondary` flag).
-- Update `packages/types/src/conversation.ts` with new `MessageAssignment` and event payload types. Do not yet wire frontend.
-- Unit tests for the repo. No service changes, no extractor changes.
-
-### PR-2 — Service writes to join table alongside the array
-
-**Scope:** dual-write. Reads still come from `conversations.message_ids`. Reassignment not yet implemented.
-
-- `BoundaryExtractionService.processMessage` writes both the existing `conversations.message_ids` array update AND a `conversation_message_assignments` row (`is_primary = TRUE, reason = 'initial'`) in the same transaction.
-- No `ExtractionResult` shape change yet — extractor still returns a single `conversationId`.
-- E2E test: after a message lands, the join table row exists, primary, matches the array.
-
-### PR-3 — Extractor multi-assignment + reassignment, threads go through LLM
-
-**Scope:** the actual product change. Single PR because the extractor schema, prompt, service consumer, and thread path are tightly coupled.
-
-- Update `ExtractionResult`, `ExtractionContext`, `extractionResponseSchema`, and `BOUNDARY_EXTRACTION_PROMPT` together.
-- Update `LLMBoundaryExtractor.extract` to consume the new schema. Delete the `handleThreadMessage` short-circuit; threads pass through the LLM with `parentMessageConversations` surfaced in `activeConversations`. (`handleThreadMessage` becomes the bootstrap path only for the very first thread message, where there are no active convs and no parent conv yet — keep that one tiny fallback.)
-- Update stub extractor.
-- Service Phase 3 implements assignment loop and reassignment loop with the validators described above. Emit `conversation:message_assigned` and `conversation:message_reassigned` outbox events.
-- Backfill audit: after deploy, re-run `scripts/analyze-conversation-boundaries.ts` on a sample of streams and confirm sandwich / premature-resolved counts drop.
-- E2E coverage: cross-topic single message → two assignments. Topic-revealed-late case → reassignment of prior message. Thread root continues parent topic → secondary assignment to parent conv.
-
-### PR-4 — Reads cut over, drop arrays
-
-**Scope:** read paths use the join table; `conversations.message_ids` and `participant_ids` go away.
-
-- Replace `ConversationRepository.findByMessageId`, `findByMessageIds`, etc. with join-table-backed equivalents.
-- Update the conversation API response shape: `messageIds` becomes primary-only by default with an optional `secondaryMessageIds` field (or surface secondaries via a separate endpoint).
-- Frontend: handle the new shape, subscribe to `conversation:message_assigned` and `conversation:message_reassigned`.
-- Migration: drop `conversations.message_ids` and `conversations.participant_ids` columns. (Participant set becomes a derived view: distinct authors of messages assigned to the conv.)
-- Run the audit script one more time post-deploy to baseline the new world.
+1. **Schema + ID prefix.** Add `cma_` to `apps/backend/src/lib/id.ts`. New migration creates `conversation_message_assignments` + indexes, backfills one row per `(conv, message)` from `conversations.message_ids` (`is_primary = TRUE, reason = 'initial'`), and drops the `message_ids` / `participant_ids` columns on `conversations` in the same migration.
+2. **Repo + types.** New `ConversationMessageAssignmentRepository`. Update `ConversationRepository` — remove array-based methods (`addMessage`, `addParticipant`, `findByMessageId(s)` array form), replace with join-table-backed equivalents. Update `packages/types/src/conversation.ts` (new `MessageAssignment`, event payloads, conv shape no longer has `messageIds`/`participantIds`).
+3. **Extractor.** Update `ExtractionContext`, `ExtractionResult`, `extractionResponseSchema`, `BOUNDARY_EXTRACTION_PROMPT`, stub extractor, and `LLMBoundaryExtractor.extract` together. `handleThreadMessage` shrinks to cold-start only (no active convs + no parent conv).
+4. **Service.** `BoundaryExtractionService.processMessage` Phase 1 builds `reassignmentCandidates`; Phase 3 runs the multi-assignment + reassignment loops with validators; emits the new outbox events.
+5. **Frontend.** Conv store reads new shape (`messageIds` now derived from primary assignments; `secondaryMessageIds` optional). Subscribe to `conversation:message_assigned` and `conversation:message_reassigned`.
+6. **Tests.** Repo unit tests, extractor unit tests (multi-assign, reassignment, thread parent secondary), service E2E (cross-topic split, late reveal triggering reassignment, thread root secondary on parent).
+7. **Audit.** Re-run `scripts/analyze-conversation-boundaries.ts` on a sample of streams after deploy to baseline.
 
 ## Out of Scope
 
@@ -217,7 +188,7 @@ Each step lands independently green. No flag gymnastics — each PR cuts over th
 - **INV-1** (no FKs): respected; the join table has no FKs.
 - **INV-2** (prefixed ULIDs): new `cma_` prefix.
 - **INV-8** (workspace scoping): join table carries `workspace_id`.
-- **INV-17** (append-only migrations): PR-1 and PR-4 each add a new migration; nothing edits existing files.
+- **INV-17** (append-only migrations): one new migration; nothing edits existing files.
 - **INV-20** (race-safe writes): primary-assignment upsert uses partial unique index + `ON CONFLICT`.
 - **INV-41** (no conn during AI): unchanged; three-phase pattern preserved.
 - **INV-51 / INV-52** (feature colocation, barrel exports): new repo and types live in `features/conversations/`, exported via `index.ts`.
@@ -225,7 +196,7 @@ Each step lands independently green. No flag gymnastics — each PR cuts over th
 
 ## Open Questions
 
-None blocking PR-1. To revisit before PR-3 ships:
+To resolve during implementation:
 
 1. **Confidence on reassignments.** Should each reassignment carry its own confidence number, or do we just trust the overall call's confidence? Leaning: per-reassignment confidence, stored on the assignment row, used by the audit script to spot low-confidence moves.
-2. **Participant denorm.** If we drop `conversations.participant_ids`, do any read paths need an indexed `conversation_participants` view, or is a `SELECT DISTINCT author_id ... JOIN assignments` query fast enough at the scale we expect per conv (<200 messages, usually <10 authors)?
+2. **Participant denorm.** With `conversations.participant_ids` gone, do read paths need an indexed `conversation_participants` view, or is a `SELECT DISTINCT author_id ... JOIN assignments JOIN messages` query fast enough at expected per-conv scale (<200 messages, usually <10 authors)? Default to the JOIN query; revisit if the audit shows it's hot.
