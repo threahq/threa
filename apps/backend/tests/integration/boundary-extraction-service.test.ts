@@ -479,6 +479,249 @@ describe("BoundaryExtractionService", () => {
     })
   })
 
+  describe("reassignment", () => {
+    test("moves an earlier message to a different existing conversation without aborting the transaction", async () => {
+      const convAId = conversationId()
+      const convBId = conversationId()
+      const msg1Id = messageId()
+      const msg2Id = messageId()
+      const msg3Id = messageId()
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msg1Id,
+          streamId: testStreamId,
+          sequence: BigInt(300),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Topic A start"),
+        })
+        await MessageRepository.insert(client, {
+          id: msg2Id,
+          streamId: testStreamId,
+          sequence: BigInt(301),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Maybe topic A, maybe topic B"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convAId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Topic A",
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convAId,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convAId,
+          messageId: msg2Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convBId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Topic B",
+        })
+
+        await MessageRepository.insert(client, {
+          id: msg3Id,
+          streamId: testStreamId,
+          sequence: BigInt(302),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Definitely topic B, and so was the ambiguous earlier one"),
+        })
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [{ conversationId: convBId, isPrimary: true }],
+        confidence: 0.9,
+        reassignments: [
+          {
+            messageId: msg2Id,
+            toConversationId: convBId,
+            reason: "Earlier ambiguous message now clearly belongs to topic B",
+            confidence: 0.85,
+          },
+        ],
+      })
+
+      const result = await service.processMessage(msg3Id, testStreamId, testWorkspaceId)
+
+      expect(result?.id).toBe(convBId)
+      expect(result?.messageIds).toEqual(expect.arrayContaining([msg2Id, msg3Id]))
+
+      const convA = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findById(client, convAId)
+      })
+      expect(convA?.messageIds).toEqual([msg1Id])
+      expect(convA?.messageIds).not.toContain(msg2Id)
+    })
+
+    test("moves an earlier message into a freshly created conversation", async () => {
+      const convAId = conversationId()
+      const msg1Id = messageId()
+      const msg2Id = messageId()
+      const msg3Id = messageId()
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msg1Id,
+          streamId: testStreamId,
+          sequence: BigInt(400),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Initial"),
+        })
+        await MessageRepository.insert(client, {
+          id: msg2Id,
+          streamId: testStreamId,
+          sequence: BigInt(401),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Pivot point"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convAId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Existing topic",
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convAId,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convAId,
+          messageId: msg2Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+
+        await MessageRepository.insert(client, {
+          id: msg3Id,
+          streamId: testStreamId,
+          sequence: BigInt(402),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Clearly a new topic, and the pivot was its start"),
+        })
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [{ conversationId: null, isPrimary: true }],
+        newConversationTopic: "New topic from pivot",
+        confidence: 0.88,
+        reassignments: [
+          {
+            messageId: msg2Id,
+            toConversationId: null,
+            reason: "Pivot belongs to the new conversation",
+          },
+        ],
+      })
+
+      const result = await service.processMessage(msg3Id, testStreamId, testWorkspaceId)
+
+      expect(result).not.toBeNull()
+      expect(result?.id).not.toBe(convAId)
+      expect(result?.messageIds).toEqual(expect.arrayContaining([msg2Id, msg3Id]))
+
+      const convA = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findById(client, convAId)
+      })
+      expect(convA?.messageIds).toEqual([msg1Id])
+    })
+
+    test("emits conversation:message_reassigned outbox event", async () => {
+      const convAId = conversationId()
+      const convBId = conversationId()
+      const msg1Id = messageId()
+      const msg2Id = messageId()
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msg1Id,
+          streamId: testStreamId,
+          sequence: BigInt(500),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Was assigned to A"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convAId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convAId,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convBId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+
+        await MessageRepository.insert(client, {
+          id: msg2Id,
+          streamId: testStreamId,
+          sequence: BigInt(501),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("New message reveals msg1 belonged in B"),
+        })
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [{ conversationId: convBId, isPrimary: true }],
+        confidence: 0.9,
+        reassignments: [
+          {
+            messageId: msg1Id,
+            toConversationId: convBId,
+            reason: "Belonged in B all along",
+          },
+        ],
+      })
+
+      await service.processMessage(msg2Id, testStreamId, testWorkspaceId)
+
+      const reassignedEvents = await withTransaction(pool, async (client) => {
+        const res = await client.query<{
+          payload: { messageId: string; fromConversationId: string; toConversationId: string }
+        }>(`SELECT payload FROM outbox WHERE event_type = 'conversation:message_reassigned'`)
+        return res.rows
+      })
+
+      expect(reassignedEvents.length).toBeGreaterThan(0)
+      const payload = reassignedEvents[0].payload
+      expect(payload.messageId).toBe(msg1Id)
+      expect(payload.fromConversationId).toBe(convAId)
+      expect(payload.toConversationId).toBe(convBId)
+    })
+  })
+
   describe("scratchpad handling", () => {
     test("skips extractor for scratchpad streams", async () => {
       const localStreamId = streamId()

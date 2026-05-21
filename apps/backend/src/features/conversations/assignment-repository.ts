@@ -62,22 +62,36 @@ export const ConversationMessageAssignmentRepository = {
   /**
    * Set the primary conversation for a message.
    *
-   * Two-step write inside the caller's transaction:
-   *   1. UPSERT this (conv, message) row to is_primary=TRUE via ON CONFLICT on
-   *      the (conversation_id, message_id) unique index. If the pair already
-   *      exists as a secondary, it is promoted in place.
-   *   2. Delete any OTHER primary row for this message in a different
-   *      conversation, so the partial unique index `(message_id) WHERE is_primary`
-   *      stays satisfied.
+   * Must run inside the caller's transaction — otherwise step 1 and step 2 can
+   * be interleaved by a concurrent reader.
    *
-   * Race safety (INV-20): both indices are honored under concurrent writes.
-   * A concurrent `assignSecondary` racing between the two steps either lands
-   * before step 1 (where it gets promoted) or fails the (conv, message)
-   * conflict and is no-oped by its own ON CONFLICT DO NOTHING. A concurrent
-   * `assignPrimary` for the same message in a different conversation races on
-   * step 2 — last writer wins, exactly one primary survives per message.
+   * Two-step write:
+   *   1. DELETE any existing primary row for this message in a DIFFERENT
+   *      conversation. This frees the partial unique index `(message_id)
+   *      WHERE is_primary` so step 2's promotion doesn't collide.
+   *   2. UPSERT this (conv, message) row to is_primary=TRUE via ON CONFLICT
+   *      on the (conversation_id, message_id) unique index. If the pair
+   *      already exists as a secondary, it is promoted in place; if it
+   *      doesn't exist, a fresh row is inserted.
+   *
+   * Race safety (INV-20):
+   * - A concurrent `assignSecondary(B, M)` racing with `assignPrimary(B, M)`:
+   *   either the secondary lands first (and step 2 promotes it via ON CONFLICT
+   *   DO UPDATE) or it lands after step 2 and no-ops on its `ON CONFLICT DO
+   *   NOTHING`. Either way, exactly one (B, M) row exists, with is_primary=TRUE.
+   * - Two concurrent `assignPrimary(X, M)` calls for different conversations
+   *   serialize on the partial unique index: one transaction commits first, the
+   *   second sees the committed primary, step 1 deletes it, step 2 inserts the
+   *   new primary. The partial index is never simultaneously violated.
    */
   async assignPrimary(db: Querier, params: AssignParams): Promise<ConversationMessageAssignment> {
+    await db.query(sql`
+      DELETE FROM conversation_message_assignments
+      WHERE message_id = ${params.messageId}
+        AND conversation_id <> ${params.conversationId}
+        AND is_primary
+    `)
+
     const result = await db.query<AssignmentRow>(sql`
       INSERT INTO conversation_message_assignments (
         id, workspace_id, conversation_id, message_id, stream_id,
@@ -101,13 +115,6 @@ export const ConversationMessageAssignmentRepository = {
         confidence = EXCLUDED.confidence,
         assigned_at = NOW()
       RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
-
-    await db.query(sql`
-      DELETE FROM conversation_message_assignments
-      WHERE message_id = ${params.messageId}
-        AND conversation_id <> ${params.conversationId}
-        AND is_primary
     `)
 
     return mapRow(result.rows[0])
@@ -168,6 +175,16 @@ export const ConversationMessageAssignmentRepository = {
       LIMIT 1
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /** Primary assignments for any of the given messages. At most one per message (partial unique index). */
+  async findPrimariesByMessageIds(db: Querier, messageIds: string[]): Promise<ConversationMessageAssignment[]> {
+    if (messageIds.length === 0) return []
+    const result = await db.query<AssignmentRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversation_message_assignments
+      WHERE message_id = ANY(${messageIds}::text[]) AND is_primary
+    `)
+    return result.rows.map(mapRow)
   },
 
   /** All assignments belonging to a conversation, ordered by assigned_at. */

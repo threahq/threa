@@ -266,14 +266,25 @@ export class BoundaryExtractionService {
       // was in Phase 1's surrounding/thread window and that `toConversationId`
       // is in `validUpdateTargets` (or null when a new conversation was created).
       const reassignmentMessageIds = validReassignmentMessageIds ?? new Set<string>()
-      for (const r of decision.reassignments) {
-        if (!reassignmentMessageIds.has(r.messageId)) {
-          logger.warn(
-            { messageId: r.messageId, streamId },
-            "Reassignment targets a message outside the extraction window - skipping"
+      const candidateReassignments = decision.reassignments.filter((r) => reassignmentMessageIds.has(r.messageId))
+      const skippedOutOfWindow = decision.reassignments.length - candidateReassignments.length
+      if (skippedOutOfWindow > 0) {
+        logger.warn(
+          { skipped: skippedOutOfWindow, streamId },
+          "Dropped reassignments targeting messages outside the extraction window"
+        )
+      }
+
+      const existingPrimariesByMessageId = new Map(
+        (
+          await ConversationMessageAssignmentRepository.findPrimariesByMessageIds(
+            client,
+            candidateReassignments.map((r) => r.messageId)
           )
-          continue
-        }
+        ).map((p) => [p.messageId, p])
+      )
+
+      for (const r of candidateReassignments) {
         let toConvId: string
         if (r.toConversationId === null) {
           if (!newConversation) {
@@ -294,10 +305,7 @@ export class BoundaryExtractionService {
           continue
         }
 
-        const existingPrimary = await ConversationMessageAssignmentRepository.findPrimaryByMessageId(
-          client,
-          r.messageId
-        )
+        const existingPrimary = existingPrimariesByMessageId.get(r.messageId)
         if (!existingPrimary) {
           logger.warn({ messageId: r.messageId }, "Reassignment target message has no existing primary - skipping")
           continue
@@ -312,7 +320,7 @@ export class BoundaryExtractionService {
         await ConversationMessageAssignmentRepository.assignPrimary(client, {
           conversationId: toConvId,
           messageId: r.messageId,
-          streamId,
+          streamId: existingPrimary.streamId,
           workspaceId,
           reason: "reassigned",
           confidence: r.confidence ?? decision.confidence,

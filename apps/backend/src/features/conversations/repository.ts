@@ -302,7 +302,7 @@ export const ConversationRepository = {
   },
 
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
-    await db.query(sql`
+    const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
         id, stream_id, workspace_id,
         topic_summary, completeness_score, confidence, status, parent_conversation_id
@@ -317,12 +317,15 @@ export const ConversationRepository = {
         ${params.status ?? "active"},
         ${params.parentConversationId ?? null}
       )
+      RETURNING
+        id, stream_id, workspace_id,
+        topic_summary, completeness_score, confidence, status, parent_conversation_id,
+        last_activity_at, created_at, updated_at,
+        ARRAY[]::TEXT[] AS message_ids,
+        ARRAY[]::TEXT[] AS participant_ids,
+        ARRAY[]::TEXT[] AS secondary_message_ids
     `)
-    const fetched = await this.findById(db, params.id)
-    if (!fetched) {
-      throw new Error(`Failed to fetch conversation ${params.id} after insert`)
-    }
-    return fetched
+    return mapRowToConversation(result.rows[0])
   },
 
   async update(db: Querier, id: string, params: UpdateConversationParams): Promise<Conversation | null> {
@@ -358,14 +361,46 @@ export const ConversationRepository = {
     updates.push(`updated_at = NOW()`)
     values.push(id)
 
+    // UPDATE + LATERAL aggregate in a single round-trip via CTE.
     const query = `
-      UPDATE conversations
-      SET ${updates.join(", ")}
-      WHERE id = $${paramIndex}
+      WITH updated AS (
+        UPDATE conversations
+        SET ${updates.join(", ")}
+        WHERE id = $${paramIndex}
+        RETURNING
+          id, stream_id, workspace_id,
+          topic_summary, completeness_score, confidence, status, parent_conversation_id,
+          last_activity_at, created_at, updated_at
+      )
+      SELECT
+        u.id, u.stream_id, u.workspace_id,
+        u.topic_summary, u.completeness_score, u.confidence, u.status, u.parent_conversation_id,
+        u.last_activity_at, u.created_at, u.updated_at,
+        agg.message_ids, agg.participant_ids, agg.secondary_message_ids
+      FROM updated u
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(
+            array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE cma.is_primary),
+            ARRAY[]::TEXT[]
+          ) AS message_ids,
+          COALESCE(
+            array_agg(DISTINCT m.author_id) FILTER (WHERE cma.is_primary AND m.author_id IS NOT NULL),
+            ARRAY[]::TEXT[]
+          ) AS participant_ids,
+          COALESCE(
+            array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE NOT cma.is_primary),
+            ARRAY[]::TEXT[]
+          ) AS secondary_message_ids
+        FROM conversation_message_assignments cma
+        LEFT JOIN messages m ON m.id = cma.message_id
+        WHERE cma.conversation_id = u.id
+      ) agg ON TRUE
     `
 
-    await db.query(query, values)
-    return this.findById(db, id)
+    const result = await db.query<ConversationRow>(query, values)
+    if (!result.rows[0]) return null
+    return mapRowToConversation(result.rows[0])
   },
 
   /**
