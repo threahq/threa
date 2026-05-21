@@ -893,7 +893,7 @@ export async function startServer(): Promise<ServerInstance> {
   const attachmentEmbeddingHandler = new AttachmentEmbeddingHandler(pool, jobQueue)
   const systemMessageOutboxHandler = new SystemMessageOutboxHandler(pool, systemMessageService)
   const activityFeedHandler = new ActivityFeedHandler(pool, activityService)
-  const botInvocationOutboxHandler = new BotInvocationOutboxHandler(pool)
+  const botInvocationOutboxHandler = new BotInvocationOutboxHandler(pool, eventService)
   const pushNotificationHandler = pushService.isEnabled()
     ? new PushNotificationHandler({ pool: pools.realtime, pushService })
     : null

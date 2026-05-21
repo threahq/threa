@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import { AuthorTypes, StreamTypes, botHasCapability } from "@threa/types"
+import { parseMarkdown } from "@threa/prosemirror"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
@@ -7,6 +8,7 @@ import { StreamRepository } from "../streams"
 import { BotRepository } from "../public-api/bot-repository"
 import { BotRuntimeService } from "./service"
 import { BotRuntimeSessionLinkRepository, StreamActiveActorRepository } from "./repository"
+import { EventService } from "../messaging"
 
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -29,10 +31,12 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private readonly cursorLock: CursorLock
   private readonly debouncer: DebounceWithMaxWait
   private readonly service: BotRuntimeService
+  private readonly eventService: EventService
 
-  constructor(pool: Pool) {
+  constructor(pool: Pool, eventService = new EventService(pool)) {
     this.pool = pool
     this.service = new BotRuntimeService({ pool })
+    this.eventService = eventService
     this.cursorLock = new CursorLock({
       pool,
       listenerId: this.listenerId,
@@ -93,7 +97,12 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return
 
     const mentionedSlugs = extractMentionSlugs(message.event.payload.contentMarkdown)
-    const mentionedBots = await BotRepository.findBySlugs(this.pool, message.workspaceId, mentionedSlugs)
+    const mentionedBots = await BotRepository.findVisibleBySlugs(
+      this.pool,
+      message.workspaceId,
+      message.event.actorId,
+      mentionedSlugs
+    )
     const explicitMentionableBot = mentionedBots.some((mentionedBot) => botHasCapability(mentionedBot, "mentionable"))
     if (explicitMentionableBot && bot.slug != null && !mentionedSlugs.includes(bot.slug)) return
 
@@ -111,7 +120,16 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
         activeStreamId: rootStream.id,
       })
     }
-    if (!link) return
+    if (!link) {
+      await this.createMissingLinkNotice({
+        workspaceId: message.workspaceId,
+        streamId: stream.id,
+        botName: bot.name,
+        rootStreamId: rootStream.id,
+        sourceMessageId: message.event.payload.messageId,
+      })
+      return
+    }
 
     await this.service.createInvocation({
       workspaceId: message.workspaceId,
@@ -128,6 +146,26 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       targetInstanceId: link.instanceId,
       targetRuntimeSessionId: link.runtimeSessionId,
       metadata: {},
+    })
+  }
+
+  private async createMissingLinkNotice(params: {
+    workspaceId: string
+    streamId: string
+    botName: string
+    rootStreamId: string
+    sourceMessageId: string
+  }): Promise<void> {
+    const contentMarkdown = `**${params.botName} is not linked to this scratchpad.** Run \`/remote-control\` in Pi to link a session.`
+    await this.eventService.createMessage({
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      authorId: AuthorTypes.SYSTEM,
+      authorType: AuthorTypes.SYSTEM,
+      contentJson: parseMarkdown(contentMarkdown),
+      contentMarkdown,
+      clientMessageId: `bot-runtime-unlinked:${params.rootStreamId}:${params.sourceMessageId}`,
+      metadata: { "bot_runtime.notice": "missing_session_link" },
     })
   }
 }
