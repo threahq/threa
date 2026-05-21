@@ -440,8 +440,16 @@ export interface Conversation {
   id: string
   streamId: string
   workspaceId: string
+  /** Message IDs whose primary conversation is this one, ordered by assignment time. */
   messageIds: string[]
+  /** Distinct authors of the primary-assigned messages. */
   participantIds: string[]
+  /**
+   * Message IDs that are also assigned to this conversation but whose primary
+   * lives elsewhere. Used for cross-conversation retrieval / memory; not surfaced
+   * in chronological views.
+   */
+  secondaryMessageIds: string[]
   topicSummary: string | null
   completenessScore: number
   confidence: number

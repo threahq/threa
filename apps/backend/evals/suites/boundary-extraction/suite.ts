@@ -84,7 +84,7 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
   return {
     newMessage: toMessage(input.newMessage, streamId, 1),
     recentMessages: (input.recentMessages || []).map((m, i) => toMessage(m, streamId, i + 2)),
-    activeConversations: input.activeConversations || [],
+    activeConversations: (input.activeConversations || []).map((c) => ({ ...c, contextMessageIds: [] })),
     streamType: input.streamType || "scratchpad",
     workspaceId,
   }
@@ -102,10 +102,18 @@ async function runBoundaryExtractionTask(
 
   try {
     const result = await extractor.extract(extractionContext)
+    // validateResult guarantees exactly one primary; fail loudly (INV-11) if
+    // that contract breaks (zero OR multiple) rather than silently using the
+    // first primary and masking a multi-primary regression.
+    const primaries = result.assignments.filter((a) => a.isPrimary)
+    if (primaries.length !== 1) {
+      throw new Error(`Extractor returned ${primaries.length} primary assignments, expected exactly 1`)
+    }
+    const primary = primaries[0]
 
     return {
       input,
-      conversationId: result.conversationId,
+      conversationId: primary.conversationId,
       newConversationTopic: result.newConversationTopic,
       completenessUpdates: result.completenessUpdates,
       confidence: result.confidence,

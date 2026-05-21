@@ -3,9 +3,9 @@
  *
  * Tests verify:
  * 1. CRUD operations work correctly
- * 2. Message and participant associations work
+ * 2. Message and participant associations live in the arrays on the
+ *    conversations row; addPrimaryMessage / addSecondaryMessage / etc maintain them.
  * 3. Status filtering works
- * 4. Array operations (addMessage, addParticipant) behave correctly
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
@@ -14,7 +14,7 @@ import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { ConversationRepository, type Conversation } from "../../src/features/conversations"
+import { ConversationRepository } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
@@ -80,7 +80,7 @@ describe("ConversationRepository", () => {
       expect(conversation.parentConversationId).toBeNull()
     })
 
-    test("creates conversation with all fields", async () => {
+    test("creates conversation with all fields and derives messageIds/participantIds from assignments", async () => {
       const convId = conversationId()
       const msgId = messageId()
 
@@ -94,26 +94,28 @@ describe("ConversationRepository", () => {
           ...testMessageContent("Test message"),
         })
 
-        return ConversationRepository.insert(client, {
+        await ConversationRepository.insert(client, {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msgId],
-          participantIds: [testUserId],
           topicSummary: "Discussion about testing",
           completenessScore: 3,
           confidence: 0.85,
           status: ConversationStatuses.ACTIVE,
         })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+
+        return ConversationRepository.findById(client, convId)
       })
 
-      expect(conversation.id).toBe(convId)
-      expect(conversation.messageIds).toEqual([msgId])
-      expect(conversation.participantIds).toEqual([testUserId])
-      expect(conversation.topicSummary).toBe("Discussion about testing")
-      expect(conversation.completenessScore).toBe(3)
-      expect(conversation.confidence).toBe(0.85)
-      expect(conversation.status).toBe(ConversationStatuses.ACTIVE)
+      expect(conversation?.id).toBe(convId)
+      expect(conversation?.messageIds).toEqual([msgId])
+      expect(conversation?.participantIds).toEqual([testUserId])
+      expect(conversation?.topicSummary).toBe("Discussion about testing")
+      expect(conversation?.completenessScore).toBe(3)
+      expect(conversation?.confidence).toBe(0.85)
+      expect(conversation?.status).toBe(ConversationStatuses.ACTIVE)
     })
   })
 
@@ -301,12 +303,13 @@ describe("ConversationRepository", () => {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msgId],
         })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
       })
 
       const conversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findByMessageId(client, msgId)
+        return ConversationRepository.findByMessageId(client, testWorkspaceId, msgId)
       })
 
       expect(conversations.some((c) => c.id === convId)).toBe(true)
@@ -314,7 +317,7 @@ describe("ConversationRepository", () => {
 
     test("returns empty array when message not in any conversation", async () => {
       const conversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findByMessageId(client, "msg_orphan")
+        return ConversationRepository.findByMessageId(client, testWorkspaceId, "msg_orphan")
       })
 
       expect(conversations).toEqual([])
@@ -357,7 +360,7 @@ describe("ConversationRepository", () => {
       })
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, convId, {
+        return ConversationRepository.update(client, testWorkspaceId, convId, {
           completenessScore: 6,
           status: ConversationStatuses.RESOLVED,
         })
@@ -380,7 +383,7 @@ describe("ConversationRepository", () => {
       })
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, convId, {
+        return ConversationRepository.update(client, testWorkspaceId, convId, {
           topicSummary: "Updated topic",
         })
       })
@@ -390,7 +393,7 @@ describe("ConversationRepository", () => {
 
     test("returns null for non-existent conversation", async () => {
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, "conv_nonexistent", {
+        return ConversationRepository.update(client, testWorkspaceId, "conv_nonexistent", {
           completenessScore: 5,
         })
       })
@@ -399,8 +402,8 @@ describe("ConversationRepository", () => {
     })
   })
 
-  describe("addMessage", () => {
-    test("appends message to conversation and updates lastActivityAt", async () => {
+  describe("assignments + bumpActivity", () => {
+    test("derives messageIds from assignments and bumpActivity updates lastActivityAt", async () => {
       const convId = conversationId()
       const msg1Id = messageId()
       const msg2Id = messageId()
@@ -428,8 +431,9 @@ describe("ConversationRepository", () => {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg1Id],
         })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msg1Id, testUserId)
       })
 
       const originalConv = await withTransaction(pool, async (client) => {
@@ -440,57 +444,229 @@ describe("ConversationRepository", () => {
       await new Promise((r) => setTimeout(r, 10))
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.addMessage(client, convId, msg2Id)
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msg2Id, testUserId)
+        await ConversationRepository.bumpActivityForIds(client, testWorkspaceId, [convId])
+        return ConversationRepository.findById(client, convId)
       })
 
       expect(updated?.messageIds).toEqual([msg1Id, msg2Id])
       expect(updated?.lastActivityAt.getTime()).toBeGreaterThan(originalConv!.lastActivityAt.getTime())
     })
-  })
 
-  describe("addParticipant", () => {
-    test("adds new participant to conversation", async () => {
+    test("participantIds is derived from message authors", async () => {
       const convId = conversationId()
+      const msgId = messageId()
       const user2WorkosId = userId()
       let user2UserId = ""
 
-      await withTransaction(pool, async (client) => {
+      const conversation = await withTransaction(pool, async (client) => {
         user2UserId = (await addTestMember(client, testWorkspaceId, user2WorkosId)).id
 
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(300),
+          authorId: user2UserId,
+          authorType: "user",
+          ...testMessageContent("Participant-deriving message"),
+        })
+
         await ConversationRepository.insert(client, {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          participantIds: [testUserId],
         })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, user2UserId)
+
+        return ConversationRepository.findById(client, convId)
       })
 
-      const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.addParticipant(client, convId, user2UserId)
-      })
-
-      expect(updated?.participantIds).toContain(testUserId)
-      expect(updated?.participantIds).toContain(user2UserId)
+      expect(conversation?.participantIds).toEqual([user2UserId])
     })
+  })
 
-    test("does not duplicate existing participant", async () => {
-      const convId = conversationId()
+  describe("workspace scoping (INV-8)", () => {
+    test("findByIds filters out conversations from other workspaces", async () => {
+      const otherWorkspaceId = workspaceId()
+      const otherUserId = userId()
+      const otherStreamId = streamId()
+      const ownConvId = conversationId()
+      const otherConvId = conversationId()
 
       await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: otherWorkspaceId,
+          name: "Other Workspace",
+          slug: `other-ws-${otherWorkspaceId}`,
+          createdBy: otherUserId,
+        })
+        const otherMember = await addTestMember(client, otherWorkspaceId, otherUserId)
+        await StreamRepository.insert(client, {
+          id: otherStreamId,
+          workspaceId: otherWorkspaceId,
+          type: "scratchpad",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: otherMember.id,
+        })
+
+        await ConversationRepository.insert(client, {
+          id: ownConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.insert(client, {
+          id: otherConvId,
+          streamId: otherStreamId,
+          workspaceId: otherWorkspaceId,
+        })
+      })
+
+      const ownResult = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findByIds(client, testWorkspaceId, [ownConvId, otherConvId])
+      })
+
+      // Only the own-workspace conv comes back even though both IDs were requested.
+      expect(ownResult.map((c) => c.id)).toEqual([ownConvId])
+    })
+
+    test("update returns null when conversation belongs to a different workspace", async () => {
+      const otherWorkspaceId = workspaceId()
+      const otherUserId = userId()
+      const otherStreamId = streamId()
+      const foreignConvId = conversationId()
+
+      await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: otherWorkspaceId,
+          name: "Foreign Workspace",
+          slug: `foreign-ws-${otherWorkspaceId}`,
+          createdBy: otherUserId,
+        })
+        const otherMember = await addTestMember(client, otherWorkspaceId, otherUserId)
+        await StreamRepository.insert(client, {
+          id: otherStreamId,
+          workspaceId: otherWorkspaceId,
+          type: "scratchpad",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: otherMember.id,
+        })
+
+        await ConversationRepository.insert(client, {
+          id: foreignConvId,
+          streamId: otherStreamId,
+          workspaceId: otherWorkspaceId,
+          topicSummary: "Foreign topic",
+        })
+      })
+
+      const result = await withTransaction(pool, async (client) => {
+        return ConversationRepository.update(client, testWorkspaceId, foreignConvId, {
+          topicSummary: "Hijacked topic",
+        })
+      })
+
+      expect(result).toBeNull()
+
+      // And the foreign conversation row is untouched.
+      const foreignConv = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findById(client, foreignConvId)
+      })
+      expect(foreignConv?.topicSummary).toBe("Foreign topic")
+    })
+  })
+
+  describe("primary/secondary array maintenance", () => {
+    test("addPrimaryMessage promotes a secondary entry in place (clears it from secondary_message_ids)", async () => {
+      const convId = conversationId()
+      const msgId = messageId()
+
+      const conversation = await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(400),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Promotion test message"),
+        })
+
         await ConversationRepository.insert(client, {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          participantIds: [testUserId],
         })
+
+        await ConversationRepository.addSecondaryMessage(client, testWorkspaceId, convId, msgId)
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+
+        return ConversationRepository.findById(client, convId)
       })
 
-      const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.addParticipant(client, convId, testUserId)
+      expect(conversation?.messageIds).toEqual([msgId])
+      expect(conversation?.secondaryMessageIds).toEqual([])
+    })
+
+    test("addSecondaryMessage is a no-op when the message is already in message_ids", async () => {
+      const convId = conversationId()
+      const msgId = messageId()
+
+      const conversation = await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(401),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Already-primary message"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+        await ConversationRepository.addSecondaryMessage(client, testWorkspaceId, convId, msgId)
+
+        return ConversationRepository.findById(client, convId)
       })
 
-      // Should still only have one instance of the user
-      expect(updated?.participantIds.filter((id) => id === testUserId).length).toBe(1)
+      expect(conversation?.messageIds).toEqual([msgId])
+      expect(conversation?.secondaryMessageIds).toEqual([])
+    })
+
+    test("removePrimaryMessage strips the message but leaves participantIds intact", async () => {
+      const convId = conversationId()
+      const msgId = messageId()
+
+      const conversation = await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(402),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Removable message"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msgId, testUserId)
+        await ConversationRepository.removePrimaryMessage(client, testWorkspaceId, convId, msgId)
+
+        return ConversationRepository.findById(client, convId)
+      })
+
+      expect(conversation?.messageIds).toEqual([])
+      expect(conversation?.participantIds).toEqual([testUserId])
     })
   })
 

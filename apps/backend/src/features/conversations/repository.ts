@@ -5,8 +5,6 @@ interface ConversationRow {
   id: string
   stream_id: string
   workspace_id: string
-  message_ids: string[]
-  participant_ids: string[]
   topic_summary: string | null
   completeness_score: number
   confidence: number
@@ -15,11 +13,23 @@ interface ConversationRow {
   last_activity_at: Date
   created_at: Date
   updated_at: Date
+  message_ids: string[]
+  participant_ids: string[]
+  secondary_message_ids: string[]
 }
 
 /**
- * Internal backend type with native Date objects.
- * The wire type in @threa/types uses ISO 8601 strings for JSON serialization.
+ * Internal backend type with native Date objects. The wire type in @threa/types
+ * uses ISO 8601 strings for JSON serialization.
+ *
+ * `messageIds` lists the messages whose PRIMARY conversation is this one,
+ * preserved in insertion order. `secondaryMessageIds` lists messages that also
+ * appear in this conversation but whose primary lives elsewhere (cross-topic
+ * references). `participantIds` are the distinct authors of `messageIds`.
+ *
+ * All three are stored as Postgres TEXT[] arrays on the conversation row; the
+ * service is the sole writer and uses row-level locking on the message row to
+ * keep concurrent calls from duplicating membership.
  */
 export interface Conversation {
   id: string
@@ -27,6 +37,7 @@ export interface Conversation {
   workspaceId: string
   messageIds: string[]
   participantIds: string[]
+  secondaryMessageIds: string[]
   topicSummary: string | null
   completenessScore: number
   confidence: number
@@ -41,8 +52,6 @@ export interface InsertConversationParams {
   id: string
   streamId: string
   workspaceId: string
-  messageIds?: string[]
-  participantIds?: string[]
   topicSummary?: string
   completenessScore?: number
   confidence?: number
@@ -51,8 +60,6 @@ export interface InsertConversationParams {
 }
 
 export interface UpdateConversationParams {
-  messageIds?: string[]
-  participantIds?: string[]
   topicSummary?: string
   completenessScore?: number
   confidence?: number
@@ -67,6 +74,7 @@ function mapRowToConversation(row: ConversationRow): Conversation {
     workspaceId: row.workspace_id,
     messageIds: row.message_ids,
     participantIds: row.participant_ids,
+    secondaryMessageIds: row.secondary_message_ids,
     topicSummary: row.topic_summary,
     completenessScore: row.completeness_score,
     confidence: row.confidence,
@@ -79,18 +87,33 @@ function mapRowToConversation(row: ConversationRow): Conversation {
 }
 
 const SELECT_FIELDS = `
-  id, stream_id, workspace_id, message_ids, participant_ids,
+  id, stream_id, workspace_id,
+  message_ids, participant_ids, secondary_message_ids,
   topic_summary, completeness_score, confidence, status, parent_conversation_id,
   last_activity_at, created_at, updated_at
 `
 
 export const ConversationRepository = {
   async findById(db: Querier, id: string): Promise<Conversation | null> {
-    const result = await db.query<ConversationRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations WHERE id = ${id}`
-    )
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations WHERE id = ${id}
+    `)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
+  },
+
+  /**
+   * Batch lookup; returns conversations in arbitrary order. Workspace-scoped
+   * (INV-8) — rows from other workspaces are filtered out at the query level
+   * even if the caller passes IDs from the wrong workspace.
+   */
+  async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Conversation[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
+    `)
+    return result.rows.map(mapRowToConversation)
   },
 
   async findByStream(
@@ -121,7 +144,8 @@ export const ConversationRepository = {
 
   /**
    * Find conversations in a stream AND in any child threads of that stream.
-   * Child threads are streams where parent_message_id belongs to a message in the given stream.
+   * Child threads are streams where parent_message_id belongs to a message in
+   * the given stream.
    */
   async findByStreamIncludingThreads(
     db: Querier,
@@ -167,37 +191,80 @@ export const ConversationRepository = {
   },
 
   async findActiveByStream(db: Querier, streamId: string, limit = 50): Promise<Conversation[]> {
-    const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE stream_id = ${streamId} AND status = 'active'
-      ORDER BY last_activity_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(mapRowToConversation)
+    return this.findByStream(db, streamId, { status: "active", limit })
   },
 
-  async findByMessageId(db: Querier, messageId: string): Promise<Conversation[]> {
+  /**
+   * Conversations that contain a specific message (primary or secondary).
+   * Workspace-scoped (INV-8). Uses the two GIN indexes on `message_ids` and
+   * `secondary_message_ids`.
+   */
+  async findByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<Conversation[]> {
     const result = await db.query<ConversationRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE ${messageId} = ANY(message_ids)
+      WHERE workspace_id = ${workspaceId}
+        AND (message_ids @> ARRAY[${messageId}]::text[] OR secondary_message_ids @> ARRAY[${messageId}]::text[])
       ORDER BY last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
   },
 
   /**
-   * Find conversations that contain any of the given message IDs.
-   * Returns unique conversations, deduplicated by ID.
+   * Find conversations that contain any of the given message IDs (primary or
+   * secondary). Returns unique conversations. Workspace-scoped (INV-8).
    */
-  async findByMessageIds(db: Querier, messageIds: string[]): Promise<Conversation[]> {
+  async findByMessageIds(db: Querier, workspaceId: string, messageIds: string[]): Promise<Conversation[]> {
     if (messageIds.length === 0) return []
-
     const result = await db.query<ConversationRow>(sql`
-      SELECT DISTINCT ON (id) ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE message_ids && ${messageIds}
-      ORDER BY id, last_activity_at DESC
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND (message_ids && ${messageIds}::text[] OR secondary_message_ids && ${messageIds}::text[])
+      ORDER BY last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
+  },
+
+  /**
+   * Find the conversation that owns a message as PRIMARY (`message_ids`),
+   * workspace-scoped. There can be at most one — enforced by the service, not
+   * the database — so this returns a single row or null.
+   */
+  async findPrimaryByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<Conversation | null> {
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND message_ids @> ARRAY[${messageId}]::text[]
+      LIMIT 1
+    `)
+    if (!result.rows[0]) return null
+    return mapRowToConversation(result.rows[0])
+  },
+
+  /**
+   * Batch variant: returns a Map keyed by message_id of the conversation that
+   * owns that message as primary. Missing keys → no primary. Workspace-scoped.
+   *
+   * The LATERAL unnest pairs each (message_id, conversation) row DB-side so
+   * the Map is built in a single pass — no JS re-scan of message_ids arrays.
+   */
+  async findPrimariesByMessageIds(
+    db: Querier,
+    workspaceId: string,
+    messageIds: string[]
+  ): Promise<Map<string, Conversation>> {
+    if (messageIds.length === 0) return new Map()
+    const result = await db.query<ConversationRow & { matched_message_id: string }>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}, m.message_id AS matched_message_id
+      FROM conversations c
+      CROSS JOIN LATERAL unnest(c.message_ids) AS m(message_id)
+      WHERE c.workspace_id = ${workspaceId}
+        AND m.message_id = ANY(${messageIds}::text[])
+    `)
+    const byMessageId = new Map<string, Conversation>()
+    for (const row of result.rows) {
+      byMessageId.set(row.matched_message_id, mapRowToConversation(row))
+    }
+    return byMessageId
   },
 
   async findByWorkspace(
@@ -229,15 +296,13 @@ export const ConversationRepository = {
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
-        id, stream_id, workspace_id, message_ids, participant_ids,
+        id, stream_id, workspace_id,
         topic_summary, completeness_score, confidence, status, parent_conversation_id
       )
       VALUES (
         ${params.id},
         ${params.streamId},
         ${params.workspaceId},
-        ${params.messageIds ?? []},
-        ${params.participantIds ?? []},
         ${params.topicSummary ?? null},
         ${params.completenessScore ?? 1},
         ${params.confidence ?? 0.5},
@@ -249,19 +314,21 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
-  async update(db: Querier, id: string, params: UpdateConversationParams): Promise<Conversation | null> {
+  /**
+   * Workspace-scoped update (INV-8). The UPDATE filters by workspace_id so a
+   * misrouted conversation ID from a different workspace silently no-ops rather
+   * than writing into another tenant's data.
+   */
+  async update(
+    db: Querier,
+    workspaceId: string,
+    id: string,
+    params: UpdateConversationParams
+  ): Promise<Conversation | null> {
     const updates: string[] = []
     const values: unknown[] = []
     let paramIndex = 1
 
-    if (params.messageIds !== undefined) {
-      updates.push(`message_ids = $${paramIndex++}`)
-      values.push(params.messageIds)
-    }
-    if (params.participantIds !== undefined) {
-      updates.push(`participant_ids = $${paramIndex++}`)
-      values.push(params.participantIds)
-    }
     if (params.topicSummary !== undefined) {
       updates.push(`topic_summary = $${paramIndex++}`)
       values.push(params.topicSummary)
@@ -284,16 +351,25 @@ export const ConversationRepository = {
     }
 
     if (updates.length === 0) {
-      return this.findById(db, id)
+      // No-op update still goes through the workspace-scoped read so a
+      // cross-workspace lookup returns null instead of leaking the row.
+      const result = await db.query<ConversationRow>(sql`
+        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+        WHERE workspace_id = ${workspaceId} AND id = ${id}
+      `)
+      if (!result.rows[0]) return null
+      return mapRowToConversation(result.rows[0])
     }
 
     updates.push(`updated_at = NOW()`)
-    values.push(id)
+    values.push(id, workspaceId)
+    const idParamIndex = paramIndex++
+    const workspaceParamIndex = paramIndex
 
     const query = `
       UPDATE conversations
       SET ${updates.join(", ")}
-      WHERE id = $${paramIndex}
+      WHERE id = $${idParamIndex} AND workspace_id = $${workspaceParamIndex}
       RETURNING ${SELECT_FIELDS}
     `
 
@@ -302,32 +378,96 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
-  async addMessage(db: Querier, id: string, messageId: string): Promise<Conversation | null> {
-    const result = await db.query<ConversationRow>(sql`
+  /**
+   * Append a message to `message_ids` (primary membership) and also add the
+   * author to `participant_ids` if not already present. Idempotent: appending
+   * a message_id that's already present is a no-op.
+   *
+   * Also clears the message from `secondary_message_ids` if it was there —
+   * a message can be either primary or secondary in a given conversation, not
+   * both.
+   *
+   * Workspace-scoped (INV-8). Caller is responsible for ensuring any prior
+   * primary membership in another conversation has been removed first
+   * (`removePrimaryMessage`), otherwise the message will appear in two
+   * `message_ids` arrays and the "exactly one primary" invariant breaks.
+   */
+  async addPrimaryMessage(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageId: string,
+    authorId: string | null
+  ): Promise<void> {
+    await db.query(sql`
       UPDATE conversations
-      SET message_ids = array_append(message_ids, ${messageId}),
-          last_activity_at = NOW(),
+      SET message_ids =
+            CASE WHEN message_ids @> ARRAY[${messageId}]::text[]
+                 THEN message_ids
+                 ELSE array_append(message_ids, ${messageId}) END,
+          participant_ids =
+            CASE WHEN ${authorId}::text IS NULL OR participant_ids @> ARRAY[${authorId}]::text[]
+                 THEN participant_ids
+                 ELSE array_append(participant_ids, ${authorId}) END,
+          secondary_message_ids = array_remove(secondary_message_ids, ${messageId}),
           updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING ${sql.raw(SELECT_FIELDS)}
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
     `)
-    if (!result.rows[0]) return null
-    return mapRowToConversation(result.rows[0])
   },
 
-  async addParticipant(db: Querier, id: string, participantId: string): Promise<Conversation | null> {
-    const result = await db.query<ConversationRow>(sql`
+  /**
+   * Append a message to `secondary_message_ids` (cross-topic reference). The
+   * message's primary lives in another conversation. Idempotent and a no-op if
+   * the message is already in this conversation's `message_ids` (would be a
+   * downgrade — service must not request it).
+   */
+  async addSecondaryMessage(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<void> {
+    await db.query(sql`
       UPDATE conversations
-      SET participant_ids = CASE
-            WHEN ${participantId} = ANY(participant_ids) THEN participant_ids
-            ELSE array_append(participant_ids, ${participantId})
-          END,
+      SET secondary_message_ids =
+            CASE WHEN message_ids @> ARRAY[${messageId}]::text[]
+                  OR secondary_message_ids @> ARRAY[${messageId}]::text[]
+                 THEN secondary_message_ids
+                 ELSE array_append(secondary_message_ids, ${messageId}) END,
           updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING ${sql.raw(SELECT_FIELDS)}
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
     `)
-    if (!result.rows[0]) return null
-    return mapRowToConversation(result.rows[0])
+  },
+
+  /**
+   * Remove a message from a conversation's `message_ids` (primary membership).
+   * Used by reassignment to clear the old home before adding to the new one.
+   * Note: `participant_ids` is NOT recomputed — author may still have other
+   * messages in this conversation. Recompute via `recomputeParticipants` if
+   * the caller wants strict bookkeeping.
+   */
+  async removePrimaryMessage(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET message_ids = array_remove(message_ids, ${messageId}),
+          updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /** Bump last_activity_at on many conversations in one round-trip. Workspace-scoped (INV-8). */
+  async bumpActivityForIds(db: Querier, workspaceId: string, ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    await db.query(sql`
+      UPDATE conversations
+      SET last_activity_at = NOW(), updated_at = NOW()
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
+    `)
   },
 
   async delete(db: Querier, id: string): Promise<boolean> {

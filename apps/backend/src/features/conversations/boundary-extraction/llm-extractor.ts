@@ -2,7 +2,7 @@ import { NoObjectGeneratedError } from "ai"
 import type { AI } from "../../../lib/ai/ai"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "./types"
+import type { BoundaryExtractor, ExtractionContext, ExtractionResult, MessageAssignment, Reassignment } from "./types"
 import type { Message } from "../../messaging"
 import { logger } from "../../../lib/logger"
 import { StreamTypes } from "@threa/types"
@@ -20,8 +20,19 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   ) {}
 
   async extract(context: ExtractionContext): Promise<ExtractionResult> {
-    if (context.streamType === StreamTypes.THREAD) {
-      return this.handleThreadMessage(context)
+    // Cold-start: a thread with no active conversation and no parent message
+    // conversation. There's nothing for the LLM to consider, so just create a
+    // new conversation deterministically.
+    if (
+      context.streamType === StreamTypes.THREAD &&
+      context.activeConversations.length === 0 &&
+      (!context.parentMessageConversations || context.parentMessageConversations.length === 0)
+    ) {
+      return {
+        assignments: [{ conversationId: null, isPrimary: true }],
+        newConversationTopic: this.truncateAsTopic(context.newMessage),
+        confidence: 1.0,
+      }
     }
 
     const config = await this.configResolver.resolve(COMPONENT_PATHS.BOUNDARY_EXTRACTION)
@@ -41,6 +52,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
           metadata: {
             streamType: context.streamType,
             activeConversationCount: context.activeConversations.length,
+            parentConversationCount: context.parentMessageConversations?.length ?? 0,
           },
         },
         context: { workspaceId: context.workspaceId, origin: "system" },
@@ -57,7 +69,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
           "LLM returned unparseable response, treating as new conversation"
         )
         return {
-          conversationId: null,
+          assignments: [{ conversationId: null, isPrimary: true }],
           newConversationTopic: this.truncateAsTopic(context.newMessage),
           confidence: 0.5,
         }
@@ -66,48 +78,28 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
     }
   }
 
-  private handleThreadMessage(context: ExtractionContext): ExtractionResult {
-    // First priority: join existing thread conversation (if there are already messages in this thread)
-    const existingThreadConv = context.activeConversations[0]
-    if (existingThreadConv) {
-      return {
-        conversationId: existingThreadConv.id,
-        confidence: 1.0,
-      }
-    }
-
-    // Second priority: join the parent message's conversation (thread continues parent's conversation)
-    const parentConv = context.parentMessageConversations?.[0]
-    if (parentConv) {
-      return {
-        conversationId: parentConv.id,
-        confidence: 1.0,
-      }
-    }
-
-    // Fallback: create new conversation (parent message wasn't in a conversation yet)
-    return {
-      conversationId: null,
-      newConversationTopic: this.truncateAsTopic(context.newMessage),
-      confidence: 1.0,
-    }
-  }
-
   private buildPrompt(context: ExtractionContext): string {
+    const allConvs = [
+      ...(context.parentMessageConversations ?? []).map((c) => ({ ...c, isParent: true })),
+      ...context.activeConversations.map((c) => ({ ...c, isParent: false })),
+    ]
+
     const convSection =
-      context.activeConversations.length > 0
-        ? context.activeConversations
-            .map(
-              (c) =>
-                `- ${c.id}: "${c.topicSummary ?? "No topic yet"}" (${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length})`
-            )
+      allConvs.length > 0
+        ? allConvs
+            .map((c) => {
+              const tag = c.isParent ? " [parent-thread]" : ""
+              const contextIds =
+                c.contextMessageIds.length > 0 ? `, in-context messages: [${c.contextMessageIds.join(", ")}]` : ""
+              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})`
+            })
             .join("\n")
         : "No active conversations in this stream yet."
 
     const recentSection = context.recentMessages
       .map(
         (m) =>
-          `[${m.authorType}:${m.authorId.slice(-8)}]: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
+          `[${m.id}] ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
       )
       .join("\n")
 
@@ -118,26 +110,108 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   }
 
   private validateResult(parsed: ExtractionResponse, context: ExtractionContext): ExtractionResult {
-    // Validate that the returned conversation ID actually exists
-    if (parsed.conversationId && !this.isValidConversationId(parsed.conversationId, context)) {
-      logger.warn({ parsedId: parsed.conversationId }, "LLM returned invalid conversation ID, treating as new")
+    const validConvIds = new Set([
+      ...context.activeConversations.map((c) => c.id),
+      ...(context.parentMessageConversations ?? []).map((c) => c.id),
+    ])
+
+    // Filter assignments to only valid conversation IDs (or null for new).
+    const validAssignments: MessageAssignment[] = []
+    for (const a of parsed.assignments) {
+      if (a.conversationId !== null && !validConvIds.has(a.conversationId)) {
+        logger.warn({ parsedId: a.conversationId }, "LLM returned invalid conversation ID in assignment - dropping")
+        continue
+      }
+      validAssignments.push({ conversationId: a.conversationId, isPrimary: a.isPrimary })
+    }
+
+    // Need at least one assignment with isPrimary=true. If nothing valid came back,
+    // or no primary was set, treat as a new conversation.
+    let primaryCount = validAssignments.filter((a) => a.isPrimary).length
+    if (validAssignments.length === 0 || primaryCount === 0) {
+      logger.warn(
+        { rawAssignments: parsed.assignments, validCount: validAssignments.length },
+        "LLM returned no valid primary assignment, treating as new conversation"
+      )
       return {
-        conversationId: null,
-        newConversationTopic: parsed.newConversationTopic || this.truncateAsTopic(context.newMessage),
+        assignments: [{ conversationId: null, isPrimary: true }],
+        newConversationTopic: parsed.newConversationTopic ?? this.truncateAsTopic(context.newMessage),
+        reassignments: undefined,
+        completenessUpdates: parsed.completenessUpdates ?? undefined,
         confidence: parsed.confidence,
       }
     }
 
+    // If more than one primary came back, keep the first and demote the rest.
+    if (primaryCount > 1) {
+      let seenPrimary = false
+      for (const a of validAssignments) {
+        if (a.isPrimary) {
+          if (seenPrimary) a.isPrimary = false
+          else seenPrimary = true
+        }
+      }
+      primaryCount = 1
+    }
+
+    // Validate reassignments: messageId must be in scope; toConversationId must be
+    // a valid existing conv OR null (when this call creates a new conv).
+    // buildPrompt exposes both active AND parent-thread contextMessageIds to the
+    // model, so both must be reassignable — otherwise a valid thread-flow move
+    // (e.g. "this thread message belongs to the parent's conversation") would be
+    // silently dropped here.
+    const candidateMessageIds = new Set<string>()
+    for (const m of context.recentMessages) candidateMessageIds.add(m.id)
+    for (const c of context.activeConversations) {
+      for (const id of c.contextMessageIds) candidateMessageIds.add(id)
+    }
+    for (const c of context.parentMessageConversations ?? []) {
+      for (const id of c.contextMessageIds) candidateMessageIds.add(id)
+    }
+    candidateMessageIds.delete(context.newMessage.id)
+
+    const hasNewConv = validAssignments.some((a) => a.conversationId === null)
+
+    const validReassignments: Reassignment[] = []
+    for (const r of parsed.reassignments ?? []) {
+      if (!candidateMessageIds.has(r.messageId)) {
+        logger.warn({ messageId: r.messageId }, "LLM tried to reassign a message outside the candidate set - dropping")
+        continue
+      }
+      if (r.toConversationId !== null && !validConvIds.has(r.toConversationId)) {
+        logger.warn(
+          { toConversationId: r.toConversationId },
+          "LLM tried to reassign to an unknown conversation - dropping"
+        )
+        continue
+      }
+      if (r.toConversationId === null && !hasNewConv) {
+        logger.warn(
+          { messageId: r.messageId },
+          "LLM tried to reassign to new conversation but no new conversation was created - dropping"
+        )
+        continue
+      }
+      validReassignments.push({
+        messageId: r.messageId,
+        toConversationId: r.toConversationId,
+        reason: r.reason,
+        confidence: r.confidence ?? undefined,
+      })
+    }
+
+    const hasNullAssignment = validAssignments.some((a) => a.conversationId === null)
+    const newConversationTopic = hasNullAssignment
+      ? (parsed.newConversationTopic ?? this.truncateAsTopic(context.newMessage))
+      : undefined
+
     return {
-      conversationId: parsed.conversationId,
-      newConversationTopic: parsed.newConversationTopic ?? undefined,
+      assignments: validAssignments,
+      newConversationTopic,
+      reassignments: validReassignments.length > 0 ? validReassignments : undefined,
       completenessUpdates: parsed.completenessUpdates ?? undefined,
       confidence: parsed.confidence,
     }
-  }
-
-  private isValidConversationId(id: string, context: ExtractionContext): boolean {
-    return context.activeConversations.some((c) => c.id === id)
   }
 
   private truncateAsTopic(message: Message): string {
@@ -148,14 +222,12 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       return text
     }
 
-    // Find last space before the limit to avoid cutting mid-word
-    // Reserve 1 char for ellipsis, so look for space before position 99
+    // Find last space before the limit to avoid cutting mid-word.
     const lastSpace = text.lastIndexOf(" ", 99)
     if (lastSpace > 20) {
       return text.slice(0, lastSpace) + "…"
     }
 
-    // No good word boundary found, just truncate at 99 + ellipsis = 100 total
     return text.slice(0, 99) + "…"
   }
 }

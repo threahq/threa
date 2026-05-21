@@ -17,6 +17,8 @@ export type {
   ExtractionResult,
   ConversationSummary,
   CompletenessUpdate,
+  MessageAssignment,
+  Reassignment,
 } from "./boundary-extraction/types"
 export {
   BOUNDARY_EXTRACTION_MODEL_ID,

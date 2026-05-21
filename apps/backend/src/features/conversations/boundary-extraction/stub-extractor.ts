@@ -4,19 +4,22 @@ import { StreamTypes } from "@threa/types"
 
 /**
  * Stub boundary extractor for CI/test environments where the LLM API is not available.
- * Always creates new conversations for scratchpad/channel messages.
- * For thread messages, joins existing conversation or creates a new one.
+ *
+ * - Threads with an existing conversation: join it as primary.
+ * - Threads with only a parent conversation: join the parent as primary.
+ * - Everything else: create a new conversation.
+ *
+ * Does not emit reassignments (no LLM judgement available).
  */
 export class StubBoundaryExtractor implements BoundaryExtractor {
   async extract(context: ExtractionContext): Promise<ExtractionResult> {
     logger.debug({ messageId: context.newMessage.id }, "Using stub boundary extractor")
 
-    // Thread handling is deterministic - no LLM needed
     if (context.streamType === StreamTypes.THREAD) {
       const existingConv = context.activeConversations[0]
       if (existingConv) {
         return {
-          conversationId: existingConv.id,
+          assignments: [{ conversationId: existingConv.id, isPrimary: true }],
           confidence: 1.0,
         }
       }
@@ -24,16 +27,14 @@ export class StubBoundaryExtractor implements BoundaryExtractor {
       const parentConv = context.parentMessageConversations?.[0]
       if (parentConv) {
         return {
-          conversationId: parentConv.id,
+          assignments: [{ conversationId: parentConv.id, isPrimary: true }],
           confidence: 1.0,
         }
       }
     }
 
-    // For non-thread messages, always create a new conversation
-    // This is a simplification for testing - real extractor uses LLM to group messages
     return {
-      conversationId: null,
+      assignments: [{ conversationId: null, isPrimary: true }],
       newConversationTopic: this.extractTopic(context.newMessage.contentMarkdown),
       confidence: 1.0,
     }
