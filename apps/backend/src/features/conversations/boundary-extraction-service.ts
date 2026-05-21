@@ -276,13 +276,15 @@ export class BoundaryExtractionService {
 
       // INV-20 race safety: lock the message rows we're about to (re)assign so
       // two concurrent boundary extractions can't both write the same message
-      // into two different conversations. The (workspace_id, id) ANY clause
-      // matches the messages PK predicate and serializes per-message-id without
-      // taking a wider lock.
+      // into two different conversations. Scoping is intentionally on id only
+      // — `messages.id` is the PK, and the id set comes from
+      // validReassignmentMessageIds (already filtered against the messages we
+      // just queried in this stream and its threads), so there's no
+      // cross-tenant exposure to guard against here.
       const lockMessageIds = [messageId, ...candidateReassignments.map((r) => r.messageId)]
       await client.query(sql`
         SELECT id FROM messages
-        WHERE workspace_id = ${workspaceId} AND id = ANY(${lockMessageIds}::text[])
+        WHERE id = ANY(${lockMessageIds}::text[])
         FOR UPDATE
       `)
 
