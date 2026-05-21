@@ -122,8 +122,9 @@ async function main() {
             c.completeness_score, c.confidence, c.status, c.parent_conversation_id,
             c.last_activity_at, c.created_at,
             COALESCE(
-              (SELECT array_agg(cma.message_id ORDER BY cma.assigned_at)
+              (SELECT array_agg(cma.message_id ORDER BY m.sequence)
                FROM conversation_message_assignments cma
+               JOIN messages m ON m.id = cma.message_id
                WHERE cma.conversation_id = c.id AND cma.is_primary),
               ARRAY[]::TEXT[]
             ) AS message_ids,

@@ -321,7 +321,7 @@ describe("ConversationRepository", () => {
       })
 
       const conversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findByMessageId(client, msgId)
+        return ConversationRepository.findByMessageId(client, testWorkspaceId, msgId)
       })
 
       expect(conversations.some((c) => c.id === convId)).toBe(true)
@@ -329,7 +329,7 @@ describe("ConversationRepository", () => {
 
     test("returns empty array when message not in any conversation", async () => {
       const conversations = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findByMessageId(client, "msg_orphan")
+        return ConversationRepository.findByMessageId(client, testWorkspaceId, "msg_orphan")
       })
 
       expect(conversations).toEqual([])
@@ -372,7 +372,7 @@ describe("ConversationRepository", () => {
       })
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, convId, {
+        return ConversationRepository.update(client, testWorkspaceId, convId, {
           completenessScore: 6,
           status: ConversationStatuses.RESOLVED,
         })
@@ -395,7 +395,7 @@ describe("ConversationRepository", () => {
       })
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, convId, {
+        return ConversationRepository.update(client, testWorkspaceId, convId, {
           topicSummary: "Updated topic",
         })
       })
@@ -405,7 +405,7 @@ describe("ConversationRepository", () => {
 
     test("returns null for non-existent conversation", async () => {
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.update(client, "conv_nonexistent", {
+        return ConversationRepository.update(client, testWorkspaceId, "conv_nonexistent", {
           completenessScore: 5,
         })
       })
@@ -513,6 +513,183 @@ describe("ConversationRepository", () => {
       })
 
       expect(conversation?.participantIds).toEqual([user2UserId])
+    })
+  })
+
+  describe("workspace scoping (INV-8)", () => {
+    test("findByIds filters out conversations from other workspaces", async () => {
+      const otherWorkspaceId = workspaceId()
+      const otherUserId = userId()
+      const otherStreamId = streamId()
+      const ownConvId = conversationId()
+      const otherConvId = conversationId()
+
+      await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: otherWorkspaceId,
+          name: "Other Workspace",
+          slug: `other-ws-${otherWorkspaceId}`,
+          createdBy: otherUserId,
+        })
+        const otherMember = await addTestMember(client, otherWorkspaceId, otherUserId)
+        await StreamRepository.insert(client, {
+          id: otherStreamId,
+          workspaceId: otherWorkspaceId,
+          type: "scratchpad",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: otherMember.id,
+        })
+
+        await ConversationRepository.insert(client, {
+          id: ownConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.insert(client, {
+          id: otherConvId,
+          streamId: otherStreamId,
+          workspaceId: otherWorkspaceId,
+        })
+      })
+
+      const ownResult = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findByIds(client, testWorkspaceId, [ownConvId, otherConvId])
+      })
+
+      // Only the own-workspace conv comes back even though both IDs were requested.
+      expect(ownResult.map((c) => c.id)).toEqual([ownConvId])
+    })
+
+    test("update returns null when conversation belongs to a different workspace", async () => {
+      const otherWorkspaceId = workspaceId()
+      const otherUserId = userId()
+      const otherStreamId = streamId()
+      const foreignConvId = conversationId()
+
+      await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: otherWorkspaceId,
+          name: "Foreign Workspace",
+          slug: `foreign-ws-${otherWorkspaceId}`,
+          createdBy: otherUserId,
+        })
+        const otherMember = await addTestMember(client, otherWorkspaceId, otherUserId)
+        await StreamRepository.insert(client, {
+          id: otherStreamId,
+          workspaceId: otherWorkspaceId,
+          type: "scratchpad",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: otherMember.id,
+        })
+
+        await ConversationRepository.insert(client, {
+          id: foreignConvId,
+          streamId: otherStreamId,
+          workspaceId: otherWorkspaceId,
+          topicSummary: "Foreign topic",
+        })
+      })
+
+      const result = await withTransaction(pool, async (client) => {
+        return ConversationRepository.update(client, testWorkspaceId, foreignConvId, {
+          topicSummary: "Hijacked topic",
+        })
+      })
+
+      expect(result).toBeNull()
+
+      // And the foreign conversation row is untouched.
+      const foreignConv = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findById(client, foreignConvId)
+      })
+      expect(foreignConv?.topicSummary).toBe("Foreign topic")
+    })
+  })
+
+  describe("exactly-one-primary deferred constraint", () => {
+    test("transient secondary-only state during a transaction commits successfully when a primary is added", async () => {
+      const convId = conversationId()
+      const msgId = messageId()
+
+      // Should succeed: secondary inserted first, primary inserted second, both
+      // in the same transaction. The deferred trigger only checks at COMMIT.
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(400),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Multi-step assignment message"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+
+        await ConversationMessageAssignmentRepository.assignSecondary(client, {
+          conversationId: convId,
+          messageId: msgId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "secondary",
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convId,
+          messageId: msgId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+      })
+
+      const assignments = await withTransaction(pool, async (client) => {
+        return ConversationMessageAssignmentRepository.findByMessageId(client, msgId)
+      })
+
+      // The (conv, msg) pair existed first as secondary; assignPrimary promoted
+      // it in place via ON CONFLICT DO UPDATE.
+      expect(assignments.length).toBe(1)
+      expect(assignments[0].isPrimary).toBe(true)
+    })
+
+    test("transaction commit fails when a message ends up with only secondary assignments", async () => {
+      const convId = conversationId()
+      const msgId = messageId()
+
+      await expect(
+        withTransaction(pool, async (client) => {
+          await MessageRepository.insert(client, {
+            id: msgId,
+            streamId: testStreamId,
+            sequence: BigInt(401),
+            authorId: testUserId,
+            authorType: "user",
+            ...testMessageContent("Secondary-only message"),
+          })
+
+          await ConversationRepository.insert(client, {
+            id: convId,
+            streamId: testStreamId,
+            workspaceId: testWorkspaceId,
+          })
+
+          // Only a secondary — no primary will exist at COMMIT, so the
+          // deferred constraint trigger must abort.
+          await ConversationMessageAssignmentRepository.assignSecondary(client, {
+            conversationId: convId,
+            messageId: msgId,
+            streamId: testStreamId,
+            workspaceId: testWorkspaceId,
+            reason: "secondary",
+          })
+        })
+      ).rejects.toThrow(/exactly one primary/i)
     })
   })
 

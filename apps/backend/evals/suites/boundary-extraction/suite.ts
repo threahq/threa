@@ -102,11 +102,16 @@ async function runBoundaryExtractionTask(
 
   try {
     const result = await extractor.extract(extractionContext)
-    const primary = result.assignments.find((a) => a.isPrimary) ?? result.assignments[0]
+    // validateResult guarantees exactly one primary; fail loudly (INV-11) if
+    // that contract breaks rather than silently using assignments[0].
+    const primary = result.assignments.find((a) => a.isPrimary)
+    if (!primary) {
+      throw new Error("Extractor returned no primary assignment")
+    }
 
     return {
       input,
-      conversationId: primary?.conversationId ?? null,
+      conversationId: primary.conversationId,
       newConversationTopic: result.newConversationTopic,
       completenessUpdates: result.completenessUpdates,
       confidence: result.confidence,

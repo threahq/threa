@@ -139,14 +139,18 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
-  /** Batch lookup; returns conversations in arbitrary order. */
-  async findByIds(db: Querier, ids: string[]): Promise<Conversation[]> {
+  /**
+   * Batch lookup; returns conversations in arbitrary order.
+   * Workspace-scoped (INV-8) — rows from other workspaces are filtered out at
+   * the query level even if the caller passes IDs from the wrong workspace.
+   */
+  async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<Conversation[]> {
     if (ids.length === 0) return []
     const result = await db.query<ConversationRow>(sql`
       SELECT ${sql.raw(FULL_SELECT)}
       FROM conversations c
       ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.id = ANY(${ids}::text[])
+      WHERE c.workspace_id = ${workspaceId} AND c.id = ANY(${ids}::text[])
     `)
     return result.rows.map(mapRowToConversation)
   },
@@ -236,16 +240,20 @@ export const ConversationRepository = {
     return this.findByStream(db, streamId, { status: "active", limit })
   },
 
-  /** Conversations that contain a specific message (primary or secondary). */
-  async findByMessageId(db: Querier, messageId: string): Promise<Conversation[]> {
+  /**
+   * Conversations that contain a specific message (primary or secondary).
+   * Workspace-scoped (INV-8).
+   */
+  async findByMessageId(db: Querier, workspaceId: string, messageId: string): Promise<Conversation[]> {
     const result = await db.query<ConversationRow>(sql`
       SELECT ${sql.raw(FULL_SELECT)}
       FROM conversations c
       ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.id IN (
-        SELECT conversation_id FROM conversation_message_assignments
-        WHERE message_id = ${messageId}
-      )
+      WHERE c.workspace_id = ${workspaceId}
+        AND c.id IN (
+          SELECT conversation_id FROM conversation_message_assignments
+          WHERE message_id = ${messageId} AND workspace_id = ${workspaceId}
+        )
       ORDER BY c.last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
@@ -253,19 +261,20 @@ export const ConversationRepository = {
 
   /**
    * Find conversations that contain any of the given message IDs.
-   * Returns unique conversations.
+   * Returns unique conversations. Workspace-scoped (INV-8).
    */
-  async findByMessageIds(db: Querier, messageIds: string[]): Promise<Conversation[]> {
+  async findByMessageIds(db: Querier, workspaceId: string, messageIds: string[]): Promise<Conversation[]> {
     if (messageIds.length === 0) return []
 
     const result = await db.query<ConversationRow>(sql`
       SELECT ${sql.raw(FULL_SELECT)}
       FROM conversations c
       ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
-      WHERE c.id IN (
-        SELECT DISTINCT conversation_id FROM conversation_message_assignments
-        WHERE message_id = ANY(${messageIds}::text[])
-      )
+      WHERE c.workspace_id = ${workspaceId}
+        AND c.id IN (
+          SELECT DISTINCT conversation_id FROM conversation_message_assignments
+          WHERE message_id = ANY(${messageIds}::text[]) AND workspace_id = ${workspaceId}
+        )
       ORDER BY c.last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
@@ -328,7 +337,20 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
-  async update(db: Querier, id: string, params: UpdateConversationParams): Promise<Conversation | null> {
+  /**
+   * Workspace-scoped update (INV-8). The UPDATE CTE filters by workspace_id so a
+   * misrouted conversation ID from a different workspace silently no-ops rather
+   * than writing into another tenant's data.
+   *
+   * The LATERAL aggregate below mirrors `ASSIGNMENT_AGGREGATE_JOIN` byte-for-byte
+   * except for `c.id` → `u.id`. If you add a column to one, add it to both.
+   */
+  async update(
+    db: Querier,
+    workspaceId: string,
+    id: string,
+    params: UpdateConversationParams
+  ): Promise<Conversation | null> {
     const updates: string[] = []
     const values: unknown[] = []
     let paramIndex = 1
@@ -355,18 +377,29 @@ export const ConversationRepository = {
     }
 
     if (updates.length === 0) {
-      return this.findById(db, id)
+      // No-op update still goes through the workspace-scoped read so a
+      // cross-workspace lookup returns null instead of leaking the row.
+      const result = await db.query<ConversationRow>(sql`
+        SELECT ${sql.raw(FULL_SELECT)}
+        FROM conversations c
+        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+        WHERE c.workspace_id = ${workspaceId} AND c.id = ${id}
+      `)
+      if (!result.rows[0]) return null
+      return mapRowToConversation(result.rows[0])
     }
 
     updates.push(`updated_at = NOW()`)
-    values.push(id)
+    const idParamIndex = paramIndex++
+    const workspaceParamIndex = paramIndex
+    values.push(id, workspaceId)
 
     // UPDATE + LATERAL aggregate in a single round-trip via CTE.
     const query = `
       WITH updated AS (
         UPDATE conversations
         SET ${updates.join(", ")}
-        WHERE id = $${paramIndex}
+        WHERE id = $${idParamIndex} AND workspace_id = $${workspaceParamIndex}
         RETURNING
           id, stream_id, workspace_id,
           topic_summary, completeness_score, confidence, status, parent_conversation_id,
@@ -416,13 +449,13 @@ export const ConversationRepository = {
     `)
   },
 
-  /** Bump last_activity_at on many conversations in one round-trip. */
-  async bumpActivityForIds(db: Querier, ids: string[]): Promise<void> {
+  /** Bump last_activity_at on many conversations in one round-trip. Workspace-scoped (INV-8). */
+  async bumpActivityForIds(db: Querier, workspaceId: string, ids: string[]): Promise<void> {
     if (ids.length === 0) return
     await db.query(sql`
       UPDATE conversations
       SET last_activity_at = NOW(), updated_at = NOW()
-      WHERE id = ANY(${ids}::text[])
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
     `)
   },
 

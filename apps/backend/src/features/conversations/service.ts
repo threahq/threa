@@ -32,9 +32,9 @@ export class ConversationService {
     return conversations.map(addStalenessFields)
   }
 
-  async listByMessage(messageId: string): Promise<ConversationWithStaleness[]> {
+  async listByMessage(workspaceId: string, messageId: string): Promise<ConversationWithStaleness[]> {
     // Single query, INV-30
-    const conversations = await ConversationRepository.findByMessageId(this.pool, messageId)
+    const conversations = await ConversationRepository.findByMessageId(this.pool, workspaceId, messageId)
     return conversations.map(addStalenessFields)
   }
 

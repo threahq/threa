@@ -94,11 +94,19 @@ export class BoundaryExtractionService {
       const allContextMessages = [...surroundingMessages, ...allThreadMessages]
       const allContextMessageIds = allContextMessages.map((m) => m.id)
 
-      const relevantConversations = await ConversationRepository.findByMessageIds(client, allContextMessageIds)
+      const relevantConversations = await ConversationRepository.findByMessageIds(
+        client,
+        workspaceId,
+        allContextMessageIds
+      )
 
       let parentMessageConversations: Conversation[] = []
       if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
-        parentMessageConversations = await ConversationRepository.findByMessageId(client, stream.parentMessageId)
+        parentMessageConversations = await ConversationRepository.findByMessageId(
+          client,
+          workspaceId,
+          stream.parentMessageId
+        )
       }
 
       const contextMessageIdSet = new Set(allContextMessageIds)
@@ -175,6 +183,17 @@ export class BoundaryExtractionService {
       }
 
       const result = await this.extractor.extract(extractionContext)
+
+      // INV-11 fail-loudly invariant: validateResult guarantees ≥1 assignment with
+      // exactly one primary. If that contract is broken upstream we want a hard
+      // error here, not a silent transaction that orphans the new message.
+      const primaryCount = result.assignments.filter((a) => a.isPrimary).length
+      if (result.assignments.length === 0 || primaryCount !== 1) {
+        throw new Error(
+          `Extractor produced invalid assignments (count=${result.assignments.length}, primary=${primaryCount}) for message ${messageId}`
+        )
+      }
+
       decision = {
         assignments: result.assignments,
         newTopic: result.newConversationTopic,
@@ -347,7 +366,7 @@ export class BoundaryExtractionService {
             continue
           }
 
-          await ConversationRepository.update(client, update.conversationId, {
+          await ConversationRepository.update(client, workspaceId, update.conversationId, {
             completenessScore: update.score,
             status: update.status,
           })
@@ -359,7 +378,7 @@ export class BoundaryExtractionService {
       // and staleness reflect the activity (assignments/reassignments don't bump
       // it implicitly — that lived in the array UPDATE before).
       const touchedIds = Array.from(touchedConversationIds)
-      await ConversationRepository.bumpActivityForIds(client, touchedIds)
+      await ConversationRepository.bumpActivityForIds(client, workspaceId, touchedIds)
 
       // For thread conversations, include parent channel's stream ID for discoverability.
       let parentStreamId: string | undefined
@@ -374,7 +393,7 @@ export class BoundaryExtractionService {
       const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
       const primaryConvId = primaryAssignment?.conversationId ?? null
 
-      const touchedConversations = await ConversationRepository.findByIds(client, touchedIds)
+      const touchedConversations = await ConversationRepository.findByIds(client, workspaceId, touchedIds)
       for (const conv of touchedConversations) {
         const isNewThisCall = newConversation?.id === conv.id
         const eventType = isNewThisCall ? "conversation:created" : "conversation:updated"

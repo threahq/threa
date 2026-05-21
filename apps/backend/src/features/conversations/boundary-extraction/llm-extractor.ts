@@ -156,9 +156,16 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
     // Validate reassignments: messageId must be in scope; toConversationId must be
     // a valid existing conv OR null (when this call creates a new conv).
+    // buildPrompt exposes both active AND parent-thread contextMessageIds to the
+    // model, so both must be reassignable — otherwise a valid thread-flow move
+    // (e.g. "this thread message belongs to the parent's conversation") would be
+    // silently dropped here.
     const candidateMessageIds = new Set<string>()
     for (const m of context.recentMessages) candidateMessageIds.add(m.id)
     for (const c of context.activeConversations) {
+      for (const id of c.contextMessageIds) candidateMessageIds.add(id)
+    }
+    for (const c of context.parentMessageConversations ?? []) {
       for (const id of c.contextMessageIds) candidateMessageIds.add(id)
     }
     candidateMessageIds.delete(context.newMessage.id)
