@@ -344,255 +344,257 @@ export class EventService {
     }
   }
 
-  private async _createMessageTxn(params: CreateMessageParams): Promise<Message> {
-    return withTransaction(this.pool, async (client) => {
-      // Fast path: if a message with this clientMessageId already exists,
-      // return it without doing any writes. Handles sequential retries.
-      if (params.clientMessageId) {
-        const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
-        if (existing) return existing
+  async createMessageInTransaction(client: PoolClient, params: CreateMessageParams): Promise<Message> {
+    // Fast path: if a message with this clientMessageId already exists,
+    // return it without doing any writes. Handles sequential retries.
+    if (params.clientMessageId) {
+      const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
+      if (existing) return existing
+    }
+    const msgId = messageId()
+    const evtId = eventId()
+
+    // 0. Get stream for thread handling (metrics deferred until after conflict check)
+    const stream = await StreamRepository.findById(client, params.streamId)
+
+    // 1. Validate and prepare attachments FIRST (before creating event).
+    //    Two flavors are allowed:
+    //    - "new" (`messageId === null`): a fresh upload owned by this send.
+    //      The attachment row gets its `message_id` / `stream_id` set in
+    //      step 6 via `attachToMessage`, anchoring ownership to this message.
+    //    - "referenced" (`messageId !== null`): the message body re-uses an
+    //      attachment that already belongs to a previous message — typical
+    //      after copy-paste of a message containing `[Image #1](attachment:id)`.
+    //      Ownership stays with the original message; an
+    //      `attachment_references` row in step 6b records the pointer so
+    //      recipients of the new message can resolve download access via the
+    //      same workspace/stream gate that already covers shared messages.
+    //
+    //    Verifying the author can read the referenced attachment closes the
+    //    obvious abuse — submitting an arbitrary id from someone else's
+    //    workspace would otherwise bypass `getDownloadUrl`'s access check by
+    //    being silently summarised on the wire.
+    let attachmentSummaries: AttachmentSummary[] | undefined
+    const attachmentsToAttach: string[] = []
+    const attachmentsToReference: string[] = []
+    if (params.attachmentIds && params.attachmentIds.length > 0) {
+      const attachments = await AttachmentRepository.findByIds(client, params.attachmentIds)
+      if (attachments.length !== params.attachmentIds.length) {
+        throw new Error("Invalid attachment IDs: not all attachments were found")
       }
-      const msgId = messageId()
-      const evtId = eventId()
-
-      // 0. Get stream for thread handling (metrics deferred until after conflict check)
-      const stream = await StreamRepository.findById(client, params.streamId)
-
-      // 1. Validate and prepare attachments FIRST (before creating event).
-      //    Two flavors are allowed:
-      //    - "new" (`messageId === null`): a fresh upload owned by this send.
-      //      The attachment row gets its `message_id` / `stream_id` set in
-      //      step 6 via `attachToMessage`, anchoring ownership to this message.
-      //    - "referenced" (`messageId !== null`): the message body re-uses an
-      //      attachment that already belongs to a previous message — typical
-      //      after copy-paste of a message containing `[Image #1](attachment:id)`.
-      //      Ownership stays with the original message; an
-      //      `attachment_references` row in step 6b records the pointer so
-      //      recipients of the new message can resolve download access via the
-      //      same workspace/stream gate that already covers shared messages.
-      //
-      //    Verifying the author can read the referenced attachment closes the
-      //    obvious abuse — submitting an arbitrary id from someone else's
-      //    workspace would otherwise bypass `getDownloadUrl`'s access check by
-      //    being silently summarised on the wire.
-      let attachmentSummaries: AttachmentSummary[] | undefined
-      const attachmentsToAttach: string[] = []
-      const attachmentsToReference: string[] = []
-      if (params.attachmentIds && params.attachmentIds.length > 0) {
-        const attachments = await AttachmentRepository.findByIds(client, params.attachmentIds)
-        if (attachments.length !== params.attachmentIds.length) {
-          throw new Error("Invalid attachment IDs: not all attachments were found")
+      for (const a of attachments) {
+        if (a.workspaceId !== params.workspaceId) {
+          throw new Error("Invalid attachment IDs: must belong to this workspace")
         }
-        for (const a of attachments) {
-          if (a.workspaceId !== params.workspaceId) {
-            throw new Error("Invalid attachment IDs: must belong to this workspace")
-          }
-          if (a.safetyStatus !== AttachmentSafetyStatuses.CLEAN) {
-            throw new Error("Invalid attachment IDs: must be malware-scan clean")
-          }
-          if (a.messageId === null) {
-            attachmentsToAttach.push(a.id)
-            continue
-          }
-          // Referenced from another message — gate on the author's ability
-          // to read it via the same chain `getDownloadUrl` honours so the
-          // two paths can never disagree. Direct stream access first; the
-          // shared helper covers the share-grant + inline-reference fallback.
-          //
-          // Two flavors:
-          // 1. User authors (no `accessibleStreamIds` provided): membership
-          //    lookups keyed by `authorId`, including the share-grant fallback.
-          // 2. Persona authors (`accessibleStreamIds` provided): mirrors
-          //    `AttachmentService.getAccessible` exactly — direct set
-          //    membership, then reference-projection intersection.
-          //    `accessibleStreamIds` comes from `AgentAccessSpec` and is
-          //    scope-restricted (from a public channel only public streams,
-          //    from a private channel only that channel + public, etc.) —
-          //    NOT the invoking user's full reach. Bypassing it with a
-          //    user-id check would let agents resurface attachments the
-          //    user couldn't surface from this invocation point.
-          let accessible = false
-          if (params.accessibleStreamIds) {
-            const accessibleSet = new Set(params.accessibleStreamIds)
-            if (a.streamId && accessibleSet.has(a.streamId)) {
-              accessible = true
-            } else {
-              const refStreamIds = await AttachmentReferenceRepository.findReferencingStreamIds(
-                client,
-                params.workspaceId,
-                a.id
-              )
-              accessible = refStreamIds.some((streamId) => accessibleSet.has(streamId))
-            }
+        if (a.safetyStatus !== AttachmentSafetyStatuses.CLEAN) {
+          throw new Error("Invalid attachment IDs: must be malware-scan clean")
+        }
+        if (a.messageId === null) {
+          attachmentsToAttach.push(a.id)
+          continue
+        }
+        // Referenced from another message — gate on the author's ability
+        // to read it via the same chain `getDownloadUrl` honours so the
+        // two paths can never disagree. Direct stream access first; the
+        // shared helper covers the share-grant + inline-reference fallback.
+        //
+        // Two flavors:
+        // 1. User authors (no `accessibleStreamIds` provided): membership
+        //    lookups keyed by `authorId`, including the share-grant fallback.
+        // 2. Persona authors (`accessibleStreamIds` provided): mirrors
+        //    `AttachmentService.getAccessible` exactly — direct set
+        //    membership, then reference-projection intersection.
+        //    `accessibleStreamIds` comes from `AgentAccessSpec` and is
+        //    scope-restricted (from a public channel only public streams,
+        //    from a private channel only that channel + public, etc.) —
+        //    NOT the invoking user's full reach. Bypassing it with a
+        //    user-id check would let agents resurface attachments the
+        //    user couldn't surface from this invocation point.
+        let accessible = false
+        if (params.accessibleStreamIds) {
+          const accessibleSet = new Set(params.accessibleStreamIds)
+          if (a.streamId && accessibleSet.has(a.streamId)) {
+            accessible = true
           } else {
-            if (a.streamId) {
-              accessible = (await checkStreamAccess(client, a.streamId, params.workspaceId, params.authorId)) !== null
-            }
-            if (!accessible) {
-              accessible = await isAttachmentReadableViaShareOrReference(client, a, params.workspaceId, params.authorId)
-            }
+            const refStreamIds = await AttachmentReferenceRepository.findReferencingStreamIds(
+              client,
+              params.workspaceId,
+              a.id
+            )
+            accessible = refStreamIds.some((streamId) => accessibleSet.has(streamId))
+          }
+        } else {
+          if (a.streamId) {
+            accessible = (await checkStreamAccess(client, a.streamId, params.workspaceId, params.authorId)) !== null
           }
           if (!accessible) {
-            throw new Error("Invalid attachment IDs: cannot reference an attachment without read access")
+            accessible = await isAttachmentReadableViaShareOrReference(client, a, params.workspaceId, params.authorId)
           }
-          attachmentsToReference.push(a.id)
         }
-
-        attachmentSummaries = attachments.map(toAttachmentSummary)
+        if (!accessible) {
+          throw new Error("Invalid attachment IDs: cannot reference an attachment without read access")
+        }
+        attachmentsToReference.push(a.id)
       }
 
-      // Non-empty metadata only — keep payloads and projections clean of `{}`.
-      const metadata = params.metadata && Object.keys(params.metadata).length > 0 ? params.metadata : undefined
+      attachmentSummaries = attachments.map(toAttachmentSummary)
+    }
 
-      // 2. Append event (source of truth) - includes attachments and sources in payload
-      const event = await StreamEventRepository.insert(client, {
-        id: evtId,
-        streamId: params.streamId,
-        eventType: "message_created",
-        payload: {
-          messageId: msgId,
-          contentJson: params.contentJson,
-          contentMarkdown: params.contentMarkdown,
-          ...(attachmentSummaries && { attachments: attachmentSummaries }),
-          ...(params.sources && params.sources.length > 0 && { sources: params.sources }),
-          ...(params.sessionId && { sessionId: params.sessionId }),
-          ...(params.clientMessageId && { clientMessageId: params.clientMessageId }),
-          ...(params.sentVia && { sentVia: params.sentVia }),
-          ...(metadata && { metadata }),
-        } satisfies MessageCreatedPayload,
-        actorId: params.authorId,
-        actorType: params.authorType,
-      })
+    // Non-empty metadata only — keep payloads and projections clean of `{}`.
+    const metadata = params.metadata && Object.keys(params.metadata).length > 0 ? params.metadata : undefined
 
-      // 3. Update projection
-      const message = await MessageRepository.insert(client, {
-        id: msgId,
-        streamId: params.streamId,
-        sequence: event.sequence,
-        authorId: params.authorId,
-        authorType: params.authorType,
+    // 2. Append event (source of truth) - includes attachments and sources in payload
+    const event = await StreamEventRepository.insert(client, {
+      id: evtId,
+      streamId: params.streamId,
+      eventType: "message_created",
+      payload: {
+        messageId: msgId,
         contentJson: params.contentJson,
         contentMarkdown: params.contentMarkdown,
-        clientMessageId: params.clientMessageId,
-        sentVia: params.sentVia,
-        metadata,
-      })
-
-      // Concurrent duplicate detected: ON CONFLICT DO NOTHING suppressed our INSERT,
-      // so the repository returned the existing message (different ID). Throw to
-      // rollback the transaction — this prevents orphaned stream_events and outbox
-      // entries that would reference our never-created msgId (INV-20).
-      if (message.id !== msgId) {
-        throw new DuplicateMessageError(message)
-      }
-
-      // Increment only after confirming this transaction owns the new message,
-      // so concurrent duplicate losers (rolled back above) never overcount.
-      messagesTotal.inc({
-        workspace_id: params.workspaceId,
-        stream_type: stream?.type || "unknown",
-        author_type: params.authorType,
-      })
-
-      // 4. Update author's read position to include their own message
-      // This ensures the sender's own message is never counted as unread
-      if (params.authorType === "user") {
-        await StreamMemberRepository.update(client, params.streamId, params.authorId, {
-          lastReadEventId: evtId,
-        })
-      }
-
-      // 5. Record persona participation (idempotent)
-      if (params.authorType === "persona") {
-        await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
-      }
-
-      // 6. Link first-time attachments to this message (also sets streamId).
-      //    Re-referenced attachments deliberately skip this step — their
-      //    `message_id`/`stream_id` already point at the original owner and
-      //    overwriting that would orphan the original `attachment:` link in
-      //    other messages.
-      if (attachmentsToAttach.length > 0) {
-        const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
-        if (attached !== attachmentsToAttach.length) {
-          throw new Error("Failed to attach all files")
-        }
-      }
-
-      // 6b. Record an attachment_references row for every attachment in this
-      //     message — both newly-attached and re-referenced. Lookups for
-      //     "is this attachment visible to a viewer of stream X?" can then
-      //     consult one index without caring about original ownership.
-      const attachmentReferenceIds = [...attachmentsToAttach, ...attachmentsToReference]
-      if (attachmentReferenceIds.length > 0) {
-        await AttachmentReferenceRepository.insertMany(
-          client,
-          attachmentReferenceIds.map((aid) => ({
-            id: attachmentReferenceId(),
-            workspaceId: params.workspaceId,
-            attachmentId: aid,
-            messageId: msgId,
-            streamId: params.streamId,
-          }))
-        )
-      }
-
-      // 7. Validate and record any cross-stream share references carried in
-      //    contentJson. Runs inside the transaction so the shared_messages
-      //    access-projection is committed atomically with the event + projection
-      //    (INV-7). No-op for messages without cross-stream share nodes.
-      await ShareService.validateAndRecordShares({
-        client,
-        workspaceId: params.workspaceId,
-        targetStreamId: params.streamId,
-        shareMessageId: msgId,
-        sharerId: params.authorId,
-        accessibleStreamIds: params.accessibleStreamIds,
-        contentJson: params.contentJson,
-        findStream: (db, id) => StreamRepository.findById(db, id),
-        resolveEffectiveStream: resolveEffectiveStreamAdapter,
-        isAncestor: (db, ancestorId, streamId) => StreamRepository.isAncestor(db, ancestorId, streamId),
-        countExposedMembers: (db, targetStreamId, sourceStreamId) =>
-          StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
-        canReadStream: async (db, workspaceId, streamId, userId) =>
-          (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
-        confirmedPrivacyWarning: params.confirmedPrivacyWarning,
-      })
-
-      // 8. Publish to outbox for real-time delivery
-      await OutboxRepository.insert(client, "message:created", {
-        workspaceId: params.workspaceId,
-        streamId: params.streamId,
-        event: serializeBigInt(event),
-      })
-
-      // 9. Publish unread increment for sidebar updates
-      // Stream-scoped: only members of this stream receive the preview content.
-      // Frontend excludes the author's own messages from unread count.
-      await OutboxRepository.insert(client, "stream:activity", {
-        workspaceId: params.workspaceId,
-        streamId: params.streamId,
-        authorId: params.authorId,
-        lastMessagePreview: {
-          authorId: params.authorId,
-          authorType: params.authorType,
-          content: params.contentMarkdown,
-          createdAt: event.createdAt.toISOString(),
-        },
-      })
-
-      // 10. If this is a thread, update parent message's reply count
-      if (stream?.parentMessageId && stream?.parentStreamId) {
-        await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
-        await this.publishParentThreadUpdate(client, {
-          workspaceId: params.workspaceId,
-          parentStreamId: stream.parentStreamId,
-          parentMessageId: stream.parentMessageId,
-        })
-      }
-
-      return message
+        ...(attachmentSummaries && { attachments: attachmentSummaries }),
+        ...(params.sources && params.sources.length > 0 && { sources: params.sources }),
+        ...(params.sessionId && { sessionId: params.sessionId }),
+        ...(params.clientMessageId && { clientMessageId: params.clientMessageId }),
+        ...(params.sentVia && { sentVia: params.sentVia }),
+        ...(metadata && { metadata }),
+      } satisfies MessageCreatedPayload,
+      actorId: params.authorId,
+      actorType: params.authorType,
     })
+
+    // 3. Update projection
+    const message = await MessageRepository.insert(client, {
+      id: msgId,
+      streamId: params.streamId,
+      sequence: event.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      clientMessageId: params.clientMessageId,
+      sentVia: params.sentVia,
+      metadata,
+    })
+
+    // Concurrent duplicate detected: ON CONFLICT DO NOTHING suppressed our INSERT,
+    // so the repository returned the existing message (different ID). Throw to
+    // rollback the transaction — this prevents orphaned stream_events and outbox
+    // entries that would reference our never-created msgId (INV-20).
+    if (message.id !== msgId) {
+      throw new DuplicateMessageError(message)
+    }
+
+    // Increment only after confirming this transaction owns the new message,
+    // so concurrent duplicate losers (rolled back above) never overcount.
+    messagesTotal.inc({
+      workspace_id: params.workspaceId,
+      stream_type: stream?.type || "unknown",
+      author_type: params.authorType,
+    })
+
+    // 4. Update author's read position to include their own message
+    // This ensures the sender's own message is never counted as unread
+    if (params.authorType === "user") {
+      await StreamMemberRepository.update(client, params.streamId, params.authorId, {
+        lastReadEventId: evtId,
+      })
+    }
+
+    // 5. Record persona participation (idempotent)
+    if (params.authorType === "persona") {
+      await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
+    }
+
+    // 6. Link first-time attachments to this message (also sets streamId).
+    //    Re-referenced attachments deliberately skip this step — their
+    //    `message_id`/`stream_id` already point at the original owner and
+    //    overwriting that would orphan the original `attachment:` link in
+    //    other messages.
+    if (attachmentsToAttach.length > 0) {
+      const attached = await AttachmentRepository.attachToMessage(client, attachmentsToAttach, msgId, params.streamId)
+      if (attached !== attachmentsToAttach.length) {
+        throw new Error("Failed to attach all files")
+      }
+    }
+
+    // 6b. Record an attachment_references row for every attachment in this
+    //     message — both newly-attached and re-referenced. Lookups for
+    //     "is this attachment visible to a viewer of stream X?" can then
+    //     consult one index without caring about original ownership.
+    const attachmentReferenceIds = [...attachmentsToAttach, ...attachmentsToReference]
+    if (attachmentReferenceIds.length > 0) {
+      await AttachmentReferenceRepository.insertMany(
+        client,
+        attachmentReferenceIds.map((aid) => ({
+          id: attachmentReferenceId(),
+          workspaceId: params.workspaceId,
+          attachmentId: aid,
+          messageId: msgId,
+          streamId: params.streamId,
+        }))
+      )
+    }
+
+    // 7. Validate and record any cross-stream share references carried in
+    //    contentJson. Runs inside the transaction so the shared_messages
+    //    access-projection is committed atomically with the event + projection
+    //    (INV-7). No-op for messages without cross-stream share nodes.
+    await ShareService.validateAndRecordShares({
+      client,
+      workspaceId: params.workspaceId,
+      targetStreamId: params.streamId,
+      shareMessageId: msgId,
+      sharerId: params.authorId,
+      accessibleStreamIds: params.accessibleStreamIds,
+      contentJson: params.contentJson,
+      findStream: (db, id) => StreamRepository.findById(db, id),
+      resolveEffectiveStream: resolveEffectiveStreamAdapter,
+      isAncestor: (db, ancestorId, streamId) => StreamRepository.isAncestor(db, ancestorId, streamId),
+      countExposedMembers: (db, targetStreamId, sourceStreamId) =>
+        StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
+      canReadStream: async (db, workspaceId, streamId, userId) =>
+        (await checkStreamAccess(db, streamId, workspaceId, userId)) !== null,
+      confirmedPrivacyWarning: params.confirmedPrivacyWarning,
+    })
+
+    // 8. Publish to outbox for real-time delivery
+    await OutboxRepository.insert(client, "message:created", {
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      event: serializeBigInt(event),
+    })
+
+    // 9. Publish unread increment for sidebar updates
+    // Stream-scoped: only members of this stream receive the preview content.
+    // Frontend excludes the author's own messages from unread count.
+    await OutboxRepository.insert(client, "stream:activity", {
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      authorId: params.authorId,
+      lastMessagePreview: {
+        authorId: params.authorId,
+        authorType: params.authorType,
+        content: params.contentMarkdown,
+        createdAt: event.createdAt.toISOString(),
+      },
+    })
+
+    // 10. If this is a thread, update parent message's reply count
+    if (stream?.parentMessageId && stream?.parentStreamId) {
+      await MessageRepository.incrementReplyCount(client, stream.parentMessageId)
+      await this.publishParentThreadUpdate(client, {
+        workspaceId: params.workspaceId,
+        parentStreamId: stream.parentStreamId,
+        parentMessageId: stream.parentMessageId,
+      })
+    }
+
+    return message
+  }
+
+  private async _createMessageTxn(params: CreateMessageParams): Promise<Message> {
+    return withTransaction(this.pool, (client) => this.createMessageInTransaction(client, params))
   }
 
   async editMessage(params: EditMessageParams): Promise<Message | null> {

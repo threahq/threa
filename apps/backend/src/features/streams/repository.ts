@@ -198,6 +198,13 @@ export const StreamRepository = {
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
+  async findByIdForWorkspace(db: Querier, id: string, workspaceId: string): Promise<Stream | null> {
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ${id} AND workspace_id = ${workspaceId}`
+    )
+    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
+  },
+
   /**
    * Locks the stream row for update, skipping if already locked.
    * Returns null if not found or already locked by another transaction.

@@ -16,6 +16,10 @@ export const WORKSPACE_PERMISSION_SCOPES = {
   BOTS_CREATE_PERSONAL: "bots:create:personal",
   BOTS_CREATE_SHARED: "bots:create:shared",
   BOTS_MANAGE: "bots:manage",
+  BOT_RUNTIME_READ: "bot-runtime:read",
+  BOT_RUNTIME_WRITE: "bot-runtime:write",
+  BOT_INVOCATIONS_READ: "bot-invocations:read",
+  BOT_INVOCATIONS_WRITE: "bot-invocations:write",
   MEMBERS_WRITE: "members:write",
   WORKSPACE_ADMIN: "workspace:admin",
   WORKSPACE_OWNER: "workspace:owner",
@@ -92,6 +96,26 @@ export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.free
     description: "Grants access to edit, archive, restore, and rotate keys for any bot in the workspace.",
   },
   {
+    slug: WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_READ,
+    name: "Read bot runtime state",
+    description: "Grants access to read bot runtime presence and invocation state.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+    name: "Write bot runtime state",
+    description: "Grants access to heartbeat bot runtime presence and link runtime sessions.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ,
+    name: "Read bot invocations",
+    description: "Grants access to read bot invocation state.",
+  },
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+    name: "Write bot invocations",
+    description: "Grants access to claim, complete, or fail bot invocations.",
+  },
+  {
     slug: WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
     name: "Manage members",
     description:
@@ -146,6 +170,10 @@ const READ_AND_SELF_SERVE: readonly WorkspacePermissionSlug[] = Object.freeze([
 const ADMIN_ADDITIONS: readonly WorkspacePermissionSlug[] = Object.freeze([
   WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_SHARED,
   WORKSPACE_PERMISSION_SCOPES.BOTS_MANAGE,
+  WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_READ,
+  WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+  WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_READ,
+  WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
   WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
   WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN,
 ])
