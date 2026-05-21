@@ -131,6 +131,7 @@ export class BoundaryExtractionService {
         stream,
         extractionContext,
         validUpdateTargets,
+        validReassignmentMessageIds: new Set(allContextMessageIds),
       }
     })
 
@@ -139,7 +140,14 @@ export class BoundaryExtractionService {
       return null
     }
 
-    const { message, stream, extractionContext, scratchpadConversations, validUpdateTargets } = fetchedData
+    const {
+      message,
+      stream,
+      extractionContext,
+      scratchpadConversations,
+      validUpdateTargets,
+      validReassignmentMessageIds,
+    } = fetchedData
 
     // Phase 2: Determine conversation (AI call only for channels/threads, 1-5+ seconds!)
     let decision: ConversationDecision
@@ -253,10 +261,19 @@ export class BoundaryExtractionService {
         touchedConversationIds.add(a.conversationId)
       }
 
-      // Apply reassignments. Each `messageId` was validated by the extractor to be
-      // in the candidate set; the service additionally validates `toConversationId`
+      // Apply reassignments. The extractor is trusted to only target messages
+      // it actually saw, but we defense-in-depth validate that `r.messageId`
+      // was in Phase 1's surrounding/thread window and that `toConversationId`
       // is in `validUpdateTargets` (or null when a new conversation was created).
+      const reassignmentMessageIds = validReassignmentMessageIds ?? new Set<string>()
       for (const r of decision.reassignments) {
+        if (!reassignmentMessageIds.has(r.messageId)) {
+          logger.warn(
+            { messageId: r.messageId, streamId },
+            "Reassignment targets a message outside the extraction window - skipping"
+          )
+          continue
+        }
         let toConvId: string
         if (r.toConversationId === null) {
           if (!newConversation) {
@@ -333,9 +350,8 @@ export class BoundaryExtractionService {
       // Bump last_activity_at on every touched conversation so its sort position
       // and staleness reflect the activity (assignments/reassignments don't bump
       // it implicitly — that lived in the array UPDATE before).
-      for (const convId of touchedConversationIds) {
-        await ConversationRepository.bumpActivity(client, convId)
-      }
+      const touchedIds = Array.from(touchedConversationIds)
+      await ConversationRepository.bumpActivityForIds(client, touchedIds)
 
       // For thread conversations, include parent channel's stream ID for discoverability.
       let parentStreamId: string | undefined
@@ -350,10 +366,9 @@ export class BoundaryExtractionService {
       const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
       const primaryConvId = primaryAssignment?.conversationId ?? null
 
-      for (const convId of touchedConversationIds) {
-        const conv = await ConversationRepository.findById(client, convId)
-        if (!conv) continue
-        const isNewThisCall = newConversation?.id === convId
+      const touchedConversations = await ConversationRepository.findByIds(client, touchedIds)
+      for (const conv of touchedConversations) {
+        const isNewThisCall = newConversation?.id === conv.id
         const eventType = isNewThisCall ? "conversation:created" : "conversation:updated"
         await OutboxRepository.insert(client, eventType, {
           workspaceId,
@@ -401,7 +416,7 @@ export class BoundaryExtractionService {
       )
 
       if (!primaryConvId) return null
-      return ConversationRepository.findById(client, primaryConvId)
+      return touchedConversations.find((c) => c.id === primaryConvId) ?? null
     })
   }
 

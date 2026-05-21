@@ -109,10 +109,7 @@ const ASSIGNMENT_AGGREGATE_JOIN = `
         ARRAY[]::TEXT[]
       ) AS message_ids,
       COALESCE(
-        (SELECT array_agg(DISTINCT m.author_id)
-         FROM conversation_message_assignments cma2
-         JOIN messages m ON m.id = cma2.message_id
-         WHERE cma2.conversation_id = c.id AND cma2.is_primary AND m.author_id IS NOT NULL),
+        array_agg(DISTINCT m.author_id) FILTER (WHERE cma.is_primary AND m.author_id IS NOT NULL),
         ARRAY[]::TEXT[]
       ) AS participant_ids,
       COALESCE(
@@ -120,6 +117,7 @@ const ASSIGNMENT_AGGREGATE_JOIN = `
         ARRAY[]::TEXT[]
       ) AS secondary_message_ids
     FROM conversation_message_assignments cma
+    LEFT JOIN messages m ON m.id = cma.message_id
     WHERE cma.conversation_id = c.id
   ) agg ON TRUE
 `
@@ -139,6 +137,18 @@ export const ConversationRepository = {
     `)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
+  },
+
+  /** Batch lookup; returns conversations in arbitrary order. */
+  async findByIds(db: Querier, ids: string[]): Promise<Conversation[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.id = ANY(${ids}::text[])
+    `)
+    return result.rows.map(mapRowToConversation)
   },
 
   async findByStream(
@@ -368,6 +378,16 @@ export const ConversationRepository = {
       UPDATE conversations
       SET last_activity_at = NOW(), updated_at = NOW()
       WHERE id = ${id}
+    `)
+  },
+
+  /** Bump last_activity_at on many conversations in one round-trip. */
+  async bumpActivityForIds(db: Querier, ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    await db.query(sql`
+      UPDATE conversations
+      SET last_activity_at = NOW(), updated_at = NOW()
+      WHERE id = ANY(${ids}::text[])
     `)
   },
 

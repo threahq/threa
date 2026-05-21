@@ -1,7 +1,7 @@
 import { sql, type Querier } from "../../db"
 import { conversationMessageAssignmentId } from "../../lib/id"
 
-export type AssignmentReason = "initial" | "reassigned" | "secondary" | "merge" | "backfill" | "manual"
+export type AssignmentReason = "initial" | "reassigned" | "secondary" | "backfill"
 
 interface AssignmentRow {
   id: string
@@ -62,25 +62,22 @@ export const ConversationMessageAssignmentRepository = {
   /**
    * Set the primary conversation for a message.
    *
-   * If a primary already exists for this message in another conversation, it is
-   * moved (the row is updated in place via ON CONFLICT on the partial unique
-   * index). If a secondary assignment for the same (conv, message) already
-   * exists, it is dropped first so the new primary doesn't collide on the
-   * (conv, message) unique index.
+   * Two-step write inside the caller's transaction:
+   *   1. UPSERT this (conv, message) row to is_primary=TRUE via ON CONFLICT on
+   *      the (conversation_id, message_id) unique index. If the pair already
+   *      exists as a secondary, it is promoted in place.
+   *   2. Delete any OTHER primary row for this message in a different
+   *      conversation, so the partial unique index `(message_id) WHERE is_primary`
+   *      stays satisfied.
    *
-   * Race safety (INV-20): the partial unique index `(message_id) WHERE is_primary`
-   * guarantees at most one primary per message. Concurrent callers either both
-   * see consistent state via the ON CONFLICT path, or one fails with a unique
-   * violation that the worker can retry.
+   * Race safety (INV-20): both indices are honored under concurrent writes.
+   * A concurrent `assignSecondary` racing between the two steps either lands
+   * before step 1 (where it gets promoted) or fails the (conv, message)
+   * conflict and is no-oped by its own ON CONFLICT DO NOTHING. A concurrent
+   * `assignPrimary` for the same message in a different conversation races on
+   * step 2 — last writer wins, exactly one primary survives per message.
    */
   async assignPrimary(db: Querier, params: AssignParams): Promise<ConversationMessageAssignment> {
-    await db.query(sql`
-      DELETE FROM conversation_message_assignments
-      WHERE message_id = ${params.messageId}
-        AND conversation_id = ${params.conversationId}
-        AND NOT is_primary
-    `)
-
     const result = await db.query<AssignmentRow>(sql`
       INSERT INTO conversation_message_assignments (
         id, workspace_id, conversation_id, message_id, stream_id,
@@ -96,15 +93,23 @@ export const ConversationMessageAssignmentRepository = {
         ${params.reason},
         ${params.confidence ?? null}
       )
-      ON CONFLICT (message_id) WHERE is_primary
+      ON CONFLICT (conversation_id, message_id)
       DO UPDATE SET
-        conversation_id = EXCLUDED.conversation_id,
+        is_primary = TRUE,
         stream_id = EXCLUDED.stream_id,
         reason = EXCLUDED.reason,
         confidence = EXCLUDED.confidence,
         assigned_at = NOW()
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
+
+    await db.query(sql`
+      DELETE FROM conversation_message_assignments
+      WHERE message_id = ${params.messageId}
+        AND conversation_id <> ${params.conversationId}
+        AND is_primary
+    `)
+
     return mapRow(result.rows[0])
   },
 
