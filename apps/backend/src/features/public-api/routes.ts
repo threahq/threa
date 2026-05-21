@@ -287,8 +287,8 @@ const claimedInvocationSchema = z.object({
   promptMarkdown: z.string(),
   authorUserId: z.string(),
   mentionedActorSlugs: z.array(z.string()),
-  claimToken: z.string().nullable(),
-  claimExpiresAt: z.string().datetime().nullable(),
+  claimToken: z.string(),
+  claimExpiresAt: z.string().datetime(),
   runtimeSessionId: z.string().nullable(),
 })
 

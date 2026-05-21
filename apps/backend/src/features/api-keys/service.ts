@@ -26,7 +26,7 @@ export class BotChannelService {
 
   async isStreamAccessibleForBot(workspaceId: string, botId: string, streamId: string): Promise<boolean> {
     const stream = await StreamRepository.findByIdForWorkspace(this.pool, streamId, workspaceId)
-    if (!stream) return false
+    if (!stream || stream.archivedAt) return false
 
     // Check public first (fast path)
     if (stream.visibility === "public") return true

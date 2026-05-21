@@ -462,8 +462,8 @@ export function createPublicApiHandlers({
           promptMarkdown: invocation.promptMarkdown,
           authorUserId: invocation.authorUserId,
           mentionedActorSlugs: invocation.mentionedActorSlugs,
-          claimToken: invocation.claimToken,
-          claimExpiresAt: invocation.claimExpiresAt?.toISOString() ?? null,
+          claimToken: invocation.claimToken!,
+          claimExpiresAt: invocation.claimExpiresAt!.toISOString(),
           runtimeSessionId: invocation.targetRuntimeSessionId,
         },
       })
@@ -475,38 +475,42 @@ export function createPublicApiHandlers({
       if (!result.success) {
         return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
       }
-      const claim = await botRuntimeService.findActiveClaim({
-        workspaceId: req.workspaceId!,
-        botId: req.botApiKey.botId,
-        invocationId: req.params.invocationId,
-        instanceId: result.data.instanceId,
-        claimToken: result.data.claimToken,
-      })
-      if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
-      await assertStreamAccessible(req, claim.responseStreamId)
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
       const contentMarkdown = normalizeMessage(result.data.finalMessageMarkdown)
       const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
       const attachmentIds = collectAttachmentReferenceIds(contentJson)
-      const message = await eventService.createMessage({
-        workspaceId: req.workspaceId!,
-        streamId: claim.responseStreamId,
-        authorId: bot.id,
-        authorType: AuthorTypes.BOT,
-        contentJson,
-        contentMarkdown,
-        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-        metadata: result.data.metadata,
+      const { completed, message } = await withTransaction(pool, async (client) => {
+        const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey!.botId,
+          invocationId: req.params.invocationId,
+          instanceId: result.data.instanceId,
+          claimToken: result.data.claimToken,
+        })
+        if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        await assertStreamAccessible(req, claim.responseStreamId)
+        const message = await eventService.createMessageInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          streamId: claim.responseStreamId,
+          authorId: bot.id,
+          authorType: AuthorTypes.BOT,
+          contentJson,
+          contentMarkdown,
+          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+          clientMessageId: `bot-invocation:${claim.id}`,
+          metadata: result.data.metadata,
+        })
+        const completed = await botRuntimeService.completeInvocationInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey!.botId,
+          invocationId: req.params.invocationId,
+          instanceId: result.data.instanceId,
+          claimToken: result.data.claimToken,
+        })
+        if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        return { completed, message }
       })
-      const completed = await botRuntimeService.completeInvocation({
-        workspaceId: req.workspaceId!,
-        botId: req.botApiKey.botId,
-        invocationId: req.params.invocationId,
-        instanceId: result.data.instanceId,
-        claimToken: result.data.claimToken,
-      })
-      if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       res.json({
         data: { invocationId: completed.id, message: serializeMessage(message, { authorDisplayName: bot.name }) },
       })

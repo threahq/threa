@@ -421,6 +421,16 @@ export const BotInvocationRepository = {
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
+  async findActiveClaimForUpdate(
+    db: Querier,
+    params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }
+  ): Promise<BotInvocation | null> {
+    const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+      FOR UPDATE`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
   async completeClaim(
     db: Querier,
     params: { workspaceId: string; botId: string; invocationId: string; instanceId: string; claimToken: string }

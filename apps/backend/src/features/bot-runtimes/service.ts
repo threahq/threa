@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import type { Querier } from "../../db"
 import type { BotInvocationCapability, BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
 import { withTransaction } from "../../db"
 import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
@@ -164,6 +165,19 @@ export class BotRuntimeService {
     return BotInvocationRepository.findActiveClaim(this.pool, params)
   }
 
+  async findActiveClaimForUpdate(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+    }
+  ): Promise<BotInvocation | null> {
+    return BotInvocationRepository.findActiveClaimForUpdate(db, params)
+  }
+
   async completeInvocation(params: {
     workspaceId: string
     botId: string
@@ -172,6 +186,19 @@ export class BotRuntimeService {
     claimToken: string
   }): Promise<BotInvocation | null> {
     return BotInvocationRepository.completeClaim(this.pool, params)
+  }
+
+  async completeInvocationInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+    }
+  ): Promise<BotInvocation | null> {
+    return BotInvocationRepository.completeClaim(db, params)
   }
 
   async failInvocation(params: {
