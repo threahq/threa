@@ -483,11 +483,23 @@ describe("BoundaryExtractionService", () => {
     test("moves an earlier message to a different existing conversation without aborting the transaction", async () => {
       const convAId = conversationId()
       const convBId = conversationId()
+      const msg0Id = messageId()
       const msg1Id = messageId()
       const msg2Id = messageId()
       const msg3Id = messageId()
 
       await withTransaction(pool, async (client) => {
+        // msg0 anchors convB inside the surrounding-window so Phase 1 discovers
+        // convB as a candidate target. Without this, the reassignment to convB
+        // would fail the validUpdateTargets check and be silently skipped.
+        await MessageRepository.insert(client, {
+          id: msg0Id,
+          streamId: testStreamId,
+          sequence: BigInt(299),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Topic B opener"),
+        })
         await MessageRepository.insert(client, {
           id: msg1Id,
           streamId: testStreamId,
@@ -531,6 +543,13 @@ describe("BoundaryExtractionService", () => {
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Topic B",
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convBId,
+          messageId: msg0Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await MessageRepository.insert(client, {
@@ -651,10 +670,21 @@ describe("BoundaryExtractionService", () => {
     test("emits conversation:message_reassigned outbox event", async () => {
       const convAId = conversationId()
       const convBId = conversationId()
+      const msg0Id = messageId()
       const msg1Id = messageId()
       const msg2Id = messageId()
 
       await withTransaction(pool, async (client) => {
+        // msg0 anchors convB inside the surrounding-window so Phase 1 discovers
+        // convB as a valid reassignment target.
+        await MessageRepository.insert(client, {
+          id: msg0Id,
+          streamId: testStreamId,
+          sequence: BigInt(499),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Topic B opener"),
+        })
         await MessageRepository.insert(client, {
           id: msg1Id,
           streamId: testStreamId,
@@ -681,6 +711,13 @@ describe("BoundaryExtractionService", () => {
           id: convBId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
+        })
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convBId,
+          messageId: msg0Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await MessageRepository.insert(client, {
