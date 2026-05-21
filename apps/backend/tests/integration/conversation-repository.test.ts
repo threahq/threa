@@ -445,7 +445,7 @@ describe("ConversationRepository", () => {
 
       const updated = await withTransaction(pool, async (client) => {
         await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, msg2Id, testUserId)
-        await ConversationRepository.bumpActivity(client, convId)
+        await ConversationRepository.bumpActivityForIds(client, testWorkspaceId, [convId])
         return ConversationRepository.findById(client, convId)
       })
 

@@ -174,8 +174,13 @@ export class BroadcastHandler implements OutboxHandler {
       return
     }
 
-    // Conversation events broadcast to stream + optionally parent stream for discoverability
-    if (isOneOfOutboxEventType(event, ["conversation:created", "conversation:updated"])) {
+    // Conversation events broadcast to stream + optionally parent stream for discoverability.
+    // `conversation:message_assigned` rides the same fan-out so thread-message membership
+    // updates reach parent-channel subscribers; `conversation:message_reassigned` has no
+    // parent dimension (it's keyed to the moved message's own stream).
+    if (
+      isOneOfOutboxEventType(event, ["conversation:created", "conversation:updated", "conversation:message_assigned"])
+    ) {
       const payload = event.payload as { streamId: string; parentStreamId?: string }
       this.io.to(`ws:${workspaceId}:stream:${payload.streamId}`).emit(event.eventType, event.payload)
       if (payload.parentStreamId) {

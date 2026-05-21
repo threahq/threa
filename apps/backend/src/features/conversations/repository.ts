@@ -243,6 +243,9 @@ export const ConversationRepository = {
   /**
    * Batch variant: returns a Map keyed by message_id of the conversation that
    * owns that message as primary. Missing keys → no primary. Workspace-scoped.
+   *
+   * The LATERAL unnest pairs each (message_id, conversation) row DB-side so
+   * the Map is built in a single pass — no JS re-scan of message_ids arrays.
    */
   async findPrimariesByMessageIds(
     db: Querier,
@@ -250,17 +253,16 @@ export const ConversationRepository = {
     messageIds: string[]
   ): Promise<Map<string, Conversation>> {
     if (messageIds.length === 0) return new Map()
-    const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE workspace_id = ${workspaceId}
-        AND message_ids && ${messageIds}::text[]
+    const result = await db.query<ConversationRow & { matched_message_id: string }>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}, m.message_id AS matched_message_id
+      FROM conversations c
+      CROSS JOIN LATERAL unnest(c.message_ids) AS m(message_id)
+      WHERE c.workspace_id = ${workspaceId}
+        AND m.message_id = ANY(${messageIds}::text[])
     `)
     const byMessageId = new Map<string, Conversation>()
     for (const row of result.rows) {
-      const conv = mapRowToConversation(row)
-      for (const id of messageIds) {
-        if (conv.messageIds.includes(id)) byMessageId.set(id, conv)
-      }
+      byMessageId.set(row.matched_message_id, mapRowToConversation(row))
     }
     return byMessageId
   },
@@ -455,15 +457,6 @@ export const ConversationRepository = {
       SET message_ids = array_remove(message_ids, ${messageId}),
           updated_at = NOW()
       WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
-    `)
-  },
-
-  /** Bump last_activity_at on a conversation. */
-  async bumpActivity(db: Querier, id: string): Promise<void> {
-    await db.query(sql`
-      UPDATE conversations
-      SET last_activity_at = NOW(), updated_at = NOW()
-      WHERE id = ${id}
     `)
   },
 

@@ -1,6 +1,6 @@
 import { useEffect } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useConversationService, useSocket } from "@/contexts"
+import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
 import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
 
 export const conversationKeys = {
@@ -9,6 +9,7 @@ export const conversationKeys = {
     [...conversationKeys.all, "list", workspaceId, streamId, options ?? {}] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
+  messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
 }
 
 interface ConversationCreatedPayload {
@@ -28,6 +29,26 @@ interface ConversationUpdatedPayload {
   parentStreamId?: string
 }
 
+interface ConversationMessageAssignedPayload {
+  workspaceId: string
+  streamId: string
+  messageId: string
+  conversationId: string
+  isPrimary: boolean
+  reason: string
+  /** For thread messages, the parent channel's stream ID. */
+  parentStreamId?: string
+}
+
+interface ConversationMessageReassignedPayload {
+  workspaceId: string
+  streamId: string
+  messageId: string
+  fromConversationId: string
+  toConversationId: string
+  reason: string
+}
+
 interface UseConversationsOptions {
   status?: ConversationStatus
   limit?: number
@@ -39,6 +60,7 @@ export function useConversations(workspaceId: string, streamId: string, options?
   const conversationService = useConversationService()
   const queryClient = useQueryClient()
   const socket = useSocket()
+  const reconnectCount = useSocketReconnectCount()
 
   const {
     data: conversations = [],
@@ -50,6 +72,13 @@ export function useConversations(workspaceId: string, streamId: string, options?
     queryFn: () => conversationService.listByStream(workspaceId, streamId, { status, limit }),
     enabled: enabled && !!workspaceId && !!streamId,
   })
+
+  // INV-53: invalidate bootstrap on resubscribe (reconnect) so any events
+  // missed during the disconnect are reconciled from the server.
+  useEffect(() => {
+    if (reconnectCount === 0 || !workspaceId || !streamId || !enabled) return
+    queryClient.invalidateQueries({ queryKey: conversationKeys.list(workspaceId, streamId, { status, limit }) })
+  }, [reconnectCount, workspaceId, streamId, status, limit, enabled, queryClient])
 
   // Handle real-time conversation events
   useEffect(() => {
@@ -87,12 +116,34 @@ export function useConversations(workspaceId: string, streamId: string, options?
       )
     }
 
+    // Per-message membership updates. The conversation aggregate (with the
+    // updated messageIds/secondaryMessageIds arrays) already flows through
+    // `conversation:updated` for the touched conv(s), so the list shape is
+    // refreshed by `handleUpdated` above. These finer-grained events drive
+    // the per-conv messages query — when a message is added or moved, the
+    // expanded `ConversationMessages` panel needs to refetch so its row set
+    // reflects the new membership.
+    const handleMessageAssigned = (payload: ConversationMessageAssignedPayload) => {
+      if (payload.streamId !== streamId && payload.parentStreamId !== streamId) return
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.conversationId) })
+    }
+
+    const handleMessageReassigned = (payload: ConversationMessageReassignedPayload) => {
+      if (payload.streamId !== streamId) return
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.fromConversationId) })
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.toConversationId) })
+    }
+
     socket.on("conversation:created", handleCreated)
     socket.on("conversation:updated", handleUpdated)
+    socket.on("conversation:message_assigned", handleMessageAssigned)
+    socket.on("conversation:message_reassigned", handleMessageReassigned)
 
     return () => {
       socket.off("conversation:created", handleCreated)
       socket.off("conversation:updated", handleUpdated)
+      socket.off("conversation:message_assigned", handleMessageAssigned)
+      socket.off("conversation:message_reassigned", handleMessageReassigned)
     }
   }, [socket, workspaceId, streamId, status, limit, enabled, queryClient])
 

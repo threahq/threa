@@ -399,4 +399,58 @@ describe("BroadcastHandler", () => {
       payload: event.payload,
     })
   })
+
+  it("should emit conversation:message_assigned to stream and parent stream rooms", async () => {
+    const event = makeEvent(1n, "conversation:message_assigned", {
+      workspaceId: "ws_1",
+      streamId: "stream_thread",
+      parentStreamId: "stream_parent",
+      messageId: "msg_1",
+      conversationId: "conv_1",
+      isPrimary: true,
+      reason: "initial",
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_thread",
+      eventType: "conversation:message_assigned",
+      payload: event.payload,
+    })
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_parent",
+      eventType: "conversation:message_assigned",
+      payload: event.payload,
+    })
+  })
+
+  it("should emit conversation:message_reassigned to its stream room only", async () => {
+    const event = makeEvent(1n, "conversation:message_reassigned", {
+      workspaceId: "ws_1",
+      streamId: "stream_a",
+      messageId: "msg_1",
+      fromConversationId: "conv_from",
+      toConversationId: "conv_to",
+      reason: "late-reveal",
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_a",
+      eventType: "conversation:message_reassigned",
+      payload: event.payload,
+    })
+    // No parentStreamId on this payload → no parent-room emit
+    expect(emitChains.filter((e) => e.eventType === "conversation:message_reassigned")).toHaveLength(1)
+  })
 })

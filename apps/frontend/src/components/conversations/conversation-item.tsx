@@ -9,6 +9,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { RelativeTime } from "@/components/relative-time"
 import { useConversationService } from "@/contexts"
 import { useActors } from "@/hooks"
+import { conversationKeys } from "@/hooks/use-conversations"
 import type { AuthorType, ConversationWithStaleness, Message } from "@threa/types"
 
 interface ConversationItemProps {
@@ -88,7 +89,7 @@ function ConversationMessages({ workspaceId, conversationId, onMessageClick }: C
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["conversations", conversationId, "messages"],
+    queryKey: conversationKeys.messages(conversationId),
     queryFn: () => conversationService.getMessages(workspaceId, conversationId),
   })
 
