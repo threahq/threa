@@ -15,7 +15,7 @@ import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { ConversationRepository } from "../../src/features/conversations"
+import { ConversationRepository, ConversationMessageAssignmentRepository } from "../../src/features/conversations"
 import { OutboxRepository } from "../../src/lib/outbox"
 import { BoundaryExtractionService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
@@ -28,7 +28,7 @@ import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../
  */
 class StubBoundaryExtractor implements BoundaryExtractor {
   private nextResult: ExtractionResult = {
-    conversationId: null,
+    assignments: [{ conversationId: null, isPrimary: true }],
     newConversationTopic: "Default topic",
     confidence: 0.8,
   }
@@ -105,7 +105,7 @@ describe("BoundaryExtractionService", () => {
   beforeEach(() => {
     // Reset extractor to default behavior
     stubExtractor.setNextResult({
-      conversationId: null,
+      assignments: [{ conversationId: null, isPrimary: true }],
       newConversationTopic: "Default topic",
       confidence: 0.8,
     })
@@ -128,7 +128,7 @@ describe("BoundaryExtractionService", () => {
       })
 
       stubExtractor.setNextResult({
-        conversationId: null,
+        assignments: [{ conversationId: null, isPrimary: true }],
         newConversationTopic: "Starting a new topic",
         confidence: 0.85,
       })
@@ -163,9 +163,15 @@ describe("BoundaryExtractionService", () => {
           id: existingConvId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg1Id],
-          participantIds: [testUserId],
           topicSummary: "Existing conversation",
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: existingConvId,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await MessageRepository.insert(client, {
@@ -179,7 +185,7 @@ describe("BoundaryExtractionService", () => {
       })
 
       stubExtractor.setNextResult({
-        conversationId: existingConvId,
+        assignments: [{ conversationId: existingConvId, isPrimary: true }],
         confidence: 0.9,
       })
 
@@ -221,18 +227,32 @@ describe("BoundaryExtractionService", () => {
           id: conv1Id,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg1Id],
           completenessScore: 2,
           status: ConversationStatuses.ACTIVE,
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: conv1Id,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await ConversationRepository.insert(client, {
           id: conv2Id,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg2Id],
           completenessScore: 3,
           status: ConversationStatuses.ACTIVE,
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: conv2Id,
+          messageId: msg2Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await MessageRepository.insert(client, {
@@ -246,7 +266,7 @@ describe("BoundaryExtractionService", () => {
       })
 
       stubExtractor.setNextResult({
-        conversationId: conv1Id,
+        assignments: [{ conversationId: conv1Id, isPrimary: true }],
         confidence: 0.95,
         completenessUpdates: [{ conversationId: conv1Id, score: 6, status: ConversationStatuses.RESOLVED }],
       })
@@ -287,7 +307,7 @@ describe("BoundaryExtractionService", () => {
       })
 
       stubExtractor.setNextResult({
-        conversationId: null,
+        assignments: [{ conversationId: null, isPrimary: true }],
         newConversationTopic: "New conversation starter",
         confidence: 0.75,
       })
@@ -340,7 +360,14 @@ describe("BoundaryExtractionService", () => {
           id: existingConvId,
           streamId: localStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg1Id],
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: existingConvId,
+          messageId: msg1Id,
+          streamId: localStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await MessageRepository.insert(client, {
@@ -354,7 +381,7 @@ describe("BoundaryExtractionService", () => {
       })
 
       stubExtractor.setNextResult({
-        conversationId: existingConvId,
+        assignments: [{ conversationId: existingConvId, isPrimary: true }],
         confidence: 0.9,
       })
 
@@ -420,8 +447,14 @@ describe("BoundaryExtractionService", () => {
           id: existingConvId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg1Id],
-          participantIds: [testUserId],
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: existingConvId,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
 
         await MessageRepository.insert(client, {
@@ -435,7 +468,7 @@ describe("BoundaryExtractionService", () => {
       })
 
       stubExtractor.setNextResult({
-        conversationId: existingConvId,
+        assignments: [{ conversationId: existingConvId, isPrimary: true }],
         confidence: 0.9,
       })
 

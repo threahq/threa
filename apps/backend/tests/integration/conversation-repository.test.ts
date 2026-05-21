@@ -3,9 +3,9 @@
  *
  * Tests verify:
  * 1. CRUD operations work correctly
- * 2. Message and participant associations work
+ * 2. Message and participant associations are derived from
+ *    conversation_message_assignments
  * 3. Status filtering works
- * 4. Array operations (addMessage, addParticipant) behave correctly
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
@@ -14,7 +14,7 @@ import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { ConversationRepository, type Conversation } from "../../src/features/conversations"
+import { ConversationRepository, ConversationMessageAssignmentRepository } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { userId, workspaceId, streamId, messageId, conversationId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threa/types"
@@ -80,7 +80,7 @@ describe("ConversationRepository", () => {
       expect(conversation.parentConversationId).toBeNull()
     })
 
-    test("creates conversation with all fields", async () => {
+    test("creates conversation with all fields and derives messageIds/participantIds from assignments", async () => {
       const convId = conversationId()
       const msgId = messageId()
 
@@ -94,26 +94,34 @@ describe("ConversationRepository", () => {
           ...testMessageContent("Test message"),
         })
 
-        return ConversationRepository.insert(client, {
+        await ConversationRepository.insert(client, {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msgId],
-          participantIds: [testUserId],
           topicSummary: "Discussion about testing",
           completenessScore: 3,
           confidence: 0.85,
           status: ConversationStatuses.ACTIVE,
         })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convId,
+          messageId: msgId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+
+        return ConversationRepository.findById(client, convId)
       })
 
-      expect(conversation.id).toBe(convId)
-      expect(conversation.messageIds).toEqual([msgId])
-      expect(conversation.participantIds).toEqual([testUserId])
-      expect(conversation.topicSummary).toBe("Discussion about testing")
-      expect(conversation.completenessScore).toBe(3)
-      expect(conversation.confidence).toBe(0.85)
-      expect(conversation.status).toBe(ConversationStatuses.ACTIVE)
+      expect(conversation?.id).toBe(convId)
+      expect(conversation?.messageIds).toEqual([msgId])
+      expect(conversation?.participantIds).toEqual([testUserId])
+      expect(conversation?.topicSummary).toBe("Discussion about testing")
+      expect(conversation?.completenessScore).toBe(3)
+      expect(conversation?.confidence).toBe(0.85)
+      expect(conversation?.status).toBe(ConversationStatuses.ACTIVE)
     })
   })
 
@@ -301,7 +309,14 @@ describe("ConversationRepository", () => {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msgId],
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convId,
+          messageId: msgId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
       })
 
@@ -399,8 +414,8 @@ describe("ConversationRepository", () => {
     })
   })
 
-  describe("addMessage", () => {
-    test("appends message to conversation and updates lastActivityAt", async () => {
+  describe("assignments + bumpActivity", () => {
+    test("derives messageIds from assignments and bumpActivity updates lastActivityAt", async () => {
       const convId = conversationId()
       const msg1Id = messageId()
       const msg2Id = messageId()
@@ -428,7 +443,14 @@ describe("ConversationRepository", () => {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          messageIds: [msg1Id],
+        })
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convId,
+          messageId: msg1Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
         })
       })
 
@@ -440,57 +462,57 @@ describe("ConversationRepository", () => {
       await new Promise((r) => setTimeout(r, 10))
 
       const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.addMessage(client, convId, msg2Id)
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convId,
+          messageId: msg2Id,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          reason: "initial",
+        })
+        await ConversationRepository.bumpActivity(client, convId)
+        return ConversationRepository.findById(client, convId)
       })
 
       expect(updated?.messageIds).toEqual([msg1Id, msg2Id])
       expect(updated?.lastActivityAt.getTime()).toBeGreaterThan(originalConv!.lastActivityAt.getTime())
     })
-  })
 
-  describe("addParticipant", () => {
-    test("adds new participant to conversation", async () => {
+    test("participantIds is derived from message authors", async () => {
       const convId = conversationId()
+      const msgId = messageId()
       const user2WorkosId = userId()
       let user2UserId = ""
 
-      await withTransaction(pool, async (client) => {
+      const conversation = await withTransaction(pool, async (client) => {
         user2UserId = (await addTestMember(client, testWorkspaceId, user2WorkosId)).id
 
+        await MessageRepository.insert(client, {
+          id: msgId,
+          streamId: testStreamId,
+          sequence: BigInt(300),
+          authorId: user2UserId,
+          authorType: "user",
+          ...testMessageContent("Participant-deriving message"),
+        })
+
         await ConversationRepository.insert(client, {
           id: convId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          participantIds: [testUserId],
         })
-      })
 
-      const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.addParticipant(client, convId, user2UserId)
-      })
-
-      expect(updated?.participantIds).toContain(testUserId)
-      expect(updated?.participantIds).toContain(user2UserId)
-    })
-
-    test("does not duplicate existing participant", async () => {
-      const convId = conversationId()
-
-      await withTransaction(pool, async (client) => {
-        await ConversationRepository.insert(client, {
-          id: convId,
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: convId,
+          messageId: msgId,
           streamId: testStreamId,
           workspaceId: testWorkspaceId,
-          participantIds: [testUserId],
+          reason: "initial",
         })
+
+        return ConversationRepository.findById(client, convId)
       })
 
-      const updated = await withTransaction(pool, async (client) => {
-        return ConversationRepository.addParticipant(client, convId, testUserId)
-      })
-
-      // Should still only have one instance of the user
-      expect(updated?.participantIds.filter((id) => id === testUserId).length).toBe(1)
+      expect(conversation?.participantIds).toEqual([user2UserId])
     })
   })
 
