@@ -90,6 +90,7 @@ import {
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
+import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
@@ -892,6 +893,7 @@ export async function startServer(): Promise<ServerInstance> {
   const attachmentEmbeddingHandler = new AttachmentEmbeddingHandler(pool, jobQueue)
   const systemMessageOutboxHandler = new SystemMessageOutboxHandler(pool, systemMessageService)
   const activityFeedHandler = new ActivityFeedHandler(pool, activityService)
+  const botInvocationOutboxHandler = new BotInvocationOutboxHandler(pool, eventService)
   const pushNotificationHandler = pushService.isEnabled()
     ? new PushNotificationHandler({ pool: pools.realtime, pushService })
     : null
@@ -916,6 +918,7 @@ export async function startServer(): Promise<ServerInstance> {
     attachmentEmbeddingHandler,
     systemMessageOutboxHandler,
     activityFeedHandler,
+    botInvocationOutboxHandler,
     linkPreviewOutboxHandler,
     ...(pushNotificationHandler ? [pushNotificationHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
