@@ -71,6 +71,12 @@ export function useConversations(workspaceId: string, streamId: string, options?
     queryKey: conversationKeys.list(workspaceId, streamId, { status, limit }),
     queryFn: () => conversationService.listByStream(workspaceId, streamId, { status, limit }),
     enabled: enabled && !!workspaceId && !!streamId,
+    // Reconnect-driven refetch is owned by the INV-53 effect below, which
+    // listens to socket reconnects (the authoritative signal — a socket can
+    // resubscribe without `navigator.onLine` flipping). Suppress TanStack's
+    // network-online refetch so a coincident wake-from-sleep doesn't fire two
+    // HTTP requests for the same recovery.
+    refetchOnReconnect: false,
   })
 
   // INV-53: invalidate bootstrap on resubscribe (reconnect) so any events

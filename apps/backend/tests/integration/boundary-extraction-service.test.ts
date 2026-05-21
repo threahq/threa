@@ -448,6 +448,182 @@ describe("BoundaryExtractionService", () => {
     })
   })
 
+  describe("multi-assignment", () => {
+    test("cross-topic split: new message assigned as primary to a new conv AND secondary to an existing conv", async () => {
+      // A message that opens a new topic but also references / belongs in
+      // an earlier, related conversation. The extractor returns two
+      // assignments — primary on a fresh conv, secondary on the existing one.
+      const existingConvId = conversationId()
+      const msg1Id = messageId()
+      const msg2Id = messageId()
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          id: msg1Id,
+          streamId: testStreamId,
+          sequence: BigInt(600),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Earlier topic A discussion"),
+        })
+
+        await ConversationRepository.insert(client, {
+          id: existingConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Topic A",
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, existingConvId, msg1Id, testUserId)
+
+        await MessageRepository.insert(client, {
+          id: msg2Id,
+          streamId: testStreamId,
+          sequence: BigInt(601),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Opening topic B, which also touches topic A"),
+        })
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [
+          { conversationId: null, isPrimary: true },
+          { conversationId: existingConvId, isPrimary: false },
+        ],
+        newConversationTopic: "Topic B",
+        confidence: 0.82,
+      })
+
+      const result = await service.processMessage(msg2Id, testStreamId, testWorkspaceId)
+
+      // Primary lands on the freshly created conv.
+      expect(result).not.toBeNull()
+      expect(result?.id).not.toBe(existingConvId)
+      expect(result?.messageIds).toContain(msg2Id)
+      expect(result?.secondaryMessageIds).not.toContain(msg2Id)
+
+      // Existing conv picks up msg2 as a secondary, not a primary.
+      const updatedExisting = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findById(client, existingConvId)
+      })
+      expect(updatedExisting?.messageIds).toEqual([msg1Id])
+      expect(updatedExisting?.secondaryMessageIds).toContain(msg2Id)
+
+      // Two conversation:message_assigned events, one isPrimary=true, one isPrimary=false.
+      const assignedEvents = await withTransaction(pool, async (client) => {
+        const res = await client.query<{
+          payload: { messageId: string; conversationId: string; isPrimary: boolean; reason: string }
+        }>(`SELECT payload FROM outbox WHERE event_type = 'conversation:message_assigned' ORDER BY created_at ASC`)
+        return res.rows.map((r) => r.payload)
+      })
+      const forMsg2 = assignedEvents.filter((e) => e.messageId === msg2Id)
+      expect(forMsg2).toHaveLength(2)
+      expect(forMsg2).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ conversationId: result?.id, isPrimary: true, reason: "initial" }),
+          expect.objectContaining({ conversationId: existingConvId, isPrimary: false, reason: "secondary" }),
+        ])
+      )
+    })
+
+    test("thread root assigned as primary in thread conv AND secondary on parent channel conv", async () => {
+      // Parent channel has a conversation anchored on a parent message.
+      // A new thread is opened off that parent message; the thread root
+      // belongs primarily to the thread's own conversation, and secondarily
+      // to the parent channel's conv (cross-references the parent topic).
+      const parentConvId = conversationId()
+      const parentMsgId = messageId()
+      const threadStreamId = streamId()
+      const threadRootMsgId = messageId()
+
+      await withTransaction(pool, async (client) => {
+        // Parent channel message + conv.
+        await MessageRepository.insert(client, {
+          id: parentMsgId,
+          streamId: testStreamId,
+          sequence: BigInt(700),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Parent channel topic"),
+        })
+        await ConversationRepository.insert(client, {
+          id: parentConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Parent topic",
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, parentConvId, parentMsgId, testUserId)
+
+        // Thread stream branching off the parent message.
+        await StreamRepository.insert(client, {
+          id: threadStreamId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+          parentStreamId: testStreamId,
+          parentMessageId: parentMsgId,
+        })
+
+        // Thread root message in the thread stream.
+        await MessageRepository.insert(client, {
+          id: threadRootMsgId,
+          streamId: threadStreamId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Branching off into related but separate territory"),
+        })
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [
+          { conversationId: null, isPrimary: true },
+          { conversationId: parentConvId, isPrimary: false },
+        ],
+        newConversationTopic: "Thread sub-topic",
+        confidence: 0.8,
+      })
+
+      const result = await service.processMessage(threadRootMsgId, threadStreamId, testWorkspaceId)
+
+      // Primary lands on a freshly created thread conv in the thread stream.
+      expect(result).not.toBeNull()
+      expect(result?.streamId).toBe(threadStreamId)
+      expect(result?.messageIds).toContain(threadRootMsgId)
+
+      // Parent conv gets the thread root as a secondary membership.
+      const updatedParent = await withTransaction(pool, async (client) => {
+        return ConversationRepository.findById(client, parentConvId)
+      })
+      expect(updatedParent?.messageIds).toEqual([parentMsgId])
+      expect(updatedParent?.secondaryMessageIds).toContain(threadRootMsgId)
+
+      // Both conversation:message_assigned events carry parentStreamId so the
+      // parent-channel room receives the membership update too.
+      const assignedEvents = await withTransaction(pool, async (client) => {
+        const res = await client.query<{
+          payload: {
+            messageId: string
+            conversationId: string
+            isPrimary: boolean
+            streamId: string
+            parentStreamId?: string
+          }
+        }>(`SELECT payload FROM outbox WHERE event_type = 'conversation:message_assigned'`)
+        return res.rows.map((r) => r.payload)
+      })
+      const forRoot = assignedEvents.filter((e) => e.messageId === threadRootMsgId)
+      expect(forRoot).toHaveLength(2)
+      for (const ev of forRoot) {
+        expect(ev.streamId).toBe(threadStreamId)
+        expect(ev.parentStreamId).toBe(testStreamId)
+      }
+      expect(forRoot.map((e) => e.isPrimary).sort()).toEqual([false, true])
+    })
+  })
+
   describe("reassignment", () => {
     test("moves an earlier message to a different existing conversation without aborting the transaction", async () => {
       const convAId = conversationId()
