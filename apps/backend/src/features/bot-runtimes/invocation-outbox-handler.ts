@@ -97,14 +97,13 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return
 
     const mentionedSlugs = extractMentionSlugs(message.event.payload.contentMarkdown)
-    const mentionedBots = await BotRepository.findVisibleBySlugs(
-      this.pool,
-      message.workspaceId,
-      message.event.actorId,
-      mentionedSlugs
-    )
+    const mentionedBots =
+      mentionedSlugs.length > 0
+        ? await BotRepository.findVisibleBySlugs(this.pool, message.workspaceId, message.event.actorId, mentionedSlugs)
+        : []
     const explicitMentionableBot = mentionedBots.some((mentionedBot) => botHasCapability(mentionedBot, "mentionable"))
-    if (explicitMentionableBot && bot.slug != null && !mentionedSlugs.includes(bot.slug)) return
+    const activeExplicitlyMentioned = bot.slug != null && mentionedSlugs.includes(bot.slug)
+    if (explicitMentionableBot && !activeExplicitlyMentioned) return
 
     let link = await BotRuntimeSessionLinkRepository.findActiveByStream(this.pool, {
       workspaceId: message.workspaceId,
