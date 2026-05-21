@@ -41,6 +41,8 @@ export type OutboxEventType =
   | "workspace_user:updated"
   | "conversation:created"
   | "conversation:updated"
+  | "conversation:message_assigned"
+  | "conversation:message_reassigned"
   | "memo:created"
   | "memo:revised"
   | "command:dispatched"
@@ -90,6 +92,8 @@ export type StreamScopedEventType =
   | "stream:activity"
   | "conversation:created"
   | "conversation:updated"
+  | "conversation:message_assigned"
+  | "conversation:message_reassigned"
   | "agent_session:started"
   | "agent_session:completed"
   | "agent_session:failed"
@@ -318,6 +322,30 @@ export interface ConversationUpdatedOutboxPayload extends StreamScopedPayload {
   parentStreamId?: string
 }
 
+/**
+ * Emitted when a message is assigned to a conversation (primary or secondary).
+ * The frontend uses this to update its per-message conversation membership map
+ * without refetching the conversation aggregate.
+ */
+export interface ConversationMessageAssignedOutboxPayload extends StreamScopedPayload {
+  messageId: string
+  conversationId: string
+  isPrimary: boolean
+  reason: string
+}
+
+/**
+ * Emitted when the boundary extractor moves a previously-classified message's
+ * primary assignment from one conversation to another. Carries both ends so the
+ * frontend can update its membership map in a single hop.
+ */
+export interface ConversationMessageReassignedOutboxPayload extends StreamScopedPayload {
+  messageId: string
+  fromConversationId: string
+  toConversationId: string
+  reason: string
+}
+
 // Memo event payloads
 export interface MemoCreatedOutboxPayload extends WorkspaceScopedPayload {
   memoId: string
@@ -532,6 +560,8 @@ export interface OutboxEventPayloadMap {
   "workspace_user:updated": WorkspaceUserUpdatedOutboxPayload
   "conversation:created": ConversationCreatedOutboxPayload
   "conversation:updated": ConversationUpdatedOutboxPayload
+  "conversation:message_assigned": ConversationMessageAssignedOutboxPayload
+  "conversation:message_reassigned": ConversationMessageReassignedOutboxPayload
   "memo:created": MemoCreatedOutboxPayload
   "memo:revised": MemoRevisedOutboxPayload
   "command:dispatched": CommandDispatchedOutboxPayload
@@ -608,6 +638,8 @@ const STREAM_SCOPED_EVENTS: StreamScopedEventType[] = [
   "stream:activity",
   "conversation:created",
   "conversation:updated",
+  "conversation:message_assigned",
+  "conversation:message_reassigned",
   "agent_session:started",
   "agent_session:completed",
   "agent_session:failed",

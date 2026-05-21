@@ -17,6 +17,8 @@ export type {
   ExtractionResult,
   ConversationSummary,
   CompletenessUpdate,
+  MessageAssignment,
+  Reassignment,
 } from "./boundary-extraction/types"
 export {
   BOUNDARY_EXTRACTION_MODEL_ID,
@@ -38,6 +40,10 @@ export type { BoundaryExtractionWorkerDeps } from "./boundary-extraction-worker"
 // Repository
 export { ConversationRepository } from "./repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
+
+// Assignment Repository
+export { ConversationMessageAssignmentRepository } from "./assignment-repository"
+export type { ConversationMessageAssignment, AssignmentReason } from "./assignment-repository"
 
 // Staleness
 export { addStalenessFields, computeTemporalStaleness, computeEffectiveCompleteness } from "./staleness"

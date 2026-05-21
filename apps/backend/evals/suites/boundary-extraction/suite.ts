@@ -84,7 +84,7 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
   return {
     newMessage: toMessage(input.newMessage, streamId, 1),
     recentMessages: (input.recentMessages || []).map((m, i) => toMessage(m, streamId, i + 2)),
-    activeConversations: input.activeConversations || [],
+    activeConversations: (input.activeConversations || []).map((c) => ({ ...c, contextMessageIds: [] })),
     streamType: input.streamType || "scratchpad",
     workspaceId,
   }
@@ -102,10 +102,11 @@ async function runBoundaryExtractionTask(
 
   try {
     const result = await extractor.extract(extractionContext)
+    const primary = result.assignments.find((a) => a.isPrimary) ?? result.assignments[0]
 
     return {
       input,
-      conversationId: result.conversationId,
+      conversationId: primary?.conversationId ?? null,
       newConversationTopic: result.newConversationTopic,
       completenessUpdates: result.completenessUpdates,
       confidence: result.confidence,

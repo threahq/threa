@@ -2,11 +2,12 @@
  * LLM Boundary Extractor Unit Tests
  *
  * Tests verify:
- * 1. Thread messages get 100% confidence and assigned to existing conversation
- * 2. Structured output parsing extracts correct fields
+ * 1. Thread cold-start (no active/parent convs) deterministically creates a new conversation
+ * 2. Structured output parsing extracts assignments + reassignments
  * 3. LLM errors fall back to safe defaults
- * 4. Invalid conversation IDs are treated as new conversations
- * 5. Topic extraction from message content
+ * 4. Invalid conversation IDs in assignments are dropped
+ * 5. Reassignments are validated against the candidate set
+ * 6. Topic extraction from message content
  */
 
 import { describe, test, expect, mock, beforeEach } from "bun:test"
@@ -18,21 +19,18 @@ import type { ConfigResolver, ComponentConfig } from "../../../lib/ai/config-res
 
 import { NoObjectGeneratedError } from "ai"
 
-// Mock generateObject function
 const mockGenerateObject = mock(
   async (): Promise<{ value: any; response: any; usage: any }> => ({
-    value: { conversationId: null, confidence: 0.5 },
+    value: { assignments: [{ conversationId: null, isPrimary: true }], confidence: 0.5 },
     response: { usage: {} },
     usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
   })
 )
 
-// Mock AI instance
 const mockAI: Partial<AI> = {
   generateObject: mockGenerateObject as AI["generateObject"],
 }
 
-// Mock ConfigResolver
 const mockConfigResolver: ConfigResolver = {
   async resolve<T extends ComponentConfig>(): Promise<T> {
     return {
@@ -73,6 +71,7 @@ function createMockConversation(overrides: Partial<ConversationSummary> = {}): C
     lastMessagePreview: "Last message preview",
     participantIds: ["usr_test"],
     completenessScore: 3,
+    contextMessageIds: [],
     ...overrides,
   }
 }
@@ -96,33 +95,8 @@ describe("LLMBoundaryExtractor", () => {
     extractor = new LLMBoundaryExtractor(mockAI as AI, mockConfigResolver)
   })
 
-  describe("thread handling", () => {
-    test("returns 100% confidence for thread messages", async () => {
-      const context = createMockContext({
-        streamType: "thread",
-        activeConversations: [createMockConversation({ id: "conv_thread123" })],
-      })
-
-      const result = await extractor.extract(context)
-
-      expect(result.confidence).toBe(1.0)
-      expect(result.conversationId).toBe("conv_thread123")
-    })
-
-    test("returns existing conversation ID for thread with active conversation", async () => {
-      const existingConv = createMockConversation({ id: "conv_existing456" })
-      const context = createMockContext({
-        streamType: "thread",
-        activeConversations: [existingConv],
-      })
-
-      const result = await extractor.extract(context)
-
-      expect(result.conversationId).toBe("conv_existing456")
-      expect(result.newConversationTopic).toBeUndefined()
-    })
-
-    test("creates new conversation for thread without existing conversation", async () => {
+  describe("thread cold-start", () => {
+    test("creates new conversation when thread has no active and no parent conversations", async () => {
       const context = createMockContext({
         streamType: "thread",
         activeConversations: [],
@@ -131,25 +105,71 @@ describe("LLMBoundaryExtractor", () => {
 
       const result = await extractor.extract(context)
 
-      expect(result.conversationId).toBeNull()
+      expect(result.assignments).toEqual([{ conversationId: null, isPrimary: true }])
       expect(result.newConversationTopic).toBe("Starting a thread discussion")
       expect(result.confidence).toBe(1.0)
     })
 
-    test("does not call LLM for thread messages", async () => {
+    test("does not call LLM during thread cold-start", async () => {
       const context = createMockContext({
         streamType: "thread",
-        activeConversations: [createMockConversation()],
+        activeConversations: [],
       })
 
       await extractor.extract(context)
 
       expect(mockGenerateObject).not.toHaveBeenCalled()
     })
+
+    test("calls LLM when thread has an existing active conversation", async () => {
+      const existingConv = createMockConversation({ id: "conv_thread123" })
+      const context = createMockContext({
+        streamType: "thread",
+        activeConversations: [existingConv],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_thread123", isPrimary: true }],
+          confidence: 0.95,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      expect(mockGenerateObject).toHaveBeenCalled()
+      expect(result.assignments[0].conversationId).toBe("conv_thread123")
+      expect(result.assignments[0].isPrimary).toBe(true)
+    })
+
+    test("calls LLM when thread has only a parent conversation", async () => {
+      const parentConv = createMockConversation({ id: "conv_parent123" })
+      const context = createMockContext({
+        streamType: "thread",
+        activeConversations: [],
+        parentMessageConversations: [parentConv],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_parent123", isPrimary: true }],
+          confidence: 0.9,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      expect(mockGenerateObject).toHaveBeenCalled()
+      expect(result.assignments[0].conversationId).toBe("conv_parent123")
+    })
   })
 
   describe("structured output handling", () => {
-    test("handles response with existing conversation", async () => {
+    test("handles response with existing conversation as primary", async () => {
       const existingConv = createMockConversation({ id: "conv_match123" })
       const context = createMockContext({
         activeConversations: [existingConv],
@@ -157,7 +177,7 @@ describe("LLMBoundaryExtractor", () => {
 
       mockGenerateObject.mockResolvedValueOnce({
         value: {
-          conversationId: "conv_match123",
+          assignments: [{ conversationId: "conv_match123", isPrimary: true }],
           confidence: 0.92,
           reasoning: "Topic matches existing conversation",
         },
@@ -167,7 +187,7 @@ describe("LLMBoundaryExtractor", () => {
 
       const result = await extractor.extract(context)
 
-      expect(result.conversationId).toBe("conv_match123")
+      expect(result.assignments).toEqual([{ conversationId: "conv_match123", isPrimary: true }])
       expect(result.confidence).toBe(0.92)
     })
 
@@ -176,7 +196,7 @@ describe("LLMBoundaryExtractor", () => {
 
       mockGenerateObject.mockResolvedValueOnce({
         value: {
-          conversationId: null,
+          assignments: [{ conversationId: null, isPrimary: true }],
           newConversationTopic: "New topic from LLM",
           confidence: 0.88,
         },
@@ -186,9 +206,61 @@ describe("LLMBoundaryExtractor", () => {
 
       const result = await extractor.extract(context)
 
-      expect(result.conversationId).toBeNull()
+      expect(result.assignments).toEqual([{ conversationId: null, isPrimary: true }])
       expect(result.newConversationTopic).toBe("New topic from LLM")
       expect(result.confidence).toBe(0.88)
+    })
+
+    test("handles multi-membership with primary + secondary", async () => {
+      const convA = createMockConversation({ id: "conv_a" })
+      const convB = createMockConversation({ id: "conv_b" })
+      const context = createMockContext({
+        activeConversations: [convA, convB],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [
+            { conversationId: "conv_a", isPrimary: true },
+            { conversationId: "conv_b", isPrimary: false },
+          ],
+          confidence: 0.85,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      expect(result.assignments).toHaveLength(2)
+      expect(result.assignments[0]).toEqual({ conversationId: "conv_a", isPrimary: true })
+      expect(result.assignments[1]).toEqual({ conversationId: "conv_b", isPrimary: false })
+    })
+
+    test("demotes extra primaries to secondaries when LLM returns multiple", async () => {
+      const convA = createMockConversation({ id: "conv_a" })
+      const convB = createMockConversation({ id: "conv_b" })
+      const context = createMockContext({
+        activeConversations: [convA, convB],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [
+            { conversationId: "conv_a", isPrimary: true },
+            { conversationId: "conv_b", isPrimary: true },
+          ],
+          confidence: 0.8,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      const primaries = result.assignments.filter((a) => a.isPrimary)
+      expect(primaries).toHaveLength(1)
+      expect(primaries[0].conversationId).toBe("conv_a")
     })
 
     test("handles completeness updates", async () => {
@@ -199,7 +271,7 @@ describe("LLMBoundaryExtractor", () => {
 
       mockGenerateObject.mockResolvedValueOnce({
         value: {
-          conversationId: "conv_update123",
+          assignments: [{ conversationId: "conv_update123", isPrimary: true }],
           confidence: 0.95,
           completenessUpdates: [{ conversationId: "conv_update123", score: 6, status: "resolved" }],
         },
@@ -213,6 +285,88 @@ describe("LLMBoundaryExtractor", () => {
       expect(result.completenessUpdates?.length).toBe(1)
       expect(result.completenessUpdates?.[0].score).toBe(6)
       expect(result.completenessUpdates?.[0].status).toBe("resolved")
+    })
+
+    test("accepts valid reassignments within the candidate set", async () => {
+      const existingConv = createMockConversation({
+        id: "conv_existing",
+        contextMessageIds: ["msg_prior1"],
+      })
+      const recentMsg = createMockMessage({ id: "msg_recent" })
+      const context = createMockContext({
+        activeConversations: [existingConv],
+        recentMessages: [recentMsg, createMockMessage({ id: "msg_test123" })],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: null, isPrimary: true }],
+          newConversationTopic: "New topic emerges",
+          reassignments: [
+            { messageId: "msg_prior1", toConversationId: null, reason: "actually about new topic", confidence: 0.8 },
+            {
+              messageId: "msg_recent",
+              toConversationId: "conv_existing",
+              reason: "fits existing topic",
+              confidence: 0.9,
+            },
+          ],
+          confidence: 0.85,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      expect(result.reassignments).toBeDefined()
+      expect(result.reassignments).toHaveLength(2)
+    })
+
+    test("drops reassignments whose messageId is not in the candidate set", async () => {
+      const existingConv = createMockConversation({ id: "conv_existing", contextMessageIds: ["msg_prior1"] })
+      const context = createMockContext({
+        activeConversations: [existingConv],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_existing", isPrimary: true }],
+          reassignments: [
+            { messageId: "msg_unknown", toConversationId: "conv_existing", reason: "out of scope", confidence: 0.7 },
+          ],
+          confidence: 0.85,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      expect(result.reassignments).toBeUndefined()
+    })
+
+    test("drops reassignments whose toConversationId is not valid", async () => {
+      const existingConv = createMockConversation({ id: "conv_existing", contextMessageIds: ["msg_prior1"] })
+      const context = createMockContext({
+        activeConversations: [existingConv],
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_existing", isPrimary: true }],
+          reassignments: [
+            { messageId: "msg_prior1", toConversationId: "conv_hallucinated", reason: "no such conv", confidence: 0.7 },
+          ],
+          confidence: 0.85,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      const result = await extractor.extract(context)
+
+      expect(result.reassignments).toBeUndefined()
     })
   })
 
@@ -232,7 +386,6 @@ describe("LLMBoundaryExtractor", () => {
         newMessage: createMockMessage({ contentMarkdown: "Parsing error topic here" }),
       })
 
-      // Simulate LLM returning unparseable response (e.g., JSON wrapped in markdown)
       const parseError = new NoObjectGeneratedError({
         message: "No object generated",
         text: "```json\n{...}\n```",
@@ -244,7 +397,7 @@ describe("LLMBoundaryExtractor", () => {
 
       const result = await extractor.extract(context)
 
-      expect(result.conversationId).toBeNull()
+      expect(result.assignments).toEqual([{ conversationId: null, isPrimary: true }])
       expect(result.newConversationTopic).toBe("Parsing error topic here")
       expect(result.confidence).toBe(0.5)
     })
@@ -256,10 +409,9 @@ describe("LLMBoundaryExtractor", () => {
         newMessage: createMockMessage({ contentMarkdown: "New topic content" }),
       })
 
-      // LLM returns an ID that doesn't exist in active conversations
       mockGenerateObject.mockResolvedValueOnce({
         value: {
-          conversationId: "conv_hallucinated_id",
+          assignments: [{ conversationId: "conv_hallucinated_id", isPrimary: true }],
           confidence: 0.8,
         },
         response: { usage: {} },
@@ -268,13 +420,12 @@ describe("LLMBoundaryExtractor", () => {
 
       const result = await extractor.extract(context)
 
-      // Should be treated as new conversation since ID doesn't exist
-      expect(result.conversationId).toBeNull()
+      expect(result.assignments).toEqual([{ conversationId: null, isPrimary: true }])
       expect(result.newConversationTopic).toBe("New topic content")
     })
   })
 
-  describe("topic extraction", () => {
+  describe("topic extraction (thread cold-start path)", () => {
     test("extracts first sentence as topic", async () => {
       const context = createMockContext({
         streamType: "thread",

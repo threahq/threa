@@ -1,11 +1,18 @@
 import type { Pool, PoolClient } from "pg"
 import { sql, withTransaction, withClient } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
+import { ConversationMessageAssignmentRepository, type AssignmentReason } from "./assignment-repository"
 import { MessageRepository, type Message } from "../messaging"
-import { StreamRepository, type Stream } from "../streams"
+import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
-import type { BoundaryExtractor, ExtractionContext, ConversationSummary } from "./boundary-extraction/types"
-import type { CompletenessUpdate } from "./boundary-extraction/types"
+import type {
+  BoundaryExtractor,
+  ExtractionContext,
+  ConversationSummary,
+  CompletenessUpdate,
+  MessageAssignment,
+  Reassignment,
+} from "./boundary-extraction/types"
 import { addStalenessFields } from "./staleness"
 import { conversationId } from "../../lib/id"
 import { ConversationStatuses, StreamTypes } from "@threa/types"
@@ -15,12 +22,13 @@ const MESSAGES_BEFORE = 5
 const MESSAGES_AFTER = 2
 
 interface ConversationDecision {
-  conversationId: string | null
+  assignments: MessageAssignment[]
   newTopic?: string
   confidence: number
+  reassignments: Reassignment[]
   completenessUpdates?: CompletenessUpdate[]
-  /** IDs of conversations that are valid targets for completeness updates (security) */
-  validUpdateTargets?: Set<string>
+  /** IDs of conversations that are valid targets for completeness updates / reassignment (security). */
+  validUpdateTargets: Set<string>
 }
 
 export class BoundaryExtractionService {
@@ -32,15 +40,19 @@ export class BoundaryExtractionService {
   /**
    * Process a message for boundary extraction.
    *
-   * IMPORTANT: This method uses the three-phase pattern (INV-41) to avoid holding
-   * database connections during AI calls (which can take 1-5+ seconds):
+   * Three-phase pattern (INV-41) so the AI call holds no DB connection:
+   *   Phase 1: fetch all context (withClient, ~100-200ms)
+   *   Phase 2: AI extraction (no connection held, 1-5+ seconds for channels/threads)
+   *   Phase 3: persist all assignments + reassignments + completeness updates in one
+   *            transaction; emit outbox events.
    *
-   * Phase 1: Fetch all data with withClient (~100-200ms)
-   * Phase 2: AI extraction with no database connection held (1-5+ seconds for channels/threads)
-   * Phase 3: Save result with withTransaction, re-checking state for scratchpads (~100ms)
+   * For scratchpads: no AI call. The message joins the active conversation if one
+   * exists, otherwise creates a new one.
    *
-   * For scratchpads: No AI call needed, simple find-or-create logic
-   * For channels/threads: AI extraction determines conversation boundaries
+   * For channels/threads: the extractor returns multi-assignment + reassignment
+   * decisions in a single call. Threads no longer take a deterministic shortcut —
+   * the LLM sees the parent message's conversation alongside the thread's active
+   * conversation and decides.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
     // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms)
@@ -55,7 +67,7 @@ export class BoundaryExtractionService {
         return { message: null, stream: null, extractionContext: null }
       }
 
-      // For scratchpads: Just fetch existing conversations (no AI needed)
+      // For scratchpads: just fetch existing conversations (no AI needed)
       if (stream.type === StreamTypes.SCRATCHPAD) {
         const existingConversations = await ConversationRepository.findByStream(client, stream.id)
         return {
@@ -63,10 +75,10 @@ export class BoundaryExtractionService {
           stream,
           extractionContext: null,
           scratchpadConversations: existingConversations,
+          validUpdateTargets: new Set<string>(),
         }
       }
 
-      // For channels/threads: Fetch all context needed for AI extraction
       const surroundingMessages = await MessageRepository.findSurrounding(
         client,
         message.id,
@@ -89,15 +101,15 @@ export class BoundaryExtractionService {
         parentMessageConversations = await ConversationRepository.findByMessageId(client, stream.parentMessageId)
       }
 
-      // Build conversation summaries
-      const activeConversations = await this.buildConversationSummaries(
-        client,
+      const contextMessageIdSet = new Set(allContextMessageIds)
+      const activeConversations = this.buildConversationSummaries(
         relevantConversations,
-        allContextMessages
+        allContextMessages,
+        contextMessageIdSet
       )
       const parentConversations =
         parentMessageConversations.length > 0
-          ? await this.buildConversationSummaries(client, parentMessageConversations, [])
+          ? this.buildConversationSummaries(parentMessageConversations, [], contextMessageIdSet)
           : undefined
 
       const extractionContext: ExtractionContext = {
@@ -109,15 +121,19 @@ export class BoundaryExtractionService {
         workspaceId: stream.workspaceId,
       }
 
+      const validUpdateTargets = new Set<string>([
+        ...relevantConversations.map((c) => c.id),
+        ...parentMessageConversations.map((c) => c.id),
+      ])
+
       return {
         message,
         stream,
         extractionContext,
-        validUpdateTargets: new Set(relevantConversations.map((c) => c.id)),
+        validUpdateTargets,
       }
     })
 
-    // Early exit if message or stream not found
     if (!fetchedData.message || !fetchedData.stream) {
       logger.warn({ messageId, streamId }, "Message or stream not found for boundary extraction")
       return null
@@ -129,17 +145,22 @@ export class BoundaryExtractionService {
     let decision: ConversationDecision
 
     if (stream.type === StreamTypes.SCRATCHPAD) {
-      // Scratchpads: Simple logic, no AI call
       const activeConversation = scratchpadConversations?.find((c) => c.status === ConversationStatuses.ACTIVE)
       decision = activeConversation
-        ? { conversationId: activeConversation.id, confidence: 1.0 }
+        ? {
+            assignments: [{ conversationId: activeConversation.id, isPrimary: true }],
+            confidence: 1.0,
+            reassignments: [],
+            validUpdateTargets: new Set([activeConversation.id]),
+          }
         : {
-            conversationId: null,
+            assignments: [{ conversationId: null, isPrimary: true }],
             newTopic: stream.displayName ?? "Scratchpad",
             confidence: 1.0,
+            reassignments: [],
+            validUpdateTargets: new Set(),
           }
     } else {
-      // Channels/threads: AI extraction (1-5+ seconds, no DB connection held!)
       if (!extractionContext) {
         logger.error({ messageId, streamId }, "Missing extraction context for channel/thread")
         return null
@@ -147,9 +168,10 @@ export class BoundaryExtractionService {
 
       const result = await this.extractor.extract(extractionContext)
       decision = {
-        conversationId: result.conversationId,
-        newTopic: result.newConversationTopic ?? undefined,
+        assignments: result.assignments,
+        newTopic: result.newConversationTopic,
         confidence: result.confidence,
+        reassignments: result.reassignments ?? [],
         completenessUpdates: result.completenessUpdates,
         validUpdateTargets,
       }
@@ -157,52 +179,140 @@ export class BoundaryExtractionService {
 
     // Phase 3: Save result in ONE transaction (fast, ~100ms)
     return withTransaction(this.pool, async (client) => {
-      // For scratchpads: Re-check conversation exists (another process may have created it)
-      // Lock the stream row to prevent race conditions (INV-20)
-      if (stream.type === StreamTypes.SCRATCHPAD && !decision.conversationId) {
+      // For scratchpads: race-safe re-check that the active conversation still
+      // exists / doesn't exist (another process may have created it).
+      if (
+        stream.type === StreamTypes.SCRATCHPAD &&
+        decision.assignments.length === 1 &&
+        decision.assignments[0].conversationId === null
+      ) {
         await client.query(sql`SELECT id FROM streams WHERE id = ${stream.id} FOR UPDATE`)
 
         const existingConversations = await ConversationRepository.findByStream(client, stream.id)
         const activeConversation = existingConversations.find((c) => c.status === ConversationStatuses.ACTIVE)
 
         if (activeConversation) {
-          // Another process created the conversation while we were processing
-          decision.conversationId = activeConversation.id
+          decision.assignments = [{ conversationId: activeConversation.id, isPrimary: true }]
+          decision.newTopic = undefined
+          decision.validUpdateTargets.add(activeConversation.id)
         }
       }
 
-      // Create or update the conversation
-      let conversation: Conversation
-      let isNew = false
-
-      if (decision.conversationId) {
-        const withMessage = await ConversationRepository.addMessage(client, decision.conversationId, messageId)
-        if (!withMessage) {
-          logger.warn({ conversationId: decision.conversationId }, "Failed to add message to conversation")
-          return null
+      // Resolve any null assignments to a freshly created conversation.
+      let newConversation: Conversation | null = null
+      const resolvedAssignments: { conversationId: string; isPrimary: boolean }[] = []
+      for (const a of decision.assignments) {
+        if (a.conversationId === null) {
+          if (!newConversation) {
+            newConversation = await ConversationRepository.insert(client, {
+              id: conversationId(),
+              streamId,
+              workspaceId,
+              topicSummary: decision.newTopic,
+              confidence: decision.confidence,
+              status: ConversationStatuses.ACTIVE,
+            })
+            decision.validUpdateTargets.add(newConversation.id)
+          }
+          resolvedAssignments.push({ conversationId: newConversation.id, isPrimary: a.isPrimary })
+        } else {
+          resolvedAssignments.push({ conversationId: a.conversationId, isPrimary: a.isPrimary })
         }
-        const withParticipant = await ConversationRepository.addParticipant(
+      }
+
+      // Track which conversations were touched, for outbox event fan-out.
+      const touchedConversationIds = new Set<string>()
+      const reassignmentEvents: {
+        messageId: string
+        fromConversationId: string
+        toConversationId: string
+        reason: string
+      }[] = []
+
+      // Assign the new message.
+      for (const a of resolvedAssignments) {
+        if (a.isPrimary) {
+          await ConversationMessageAssignmentRepository.assignPrimary(client, {
+            conversationId: a.conversationId,
+            messageId,
+            streamId,
+            workspaceId,
+            reason: "initial",
+            confidence: decision.confidence,
+          })
+        } else {
+          await ConversationMessageAssignmentRepository.assignSecondary(client, {
+            conversationId: a.conversationId,
+            messageId,
+            streamId,
+            workspaceId,
+            reason: "secondary",
+            confidence: decision.confidence,
+          })
+        }
+        touchedConversationIds.add(a.conversationId)
+      }
+
+      // Apply reassignments. Each `messageId` was validated by the extractor to be
+      // in the candidate set; the service additionally validates `toConversationId`
+      // is in `validUpdateTargets` (or null when a new conversation was created).
+      for (const r of decision.reassignments) {
+        let toConvId: string
+        if (r.toConversationId === null) {
+          if (!newConversation) {
+            logger.warn(
+              { messageId: r.messageId },
+              "Reassignment targets a new conversation but none was created - skipping"
+            )
+            continue
+          }
+          toConvId = newConversation.id
+        } else if (decision.validUpdateTargets.has(r.toConversationId)) {
+          toConvId = r.toConversationId
+        } else {
+          logger.warn(
+            { conversationId: r.toConversationId, messageId: r.messageId },
+            "Reassignment target not in valid update set - skipping"
+          )
+          continue
+        }
+
+        const existingPrimary = await ConversationMessageAssignmentRepository.findPrimaryByMessageId(
           client,
-          decision.conversationId,
-          message.authorId
+          r.messageId
         )
-        conversation = withParticipant ?? withMessage
-      } else {
-        conversation = await ConversationRepository.insert(client, {
-          id: conversationId(),
+        if (!existingPrimary) {
+          logger.warn({ messageId: r.messageId }, "Reassignment target message has no existing primary - skipping")
+          continue
+        }
+        if (existingPrimary.conversationId === toConvId) {
+          // No-op move; the LLM is asking us to move the message to where it already lives.
+          continue
+        }
+
+        const fromConvId = existingPrimary.conversationId
+
+        await ConversationMessageAssignmentRepository.assignPrimary(client, {
+          conversationId: toConvId,
+          messageId: r.messageId,
           streamId,
           workspaceId,
-          messageIds: [messageId],
-          participantIds: [message.authorId],
-          topicSummary: decision.newTopic,
-          confidence: decision.confidence,
-          status: ConversationStatuses.ACTIVE,
+          reason: "reassigned",
+          confidence: r.confidence ?? decision.confidence,
         })
-        isNew = true
+
+        touchedConversationIds.add(fromConvId)
+        touchedConversationIds.add(toConvId)
+        reassignmentEvents.push({
+          messageId: r.messageId,
+          fromConversationId: fromConvId,
+          toConversationId: toConvId,
+          reason: r.reason,
+        })
       }
 
-      // Apply completeness updates (if any)
-      if (decision.completenessUpdates && decision.validUpdateTargets) {
+      // Apply completeness updates.
+      if (decision.completenessUpdates) {
         for (const update of decision.completenessUpdates) {
           if (!decision.validUpdateTargets.has(update.conversationId)) {
             logger.warn(
@@ -216,62 +326,96 @@ export class BoundaryExtractionService {
             completenessScore: update.score,
             status: update.status,
           })
+          touchedConversationIds.add(update.conversationId)
         }
       }
 
-      // For thread conversations, include parent channel's stream ID for discoverability
+      // Bump last_activity_at on every touched conversation so its sort position
+      // and staleness reflect the activity (assignments/reassignments don't bump
+      // it implicitly — that lived in the array UPDATE before).
+      for (const convId of touchedConversationIds) {
+        await ConversationRepository.bumpActivity(client, convId)
+      }
+
+      // For thread conversations, include parent channel's stream ID for discoverability.
       let parentStreamId: string | undefined
       if (stream.type === StreamTypes.THREAD && stream.parentMessageId) {
         const parentMessage = await MessageRepository.findById(client, stream.parentMessageId)
         parentStreamId = parentMessage?.streamId
       }
 
-      // Publish outbox event
-      const eventType = isNew ? "conversation:created" : "conversation:updated"
-      await OutboxRepository.insert(client, eventType, {
-        workspaceId,
-        streamId,
-        conversationId: conversation.id,
-        conversation: addStalenessFields(conversation),
-        parentStreamId,
-      })
+      // Emit outbox events for every touched conversation.
+      // The conversation that received the new message as primary is reported
+      // first (as conversation:created if it's new, conversation:updated otherwise).
+      const primaryAssignment = resolvedAssignments.find((a) => a.isPrimary)
+      const primaryConvId = primaryAssignment?.conversationId ?? null
+
+      for (const convId of touchedConversationIds) {
+        const conv = await ConversationRepository.findById(client, convId)
+        if (!conv) continue
+        const isNewThisCall = newConversation?.id === convId
+        const eventType = isNewThisCall ? "conversation:created" : "conversation:updated"
+        await OutboxRepository.insert(client, eventType, {
+          workspaceId,
+          streamId: conv.streamId,
+          conversationId: conv.id,
+          conversation: addStalenessFields(conv),
+          parentStreamId,
+        })
+      }
+
+      // Emit per-assignment events for the new message (so the frontend knows
+      // which conv(s) the new message belongs to).
+      for (const a of resolvedAssignments) {
+        await OutboxRepository.insert(client, "conversation:message_assigned", {
+          workspaceId,
+          streamId,
+          messageId,
+          conversationId: a.conversationId,
+          isPrimary: a.isPrimary,
+          reason: a.isPrimary ? "initial" : "secondary",
+        })
+      }
+
+      // Emit per-reassignment events.
+      for (const ev of reassignmentEvents) {
+        await OutboxRepository.insert(client, "conversation:message_reassigned", {
+          workspaceId,
+          streamId,
+          messageId: ev.messageId,
+          fromConversationId: ev.fromConversationId,
+          toConversationId: ev.toConversationId,
+          reason: ev.reason,
+        })
+      }
 
       logger.info(
         {
           messageId,
-          conversationId: conversation.id,
-          isNew,
+          primaryConversationId: primaryConvId,
+          assignmentCount: resolvedAssignments.length,
+          reassignmentCount: reassignmentEvents.length,
           confidence: decision.confidence,
         },
         "Boundary extraction complete"
       )
 
-      return conversation
+      if (!primaryConvId) return null
+      return ConversationRepository.findById(client, primaryConvId)
     })
   }
 
-  private async buildConversationSummaries(
-    client: PoolClient,
+  private buildConversationSummaries(
     conversations: Conversation[],
-    recentMessages: Message[]
-  ): Promise<ConversationSummary[]> {
-    const recentMessageMap = new Map(recentMessages.map((m) => [m.id, m]))
-
-    // Collect message IDs that need fetching (not in recent window)
-    const missingIds: string[] = []
-    for (const c of conversations) {
-      const lastMessageId = c.messageIds[c.messageIds.length - 1]
-      if (lastMessageId && !recentMessageMap.has(lastMessageId)) {
-        missingIds.push(lastMessageId)
-      }
-    }
-
-    // Batch fetch missing messages
-    const fetchedMessages = missingIds.length > 0 ? await MessageRepository.findByIds(client, missingIds) : new Map()
+    contextMessages: Message[],
+    contextMessageIds: Set<string>
+  ): ConversationSummary[] {
+    const messageMap = new Map(contextMessages.map((m) => [m.id, m]))
 
     return conversations.map((c) => {
       const lastMessageId = c.messageIds[c.messageIds.length - 1]
-      const lastMessage = recentMessageMap.get(lastMessageId) ?? fetchedMessages.get(lastMessageId)
+      const lastMessage = lastMessageId ? messageMap.get(lastMessageId) : undefined
+      const contextIds = c.messageIds.filter((id) => contextMessageIds.has(id))
 
       return {
         id: c.id,
@@ -280,7 +424,11 @@ export class BoundaryExtractionService {
         lastMessagePreview: lastMessage?.contentMarkdown.slice(0, 100) ?? "",
         participantIds: c.participantIds,
         completenessScore: c.completenessScore,
+        contextMessageIds: contextIds,
       }
     })
   }
 }
+
+// Re-export type for service consumers
+export type { PoolClient }

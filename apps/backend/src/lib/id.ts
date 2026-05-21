@@ -11,6 +11,7 @@ export {
   sessionId,
   stepId,
   conversationId,
+  conversationMessageAssignmentId,
   memoId,
   pendingItemId,
   commandId,

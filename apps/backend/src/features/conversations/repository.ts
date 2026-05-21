@@ -5,8 +5,6 @@ interface ConversationRow {
   id: string
   stream_id: string
   workspace_id: string
-  message_ids: string[]
-  participant_ids: string[]
   topic_summary: string | null
   completeness_score: number
   confidence: number
@@ -15,11 +13,22 @@ interface ConversationRow {
   last_activity_at: Date
   created_at: Date
   updated_at: Date
+  message_ids: string[] | null
+  participant_ids: string[] | null
+  secondary_message_ids: string[] | null
 }
 
 /**
  * Internal backend type with native Date objects.
  * The wire type in @threa/types uses ISO 8601 strings for JSON serialization.
+ *
+ * `messageIds` and `participantIds` are populated from `conversation_message_assignments`
+ * (primary assignments only, ordered by assigned_at). The arrays themselves are no
+ * longer stored on the conversations row — they're aggregated at read time.
+ *
+ * `secondaryMessageIds` lists messages that are ALSO assigned to this conversation
+ * but for which the primary lives elsewhere. Empty for conversations created before
+ * multi-membership.
  */
 export interface Conversation {
   id: string
@@ -27,6 +36,7 @@ export interface Conversation {
   workspaceId: string
   messageIds: string[]
   participantIds: string[]
+  secondaryMessageIds: string[]
   topicSummary: string | null
   completenessScore: number
   confidence: number
@@ -41,8 +51,6 @@ export interface InsertConversationParams {
   id: string
   streamId: string
   workspaceId: string
-  messageIds?: string[]
-  participantIds?: string[]
   topicSummary?: string
   completenessScore?: number
   confidence?: number
@@ -51,8 +59,6 @@ export interface InsertConversationParams {
 }
 
 export interface UpdateConversationParams {
-  messageIds?: string[]
-  participantIds?: string[]
   topicSummary?: string
   completenessScore?: number
   confidence?: number
@@ -65,8 +71,9 @@ function mapRowToConversation(row: ConversationRow): Conversation {
     id: row.id,
     streamId: row.stream_id,
     workspaceId: row.workspace_id,
-    messageIds: row.message_ids,
-    participantIds: row.participant_ids,
+    messageIds: row.message_ids ?? [],
+    participantIds: row.participant_ids ?? [],
+    secondaryMessageIds: row.secondary_message_ids ?? [],
     topicSummary: row.topic_summary,
     completenessScore: row.completeness_score,
     confidence: row.confidence,
@@ -78,17 +85,58 @@ function mapRowToConversation(row: ConversationRow): Conversation {
   }
 }
 
-const SELECT_FIELDS = `
-  id, stream_id, workspace_id, message_ids, participant_ids,
-  topic_summary, completeness_score, confidence, status, parent_conversation_id,
-  last_activity_at, created_at, updated_at
+const BASE_FIELDS = `
+  c.id, c.stream_id, c.workspace_id,
+  c.topic_summary, c.completeness_score, c.confidence, c.status, c.parent_conversation_id,
+  c.last_activity_at, c.created_at, c.updated_at
+`
+
+/**
+ * Subquery that aggregates the message/participant arrays for one conversation.
+ * Joined into the conversation SELECT via LEFT JOIN LATERAL so each conversation
+ * row gets its derived arrays in a single round trip.
+ *
+ * - `message_ids`: primary-assignment message IDs, ordered by assigned_at.
+ * - `participant_ids`: distinct authors of those primary-assigned messages.
+ * - `secondary_message_ids`: message IDs assigned to this conversation but whose
+ *   primary lives elsewhere.
+ */
+const ASSIGNMENT_AGGREGATE_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT
+      COALESCE(
+        array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE cma.is_primary),
+        ARRAY[]::TEXT[]
+      ) AS message_ids,
+      COALESCE(
+        (SELECT array_agg(DISTINCT m.author_id)
+         FROM conversation_message_assignments cma2
+         JOIN messages m ON m.id = cma2.message_id
+         WHERE cma2.conversation_id = c.id AND cma2.is_primary AND m.author_id IS NOT NULL),
+        ARRAY[]::TEXT[]
+      ) AS participant_ids,
+      COALESCE(
+        array_agg(cma.message_id ORDER BY cma.assigned_at) FILTER (WHERE NOT cma.is_primary),
+        ARRAY[]::TEXT[]
+      ) AS secondary_message_ids
+    FROM conversation_message_assignments cma
+    WHERE cma.conversation_id = c.id
+  ) agg ON TRUE
+`
+
+const FULL_SELECT = `
+  ${BASE_FIELDS},
+  agg.message_ids, agg.participant_ids, agg.secondary_message_ids
 `
 
 export const ConversationRepository = {
   async findById(db: Querier, id: string): Promise<Conversation | null> {
-    const result = await db.query<ConversationRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations WHERE id = ${id}`
-    )
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.id = ${id}
+    `)
     if (!result.rows[0]) return null
     return mapRowToConversation(result.rows[0])
   },
@@ -102,18 +150,22 @@ export const ConversationRepository = {
 
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-        WHERE stream_id = ${streamId} AND status = ${options.status}
-        ORDER BY last_activity_at DESC
+        SELECT ${sql.raw(FULL_SELECT)}
+        FROM conversations c
+        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+        WHERE c.stream_id = ${streamId} AND c.status = ${options.status}
+        ORDER BY c.last_activity_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToConversation)
     }
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE stream_id = ${streamId}
-      ORDER BY last_activity_at DESC
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.stream_id = ${streamId}
+      ORDER BY c.last_activity_at DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
@@ -132,10 +184,12 @@ export const ConversationRepository = {
 
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+        SELECT ${sql.raw(FULL_SELECT)}
+        FROM conversations c
+        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
         WHERE (
-          stream_id = ${streamId}
-          OR stream_id IN (
+          c.stream_id = ${streamId}
+          OR c.stream_id IN (
             SELECT s.id FROM streams s
             WHERE s.type = 'thread'
               AND s.parent_message_id IN (
@@ -143,59 +197,66 @@ export const ConversationRepository = {
               )
           )
         )
-        AND status = ${options.status}
-        ORDER BY last_activity_at DESC
+        AND c.status = ${options.status}
+        ORDER BY c.last_activity_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToConversation)
     }
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE stream_id = ${streamId}
-         OR stream_id IN (
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.stream_id = ${streamId}
+         OR c.stream_id IN (
            SELECT s.id FROM streams s
            WHERE s.type = 'thread'
              AND s.parent_message_id IN (
                SELECT m.id FROM messages m WHERE m.stream_id = ${streamId}
              )
          )
-      ORDER BY last_activity_at DESC
+      ORDER BY c.last_activity_at DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
   },
 
   async findActiveByStream(db: Querier, streamId: string, limit = 50): Promise<Conversation[]> {
-    const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE stream_id = ${streamId} AND status = 'active'
-      ORDER BY last_activity_at DESC
-      LIMIT ${limit}
-    `)
-    return result.rows.map(mapRowToConversation)
+    return this.findByStream(db, streamId, { status: "active", limit })
   },
 
+  /** Conversations that contain a specific message (primary or secondary). */
   async findByMessageId(db: Querier, messageId: string): Promise<Conversation[]> {
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE ${messageId} = ANY(message_ids)
-      ORDER BY last_activity_at DESC
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.id IN (
+        SELECT conversation_id FROM conversation_message_assignments
+        WHERE message_id = ${messageId}
+      )
+      ORDER BY c.last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
   },
 
   /**
    * Find conversations that contain any of the given message IDs.
-   * Returns unique conversations, deduplicated by ID.
+   * Returns unique conversations.
    */
   async findByMessageIds(db: Querier, messageIds: string[]): Promise<Conversation[]> {
     if (messageIds.length === 0) return []
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT DISTINCT ON (id) ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE message_ids && ${messageIds}
-      ORDER BY id, last_activity_at DESC
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.id IN (
+        SELECT DISTINCT conversation_id FROM conversation_message_assignments
+        WHERE message_id = ANY(${messageIds}::text[])
+      )
+      ORDER BY c.last_activity_at DESC
     `)
     return result.rows.map(mapRowToConversation)
   },
@@ -209,44 +270,49 @@ export const ConversationRepository = {
 
     if (options?.status) {
       const result = await db.query<ConversationRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-        WHERE workspace_id = ${workspaceId} AND status = ${options.status}
-        ORDER BY last_activity_at DESC
+        SELECT ${sql.raw(FULL_SELECT)}
+        FROM conversations c
+        ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+        WHERE c.workspace_id = ${workspaceId} AND c.status = ${options.status}
+        ORDER BY c.last_activity_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToConversation)
     }
 
     const result = await db.query<ConversationRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
-      WHERE workspace_id = ${workspaceId}
-      ORDER BY last_activity_at DESC
+      SELECT ${sql.raw(FULL_SELECT)}
+      FROM conversations c
+      ${sql.raw(ASSIGNMENT_AGGREGATE_JOIN)}
+      WHERE c.workspace_id = ${workspaceId}
+      ORDER BY c.last_activity_at DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToConversation)
   },
 
   async insert(db: Querier, params: InsertConversationParams): Promise<Conversation> {
-    const result = await db.query<ConversationRow>(sql`
+    await db.query(sql`
       INSERT INTO conversations (
-        id, stream_id, workspace_id, message_ids, participant_ids,
+        id, stream_id, workspace_id,
         topic_summary, completeness_score, confidence, status, parent_conversation_id
       )
       VALUES (
         ${params.id},
         ${params.streamId},
         ${params.workspaceId},
-        ${params.messageIds ?? []},
-        ${params.participantIds ?? []},
         ${params.topicSummary ?? null},
         ${params.completenessScore ?? 1},
         ${params.confidence ?? 0.5},
         ${params.status ?? "active"},
         ${params.parentConversationId ?? null}
       )
-      RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
-    return mapRowToConversation(result.rows[0])
+    const fetched = await this.findById(db, params.id)
+    if (!fetched) {
+      throw new Error(`Failed to fetch conversation ${params.id} after insert`)
+    }
+    return fetched
   },
 
   async update(db: Querier, id: string, params: UpdateConversationParams): Promise<Conversation | null> {
@@ -254,14 +320,6 @@ export const ConversationRepository = {
     const values: unknown[] = []
     let paramIndex = 1
 
-    if (params.messageIds !== undefined) {
-      updates.push(`message_ids = $${paramIndex++}`)
-      values.push(params.messageIds)
-    }
-    if (params.participantIds !== undefined) {
-      updates.push(`participant_ids = $${paramIndex++}`)
-      values.push(params.participantIds)
-    }
     if (params.topicSummary !== undefined) {
       updates.push(`topic_summary = $${paramIndex++}`)
       values.push(params.topicSummary)
@@ -294,40 +352,23 @@ export const ConversationRepository = {
       UPDATE conversations
       SET ${updates.join(", ")}
       WHERE id = $${paramIndex}
-      RETURNING ${SELECT_FIELDS}
     `
 
-    const result = await db.query<ConversationRow>(query, values)
-    if (!result.rows[0]) return null
-    return mapRowToConversation(result.rows[0])
+    await db.query(query, values)
+    return this.findById(db, id)
   },
 
-  async addMessage(db: Querier, id: string, messageId: string): Promise<Conversation | null> {
-    const result = await db.query<ConversationRow>(sql`
+  /**
+   * Bump last_activity_at on a conversation. Called when a new message is
+   * assigned to it (the assignment row itself doesn't bump the conversation's
+   * activity timestamp — that lives on the conversation row).
+   */
+  async bumpActivity(db: Querier, id: string): Promise<void> {
+    await db.query(sql`
       UPDATE conversations
-      SET message_ids = array_append(message_ids, ${messageId}),
-          last_activity_at = NOW(),
-          updated_at = NOW()
+      SET last_activity_at = NOW(), updated_at = NOW()
       WHERE id = ${id}
-      RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
-    if (!result.rows[0]) return null
-    return mapRowToConversation(result.rows[0])
-  },
-
-  async addParticipant(db: Querier, id: string, participantId: string): Promise<Conversation | null> {
-    const result = await db.query<ConversationRow>(sql`
-      UPDATE conversations
-      SET participant_ids = CASE
-            WHEN ${participantId} = ANY(participant_ids) THEN participant_ids
-            ELSE array_append(participant_ids, ${participantId})
-          END,
-          updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
-    if (!result.rows[0]) return null
-    return mapRowToConversation(result.rows[0])
   },
 
   async delete(db: Querier, id: string): Promise<boolean> {
