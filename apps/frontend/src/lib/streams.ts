@@ -77,6 +77,24 @@ export function streamFallbackLabel(type: StreamType, context: FallbackContext):
   return FALLBACK_LABELS[type]?.[context] ?? "Untitled"
 }
 
+/**
+ * The display label for a stream object — always a non-null string. Resolves
+ * the name (channel slug / displayName) and falls through to a context-
+ * appropriate placeholder when the stream has no name yet.
+ *
+ * This is the entry point for any surface that renders a stream's name and
+ * needs a guaranteed string. Use the nullable `getStreamName` only when you
+ * genuinely need null (sort/search keys, or a bespoke caller-specific
+ * fallback). For DM objects whose `displayName` may be stale, resolve the peer
+ * first (or go through `resolveStreamName`/`useStreamName` by id).
+ */
+export function streamLabel(
+  stream: { type: string; slug?: string | null; displayName?: string | null },
+  context: FallbackContext = "generic"
+): string {
+  return getStreamName(stream) ?? streamFallbackLabel(stream.type as StreamType, context)
+}
+
 interface StreamNameCaches {
   streams: Array<{ id: string; type: StreamType; slug?: string | null; displayName?: string | null }>
   users: Array<{ id: string; name: string }>
@@ -105,6 +123,6 @@ export function resolveStreamName(
   const peerName = resolveDmDisplayName(streamId, caches.users, caches.dmPeers)
   if (peerName) return peerName
   const stream = caches.streams.find((s) => s.id === streamId)
-  if (stream) return getStreamName(stream) ?? streamFallbackLabel(stream.type, context)
+  if (stream) return streamLabel(stream, context)
   return null
 }

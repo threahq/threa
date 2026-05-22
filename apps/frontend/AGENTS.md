@@ -27,22 +27,30 @@ Pick the entry point by what you're holding:
   In a non-hook context (list mappers, tests) call the pure
   `resolveStreamName(streamId, { streams, users, dmPeers }, context?)` directly.
 
-- **You already have a stream object** → `getStreamName(stream)` (channel → `#slug`,
-  otherwise `displayName`), falling back to `streamFallbackLabel(stream.type, context)`
-  when it returns `null`:
+- **You already have a stream object** → `streamLabel(stream, context?)`. It
+  returns a guaranteed non-null string: the resolved name (channel `#slug` /
+  `displayName`) when there is one, otherwise the context-appropriate
+  placeholder. This is the single call — do **not** append your own
+  `?? streamFallbackLabel(...)` tail; the fallback lives inside `streamLabel`:
 
   ```ts
-  const label = getStreamName(stream) ?? streamFallbackLabel(stream.type, "sidebar")
+  const label = streamLabel(stream, "sidebar")
   ```
 
   When the object can be a DM whose `displayName` may be stale/null (raw socket
   rows carry `displayName: null`), resolve the peer first with
-  `resolveDmDisplayName(streamId, users, dmPeers)` before falling back to the
-  object's own name — or just go through `resolveStreamName`/`useStreamName` by id.
+  `resolveDmDisplayName(streamId, users, dmPeers)` before `streamLabel` — or just
+  go through `resolveStreamName`/`useStreamName` by id.
+
+  Reach for the nullable `getStreamName(stream)` primitive **only** when you
+  genuinely need `null` rather than a placeholder — sort/search keys
+  (`getStreamName(s) ?? ""`) or a caller-specific fallback phrase
+  (``getStreamName(s) ?? `this ${noun}` ``). If you want a displayable label,
+  use `streamLabel`, not `getStreamName`.
 
 `FallbackContext` (`"sidebar" | "activity" | "breadcrumb" | "generic" | "noun"`)
 selects context-appropriate placeholder wording for unnamed streams; pass the
-one that matches the surface.
+one that matches the surface. `streamLabel` defaults to `"generic"`.
 
 ### Why this exists
 

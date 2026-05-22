@@ -4,7 +4,7 @@ import { useThreadAncestors } from "@/hooks"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { usePanel } from "@/contexts"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 import type { StreamType } from "@threa/types"
 
 interface ThreadHeaderStream {
@@ -70,7 +70,7 @@ export function ThreadHeader({ workspaceId, stream, inPanel = false }: ThreadHea
     <div className={`min-w-0 flex-1 overflow-hidden ${inPanel ? "pr-2" : ""}`}>
       <ResponsiveBreadcrumbs
         ancestors={ancestors}
-        currentLabel={getStreamName(stream) ?? streamFallbackLabel("thread", "breadcrumb")}
+        currentLabel={streamLabel(stream, "breadcrumb")}
         isMainViewStream={isMainViewStream}
         onClosePanel={closePanel}
         getNavigationUrl={getNavigationUrl}

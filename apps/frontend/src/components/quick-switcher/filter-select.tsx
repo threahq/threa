@@ -4,7 +4,7 @@ import { Calendar } from "@/components/ui/calendar"
 import { formatISODate } from "@/lib/dates"
 import { useFormattedDate } from "@/hooks"
 import type { StreamType, User, Stream } from "@threa/types"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { getStreamName, streamLabel } from "@/lib/streams"
 
 interface StreamTypeOption {
   value: StreamType
@@ -176,7 +176,7 @@ function StreamSelect({ streams, onSelect }: StreamSelectProps) {
     return name.toLowerCase().includes(search.toLowerCase())
   })
 
-  const resolvedName = (stream: Stream) => getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
+  const resolvedName = (stream: Stream) => streamLabel(stream)
 
   return (
     <div className="w-48">

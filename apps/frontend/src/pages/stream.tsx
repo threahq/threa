@@ -33,7 +33,7 @@ import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { StreamTypes, type StreamType } from "@threa/types"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 
@@ -131,7 +131,7 @@ export function StreamPage() {
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
   if (stream) {
-    streamName = getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
+    streamName = streamLabel(stream)
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }

@@ -28,7 +28,7 @@ import {
   type ShareData,
   type ShareMeta,
 } from "@/hooks/use-share-target"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ItemList } from "@/components/quick-switcher/item-list"
@@ -215,7 +215,7 @@ export function SharePickerPage() {
 
         return {
           id: stream.id,
-          label: getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic"),
+          label: streamLabel(stream),
           description: typeLabel,
           icon: STREAM_ICONS[stream.type],
           avatarUrl,

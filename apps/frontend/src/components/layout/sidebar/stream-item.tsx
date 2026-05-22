@@ -10,7 +10,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 import { BADGE_CONFIG, URGENCY_COLORS } from "./config"
 import {
   SidebarActionDrawer,
@@ -203,7 +203,7 @@ export function StreamItem({
   }
 
   const avatar = getAvatar()
-  const name = getStreamName(stream) ?? streamFallbackLabel(stream.type, "sidebar")
+  const name = streamLabel(stream, "sidebar")
   const threadRootStream =
     stream.type === StreamTypes.THREAD && stream.rootStreamId
       ? (allStreams.find((s) => s.id === stream.rootStreamId) ?? null)

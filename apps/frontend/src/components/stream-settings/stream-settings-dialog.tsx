@@ -21,7 +21,7 @@ import {
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
 import { StreamTypes, type Stream, type StreamBootstrap, type NotificationLevel } from "@threa/types"
-import { getStreamName, resolveDmDisplayName, streamFallbackLabel } from "@/lib/streams"
+import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 
 const TAB_CONFIG: Record<StreamSettingsTab, { label: string; description: string }> = {
   general: { label: "General", description: "Notifications and stream details" },
@@ -96,7 +96,7 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
   // resolves through the shared helper so the title matches every other surface.
   let streamName = "Stream"
   if (resolvedStream) {
-    streamName = dmDisplayName ?? getStreamName(resolvedStream) ?? streamFallbackLabel(resolvedStream.type, "generic")
+    streamName = dmDisplayName ?? streamLabel(resolvedStream)
   }
 
   return (

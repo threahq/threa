@@ -12,7 +12,7 @@ import {
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useWorkspaceStreams, useWorkspaceStreamMemberships, useWorkspaceUnreadState } from "@/stores/workspace-store"
-import { getStreamName, streamFallbackLabel, STREAM_ICONS } from "@/lib/streams"
+import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { compareStreamEntries, scoreStreamMatch, useStoredStreamSortMode } from "@/lib/stream-sort"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
 import { queueShareHandoff } from "@/stores/share-handoff-store"
@@ -178,7 +178,7 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: Sh
                 <CommandGroup key={group.id} heading={group.heading}>
                   {list.map(({ stream }) => {
                     const Icon = STREAM_ICONS[stream.type]
-                    const label = getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
+                    const label = streamLabel(stream)
                     return (
                       <CommandItem key={stream.id} value={stream.id} onSelect={() => handleSelect(stream.id)}>
                         <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />

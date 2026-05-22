@@ -11,10 +11,10 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { isDraftId } from "./use-draft-scratchpads"
 import { deleteStashedDraftById } from "./use-stashed-drafts"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import type { JSONContent, StreamType } from "@threa/types"
+import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 
 /**
  * Defensive ceiling on the workspace-wide stash scan that powers the /drafts
@@ -133,7 +133,7 @@ function resolveDraftLocation(
     const messageInfo = messageToStreamMap.get(parsed.id)
     const parentStream = messageInfo ? streamMap.get(messageInfo.streamId) : null
     if (parentStream) {
-      const streamName = getStreamName(parentStream) ?? streamFallbackLabel(parentStream.type as StreamType, "sidebar")
+      const streamName = streamLabel(parentStream, "sidebar")
       const displayName = `Thread in ${streamName}`
       return {
         draftType: "thread",
