@@ -27,10 +27,19 @@ type RuntimeSessionLink = {
 
 type ClaimedInvocation = {
   id: string
+  activeStreamId: string
   sourceMessageId: string
   promptMarkdown: string
   claimToken: string
   claimExpiresAt: string | null
+}
+
+type StreamMessage = {
+  id: string
+  authorType: string
+  authorDisplayName?: string
+  content: string
+  createdAt: string
 }
 
 let config: Config | undefined
@@ -195,6 +204,26 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   ctx.ui.notify("Threa remote enabled", "info")
 }
 
+function formatInvocationContext(messages: StreamMessage[], sourceMessageId: string): string {
+  if (messages.length === 0) return ""
+  return [
+    "Recent Threa stream context (oldest first):",
+    ...messages.map((message) => {
+      const author = message.authorDisplayName || message.authorType
+      const marker = message.id === sourceMessageId ? " [source]" : ""
+      return `- ${author}${marker}: ${message.content}`
+    }),
+  ].join("\n")
+}
+
+async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<string> {
+  if (!config) return ""
+  const body = await request<{ data: StreamMessage[] }>(
+    `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?limit=12`
+  )
+  return formatInvocationContext(body.data, invocation.sourceMessageId)
+}
+
 async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!config || !isEnabled()) return
   if (pending) {
@@ -220,6 +249,10 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   if (!body.data) return
   pending = body.data
   pendingAssistantTexts = []
+  const context = await fetchInvocationContext(body.data).catch((error) => {
+    ctx.ui.notify(`Threa remote context fetch failed: ${String(error)}`, "warning")
+    return ""
+  })
   await heartbeat("busy", `Working on ${body.data.id}`)
   setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
@@ -227,7 +260,8 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
       `Remote Threa invocation ${body.data.id}.`,
       `Source message: ${body.data.sourceMessageId}`,
       "Respond normally; the extension will post your final answer back to Threa.",
-      "",
+      context ? `\n${context}` : "",
+      "\nSource message prompt:",
       body.data.promptMarkdown,
     ].join("\n")
   )
