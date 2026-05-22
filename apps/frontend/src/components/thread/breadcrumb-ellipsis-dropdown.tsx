@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom"
 import { BreadcrumbItem, BreadcrumbEllipsis, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 import type { StreamType } from "@threa/types"
 
 interface StreamInfo {
@@ -35,7 +35,7 @@ export function BreadcrumbEllipsisDropdown({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             {items.map((item) => {
-              const displayName = getStreamName(item) ?? streamFallbackLabel(item.type, "breadcrumb")
+              const displayName = streamLabel(item, "breadcrumb")
 
               if (isMainViewStream(item.id)) {
                 return (

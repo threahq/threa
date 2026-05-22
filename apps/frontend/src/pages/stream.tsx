@@ -33,9 +33,8 @@ import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { StreamTypes, type StreamType } from "@threa/types"
-import { getStreamName, resolveDmDisplayName, streamFallbackLabel } from "@/lib/streams"
+import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
-import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 
 function getStreamTypeLabel(type: StreamType): string {
@@ -96,7 +95,6 @@ export function StreamPage() {
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const dmPeers = useWorkspaceDmPeers(workspaceId ?? "")
-  const workspaceUsers = useWorkspaceUsers(workspaceId)
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -108,20 +106,16 @@ export function StreamPage() {
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Set document title to include stream name (matching sidebar DM resolution logic)
+  // `stream.displayName` is already viewer-resolved by useStreamOrDraft (DM peer
+  // names included), so the page title just reads the shared name off it.
   useEffect(() => {
     if (!stream) {
       setPageStreamName(null)
       return () => setPageStreamName(null)
     }
-    const resolvedName =
-      stream.type === StreamTypes.DM
-        ? (resolveDmDisplayName(stream.id, workspaceUsers, dmPeers) ?? stream.displayName)
-        : null
-    const name = resolvedName ?? getStreamName(stream)
-    setPageStreamName(name)
+    setPageStreamName(getStreamName(stream))
     return () => setPageStreamName(null)
-  }, [stream, workspaceUsers, dmPeers])
+  }, [stream])
 
   if (!workspaceId || !streamId) {
     return null
@@ -137,7 +131,7 @@ export function StreamPage() {
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
   if (stream) {
-    streamName = getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
+    streamName = streamLabel(stream)
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }

@@ -1,5 +1,23 @@
 import { describe, it, expect } from "vitest"
-import { resolveDmDisplayName, resolveStreamName } from "./streams"
+import { resolveDmDisplayName, resolveStreamName, streamLabel } from "./streams"
+
+describe("streamLabel", () => {
+  it("prefixes a channel with its slug", () => {
+    expect(streamLabel({ type: "channel", slug: "general", displayName: null })).toBe("#general")
+  })
+
+  it("uses the displayName for a named non-channel stream", () => {
+    expect(streamLabel({ type: "thread", slug: null, displayName: "Launch plan" })).toBe("Launch plan")
+  })
+
+  it("falls through to a context-appropriate placeholder when the stream has no name", () => {
+    expect(streamLabel({ type: "scratchpad", slug: null, displayName: null }, "sidebar")).toBe("New scratchpad")
+  })
+
+  it("defaults the fallback context to generic", () => {
+    expect(streamLabel({ type: "thread", slug: null, displayName: null })).toBe("Thread")
+  })
+})
 
 describe("resolveStreamName", () => {
   const users = [{ id: "user_peer", name: "Pierre Boberg" }]

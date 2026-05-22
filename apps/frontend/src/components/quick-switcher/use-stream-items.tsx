@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
 import { StreamTypes, getAvatarUrl } from "@threa/types"
 import type { Stream, StreamType } from "@threa/types"
-import { getStreamName, streamFallbackLabel, STREAM_ICONS } from "@/lib/streams"
+import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
@@ -199,7 +199,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
 
         return {
           id: stream.id,
-          label: getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic"),
+          label: streamLabel(stream),
           description,
           icon: STREAM_ICONS[stream.type],
           avatarUrl,

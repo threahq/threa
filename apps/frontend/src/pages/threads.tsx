@@ -8,7 +8,7 @@ import { StreamTypes } from "@threa/types"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useActors } from "@/hooks"
 import { getThreadRootContext } from "@/components/thread/breadcrumb-helpers"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 
 export function ThreadsPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -25,7 +25,7 @@ export function ThreadsPage() {
   // Convert threads to QuickSwitcherItem format
   const items: QuickSwitcherItem[] = useMemo(() => {
     return threads.map((thread) => {
-      const displayName = getStreamName(thread) ?? streamFallbackLabel("thread", "sidebar")
+      const displayName = streamLabel(thread, "sidebar")
       // CachedStream doesn't have lastMessagePreview
       const preview = (thread as any).lastMessagePreview
       const authorName = preview ? getActorName(preview.authorId, preview.authorType) : null

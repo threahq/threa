@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom"
 import { BreadcrumbItem, BreadcrumbLink, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 import type { StreamType } from "@threa/types"
 
 interface StreamInfo {
@@ -33,7 +33,7 @@ export function getThreadRootContext(
   const rootStream = allStreams.find((s) => s.id === thread.rootStreamId)
   if (!rootStream) return null
 
-  return getStreamName(rootStream) ?? streamFallbackLabel(rootStream.type, "sidebar")
+  return streamLabel(rootStream, "sidebar")
 }
 
 interface AncestorBreadcrumbItemProps {
@@ -58,7 +58,7 @@ export function AncestorBreadcrumbItem({
   getNavigationUrl,
   maxWidth = 120,
 }: AncestorBreadcrumbItemProps) {
-  const displayName = getStreamName(stream) ?? streamFallbackLabel(stream.type, "breadcrumb")
+  const displayName = streamLabel(stream, "breadcrumb")
 
   if (isMainViewStream) {
     return (

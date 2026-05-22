@@ -2,7 +2,7 @@ import { useCallback, useState } from "react"
 import type { Stream } from "@threa/types"
 import type { UrgencyLevel } from "@/components/layout/sidebar/types"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 
 /** Sort modes used by stream pickers (quick switcher, share modal, share picker). */
 export type StreamSortMode = "recency" | "alphabetical"
@@ -27,7 +27,7 @@ export function scoreStreamMatch(
   lowerQuery: string
 ): number {
   if (!lowerQuery) return 0
-  const name = (getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")).toLowerCase()
+  const name = streamLabel(stream).toLowerCase()
   if (name === lowerQuery) return 0
   if (name.startsWith(lowerQuery)) return 1
   if (name.includes(lowerQuery)) return 2
@@ -36,8 +36,8 @@ export function scoreStreamMatch(
 }
 
 function compareNames(a: SortableStream, b: SortableStream): number {
-  const aName = getStreamName(a) ?? streamFallbackLabel(a.type, "generic")
-  const bName = getStreamName(b) ?? streamFallbackLabel(b.type, "generic")
+  const aName = streamLabel(a)
+  const bName = streamLabel(b)
   return aName.localeCompare(bName)
 }
 

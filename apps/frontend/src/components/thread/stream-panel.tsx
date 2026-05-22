@@ -48,9 +48,9 @@ import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentMessage } from "./thread-parent-message"
 import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { StreamTypes } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamLabel } from "@/lib/streams"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -378,11 +378,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   } else if (isThread && stream) {
     headerContent = <ThreadHeader workspaceId={workspaceId} stream={stream} inPanel />
   } else {
-    headerContent = (
-      <SidePanelTitle className="flex-1">
-        {stream ? (getStreamName(stream) ?? streamFallbackLabel(stream.type as StreamType, "generic")) : "Stream"}
-      </SidePanelTitle>
-    )
+    headerContent = <SidePanelTitle className="flex-1">{stream ? streamLabel(stream) : "Stream"}</SidePanelTitle>
   }
 
   return (
@@ -422,9 +418,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                 description="Choose an action for this stream."
                 header={
                   <div className="px-4 pt-2 pb-3">
-                    <p className="truncate text-base font-semibold text-foreground">
-                      {getStreamName(stream) ?? streamFallbackLabel(stream.type as StreamType, "generic")}
-                    </p>
+                    <p className="truncate text-base font-semibold text-foreground">{streamLabel(stream)}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {stream.type === StreamTypes.THREAD ? "Thread" : "Stream"} actions
                     </p>

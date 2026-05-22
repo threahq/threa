@@ -21,7 +21,7 @@ import {
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
 import { StreamTypes, type Stream, type StreamBootstrap, type NotificationLevel } from "@threa/types"
-import { resolveDmDisplayName } from "@/lib/streams"
+import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 
 const TAB_CONFIG: Record<StreamSettingsTab, { label: string; description: string }> = {
   general: { label: "General", description: "Notifications and stream details" },
@@ -92,9 +92,11 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
   // If active tab isn't available for this stream type, fall back
   const effectiveTab = (availableTabs as readonly string[]).includes(activeTab) ? activeTab : availableTabs[0]
 
+  // DMs carry the viewer-specific peer name in `dmDisplayName`; everything else
+  // resolves through the shared helper so the title matches every other surface.
   let streamName = "Stream"
   if (resolvedStream) {
-    streamName = resolvedStream.slug ? `#${resolvedStream.slug}` : (resolvedStream.displayName ?? "Stream")
+    streamName = dmDisplayName ?? streamLabel(resolvedStream)
   }
 
   return (

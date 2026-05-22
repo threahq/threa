@@ -32,7 +32,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { RelativeTime } from "@/components/relative-time"
 import { SidebarToggle } from "@/components/layout"
 import { cn } from "@/lib/utils"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
+import { streamFallbackLabel, streamLabel } from "@/lib/streams"
 import type { MemoExplorerDetail, MemoExplorerResult, MemoExplorerStreamRef } from "@/api"
 
 const ALL_MEMO_TYPES = "all-memo-types"
@@ -557,7 +557,7 @@ export function MemoryPage() {
     .filter((stream) => !stream.archivedAt)
     .map((stream) => ({
       id: stream.id,
-      label: getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic"),
+      label: streamLabel(stream),
     }))
     .sort((a, b) => a.label.localeCompare(b.label))
 

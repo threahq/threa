@@ -19,7 +19,7 @@ import { useWorkspaceStreams, useWorkspaceUnreadState, useWorkspaceUsers } from 
 import { useActivityCounts, useUnreadCounts } from "@/hooks"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
-import { getStreamName, streamFallbackLabel, STREAM_ICONS } from "@/lib/streams"
+import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { CATEGORY_OPTIONS } from "./category"
 import type { ExplorerFilters } from "./use-explorer-url-state"
 
@@ -119,7 +119,7 @@ export function ExplorerFilters({ workspaceId, filters, parentStreamId, onUpdate
   }, [streams, streamSearch, filters.streamIds, getUnreadCount, getMentionCount, mutedStreamIds])
 
   const labelForStream = (stream: { type: string; displayName?: string | null; slug?: string | null }) =>
-    getStreamName(stream) ?? streamFallbackLabel(stream.type as Parameters<typeof streamFallbackLabel>[0], "generic")
+    streamLabel(stream)
 
   const toggleCategory = (cat: AttachmentCategory) => {
     const set = new Set(filters.categories)
