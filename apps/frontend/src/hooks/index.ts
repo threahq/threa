@@ -188,3 +188,5 @@ export {
   isLocalScheduledId,
   scheduledKeys,
 } from "./use-scheduled"
+
+export { useStreamName } from "./use-stream-name"

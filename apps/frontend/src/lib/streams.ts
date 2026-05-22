@@ -56,7 +56,7 @@ export function resolveDmDisplayName(
   return workspaceUsers.find((u) => u.id === peerUserId)?.name ?? null
 }
 
-type FallbackContext = "sidebar" | "activity" | "breadcrumb" | "generic" | "noun"
+export type FallbackContext = "sidebar" | "activity" | "breadcrumb" | "generic" | "noun"
 
 const FALLBACK_LABELS: Record<string, Record<FallbackContext, string>> = {
   scratchpad: {
@@ -75,4 +75,36 @@ const FALLBACK_LABELS: Record<string, Record<FallbackContext, string>> = {
 /** Context-appropriate fallback text for streams that truly have no name yet. */
 export function streamFallbackLabel(type: StreamType, context: FallbackContext): string {
   return FALLBACK_LABELS[type]?.[context] ?? "Untitled"
+}
+
+interface StreamNameCaches {
+  streams: Array<{ id: string; type: StreamType; slug?: string | null; displayName?: string | null }>
+  users: Array<{ id: string; name: string }>
+  dmPeers: Array<{ streamId: string; userId: string }>
+}
+
+/**
+ * Resolve a stream's display name from the workspace caches by id — the single
+ * entry point any surface should use when it has a stream id and wants a label.
+ *
+ * DMs resolve from the peer user first, which works even when the DM's stream
+ * object isn't in the streams cache (`dmPeers` covers every DM the viewer
+ * belongs to). Other types use the cached stream's name with a context
+ * fallback. Returns null only when the id matches no DM peer and no cached
+ * stream, so the caller can layer its own last-resort fallback (e.g. a
+ * persisted snapshot name).
+ *
+ * Prefer the `useStreamName` hook in components; this pure function exists for
+ * non-hook contexts (list mappers, tests) and as the hook's implementation.
+ */
+export function resolveStreamName(
+  streamId: string,
+  caches: StreamNameCaches,
+  context: FallbackContext = "generic"
+): string | null {
+  const peerName = resolveDmDisplayName(streamId, caches.users, caches.dmPeers)
+  if (peerName) return peerName
+  const stream = caches.streams.find((s) => s.id === streamId)
+  if (stream) return getStreamName(stream) ?? streamFallbackLabel(stream.type, context)
+  return null
 }
