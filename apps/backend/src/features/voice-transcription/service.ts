@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
 import { voiceSessionId } from "../../lib/id"
+import { UserRepository } from "../workspaces"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
 import { voiceConfig, parseModelProvider, type VoiceSessionStatus } from "./config"
 
@@ -43,12 +44,32 @@ export class VoiceTranscriptionService {
   }
 
   /**
-   * Resolve a session for the realtime relay: it must exist, be active, and be
-   * owned by the connecting user in this workspace. Throws otherwise so the
-   * gateway can refuse to open an upstream socket for a stale/foreign session.
+   * Resolve a session for the realtime relay: the connecting WorkOS user must
+   * map to a member of this workspace, and the session must exist, be active,
+   * and be owned by that user. Identity resolution lives here (not in the
+   * gateway) so all session data access stays behind the service (INV-34).
+   * Throws otherwise so the gateway can refuse to open an upstream socket for a
+   * stale/foreign session.
    */
-  async getRelaySession(params: { workspaceId: string; userId: string; sessionId: string }): Promise<VoiceSessionRow> {
-    const row = await VoiceSessionRepository.findOwned(this.pool, params.workspaceId, params.userId, params.sessionId)
+  async getRelaySession(params: {
+    workspaceId: string
+    workosUserId: string
+    sessionId: string
+  }): Promise<VoiceSessionRow> {
+    const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(
+      this.pool,
+      params.workspaceId,
+      params.workosUserId
+    )
+    if (!workspaceUser) {
+      throw new HttpError("Not authorized for this workspace", { status: 403, code: "VOICE_NOT_AUTHORIZED" })
+    }
+    const row = await VoiceSessionRepository.findOwned(
+      this.pool,
+      params.workspaceId,
+      workspaceUser.id,
+      params.sessionId
+    )
     if (!row) {
       throw new HttpError("Voice session not found", { status: 404, code: "VOICE_SESSION_NOT_FOUND" })
     }

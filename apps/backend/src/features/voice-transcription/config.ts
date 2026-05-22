@@ -3,6 +3,8 @@
  * Pricing is NOT here — it lives in models.yaml and is read via ModelRegistry (INV-33).
  */
 
+import { parseModelId } from "../../lib/ai/ai"
+
 export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
 
 /** Status values for voice_sessions.status (validated in code, no DB enum — INV-3). */
@@ -12,11 +14,15 @@ export type VoiceSessionStatus = (typeof VOICE_SESSION_STATUSES)[number]
 /**
  * Extract the provider prefix from a full model id
  * (`elevenlabs:scribe-v2-realtime` → `elevenlabs`). Returns null when the id
- * carries no provider prefix; callers decide how to surface that.
+ * carries no provider prefix; callers decide how to surface that. Delegates to
+ * the shared `parseModelId` so model-id parsing lives in one place (INV-35).
  */
 export function parseModelProvider(model: string): string | null {
-  const colon = model.indexOf(":")
-  return colon === -1 ? null : model.slice(0, colon)
+  try {
+    return parseModelId(model).provider
+  } catch {
+    return null
+  }
 }
 
 export const voiceConfig = {

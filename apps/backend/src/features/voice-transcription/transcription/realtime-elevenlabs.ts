@@ -1,4 +1,5 @@
 import { logger } from "../../../lib/logger"
+import { voiceConfig } from "../config"
 import type {
   TranscriptionStrategy,
   TranscriptionSession,
@@ -13,7 +14,7 @@ export interface ElevenLabsStrategyConfig {
 }
 
 const REALTIME_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime"
-const SAMPLE_RATE_HZ = 16_000
+const SAMPLE_RATE_HZ = voiceConfig.sampleRateHz
 /** PCM16 mono: 2 bytes/sample, so ms = bytes / (2 * 16000 / 1000) = bytes / 32. */
 const BYTES_PER_MS = (SAMPLE_RATE_HZ * 2) / 1000
 

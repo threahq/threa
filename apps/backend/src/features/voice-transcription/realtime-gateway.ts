@@ -1,7 +1,5 @@
 import type { Server } from "socket.io"
-import type { Pool } from "pg"
 import type { AuthService } from "@threa/backend-common"
-import { UserRepository } from "../workspaces"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
@@ -10,7 +8,6 @@ import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
 
 interface Dependencies {
-  pool: Pool
   authService: AuthService
   voiceTranscriptionService: VoiceTranscriptionService
   transcription: Transcription
@@ -49,7 +46,7 @@ function toBuffer(frame: unknown): Buffer | null {
  * with no durable read model to reconstruct.
  */
 export function registerVoiceGateway(io: Server, deps: Dependencies) {
-  const { pool, authService, voiceTranscriptionService, transcription } = deps
+  const { authService, voiceTranscriptionService, transcription } = deps
   const namespace = io.of("/voice")
 
   // Same session-cookie auth as the main namespace (INV-35: reuse, don't fork).
@@ -122,15 +119,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         starting = true
 
         try {
-          const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, workspaceId, workosUserId)
-          if (!workspaceUser) {
-            callback?.({ ok: false, error: "Not authorized" })
-            return
-          }
-
           const row = await voiceTranscriptionService.getRelaySession({
             workspaceId,
-            userId: workspaceUser.id,
+            workosUserId,
             sessionId: voiceSessionId,
           })
 
@@ -145,14 +136,16 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
               logger.warn({ err, voiceSessionId }, "Voice upstream close after abandoned start failed")
             }
             await voiceTranscriptionService
-              .abortSession({ workspaceId, userId: workspaceUser.id, sessionId: voiceSessionId, totalAudioMs: 0 })
+              .abortSession({ workspaceId, userId: row.userId, sessionId: voiceSessionId, totalAudioMs: 0 })
               .catch(() => {})
             callback?.({ ok: false, error: "Session ended before it started" })
             return
           }
 
-          upstream.onDelta((delta) => socket.emit("voice:delta", delta))
-          upstream.onError((e) => socket.emit("voice:error", e))
+          // Per-session payloads (plan §3): the client filters deltas by
+          // voiceSessionId so a stale session can't leak text into a new one.
+          upstream.onDelta((delta) => socket.emit("voice:transcript:delta", { voiceSessionId, ...delta }))
+          upstream.onError((e) => socket.emit("voice:transcription:error", { voiceSessionId, ...e }))
 
           const maxDurationTimer = setTimeout(() => {
             socket.emit("voice:stopped", { reason: "max_duration" })
@@ -161,7 +154,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
 
           state = {
             workspaceId,
-            userId: workspaceUser.id,
+            userId: row.userId,
             voiceSessionId,
             upstream,
             maxDurationTimer,

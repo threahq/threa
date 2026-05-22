@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
+import { HttpError } from "../../lib/errors"
 import type { VoiceTranscriptionService } from "./service"
 
 const createSessionSchema = z.object({
@@ -19,10 +20,7 @@ export function createVoiceTranscriptionHandlers({ voiceTranscriptionService }: 
 
       const result = createSessionSchema.safeParse(req.body)
       if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
+        throw new HttpError("Invalid voice session request", { status: 400, code: "VALIDATION_ERROR" })
       }
 
       const row = await voiceTranscriptionService.createSession({

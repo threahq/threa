@@ -6,6 +6,7 @@ import { getCachedWsConfig } from "@/lib/cached-ws-config"
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
 
 interface VoiceDelta {
+  voiceSessionId: string
   text: string
   isFinal: boolean
 }
@@ -75,6 +76,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const audioContextRef = useRef<AudioContext | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  // Bumped on every start() and every teardown/stop so a `voice:start` ACK that
+  // resolves after the user has already stopped (or torn down) can't flip the
+  // state machine back to "recording" with nothing behind it.
+  const startGenerationRef = useRef(0)
   // Keep the latest committed-text callback without re-subscribing the socket.
   const onCommittedTextRef = useRef(onCommittedText)
   onCommittedTextRef.current = onCommittedText
@@ -90,6 +95,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   }, [])
 
   const teardown = useCallback(() => {
+    startGenerationRef.current++
     teardownAudio()
     socketRef.current?.disconnect()
     socketRef.current = null
@@ -111,6 +117,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
     setError(null)
     setState("connecting")
+    const generation = ++startGenerationRef.current
 
     void (async () => {
       try {
@@ -153,10 +160,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         const socket = io(voiceUrl, { path: "/socket.io/", withCredentials: true, autoConnect: true })
         socketRef.current = socket
 
-        socket.on("voice:delta", (delta: VoiceDelta) => {
+        socket.on("voice:transcript:delta", (delta: VoiceDelta) => {
+          // Ignore deltas from a session we've already moved past so a stale
+          // socket can't leak text into a new take (plan §3).
+          if (delta.voiceSessionId !== sessionIdRef.current) return
           if (delta.isFinal && delta.text) onCommittedTextRef.current(delta.text)
         })
-        socket.on("voice:error", (e: { message?: string }) => fail(e?.message || "Transcription failed"))
+        socket.on("voice:transcription:error", (e: { message?: string }) => fail(e?.message || "Transcription failed"))
         socket.on("voice:stopped", () => {
           // Server-initiated stop (e.g. the max-duration guard). Leave the
           // recording state, not just tear down the audio graph.
@@ -173,6 +183,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           "voice:start",
           { workspaceId, voiceSessionId: session.voiceSessionId },
           (result: { ok: boolean; error?: string }) => {
+            // The user stopped (or we tore down) while this ACK was in flight —
+            // don't resurrect a dead take into the "recording" state.
+            if (generation !== startGenerationRef.current) {
+              socket.disconnect()
+              return
+            }
             if (!result?.ok) {
               fail(result?.error || "Couldn't start dictation")
               return
@@ -184,6 +200,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           }
         )
       } catch (err) {
+        // The user already stopped this take while we were setting up — don't
+        // surface a late setup error against a session they've abandoned.
+        if (generation !== startGenerationRef.current) return
         const message =
           err instanceof DOMException && (err.name === "NotAllowedError" || err.name === "SecurityError")
             ? "Microphone access was denied"
@@ -196,21 +215,23 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const stop = useCallback(() => {
     if (state !== "recording" && state !== "connecting") return
     setState("stopping")
+    // Invalidate any in-flight `voice:start` ACK so a late accept can't flip us
+    // back to "recording" after we've decided to stop.
+    startGenerationRef.current++
     // Stop capture immediately; tell the backend to commit the buffered audio.
     teardownAudio()
     const socket = socketRef.current
+    socketRef.current = null
+    sessionIdRef.current = null
     if (socket) {
       socket.emit("voice:stop", () => {
         socket.disconnect()
-        socketRef.current = null
-        sessionIdRef.current = null
         setState("idle")
       })
     } else {
-      teardown()
       setState("idle")
     }
-  }, [state, teardownAudio, teardown])
+  }, [state, teardownAudio])
 
   // Abort a still-open session on unmount: disconnecting the socket makes the
   // gateway finalize it as aborted; if the socket never opened, abort over HTTP

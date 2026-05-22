@@ -1,6 +1,7 @@
 import { describe, expect, test, spyOn, afterEach } from "bun:test"
 import type { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
+import { UserRepository } from "../workspaces"
 import { VoiceTranscriptionService } from "./service"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
 import { voiceConfig } from "./config"
@@ -31,6 +32,7 @@ afterEach(() => {
   ;(VoiceSessionRepository.insert as ReturnType<typeof spyOn>)?.mockRestore?.()
   ;(VoiceSessionRepository.findOwned as ReturnType<typeof spyOn>)?.mockRestore?.()
   ;(VoiceSessionRepository.finalizeOwned as ReturnType<typeof spyOn>)?.mockRestore?.()
+  ;(UserRepository.findByWorkosUserIdInWorkspace as ReturnType<typeof spyOn>)?.mockRestore?.()
 })
 
 describe("VoiceTranscriptionService.createSession", () => {
@@ -73,16 +75,36 @@ describe("VoiceTranscriptionService.createSession", () => {
 })
 
 describe("VoiceTranscriptionService.getRelaySession", () => {
-  const params = { workspaceId: "ws_1", userId: "user_1", sessionId: "voicesess_1" }
+  const params = { workspaceId: "ws_1", workosUserId: "workos_1", sessionId: "voicesess_1" }
 
-  test("returns the row when active and unexpired", async () => {
+  function mockUser() {
+    spyOn(UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue({ id: "user_1" } as never)
+  }
+
+  test("resolves the workspace user and returns the row when active and unexpired", async () => {
+    mockUser()
     const row = makeRow()
-    spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(row)
+    const findOwned = spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(row)
     const service = new VoiceTranscriptionService(pool)
     expect(await service.getRelaySession(params)).toBe(row)
+    // The session lookup is scoped to the resolved workspace user id, not the
+    // raw WorkOS id from the socket.
+    expect(findOwned.mock.calls[0]).toEqual([pool, "ws_1", "user_1", "voicesess_1"])
+  })
+
+  test("throws 403 when the WorkOS user is not a member of the workspace", async () => {
+    spyOn(UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue(null)
+    const findOwned = spyOn(VoiceSessionRepository, "findOwned")
+    const service = new VoiceTranscriptionService(pool)
+    await expect(service.getRelaySession(params)).rejects.toMatchObject({
+      status: 403,
+      code: "VOICE_NOT_AUTHORIZED",
+    })
+    expect(findOwned).not.toHaveBeenCalled()
   })
 
   test("throws 404 when not found", async () => {
+    mockUser()
     spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(null)
     const service = new VoiceTranscriptionService(pool)
     await expect(service.getRelaySession(params)).rejects.toMatchObject({
@@ -92,6 +114,7 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
   })
 
   test("throws 409 when not active", async () => {
+    mockUser()
     spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow({ status: "finished" }))
     const service = new VoiceTranscriptionService(pool)
     await expect(service.getRelaySession(params)).rejects.toMatchObject({
@@ -101,6 +124,7 @@ describe("VoiceTranscriptionService.getRelaySession", () => {
   })
 
   test("throws 409 when expired", async () => {
+    mockUser()
     spyOn(VoiceSessionRepository, "findOwned").mockResolvedValue(makeRow({ expiresAt: new Date(Date.now() - 1) }))
     const service = new VoiceTranscriptionService(pool)
     await expect(service.getRelaySession(params)).rejects.toMatchObject({

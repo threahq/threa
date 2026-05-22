@@ -562,7 +562,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   // Dedicated voice relay on its own namespace so audio frames don't share the
   // main namespace's room fan-out.
-  registerVoiceGateway(io, { pool, authService, voiceTranscriptionService, transcription })
+  registerVoiceGateway(io, { authService, voiceTranscriptionService, transcription })
 
   const serverId = `server_${ulid()}`
 
