@@ -228,7 +228,7 @@ async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<{ 
     `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?${query}`
   )
 
-  const sourceIncluded = body.data.some((message) => message.id === invocation.sourceMessageId)
+  let sourceIncluded = body.data.some((message) => message.id === invocation.sourceMessageId)
   const messages = sourceIncluded
     ? body.data
     : (
@@ -236,11 +236,12 @@ async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<{ 
           `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?limit=12`
         )
       ).data
+  sourceIncluded = messages.some((message) => message.id === invocation.sourceMessageId)
   const orderedMessages = [...messages].sort((a, b) => (BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1))
 
   return {
     context: formatInvocationContext(orderedMessages, invocation.sourceMessageId),
-    cursor: orderedMessages.at(-1)?.sequence,
+    cursor: sourceIncluded ? orderedMessages.at(-1)?.sequence : undefined,
   }
 }
 
