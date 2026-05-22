@@ -140,7 +140,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
         const AudioCtx =
           window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-        const audioContext = new AudioCtx({ sampleRate: SAMPLE_RATE_HZ })
+        // Don't pin the context to 16kHz. Firefox (incl. Android) throws from
+        // createMediaStreamSource when the context rate differs from the mic
+        // track's native rate instead of resampling like Chrome does. Run at the
+        // device's native rate and let the worklet downsample to the 16kHz the
+        // upstream STT expects (its targetSampleRate handles the conversion).
+        const audioContext = new AudioCtx()
         audioContextRef.current = audioContext
         await audioContext.audioWorklet.addModule("/worklets/pcm16-processor.js")
 
