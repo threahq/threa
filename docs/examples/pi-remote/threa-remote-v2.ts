@@ -35,13 +35,31 @@ type ClaimedInvocation = {
 
 let config: Config | undefined
 let timer: ReturnType<typeof setInterval> | undefined
+let pollInFlight = false
 let pending: ClaimedInvocation | undefined
 let pendingAssistantTexts: string[] = []
+
+function validateConfig(value: unknown): Config | undefined {
+  if (!value || typeof value !== "object") {
+    console.error(`Invalid ${CONFIG_PATH}: expected an object`)
+    return undefined
+  }
+  const candidate = value as Partial<Config>
+  const invalidFields = ["baseUrl", "workspaceId", "apiKey"].filter((field) => {
+    const fieldValue = candidate[field as keyof Config]
+    return typeof fieldValue !== "string" || fieldValue.trim().length === 0
+  })
+  if (invalidFields.length > 0) {
+    console.error(`Invalid ${CONFIG_PATH}: missing or invalid ${invalidFields.join(", ")}`)
+    return undefined
+  }
+  return candidate as Config
+}
 
 function readConfig(): Config | undefined {
   if (!existsSync(CONFIG_PATH)) return undefined
   try {
-    return JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as Config
+    return validateConfig(JSON.parse(readFileSync(CONFIG_PATH, "utf8")))
   } catch (error) {
     console.error(`Failed to parse ${CONFIG_PATH}: ${String(error)}`)
     return undefined
@@ -154,6 +172,7 @@ function isEnabled(): boolean {
 function stopPolling(): void {
   if (timer) clearInterval(timer)
   timer = undefined
+  pollInFlight = false
 }
 
 async function disableRemote(ctx: ExtensionContext): Promise<void> {
@@ -161,8 +180,7 @@ async function disableRemote(ctx: ExtensionContext): Promise<void> {
   config.enabled = false
   saveConfig()
   stopPolling()
-  pending = undefined
-  pendingAssistantTexts = []
+  await failPending("Threa remote disabled")
   await heartbeat("offline").catch(() => undefined)
   setRemoteStatus(ctx, "Threa remote: off")
   ctx.ui.notify("Threa remote disabled", "info")
@@ -245,10 +263,19 @@ function textFromAgentMessages(messages: unknown): string {
 function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!isEnabled()) return
   stopPolling()
-  const poll = () =>
-    claimIfIdle(pi, ctx).catch((error) => ctx.ui.notify(`Threa remote poll failed: ${String(error)}`, "warning"))
-  timer = setInterval(poll, Math.max(1000, config?.pollMs ?? 3000))
-  setTimeout(poll, 0)
+  const poll = async () => {
+    if (pollInFlight) return
+    pollInFlight = true
+    try {
+      await claimIfIdle(pi, ctx)
+    } catch (error) {
+      ctx.ui.notify(`Threa remote poll failed: ${String(error)}`, "warning")
+    } finally {
+      pollInFlight = false
+    }
+  }
+  timer = setInterval(() => void poll(), Math.max(1000, config?.pollMs ?? 3000))
+  void poll()
 }
 
 async function completePending(markdown: string): Promise<void> {
@@ -348,6 +375,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (_event, ctx) => {
     stopPolling()
+    await failPending("Pi session shut down")
     await heartbeat("offline").catch(() => undefined)
     ctx.ui.setStatus(STATUS_KEY, undefined)
   })
