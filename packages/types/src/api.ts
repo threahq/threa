@@ -96,12 +96,24 @@ export interface StreamContextBagPayload {
   refs: StreamContextRef[]
 }
 
+export interface BotRuntimePresenceSummary {
+  botId: string
+  runtimeKind: string
+  instanceId: string
+  displayName: string | null
+  status: "available" | "busy" | "offline" | "error"
+  acceptingInvocations: boolean
+  statusText: string | null
+  lastSeenAt: string
+}
+
 export interface StreamBootstrap {
   stream: Stream
   events: StreamEvent[]
   members: StreamMember[]
   /** Bot IDs that have been granted access to this stream. */
   botMemberIds: string[]
+  botRuntimePresence?: Record<string, BotRuntimePresenceSummary | null>
   membership: StreamMember | null
   latestSequence: string
   /**

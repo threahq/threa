@@ -5,6 +5,7 @@ interface ActiveBotStatusStripProps {
   botName: string
   runtimeDisplayName: string | null
   status: BotRuntimeStatus | "unknown"
+  statusText?: string | null
   className?: string
 }
 
@@ -16,8 +17,15 @@ const STATUS_COPY: Record<BotRuntimeStatus | "unknown", string> = {
   unknown: "not linked",
 }
 
-export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, className }: ActiveBotStatusStripProps) {
-  const detail = runtimeDisplayName ? `linked to ${runtimeDisplayName}` : "run /remote-control in Pi to connect"
+export function ActiveBotStatusStrip({
+  botName,
+  runtimeDisplayName,
+  status,
+  statusText,
+  className,
+}: ActiveBotStatusStripProps) {
+  const detail =
+    statusText ?? (runtimeDisplayName ? `linked to ${runtimeDisplayName}` : "run /remote-control in Pi to connect")
 
   return (
     <div

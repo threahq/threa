@@ -290,6 +290,13 @@ export const StreamActiveActorRepository = {
 }
 
 export const BotRuntimeInstanceRepository = {
+  async findLatestForBot(db: Querier, workspaceId: string, botId: string): Promise<BotRuntimeInstance | null> {
+    const result = await db.query<BotRuntimeInstanceRow>(
+      sql`SELECT * FROM bot_runtime_instances WHERE workspace_id = ${workspaceId} AND bot_id = ${botId} ORDER BY last_seen_at DESC LIMIT 1`
+    )
+    return result.rows[0] ? mapRuntimeInstance(result.rows[0]) : null
+  },
+
   async upsertPresence(
     db: Querier,
     params: {
