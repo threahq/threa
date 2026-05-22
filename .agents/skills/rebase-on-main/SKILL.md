@@ -32,7 +32,7 @@ git fetch origin main
 BRANCH=$(git branch --show-current)
 echo "branch=$BRANCH"
 # Sanity: refuse to run on main/detached HEAD
-[ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] || { echo "Not on a feature branch — abort"; }
+[ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] || { echo "Not on a feature branch — abort" >&2; exit 1; }
 # Commits that are on your branch but not on the up-to-date origin/main:
 git log --oneline origin/main..HEAD
 ```
