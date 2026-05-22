@@ -114,7 +114,7 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
       capabilities: {
         supportsActiveScratchpad: true,
         supportsPersistentSessions: true,
-        supportsMentionInvocations: false,
+        supportsMentionInvocations: true,
       },
       statusText,
     }),
@@ -211,7 +211,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
       body: JSON.stringify({
         runtimeKind: "pi-local",
         instanceId: ensureInstanceId(),
-        supportedCapabilities: ["active-scratchpad"],
+        supportedCapabilities: ["active-scratchpad", "mentionable"],
         claimTtlSeconds: 120,
       }),
     }
