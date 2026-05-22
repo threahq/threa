@@ -9,6 +9,16 @@ export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
 export const VOICE_SESSION_STATUSES = ["active", "finished", "aborted", "expired"] as const
 export type VoiceSessionStatus = (typeof VOICE_SESSION_STATUSES)[number]
 
+/**
+ * Extract the provider prefix from a full model id
+ * (`elevenlabs:scribe-v2-realtime` → `elevenlabs`). Returns null when the id
+ * carries no provider prefix; callers decide how to surface that.
+ */
+export function parseModelProvider(model: string): string | null {
+  const colon = model.indexOf(":")
+  return colon === -1 ? null : model.slice(0, colon)
+}
+
 export const voiceConfig = {
   defaultModel: VOICE_DEFAULT_MODEL,
   /** PCM16 mono sample rate captured client-side and expected by upstream STT. */

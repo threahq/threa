@@ -58,6 +58,10 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
   namespace.on("connection", (socket) => {
     const workosUserId = socket.data.workosUserId as string
     let state: RelayState | null = null
+    // `voice:start` yields at several awaits; without these guards a second
+    // start (or a disconnect mid-start) would orphan the upstream socket+timer.
+    let starting = false
+    let disconnected = false
 
     async function finalize(reason: "stopped" | "aborted" | "max_duration"): Promise<void> {
       if (!state || state.finalized) return
@@ -105,7 +109,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         payload: { workspaceId?: string; voiceSessionId?: string },
         callback?: (result: { ok: boolean; error?: string }) => void
       ) => {
-        if (state) {
+        if (state || starting) {
           callback?.({ ok: false, error: "Session already started" })
           return
         }
@@ -115,6 +119,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           callback?.({ ok: false, error: "workspaceId and voiceSessionId required" })
           return
         }
+        starting = true
 
         try {
           const workspaceUser = await UserRepository.findByWorkosUserIdInWorkspace(pool, workspaceId, workosUserId)
@@ -130,6 +135,22 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           })
 
           const upstream = await transcription.open({ model: row.model, language: row.language ?? undefined })
+
+          // The socket disconnected while we were opening upstream — there is no
+          // longer anyone to relay to, so tear down what we just built.
+          if (disconnected) {
+            try {
+              await upstream.close()
+            } catch (err) {
+              logger.warn({ err, voiceSessionId }, "Voice upstream close after abandoned start failed")
+            }
+            await voiceTranscriptionService
+              .abortSession({ workspaceId, userId: workspaceUser.id, sessionId: voiceSessionId, totalAudioMs: 0 })
+              .catch(() => {})
+            callback?.({ ok: false, error: "Session ended before it started" })
+            return
+          }
+
           upstream.onDelta((delta) => socket.emit("voice:delta", delta))
           upstream.onError((e) => socket.emit("voice:error", e))
 
@@ -155,6 +176,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           }
           logger.error({ err, voiceSessionId, workspaceId }, "Failed to start voice relay")
           callback?.({ ok: false, error: "Failed to start voice session" })
+        } finally {
+          starting = false
         }
       }
     )
@@ -173,6 +196,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
     })
 
     socket.on("disconnect", () => {
+      disconnected = true
       void finalize("aborted")
     })
   })

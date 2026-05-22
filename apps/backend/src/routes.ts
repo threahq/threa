@@ -37,8 +37,7 @@ import { createWorkspaceIntegrationHandlers } from "./features/workspace-integra
 import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
 import { BotRuntimeService } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
-import { createVoiceTranscriptionHandlers } from "./features/voice-transcription"
-import type { VoiceTranscriptionService } from "./features/voice-transcription/service"
+import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
 import {
   createInternalAuthMiddleware,
   errorHandler,

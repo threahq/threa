@@ -487,7 +487,7 @@ export function MessageComposer({
   // ── Mic / dictation button ────────────────────────────────────────────────
   // Shown only on workspace surfaces, and only while the composer is empty
   // (so it doesn't crowd typed text) or dictation is already live.
-  const insertTranscribedText = (text: string) => richEditorRef.current?.insertTranscribedText(text)
+  const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
   const showMic = !!workspaceId && (voiceActive || isEmptyContent(content))
   const micButton =
     showMic && workspaceId ? (

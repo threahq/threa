@@ -148,10 +148,16 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           if (delta.isFinal && delta.text) onCommittedTextRef.current(delta.text)
         })
         socket.on("voice:error", (e: { message?: string }) => fail(e?.message || "Transcription failed"))
-        socket.on("voice:stopped", () => teardown())
+        socket.on("voice:stopped", () => {
+          // Server-initiated stop (e.g. the max-duration guard). Leave the
+          // recording state, not just tear down the audio graph.
+          teardown()
+          setState("idle")
+        })
         socket.on("disconnect", () => {
-          // An unexpected drop while recording ends the take.
-          if (workletRef.current) teardown()
+          // An unexpected drop while still capturing ends the take — surface it
+          // so the button leaves its recording state instead of hanging.
+          if (workletRef.current) fail("Dictation connection lost")
         })
 
         socket.emit(

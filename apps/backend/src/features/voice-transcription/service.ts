@@ -2,15 +2,7 @@ import type { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
 import { voiceSessionId } from "../../lib/id"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
-import { voiceConfig, type VoiceSessionStatus } from "./config"
-
-function parseProvider(model: string): string {
-  const colon = model.indexOf(":")
-  if (colon === -1) {
-    throw new HttpError(`Invalid voice model: ${model}`, { status: 400, code: "INVALID_VOICE_MODEL" })
-  }
-  return model.slice(0, colon)
-}
+import { voiceConfig, parseModelProvider, type VoiceSessionStatus } from "./config"
 
 export class VoiceTranscriptionService {
   private pool: Pool
@@ -31,7 +23,10 @@ export class VoiceTranscriptionService {
     language?: string
   }): Promise<VoiceSessionRow> {
     const model = params.model ?? voiceConfig.defaultModel
-    const provider = parseProvider(model)
+    const provider = parseModelProvider(model)
+    if (!provider) {
+      throw new HttpError(`Invalid voice model: ${model}`, { status: 400, code: "INVALID_VOICE_MODEL" })
+    }
     const region = "us"
     const expiresAt = new Date(Date.now() + voiceConfig.maxSessionMs)
 

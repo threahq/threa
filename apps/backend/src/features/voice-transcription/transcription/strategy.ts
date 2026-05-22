@@ -1,5 +1,6 @@
 import type { ModelRegistry } from "../../../lib/ai/model-registry"
 import { logger } from "../../../lib/logger"
+import { parseModelProvider } from "../config"
 import { RealtimeElevenLabsStrategy } from "./realtime-elevenlabs"
 
 /**
@@ -73,14 +74,6 @@ export interface Transcription {
   open(opts: TranscriptionOpenOptions): Promise<TranscriptionSession>
 }
 
-function parseProvider(model: string): string {
-  const colon = model.indexOf(":")
-  if (colon === -1) {
-    throw new Error(`Voice model must include a provider prefix: ${model}`)
-  }
-  return model.slice(0, colon)
-}
-
 export function createTranscription(config: TranscriptionFactoryConfig): Transcription {
   const { modelRegistry } = config
 
@@ -94,7 +87,10 @@ export function createTranscription(config: TranscriptionFactoryConfig): Transcr
       if (!modelRegistry.supportsAudioInput(opts.model)) {
         throw new Error(`Model does not support audio input: ${opts.model}`)
       }
-      const provider = parseProvider(opts.model)
+      const provider = parseModelProvider(opts.model)
+      if (!provider) {
+        throw new Error(`Voice model must include a provider prefix: ${opts.model}`)
+      }
       const strategy = strategies.get(provider)
       if (!strategy) {
         throw new Error(`No transcription strategy available for provider: ${provider}`)
