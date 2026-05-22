@@ -121,9 +121,9 @@ What we give up: `whisper-large-v3-turbo` is no longer the default. It stays rea
 ```
  Browser                              Backend (relay)                    Realtime STT provider
  ┌──────────────────────┐            ┌──────────────────────┐           ┌──────────────────┐
- │ AudioWorklet (PCM16) │            │  socket.io ns        │  WS       │ ElevenLabs Scribe│
- │  - capture frames    │  socket.io │  /voice/realtime     │  (PCM16   │ v2 Realtime  OR  │
- │  - downsample 16kHz  │  binary    │                      │  frames)  │ Deepgram Nova-3  │
+ │ AudioWorklet (PCM16) │  dedicated │  /voice/realtime     │  WS       │ ElevenLabs Scribe│
+ │  - capture frames    │  voice     │  socket (warm-linger │  (PCM16   │ v2 Realtime  OR  │
+ │  - downsample 16kHz  │  socket    │   after stop)        │  frames)  │ Deepgram Nova-3  │
  │  - send ~100ms frames│ ─────────► │  relay audio frames  │ ────────► │                  │
  │                      │            │  up; relay deltas    │           │                  │
  │  - receive deltas    │ ◄───────── │  down; record usage  │ ◄──────── │ delta / final    │
@@ -131,14 +131,18 @@ What we give up: `whisper-large-v3-turbo` is no longer the default. It stays rea
  └──────────────────────┘            └──────────────────────┘           └──────────────────┘
 ```
 
-- **The browser never holds the provider key.** Audio frames go to our backend over the existing socket.io connection (binary events) or a dedicated WS route; the backend holds one upstream WS to the resolved provider (ElevenLabs or Deepgram) per active session. This keeps the API key server-side and lets us record usage/cost (INV-19), enforce per-user caps, and route by data-residency policy (§7.1).
+- **The browser never holds the provider key.** Audio frames go to our backend over a **dedicated voice socket** (not the main socket.io connection — see the connection model below); the backend holds one upstream WS to the resolved provider (ElevenLabs or Deepgram) per active session. This keeps the API key server-side and lets us record usage/cost (INV-19), enforce per-user caps, and route by data-residency policy (§7.1).
 - **A `voiceSessionId` ties the session together.** Created when the user taps mic, torn down on stop/blur/expiry. The frontend tags audio frames and filters incoming deltas by it so a stale session can't leak text into a new one.
 - **User-scoped, not stream-scoped.** Dictation is private to the user and destination-agnostic (thread, scratchpad, DM), so relay events ride a per-connection channel rather than a stream room.
 
-#### Connection model — the open decision
+#### Connection model — decided: backend relay over a dedicated voice socket
 
-- **(A, recommended) Backend relay.** Client ↔ backend WS ↔ provider WS. Full cost tracking, key safety, per-user rate limiting, residency-aware routing, one place to swap models. Cost: ~one extra hop of latency (single-digit ms intra-region) and backend holds N concurrent upstream sockets.
-- **(B) Browser-direct with ephemeral tokens.** Backend mints a short-lived provider token; browser connects straight to the provider. Lowest latency, no relay load. But we lose visibility into traffic for cost/telemetry, can't enforce residency routing, and must trust client-reported usage. Not recommended for a product that meters AI cost.
+**Decision (✅):** backend relay (option A below), and the client↔backend leg is its **own dedicated socket opened specifically for voice**, not the main socket.io connection. It is opened lazily when the user first starts dictating, **reused for the whole dictation-then-typing flow**, and **kept open for a short linger window (≈30–60 s) after the user stops** so a "started talking again" or "added a bit more" resume is instant rather than paying the WS-open + provider-handshake cost each time. The linger socket holds **no upstream provider connection** while idle (that's torn down on session stop to stop billing) — only the cheap client↔backend pipe stays warm. After the linger window with no activity, the socket closes. We already have socket lifecycle/auth logic we can break out and reuse here rather than building from scratch.
+
+- **(A, chosen) Backend relay.** Client ↔ backend WS ↔ provider WS. Full cost tracking, key safety, per-user rate limiting, residency-aware routing, one place to swap models. Cost: ~one extra hop of latency (single-digit ms intra-region) and backend holds N concurrent upstream sockets — bounded by the per-user concurrency cap and the fact that the upstream socket only exists while actively dictating, not during the linger window.
+- **(B, rejected) Browser-direct with ephemeral tokens.** Backend mints a short-lived provider token; browser connects straight to the provider. Lowest latency, no relay load. But we lose visibility into traffic for cost/telemetry, can't enforce residency routing, and must trust client-reported usage. Rejected for a product that meters AI cost.
+
+Why a dedicated socket rather than multiplexing on the main socket.io connection: voice is high-rate binary traffic (~10 frames/s) with a different lifecycle (warm-linger) than the main connection, and isolating it keeps audio backpressure from competing with chat/presence events on the primary channel.
 
 ### 2.3 Client capture (both paths)
 
@@ -551,16 +555,16 @@ Total: ~6.5 days for v1 (transcription only, three swappable strategies). Drop t
 
 ## 11. Open Decisions
 
-A few still open; the first three are now **decided** and recorded here for traceability.
+All eight are now **decided** and recorded here for traceability.
 
-1. ✅ **Default provider — decided: `elevenlabs:scribe-v2-realtime`.** Cheapest ($0.39/hr), lowest latency (~150 ms), STT-specialized, zero-retention. Deepgram Nova-3 is the swappable comparison/steering + EU-residency strategy. OpenAI ruled out (no steering in realtime sessions). Needs `ELEVENLABS_API_KEY` (+ `DEEPGRAM_API_KEY` for the comparison/EU path).
-2. **Realtime connection model.** Recommended: backend WS relay (cost tracking + key safety + residency routing). Alternative: browser-direct with ephemeral tokens (lower latency, weaker observability, can't enforce residency). The relay is the right call for a metered product unless latency is unacceptable in testing.
-3. ✅ **Strategy coverage in v1 — decided: start with ElevenLabs.** Ship ElevenLabs realtime first; Deepgram realtime + OpenRouter batch land in the fast follow (milestone 6) so you can A/B and so the EU-residency path exists.
-4. **Audio persistence.** Recommended: never persist; rely on providers' zero-retention modes. Alternative: short-lived S3 with 7-day TTL for debug, behind a flag.
-5. **Tidy-up timing model.** Recommended: end-of-session full rewrite. Alternative: per-chunk with re-rewrite of last two chunks. (Decide later; doesn't block v1. With strong realtime self-correction handling, the tidy-up may be less necessary than originally thought.)
+1. ✅ **Default provider — `elevenlabs:scribe-v2-realtime`.** Cheapest ($0.39/hr), lowest latency (~150 ms), STT-specialized, zero-retention. Deepgram Nova-3 is the swappable comparison/steering + EU-residency strategy. OpenAI ruled out (no steering in realtime sessions). Needs `ELEVENLABS_API_KEY` (+ `DEEPGRAM_API_KEY` for the comparison/EU path).
+2. ✅ **Realtime connection model — backend relay over a dedicated voice socket.** Backend WS relay (cost tracking + key safety + residency routing) wins over browser-direct. The client↔backend leg is its **own dedicated socket** opened lazily on first dictation, reused across the dictate-then-type flow, and **kept warm for a ≈30–60 s linger window after stop** so resuming is instant; the upstream provider socket is torn down on stop (no idle billing) while the cheap client↔backend pipe lingers. Reuses existing socket lifecycle/auth logic broken out for this. See §2.2.
+3. ✅ **Strategy coverage in v1 — start with ElevenLabs.** Ship ElevenLabs realtime first; Deepgram realtime + OpenRouter batch land in the fast follow (milestone 6) so you can A/B and so the EU-residency path exists.
+4. ✅ **Audio persistence — never persist.** This is **voice-to-type**, not voice memos: audio is transcribed and discarded, never written to S3 or disk (relies on providers' zero-retention modes, §6). If we ever add a distinct "voice memos" feature later, persistence gets added there via the existing attachments path — it does not change this v1 model.
+5. ✅ **Tidy-up timing model — deferred until we build it.** Not decided now and doesn't block v1; the tidy-up pass is itself deferred (§5). When we implement it we'll choose between end-of-session full rewrite and per-chunk re-rewrite then, informed by how good realtime self-correction turns out to be.
 6. ✅ **Vocabulary hints in v1 — yes.** Cheap to build; ElevenLabs (≤50 realtime terms) and Deepgram (≤100 words) both accept keyterm biasing, so it helps domain language immediately.
-7. **Data residency (new).** v1 starts on ElevenLabs non-Enterprise = **US processing only**. Plan is a per-workspace `voiceResidencyPolicy` enforced at the relay (§7.1): EU-required workspaces route to Deepgram's EU endpoint (`api.eu.deepgram.com` — verified GA, drop-in hostname swap, same keys), or voice is disabled (fail closed) — never silently US. Because the EU route is now confirmed to be just a hostname swap on a strategy we're already building, the marginal cost to support EU at launch is small. Open sub-question for you: **ship US-only first and gate EU behind "coming soon," or fold the Deepgram-EU route into milestone 6 so EU customers are supported at launch?** (I'd lean toward the latter now that it's cheap.)
-8. **Cost cap UI.** Where (if anywhere) do we surface "you've spent $X on voice this month"? Probably the settings page. Out of scope for v1 unless you'd like it.
+7. ✅ **Data residency — no gating; default policy `"any"`.** We do **not** gate EU behind "coming soon" — the Deepgram-EU route (`api.eu.deepgram.com`, verified GA, drop-in hostname swap, same keys) folds into milestone 6 so residency-sensitive workspaces are supported at launch. The per-workspace `voiceResidencyPolicy` (§7.1) **defaults to `"any"`** (current usage is just two users who don't care); workspaces that need EU/US pinning can opt in, and unsatisfiable policies fail closed (mic disabled, never silently US).
+8. ✅ **Cost visibility — track, don't surface separately (yet).** Voice cost is recorded through the existing AI cost telemetry tagged `functionId: "voice_transcription"` (§3.5) so it's **easy to slice/visualize voice spend** in whatever cost view we already have, but we do **not** add a dedicated "voice spend this month" UI in v1 — dictation is virtually free at expected usage. Revisit if a power user ever runs it up.
 
 ---
 
