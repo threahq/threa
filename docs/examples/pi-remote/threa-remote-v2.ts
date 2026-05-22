@@ -34,7 +34,7 @@ type ClaimedInvocation = {
   claimExpiresAt: string | null
 }
 
-type StreamMessage = {
+interface StreamMessage {
   id: string
   authorType: string
   authorDisplayName?: string
@@ -206,9 +206,10 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
 
 function formatInvocationContext(messages: StreamMessage[], sourceMessageId: string): string {
   if (messages.length === 0) return ""
+  const orderedMessages = [...messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   return [
     "Recent Threa stream context (oldest first):",
-    ...messages.map((message) => {
+    ...orderedMessages.map((message) => {
       const author = message.authorDisplayName || message.authorType
       const marker = message.id === sourceMessageId ? " [source]" : ""
       return `- ${author}${marker}: ${message.content}`
