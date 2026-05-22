@@ -5,15 +5,20 @@
 **Author:** Claude (planning)
 **Decisions owner:** Kristoffer
 
+> **Revision note (streaming):** After review, the primary transport is now a **realtime WebSocket transcription session** (true word-by-word streaming), not chunked OpenRouter Whisper. Default provider is **ElevenLabs Scribe v2 Realtime** (~150 ms latency, STT-specialized, zero-retention mode), with **OpenAI gpt-4o-transcribe realtime** and **OpenRouter Whisper batch** as swappable comparison strategies behind one interface. Section 2 was rewritten around this. See [§2](#2-end-to-end-data-flow).
+
 ## TL;DR
 
-Add a microphone affordance to the composer that streams dictated speech into the editor as if the user is typing. Scope of v1 is **transcription only** — recording, upload, transcription via OpenRouter (`openai/whisper-large-v3-turbo` by default), and live insertion at the caret. The "tidy-up" pass with `gpt-5.4-nano`/`gpt-5.4-mini` is designed-but-deferred, behind a feature flag and a clear hand-off point.
+Add a microphone affordance to the composer that streams dictated speech into the editor as if the user is typing. Scope of v1 is **transcription only** — recording, live streaming transcription, and insertion at the caret. The "tidy-up" pass with `gpt-5.4-nano`/`gpt-5.4-mini` is designed-but-deferred, behind a feature flag and a clear hand-off point.
 
-Three things you'll want to weigh in on before we build (see [Open Decisions](#open-decisions)):
+**Default model is `elevenlabs:scribe-v2-realtime`**, not `whisper-large-v3-turbo`. Two reasons. (1) Streaming: real word-by-word transcription needs a realtime WebSocket session; Whisper turbo via OpenRouter is one-shot only. (2) Whisper turbo isn't even on OpenAI's own API — only third parties serve it, none with realtime. ElevenLabs Scribe v2 Realtime is purpose-built for streaming STT (lowest latency of the options, strong accent handling, zero-retention mode that matches our no-persistence stance). OpenAI's `gpt-4o-transcribe` realtime is the alternate (better at self-corrections, overlaps the tidy-up goal). Whisper turbo stays reachable as a cheap non-streaming "batch" comparison strategy. All three sit behind one `TranscriptionStrategy` interface, so swapping to compare is a settings toggle.
 
-1. **Audio chunking strategy** — true streaming via PCM/AudioWorklet vs single-take vs stop-and-restart. Tradeoffs in latency, complexity, and audio quality.
-2. **Persistence** — whether we keep the audio at all, even ephemerally for debugging.
-3. **Transport** — Socket.io vs SSE for streaming partial transcripts back to the client.
+Things you'll want to weigh in on before we build (see [Open Decisions](#open-decisions)):
+
+1. **Default provider** — ElevenLabs Scribe v2 Realtime (recommended) vs OpenAI gpt-4o-transcribe realtime. Both are realtime; differ on latency, correction handling, and price.
+2. **Realtime connection model** — backend WebSocket relay (recommended, keeps cost tracking + API keys server-side) vs browser-direct with ephemeral tokens (lower latency, weaker observability).
+3. **Persistence** — whether we keep the audio at all, even ephemerally for debugging.
+4. **Strategy coverage in v1** — ship just the default realtime provider, or wire all three from day one so you can A/B them immediately.
 
 Sections that follow lay out the UX, data flow, models, file structure, milestones, risks, and rollout.
 
@@ -87,9 +92,9 @@ The user explicitly wants dictation to coexist with already-typed text. Rules:
 
 A new section under **Settings → Voice & dictation**:
 
-- **Transcription model** — radio buttons: Whisper Large v3 Turbo (default), Whisper Large v3, GPT-4o Transcribe, GPT-4o Mini Transcribe. (Models added to `models.yaml` and to a new "Speech-to-text" section in `docs/model-reference.md`.)
-- **Language hint** — `Auto-detect (default)` or pick a locale. Whisper performs better with a hint.
-- **Vocabulary** — multi-line text field, free-form: "Names, terms, or phrases I use often." Stored as `userPreferences.voice.vocabularyHints` (array of strings). Used by both the language hint to the STT call and (later) the tidy-up pass.
+- **Transcription model** — radio buttons: ElevenLabs Scribe v2 Realtime (default, streaming), GPT-4o Transcribe (streaming), GPT-4o Mini Transcribe (streaming), Whisper Large v3 Turbo (batch — laggy, for comparison). Each labeled with its transport so the tradeoff is visible. (Models added to `models.yaml` and to a new "Speech-to-text" section in `docs/model-reference.md`.)
+- **Language hint** — `Auto-detect (default)` or pick a locale. Improves accuracy and reduces language flip-flopping on the realtime path.
+- **Vocabulary** — multi-line text field, free-form: "Names, terms, or phrases I use often." Stored as `userPreferences.voice.vocabularyHints` (array of strings). Passed as keyterm/biasing hints to providers that accept them (ElevenLabs, OpenAI) and (later) used by the tidy-up pass.
 - **Tidy-up pass** — toggle (default off in v1 since it's deferred). Tooltip: "Use a small model to clean disfluencies and corrections from your speech."
 - **Tidy-up model** — radio buttons: GPT-5.4 Nano (default), GPT-5.4 Mini. Only relevant when tidy-up is on.
 
@@ -97,116 +102,130 @@ A new section under **Settings → Voice & dictation**:
 
 ## 2. End-to-end data flow
 
-This is the meat of the question you flagged: **how audio gets from the mic to OpenRouter and how text gets from OpenRouter back into the composer.**
+This is the meat of the question you flagged: **how audio gets from the mic to the model and how text comes back into the composer.** The primary path is a realtime WebSocket transcription session (default provider ElevenLabs Scribe v2 Realtime) for genuine word-by-word streaming. A secondary batch path (OpenRouter Whisper) is kept behind the same strategy interface for model comparison.
 
-### 2.1 Topology
+### 2.1 Why realtime, and what we give up
+
+`whisper-large-v3-turbo` can't drive live dictation: it's one-shot only via OpenRouter, and it isn't on OpenAI's own API at all — OpenAI direct serves only `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` ([OpenAI models](https://developers.openai.com/api/docs/models/gpt-4o-transcribe)); the turbo weights are open and only third parties (OpenRouter, Groq) host them, none with realtime. True streaming — audio in, partial transcripts out continuously — needs a provider with a realtime STT WebSocket. The realistic options:
+
+1. **ElevenLabs Scribe v2 Realtime** (recommended default) — WebSocket STT, ~150 ms last-chunk-to-text latency, 90 languages, strong accents, **zero-retention mode** ([Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text)). STT-specialized; currently tops accuracy benchmarks. Pricier than Whisper batch but built for exactly this.
+2. **OpenAI Realtime API** — `type: "transcription"` session over `wss://api.openai.com/v1/realtime`, PCM16 frames in, `conversation.item.input_audio_transcription.delta` events out every ~200–400 ms with server-side VAD ([OpenAI realtime guide](https://developers.openai.com/api/docs/guides/realtime-transcription)). Best at resolving self-corrections inline. (OpenAI also offers a lighter middle ground: `stream=true` on `POST /v1/audio/transcriptions` streams `transcript.text.delta` from a complete clip — lower time-to-first-word but still clip-based. We treat that as a fallback for the OpenAI strategy, not a separate transport.)
+3. **OpenRouter Whisper turbo** — one-shot batch only; the cheap comparison baseline, visibly laggy.
+
+**Decision:** primary path is a realtime WebSocket session, defaulting to ElevenLabs. The cost is new provider integrations — `ELEVENLABS_API_KEY` and/or `OPENAI_API_KEY` (backend currently only configures `OPENROUTER_API_KEY` in `env.ts:152`) — plus a WebSocket relay on the backend. You've explicitly accepted that complexity in exchange for streaming.
+
+What we give up: `whisper-large-v3-turbo` is no longer the default. It stays reachable via the batch strategy (§2.5) so you can still A/B it against the realtime providers.
+
+### 2.2 Topology (primary: realtime WebSocket relay)
 
 ```
- Browser                           Backend                         OpenRouter
- ┌─────────────────────┐          ┌──────────────────────┐        ┌─────────────────┐
- │ MediaRecorder /     │  audio   │  POST /workspaces/:w │  audio │ POST /api/v1/   │
- │ AudioWorklet (PCM)  │ ───────► │  /voice/sessions/    │ ─────► │ audio/          │
- │                     │ (multi-  │  :sid/chunks         │ (base64│ transcriptions  │
- │ Recorder loop:      │  part /  │                      │ JSON)  │                 │
- │ - capture window    │  binary  │  → transcribe service│        │ ◄── { text }    │
- │ - upload chunk N    │  WS)     │  → outbox event      │        │                 │
- │ - receive text      │ ◄─────── │  → broadcast handler │        └─────────────────┘
- │ - insert at caret   │  socket  │                      │
- └─────────────────────┘  event   └──────────────────────┘
+ Browser                              Backend (relay)                    Realtime STT provider
+ ┌──────────────────────┐            ┌──────────────────────┐           ┌──────────────────┐
+ │ AudioWorklet (PCM16) │            │  socket.io ns        │  WS       │ ElevenLabs Scribe│
+ │  - capture frames    │  socket.io │  /voice/realtime     │  (PCM16   │ v2 Realtime  OR  │
+ │  - downsample 16kHz  │  binary    │                      │  frames)  │ OpenAI Realtime  │
+ │  - send ~100ms frames│ ─────────► │  relay audio frames  │ ────────► │                  │
+ │                      │            │  up; relay deltas    │           │                  │
+ │  - receive deltas    │ ◄───────── │  down; record usage  │ ◄──────── │ delta / final    │
+ │  - insert at caret   │  delta evt │  on session close    │  events   │ events           │
+ └──────────────────────┘            └──────────────────────┘           └──────────────────┘
 ```
 
-### 2.2 Why this shape
+- **The browser never holds the OpenAI key.** Audio frames go to our backend over the existing socket.io connection (binary events) or a dedicated WS route; the backend holds one upstream WS to OpenAI per active session. This keeps the API key server-side and lets us record usage/cost (INV-19) and enforce per-user caps.
+- **A `voiceSessionId` ties the session together.** Created when the user taps mic, torn down on stop/blur/expiry. The frontend tags audio frames and filters incoming deltas by it so a stale session can't leak text into a new one.
+- **User-scoped, not stream-scoped.** Dictation is private to the user and destination-agnostic (thread, scratchpad, DM), so relay events ride a per-connection channel rather than a stream room.
 
-- **HTTP for audio upload, Socket.io for results.** Audio chunks are large and binary; results are small and text. Two transports keeps each one optimized. Audio upload uses the existing multer-s3 + workspace-router auth chain (`apps/backend/src/middleware/upload.ts`). Result delivery rides the outbox + broadcast handler pattern (INV-4) that the rest of the app already uses (`apps/backend/src/lib/outbox/broadcast-handler.ts`).
-- **The user's socket.io room receives the events.** Specifically a user-scoped room: `ws:{workspaceId}:user:{userId}`, since dictation results are private and not stream-scoped (a user might be dictating into a thread, a scratchpad, or composing a DM — the destination doesn't matter to the transcription layer).
-- **A `voiceSessionId` ties chunks together.** Each press of the mic button creates a session; chunks reference it. The frontend filters incoming events by `voiceSessionId` to ignore stale results from a previous session.
+#### Connection model — the open decision
 
-### 2.3 OpenRouter audio API — what we know and what we don't
+- **(A, recommended) Backend relay.** Client ↔ backend WS ↔ OpenAI WS. Full cost tracking, key safety, per-user rate limiting, one place to swap models. Cost: ~one extra hop of latency (single-digit ms intra-region) and backend holds N concurrent upstream sockets.
+- **(B) Browser-direct with ephemeral tokens.** Backend mints a short-lived OpenAI ephemeral token; browser connects straight to OpenAI. Lowest latency, no relay load. But we lose visibility into traffic for cost/telemetry and must trust client-reported usage. Not recommended for a product that meters AI cost.
 
-From the OpenRouter docs ([announcement](https://openrouter.ai/announcements/announcing-audio-apis), [audio guide](https://openrouter.ai/docs/guides/overview/multimodal/audio)):
+### 2.3 Client capture (both paths)
 
-- Endpoint: `POST https://openrouter.ai/api/v1/audio/transcriptions`.
-- **Body shape**: JSON with **base64-encoded audio**. Documented fields include `model`, the audio payload, and an optional `language` hint. The announcement does **not** confirm `stream: true` for the transcription endpoint (only for the speech/output endpoint). Treat OpenRouter transcription as **one-shot per call** for v1.
-- Supported formats: mp3, mp4, wav, webm, flac, ogg. We'll send `webm/opus` from MediaRecorder, or `wav` PCM if we go the AudioWorklet route.
-- File size limit is documented as 25 MB for Whisper-1 on OpenRouter; the turbo variant isn't explicitly bounded but we should assume 25 MB / ~25 min per request and keep individual chunks well under that.
+Use the Web Audio API with an `AudioWorkletNode` to read raw `Float32Array` samples, downsample to 16 kHz mono, and convert to PCM16:
 
-**Streaming implication:** since OpenRouter's transcription endpoint is one-shot, "true" partial-transcript streaming requires us to do the chunking on _our_ side. Each client-side chunk → one OpenRouter request → one socket.io event back to the client.
+- **Realtime path:** emit ~100 ms frames continuously, base64-encode, and send as `input_audio_buffer.append` payloads relayed upstream. Server-side VAD handles segmentation — no manual silence detection needed.
+- **Batch path (§2.5):** buffer into ~2.5 s windows (or cut on a ≥300 ms silence), wrap each as a self-contained WAV blob, POST to a chunk endpoint.
 
-If `stream: true` becomes supported on OpenRouter (or if we point at OpenAI direct for `gpt-4o-mini-transcribe`, which _does_ support `stream: true` via the OpenAI SDK), the same architecture absorbs that: the backend just receives partial-transcript SSE events from upstream and emits them as separate `voice:transcription:partial` events. The contract toward the frontend doesn't change.
+AudioWorklet works on iOS Safari, Android Chrome, and desktop. Capability-detect at session start; if AudioWorklet or `getUserMedia` is unavailable, disable the mic affordance with an explanatory tooltip rather than failing silently.
 
-### 2.4 Client → backend — chunking strategy
+### 2.4 Backend relay & the `TranscriptionStrategy` interface
 
-Three approaches, ordered by my recommendation:
+All transcription goes through one interface so the transport difference is invisible to the rest of the feature:
 
-#### Approach A (recommended): **AudioWorklet + PCM windows**
+```ts
+interface TranscriptionStrategy {
+  // Realtime: opens an upstream WS, returns a live session.
+  // Batch: returns a session whose pushChunk() does a one-shot HTTP call.
+  open(opts: { model: string; language?: string; vocabulary?: string[] }): Promise<TranscriptionSession>
+}
 
-- Use Web Audio API with an `AudioWorkletNode` to read raw `Float32Array` samples off the mic.
-- Buffer samples in a ring; emit a **window** every ~2.5 s (or earlier on a detected silence ≥ 300 ms).
-- Encode each window as a self-contained WAV blob (just a header + the int16 PCM) and POST it.
-- **Pros**: Each chunk is independently decodable. No gaps between chunks. Cross-platform (works on iOS Safari, Android Chrome, desktop). Lets us implement simple VAD-driven chunking (cut at silences, not arbitrary 2.5-second walls). Cheap to encode.
-- **Cons**: Slightly more code than MediaRecorder. WAV is ~10× larger on the wire than opus (16-bit 16 kHz mono = 32 KB/sec, so a 2.5 s chunk is ~80 KB).
+interface TranscriptionSession {
+  pushAudio(frame: Int16Array): void // realtime: append; batch: buffer
+  flush(): Promise<void> // batch: send current window; realtime: commit
+  onDelta(cb: (text: string) => void): void
+  onError(cb: (e: TranscriptionError) => void): void
+  close(): Promise<{ totalAudioMs: number; costUsd?: number }>
+}
+```
 
-#### Approach B: **MediaRecorder with stop-and-restart**
+- **`RealtimeElevenLabsStrategy`** (recommended default) — opens ElevenLabs Scribe v2 Realtime over WebSocket, streams PCM frames, surfaces partial transcripts via `onDelta`. ~150 ms last-chunk-to-text latency, STT-specialized accuracy across 90 languages and accents, and a **Zero Retention mode** that aligns with our no-persistence stance ([Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text), [realtime docs](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime)). Auth with `ELEVENLABS_API_KEY`.
+- **`RealtimeOpenAIStrategy`** — opens `wss://api.openai.com/v1/realtime?intent=transcription`, configures the session with `gpt-4o-mini-transcribe` (or `gpt-4o-transcribe`), relays `input_audio_buffer.append`, surfaces `*.delta` events via `onDelta`. ~200–400 ms delta latency. Auth with `OPENAI_API_KEY`. Strong on disfluency/self-correction handling (overlaps with the deferred tidy-up goal).
+- **`BatchOpenRouterStrategy`** — buffers PCM into WAV windows, calls `POST https://openrouter.ai/api/v1/audio/transcriptions` (base64, one-shot) with `whisper-large-v3-turbo`, surfaces the returned text via `onDelta` once per window. Reuses `OPENROUTER_API_KEY` + `OPENROUTER_BASE_URL` from `ai.ts:30`. Cheapest (~$0.04/hr) but visibly laggy; the comparison baseline.
 
-- `recorder.start()`, after 2.5 s `recorder.stop()`, on `dataavailable` upload the blob, then `recorder.start()` again. Each blob is a complete webm/opus file, independently decodable.
-- **Pros**: Less code. Smaller payloads (~10 KB/2.5 s).
-- **Cons**: 30–80 ms audio gap per chunk boundary (browser-dependent). Words can get clipped. Workable but not invisible.
+**Three realtime providers don't all share a transport detail, but they share the relay shape**: client frames → backend relay → upstream WS → deltas back. Adding ElevenLabs cost nothing architecturally — it's the payoff of the strategy interface, and it directly serves your "compare which is most useful" goal (ElevenLabs vs OpenAI realtime vs Whisper batch).
 
-#### Approach C: **Single take, no chunking**
+The wrapper question (INV-19/INV-28): the `@openrouter/ai-sdk-provider` SDK has no transcription or realtime primitive, so both strategies do their own `fetch`/WS. To stay inside the project's AI-governance, expose them through a `createAI`-adjacent factory (`createTranscription({ openai, openrouter })`) that owns telemetry metadata and `CostRecorder.recordUsage()` — same pattern as `createAI`, just a different modality. Cost is recorded on `close()` from the upstream usage event (Realtime emits per-session usage; OpenRouter returns `usage.cost`).
 
-- Record the whole thing as one blob; upload on stop. Text returns in one big chunk.
-- **Pros**: Simplest. Smallest code surface.
-- **Cons**: Doesn't match the "stream into the composer" UX the user asked for. For a 30 s dictation the user sits with nothing for ~3 s after release.
-
-**Recommendation:** ship Approach A, with a server-side feature flag that can fall back to Approach C if there are issues. Approach B is a middle option if we want to defer the AudioWorklet complexity.
-
-### 2.5 Backend → OpenRouter
-
-The existing `createAI` wrapper (`apps/backend/src/lib/ai/ai.ts`) is built for chat completions and embeddings via `@openrouter/ai-sdk-provider`. It does **not** have an audio path. Two options:
-
-1. **Bypass the wrapper for transcription.** Add a thin `TranscriptionClient` that calls OpenRouter's audio endpoint directly via `fetch`, reusing the existing `OPENROUTER_API_KEY` from `env.ts:152` and the `OPENROUTER_BASE_URL` constant from `ai.ts:30`. Hand-roll cost recording via the existing `CostRecorder.recordUsage()` path (`features/ai-usage/cost-service.ts`).
-2. **Extend `createAI`.** Add a `generateTranscription(options)` method that internally still hits the audio endpoint by hand (since the AI SDK doesn't have a transcription primitive for this provider) but plugs into the same telemetry, retry, and cost recording machinery.
-
-**Recommendation:** option 2. Keep all AI traffic through `createAI` so INV-19 (telemetry) and INV-28 (no raw SDK imports) are honored, even though under the hood it's a direct fetch. This also gives us one place to add `stream: true` support if/when OpenRouter ships it.
-
-`models.yaml` gains a new section:
+`models.yaml` gains a speech-to-text section. Note the provider prefix differs per strategy:
 
 ```yaml
 # Speech-to-text models
-openrouter:openai/whisper-large-v3-turbo:
-  name: Whisper Large v3 Turbo
+elevenlabs:scribe-v2-realtime: # recommended default, realtime
+  name: ElevenLabs Scribe v2 Realtime
   inputModalities: [audio]
   outputModalities: [text]
+  streaming: realtime
 
-openrouter:openai/whisper-large-v3:
-  name: Whisper Large v3
-  inputModalities: [audio]
-  outputModalities: [text]
-
-openrouter:openai/gpt-4o-transcribe:
-  name: GPT-4o Transcribe
-  inputModalities: [audio]
-  outputModalities: [text]
-
-openrouter:openai/gpt-4o-mini-transcribe:
+openai/gpt-4o-mini-transcribe: # realtime + streaming-file
   name: GPT-4o Mini Transcribe
   inputModalities: [audio]
   outputModalities: [text]
+  streaming: realtime
+
+openai/gpt-4o-transcribe: # higher accuracy, realtime + streaming-file
+  name: GPT-4o Transcribe
+  inputModalities: [audio]
+  outputModalities: [text]
+  streaming: realtime
+
+openrouter:openai/whisper-large-v3-turbo: # batch comparison strategy
+  name: Whisper Large v3 Turbo
+  inputModalities: [audio]
+  outputModalities: [text]
+  streaming: batch
 ```
 
-A new `audio` modality value is introduced — `ModelRegistry` gets a `supportsAudioInput()` method for parity with `supportsVision()`. Update `docs/model-reference.md` with a "Speech-to-text" section listing the four models with cost per minute (Whisper turbo ~$0.04/hr per OpenRouter pricing) and "When to use" guidance.
+A new `elevenlabs:` provider prefix joins `openai:`/`openrouter:`. The model-registry/provider-resolution code (`ai.ts:413`) only knows `openrouter` today; adding `openai` and `elevenlabs` as transcription-only providers is part of this work.
+
+A new `audio` modality and a `streaming: realtime | streaming-file | batch` capability are introduced; `ModelRegistry` gets `supportsAudioInput()` and `transcriptionStreamingMode()`. Update `docs/model-reference.md` with a "Speech-to-text" section: GPT-4o transcribe pricing (per-minute), Whisper turbo (~$0.04/hr via OpenRouter), and "when to use" guidance (realtime for dictation; batch for cheap/offline comparison).
+
+### 2.5 Batch path (secondary, for comparison)
+
+Kept so you can compare Whisper turbo against streaming GPT-4o without re-architecting. When the selected model's `streaming` capability is `batch`, the frontend switches from continuous frames to WAV-window uploads:
+
+- `POST /api/workspaces/:wid/voice/sessions/:sid/chunks` — multipart `audio` field, optional `chunkIndex` / `isFinal`. Returns 202; transcription runs async on `JobQueues.VOICE_TRANSCRIBE`.
+- Each completed window emits an outbox event `voice:transcript:chunk` `{ voiceSessionId, chunkIndex, text, isFinal }`, scope `user`, routed by `BroadcastHandler` to `ws:{workspaceId}:user:{userId}` (`broadcast-handler.ts:1-60`).
+
+The batch path is the original chunked design; it is fully usable but visibly laggier (~2.5 s windows) than realtime. Treat it as a developer/comparison tool, not the default UX.
 
 ### 2.6 Backend → client (live transcript)
 
-For each chunk the worker completes:
+- **Realtime path:** deltas arrive on the relay WS and are forwarded to the browser as `voice:transcript:delta` events `{ voiceSessionId, text, isFinal }`. No outbox hop — these are ephemeral, per-connection, and latency-sensitive, so the relay emits them directly to the originating socket (the relay already holds that socket). This is the one place we bypass the outbox, justified because the data is transient and tied to a live connection rather than durable workspace state.
+- **Batch path:** uses the outbox + broadcast handler (INV-4) as above, since those completions are produced by an async worker decoupled from the client connection.
+- Either way the frontend listens only while a session is locally active and filters by `voiceSessionId`.
 
-1. Insert outbox event `voice:transcript:chunk` with payload `{ voiceSessionId, chunkIndex, text, isFinal }`.
-2. `BroadcastHandler` routes events with `scope: "user"` to `ws:{workspaceId}:user:{userId}` (already supported, see `broadcast-handler.ts:1-60`).
-3. Frontend listens for `voice:transcript:chunk` only while a voice session is active locally, filters by `voiceSessionId`, and inserts text at the caret using `editor.chain().focus().insertContent(text).run()` (`apps/frontend/src/components/editor/rich-editor.tsx:777`).
-
-**Why outbox vs direct socket.emit:** the broadcast handler already debounces, deduplicates, and survives backend restarts. Reusing it costs nothing and keeps INV-4 honored. The slight downside is ~10–50 ms of additional latency from the outbox dispatcher cycle — acceptable since end-to-end is dominated by upstream STT.
-
-**Alternative considered:** SSE / chunked HTTP from the upload endpoint itself (keep the HTTP request open, stream `text/event-stream` back). Rejected because (a) the codebase has no SSE precedent and (b) splitting upload from result lets us hold the recording open across multiple chunk uploads without one giant request.
+**Reconnect handling (INV-53):** if the socket drops mid-session, the realtime session is considered ended (audio can't resume cleanly); the frontend stops the recorder, keeps whatever text already landed, and surfaces a "connection lost — tap to resume" affordance that starts a fresh session. We do not attempt to replay missed deltas.
 
 ### 2.7 Streaming text into the composer (UX layer)
 
@@ -217,7 +236,9 @@ When a chunk arrives, we don't dump all the text at once — we want the "typing
 - If the user moves the caret or starts typing manually, the buffer drains at the new position.
 - When the session ends (`isFinal: true` on the last chunk and buffer empty), the buffer is cleared and the composer returns to idle.
 
-This gives a believable typing animation even though the underlying transcript arrives in 2.5-second chunks of dozens of characters at a time.
+On the realtime path deltas already arrive word-by-word every ~200–400 ms, so the buffer mostly just smooths jitter. On the batch path it does the heavier lifting, turning a 2.5-second chunk of dozens of characters into a believable typing animation. Same drainer, both paths.
+
+Realtime transcription deltas are sometimes **revised** (the model corrects an interim guess as more context arrives). The drainer must support a "replace last interim span" operation, not just append: track the character range of the current not-yet-finalized delta and overwrite it when a correction arrives, committing the span only on the `isFinal`/`completed` event for that segment.
 
 ---
 
@@ -228,26 +249,39 @@ New colocated feature: `apps/backend/src/features/voice-transcription/` (INV-51)
 ```
 voice-transcription/
 ├── index.ts                    # barrel exports
-├── config.ts                   # default models, chunk size limits, language defaults
-├── handlers.ts                 # POST /sessions, POST /sessions/:id/chunks, POST /sessions/:id/finish
-├── service.ts                  # session lifecycle, dispatch transcription
+├── config.ts                   # default models, frame/window sizes, language defaults
+├── handlers.ts                 # session create/finish/abort; batch chunk upload
+├── realtime-gateway.ts         # socket.io namespace: per-session relay to OpenAI WS
+├── service.ts                  # session lifecycle, strategy selection
 ├── repository.ts               # voice_sessions table access
-├── transcription-client.ts     # talks to OpenRouter audio endpoint (or via createAI extension)
-├── worker.ts                   # JobQueues.VOICE_TRANSCRIBE worker
-├── chunk-outbox-handler.ts     # turns transcription completions into broadcast events
+├── transcription/              # the TranscriptionStrategy interface + impls (INV-44 config colocated)
+│   ├── strategy.ts             # interface + factory createTranscription({ openai, openrouter })
+│   ├── realtime-openai.ts      # RealtimeOpenAIStrategy (upstream WS, default)
+│   ├── batch-openrouter.ts     # BatchOpenRouterStrategy (one-shot HTTP, comparison)
+│   └── config.ts               # model IDs, temperatures, frame sizes
+├── worker.ts                   # JobQueues.VOICE_TRANSCRIBE worker (batch path only)
+├── chunk-outbox-handler.ts     # batch completions → broadcast events
 ├── service.test.ts
-├── transcription-client.test.ts
+├── realtime-gateway.test.ts
+├── transcription/strategy.test.ts
 └── handlers.test.ts
 ```
 
-### 3.1 Routes
+### 3.1 Routes & realtime gateway
 
-Wired into `apps/backend/src/routes.ts` via `createVoiceTranscriptionHandlers({...})`:
+HTTP handlers wired into `apps/backend/src/routes.ts` via `createVoiceTranscriptionHandlers({...})`:
 
-- `POST /api/workspaces/:wid/voice/sessions` — create a session. Body: `{ model?: string, language?: string }`. Response: `{ voiceSessionId, expiresAt }`. Defaults pulled from user preferences if set, else `config.ts` defaults.
-- `POST /api/workspaces/:wid/voice/sessions/:sid/chunks` — upload one chunk (multipart, single field `audio`). Optional fields: `chunkIndex`, `isFinal`. Returns 202 immediately; transcription is async.
-- `POST /api/workspaces/:wid/voice/sessions/:sid/finish` — mark the session done. Backend stops accepting chunks. Useful for cleanup; not strictly required if `isFinal` is set on the last chunk.
-- `DELETE /api/workspaces/:wid/voice/sessions/:sid` — abort. Drops any pending work.
+- `POST /api/workspaces/:wid/voice/sessions` — create a session. Body: `{ model?: string, language?: string }`. Response: `{ voiceSessionId, transport: "realtime" | "batch", expiresAt }`. `transport` is derived from the selected model's `streaming` capability so the client knows whether to open the realtime gateway or POST chunks. Defaults from user preferences, else `config.ts`.
+- `POST /api/workspaces/:wid/voice/sessions/:sid/finish` — mark done. Closes the upstream session and records usage/cost.
+- `DELETE /api/workspaces/:wid/voice/sessions/:sid` — abort. Tears down the upstream WS, drops pending work.
+- `POST /api/workspaces/:wid/voice/sessions/:sid/chunks` — **batch path only.** Multipart `audio`; optional `chunkIndex`/`isFinal`; returns 202, runs async on the queue.
+
+**Realtime gateway** (`realtime-gateway.ts`): a socket.io namespace/event set on the existing server, not a raw `ws` server, so it inherits auth and the workspace connection the client already has. Events:
+
+- client → server: `voice:audio` `{ voiceSessionId, frame }` (binary PCM16, ~100 ms).
+- server → client: `voice:transcript:delta` `{ voiceSessionId, text, isFinal }`, `voice:transcription:error`.
+
+On the first `voice:audio` for a session the gateway lazily opens the upstream OpenAI WS via the strategy, then pipes frames up and deltas down until `finish`/`abort`/idle-timeout/socket-close. One upstream socket per active session; a per-user concurrency guard (max 1–2 concurrent sessions) prevents fan-out abuse.
 
 ### 3.2 Data model
 
@@ -255,25 +289,28 @@ One new table, kept light. **No persistence of audio bytes by default** (see [Op
 
 #### `voice_sessions`
 
-| Column         | Type                       | Notes                                           |
-| -------------- | -------------------------- | ----------------------------------------------- |
-| id             | TEXT PK                    | ULID prefixed `voicesess_`                      |
-| workspace_id   | TEXT NOT NULL              | INV-8                                           |
-| user_id        | TEXT NOT NULL              | Owner                                           |
-| model          | TEXT NOT NULL              | e.g. `openrouter:openai/whisper-large-v3-turbo` |
-| language       | TEXT                       | nullable; null = auto                           |
-| status         | TEXT NOT NULL              | `active` / `finished` / `aborted` / `expired`   |
-| chunk_count    | INTEGER NOT NULL DEFAULT 0 |                                                 |
-| total_audio_ms | INTEGER NOT NULL DEFAULT 0 | for cost telemetry                              |
-| created_at     | TIMESTAMPTZ NOT NULL       | DEFAULT NOW()                                   |
-| finished_at    | TIMESTAMPTZ                |                                                 |
-| expires_at     | TIMESTAMPTZ NOT NULL       | created_at + 10 min — sessions auto-expire      |
+| Column         | Type                       | Notes                                         |
+| -------------- | -------------------------- | --------------------------------------------- |
+| id             | TEXT PK                    | ULID prefixed `voicesess_`                    |
+| workspace_id   | TEXT NOT NULL              | INV-8                                         |
+| user_id        | TEXT NOT NULL              | Owner                                         |
+| model          | TEXT NOT NULL              | e.g. `openai/gpt-4o-mini-transcribe`          |
+| transport      | TEXT NOT NULL              | `realtime` / `batch` (derived from model)     |
+| language       | TEXT                       | nullable; null = auto                         |
+| status         | TEXT NOT NULL              | `active` / `finished` / `aborted` / `expired` |
+| chunk_count    | INTEGER NOT NULL DEFAULT 0 |                                               |
+| total_audio_ms | INTEGER NOT NULL DEFAULT 0 | for cost telemetry                            |
+| created_at     | TIMESTAMPTZ NOT NULL       | DEFAULT NOW()                                 |
+| finished_at    | TIMESTAMPTZ                |                                               |
+| expires_at     | TIMESTAMPTZ NOT NULL       | created_at + 10 min — sessions auto-expire    |
 
 Index on `(workspace_id, user_id, status)` to find a user's active session quickly. No table for individual chunks unless we decide to persist audio (see Open Decisions).
 
 The handler validates input with Zod (INV-55) and throws `HttpError` for failures (INV-32). Migration follows append-only convention (INV-17); add via `/add-migration`.
 
-### 3.3 Job queue
+### 3.3 Job queue (batch path only)
+
+The realtime path needs no queue — the gateway relays frames synchronously over the live WS. The queue exists only for the batch comparison strategy.
 
 Add `VOICE_TRANSCRIBE: "voice.transcribe"` to `JobQueues` in `apps/backend/src/lib/queue/job-queue.ts`. Worker payload:
 
@@ -294,17 +331,20 @@ Add `VOICE_TRANSCRIBE: "voice.transcribe"` to `JobQueues` in `apps/backend/src/l
 
 **Why a worker rather than synchronous in-handler:** lets us bound concurrent OpenRouter calls per node, and survives transient OpenRouter slowness without holding the HTTP upload connection open. The chunk upload returns 202 within ~50 ms of disk write; the worker does the slow call asynchronously.
 
-### 3.4 Outbox events emitted
+### 3.4 Realtime vs outbox events
 
-- `voice:transcript:chunk` — `{ voiceSessionId, chunkIndex, text, isFinal }`. Scope: `user`. Routes to `ws:{workspaceId}:user:{userId}`.
-- `voice:transcription:error` — `{ voiceSessionId, chunkIndex, code, message }`. Scope: `user`.
-- `voice:session:expired` — emitted by a sweeper when an active session passes its `expires_at`.
+- **Realtime path** (relay → originating socket, no outbox): `voice:transcript:delta` `{ voiceSessionId, text, isFinal }`, `voice:transcription:error` `{ voiceSessionId, code, message }`.
+- **Batch path** (outbox + broadcast, scope `user`): `voice:transcript:chunk` `{ voiceSessionId, chunkIndex, text, isFinal }`, `voice:transcription:error`.
+- **Both:** `voice:session:expired` — emitted by a sweeper when an active session passes `expires_at`.
 
 ### 3.5 Cost tracking
 
-The transcription client wraps every OpenRouter call in `recordUsage()` with telemetry metadata `{ functionId: "voice_transcription", voiceSessionId, chunkIndex, durationMs }` (INV-19). OpenRouter returns cost in `usage.cost` on the response, same as chat completions — we record it the same way.
+Both strategies record on session `close()` via `CostRecorder.recordUsage()` with telemetry metadata `{ functionId: "voice_transcription", voiceSessionId, transport, model, totalAudioMs }` (INV-19).
 
-For Whisper, OpenRouter bills per audio second/minute rather than per token. The `CostRecorder` interface may need a minor extension to record `{ unit: "audio_seconds", quantity: durationSeconds }` alongside token-based usage. Look at how it currently handles non-token cost from `usage.cost`; if the field already carries dollar-cost directly, we may not need a schema change at all.
+- **Realtime:** OpenAI's realtime session emits a usage event with audio-input duration/tokens; record dollar cost from that.
+- **Batch:** OpenRouter returns `usage.cost` per request, same as chat completions; sum across windows.
+
+Both bill on audio duration rather than text tokens. The `CostRecorder` may need a minor extension to record `{ unit: "audio_seconds", quantity }` alongside token usage; if the existing `usage.cost` field already carries dollar-cost directly, no schema change is needed.
 
 ---
 
@@ -317,40 +357,46 @@ apps/frontend/src/
 ├── components/composer/
 │   ├── message-composer.tsx           # extend: mic button slot + recording mode UI
 │   └── voice/
-│       ├── voice-recorder.ts          # AudioWorklet-based capture (Approach A)
-│       ├── voice-recorder-worklet.ts  # registered with audio context
-│       ├── voice-session-store.ts     # Zustand: { sessionId, status, buffer }
+│       ├── voice-recorder.ts          # AudioWorklet capture → PCM16 frames
+│       ├── voice-recorder-worklet.ts  # AudioWorklet processor (downsample + framing)
+│       ├── voice-transport.ts         # realtime (socket.io frames) | batch (chunk POST)
+│       ├── voice-session-store.ts     # Zustand: { sessionId, transport, status, buffer }
 │       ├── voice-mic-button.tsx       # the button + recording-state UI
 │       ├── voice-waveform.tsx         # canvas-based waveform
-│       └── insert-stream.ts           # the type-buffer drainer
-├── lib/api/voice.ts                   # createSession / uploadChunk / finishSession / abort
+│       └── insert-stream.ts           # the type-buffer drainer (append + replace-interim)
+├── lib/api/voice.ts                   # createSession / finishSession / abort / (batch) uploadChunk
 └── pages/settings/voice-settings.tsx  # new settings panel
 ```
 
 ### 4.2 Recorder API
 
+The recorder always produces PCM16 frames; the transport decides what to do with them based on the session's `transport` field returned by `POST /sessions`.
+
 ```ts
-// voice-recorder.ts
+// voice-recorder.ts — single capture pipeline, two sinks
 const recorder = createVoiceRecorder({
-  windowMs: 2500,
-  silenceCutoffMs: 300,
-  onChunk: (wavBlob, meta) => uploadChunk(sessionId, wavBlob, meta),
-  onStop: () => finishSession(sessionId),
+  frameMs: 100, // realtime: send each frame; batch: buffer to windows
+  onFrame: (pcm16) => transport.pushAudio(pcm16),
+  onStop: () => transport.finish(),
   onError: (e) => store.setStatus("error", e.message),
 })
 await recorder.start() // requests getUserMedia
-// ...
-recorder.stop()
+
+// voice-transport.ts
+const transport =
+  session.transport === "realtime"
+    ? createRealtimeTransport(socket, session.voiceSessionId) // emits voice:audio frames
+    : createBatchTransport(session.voiceSessionId, { windowMs: 2500, silenceCutoffMs: 300 }) // buffers → WAV → POST
 ```
 
-### 4.3 Socket subscription
+### 4.3 Receiving deltas
 
-Hook `useVoiceTranscriptionStream(voiceSessionId)`:
+Hook `useVoiceTranscriptionStream(voiceSessionId, transport)`:
 
-- Subscribes to `voice:transcript:chunk` on the user room.
-- Filters by `voiceSessionId`.
-- Pushes incoming text into the local type buffer.
-- Pairs subscription with a bootstrap fetch of any chunks already completed for this session (INV-53), so reconnects don't drop text.
+- **Realtime:** listens for `voice:transcript:delta` on the active socket; handles both append and interim-replacement (track current interim span, overwrite until `isFinal`).
+- **Batch:** listens for `voice:transcript:chunk` on the user room; appends each window's text.
+- Both filter by `voiceSessionId` and push into the local type buffer.
+- INV-53: on the batch path, pairs with a bootstrap fetch of already-completed chunks so a reconnect doesn't drop text. On the realtime path, a dropped socket ends the session (see §2.6) — there's no partial replay.
 
 ### 4.4 Editor integration
 
@@ -414,7 +460,7 @@ I lean toward end-of-session: simpler, cheaper, and the user gets the unfiltered
 
 The user's instinct ("we don't have to persist the audio stream") matches mine. Recommended posture:
 
-- **Audio bytes: never persisted by default.** The worker holds the buffer in memory, sends to OpenRouter, discards on completion. No S3 write, no temp file. Logs only durations + transcribed text, not audio.
+- **Audio bytes: never persisted by default.** Realtime frames pass through the relay and are discarded; batch windows are held in memory, sent, and dropped. No S3 write, no temp file. Logs only durations + transcribed text, not audio. ElevenLabs zero-retention mode (and OpenAI's no-training default) means the upstream provider doesn't retain audio either.
 - **Transcribed text: persisted only as the composer draft.** The drafts system (`apps/frontend/src/components/timeline/message-input.tsx`) already saves composer state to IDB; dictated text rides that machinery. No separate "voice transcript" table.
 - **Voice session metadata: kept in `voice_sessions` for 7 days.** Useful for cost telemetry and debugging without retaining sensitive content.
 
@@ -425,50 +471,50 @@ If we want optional retention later (e.g., "save voice memos as message attachme
 ## 7. Security & privacy
 
 - **getUserMedia permission scope.** Browsers persist mic permission per-origin; we don't escalate or store anything beyond that.
-- **Audio in transit.** TLS to backend, TLS to OpenRouter. No third-party processors in between.
-- **Workspace isolation.** Voice sessions are workspace-scoped (INV-8). A session created in workspace A can't be uploaded to from a request scoped to workspace B; standard workspace middleware enforces this.
-- **Rate limiting.** Reuse the existing rate-limit middleware. Per-user limits on `POST chunks`: max 30 chunks / minute (one chunk every ~2 s × 60 s).
-- **Abuse considerations.** The cost-per-minute of Whisper turbo is low (~$0.04/hr), but a malicious caller streaming silence for an hour is still a real bill. The `voice_sessions.expires_at` (10-min hard cap) limits damage per session; per-user daily caps live in the AI cost service and apply automatically.
+- **Audio in transit.** TLS to backend, TLS to the upstream provider (ElevenLabs/OpenAI/OpenRouter). The relay terminates the client connection and opens its own upstream connection; the API key never reaches the browser. Prefer providers' zero-retention / no-training modes where available.
+- **Workspace isolation.** Voice sessions are workspace-scoped (INV-8). A session created in workspace A can't be driven from a connection scoped to workspace B; standard workspace middleware plus the gateway's per-session ownership check enforce this.
+- **Rate limiting & concurrency.** Reuse the existing rate-limit middleware. Realtime: max 1–2 concurrent sessions per user (the gateway holds one upstream socket each). Batch: max 30 chunk POSTs / minute.
+- **Abuse considerations.** Realtime providers bill per audio minute; a hot mic streaming silence for an hour is a real bill. The `voice_sessions.expires_at` (10-min hard cap) plus a server-side idle-timeout (e.g. 30 s of VAD-detected silence auto-closes the session) limit per-session damage; per-user daily caps live in the AI cost service and apply automatically.
 
 ---
 
 ## 8. Testing
 
-- **Unit:** `voice-recorder.ts` (window emission timing), `insert-stream.ts` (caret-respecting buffer drain), `service.ts` (session lifecycle), `transcription-client.ts` (request shape, error mapping).
-- **Integration:** real component mount of `MessageComposer` with a mocked `voice-session-store` simulating chunks arriving (INV-39).
-- **E2E (Playwright):** stub `getUserMedia` and OpenRouter responses; verify (a) mic button appears/disappears with editor empty state, (b) tapping mic creates a session, (c) incoming socket events insert text at the caret, (d) typing during dictation interleaves correctly.
+- **Unit:** `voice-recorder.ts` (PCM framing/downsampling), `insert-stream.ts` (caret-respecting drain + interim-replacement), `service.ts` (session lifecycle + transport selection), each strategy in `transcription/` (frame relay / request shape, error mapping). Mock the upstream WS for the realtime strategies.
+- **Integration:** real component mount of `MessageComposer` with a mocked `voice-session-store` feeding `voice:transcript:delta` events, including an interim→final correction (INV-39).
+- **E2E (Playwright):** stub `getUserMedia` and a fake realtime gateway; verify (a) mic button appears/disappears with editor empty state, (b) tapping mic creates a realtime session, (c) delta events stream text at the caret, (d) typing during dictation interleaves correctly, (e) socket drop ends the session and preserves captured text.
 - **Eval (when tidy-up lands):** small corpus of transcripts with known disfluencies and corrections, scored against hand-written gold versions.
 
 ---
 
 ## 9. Milestones
 
-| #   | Outcome                                                                                                                  | Estimate |
-| --- | ------------------------------------------------------------------------------------------------------------------------ | -------- |
-| 1   | Backend feature skeleton: session table, handlers, repo, service. No transcription yet — handler echoes the chunk count. | 0.5 d    |
-| 2   | `TranscriptionClient` against OpenRouter; cost recording wired; backend worker calling it; manual curl test.             | 1 d      |
-| 3   | Frontend recorder (Approach A): AudioWorklet, WAV encoding, upload loop. Headless test against staging backend.          | 1 d      |
-| 4   | Socket.io broadcast plumbing + frontend insert-stream into the editor. Round-trip working end-to-end.                    | 0.5 d    |
-| 5   | UX polish: desktop button placement, mobile FAB, recording states, waveform.                                             | 1 d      |
-| 6   | Settings UI (model, language, vocabulary hints). User preferences plumbed.                                               | 0.5 d    |
-| 7   | E2E + integration tests; cost telemetry verification.                                                                    | 0.5 d    |
+| #   | Outcome                                                                                                                                               | Estimate |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 1   | Backend feature skeleton: `voice_sessions` table, session create/finish/abort handlers, repo, service, `TranscriptionStrategy` interface.             | 0.5 d    |
+| 2   | `RealtimeElevenLabsStrategy` + realtime gateway (socket.io ns relaying to upstream WS); cost recording on close; manual test with a CLI frame feeder. | 1.5 d    |
+| 3   | Frontend recorder: AudioWorklet → PCM16 frames; realtime transport emitting `voice:audio`; receive `voice:transcript:delta`. End-to-end round-trip.   | 1.5 d    |
+| 4   | Editor insert-stream (append + interim-replacement) wired to the live caret. Dictation visibly working.                                               | 0.5 d    |
+| 5   | UX polish: desktop button placement, mobile FAB, recording states, waveform.                                                                          | 1 d      |
+| 6   | Second strategy (`RealtimeOpenAIStrategy`) + batch (`BatchOpenRouterStrategy`) behind the toggle; settings UI (model, language, vocabulary).          | 1 d      |
+| 7   | E2E + integration tests; cost telemetry verification.                                                                                                 | 0.5 d    |
 
-Total: ~5 days for v1 (transcription only). Tidy-up pass is a separate ~2-day follow-up.
+Total: ~6.5 days for v1 (transcription only, three swappable strategies). Drop to ~4.5 days if we ship only the ElevenLabs realtime strategy first (milestone 6 becomes a follow-up). Tidy-up pass is a separate ~2-day follow-up.
 
 ---
 
 ## 10. Risks & how we mitigate
 
-| Risk                                                                                     | Mitigation                                                                                                                 |
-| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| OpenRouter audio endpoint changes its base64-only stance and starts requiring multipart. | `TranscriptionClient` is the only place that knows the wire format. Swap behind one method.                                |
-| Stop-and-restart chunking drops audio at boundaries (Approach B).                        | Start with Approach A (AudioWorklet) which has no boundaries.                                                              |
-| Mobile Safari quirks with AudioWorklet on older iOS.                                     | Capability-detect at session start; fall back to MediaRecorder webm/opus (Approach B) for unsupported clients.             |
-| Long dictations exceed the per-chunk size limit.                                         | Fixed-size windows already keep chunks small (~80 KB).                                                                     |
-| OpenRouter latency spikes block the worker queue and stall the user.                     | `tier: interactive`, plus a per-call timeout (8 s) that surfaces an error event the frontend can show inline.              |
-| Socket reconnects drop transcript events mid-session.                                    | INV-53: subscription pairs with a bootstrap fetch that returns any already-finished chunks since `lastChunkIndex`.         |
-| Background tabs throttle the recorder and audio capture goes silent.                     | Listen for `visibilitychange`; pause + show a "Tab paused" banner; do not silently drop audio.                             |
-| Cost runaway from accidental hot mics.                                                   | 10-min hard session expiry. Per-user daily cost cap via existing AI cost service. UI warning if user crosses a soft limit. |
+| Risk                                                                         | Mitigation                                                                                                                                   |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| A provider's realtime WS protocol differs (frame format, event names, auth). | Each provider is one `TranscriptionStrategy` impl; the gateway and frontend only know the neutral interface. Differences stay isolated.      |
+| Backend holds many concurrent upstream sockets (one per dictating user).     | Per-user concurrency cap (1–2), idle-timeout auto-close, 10-min hard expiry. Sockets are cheap; the cap bounds fan-out.                      |
+| Mobile Safari quirks with AudioWorklet on older iOS.                         | Capability-detect at session start; if unsupported, fall back to the batch strategy (MediaRecorder webm/opus windows) or disable the mic.    |
+| Realtime provider latency spikes or upstream disconnect mid-dictation.       | Surface a `voice:transcription:error`; keep captured text; offer "tap to resume" (new session). Per-frame send has an upstream send timeout. |
+| Socket drop mid-session loses in-flight audio.                               | Realtime sessions end on drop (no clean resume); preserve landed text. Batch path uses INV-53 bootstrap to recover completed chunks.         |
+| Interim deltas get revised and the composer flickers.                        | Interim-replacement drain: overwrite the tracked interim span, commit only on `isFinal`. No re-insert of committed text.                     |
+| Background tabs throttle the recorder and audio capture goes silent.         | Listen for `visibilitychange`; pause + show a "Tab paused" banner; do not silently drop audio.                                               |
+| Cost runaway from accidental hot mics (realtime bills per minute).           | 10-min hard expiry + idle-timeout. Per-user daily cost cap via existing AI cost service. UI warning if user crosses a soft limit.            |
 
 ---
 
@@ -476,13 +522,13 @@ Total: ~5 days for v1 (transcription only). Tidy-up pass is a separate ~2-day fo
 
 I need an answer (or "your call, pick the recommended one") on these before building. Order matches the order I'd want to confirm them.
 
-1. **Chunking strategy.** Recommended: Approach A (AudioWorklet + PCM windows). Alternatives: B (MediaRecorder stop-and-restart, simpler), C (single take, no streaming UX).
-2. **Audio persistence.** Recommended: never persist. Alternative: short-lived S3 with 7-day TTL for debug-only access by admins, behind a feature flag.
-3. **Transport for live transcripts.** Recommended: Socket.io via existing outbox/broadcast. Alternative: SSE on the same HTTP connection that ships chunks (requires new infra; not recommended).
-4. **Tidy-up timing model.** Recommended: end-of-session full rewrite. Alternative: per-chunk with re-rewrite of last two chunks. (Decide later; doesn't block v1.)
-5. **Default model.** Confirmed: `openrouter:openai/whisper-large-v3-turbo`. Worth a side-eye on whether to default new users to `openai/gpt-4o-mini-transcribe` instead, which has stronger handling of disfluencies but is ~3× the cost.
-6. **Vocabulary hints in v1.** The settings UI is cheap to build but the hints only matter when (a) we pass them as Whisper's `prompt` field, and (b) the tidy-up pass uses them. Worth shipping in v1 just for (a) — Whisper does respect `prompt` for biasing.
-7. **Cost cap UI.** Where (if anywhere) do we surface "you've spent $X on voice this month"? Probably the same settings page. Out of scope for v1 unless you'd like it.
+1. **Default provider.** Recommended: `elevenlabs:scribe-v2-realtime` (lowest latency, STT-specialized, zero-retention). Alternative: `openai/gpt-4o-transcribe` realtime (better inline self-correction, overlaps the tidy-up goal). Both need a new API key. Which gets the `ELEVENLABS_API_KEY` vs `OPENAI_API_KEY` budget?
+2. **Realtime connection model.** Recommended: backend WS relay (cost tracking + key safety). Alternative: browser-direct with ephemeral tokens (lower latency, weaker observability). The relay is the right call for a metered product unless latency is unacceptable in testing.
+3. **Strategy coverage in v1.** Recommended: ship ElevenLabs realtime first, add OpenAI realtime + OpenRouter batch in a fast follow (milestone 6) so you can A/B. Alternative: all three on day one (+~1 day).
+4. **Audio persistence.** Recommended: never persist; rely on providers' zero-retention modes. Alternative: short-lived S3 with 7-day TTL for debug, behind a flag.
+5. **Tidy-up timing model.** Recommended: end-of-session full rewrite. Alternative: per-chunk with re-rewrite of last two chunks. (Decide later; doesn't block v1. With strong realtime self-correction handling, the tidy-up may be less necessary than originally thought.)
+6. **Vocabulary hints in v1.** Cheap to build. ElevenLabs and OpenAI realtime both accept biasing/keyterm hints, so this helps domain language immediately — worth shipping in v1.
+7. **Cost cap UI.** Where (if anywhere) do we surface "you've spent $X on voice this month"? Probably the settings page. Out of scope for v1 unless you'd like it.
 
 ---
 
@@ -491,12 +537,15 @@ I need an answer (or "your call, pick the recommended one") on these before buil
 - `apps/frontend/src/components/composer/message-composer.tsx:218-990` — composer
 - `apps/frontend/src/components/editor/rich-editor.tsx:33-41, 777` — editor handle, programmatic insert
 - `apps/frontend/src/components/timeline/message-input.tsx:189-468` — host of the composer
-- `apps/backend/src/lib/ai/ai.ts:392-949` — `createAI` wrapper, where audio support hooks in
-- `apps/backend/src/lib/ai/models.yaml` — model capability registry
-- `apps/backend/src/features/attachments/` — precedent for file upload (multer-s3) and outbox-driven worker dispatch
-- `apps/backend/src/lib/outbox/broadcast-handler.ts:1-60` — user-scoped socket.io routing
-- `apps/backend/src/lib/queue/job-queue.ts` — job queue tiers
+- `apps/backend/src/lib/ai/ai.ts:30,392-949` — `createAI` wrapper + `OPENROUTER_BASE_URL`; pattern to mirror for `createTranscription`
+- `apps/backend/src/lib/ai/ai.ts:413` — provider resolution (only `openrouter` today; add `openai`/`elevenlabs`)
+- `apps/backend/src/lib/ai/models.yaml` — model capability registry (add `audio` modality + `streaming` capability)
+- `apps/backend/src/lib/env.ts:152` — provider keys (add `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`)
+- `apps/backend/src/features/attachments/` — precedent for file upload (multer-s3); used by the batch path
+- `apps/backend/src/lib/outbox/broadcast-handler.ts:1-60` — user-scoped socket.io routing (batch path)
+- `apps/backend/src/lib/queue/job-queue.ts` — job queue tiers (batch worker)
 - `apps/backend/src/features/user-preferences/service.ts:115-184` — preference store + outbox propagation
 - `docs/model-reference.md` — where the new STT entries go
-- OpenRouter: [Audio APIs announcement](https://openrouter.ai/announcements/announcing-audio-apis) · [Whisper Large v3 Turbo](https://openrouter.ai/openai/whisper-large-v3-turbo) · [Audio guide](https://openrouter.ai/docs/guides/overview/multimodal/audio)
-- OpenAI: [Speech-to-text guide](https://developers.openai.com/api/docs/guides/speech-to-text) (relevant if we add direct `gpt-4o-mini-transcribe` streaming later)
+- ElevenLabs: [Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text) · [Realtime STT API reference](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime) · [client-side streaming guide](https://elevenlabs.io/docs/eleven-api/guides/how-to/speech-to-text/realtime/client-side-streaming)
+- OpenAI: [Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription) · [gpt-4o-transcribe](https://developers.openai.com/api/docs/models/gpt-4o-transcribe) · [Speech-to-text guide](https://developers.openai.com/api/docs/guides/speech-to-text)
+- OpenRouter (batch comparison): [Audio APIs announcement](https://openrouter.ai/announcements/announcing-audio-apis) · [Whisper Large v3 Turbo](https://openrouter.ai/openai/whisper-large-v3-turbo)
