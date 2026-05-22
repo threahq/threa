@@ -272,7 +272,9 @@ export function MessageComposer({
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
 
-  // Close inline format toolbar and collapse expansion when navigating to a different stream/scope
+  // Close inline format toolbar and collapse expansion when navigating to a different stream/scope.
+  // Clearing voiceActive collapses the mobile chrome; combined with the scopeId-keyed mic below,
+  // an in-flight dictation take ends on navigation rather than carrying over into the next stream.
   useEffect(() => {
     if (blurTimeoutRef.current) {
       clearTimeout(blurTimeoutRef.current)
@@ -282,6 +284,7 @@ export function MessageComposer({
     setMobileExpanded(false)
     setMobileFocused(false)
     setMobileLinkPopoverOpen(false)
+    setVoiceActive(false)
   }, [scopeId])
 
   // Reset mobile-only state when viewport crosses the mobile/desktop threshold
@@ -494,8 +497,11 @@ export function MessageComposer({
   // composer already has text — appended at the caret like committed speech.
   const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
   const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
+  // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
+  // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
   const micButton = workspaceId ? (
     <MicButton
+      key={`mic-${scopeId ?? ""}`}
       workspaceId={workspaceId}
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
@@ -505,6 +511,7 @@ export function MessageComposer({
   ) : null
   const micButtonFab = workspaceId ? (
     <MicButton
+      key={`mic-fab-${scopeId ?? ""}`}
       workspaceId={workspaceId}
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
