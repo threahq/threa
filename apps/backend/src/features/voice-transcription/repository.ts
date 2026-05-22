@@ -106,4 +106,19 @@ export const VoiceSessionRepository = {
     `)
     return exists.rowCount === 0 ? "not_found" : "already_final"
   },
+
+  /**
+   * Sweep every active session past its hard `expires_at` to the terminal
+   * `expired` status in one set-based UPDATE (INV-56), guarded on status so
+   * concurrent finalizers can't double-transition (INV-20). Returns how many
+   * rows were swept. Backed by idx_voice_sessions_expiry (status, expires_at).
+   */
+  async expireStale(db: Querier, now: Date): Promise<number> {
+    const result = await db.query(sql`
+      UPDATE voice_sessions
+      SET status = 'expired', finished_at = NOW()
+      WHERE status = 'active' AND expires_at <= ${now}
+    `)
+    return result.rowCount ?? 0
+  },
 }

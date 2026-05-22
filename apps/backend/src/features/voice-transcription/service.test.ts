@@ -32,6 +32,7 @@ afterEach(() => {
   ;(VoiceSessionRepository.insert as ReturnType<typeof spyOn>)?.mockRestore?.()
   ;(VoiceSessionRepository.findOwned as ReturnType<typeof spyOn>)?.mockRestore?.()
   ;(VoiceSessionRepository.finalizeOwned as ReturnType<typeof spyOn>)?.mockRestore?.()
+  ;(VoiceSessionRepository.expireStale as ReturnType<typeof spyOn>)?.mockRestore?.()
   ;(UserRepository.findByWorkosUserIdInWorkspace as ReturnType<typeof spyOn>)?.mockRestore?.()
 })
 
@@ -164,5 +165,19 @@ describe("VoiceTranscriptionService finalize paths", () => {
     spyOn(VoiceSessionRepository, "finalizeOwned").mockResolvedValue("already_final")
     const service = new VoiceTranscriptionService(pool)
     await expect(service.finishSession(params)).resolves.toBeUndefined()
+  })
+})
+
+describe("VoiceTranscriptionService.expireStaleSessions", () => {
+  test("sweeps with the current time and returns the swept count", async () => {
+    const expireStale = spyOn(VoiceSessionRepository, "expireStale").mockResolvedValue(3)
+    const service = new VoiceTranscriptionService(pool)
+
+    const before = Date.now()
+    expect(await service.expireStaleSessions()).toBe(3)
+
+    expect(expireStale.mock.calls[0][0]).toBe(pool)
+    const now = expireStale.mock.calls[0][1] as Date
+    expect(now.getTime()).toBeGreaterThanOrEqual(before)
   })
 })

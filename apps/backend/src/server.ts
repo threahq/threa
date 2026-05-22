@@ -11,7 +11,12 @@ import { runMigrations } from "./db/migrations"
 import { WorkosAuthService, StubAuthService, WorkosApiKeyService, StubApiKeyService } from "@threa/backend-common"
 import { BotChannelService } from "./features/api-keys"
 import { UserApiKeyService as UserApiKeyServiceImpl } from "./features/user-api-keys"
-import { VoiceTranscriptionService, createTranscription, registerVoiceGateway } from "./features/voice-transcription"
+import {
+  VoiceTranscriptionService,
+  createTranscription,
+  createVoiceSessionSweeper,
+  registerVoiceGateway,
+} from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
@@ -965,6 +970,12 @@ export async function startServer(): Promise<ServerInstance> {
   const pushSessionCleanup = createPushSessionCleanup(pushService)
   pushSessionCleanup.start()
 
+  // Safety net for voice sessions the in-process max-duration timer never
+  // finalized (crash/restart, or an HTTP-created session whose socket never
+  // connected): sweep them to `expired` so they don't linger active.
+  const voiceSessionSweeper = createVoiceSessionSweeper(voiceTranscriptionService)
+  voiceSessionSweeper.start()
+
   await new Promise<void>((resolve) => {
     server.listen(config.port, "0.0.0.0", () => {
       logger.info({ port: config.port }, "Server started")
@@ -987,6 +998,7 @@ export async function startServer(): Promise<ServerInstance> {
     poolMonitor.stop()
     orphanSessionCleanup.stop()
     pushSessionCleanup.stop()
+    voiceSessionSweeper.stop()
     agentSessionMetrics.stop()
     await scheduleManager.stop()
     await cleanupWorker.stop()

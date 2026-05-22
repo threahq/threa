@@ -106,6 +106,17 @@ export class VoiceTranscriptionService {
     })
   }
 
+  /**
+   * Expire sessions left `active` past their hard `expires_at`. The gateway's
+   * in-process max-duration timer finalizes the common case; this is the
+   * safety net the periodic sweeper drives for sessions a crash/restart (or an
+   * HTTP-created session whose socket never connected) stranded active. Status
+   * transitions stay behind the service (INV-34). Returns how many were swept.
+   */
+  async expireStaleSessions(now: Date = new Date()): Promise<number> {
+    return VoiceSessionRepository.expireStale(this.pool, now)
+  }
+
   private async finalize(params: {
     workspaceId: string
     userId: string
