@@ -91,12 +91,18 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(this.pool, rootStreamId)
     const invocationRootStreamId = rootStream?.id ?? stream.id
     const mentionedSlugs = extractMentionSlugs(message.event.payload.contentMarkdown)
+    const uniqueMentionedSlugs = Array.from(new Set(mentionedSlugs))
     const [mentionedBots, mentionedPersonas] =
-      mentionedSlugs.length > 0
+      uniqueMentionedSlugs.length > 0
         ? await Promise.all([
-            BotRepository.findVisibleBySlugs(this.pool, message.workspaceId, message.event.actorId, mentionedSlugs),
+            BotRepository.findVisibleBySlugs(
+              this.pool,
+              message.workspaceId,
+              message.event.actorId,
+              uniqueMentionedSlugs
+            ),
             Promise.all(
-              mentionedSlugs.map((slug) => PersonaRepository.findBySlug(this.pool, slug, message.workspaceId))
+              uniqueMentionedSlugs.map((slug) => PersonaRepository.findBySlug(this.pool, slug, message.workspaceId))
             ),
           ])
         : [[], []]
