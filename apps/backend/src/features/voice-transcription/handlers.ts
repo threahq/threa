@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import { HttpError } from "../../lib/errors"
+import { voiceConfig } from "./config"
 import type { VoiceTranscriptionService } from "./service"
 
 const createSessionSchema = z.object({
@@ -36,6 +37,9 @@ export function createVoiceTranscriptionHandlers({ voiceTranscriptionService }: 
         provider: row.provider,
         region: row.region,
         expiresAt: row.expiresAt.toISOString(),
+        // The gateway force-stops a take at this duration; surface it so the
+        // client can show a countdown and the auto-stop isn't a surprise.
+        maxDurationMs: voiceConfig.maxSessionMs,
       })
     },
 
