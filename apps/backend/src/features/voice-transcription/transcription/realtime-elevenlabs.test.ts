@@ -76,6 +76,11 @@ describe("RealtimeElevenLabsStrategy connect", () => {
     expect(socket.options).toMatchObject({ headers: { "xi-api-key": "secret-key" } })
   })
 
+  test("requests VAD auto-commit so segments finalize on silence, not only on stop", async () => {
+    const { socket } = await openSession()
+    expect(socket.url).toContain("commit_strategy=vad")
+  })
+
   test("passes language_code when a language is provided", async () => {
     const strategy = new RealtimeElevenLabsStrategy({ apiKey: "k" })
     const p = strategy.open({ model: "elevenlabs:scribe-v2-realtime", language: "sv" })

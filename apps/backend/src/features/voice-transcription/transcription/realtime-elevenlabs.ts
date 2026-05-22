@@ -66,6 +66,10 @@ class ElevenLabsSession implements TranscriptionSession {
   connect(): Promise<void> {
     const params = new URLSearchParams({ model_id: toUpstreamModelId(this.opts.model) })
     if (this.opts.language) params.set("language_code", this.opts.language)
+    // Auto-commit on silence. The default "manual" strategy only finalizes a
+    // segment when we send commit:true (which we only do on stop), so without
+    // this the user sees no committed text until they stop dictating.
+    params.set("commit_strategy", "vad")
     const url = `${REALTIME_URL}?${params.toString()}`
 
     // Bun's WebSocket accepts a non-standard options arg for request headers.
