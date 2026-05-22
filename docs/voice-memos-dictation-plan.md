@@ -536,7 +536,7 @@ The one unavoidably vertical PR. Smallest change that lets you tap a mic on your
 - **Frontend:** mic button with the real **responsive placement** (desktop near send, **mobile FAB above send on focus**) since the reviewer is on mobile and needs it to test at all; hidden once typing (per §1); AudioWorklet → PCM16 16 kHz capture; dedicated voice socket client; **naive** caret insert (append final text — no interim-replacement polish yet); capability-detect and disable with a tooltip where unsupported.
 - **Deferred to later PRs:** interim-replacement/flicker handling, warm-linger socket, idle-timeout + 10-min expiry sweeper, error/resume UX, cost recording, residency, settings, Deepgram, batch, waveform.
 - **Phone test:** open a stream → tap mic → speak → final text appears in the composer → send.
-- **Estimate:** ~3 d (this is the big one; it's the irreducible end-to-end core).
+- **Relative size:** the largest PR — it's the irreducible end-to-end core. Everything after this is additive and smaller.
 
 ### PR 2 — Lifecycle & robustness (still ElevenLabs only)
 
@@ -546,39 +546,34 @@ Makes the skeleton feel good and behave under real conditions. Reviewable as "di
 - Warm-linger voice socket (~30–60 s keep-alive after stop; upstream provider socket torn down on stop — §2.2).
 - Idle-timeout auto-close (VAD silence) + 10-min hard `expires_at` + sweeper; `voice:transcription:error` surface + tap-to-resume; socket-drop preserves captured text; `visibilitychange` pause banner.
 - **Phone test:** talk with pauses; stop and resume within a few seconds (instant, no re-handshake); background the tab; force a drop — text is preserved, no flicker.
-- **Estimate:** ~1.5 d.
 
 ### PR 3 — Cost telemetry & per-user caps
 
 - Record usage on session `close()` via `CostRecorder` with INV-19 metadata; `audioPricePerHour` read from `models.yaml` (INV-33); per-user concurrency cap + daily cost cap.
 - **Phone test:** dictate a bit, then confirm the spend shows up wherever existing AI cost is surfaced (cost is sliceable by `functionId: "voice_transcription"` per Decision #8).
-- **Estimate:** ~0.5 d.
 
 ### PR 4 — Settings: language hint + vocabulary (ElevenLabs keyterms)
 
 - Settings → Voice & dictation: language hint, vocabulary field (`userPreferences.voice.vocabularyHints`), tidy-up toggle (off, deferred). Vocabulary wired as ElevenLabs realtime keyterms (≤50 terms). Model picker shows ElevenLabs only for now.
 - **Phone test:** add a custom term, dictate it, see biasing improve recognition.
-- **Estimate:** ~0.5 d.
 
 ### PR 5 — Second provider (Deepgram) + residency resolver
 
 - `RealtimeDeepgramStrategy`; `voiceResidencyPolicy` (default `"any"`, Decision #7); residency-aware resolver + Deepgram-EU endpoint (§7.1); `DEEPGRAM_API_KEY`; model picker now offers ElevenLabs + Deepgram with their keyterm caps.
 - **Phone test:** switch provider in settings, dictate, compare quality/steering; set policy to `eu` and confirm routing/disable behavior.
-- **Estimate:** ~1 d.
 
 ### PR 6 — Batch fallback + degraded-device path
 
 - `BatchOpenRouterStrategy` behind a dev/debug flag (§1.5); MediaRecorder webm/opus fallback for devices without AudioWorklet so the mic still works (degrades to batch).
 - **Phone test:** on an older device or with the flag, dictation still produces text via the batch path.
-- **Estimate:** ~0.5 d.
 
 ### PR 7 — Tidy-up pass (deferred follow-up)
 
-Separate from v1 entirely. Small model cleans disfluencies/corrections; timing model (end-of-session vs per-chunk) decided when built (Decision #5). ~2 d.
+Separate from v1 entirely. Small model cleans disfluencies/corrections; timing model (end-of-session vs per-chunk) decided when built (Decision #5).
 
 ---
 
-**Sequencing notes.** PRs 1→2 are the recommended order and each builds on the last, but **3, 4, 5, 6 are independent of one another** once PR 2 lands — they can ship in any order or in parallel. v1 = PRs 1–6 (~7 d, matching the earlier estimate). If you want the absolute minimum first cut to play with, PRs 1–2 alone are a complete, shippable ElevenLabs dictation feature (~4.5 d); 3–6 are hardening and breadth.
+**Sequencing notes.** PRs 1→2 are the recommended order and each builds on the last, but **3, 4, 5, 6 are independent of one another** once PR 2 lands — they can ship in any order or in parallel. v1 = PRs 1–6. If you want the absolute minimum first cut to play with, PRs 1–2 alone are a complete, shippable ElevenLabs dictation feature; 3–6 are hardening and breadth.
 
 ---
 
