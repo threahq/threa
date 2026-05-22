@@ -304,7 +304,7 @@ const runtimeSessionLinkSchema = z.object({
 
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
 const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
-const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema })
+const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema.nullable() })
 
 const errorSchema = z.object({
   error: z.string(),

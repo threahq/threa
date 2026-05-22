@@ -564,9 +564,10 @@ export function createPublicApiHandlers({
       }
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-      const contentMarkdown = result.data.finalMessageMarkdown
-        ? normalizeMessage(result.data.finalMessageMarkdown)
-        : null
+      const contentMarkdown =
+        result.data.noResponse === true || !result.data.finalMessageMarkdown
+          ? null
+          : normalizeMessage(result.data.finalMessageMarkdown)
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
       const { completed, message } = await withTransaction(pool, async (client) => {
