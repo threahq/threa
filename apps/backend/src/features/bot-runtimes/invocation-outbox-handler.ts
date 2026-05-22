@@ -82,7 +82,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private async processMessageCreated(payload: unknown): Promise<void> {
     const message = parseMessagePayload(payload)
     if (!message) return
-    if (message.event.actorType !== AuthorTypes.USER || !message.event.actorId) return
+    if (!message.event.actorId) return
 
     const stream = await StreamRepository.findById(this.pool, message.streamId)
     if (!stream || stream.workspaceId !== message.workspaceId || stream.archivedAt) return
@@ -90,7 +90,8 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const rootStreamId = stream.rootStreamId ?? stream.id
     const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(this.pool, rootStreamId)
     const invocationRootStreamId = rootStream?.id ?? stream.id
-    const mentionedSlugs = extractMentionSlugs(message.event.payload.contentMarkdown)
+    const isUserAuthored = message.event.actorType === AuthorTypes.USER
+    const mentionedSlugs = isUserAuthored ? extractMentionSlugs(message.event.payload.contentMarkdown) : []
     const uniqueMentionedSlugs = Array.from(new Set(mentionedSlugs))
     const [mentionedBots, mentionedPersonas] =
       uniqueMentionedSlugs.length > 0
@@ -133,6 +134,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
 
     const bot = await BotRepository.findById(this.pool, message.workspaceId, active.actorId)
     if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return
+    if (message.event.actorType === AuthorTypes.BOT && message.event.actorId === bot.id) return
     if (mentionableBots.some((mentionedBot) => mentionedBot.id === bot.id)) return
     const activeExplicitlyMentioned = bot.slug != null && mentionedSlugs.includes(bot.slug)
     if ((mentionableBots.length > 0 || hasMentionedPersona) && !activeExplicitlyMentioned) return
@@ -171,7 +173,14 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       actorId: bot.id,
       trigger: "active-scratchpad",
       requiredCapability: "active-scratchpad",
-      promptMarkdown: message.event.payload.contentMarkdown,
+      promptMarkdown: isUserAuthored
+        ? message.event.payload.contentMarkdown
+        : [
+            "A non-user message was posted in your active Threa scratchpad.",
+            "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE",
+            "",
+            message.event.payload.contentMarkdown,
+          ].join("\n"),
       authorUserId: message.event.actorId,
       mentionedActorSlugs: mentionedSlugs,
       targetInstanceId: link.instanceId,

@@ -94,12 +94,18 @@ export const renewInvocationClaimSchema = z.object({
   claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
 })
 
-export const completeInvocationSchema = z.object({
-  instanceId: z.string().min(1).max(128),
-  claimToken: z.string().min(1).max(256),
-  finalMessageMarkdown: z.string().min(1).max(50_000),
-  metadata: messageMetadataSchema.optional(),
-})
+export const completeInvocationSchema = z
+  .object({
+    instanceId: z.string().min(1).max(128),
+    claimToken: z.string().min(1).max(256),
+    finalMessageMarkdown: z.string().min(1).max(50_000).optional(),
+    noResponse: z.boolean().optional(),
+    metadata: messageMetadataSchema.optional(),
+  })
+  .refine((value) => value.noResponse === true || value.finalMessageMarkdown != null, {
+    message: "Either finalMessageMarkdown or noResponse is required",
+    path: ["finalMessageMarkdown"],
+  })
 
 export const failInvocationSchema = z.object({
   instanceId: z.string().min(1).max(128),

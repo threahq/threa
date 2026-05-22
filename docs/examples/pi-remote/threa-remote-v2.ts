@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@e
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
 const STATUS_KEY = "threa-remote"
+const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 
 type Config = {
   baseUrl: string
@@ -344,15 +345,18 @@ function advanceStreamCursor(invocation: ClaimedInvocation): void {
 async function completePending(markdown: string): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
+  const finalMarkdown = markdown.trim() || "Done."
+  const noResponse = finalMarkdown === NO_RESPONSE_MARKER
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
       instanceId: ensureInstanceId(),
       claimToken: invocation.claimToken,
-      finalMessageMarkdown: markdown || "Done.",
+      ...(noResponse ? { noResponse: true } : { finalMessageMarkdown: finalMarkdown }),
       metadata: {
         "pi.remote.invocationId": invocation.id,
         "pi.remote.instanceId": ensureInstanceId(),
+        ...(noResponse && { "pi.remote.noResponse": "true" }),
       },
     }),
   })
