@@ -396,6 +396,8 @@ Any ideas what's causing this?`,
     },
     expectedOutput: {
       expectNewConversation: true,
+      // Require Swedish wording from the source conversation (evaluator passes on any one match)
+      topicContains: ["tomat", "balkong"],
       // Must not label the language or fall back to English framing
       topicNotContains: ["swedish", "svenska", "discussion", "chat about", "conversation about"],
       minConfidence: 0.7,

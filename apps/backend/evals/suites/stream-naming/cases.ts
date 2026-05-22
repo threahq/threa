@@ -222,6 +222,8 @@ User: Och hur ofta måste man vattna?`,
       category: "language",
     },
     expectedOutput: {
+      // Require Swedish wording from the source conversation (evaluator passes on any one match)
+      nameContains: ["tomat", "balkong"],
       // Should not label the language or use English framing words
       nameNotContains: ["swedish", "svenska", "discussion", "chat", "conversation", "about"],
       wordCountRange: { min: 2, max: 5 },
