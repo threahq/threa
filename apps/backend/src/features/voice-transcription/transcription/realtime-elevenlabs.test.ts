@@ -149,4 +149,25 @@ describe("RealtimeElevenLabsStrategy audio + transcripts", () => {
     await session.close()
     expect(socket.readyState).toBe(FakeWebSocket.CLOSED)
   })
+
+  test("an unsolicited close after open surfaces an UPSTREAM_CLOSED error", async () => {
+    const { session, socket } = await openSession()
+    const errors: TranscriptionError[] = []
+    session.onError((e) => errors.push(e))
+
+    socket.dispatch("close", { code: 1006 })
+
+    expect(errors).toEqual([{ code: "UPSTREAM_CLOSED", message: "ElevenLabs realtime closed (code 1006)" }])
+  })
+
+  test("a close we initiated via close() does not surface an error", async () => {
+    const { session, socket } = await openSession()
+    const errors: TranscriptionError[] = []
+    session.onError((e) => errors.push(e))
+
+    await session.close()
+    socket.dispatch("close", { code: 1000 })
+
+    expect(errors).toEqual([])
+  })
 })

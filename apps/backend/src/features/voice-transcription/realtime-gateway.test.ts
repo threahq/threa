@@ -167,6 +167,25 @@ describe("registerVoiceGateway voice:start", () => {
     })
     expect(cb).toHaveBeenCalledWith({ ok: false, error: "Session ended before it started" })
   })
+
+  it("aborts the resolved session when opening the upstream fails", async () => {
+    const { socket, voiceTranscriptionService } = setup({
+      open: async () => {
+        throw new Error("upstream unreachable")
+      },
+    })
+    const cb = mock(() => {})
+
+    await socket.trigger("voice:start", START_PAYLOAD, cb)
+
+    expect(voiceTranscriptionService.abortSession).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+      totalAudioMs: 0,
+    })
+    expect(cb).toHaveBeenCalledWith({ ok: false, error: "Failed to start voice session" })
+  })
 })
 
 describe("registerVoiceGateway lifecycle", () => {

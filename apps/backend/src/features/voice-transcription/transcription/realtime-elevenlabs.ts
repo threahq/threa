@@ -100,6 +100,13 @@ class ElevenLabsSession implements TranscriptionSession {
         if (!settled) {
           settled = true
           reject(new Error(`ElevenLabs realtime closed before open (code ${event.code})`))
+          return
+        }
+        // A drop after open is only expected when we initiated the close. An
+        // unsolicited close means the upstream went away mid-dictation; surface
+        // it so the relay leaves its recording state instead of hanging (INV-11).
+        if (!this.closed) {
+          this.emitError({ code: "UPSTREAM_CLOSED", message: `ElevenLabs realtime closed (code ${event.code})` })
         }
       })
 

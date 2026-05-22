@@ -17,10 +17,16 @@ export function createSocketAuthMiddleware(authService: AuthService) {
     const session = cookies[SESSION_COOKIE_NAME]
     if (!session) return next(new Error("No session cookie"))
 
-    const result = await authService.authenticateSession(session)
-    if (!result.success || !result.user) return next(new Error("Authentication failed"))
-
-    socket.data.workosUserId = result.user.id
-    next()
+    // Socket.io won't catch a rejected promise from an async middleware, so a
+    // throwing auth call (network/WorkOS error) would hang the connection until
+    // timeout. Fail closed: reject the connection rather than leave it pending.
+    try {
+      const result = await authService.authenticateSession(session)
+      if (!result.success || !result.user) return next(new Error("Authentication failed"))
+      socket.data.workosUserId = result.user.id
+      next()
+    } catch {
+      next(new Error("Authentication failed"))
+    }
   }
 }

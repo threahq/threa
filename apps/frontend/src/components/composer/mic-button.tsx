@@ -72,7 +72,7 @@ export function MicButton({
               className
             )}
             onClick={handleClick}
-            disabled={disabled || !supported}
+            disabled={disabled || !supported || state === "stopping"}
           >
             {state === "connecting" || state === "stopping" ? (
               <Loader2 className="h-4 w-4 animate-spin" />

@@ -30,6 +30,9 @@ interface UseVoiceDictationResult {
 
 const FRAME_SAMPLES = 1600 // 100ms @ 16kHz
 const SAMPLE_RATE_HZ = 16_000
+// If the server never acks voice:stop (dropped connection mid-stop), fall
+// through anyway so the button can't hang in the "stopping" state forever.
+const STOP_ACK_TIMEOUT_MS = 3000
 
 function detectSupport(): { supported: boolean; reason: string | null } {
   if (typeof window === "undefined") return { supported: false, reason: "Voice input is unavailable here" }
@@ -224,7 +227,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     socketRef.current = null
     sessionIdRef.current = null
     if (socket) {
-      socket.emit("voice:stop", () => {
+      // The ack callback fires on the server's confirmation or on the timeout —
+      // either way we disconnect and return to idle so the UI never wedges.
+      socket.timeout(STOP_ACK_TIMEOUT_MS).emit("voice:stop", () => {
         socket.disconnect()
         setState("idle")
       })

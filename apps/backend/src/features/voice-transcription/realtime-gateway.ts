@@ -118,12 +118,18 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         }
         starting = true
 
+        // Captured once getRelaySession resolves so a later failure (e.g.
+        // upstream open) can abort the DB session instead of leaving it active
+        // until the max-duration sweeper.
+        let resolvedUserId: string | undefined
+
         try {
           const row = await voiceTranscriptionService.getRelaySession({
             workspaceId,
             workosUserId,
             sessionId: voiceSessionId,
           })
+          resolvedUserId = row.userId
 
           const upstream = await transcription.open({ model: row.model, language: row.language ?? undefined })
 
@@ -163,6 +169,13 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           logger.debug({ voiceSessionId, workspaceId }, "Voice relay started")
           callback?.({ ok: true })
         } catch (err) {
+          // The session row was already resolved/created, so a failure here
+          // leaves it active. Abort it (best-effort) so it doesn't linger.
+          if (resolvedUserId) {
+            await voiceTranscriptionService
+              .abortSession({ workspaceId, userId: resolvedUserId, sessionId: voiceSessionId, totalAudioMs: 0 })
+              .catch(() => {})
+          }
           if (err instanceof HttpError) {
             callback?.({ ok: false, error: err.message })
             return
