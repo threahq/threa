@@ -104,6 +104,7 @@ export {
   botRuntimeInstanceId,
   botRuntimeSessionLinkId,
   botInvocationId,
+  botRuntimePairingCodeId,
 } from "./id"
 export {
   parseCookies,
