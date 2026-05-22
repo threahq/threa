@@ -6,6 +6,8 @@ export interface VoiceSession {
   provider: string
   region: string
   expiresAt: string
+  /** Hard cap after which the backend force-stops the take, in ms. */
+  maxDurationMs: number
 }
 
 export interface CreateVoiceSessionInput {

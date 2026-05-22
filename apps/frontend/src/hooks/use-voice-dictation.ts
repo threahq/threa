@@ -32,6 +32,19 @@ interface UseVoiceDictationResult {
    * after the upstream VAD endpoints a segment.
    */
   interimText: string
+  /**
+   * Smoothed live input level (0–1) derived from the mic signal while recording,
+   * so the UI can react to the user's voice instead of pulsing on a fixed timer.
+   * 0 whenever not recording.
+   */
+  level: number
+  /** Elapsed recording time for the current take, in ms (0 when not recording). */
+  elapsedMs: number
+  /**
+   * Hard cap after which the backend force-stops the take, in ms — null until a
+   * session is created. Pair with `elapsedMs` to show a countdown near the cap.
+   */
+  maxDurationMs: number | null
   start: () => void
   stop: () => void
 }
@@ -81,6 +94,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const [state, setState] = useState<VoiceDictationState>("idle")
   const [error, setError] = useState<string | null>(null)
   const [interimText, setInterimText] = useState("")
+  const [level, setLevel] = useState(0)
+  const [elapsedMs, setElapsedMs] = useState(0)
+  const [maxDurationMs, setMaxDurationMs] = useState<number | null>(null)
   const supportRef = useRef(detectSupport())
 
   const socketRef = useRef<Socket | null>(null)
@@ -88,6 +104,14 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const audioContextRef = useRef<AudioContext | null>(null)
   const workletRef = useRef<AudioWorkletNode | null>(null)
   const sessionIdRef = useRef<string | null>(null)
+  // Live input-level metering: an AnalyserNode taps the mic source and a rAF
+  // loop computes a smoothed RMS level + elapsed time while recording.
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const meterRafRef = useRef<number | null>(null)
+  const recordingStartRef = useRef(0)
+  const smoothedLevelRef = useRef(0)
+  const lastSetLevelRef = useRef(0)
+  const lastElapsedTickRef = useRef(0)
   // Bumped on every start() and every teardown/stop so a `voice:start` ACK that
   // resolves after the user has already stopped (or torn down) can't flip the
   // state machine back to "recording" with nothing behind it.
@@ -121,6 +145,14 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   }, [updateInterim])
 
   const teardownAudio = useCallback(() => {
+    if (meterRafRef.current !== null) cancelAnimationFrame(meterRafRef.current)
+    meterRafRef.current = null
+    analyserRef.current?.disconnect()
+    analyserRef.current = null
+    smoothedLevelRef.current = 0
+    lastSetLevelRef.current = 0
+    setLevel(0)
+    setElapsedMs(0)
     workletRef.current?.port.close()
     workletRef.current?.disconnect()
     workletRef.current = null
@@ -130,12 +162,49 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     audioContextRef.current = null
   }, [])
 
+  // rAF loop: sample the analyser, surface a smoothed input level and the
+  // elapsed recording time. Fast attack / slow decay reads as responsive; the
+  // level setState is gated to meaningful changes so a 60fps loop doesn't churn
+  // renders, and elapsed ticks at ~4Hz (enough for an m:ss readout + cap hint).
+  const runMeter = useCallback(() => {
+    const analyser = analyserRef.current
+    if (!analyser) return
+    const buf = new Uint8Array(analyser.fftSize)
+    const tick = () => {
+      const node = analyserRef.current
+      if (!node) return
+      node.getByteTimeDomainData(buf)
+      let sumSquares = 0
+      for (let i = 0; i < buf.length; i++) {
+        const sample = (buf[i] - 128) / 128
+        sumSquares += sample * sample
+      }
+      const rms = Math.sqrt(sumSquares / buf.length)
+      const target = Math.min(1, rms * 3)
+      const prev = smoothedLevelRef.current
+      const next = prev + (target - prev) * (target > prev ? 0.5 : 0.12)
+      smoothedLevelRef.current = next
+      if (Math.abs(next - lastSetLevelRef.current) >= 0.02) {
+        lastSetLevelRef.current = next
+        setLevel(next)
+      }
+      const now = performance.now()
+      if (now - lastElapsedTickRef.current >= 250) {
+        lastElapsedTickRef.current = now
+        setElapsedMs(now - recordingStartRef.current)
+      }
+      meterRafRef.current = requestAnimationFrame(tick)
+    }
+    meterRafRef.current = requestAnimationFrame(tick)
+  }, [])
+
   const teardown = useCallback(() => {
     startGenerationRef.current++
     teardownAudio()
     socketRef.current?.disconnect()
     socketRef.current = null
     sessionIdRef.current = null
+    setMaxDurationMs(null)
     updateInterim("")
     coordinator.deactivate(coordinatedStop)
   }, [teardownAudio, updateInterim, coordinator, coordinatedStop])
@@ -173,6 +242,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
         const session = await voiceApi.createSession(workspaceId, { language })
         sessionIdRef.current = session.voiceSessionId
+        setMaxDurationMs(session.maxDurationMs)
 
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
@@ -202,6 +272,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         source.connect(worklet)
         worklet.connect(muted)
         muted.connect(audioContext.destination)
+        // Tap the source for level metering. The analyser is a pure sink (no
+        // onward connection), so it never feeds audio back into the graph.
+        const analyser = audioContext.createAnalyser()
+        analyser.fftSize = 1024
+        analyser.smoothingTimeConstant = 0.4
+        source.connect(analyser)
+        analyserRef.current = analyser
         // iOS Safari starts the context suspended; without this the worklet's
         // process() never runs and no audio frames are produced.
         if (audioContext.state === "suspended") await audioContext.resume()
@@ -255,6 +332,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             worklet.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
               socketRef.current?.emit("voice:audio", event.data)
             }
+            recordingStartRef.current = performance.now()
+            lastElapsedTickRef.current = 0
+            setElapsedMs(0)
+            runMeter()
             setState("recording")
           }
         )
@@ -269,7 +350,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         fail(message)
       }
     })()
-  }, [state, workspaceId, language, fail, teardown, flushInterim, coordinator, coordinatedStop])
+  }, [state, workspaceId, language, fail, teardown, flushInterim, runMeter, coordinator, coordinatedStop])
 
   const stop = useCallback(() => {
     if (state !== "recording" && state !== "connecting") return
@@ -321,6 +402,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     unsupportedReason: supportRef.current.reason,
     error,
     interimText,
+    level,
+    elapsedMs,
+    maxDurationMs,
     start,
     stop,
   }

@@ -64,6 +64,7 @@ describe("createVoiceTranscriptionHandlers.createSession", () => {
       provider: "elevenlabs",
       region: "us",
       expiresAt: expiresAt.toISOString(),
+      maxDurationMs: 10 * 60 * 1_000,
     })
   })
 })
