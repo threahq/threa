@@ -17,6 +17,7 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { ChannelSlugInput } from "./channel-slug-input"
+import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import {
   StreamTypes,
@@ -78,7 +79,7 @@ export function GeneralTab({
       <ThreadVisibilityDisplay
         key="visibility"
         inheritedVisibility={rootStream.visibility}
-        rootStreamName={rootStream.slug ? `#${rootStream.slug}` : (rootStream.displayName ?? "parent stream")}
+        rootStreamName={getStreamName(rootStream) ?? "parent stream"}
       />
     )
   } else if (isThread) {
@@ -473,7 +474,7 @@ function ArchiveSection({
     setConfirmOpen(false)
   }
 
-  const streamName = stream.slug ? `#${stream.slug}` : (stream.displayName ?? `this ${streamTypeLabel}`)
+  const streamName = getStreamName(stream) ?? `this ${streamTypeLabel}`
 
   return (
     <div className="space-y-3">

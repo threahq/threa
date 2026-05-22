@@ -133,4 +133,38 @@ describe("StreamSettingsDialog", () => {
     expect(nav).toHaveClass("min-h-0", "overflow-y-auto")
     expect(content).toHaveClass("flex-1", "min-h-0", "overflow-y-auto")
   })
+
+  it("titles a DM with the resolved peer name when the stream row has no displayName", async () => {
+    // Raw DM rows arrive with displayName: null (viewer-specific names aren't
+    // persisted), so the title must resolve through the shared resolver via the
+    // peer user rather than falling back to a generic label.
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_dm"), {
+      stream: makeStream({ displayName: null }),
+      events: [],
+      members: [],
+      botMemberIds: [],
+      membership: null,
+      latestSequence: "0",
+      hasOlderEvents: false,
+      syncMode: "replace",
+      unreadCount: 0,
+      mentionCount: 0,
+      activityCount: 0,
+    } satisfies StreamBootstrap)
+
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+      { id: "user_peer", name: "Ada Lovelace" },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceDmPeers").mockReturnValue([
+      { streamId: "stream_dm", userId: "user_peer" },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceDmPeers>)
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <StreamSettingsDialog workspaceId="ws_1" />
+      </QueryClientProvider>
+    )
+
+    expect(await screen.findByText("Ada Lovelace Settings")).toBeInTheDocument()
+  })
 })
