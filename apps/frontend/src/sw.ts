@@ -7,10 +7,31 @@ import {
   SW_MSG_SUBSCRIPTION_CHANGED,
   SW_MSG_CLEAR_NOTIFICATIONS,
   SW_MSG_QUEUE_BOOTSTRAP_SYNC,
+  SW_MSG_RELOAD_FRESH,
   SHARE_TARGET_CACHE,
 } from "./lib/sw-messages"
 
 declare const self: ServiceWorkerGlobalScope
+
+/**
+ * One-shot: serve the next app-shell navigation from the network instead of the
+ * cache-first precache. Set by the "new version" reload (SW_MSG_RELOAD_FRESH)
+ * so the reload fetches the freshly-deployed index.html — the precache here is
+ * still the *old* build until the new SW installs and claims, so a plain
+ * cache-first reload would just re-serve the old client. In-memory is fine: the
+ * page reloads within milliseconds of the ack, so the flag never needs to
+ * survive an SW restart, and if it somehow does reset we fall back to the safe
+ * cache-first path (no worse than before).
+ */
+let serveNextNavFromNetwork = false
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type !== SW_MSG_RELOAD_FRESH) return
+  serveNextNavFromNetwork = true
+  // Ack so the page reloads only once the flag is set, guaranteeing the
+  // navigation that follows is the one served from the network.
+  event.ports[0]?.postMessage({ ok: true })
+})
 
 /** Extend NotificationOptions with properties supported by browsers but missing from TS lib types. */
 interface ExtendedNotificationOptions extends NotificationOptions {
@@ -80,6 +101,19 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     (async () => {
+      // One-shot network-first: the user clicked "Reload" on the new-version
+      // toast. Fetch the freshly-deployed shell so the reload lands on the new
+      // build instead of this (old) SW's precached shell. Falls through to the
+      // precache if the network fails (offline) so the reload still yields a
+      // working app.
+      if (serveNextNavFromNetwork) {
+        serveNextNavFromNetwork = false
+        try {
+          return await fetch(event.request)
+        } catch {
+          // Offline — fall through to the precached shell below.
+        }
+      }
       // matchPrecache resolves workbox's revisioned cache key, so this is the
       // exact index.html that ships with the precached asset bundle.
       const precached = await matchPrecache("/index.html")
