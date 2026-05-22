@@ -133,6 +133,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
 
     const bot = await BotRepository.findById(this.pool, message.workspaceId, active.actorId)
     if (!bot || bot.archivedAt || !botHasCapability(bot, "active-scratchpad")) return
+    if (mentionableBots.some((mentionedBot) => mentionedBot.id === bot.id)) return
     const activeExplicitlyMentioned = bot.slug != null && mentionedSlugs.includes(bot.slug)
     if ((mentionableBots.length > 0 || hasMentionedPersona) && !activeExplicitlyMentioned) return
 
