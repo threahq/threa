@@ -382,6 +382,19 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // Keep the stable coordinator handle pointed at the latest stop().
   stopRef.current = stop
 
+  // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
+  // capture, so a take left "recording" would silently record nothing while the
+  // UI still says it's live. End it cleanly on hide instead: stop() flushes the
+  // in-flight hypothesis and commits the landed text, so the user returns to
+  // their words and an idle mic rather than a dead one they think is recording.
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") stopRef.current()
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange)
+  }, [])
+
   // Abort a still-open session on unmount: disconnecting the socket makes the
   // gateway finalize it as aborted; if the socket never opened, abort over HTTP
   // so it doesn't linger until the max-duration guard.

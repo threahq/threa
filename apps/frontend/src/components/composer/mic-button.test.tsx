@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import * as voiceDictation from "@/hooks/use-voice-dictation"
 import { MicButton, formatClock, recordingRingShadow } from "./mic-button"
 
 describe("formatClock", () => {
@@ -62,5 +63,54 @@ describe("MicButton", () => {
     )
 
     expect(screen.getByRole("button", { name: "Dictate a message" })).toBeDisabled()
+  })
+})
+
+// Drive the dictation states the real hook can't reach in jsdom (no audio /
+// socket) by spying the hook, so we can assert the button's state-dependent
+// chrome — the recording timer and the inline error/resume surface.
+describe("MicButton state surfaces", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function mockDictation(overrides: Partial<ReturnType<typeof voiceDictation.useVoiceDictation>>) {
+    vi.spyOn(voiceDictation, "useVoiceDictation").mockReturnValue({
+      state: "idle",
+      supported: true,
+      unsupportedReason: null,
+      error: null,
+      interimText: "",
+      level: 0,
+      elapsedMs: 0,
+      maxDurationMs: null,
+      start: vi.fn(),
+      stop: vi.fn(),
+      ...overrides,
+    })
+  }
+
+  function renderButton() {
+    render(
+      <TooltipProvider>
+        <MicButton workspaceId="ws_1" onInsertText={vi.fn()} />
+      </TooltipProvider>
+    )
+  }
+
+  it("surfaces the error inline (not just a hover tooltip) with a retry affordance", () => {
+    mockDictation({ state: "error", error: "Dictation connection lost" })
+    renderButton()
+
+    // The inline status is what a touch user (no hover) sees.
+    expect(screen.getByRole("status")).toHaveTextContent("Dictation connection lost")
+    // The button itself is the tap-to-resume target.
+    expect(screen.getByRole("button", { name: "Retry dictation" })).toBeEnabled()
+  })
+
+  it("shows a live elapsed clock while recording", () => {
+    mockDictation({ state: "recording", elapsedMs: 5_000, maxDurationMs: 600_000 })
+    renderButton()
+
+    expect(screen.getByRole("button", { name: "Stop dictation" })).toBeEnabled()
+    expect(screen.getByText("0:05")).toBeInTheDocument()
   })
 })

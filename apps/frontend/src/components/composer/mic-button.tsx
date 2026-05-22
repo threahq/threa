@@ -29,6 +29,12 @@ export function formatClock(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`
 }
 
+function actionLabelFor(state: VoiceDictationState): string {
+  if (state === "recording") return "Stop dictation"
+  if (state === "error") return "Retry dictation"
+  return "Dictate a message"
+}
+
 function tooltipFor(args: {
   supported: boolean
   unsupportedReason: string | null
@@ -105,6 +111,7 @@ export function MicButton({
   ).current
 
   const recording = state === "recording"
+  const actionLabel = actionLabelFor(state)
   const remainingMs = maxDurationMs !== null ? maxDurationMs - elapsedMs : null
   const nearCap = remainingMs !== null && remainingMs <= NEAR_CAP_MS
   // While recording (and motion is allowed), drive the halo rings from the live
@@ -141,11 +148,23 @@ export function MicButton({
               {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
             </span>
           )}
+          {state === "error" && error && (
+            // The tooltip alone is invisible on touch (no hover), so a dropped
+            // take would look like it just stopped. Surface the reason inline
+            // instead; the button below stays the tap-to-resume target. Absolute
+            // positioning keeps it from shifting the composer layout (INV-21).
+            <span
+              role="status"
+              className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 max-w-[11rem] select-none rounded-md bg-destructive px-2 py-1 text-center text-[10px] font-medium leading-snug text-destructive-foreground shadow-sm"
+            >
+              {error}
+            </span>
+          )}
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            aria-label={state === "recording" ? "Stop dictation" : "Dictate a message"}
+            aria-label={actionLabel}
             aria-pressed={state === "recording"}
             className={cn(
               "h-7 w-7 shrink-0 transition-shadow duration-100",
