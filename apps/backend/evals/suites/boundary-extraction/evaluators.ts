@@ -80,6 +80,36 @@ export const topicContainsEvaluator: Evaluator<BoundaryExtractionOutput, Boundar
 }
 
 /**
+ * Evaluator that checks the new conversation topic avoids unwanted phrases
+ * (framing preamble like "discussion about", language labels like "in swedish").
+ */
+export const topicNotContainsEvaluator: Evaluator<BoundaryExtractionOutput, BoundaryExtractionExpected> = {
+  name: "topic-not-contains",
+  evaluate: (output: BoundaryExtractionOutput, expected: BoundaryExtractionExpected): EvaluatorResult => {
+    if (!expected.topicNotContains || expected.topicNotContains.length === 0) {
+      return { name: "topic-not-contains", score: 1, passed: true, details: "No exclusion requirements" }
+    }
+
+    // Skip if not a new conversation
+    if (output.conversationId !== null) {
+      return { name: "topic-not-contains", score: 1, passed: true, details: "Not a new conversation" }
+    }
+
+    const topic = (output.newConversationTopic || "").toLowerCase()
+    const found = expected.topicNotContains.filter((word) => topic.includes(word.toLowerCase()))
+
+    const passed = found.length === 0
+    return {
+      name: "topic-not-contains",
+      score: passed ? 1 : 0,
+      passed,
+      details:
+        found.length > 0 ? `Topic "${output.newConversationTopic}" contains unwanted: ${found.join(", ")}` : undefined,
+    }
+  },
+}
+
+/**
  * Evaluator that checks confidence is above threshold.
  */
 export const confidenceEvaluator: Evaluator<BoundaryExtractionOutput, BoundaryExtractionExpected> = {

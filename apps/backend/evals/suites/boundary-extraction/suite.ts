@@ -34,6 +34,7 @@ import type {
 import {
   conversationDecisionEvaluator,
   topicContainsEvaluator,
+  topicNotContainsEvaluator,
   confidenceEvaluator,
   completenessUpdateEvaluator,
   accuracyEvaluator,
@@ -143,7 +144,13 @@ export const boundaryExtractionSuite: EvalSuite<
 
   task: runBoundaryExtractionTask,
 
-  evaluators: [conversationDecisionEvaluator, topicContainsEvaluator, confidenceEvaluator, completenessUpdateEvaluator],
+  evaluators: [
+    conversationDecisionEvaluator,
+    topicContainsEvaluator,
+    topicNotContainsEvaluator,
+    confidenceEvaluator,
+    completenessUpdateEvaluator,
+  ],
 
   runEvaluators: [accuracyEvaluator, decisionAccuracyEvaluator, averageConfidenceEvaluator],
 
