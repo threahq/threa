@@ -335,6 +335,24 @@
 .dictation-preview-ghost::before {
   content: " ";
 }
+/* The freshly-arrived tail of the hypothesis fades in so growing partials read
+   as words materializing rather than the whole line repainting each update. */
+.dictation-preview-ghost__fresh {
+  animation: dictation-ghost-fade 0.18s ease-out;
+}
+@keyframes dictation-ghost-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dictation-preview-ghost__fresh {
+    animation: none;
+  }
+}
 /* While a dictation preview occupies the line, suppress the empty-state
    placeholder so it doesn't render on top of the ghost text. */
 .ProseMirror p.is-editor-empty:first-child:has(.dictation-preview-ghost)::before {
