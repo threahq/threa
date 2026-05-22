@@ -44,3 +44,4 @@ export {
 export { SidebarProvider, useSidebar, type ViewMode, type UrgencyBlock, type CollapseState } from "./sidebar-context"
 export { TraceProvider, useTrace } from "./trace-context"
 export { MediaGalleryProvider, useMediaGallery } from "./media-gallery-context"
+export { DictationCoordinatorProvider, useDictationCoordinator } from "./dictation-coordinator-context"

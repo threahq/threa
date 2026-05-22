@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
 import { voiceApi } from "@/api/voice"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
+import { useDictationCoordinator } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
 
@@ -95,6 +96,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const onCommittedTextRef = useRef(onCommittedText)
   onCommittedTextRef.current = onCommittedText
 
+  // Only one take dictates at a time across all composers. Starting a take stops
+  // whichever was active first (flushing its tail). `coordinatedStop` is a stable
+  // identity the coordinator can compare and invoke; it always calls the latest stop().
+  const coordinator = useDictationCoordinator()
+  const stopRef = useRef<() => void>(() => {})
+  const coordinatedStop = useCallback(() => stopRef.current(), [])
+
   // Mirror the interim hypothesis into a ref so teardown/stop/fail can read and
   // flush it synchronously, without those callbacks depending on render state.
   const interimRef = useRef("")
@@ -129,7 +137,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     socketRef.current = null
     sessionIdRef.current = null
     updateInterim("")
-  }, [teardownAudio, updateInterim])
+    coordinator.deactivate(coordinatedStop)
+  }, [teardownAudio, updateInterim, coordinator, coordinatedStop])
 
   const fail = useCallback(
     (message: string) => {
@@ -147,6 +156,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     if (!supportRef.current.supported) return
     if (state !== "idle" && state !== "error") return
 
+    // Take the single active slot, flushing+stopping any other composer's take.
+    coordinator.activate(coordinatedStop)
     setError(null)
     updateInterim("")
     setState("connecting")
@@ -258,10 +269,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         fail(message)
       }
     })()
-  }, [state, workspaceId, language, fail, teardown, flushInterim])
+  }, [state, workspaceId, language, fail, teardown, flushInterim, coordinator, coordinatedStop])
 
   const stop = useCallback(() => {
     if (state !== "recording" && state !== "connecting") return
+    coordinator.deactivate(coordinatedStop)
     setState("stopping")
     // Keep the in-flight hypothesis: the backend commits buffered audio on stop,
     // but we've already advanced past this session id (below), so its final delta
@@ -285,7 +297,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     } else {
       setState("idle")
     }
-  }, [state, teardownAudio, flushInterim])
+  }, [state, teardownAudio, flushInterim, coordinator, coordinatedStop])
+  // Keep the stable coordinator handle pointed at the latest stop().
+  stopRef.current = stop
 
   // Abort a still-open session on unmount: disconnecting the socket makes the
   // gateway finalize it as aborted; if the socket never opened, abort over HTTP
