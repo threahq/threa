@@ -18,5 +18,13 @@ export const SW_MSG_CLEAR_NOTIFICATIONS = "CLEAR_NOTIFICATIONS"
  */
 export const SW_MSG_QUEUE_BOOTSTRAP_SYNC = "QUEUE_BOOTSTRAP_SYNC"
 
+/**
+ * Posted from the app to the SW (the controlling worker) to serve the *next*
+ * navigation from the network instead of the cache-first precache shell. Used by
+ * the "new version" reload so the reload lands on the freshly-deployed build
+ * rather than the old build the current SW precached.
+ */
+export const SW_MSG_RELOAD_FRESH = "RELOAD_FRESH"
+
 /** Cache name used by the SW to stash share-target POST data (files + text) for the app to read. */
 export const SHARE_TARGET_CACHE = "share-target"
