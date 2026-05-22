@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Archive, Bell, Check, CircleAlert, Trash2, Undo2 } from "lucide-react"
-import { StreamTypes } from "@threa/types"
 import type { SavedMessageView, SavedStatus, StreamType } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -208,14 +207,16 @@ function resolveStreamLabel(
   users: Array<{ id: string; name: string }>,
   dmPeers: Array<{ streamId: string; userId: string }>
 ): string {
-  if (!stream) {
-    // No cached stream (lost access, archived membership). Fall back to the
-    // backend snapshot, then to a generic placeholder.
-    return saved.message?.streamName ?? "Unknown"
-  }
-  if (stream.type === StreamTypes.DM) {
-    const peerName = resolveDmDisplayName(stream.id, users, dmPeers)
-    if (peerName) return peerName
-  }
-  return getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
+  // DM names are viewer-specific and resolved from the peer user. `dmPeers`
+  // covers every DM the viewer belongs to (streamId -> peer), so this resolves
+  // even when the DM's stream object isn't in the streams cache — which is the
+  // common case here, since the saved list can reference DMs the sidebar never
+  // loaded. Try it first off the saved row's streamId; non-DM streamIds have
+  // no peer entry and fall through.
+  const peerName = resolveDmDisplayName(saved.streamId, users, dmPeers)
+  if (peerName) return peerName
+  if (stream) return getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
+  // No peer match and no cached stream (lost access, cold cache). Fall back to
+  // the backend snapshot, then to a generic placeholder.
+  return saved.message?.streamName ?? "Unknown"
 }
