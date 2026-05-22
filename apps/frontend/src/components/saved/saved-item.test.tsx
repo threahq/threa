@@ -104,7 +104,17 @@ describe("SavedItem stream label", () => {
     expect(getByText("#general")).toBeTruthy()
   })
 
-  it("falls back to the snapshot stream name, then Unknown, when nothing resolves", () => {
+  it("falls back to the snapshot stream name when the cache lookup misses", () => {
+    mockStore({ streams: [], users: [], dmPeers: [] })
+
+    const { getByText } = mount(
+      makeView({ streamId: "stream_gone", message: { ...makeView().message!, streamName: "Legacy Stream" } })
+    )
+
+    expect(getByText("Legacy Stream")).toBeTruthy()
+  })
+
+  it("falls back to Unknown when neither cache nor snapshot resolves", () => {
     mockStore({ streams: [], users: [], dmPeers: [] })
 
     const { getByText } = mount(
