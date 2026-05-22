@@ -24,17 +24,40 @@ interface MicButtonProps {
   onInsertText: (text: string) => void
   /** Live (uncommitted) transcript hypothesis, pushed as it grows and cleared ("") when a segment commits or the take ends. */
   onInterimText?: (text: string) => void
+  /** Reports whether a take is in flight, so the host can keep its chrome (and this button) mounted while dictating. */
+  onActiveChange?: (active: boolean) => void
   disabled?: boolean
   className?: string
   language?: string
 }
 
-export function MicButton({ workspaceId, onInsertText, onInterimText, disabled, className, language }: MicButtonProps) {
+export function MicButton({
+  workspaceId,
+  onInsertText,
+  onInterimText,
+  onActiveChange,
+  disabled,
+  className,
+  language,
+}: MicButtonProps) {
   const { state, supported, unsupportedReason, error, interimText, start, stop } = useVoiceDictation({
     workspaceId,
     onCommittedText: onInsertText,
     language,
   })
+
+  // Tell the host when a take is in flight. The mobile composer collapses its
+  // action bar (and this button) on blur; without this signal a tap-outside
+  // mid-take would unmount the hook and abort the session, losing the take.
+  const isActive = state === "connecting" || state === "recording" || state === "stopping"
+  const onActiveChangeRef = useRef(onActiveChange)
+  onActiveChangeRef.current = onActiveChange
+  useEffect(() => {
+    onActiveChangeRef.current?.(isActive)
+  }, [isActive])
+  useEffect(() => {
+    return () => onActiveChangeRef.current?.(false)
+  }, [])
 
   // Mirror the live hypothesis into the editor. Keep the callback in a ref so a
   // new function identity each render doesn't re-fire this on every keystroke,

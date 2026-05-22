@@ -264,6 +264,10 @@ export function MessageComposer({
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileFocused, setMobileFocused] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
+  // True while a dictation take is in flight. Keeps the mobile chrome (and the
+  // mic button it lives in) mounted across a tap-outside blur so the session
+  // isn't torn down mid-take.
+  const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
@@ -288,6 +292,11 @@ export function MessageComposer({
       setMobileLinkPopoverOpen(false)
     }
   }, [isMobile])
+
+  // Mobile chrome (action bar + full editor padding) stays open while focused
+  // OR while a dictation take is in flight, so a tap-outside doesn't unmount the
+  // mic mid-take and abort the session.
+  const mobileChromeOpen = mobileFocused || voiceActive
 
   // Track focus state for mobile progressive disclosure.
   // Uses a small delay on blur to avoid flicker when focus moves between editor and action bar buttons.
@@ -490,6 +499,7 @@ export function MessageComposer({
       workspaceId={workspaceId}
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
+      onActiveChange={setVoiceActive}
       disabled={controlsDisabled}
     />
   ) : null
@@ -498,6 +508,7 @@ export function MessageComposer({
       workspaceId={workspaceId}
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
+      onActiveChange={setVoiceActive}
       disabled={controlsDisabled}
       className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
     />
@@ -787,14 +798,14 @@ export function MessageComposer({
             className={cn(
               "rounded-[16px] border border-input bg-card flex flex-col flex-1 min-h-0",
               // Compact padding when mobile-unfocused (single line), normal otherwise
-              isMobile && !mobileFocused ? "px-3 py-2" : "p-3 gap-2",
+              isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
               // When mobile-expanded, let the editor grow and override its internal max-height
               mobileExpanded && "[&_.tiptap]:max-h-none"
             )}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")) return
               // On mobile unfocused, reveal the editor first then focus on next frame
-              if (isMobile && !mobileFocused) {
+              if (isMobile && !mobileChromeOpen) {
                 setMobileFocused(true)
                 requestAnimationFrame(() => richEditorRef.current?.focus())
                 return
@@ -803,7 +814,7 @@ export function MessageComposer({
             }}
           >
             {/* Mobile preview bar — plain text first line + send button */}
-            {isMobile && !mobileFocused && (
+            {isMobile && !mobileChromeOpen && (
               <div className="flex items-center gap-2 min-h-[30px] text-sm select-none pointer-events-none">
                 <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
                 <div className="pointer-events-auto">{sendButton}</div>
@@ -813,14 +824,14 @@ export function MessageComposer({
             {/* Editor — always mounted to preserve state; hidden in preview mode */}
             <div
               className={cn(
-                isMobile && !mobileFocused ? "h-0 overflow-hidden" : "flex-1 min-h-0",
+                isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
                 mobileExpanded && "overflow-y-auto"
               )}
             >
               <div className="h-full">{sharedEditor}</div>
             </div>
 
-            {/* Bottom action bar — visible on desktop always, on mobile only when focused.
+            {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
                onMouseDown preventDefault keeps editor focus on mobile so the virtual keyboard
                stays open when tapping any button in this bar.
 
@@ -833,7 +844,7 @@ export function MessageComposer({
                DOM-subtree guard below limits the suppression to elements actually
                living under this wrapper — buttons in our own action bar — and
                leaves portaled content untouched. */}
-            {(!isMobile || mobileFocused) && (
+            {(!isMobile || mobileChromeOpen) && (
               <div
                 ref={actionBarWrapperRef}
                 onMouseDown={(e) => {
