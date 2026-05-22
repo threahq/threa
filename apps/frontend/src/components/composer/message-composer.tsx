@@ -21,7 +21,6 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton } from "./mic-button"
-import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
@@ -265,9 +264,6 @@ export function MessageComposer({
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileFocused, setMobileFocused] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
-  // Dictation stays mounted while live even after it inserts text, so the
-  // typing-detection that otherwise hides the mic can't tear it down mid-take.
-  const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
@@ -485,32 +481,27 @@ export function MessageComposer({
   )
 
   // ── Mic / dictation button ────────────────────────────────────────────────
-  // Shown only on workspace surfaces, and only while the composer is empty
-  // (so it doesn't crowd typed text) or dictation is already live.
+  // Always available on workspace surfaces so dictation can be resumed after the
+  // composer already has text — appended at the caret like committed speech.
   const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
   const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
-  const showMic = !!workspaceId && (voiceActive || isEmptyContent(content))
-  const micButton =
-    showMic && workspaceId ? (
-      <MicButton
-        workspaceId={workspaceId}
-        onInsertText={insertTranscribedText}
-        onInterimText={setDictationInterim}
-        onActiveChange={setVoiceActive}
-        disabled={controlsDisabled}
-      />
-    ) : null
-  const micButtonFab =
-    showMic && workspaceId ? (
-      <MicButton
-        workspaceId={workspaceId}
-        onInsertText={insertTranscribedText}
-        onInterimText={setDictationInterim}
-        onActiveChange={setVoiceActive}
-        disabled={controlsDisabled}
-        className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
-      />
-    ) : null
+  const micButton = workspaceId ? (
+    <MicButton
+      workspaceId={workspaceId}
+      onInsertText={insertTranscribedText}
+      onInterimText={setDictationInterim}
+      disabled={controlsDisabled}
+    />
+  ) : null
+  const micButtonFab = workspaceId ? (
+    <MicButton
+      workspaceId={workspaceId}
+      onInsertText={insertTranscribedText}
+      onInterimText={setDictationInterim}
+      disabled={controlsDisabled}
+      className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
+    />
+  ) : null
 
   // ── Expanded (fullscreen) layout ──────────────────────────────────────────
   // Trailing content for the inline toolbar: just the close X

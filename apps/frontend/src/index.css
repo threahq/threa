@@ -335,6 +335,11 @@
 .dictation-preview-ghost::before {
   content: " ";
 }
+/* While a dictation preview occupies the line, suppress the empty-state
+   placeholder so it doesn't render on top of the ghost text. */
+.ProseMirror p.is-editor-empty:first-child:has(.dictation-preview-ghost)::before {
+  content: "";
+}
 
 .ProseMirror > *:not(.ProseMirror-gapcursor) + *:not(.ProseMirror-gapcursor) {
   @apply mt-2;

@@ -25,32 +25,16 @@ interface MicButtonProps {
   /** Live (uncommitted) transcript hypothesis, pushed as it grows and cleared ("") when a segment commits or the take ends. */
   onInterimText?: (text: string) => void
   disabled?: boolean
-  /** Notifies the composer when dictation is live so it can keep the button visible while typing-detection would otherwise hide it. */
-  onActiveChange?: (active: boolean) => void
   className?: string
   language?: string
 }
 
-export function MicButton({
-  workspaceId,
-  onInsertText,
-  onInterimText,
-  disabled,
-  onActiveChange,
-  className,
-  language,
-}: MicButtonProps) {
+export function MicButton({ workspaceId, onInsertText, onInterimText, disabled, className, language }: MicButtonProps) {
   const { state, supported, unsupportedReason, error, interimText, start, stop } = useVoiceDictation({
     workspaceId,
     onCommittedText: onInsertText,
     language,
   })
-
-  const isActive = state === "connecting" || state === "recording" || state === "stopping"
-
-  useEffect(() => {
-    onActiveChange?.(isActive)
-  }, [isActive, onActiveChange])
 
   // Mirror the live hypothesis into the editor. Keep the callback in a ref so a
   // new function identity each render doesn't re-fire this on every keystroke,
