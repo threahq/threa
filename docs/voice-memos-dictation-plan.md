@@ -5,17 +5,17 @@
 **Author:** Claude (planning)
 **Decisions owner:** Kristoffer
 
-> **Revision note (streaming):** After review, the primary transport is now a **realtime WebSocket transcription session** (true word-by-word streaming), not chunked OpenRouter Whisper. Default provider is **ElevenLabs Scribe v2 Realtime** (~150 ms latency, STT-specialized, zero-retention mode), with **OpenAI gpt-4o-transcribe realtime** and **OpenRouter Whisper batch** as swappable comparison strategies behind one interface. Section 2 was rewritten around this. See [§2](#2-end-to-end-data-flow).
+> **Revision note (streaming + steering):** After review, the primary transport is a **realtime WebSocket transcription session** (true word-by-word streaming), not chunked OpenRouter Whisper. Default provider is **ElevenLabs Scribe v2 Realtime** (~150 ms latency, STT-specialized, zero-retention mode, $0.39/hr). The comparison/steering strategy is **Deepgram Nova-3** (strongest keyterm steering, EU residency region), with **OpenRouter Whisper batch** as the cheap baseline — all swappable behind one interface. OpenAI was evaluated and ruled out (its prompt steering doesn't work in realtime sessions). Section 2 was rewritten around this; §7.6 covers data residency. See [§2](#2-end-to-end-data-flow).
 
 ## TL;DR
 
 Add a microphone affordance to the composer that streams dictated speech into the editor as if the user is typing. Scope of v1 is **transcription only** — recording, live streaming transcription, and insertion at the caret. The "tidy-up" pass with `gpt-5.4-nano`/`gpt-5.4-mini` is designed-but-deferred, behind a feature flag and a clear hand-off point.
 
-**Default model is `elevenlabs:scribe-v2-realtime`**, not `whisper-large-v3-turbo`. Two reasons. (1) Streaming: real word-by-word transcription needs a realtime WebSocket session; Whisper turbo via OpenRouter is one-shot only. (2) Whisper turbo isn't even on OpenAI's own API — only third parties serve it, none with realtime. ElevenLabs Scribe v2 Realtime is purpose-built for streaming STT (lowest latency of the options, strong accent handling, zero-retention mode that matches our no-persistence stance). OpenAI's `gpt-4o-transcribe` realtime is the alternate (better at self-corrections, overlaps the tidy-up goal). Whisper turbo stays reachable as a cheap non-streaming "batch" comparison strategy. All three sit behind one `TranscriptionStrategy` interface, so swapping to compare is a settings toggle.
+**Default model is `elevenlabs:scribe-v2-realtime`**, not `whisper-large-v3-turbo`. Two reasons. (1) Streaming: real word-by-word transcription needs a realtime WebSocket session; Whisper turbo via OpenRouter is one-shot only. (2) Whisper turbo isn't even on OpenAI's own API — only third parties serve it, none with realtime. ElevenLabs Scribe v2 Realtime is purpose-built for streaming STT (lowest latency and cheapest of the options at $0.39/hr, strong accent handling, context-aware keyterm steering, zero-retention mode that matches our no-persistence stance). **Deepgram Nova-3** is the comparison/steering strategy: the strongest keyterm steering available (100 words / 500 tokens, multilingual) and a usable EU residency region — the escape hatch when steering or data-residency needs outgrow ElevenLabs' starting tier. Whisper turbo stays reachable as a cheap non-streaming "batch" comparison strategy. All three sit behind one `TranscriptionStrategy` interface, so swapping to compare is a settings toggle.
 
 Things you'll want to weigh in on before we build (see [Open Decisions](#open-decisions)):
 
-1. **Default provider** — ElevenLabs Scribe v2 Realtime (recommended) vs OpenAI gpt-4o-transcribe realtime. Both are realtime; differ on latency, correction handling, and price.
+1. **Default provider** — ElevenLabs Scribe v2 Realtime (decided). Deepgram Nova-3 is the swappable comparison/steering + EU-residency strategy.
 2. **Realtime connection model** — backend WebSocket relay (recommended, keeps cost tracking + API keys server-side) vs browser-direct with ephemeral tokens (lower latency, weaker observability).
 3. **Persistence** — whether we keep the audio at all, even ephemerally for debugging.
 4. **Strategy coverage in v1** — ship just the default realtime provider, or wire all three from day one so you can A/B them immediately.
@@ -92,9 +92,9 @@ The user explicitly wants dictation to coexist with already-typed text. Rules:
 
 A new section under **Settings → Voice & dictation**:
 
-- **Transcription model** — radio buttons: ElevenLabs Scribe v2 Realtime (default, streaming), GPT-4o Transcribe (streaming), GPT-4o Mini Transcribe (streaming), Whisper Large v3 Turbo (batch — laggy, for comparison). Each labeled with its transport so the tradeoff is visible. (Models added to `models.yaml` and to a new "Speech-to-text" section in `docs/model-reference.md`.)
+- **Transcription model** — radio buttons: ElevenLabs Scribe v2 Realtime (default, streaming), Deepgram Nova-3 (streaming — heavy keyterm steering, EU region), Whisper Large v3 Turbo (batch — laggy, for comparison). Each labeled with its transport so the tradeoff is visible. (Models added to `models.yaml` and to a new "Speech-to-text" section in `docs/model-reference.md`.) Note: a workspace residency policy (§7.6) can constrain or hide options here — an EU-required workspace won't be offered a US-only model.
 - **Language hint** — `Auto-detect (default)` or pick a locale. Improves accuracy and reduces language flip-flopping on the realtime path.
-- **Vocabulary** — multi-line text field, free-form: "Names, terms, or phrases I use often." Stored as `userPreferences.voice.vocabularyHints` (array of strings). Passed as keyterm/biasing hints to providers that accept them (ElevenLabs, OpenAI) and (later) used by the tidy-up pass.
+- **Vocabulary** — multi-line text field, free-form: "Names, terms, or phrases I use often." Stored as `userPreferences.voice.vocabularyHints` (array of strings). Passed as keyterm/biasing hints to providers that accept them (ElevenLabs ≤50 realtime terms, Deepgram ≤100 words) and (later) used by the tidy-up pass.
 - **Tidy-up pass** — toggle (default off in v1 since it's deferred). Tooltip: "Use a small model to clean disfluencies and corrections from your speech."
 - **Tidy-up model** — radio buttons: GPT-5.4 Nano (default), GPT-5.4 Mini. Only relevant when tidy-up is on.
 
@@ -109,10 +109,10 @@ This is the meat of the question you flagged: **how audio gets from the mic to t
 `whisper-large-v3-turbo` can't drive live dictation: it's one-shot only via OpenRouter, and it isn't on OpenAI's own API at all — OpenAI direct serves only `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` ([OpenAI models](https://developers.openai.com/api/docs/models/gpt-4o-transcribe)); the turbo weights are open and only third parties (OpenRouter, Groq) host them, none with realtime. True streaming — audio in, partial transcripts out continuously — needs a provider with a realtime STT WebSocket. The realistic options:
 
 1. **ElevenLabs Scribe v2 Realtime** (recommended default) — WebSocket STT, ~150 ms last-chunk-to-text latency, 90 languages, strong accents, **zero-retention mode** ([Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text)). STT-specialized; currently tops accuracy benchmarks. Pricier than Whisper batch but built for exactly this.
-2. **OpenAI Realtime API** — `type: "transcription"` session over `wss://api.openai.com/v1/realtime`, PCM16 frames in, `conversation.item.input_audio_transcription.delta` events out every ~200–400 ms with server-side VAD ([OpenAI realtime guide](https://developers.openai.com/api/docs/guides/realtime-transcription)). Best at resolving self-corrections inline. (OpenAI also offers a lighter middle ground: `stream=true` on `POST /v1/audio/transcriptions` streams `transcript.text.delta` from a complete clip — lower time-to-first-word but still clip-based. We treat that as a fallback for the OpenAI strategy, not a separate transport.)
+2. **Deepgram Nova-3** — WebSocket STT over `wss://api.deepgram.com/v1/listen`, PCM16 frames in, interim + final transcripts out continuously, low latency ([Nova-3 keyterm prompting](https://deepgram.com/learn/deepgram-expands-nova-3-with-10-new-languages-and-multilingual-keyterm-prompting)). Strongest **keyterm steering** (up to 100 words / 500 tokens, multilingual, GA) and an **EU region** for residency (§7.6). The comparison/steering escape hatch. (We evaluated OpenAI's realtime transcription here but ruled it out: its `prompt` steering does not apply to realtime sessions and its first-token latency is 500–1500 ms — it can't deliver steering + streaming together.)
 3. **OpenRouter Whisper turbo** — one-shot batch only; the cheap comparison baseline, visibly laggy.
 
-**Decision:** primary path is a realtime WebSocket session, defaulting to ElevenLabs. The cost is new provider integrations — `ELEVENLABS_API_KEY` and/or `OPENAI_API_KEY` (backend currently only configures `OPENROUTER_API_KEY` in `env.ts:152`) — plus a WebSocket relay on the backend. You've explicitly accepted that complexity in exchange for streaming.
+**Decision:** primary path is a realtime WebSocket session, defaulting to ElevenLabs. The cost is new provider integrations — `ELEVENLABS_API_KEY` (and `DEEPGRAM_API_KEY` for the comparison/EU strategy); the backend currently only configures `OPENROUTER_API_KEY` in `env.ts:152` — plus a WebSocket relay on the backend. You've explicitly accepted that complexity in exchange for streaming.
 
 What we give up: `whisper-large-v3-turbo` is no longer the default. It stays reachable via the batch strategy (§2.5) so you can still A/B it against the realtime providers.
 
@@ -123,7 +123,7 @@ What we give up: `whisper-large-v3-turbo` is no longer the default. It stays rea
  ┌──────────────────────┐            ┌──────────────────────┐           ┌──────────────────┐
  │ AudioWorklet (PCM16) │            │  socket.io ns        │  WS       │ ElevenLabs Scribe│
  │  - capture frames    │  socket.io │  /voice/realtime     │  (PCM16   │ v2 Realtime  OR  │
- │  - downsample 16kHz  │  binary    │                      │  frames)  │ OpenAI Realtime  │
+ │  - downsample 16kHz  │  binary    │                      │  frames)  │ Deepgram Nova-3  │
  │  - send ~100ms frames│ ─────────► │  relay audio frames  │ ────────► │                  │
  │                      │            │  up; relay deltas    │           │                  │
  │  - receive deltas    │ ◄───────── │  down; record usage  │ ◄──────── │ delta / final    │
@@ -131,14 +131,14 @@ What we give up: `whisper-large-v3-turbo` is no longer the default. It stays rea
  └──────────────────────┘            └──────────────────────┘           └──────────────────┘
 ```
 
-- **The browser never holds the OpenAI key.** Audio frames go to our backend over the existing socket.io connection (binary events) or a dedicated WS route; the backend holds one upstream WS to OpenAI per active session. This keeps the API key server-side and lets us record usage/cost (INV-19) and enforce per-user caps.
+- **The browser never holds the provider key.** Audio frames go to our backend over the existing socket.io connection (binary events) or a dedicated WS route; the backend holds one upstream WS to the resolved provider (ElevenLabs or Deepgram) per active session. This keeps the API key server-side and lets us record usage/cost (INV-19), enforce per-user caps, and route by data-residency policy (§7.6).
 - **A `voiceSessionId` ties the session together.** Created when the user taps mic, torn down on stop/blur/expiry. The frontend tags audio frames and filters incoming deltas by it so a stale session can't leak text into a new one.
 - **User-scoped, not stream-scoped.** Dictation is private to the user and destination-agnostic (thread, scratchpad, DM), so relay events ride a per-connection channel rather than a stream room.
 
 #### Connection model — the open decision
 
-- **(A, recommended) Backend relay.** Client ↔ backend WS ↔ OpenAI WS. Full cost tracking, key safety, per-user rate limiting, one place to swap models. Cost: ~one extra hop of latency (single-digit ms intra-region) and backend holds N concurrent upstream sockets.
-- **(B) Browser-direct with ephemeral tokens.** Backend mints a short-lived OpenAI ephemeral token; browser connects straight to OpenAI. Lowest latency, no relay load. But we lose visibility into traffic for cost/telemetry and must trust client-reported usage. Not recommended for a product that meters AI cost.
+- **(A, recommended) Backend relay.** Client ↔ backend WS ↔ provider WS. Full cost tracking, key safety, per-user rate limiting, residency-aware routing, one place to swap models. Cost: ~one extra hop of latency (single-digit ms intra-region) and backend holds N concurrent upstream sockets.
+- **(B) Browser-direct with ephemeral tokens.** Backend mints a short-lived provider token; browser connects straight to the provider. Lowest latency, no relay load. But we lose visibility into traffic for cost/telemetry, can't enforce residency routing, and must trust client-reported usage. Not recommended for a product that meters AI cost.
 
 ### 2.3 Client capture (both paths)
 
@@ -170,12 +170,12 @@ interface TranscriptionSession {
 ```
 
 - **`RealtimeElevenLabsStrategy`** (recommended default) — opens ElevenLabs Scribe v2 Realtime over WebSocket, streams PCM frames, surfaces partial transcripts via `onDelta`. ~150 ms last-chunk-to-text latency, STT-specialized accuracy across 90 languages and accents, and a **Zero Retention mode** that aligns with our no-persistence stance ([Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text), [realtime docs](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime)). Auth with `ELEVENLABS_API_KEY`.
-- **`RealtimeOpenAIStrategy`** — opens `wss://api.openai.com/v1/realtime?intent=transcription`, configures the session with `gpt-4o-mini-transcribe` (or `gpt-4o-transcribe`), relays `input_audio_buffer.append`, surfaces `*.delta` events via `onDelta`. ~200–400 ms delta latency. Auth with `OPENAI_API_KEY`. Strong on disfluency/self-correction handling (overlaps with the deferred tidy-up goal).
+- **`RealtimeDeepgramStrategy`** (steering-heavy comparison) — opens Deepgram Nova-3 streaming STT over WebSocket (`wss://api.deepgram.com/v1/listen`), relays PCM frames, surfaces interim/final transcripts via `onDelta`. The reason it's the comparison strategy rather than OpenAI: Nova-3's **keyterm prompting** is the strongest steering on offer — up to 100 words / 500 tokens, multilingual, GA — so it's the right escape hatch when a user's vocabulary outgrows ElevenLabs' realtime keyterm cap (50 terms × 20 chars). ~$0.46/hr streaming, 45+ languages, EU region available (see §7.6). Auth with `DEEPGRAM_API_KEY`. We dropped OpenAI realtime from this slot because its `prompt` steering parameter is **not supported in realtime sessions** ([OpenAI realtime guide](https://developers.openai.com/api/docs/guides/realtime-transcription)) and its realtime first-token latency (500–1500 ms) is the worst of the group — it can't give us steering and streaming at once, which is exactly what you asked for.
 - **`BatchOpenRouterStrategy`** — buffers PCM into WAV windows, calls `POST https://openrouter.ai/api/v1/audio/transcriptions` (base64, one-shot) with `whisper-large-v3-turbo`, surfaces the returned text via `onDelta` once per window. Reuses `OPENROUTER_API_KEY` + `OPENROUTER_BASE_URL` from `ai.ts:30`. Cheapest (~$0.04/hr) but visibly laggy; the comparison baseline.
 
-**Three realtime providers don't all share a transport detail, but they share the relay shape**: client frames → backend relay → upstream WS → deltas back. Adding ElevenLabs cost nothing architecturally — it's the payoff of the strategy interface, and it directly serves your "compare which is most useful" goal (ElevenLabs vs OpenAI realtime vs Whisper batch).
+**The two realtime providers don't share a transport detail, but they share the relay shape**: client frames → backend relay → upstream WS → deltas back. Adding Deepgram cost nothing architecturally — it's the payoff of the strategy interface, and it directly serves your "compare which is most useful" goal (ElevenLabs vs Deepgram realtime vs Whisper batch), with Deepgram covering the heavy-steering / EU-residency cases ElevenLabs can't on our starting tier.
 
-The wrapper question (INV-19/INV-28): the `@openrouter/ai-sdk-provider` SDK has no transcription or realtime primitive, so both strategies do their own `fetch`/WS. To stay inside the project's AI-governance, expose them through a `createAI`-adjacent factory (`createTranscription({ openai, openrouter })`) that owns telemetry metadata and `CostRecorder.recordUsage()` — same pattern as `createAI`, just a different modality. Cost is recorded on `close()` from the upstream usage event (Realtime emits per-session usage; OpenRouter returns `usage.cost`).
+The wrapper question (INV-19/INV-28): the `@openrouter/ai-sdk-provider` SDK has no transcription or realtime primitive, so every strategy does its own `fetch`/WS. To stay inside the project's AI-governance, expose them through a `createAI`-adjacent factory (`createTranscription({ elevenlabs, deepgram, openrouter })`) that owns telemetry metadata and `CostRecorder.recordUsage()` — same pattern as `createAI`, just a different modality. Cost is recorded on `close()` from the upstream usage event (ElevenLabs/Deepgram report billed audio duration; OpenRouter returns `usage.cost`).
 
 `models.yaml` gains a speech-to-text section. Note the provider prefix differs per strategy:
 
@@ -187,14 +187,8 @@ elevenlabs:scribe-v2-realtime: # recommended default, realtime
   outputModalities: [text]
   streaming: realtime
 
-openai/gpt-4o-mini-transcribe: # realtime + streaming-file
-  name: GPT-4o Mini Transcribe
-  inputModalities: [audio]
-  outputModalities: [text]
-  streaming: realtime
-
-openai/gpt-4o-transcribe: # higher accuracy, realtime + streaming-file
-  name: GPT-4o Transcribe
+deepgram:nova-3: # steering-heavy comparison strategy, realtime
+  name: Deepgram Nova-3
   inputModalities: [audio]
   outputModalities: [text]
   streaming: realtime
@@ -206,13 +200,13 @@ openrouter:openai/whisper-large-v3-turbo: # batch comparison strategy
   streaming: batch
 ```
 
-A new `elevenlabs:` provider prefix joins `openai:`/`openrouter:`. The model-registry/provider-resolution code (`ai.ts:413`) only knows `openrouter` today; adding `openai` and `elevenlabs` as transcription-only providers is part of this work.
+New `elevenlabs:` and `deepgram:` provider prefixes join `openrouter:`. The model-registry/provider-resolution code (`ai.ts:413`) only knows `openrouter` today; adding `elevenlabs` and `deepgram` as transcription-only providers is part of this work.
 
-A new `audio` modality and a `streaming: realtime | streaming-file | batch` capability are introduced; `ModelRegistry` gets `supportsAudioInput()` and `transcriptionStreamingMode()`. Update `docs/model-reference.md` with a "Speech-to-text" section: GPT-4o transcribe pricing (per-minute), Whisper turbo (~$0.04/hr via OpenRouter), and "when to use" guidance (realtime for dictation; batch for cheap/offline comparison).
+A new `audio` modality and a `streaming: realtime | batch` capability are introduced; `ModelRegistry` gets `supportsAudioInput()` and `transcriptionStreamingMode()`. Update `docs/model-reference.md` with a "Speech-to-text" section: ElevenLabs Scribe v2 Realtime (~$0.39/hr), Deepgram Nova-3 (~$0.46/hr streaming), Whisper turbo (~$0.04/hr via OpenRouter), and "when to use" guidance (ElevenLabs realtime for dictation default; Deepgram realtime when heavy keyterm steering or EU residency is needed; batch for cheap/offline comparison).
 
 ### 2.5 Batch path (secondary, for comparison)
 
-Kept so you can compare Whisper turbo against streaming GPT-4o without re-architecting. When the selected model's `streaming` capability is `batch`, the frontend switches from continuous frames to WAV-window uploads:
+Kept so you can compare Whisper turbo against the streaming providers without re-architecting. When the selected model's `streaming` capability is `batch`, the frontend switches from continuous frames to WAV-window uploads:
 
 - `POST /api/workspaces/:wid/voice/sessions/:sid/chunks` — multipart `audio` field, optional `chunkIndex` / `isFinal`. Returns 202; transcription runs async on `JobQueues.VOICE_TRANSCRIBE`.
 - Each completed window emits an outbox event `voice:transcript:chunk` `{ voiceSessionId, chunkIndex, text, isFinal }`, scope `user`, routed by `BroadcastHandler` to `ws:{workspaceId}:user:{userId}` (`broadcast-handler.ts:1-60`).
@@ -251,12 +245,14 @@ voice-transcription/
 ├── index.ts                    # barrel exports
 ├── config.ts                   # default models, frame/window sizes, language defaults
 ├── handlers.ts                 # session create/finish/abort; batch chunk upload
-├── realtime-gateway.ts         # socket.io namespace: per-session relay to OpenAI WS
+├── realtime-gateway.ts         # socket.io namespace: per-session relay to upstream provider WS
 ├── service.ts                  # session lifecycle, strategy selection
 ├── repository.ts               # voice_sessions table access
 ├── transcription/              # the TranscriptionStrategy interface + impls (INV-44 config colocated)
-│   ├── strategy.ts             # interface + factory createTranscription({ openai, openrouter })
-│   ├── realtime-openai.ts      # RealtimeOpenAIStrategy (upstream WS, default)
+│   ├── strategy.ts             # interface + factory createTranscription({ elevenlabs, deepgram, openrouter })
+│   ├── realtime-elevenlabs.ts  # RealtimeElevenLabsStrategy (upstream WS, default)
+│   ├── realtime-deepgram.ts    # RealtimeDeepgramStrategy (upstream WS, steering/EU comparison)
+│   ├── residency.ts            # residency-aware strategy resolver (workspace policy → provider+region)
 │   ├── batch-openrouter.ts     # BatchOpenRouterStrategy (one-shot HTTP, comparison)
 │   └── config.ts               # model IDs, temperatures, frame sizes
 ├── worker.ts                   # JobQueues.VOICE_TRANSCRIBE worker (batch path only)
@@ -281,7 +277,7 @@ HTTP handlers wired into `apps/backend/src/routes.ts` via `createVoiceTranscript
 - client → server: `voice:audio` `{ voiceSessionId, frame }` (binary PCM16, ~100 ms).
 - server → client: `voice:transcript:delta` `{ voiceSessionId, text, isFinal }`, `voice:transcription:error`.
 
-On the first `voice:audio` for a session the gateway lazily opens the upstream OpenAI WS via the strategy, then pipes frames up and deltas down until `finish`/`abort`/idle-timeout/socket-close. One upstream socket per active session; a per-user concurrency guard (max 1–2 concurrent sessions) prevents fan-out abuse.
+On the first `voice:audio` for a session the gateway lazily opens the upstream provider WS via the residency-resolved strategy, then pipes frames up and deltas down until `finish`/`abort`/idle-timeout/socket-close. One upstream socket per active session; a per-user concurrency guard (max 1–2 concurrent sessions) prevents fan-out abuse.
 
 ### 3.2 Data model
 
@@ -289,20 +285,22 @@ One new table, kept light. **No persistence of audio bytes by default** (see [Op
 
 #### `voice_sessions`
 
-| Column         | Type                       | Notes                                         |
-| -------------- | -------------------------- | --------------------------------------------- |
-| id             | TEXT PK                    | ULID prefixed `voicesess_`                    |
-| workspace_id   | TEXT NOT NULL              | INV-8                                         |
-| user_id        | TEXT NOT NULL              | Owner                                         |
-| model          | TEXT NOT NULL              | e.g. `openai/gpt-4o-mini-transcribe`          |
-| transport      | TEXT NOT NULL              | `realtime` / `batch` (derived from model)     |
-| language       | TEXT                       | nullable; null = auto                         |
-| status         | TEXT NOT NULL              | `active` / `finished` / `aborted` / `expired` |
-| chunk_count    | INTEGER NOT NULL DEFAULT 0 |                                               |
-| total_audio_ms | INTEGER NOT NULL DEFAULT 0 | for cost telemetry                            |
-| created_at     | TIMESTAMPTZ NOT NULL       | DEFAULT NOW()                                 |
-| finished_at    | TIMESTAMPTZ                |                                               |
-| expires_at     | TIMESTAMPTZ NOT NULL       | created_at + 10 min — sessions auto-expire    |
+| Column         | Type                       | Notes                                                          |
+| -------------- | -------------------------- | -------------------------------------------------------------- |
+| id             | TEXT PK                    | ULID prefixed `voicesess_`                                     |
+| workspace_id   | TEXT NOT NULL              | INV-8                                                          |
+| user_id        | TEXT NOT NULL              | Owner                                                          |
+| model          | TEXT NOT NULL              | e.g. `elevenlabs:scribe-v2-realtime`                           |
+| transport      | TEXT NOT NULL              | `realtime` / `batch` (derived from model)                      |
+| provider       | TEXT NOT NULL              | `elevenlabs` / `deepgram` / `openrouter`                       |
+| region         | TEXT NOT NULL              | resolved processing region, e.g. `us` / `eu` (residency audit) |
+| language       | TEXT                       | nullable; null = auto                                          |
+| status         | TEXT NOT NULL              | `active` / `finished` / `aborted` / `expired`                  |
+| chunk_count    | INTEGER NOT NULL DEFAULT 0 |                                                                |
+| total_audio_ms | INTEGER NOT NULL DEFAULT 0 | for cost telemetry                                             |
+| created_at     | TIMESTAMPTZ NOT NULL       | DEFAULT NOW()                                                  |
+| finished_at    | TIMESTAMPTZ                |                                                                |
+| expires_at     | TIMESTAMPTZ NOT NULL       | created_at + 10 min — sessions auto-expire                     |
 
 Index on `(workspace_id, user_id, status)` to find a user's active session quickly. No table for individual chunks unless we decide to persist audio (see Open Decisions).
 
@@ -341,7 +339,7 @@ Add `VOICE_TRANSCRIBE: "voice.transcribe"` to `JobQueues` in `apps/backend/src/l
 
 Both strategies record on session `close()` via `CostRecorder.recordUsage()` with telemetry metadata `{ functionId: "voice_transcription", voiceSessionId, transport, model, totalAudioMs }` (INV-19).
 
-- **Realtime:** OpenAI's realtime session emits a usage event with audio-input duration/tokens; record dollar cost from that.
+- **Realtime:** ElevenLabs and Deepgram report billed audio duration on the session; convert to dollar cost via the provider's per-hour rate and record it.
 - **Batch:** OpenRouter returns `usage.cost` per request, same as chat completions; sum across windows.
 
 Both bill on audio duration rather than text tokens. The `CostRecorder` may need a minor extension to record `{ unit: "audio_seconds", quantity }` alongside token usage; if the existing `usage.cost` field already carries dollar-cost directly, no schema change is needed.
@@ -460,7 +458,7 @@ I lean toward end-of-session: simpler, cheaper, and the user gets the unfiltered
 
 The user's instinct ("we don't have to persist the audio stream") matches mine. Recommended posture:
 
-- **Audio bytes: never persisted by default.** Realtime frames pass through the relay and are discarded; batch windows are held in memory, sent, and dropped. No S3 write, no temp file. Logs only durations + transcribed text, not audio. ElevenLabs zero-retention mode (and OpenAI's no-training default) means the upstream provider doesn't retain audio either.
+- **Audio bytes: never persisted by default.** Realtime frames pass through the relay and are discarded; batch windows are held in memory, sent, and dropped. No S3 write, no temp file. Logs only durations + transcribed text, not audio. ElevenLabs zero-retention mode (and Deepgram's no-storage / no-training default) means the upstream provider doesn't retain audio either.
 - **Transcribed text: persisted only as the composer draft.** The drafts system (`apps/frontend/src/components/timeline/message-input.tsx`) already saves composer state to IDB; dictated text rides that machinery. No separate "voice transcript" table.
 - **Voice session metadata: kept in `voice_sessions` for 7 days.** Useful for cost telemetry and debugging without retaining sensitive content.
 
@@ -471,16 +469,41 @@ If we want optional retention later (e.g., "save voice memos as message attachme
 ## 7. Security & privacy
 
 - **getUserMedia permission scope.** Browsers persist mic permission per-origin; we don't escalate or store anything beyond that.
-- **Audio in transit.** TLS to backend, TLS to the upstream provider (ElevenLabs/OpenAI/OpenRouter). The relay terminates the client connection and opens its own upstream connection; the API key never reaches the browser. Prefer providers' zero-retention / no-training modes where available.
+- **Audio in transit.** TLS to backend, TLS to the upstream provider (ElevenLabs/Deepgram/OpenRouter). The relay terminates the client connection and opens its own upstream connection; the API key never reaches the browser. Prefer providers' zero-retention / no-training modes where available.
 - **Workspace isolation.** Voice sessions are workspace-scoped (INV-8). A session created in workspace A can't be driven from a connection scoped to workspace B; standard workspace middleware plus the gateway's per-session ownership check enforce this.
 - **Rate limiting & concurrency.** Reuse the existing rate-limit middleware. Realtime: max 1–2 concurrent sessions per user (the gateway holds one upstream socket each). Batch: max 30 chunk POSTs / minute.
 - **Abuse considerations.** Realtime providers bill per audio minute; a hot mic streaming silence for an hour is a real bill. The `voice_sessions.expires_at` (10-min hard cap) plus a server-side idle-timeout (e.g. 30 s of VAD-detected silence auto-closes the session) limit per-session damage; per-user daily caps live in the AI cost service and apply automatically.
+
+### 7.6 Data residency
+
+You asked specifically: can we run ElevenLabs in EU vs US, or is the region up to them — and what's the strategy for customers who require residency.
+
+**What ElevenLabs actually offers (researched May 2026):**
+
+- Three residency regions — **US (default), EU, and India** — but **regional residency is an Enterprise-tier feature only** ([data residency docs](https://elevenlabs.io/docs/overview/administration/data-residency), [EU residency announcement](https://elevenlabs.io/blog/introducing-european-data-residency)). On the tier we start on, processing is **US-only**.
+- It is **not fully "up to them"** at the Enterprise tier — you select the region. But the guarantee is softer than it sounds: residency pins **storage** to the region, while **processing may still occur outside it** (international affiliates, subprocessors, support, content moderation) **unless** you combine EU residency with **Zero Retention Mode + the API**, which together restrict processing to the EU. Zero Retention is also a higher-tier feature.
+- Compliance posture is solid: EU‑US Data Privacy Framework certified (active on the official registry as of 2026‑05), GDPR, a DPA, plus HDS and HIPAA-capable configurations. There is no publicly documented separate EU endpoint hostname — routing is provisioned at the Enterprise account level via their CSM, not a self-serve header.
+
+**So the honest position for v1:** we start on ElevenLabs at a non-Enterprise tier, which means **voice processing happens in the US**. That's fine for most users but unacceptable for a customer with a hard EU (or other) residency requirement. We do **not** want to silently stream a residency-required customer's audio to the US. The strategy below makes residency a first-class, enforced policy rather than an afterthought — and leans on the fact that **Threa is already region-sharded by workspace** (workspace is the data ownership/sharding boundary, INV-8), so each workspace already has a home region we can align to.
+
+**Residency strategy (provider-agnostic, enforced at the relay):**
+
+1. **Per-workspace residency policy.** Add `voiceResidencyPolicy: "any" | "eu" | "us" | "disabled"` (default `"any"`), stored on workspace settings, defaulting from the workspace's home region. This is the single source of truth; the model picker (§1.5) and the relay both read it.
+2. **Residency-aware strategy resolver** (`transcription/residency.ts`). Given `(policy, requestedModel)`, it returns a concrete `(provider, region, endpoint)` or refuses. Selection rules:
+   - `policy = "any"` → ElevenLabs US (default), or whatever model the user picked.
+   - `policy = "eu"` → route to a provider+region that processes in the EU. **Deepgram Nova-3 is the v1 EU answer**: it exposes an EU processing region and is already our comparison strategy, so no new integration is needed — the resolver just selects Deepgram-EU instead of ElevenLabs-US. (If/when we reach ElevenLabs Enterprise with EU residency + Zero Retention, the resolver can prefer ElevenLabs-EU instead — a config change, not a rearchitecture.)
+   - `policy = "us"` → pin to a US region explicitly (e.g. compliance that forbids EU processing).
+   - No strategy satisfies the policy → **fail closed**: disable the mic for that workspace with a clear message ("Voice dictation isn't available under your data-residency settings yet"), never fall through to a non-compliant region.
+3. **Audit trail.** `voice_sessions.provider` and `voice_sessions.region` (added to the table in §3.2) record where each session was actually processed, so we can prove residency after the fact.
+4. **Degradation ladder, explicit and ordered:** (a) preferred in-region provider → (b) alternate in-region provider → (c) **disable** with a clear user-facing reason. Never (d) "send it to US anyway." This is the whole point of routing at the backend relay rather than browser-direct: the policy can't be bypassed by the client.
+
+This gives you a concrete answer for residency-sensitive customers today (Deepgram-EU or disable), keeps the door open to ElevenLabs-EU once Enterprise is in play, and the abstraction means adding a third in-region option later (e.g. Azure Speech EU, or self-hosted Whisper in our EU backend region) is just another resolver branch.
 
 ---
 
 ## 8. Testing
 
-- **Unit:** `voice-recorder.ts` (PCM framing/downsampling), `insert-stream.ts` (caret-respecting drain + interim-replacement), `service.ts` (session lifecycle + transport selection), each strategy in `transcription/` (frame relay / request shape, error mapping). Mock the upstream WS for the realtime strategies.
+- **Unit:** `voice-recorder.ts` (PCM framing/downsampling), `insert-stream.ts` (caret-respecting drain + interim-replacement), `service.ts` (session lifecycle + transport selection), `residency.ts` (policy → provider/region resolution, including the fail-closed "disable" branch when no in-region strategy exists), each strategy in `transcription/` (frame relay / request shape, error mapping). Mock the upstream WS for the realtime strategies.
 - **Integration:** real component mount of `MessageComposer` with a mocked `voice-session-store` feeding `voice:transcript:delta` events, including an interim→final correction (INV-39).
 - **E2E (Playwright):** stub `getUserMedia` and a fake realtime gateway; verify (a) mic button appears/disappears with editor empty state, (b) tapping mic creates a realtime session, (c) delta events stream text at the caret, (d) typing during dictation interleaves correctly, (e) socket drop ends the session and preserves captured text.
 - **Eval (when tidy-up lands):** small corpus of transcripts with known disfluencies and corrections, scored against hand-written gold versions.
@@ -489,15 +512,15 @@ If we want optional retention later (e.g., "save voice memos as message attachme
 
 ## 9. Milestones
 
-| #   | Outcome                                                                                                                                               | Estimate |
-| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| 1   | Backend feature skeleton: `voice_sessions` table, session create/finish/abort handlers, repo, service, `TranscriptionStrategy` interface.             | 0.5 d    |
-| 2   | `RealtimeElevenLabsStrategy` + realtime gateway (socket.io ns relaying to upstream WS); cost recording on close; manual test with a CLI frame feeder. | 1.5 d    |
-| 3   | Frontend recorder: AudioWorklet → PCM16 frames; realtime transport emitting `voice:audio`; receive `voice:transcript:delta`. End-to-end round-trip.   | 1.5 d    |
-| 4   | Editor insert-stream (append + interim-replacement) wired to the live caret. Dictation visibly working.                                               | 0.5 d    |
-| 5   | UX polish: desktop button placement, mobile FAB, recording states, waveform.                                                                          | 1 d      |
-| 6   | Second strategy (`RealtimeOpenAIStrategy`) + batch (`BatchOpenRouterStrategy`) behind the toggle; settings UI (model, language, vocabulary).          | 1 d      |
-| 7   | E2E + integration tests; cost telemetry verification.                                                                                                 | 0.5 d    |
+| #   | Outcome                                                                                                                                                            | Estimate |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
+| 1   | Backend feature skeleton: `voice_sessions` table, session create/finish/abort handlers, repo, service, `TranscriptionStrategy` interface.                          | 0.5 d    |
+| 2   | `RealtimeElevenLabsStrategy` + realtime gateway (socket.io ns relaying to upstream WS); cost recording on close; manual test with a CLI frame feeder.              | 1.5 d    |
+| 3   | Frontend recorder: AudioWorklet → PCM16 frames; realtime transport emitting `voice:audio`; receive `voice:transcript:delta`. End-to-end round-trip.                | 1.5 d    |
+| 4   | Editor insert-stream (append + interim-replacement) wired to the live caret. Dictation visibly working.                                                            | 0.5 d    |
+| 5   | UX polish: desktop button placement, mobile FAB, recording states, waveform.                                                                                       | 1 d      |
+| 6   | Second strategy (`RealtimeDeepgramStrategy`) + batch (`BatchOpenRouterStrategy`) behind the toggle; residency resolver; settings UI (model, language, vocabulary). | 1 d      |
+| 7   | E2E + integration tests; cost telemetry verification.                                                                                                              | 0.5 d    |
 
 Total: ~6.5 days for v1 (transcription only, three swappable strategies). Drop to ~4.5 days if we ship only the ElevenLabs realtime strategy first (milestone 6 becomes a follow-up). Tidy-up pass is a separate ~2-day follow-up.
 
@@ -520,15 +543,16 @@ Total: ~6.5 days for v1 (transcription only, three swappable strategies). Drop t
 
 ## 11. Open Decisions
 
-I need an answer (or "your call, pick the recommended one") on these before building. Order matches the order I'd want to confirm them.
+A few still open; the first three are now **decided** and recorded here for traceability.
 
-1. **Default provider.** Recommended: `elevenlabs:scribe-v2-realtime` (lowest latency, STT-specialized, zero-retention). Alternative: `openai/gpt-4o-transcribe` realtime (better inline self-correction, overlaps the tidy-up goal). Both need a new API key. Which gets the `ELEVENLABS_API_KEY` vs `OPENAI_API_KEY` budget?
-2. **Realtime connection model.** Recommended: backend WS relay (cost tracking + key safety). Alternative: browser-direct with ephemeral tokens (lower latency, weaker observability). The relay is the right call for a metered product unless latency is unacceptable in testing.
-3. **Strategy coverage in v1.** Recommended: ship ElevenLabs realtime first, add OpenAI realtime + OpenRouter batch in a fast follow (milestone 6) so you can A/B. Alternative: all three on day one (+~1 day).
+1. ✅ **Default provider — decided: `elevenlabs:scribe-v2-realtime`.** Cheapest ($0.39/hr), lowest latency (~150 ms), STT-specialized, zero-retention. Deepgram Nova-3 is the swappable comparison/steering + EU-residency strategy. OpenAI ruled out (no steering in realtime sessions). Needs `ELEVENLABS_API_KEY` (+ `DEEPGRAM_API_KEY` for the comparison/EU path).
+2. **Realtime connection model.** Recommended: backend WS relay (cost tracking + key safety + residency routing). Alternative: browser-direct with ephemeral tokens (lower latency, weaker observability, can't enforce residency). The relay is the right call for a metered product unless latency is unacceptable in testing.
+3. ✅ **Strategy coverage in v1 — decided: start with ElevenLabs.** Ship ElevenLabs realtime first; Deepgram realtime + OpenRouter batch land in the fast follow (milestone 6) so you can A/B and so the EU-residency path exists.
 4. **Audio persistence.** Recommended: never persist; rely on providers' zero-retention modes. Alternative: short-lived S3 with 7-day TTL for debug, behind a flag.
 5. **Tidy-up timing model.** Recommended: end-of-session full rewrite. Alternative: per-chunk with re-rewrite of last two chunks. (Decide later; doesn't block v1. With strong realtime self-correction handling, the tidy-up may be less necessary than originally thought.)
-6. **Vocabulary hints in v1.** Cheap to build. ElevenLabs and OpenAI realtime both accept biasing/keyterm hints, so this helps domain language immediately — worth shipping in v1.
-7. **Cost cap UI.** Where (if anywhere) do we surface "you've spent $X on voice this month"? Probably the settings page. Out of scope for v1 unless you'd like it.
+6. ✅ **Vocabulary hints in v1 — yes.** Cheap to build; ElevenLabs (≤50 realtime terms) and Deepgram (≤100 words) both accept keyterm biasing, so it helps domain language immediately.
+7. **Data residency (new).** v1 starts on ElevenLabs non-Enterprise = **US processing only**. Plan is a per-workspace `voiceResidencyPolicy` enforced at the relay (§7.6): EU-required workspaces route to Deepgram-EU, or voice is disabled (fail closed) — never silently US. Open sub-question for you: **for the very first cut, is it acceptable to ship US-only and gate EU customers behind "coming soon," or do you want the Deepgram-EU route wired in milestone 6 so EU customers are supported at launch?**
+8. **Cost cap UI.** Where (if anywhere) do we surface "you've spent $X on voice this month"? Probably the settings page. Out of scope for v1 unless you'd like it.
 
 ---
 
@@ -538,14 +562,15 @@ I need an answer (or "your call, pick the recommended one") on these before buil
 - `apps/frontend/src/components/editor/rich-editor.tsx:33-41, 777` — editor handle, programmatic insert
 - `apps/frontend/src/components/timeline/message-input.tsx:189-468` — host of the composer
 - `apps/backend/src/lib/ai/ai.ts:30,392-949` — `createAI` wrapper + `OPENROUTER_BASE_URL`; pattern to mirror for `createTranscription`
-- `apps/backend/src/lib/ai/ai.ts:413` — provider resolution (only `openrouter` today; add `openai`/`elevenlabs`)
+- `apps/backend/src/lib/ai/ai.ts:413` — provider resolution (only `openrouter` today; add `elevenlabs`/`deepgram`)
 - `apps/backend/src/lib/ai/models.yaml` — model capability registry (add `audio` modality + `streaming` capability)
-- `apps/backend/src/lib/env.ts:152` — provider keys (add `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`)
+- `apps/backend/src/lib/env.ts:152` — provider keys (add `ELEVENLABS_API_KEY`, `DEEPGRAM_API_KEY`)
 - `apps/backend/src/features/attachments/` — precedent for file upload (multer-s3); used by the batch path
 - `apps/backend/src/lib/outbox/broadcast-handler.ts:1-60` — user-scoped socket.io routing (batch path)
 - `apps/backend/src/lib/queue/job-queue.ts` — job queue tiers (batch worker)
 - `apps/backend/src/features/user-preferences/service.ts:115-184` — preference store + outbox propagation
 - `docs/model-reference.md` — where the new STT entries go
-- ElevenLabs: [Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text) · [Realtime STT API reference](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime) · [client-side streaming guide](https://elevenlabs.io/docs/eleven-api/guides/how-to/speech-to-text/realtime/client-side-streaming)
-- OpenAI: [Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription) · [gpt-4o-transcribe](https://developers.openai.com/api/docs/models/gpt-4o-transcribe) · [Speech-to-text guide](https://developers.openai.com/api/docs/guides/speech-to-text)
+- ElevenLabs: [Scribe v2 Realtime](https://elevenlabs.io/realtime-speech-to-text) · [Realtime STT API reference](https://elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-text-realtime) · [client-side streaming guide](https://elevenlabs.io/docs/eleven-api/guides/how-to/speech-to-text/realtime/client-side-streaming) · [data residency](https://elevenlabs.io/docs/overview/administration/data-residency) · [EU residency announcement](https://elevenlabs.io/blog/introducing-european-data-residency)
+- Deepgram (comparison/steering + EU residency): [Nova-3 keyterm prompting](https://deepgram.com/learn/deepgram-expands-nova-3-with-10-new-languages-and-multilingual-keyterm-prompting) · [Nova-3 intro](https://deepgram.com/learn/introducing-nova-3-speech-to-text-api) · [pricing](https://deepgram.com/pricing)
+- OpenAI (evaluated, ruled out for realtime steering): [Realtime transcription guide](https://developers.openai.com/api/docs/guides/realtime-transcription)
 - OpenRouter (batch comparison): [Audio APIs announcement](https://openrouter.ai/announcements/announcing-audio-apis) · [Whisper Large v3 Turbo](https://openrouter.ai/openai/whisper-large-v3-turbo)
