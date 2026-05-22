@@ -11,6 +11,7 @@ import { runMigrations } from "./db/migrations"
 import { WorkosAuthService, StubAuthService, WorkosApiKeyService, StubApiKeyService } from "@threa/backend-common"
 import { BotChannelService } from "./features/api-keys"
 import { UserApiKeyService as UserApiKeyServiceImpl } from "./features/user-api-keys"
+import { VoiceTranscriptionService, createTranscription, registerVoiceGateway } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
@@ -467,6 +468,16 @@ export async function startServer(): Promise<ServerInstance> {
   // User-scoped API key service — managed by Threa (not WorkOS)
   const userApiKeyService = new UserApiKeyServiceImpl(pool)
 
+  // Voice dictation — session lifecycle service + the realtime STT factory.
+  // The factory only registers the ElevenLabs strategy when a key is present
+  // (empty string disables voice); fail loudly later if a session is opened
+  // without a configured provider (INV-11).
+  const voiceTranscriptionService = new VoiceTranscriptionService(pool)
+  const transcription = createTranscription({
+    elevenlabs: config.ai.elevenLabsApiKey ? { apiKey: config.ai.elevenLabsApiKey } : undefined,
+    modelRegistry,
+  })
+
   // Bot API key service — self-managed keys for bot integrations
   const botApiKeyService = new BotApiKeyService(pool)
 
@@ -517,6 +528,7 @@ export async function startServer(): Promise<ServerInstance> {
     workspaceAuthzService,
     workosOrgService,
     userApiKeyService,
+    voiceTranscriptionService,
     botApiKeyService,
     storage,
     ai,
@@ -547,6 +559,10 @@ export async function startServer(): Promise<ServerInstance> {
     userSocketRegistry,
     sessionAbortRegistry,
   })
+
+  // Dedicated voice relay on its own namespace so audio frames don't share the
+  // main namespace's room fan-out.
+  registerVoiceGateway(io, { authService, voiceTranscriptionService, transcription })
 
   const serverId = `server_${ulid()}`
 

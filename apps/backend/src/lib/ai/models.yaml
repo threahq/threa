@@ -76,3 +76,11 @@ models:
     name: Text Embedding 3 Small
     inputModalities: [text]
     outputModalities: [embedding]
+
+  # Speech-to-text models (realtime WebSocket STT — voice dictation)
+  elevenlabs:scribe-v2-realtime:
+    name: ElevenLabs Scribe v2 Realtime
+    inputModalities: [audio]
+    outputModalities: [text]
+    streaming: realtime
+    audioPricePerHour: 0.39

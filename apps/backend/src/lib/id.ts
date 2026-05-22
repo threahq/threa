@@ -58,4 +58,5 @@ export {
   botInvocationId,
   botRuntimePairingCodeId,
   streamLabelId,
+  voiceSessionId,
 } from "@threa/backend-common"

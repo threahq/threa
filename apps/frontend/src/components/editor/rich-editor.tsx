@@ -36,6 +36,8 @@ export interface RichEditorHandle {
   insertMention(): void
   insertSlash(): void
   insertEmoji(): void
+  /** Append a committed dictation span at the caret (PR1: naive insert, no interim replacement). */
+  insertTranscribedText(text: string): void
   /** Access the TipTap editor instance for external toolbar rendering */
   getEditor(): import("@tiptap/react").Editor | null
 }
@@ -791,6 +793,19 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     handleTriggerClick(":", EmojiPluginKey)
   }, [handleTriggerClick])
 
+  const insertTranscribedText = useCallback(
+    (text: string) => {
+      if (!editor || editor.isDestroyed || !text) return
+      // Separate consecutive committed spans with a space when the caret isn't
+      // already on whitespace, so words don't run together.
+      const { from } = editor.state.selection
+      const charBefore = from > 0 ? editor.state.doc.textBetween(from - 1, from) : ""
+      const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""
+      editor.chain().focus().insertContent(`${prefix}${text}`).run()
+    },
+    [editor]
+  )
+
   // Expose imperative handle for parent to trigger insert actions
   useImperativeHandle(
     ref,
@@ -800,9 +815,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertMention: handleMentionClick,
       insertSlash: handleSlashClick,
       insertEmoji: handleEmojiClick,
+      insertTranscribedText,
       getEditor: () => editor,
     }),
-    [focus, focusAfterQuoteReply, handleMentionClick, handleSlashClick, handleEmojiClick, editor]
+    [focus, focusAfterQuoteReply, handleMentionClick, handleSlashClick, handleEmojiClick, insertTranscribedText, editor]
   )
 
   return (

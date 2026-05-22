@@ -37,6 +37,7 @@ import { createWorkspaceIntegrationHandlers } from "./features/workspace-integra
 import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
 import { BotRuntimeService } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
+import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
 import {
   createInternalAuthMiddleware,
   errorHandler,
@@ -102,6 +103,7 @@ interface Dependencies {
   workspaceAuthzService: WorkspaceAuthzService
   workosOrgService: WorkosOrgService
   userApiKeyService: UserApiKeyService
+  voiceTranscriptionService: VoiceTranscriptionService
   botApiKeyService: BotApiKeyService
   storage: StorageProvider
   ai: AI
@@ -140,6 +142,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceAuthzService,
     workosOrgService,
     userApiKeyService,
+    voiceTranscriptionService,
     botApiKeyService,
     storage,
     ai,
@@ -476,6 +479,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/user-api-keys", ...authed, userApiKeys.list)
   app.post("/api/workspaces/:workspaceId/user-api-keys", ...authed, userApiKeys.create)
   app.post("/api/workspaces/:workspaceId/user-api-keys/:keyId/revoke", ...authed, userApiKeys.revoke)
+
+  // Voice dictation: HTTP creates/aborts the session; the dedicated /voice
+  // socket namespace owns the live audio relay and authoritative stop.
+  const voice = createVoiceTranscriptionHandlers({ voiceTranscriptionService })
+  app.post("/api/workspaces/:workspaceId/voice/sessions", ...authed, voice.createSession)
+  app.delete("/api/workspaces/:workspaceId/voice/sessions/:sessionId", ...authed, voice.abortSession)
 
   // Bot management. Management routes (update, archive, keys, avatar, grants)
   // are gated by `requireBotManagement()` middleware that resolves the bot,
