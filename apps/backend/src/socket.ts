@@ -1,7 +1,7 @@
 import type { Server, Socket } from "socket.io"
 import crypto from "crypto"
-import { parseCookies, SESSION_COOKIE_NAME } from "@threa/backend-common"
 import type { AuthService } from "@threa/backend-common"
+import { createSocketAuthMiddleware } from "./lib/socket-auth"
 import { DEVICE_KEY_LENGTH, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threa/types"
 import type { StreamService } from "./features/streams"
 import type { PushService } from "./features/push"
@@ -73,25 +73,9 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
   const { pool, authService, streamService, pushService, userSocketRegistry, sessionAbortRegistry } = deps
 
   // ===========================================================================
-  // Authentication middleware
+  // Authentication middleware (shared with the voice namespace — see lib/socket-auth)
   // ===========================================================================
-  io.use(async (socket, next) => {
-    const rawCookie = socket.handshake.headers.cookie || ""
-    const cookies = parseCookies(rawCookie)
-    const session = cookies[SESSION_COOKIE_NAME]
-
-    if (!session) {
-      return next(new Error("No session cookie"))
-    }
-
-    const result = await authService.authenticateSession(session)
-    if (!result.success || !result.user) {
-      return next(new Error("Authentication failed"))
-    }
-
-    socket.data.workosUserId = result.user.id
-    return next()
-  })
+  io.use(createSocketAuthMiddleware(authService))
 
   // ===========================================================================
   // Connection handlers

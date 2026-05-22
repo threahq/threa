@@ -11,6 +11,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
     insertMention: vi.fn(),
     insertSlash: vi.fn(),
     insertEmoji: vi.fn(),
+    insertTranscribedText: vi.fn(),
     getEditor: vi.fn(() => null),
   }
 

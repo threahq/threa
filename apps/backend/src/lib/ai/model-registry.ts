@@ -5,12 +5,18 @@ import * as yaml from "yaml"
 /**
  * Input modality types supported by models.
  */
-export type InputModality = "text" | "image"
+export type InputModality = "text" | "image" | "audio"
 
 /**
  * Output modality types supported by models.
  */
 export type OutputModality = "text" | "embedding"
+
+/**
+ * Streaming capability of a model. `realtime` denotes a continuous
+ * WebSocket session (e.g. realtime speech-to-text).
+ */
+export type StreamingCapability = "realtime"
 
 /**
  * Model capabilities definition.
@@ -19,6 +25,10 @@ export interface ModelCapabilities {
   name: string
   inputModalities: InputModality[]
   outputModalities: OutputModality[]
+  /** Present for streaming models (e.g. realtime STT). */
+  streaming?: StreamingCapability
+  /** Billed audio price per hour in USD. Source of truth for audio cost recording (INV-33). */
+  audioPricePerHour?: number
 }
 
 /**
@@ -57,6 +67,18 @@ export interface ModelRegistry {
   supportsOutputModality(modelId: string, modality: OutputModality): boolean
 
   /**
+   * Check if a model accepts audio input (e.g. speech-to-text).
+   * Returns false for unknown models.
+   */
+  supportsAudioInput(modelId: string): boolean
+
+  /**
+   * Get the billed audio price per hour (USD) for a model, or undefined
+   * if the model is unknown or has no audio pricing.
+   */
+  getAudioPricePerHour(modelId: string): number | undefined
+
+  /**
    * Get all registered model IDs.
    */
   getModelIds(): string[]
@@ -93,6 +115,15 @@ export function createModelRegistry(): ModelRegistry {
     supportsOutputModality(modelId: string, modality: OutputModality): boolean {
       const caps = models.get(modelId)
       return caps?.outputModalities.includes(modality) ?? false
+    },
+
+    supportsAudioInput(modelId: string): boolean {
+      const caps = models.get(modelId)
+      return caps?.inputModalities.includes("audio") ?? false
+    },
+
+    getAudioPricePerHour(modelId: string): number | undefined {
+      return models.get(modelId)?.audioPricePerHour
     },
 
     getModelIds(): string[] {

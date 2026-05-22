@@ -106,6 +106,7 @@ export {
   botInvocationId,
   botRuntimePairingCodeId,
   streamLabelId,
+  voiceSessionId,
 } from "./id"
 export {
   parseCookies,
