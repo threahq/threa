@@ -80,7 +80,7 @@ export interface ConversationSummary {
   participantIds: string[]
   completenessScore: number
   /** Lifecycle status so the model treats "resolved" conversations as closed. */
-  status: string
+  status: (typeof CONVERSATION_STATUSES)[number]
   /**
    * Message IDs from this conversation that appear in the current extraction
    * context. The LLM may reassign these to a different conversation.
