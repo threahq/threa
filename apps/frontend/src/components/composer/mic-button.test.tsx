@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { MicButton, formatClock } from "./mic-button"
+import { MicButton, formatClock, recordingRingShadow } from "./mic-button"
 
 describe("formatClock", () => {
   it("renders m:ss with zero-padded seconds", () => {
@@ -14,6 +14,30 @@ describe("formatClock", () => {
   it("floors sub-second remainders and clamps negatives to 0:00", () => {
     expect(formatClock(1_999)).toBe("0:01")
     expect(formatClock(-500)).toBe("0:00")
+  })
+})
+
+describe("recordingRingShadow", () => {
+  it("layers three concentric destructive rings", () => {
+    const shadow = recordingRingShadow(0)
+    expect(shadow.split(", ")).toEqual([
+      "0 0 0 1.00px hsl(var(--destructive) / 0.280)",
+      "0 0 0 3.00px hsl(var(--destructive) / 0.100)",
+      "0 0 0 6.00px hsl(var(--destructive) / 0.030)",
+    ])
+  })
+
+  it("grows spread and opacity with the input level", () => {
+    expect(recordingRingShadow(1).split(", ")).toEqual([
+      "0 0 0 2.50px hsl(var(--destructive) / 0.600)",
+      "0 0 0 9.00px hsl(var(--destructive) / 0.260)",
+      "0 0 0 16.00px hsl(var(--destructive) / 0.120)",
+    ])
+  })
+
+  it("clamps out-of-range levels", () => {
+    expect(recordingRingShadow(-1)).toBe(recordingRingShadow(0))
+    expect(recordingRingShadow(5)).toBe(recordingRingShadow(1))
   })
 })
 
