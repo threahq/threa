@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { Mic, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -22,6 +22,8 @@ interface MicButtonProps {
   workspaceId: string
   /** Insert a committed transcript span into the editor at the caret. */
   onInsertText: (text: string) => void
+  /** Live (uncommitted) transcript hypothesis, pushed as it grows and cleared ("") when a segment commits or the take ends. */
+  onInterimText?: (text: string) => void
   disabled?: boolean
   /** Notifies the composer when dictation is live so it can keep the button visible while typing-detection would otherwise hide it. */
   onActiveChange?: (active: boolean) => void
@@ -32,12 +34,13 @@ interface MicButtonProps {
 export function MicButton({
   workspaceId,
   onInsertText,
+  onInterimText,
   disabled,
   onActiveChange,
   className,
   language,
 }: MicButtonProps) {
-  const { state, supported, unsupportedReason, error, start, stop } = useVoiceDictation({
+  const { state, supported, unsupportedReason, error, interimText, start, stop } = useVoiceDictation({
     workspaceId,
     onCommittedText: onInsertText,
     language,
@@ -48,6 +51,18 @@ export function MicButton({
   useEffect(() => {
     onActiveChange?.(isActive)
   }, [isActive, onActiveChange])
+
+  // Mirror the live hypothesis into the editor. Keep the callback in a ref so a
+  // new function identity each render doesn't re-fire this on every keystroke,
+  // and clear the ghost on unmount so a hidden mic can't strand preview text.
+  const onInterimTextRef = useRef(onInterimText)
+  onInterimTextRef.current = onInterimText
+  useEffect(() => {
+    onInterimTextRef.current?.(interimText)
+  }, [interimText])
+  useEffect(() => {
+    return () => onInterimTextRef.current?.("")
+  }, [])
 
   const tooltip = tooltipFor({ supported, unsupportedReason, state, error })
 

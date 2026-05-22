@@ -13,7 +13,7 @@ interface VoiceDelta {
 
 interface UseVoiceDictationOptions {
   workspaceId: string
-  /** Called with each committed (final) transcript span. PR1 ignores interim deltas. */
+  /** Called with each committed (final) transcript span. */
   onCommittedText: (text: string) => void
   language?: string
 }
@@ -24,6 +24,13 @@ interface UseVoiceDictationResult {
   supported: boolean
   unsupportedReason: string | null
   error: string | null
+  /**
+   * The live (uncommitted) transcript hypothesis for the current segment. It
+   * grows as the user speaks and clears to "" once the segment commits (or the
+   * take ends). Surfaced so the UI can show words immediately instead of only
+   * after the upstream VAD endpoints a segment.
+   */
+  interimText: string
   start: () => void
   stop: () => void
 }
@@ -64,14 +71,15 @@ function resolveVoiceUrl(workspaceId: string): string | null {
 /**
  * Drives one voice-dictation session: create the session over HTTP, capture
  * mic audio as PCM16 frames via an AudioWorklet, stream them up the dedicated
- * `/voice` socket namespace, and surface committed transcript spans. PR1 is a
- * naive caret insert — only final deltas are forwarded, interim replacement
- * lands in a later PR.
+ * `/voice` socket namespace, and surface transcript spans. Committed (final)
+ * spans are forwarded to `onCommittedText`; the in-flight hypothesis is exposed
+ * live via `interimText` so callers can show words as they're spoken.
  */
 export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDictationResult {
   const { workspaceId, onCommittedText, language } = options
   const [state, setState] = useState<VoiceDictationState>("idle")
   const [error, setError] = useState<string | null>(null)
+  const [interimText, setInterimText] = useState("")
   const supportRef = useRef(detectSupport())
 
   const socketRef = useRef<Socket | null>(null)
@@ -103,6 +111,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     socketRef.current?.disconnect()
     socketRef.current = null
     sessionIdRef.current = null
+    setInterimText("")
   }, [teardownAudio])
 
   const fail = useCallback(
@@ -119,6 +128,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     if (state !== "idle" && state !== "error") return
 
     setError(null)
+    setInterimText("")
     setState("connecting")
     const generation = ++startGenerationRef.current
 
@@ -172,7 +182,16 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // Ignore deltas from a session we've already moved past so a stale
           // socket can't leak text into a new take (plan §3).
           if (delta.voiceSessionId !== sessionIdRef.current) return
-          if (delta.isFinal && delta.text) onCommittedTextRef.current(delta.text)
+          if (delta.isFinal) {
+            // The segment endpointed: commit it for real and drop the live
+            // hypothesis so the next segment starts from a clean preview.
+            if (delta.text) onCommittedTextRef.current(delta.text)
+            setInterimText("")
+          } else {
+            // Running hypothesis for the current segment — each partial replaces
+            // the prior one rather than appending.
+            setInterimText(delta.text)
+          }
         })
         socket.on("voice:transcription:error", (e: { message?: string }) => fail(e?.message || "Transcription failed"))
         socket.on("voice:stopped", () => {
@@ -223,6 +242,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const stop = useCallback(() => {
     if (state !== "recording" && state !== "connecting") return
     setState("stopping")
+    setInterimText("")
     // Invalidate any in-flight `voice:start` ACK so a late accept can't flip us
     // back to "recording" after we've decided to stop.
     startGenerationRef.current++
@@ -262,6 +282,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     supported: supportRef.current.supported,
     unsupportedReason: supportRef.current.reason,
     error,
+    interimText,
     start,
     stop,
   }

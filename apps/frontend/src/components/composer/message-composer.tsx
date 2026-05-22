@@ -488,12 +488,14 @@ export function MessageComposer({
   // Shown only on workspace surfaces, and only while the composer is empty
   // (so it doesn't crowd typed text) or dictation is already live.
   const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
+  const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
   const showMic = !!workspaceId && (voiceActive || isEmptyContent(content))
   const micButton =
     showMic && workspaceId ? (
       <MicButton
         workspaceId={workspaceId}
         onInsertText={insertTranscribedText}
+        onInterimText={setDictationInterim}
         onActiveChange={setVoiceActive}
         disabled={controlsDisabled}
       />
@@ -503,6 +505,7 @@ export function MessageComposer({
       <MicButton
         workspaceId={workspaceId}
         onInsertText={insertTranscribedText}
+        onInterimText={setDictationInterim}
         onActiveChange={setVoiceActive}
         disabled={controlsDisabled}
         className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"

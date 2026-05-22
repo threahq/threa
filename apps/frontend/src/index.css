@@ -327,6 +327,15 @@
   content: attr(data-placeholder);
 }
 
+/* Live dictation hypothesis shown at the caret while speaking. Muted and
+   non-selectable so it reads as provisional and never participates in editing. */
+.dictation-preview-ghost {
+  @apply text-muted-foreground/70 italic pointer-events-none select-none;
+}
+.dictation-preview-ghost::before {
+  content: " ";
+}
+
 .ProseMirror > *:not(.ProseMirror-gapcursor) + *:not(.ProseMirror-gapcursor) {
   @apply mt-2;
 }
