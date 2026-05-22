@@ -1037,6 +1037,14 @@ async function resolveResponseStreamForMention(params: {
 
 Use this carefully in the outbox handler: if `StreamService.createThread()` owns its own transaction, call it outside the invocation insert transaction or refactor a repository-level helper that can run inside a caller-owned transaction.
 
+### Follow-up notes from Phase 6 dogfood
+
+These are intentionally deferred from the initial mentionable-invocation PR, but should be addressed before treating remote mentions as complete:
+
+- **Pi mention claims:** the backend can create `trigger: "mention"` / `requiredCapability: "mentionable"` invocations for `@pi-remote` in channels, but the V2 Pi adapter currently claims only `supportedCapabilities: ["active-scratchpad"]`. Either teach the adapter to claim/respond to `mentionable` invocations or avoid creating mention invocations for Pi runtimes until they support them.
+- **Persona mention suppression:** active scratchpad auto-invocation is suppressed for explicit mentionable bot mentions, but not for persona mentions such as `@ariadne`. Mention resolution/suppression should include personas so `@ariadne` does not also trigger the active Pi bot unless Pi is explicitly mentioned too.
+- **Non-user context without automatic replies:** the active Pi bot should be able to observe persona/bot replies as context, but should not automatically respond to every non-user message. A follow-up orchestration rule should decide when an active bot may react to Ariadne's reply; the current handler's blanket user-only trigger is safe but too coarse for richer collaboration.
+
 ---
 
 ## Phase 7 — Threa-first pairing code flow
