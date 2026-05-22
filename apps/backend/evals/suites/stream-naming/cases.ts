@@ -222,7 +222,7 @@ User: Och hur ofta måste man vattna?`,
       category: "language",
     },
     expectedOutput: {
-      // Require Swedish wording from the source conversation (evaluator passes on any one match)
+      // Title must reuse the source conversation's Swedish wording, not translate to English
       nameContains: ["tomat", "balkong"],
       // Should not label the language or use English framing words
       nameNotContains: ["swedish", "svenska", "discussion", "chat", "conversation", "about"],
@@ -241,7 +241,7 @@ User: Men exporten känns långsam`,
     expectedOutput: {
       // Proper nouns must survive untranslated
       nameContains: ["lightroom", "photoshop"],
-      nameNotContains: ["swedish", "svenska", "discussion", "chat", "conversation"],
+      nameNotContains: ["swedish", "svenska", "discussion", "chat", "conversation", "about"],
       wordCountRange: { min: 2, max: 5 },
     },
   },
