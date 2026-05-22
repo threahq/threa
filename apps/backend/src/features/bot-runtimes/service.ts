@@ -63,6 +63,18 @@ export class BotRuntimeService {
     })
   }
 
+  async findActivePiRemoteSession(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId: string
+  }): Promise<BotRuntimeSessionLink | null> {
+    return BotRuntimeSessionLinkRepository.findActiveByRuntimeSession(this.pool, {
+      ...params,
+      runtimeKind: "pi-local",
+    })
+  }
+
   async createOrLinkPiRemoteSession(params: {
     workspaceId: string
     botId: string
@@ -176,6 +188,17 @@ export class BotRuntimeService {
     }
   ): Promise<BotInvocation | null> {
     return BotInvocationRepository.findActiveClaimForUpdate(db, params)
+  }
+
+  async renewInvocationClaim(params: {
+    workspaceId: string
+    botId: string
+    invocationId: string
+    instanceId: string
+    claimToken: string
+    claimTtlSeconds: number
+  }): Promise<BotInvocation | null> {
+    return BotInvocationRepository.renewClaim(this.pool, params)
   }
 
   async completeInvocation(params: {

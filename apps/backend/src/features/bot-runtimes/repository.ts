@@ -347,6 +347,22 @@ export const BotRuntimeSessionLinkRepository = {
     )
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
+
+  async findActiveByRuntimeSession(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      runtimeKind: BotRuntimeKind
+      instanceId: string
+      runtimeSessionId: string
+    }
+  ): Promise<BotRuntimeSessionLink | null> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND runtime_kind = ${params.runtimeKind} AND instance_id = ${params.instanceId} AND runtime_session_id = ${params.runtimeSessionId} AND status = 'active'`
+    )
+    return result.rows[0] ? mapSessionLink(result.rows[0]) : null
+  },
 }
 
 export const BotInvocationRepository = {
@@ -428,6 +444,24 @@ export const BotInvocationRepository = {
     const result = await db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
       WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
       FOR UPDATE`)
+    return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  async renewClaim(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+      claimTtlSeconds: number
+    }
+  ): Promise<BotInvocation | null> {
+    const result =
+      await db.query<BotInvocationRow>(sql`UPDATE bot_invocations SET claim_expires_at = NOW() + (${params.claimTtlSeconds} || ' seconds')::interval, updated_at = NOW()
+      WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
+      RETURNING *`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
 
