@@ -138,8 +138,10 @@ export function MicButton({
             aria-pressed={state === "recording"}
             className={cn(
               "h-7 w-7 shrink-0 transition-shadow duration-100",
+              // The persistent destructive tint signals the live state on its
+              // own; the voice-reactive ring (below) adds motion only when the
+              // user hasn't opted out via prefers-reduced-motion.
               recording && "bg-destructive/15 text-destructive",
-              recording && prefersReducedMotion && "animate-pulse",
               className
             )}
             style={recordingRing}
