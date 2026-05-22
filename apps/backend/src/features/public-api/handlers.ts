@@ -564,9 +564,11 @@ export function createPublicApiHandlers({
       }
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
-      const contentMarkdown = normalizeMessage(result.data.finalMessageMarkdown)
-      const contentJson = parseMarkdown(contentMarkdown, undefined, toEmoji)
-      const attachmentIds = collectAttachmentReferenceIds(contentJson)
+      const contentMarkdown = result.data.finalMessageMarkdown
+        ? normalizeMessage(result.data.finalMessageMarkdown)
+        : null
+      const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
+      const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
       const { completed, message } = await withTransaction(pool, async (client) => {
         const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
           workspaceId: req.workspaceId!,
@@ -577,17 +579,19 @@ export function createPublicApiHandlers({
         })
         if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
         await assertStreamAccessible(req, claim.responseStreamId)
-        const message = await eventService.createMessageInTransaction(client, {
-          workspaceId: req.workspaceId!,
-          streamId: claim.responseStreamId,
-          authorId: bot.id,
-          authorType: AuthorTypes.BOT,
-          contentJson,
-          contentMarkdown,
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          clientMessageId: `bot-invocation:${claim.id}`,
-          metadata: result.data.metadata,
-        })
+        const message = contentMarkdown
+          ? await eventService.createMessageInTransaction(client, {
+              workspaceId: req.workspaceId!,
+              streamId: claim.responseStreamId,
+              authorId: bot.id,
+              authorType: AuthorTypes.BOT,
+              contentJson: contentJson!,
+              contentMarkdown,
+              attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+              clientMessageId: `bot-invocation:${claim.id}`,
+              metadata: result.data.metadata,
+            })
+          : null
         const completed = await botRuntimeService.completeInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
@@ -599,7 +603,10 @@ export function createPublicApiHandlers({
         return { completed, message }
       })
       res.json({
-        data: { invocationId: completed.id, message: serializeMessage(message, { authorDisplayName: bot.name }) },
+        data: {
+          invocationId: completed.id,
+          message: message ? serializeMessage(message, { authorDisplayName: bot.name }) : null,
+        },
       })
     },
 
