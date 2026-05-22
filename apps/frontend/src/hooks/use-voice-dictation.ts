@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
 import { voiceApi } from "@/api/voice"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
+import { useDictationCoordinator } from "@/contexts"
 
 export type VoiceDictationState = "idle" | "connecting" | "recording" | "stopping" | "error"
 
@@ -13,7 +14,7 @@ interface VoiceDelta {
 
 interface UseVoiceDictationOptions {
   workspaceId: string
-  /** Called with each committed (final) transcript span. PR1 ignores interim deltas. */
+  /** Called with each committed (final) transcript span. */
   onCommittedText: (text: string) => void
   language?: string
 }
@@ -24,6 +25,13 @@ interface UseVoiceDictationResult {
   supported: boolean
   unsupportedReason: string | null
   error: string | null
+  /**
+   * The live (uncommitted) transcript hypothesis for the current segment. It
+   * grows as the user speaks and clears to "" once the segment commits (or the
+   * take ends). Surfaced so the UI can show words immediately instead of only
+   * after the upstream VAD endpoints a segment.
+   */
+  interimText: string
   start: () => void
   stop: () => void
 }
@@ -64,14 +72,15 @@ function resolveVoiceUrl(workspaceId: string): string | null {
 /**
  * Drives one voice-dictation session: create the session over HTTP, capture
  * mic audio as PCM16 frames via an AudioWorklet, stream them up the dedicated
- * `/voice` socket namespace, and surface committed transcript spans. PR1 is a
- * naive caret insert — only final deltas are forwarded, interim replacement
- * lands in a later PR.
+ * `/voice` socket namespace, and surface transcript spans. Committed (final)
+ * spans are forwarded to `onCommittedText`; the in-flight hypothesis is exposed
+ * live via `interimText` so callers can show words as they're spoken.
  */
 export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDictationResult {
   const { workspaceId, onCommittedText, language } = options
   const [state, setState] = useState<VoiceDictationState>("idle")
   const [error, setError] = useState<string | null>(null)
+  const [interimText, setInterimText] = useState("")
   const supportRef = useRef(detectSupport())
 
   const socketRef = useRef<Socket | null>(null)
@@ -86,6 +95,30 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // Keep the latest committed-text callback without re-subscribing the socket.
   const onCommittedTextRef = useRef(onCommittedText)
   onCommittedTextRef.current = onCommittedText
+
+  // Only one take dictates at a time across all composers. Starting a take stops
+  // whichever was active first (flushing its tail). `coordinatedStop` is a stable
+  // identity the coordinator can compare and invoke; it always calls the latest stop().
+  const coordinator = useDictationCoordinator()
+  const stopRef = useRef<() => void>(() => {})
+  const coordinatedStop = useCallback(() => stopRef.current(), [])
+
+  // Mirror the interim hypothesis into a ref so teardown/stop/fail can read and
+  // flush it synchronously, without those callbacks depending on render state.
+  const interimRef = useRef("")
+  const updateInterim = useCallback((text: string) => {
+    interimRef.current = text
+    setInterimText(text)
+  }, [])
+  // Commit whatever uncommitted hypothesis is in flight, then clear it. Used when
+  // a take ends before the upstream emits a final delta (manual stop, error, or a
+  // dropped connection) so the words the user already saw are kept rather than
+  // silently discarded.
+  const flushInterim = useCallback(() => {
+    const pending = interimRef.current
+    if (pending) onCommittedTextRef.current(pending)
+    updateInterim("")
+  }, [updateInterim])
 
   const teardownAudio = useCallback(() => {
     workletRef.current?.port.close()
@@ -103,22 +136,30 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     socketRef.current?.disconnect()
     socketRef.current = null
     sessionIdRef.current = null
-  }, [teardownAudio])
+    updateInterim("")
+    coordinator.deactivate(coordinatedStop)
+  }, [teardownAudio, updateInterim, coordinator, coordinatedStop])
 
   const fail = useCallback(
     (message: string) => {
+      // Don't throw away words the user already saw mid-segment — commit the
+      // pending hypothesis before tearing the failed take down.
+      flushInterim()
       setError(message)
       setState("error")
       teardown()
     },
-    [teardown]
+    [teardown, flushInterim]
   )
 
   const start = useCallback(() => {
     if (!supportRef.current.supported) return
     if (state !== "idle" && state !== "error") return
 
+    // Take the single active slot, flushing+stopping any other composer's take.
+    coordinator.activate(coordinatedStop)
     setError(null)
+    updateInterim("")
     setState("connecting")
     const generation = ++startGenerationRef.current
 
@@ -172,12 +213,22 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // Ignore deltas from a session we've already moved past so a stale
           // socket can't leak text into a new take (plan §3).
           if (delta.voiceSessionId !== sessionIdRef.current) return
-          if (delta.isFinal && delta.text) onCommittedTextRef.current(delta.text)
+          if (delta.isFinal) {
+            // The segment endpointed: commit it for real and drop the live
+            // hypothesis so the next segment starts from a clean preview.
+            if (delta.text) onCommittedTextRef.current(delta.text)
+            updateInterim("")
+          } else {
+            // Running hypothesis for the current segment — each partial replaces
+            // the prior one rather than appending.
+            updateInterim(delta.text)
+          }
         })
         socket.on("voice:transcription:error", (e: { message?: string }) => fail(e?.message || "Transcription failed"))
         socket.on("voice:stopped", () => {
-          // Server-initiated stop (e.g. the max-duration guard). Leave the
-          // recording state, not just tear down the audio graph.
+          // Server-initiated stop (e.g. the max-duration guard). Keep any pending
+          // hypothesis and leave the recording state, not just tear down audio.
+          flushInterim()
           teardown()
           setState("idle")
         })
@@ -218,11 +269,16 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         fail(message)
       }
     })()
-  }, [state, workspaceId, language, fail, teardown])
+  }, [state, workspaceId, language, fail, teardown, flushInterim, coordinator, coordinatedStop])
 
   const stop = useCallback(() => {
     if (state !== "recording" && state !== "connecting") return
+    coordinator.deactivate(coordinatedStop)
     setState("stopping")
+    // Keep the in-flight hypothesis: the backend commits buffered audio on stop,
+    // but we've already advanced past this session id (below), so its final delta
+    // would be dropped — flush the local hypothesis so the tail isn't lost.
+    flushInterim()
     // Invalidate any in-flight `voice:start` ACK so a late accept can't flip us
     // back to "recording" after we've decided to stop.
     startGenerationRef.current++
@@ -241,7 +297,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     } else {
       setState("idle")
     }
-  }, [state, teardownAudio])
+  }, [state, teardownAudio, flushInterim, coordinator, coordinatedStop])
+  // Keep the stable coordinator handle pointed at the latest stop().
+  stopRef.current = stop
 
   // Abort a still-open session on unmount: disconnecting the socket makes the
   // gateway finalize it as aborted; if the socket never opened, abort over HTTP
@@ -262,6 +320,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     supported: supportRef.current.supported,
     unsupportedReason: supportRef.current.reason,
     error,
+    interimText,
     start,
     stop,
   }

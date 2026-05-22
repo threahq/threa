@@ -27,6 +27,7 @@ import { AttachmentReferenceExtension } from "./attachment-reference-extension"
 import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import { QuoteReplyExtension } from "./quote-reply-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
+import { DictationPreview } from "./dictation-preview-extension"
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -106,6 +107,9 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
 
     // Shared message pointer blocks (cross-stream shares)
     SharedMessageExtension,
+
+    // Live dictation hypothesis ghost (inert unless actively dictating)
+    DictationPreview,
   ]
 
   // Add mention extension if suggestion config provided

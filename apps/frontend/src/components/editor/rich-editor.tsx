@@ -36,8 +36,10 @@ export interface RichEditorHandle {
   insertMention(): void
   insertSlash(): void
   insertEmoji(): void
-  /** Append a committed dictation span at the caret (PR1: naive insert, no interim replacement). */
+  /** Append a committed dictation span at the caret. */
   insertTranscribedText(text: string): void
+  /** Show the live (uncommitted) dictation hypothesis as a caret ghost; empty string clears it. */
+  setDictationInterim(text: string): void
   /** Access the TipTap editor instance for external toolbar rendering */
   getEditor(): import("@tiptap/react").Editor | null
 }
@@ -806,6 +808,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     [editor]
   )
 
+  const setDictationInterim = useCallback(
+    (text: string) => {
+      if (!editor || editor.isDestroyed) return
+      editor.commands.setDictationPreview(text)
+    },
+    [editor]
+  )
+
   // Expose imperative handle for parent to trigger insert actions
   useImperativeHandle(
     ref,
@@ -816,9 +826,19 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertSlash: handleSlashClick,
       insertEmoji: handleEmojiClick,
       insertTranscribedText,
+      setDictationInterim,
       getEditor: () => editor,
     }),
-    [focus, focusAfterQuoteReply, handleMentionClick, handleSlashClick, handleEmojiClick, insertTranscribedText, editor]
+    [
+      focus,
+      focusAfterQuoteReply,
+      handleMentionClick,
+      handleSlashClick,
+      handleEmojiClick,
+      insertTranscribedText,
+      setDictationInterim,
+      editor,
+    ]
   )
 
   return (

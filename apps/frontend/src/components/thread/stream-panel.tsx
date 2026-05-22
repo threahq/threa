@@ -466,6 +466,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     submitLabel="Reply"
                     submittingLabel="Creating..."
                     placeholder="Write your reply..."
+                    workspaceId={workspaceId}
                     scopeId={panelId}
                     expanded
                     onCollapse={handleDraftCollapse}
@@ -534,6 +535,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   submittingLabel="Creating..."
                   placeholder="Write your reply..."
                   autoFocus={!isMobile}
+                  workspaceId={workspaceId}
                   scopeId={panelId}
                   onExpandClick={handleDraftExpand}
                   streamContext={draftStreamContext}

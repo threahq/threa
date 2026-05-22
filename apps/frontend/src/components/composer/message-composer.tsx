@@ -21,7 +21,6 @@ import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { MicButton } from "./mic-button"
-import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
@@ -265,14 +264,17 @@ export function MessageComposer({
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileFocused, setMobileFocused] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
-  // Dictation stays mounted while live even after it inserts text, so the
-  // typing-detection that otherwise hides the mic can't tear it down mid-take.
+  // True while a dictation take is in flight. Keeps the mobile chrome (and the
+  // mic button it lives in) mounted across a tap-outside blur so the session
+  // isn't torn down mid-take.
   const [voiceActive, setVoiceActive] = useState(false)
   const isMobile = useIsMobile()
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
 
-  // Close inline format toolbar and collapse expansion when navigating to a different stream/scope
+  // Close inline format toolbar and collapse expansion when navigating to a different stream/scope.
+  // Clearing voiceActive collapses the mobile chrome; combined with the scopeId-keyed mic below,
+  // an in-flight dictation take ends on navigation rather than carrying over into the next stream.
   useEffect(() => {
     if (blurTimeoutRef.current) {
       clearTimeout(blurTimeoutRef.current)
@@ -282,6 +284,7 @@ export function MessageComposer({
     setMobileExpanded(false)
     setMobileFocused(false)
     setMobileLinkPopoverOpen(false)
+    setVoiceActive(false)
   }, [scopeId])
 
   // Reset mobile-only state when viewport crosses the mobile/desktop threshold
@@ -292,6 +295,11 @@ export function MessageComposer({
       setMobileLinkPopoverOpen(false)
     }
   }, [isMobile])
+
+  // Mobile chrome (action bar + full editor padding) stays open while focused
+  // OR while a dictation take is in flight, so a tap-outside doesn't unmount the
+  // mic mid-take and abort the session.
+  const mobileChromeOpen = mobileFocused || voiceActive
 
   // Track focus state for mobile progressive disclosure.
   // Uses a small delay on blur to avoid flicker when focus moves between editor and action bar buttons.
@@ -485,29 +493,33 @@ export function MessageComposer({
   )
 
   // ── Mic / dictation button ────────────────────────────────────────────────
-  // Shown only on workspace surfaces, and only while the composer is empty
-  // (so it doesn't crowd typed text) or dictation is already live.
+  // Always available on workspace surfaces so dictation can be resumed after the
+  // composer already has text — appended at the caret like committed speech.
   const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
-  const showMic = !!workspaceId && (voiceActive || isEmptyContent(content))
-  const micButton =
-    showMic && workspaceId ? (
-      <MicButton
-        workspaceId={workspaceId}
-        onInsertText={insertTranscribedText}
-        onActiveChange={setVoiceActive}
-        disabled={controlsDisabled}
-      />
-    ) : null
-  const micButtonFab =
-    showMic && workspaceId ? (
-      <MicButton
-        workspaceId={workspaceId}
-        onInsertText={insertTranscribedText}
-        onActiveChange={setVoiceActive}
-        disabled={controlsDisabled}
-        className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
-      />
-    ) : null
+  const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
+  // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
+  // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
+  const micButton = workspaceId ? (
+    <MicButton
+      key={`mic-${scopeId ?? ""}`}
+      workspaceId={workspaceId}
+      onInsertText={insertTranscribedText}
+      onInterimText={setDictationInterim}
+      onActiveChange={setVoiceActive}
+      disabled={controlsDisabled}
+    />
+  ) : null
+  const micButtonFab = workspaceId ? (
+    <MicButton
+      key={`mic-fab-${scopeId ?? ""}`}
+      workspaceId={workspaceId}
+      onInsertText={insertTranscribedText}
+      onInterimText={setDictationInterim}
+      onActiveChange={setVoiceActive}
+      disabled={controlsDisabled}
+      className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
+    />
+  ) : null
 
   // ── Expanded (fullscreen) layout ──────────────────────────────────────────
   // Trailing content for the inline toolbar: just the close X
@@ -793,14 +805,14 @@ export function MessageComposer({
             className={cn(
               "rounded-[16px] border border-input bg-card flex flex-col flex-1 min-h-0",
               // Compact padding when mobile-unfocused (single line), normal otherwise
-              isMobile && !mobileFocused ? "px-3 py-2" : "p-3 gap-2",
+              isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
               // When mobile-expanded, let the editor grow and override its internal max-height
               mobileExpanded && "[&_.tiptap]:max-h-none"
             )}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")) return
               // On mobile unfocused, reveal the editor first then focus on next frame
-              if (isMobile && !mobileFocused) {
+              if (isMobile && !mobileChromeOpen) {
                 setMobileFocused(true)
                 requestAnimationFrame(() => richEditorRef.current?.focus())
                 return
@@ -809,7 +821,7 @@ export function MessageComposer({
             }}
           >
             {/* Mobile preview bar — plain text first line + send button */}
-            {isMobile && !mobileFocused && (
+            {isMobile && !mobileChromeOpen && (
               <div className="flex items-center gap-2 min-h-[30px] text-sm select-none pointer-events-none">
                 <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
                 <div className="pointer-events-auto">{sendButton}</div>
@@ -819,14 +831,14 @@ export function MessageComposer({
             {/* Editor — always mounted to preserve state; hidden in preview mode */}
             <div
               className={cn(
-                isMobile && !mobileFocused ? "h-0 overflow-hidden" : "flex-1 min-h-0",
+                isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
                 mobileExpanded && "overflow-y-auto"
               )}
             >
               <div className="h-full">{sharedEditor}</div>
             </div>
 
-            {/* Bottom action bar — visible on desktop always, on mobile only when focused.
+            {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
                onMouseDown preventDefault keeps editor focus on mobile so the virtual keyboard
                stays open when tapping any button in this bar.
 
@@ -839,7 +851,7 @@ export function MessageComposer({
                DOM-subtree guard below limits the suppression to elements actually
                living under this wrapper — buttons in our own action bar — and
                leaves portaled content untouched. */}
-            {(!isMobile || mobileFocused) && (
+            {(!isMobile || mobileChromeOpen) && (
               <div
                 ref={actionBarWrapperRef}
                 onMouseDown={(e) => {

@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { Mic, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -22,9 +22,11 @@ interface MicButtonProps {
   workspaceId: string
   /** Insert a committed transcript span into the editor at the caret. */
   onInsertText: (text: string) => void
-  disabled?: boolean
-  /** Notifies the composer when dictation is live so it can keep the button visible while typing-detection would otherwise hide it. */
+  /** Live (uncommitted) transcript hypothesis, pushed as it grows and cleared ("") when a segment commits or the take ends. */
+  onInterimText?: (text: string) => void
+  /** Reports whether a take is in flight, so the host can keep its chrome (and this button) mounted while dictating. */
   onActiveChange?: (active: boolean) => void
+  disabled?: boolean
   className?: string
   language?: string
 }
@@ -32,22 +34,42 @@ interface MicButtonProps {
 export function MicButton({
   workspaceId,
   onInsertText,
-  disabled,
+  onInterimText,
   onActiveChange,
+  disabled,
   className,
   language,
 }: MicButtonProps) {
-  const { state, supported, unsupportedReason, error, start, stop } = useVoiceDictation({
+  const { state, supported, unsupportedReason, error, interimText, start, stop } = useVoiceDictation({
     workspaceId,
     onCommittedText: onInsertText,
     language,
   })
 
+  // Tell the host when a take is in flight. The mobile composer collapses its
+  // action bar (and this button) on blur; without this signal a tap-outside
+  // mid-take would unmount the hook and abort the session, losing the take.
   const isActive = state === "connecting" || state === "recording" || state === "stopping"
-
+  const onActiveChangeRef = useRef(onActiveChange)
+  onActiveChangeRef.current = onActiveChange
   useEffect(() => {
-    onActiveChange?.(isActive)
-  }, [isActive, onActiveChange])
+    onActiveChangeRef.current?.(isActive)
+  }, [isActive])
+  useEffect(() => {
+    return () => onActiveChangeRef.current?.(false)
+  }, [])
+
+  // Mirror the live hypothesis into the editor. Keep the callback in a ref so a
+  // new function identity each render doesn't re-fire this on every keystroke,
+  // and clear the ghost on unmount so a hidden mic can't strand preview text.
+  const onInterimTextRef = useRef(onInterimText)
+  onInterimTextRef.current = onInterimText
+  useEffect(() => {
+    onInterimTextRef.current?.(interimText)
+  }, [interimText])
+  useEffect(() => {
+    return () => onInterimTextRef.current?.("")
+  }, [])
 
   const tooltip = tooltipFor({ supported, unsupportedReason, state, error })
 
