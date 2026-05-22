@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { Mic, Loader2 } from "lucide-react"
+import { Mic, Loader2, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -150,14 +150,20 @@ export function MicButton({
           )}
           {state === "error" && error && (
             // The tooltip alone is invisible on touch (no hover), so a dropped
-            // take would look like it just stopped. Surface the reason inline
-            // instead; the button below stays the tap-to-resume target. Absolute
-            // positioning keeps it from shifting the composer layout (INV-21).
+            // take would look like it just stopped. Surface the reason inline as
+            // a compact toast with a caret pointing at the mic, which stays the
+            // tap-to-retry target. Absolute positioning keeps it from shifting
+            // the composer layout (INV-21).
             <span
               role="status"
-              className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 max-w-[11rem] select-none rounded-md bg-destructive px-2 py-1 text-center text-[10px] font-medium leading-snug text-destructive-foreground shadow-sm"
+              className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
             >
-              {error}
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="text-left">{error}</span>
+              <span
+                aria-hidden
+                className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
+              />
             </span>
           )}
           <Button

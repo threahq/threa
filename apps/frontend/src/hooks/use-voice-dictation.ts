@@ -49,6 +49,21 @@ interface UseVoiceDictationResult {
   stop: () => void
 }
 
+// Phrase structured upstream error codes as short, human copy. The raw provider
+// message (e.g. "ElevenLabs realtime closed (code 1000)") leaks the vendor and a
+// socket close code, so we never surface it — the backend sends a stable `code`
+// and the wording lives here (INV-46).
+export function friendlyTranscriptionError(code: string | undefined): string {
+  switch (code) {
+    case "INPUT_ERROR":
+      return "Couldn't make out the audio"
+    case "UPSTREAM_CLOSED":
+      return "Dictation stopped unexpectedly"
+    default:
+      return "Dictation hit a problem"
+  }
+}
+
 const FRAME_SAMPLES = 1600 // 100ms @ 16kHz
 const SAMPLE_RATE_HZ = 16_000
 // If the server never acks voice:stop (dropped connection mid-stop), fall
@@ -301,7 +316,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             updateInterim(delta.text)
           }
         })
-        socket.on("voice:transcription:error", (e: { message?: string }) => fail(e?.message || "Transcription failed"))
+        socket.on("voice:transcription:error", (e: { code?: string }) => fail(friendlyTranscriptionError(e?.code)))
         socket.on("voice:stopped", () => {
           // Server-initiated stop (e.g. the max-duration guard). Keep any pending
           // hypothesis and leave the recording state, not just tear down audio.
