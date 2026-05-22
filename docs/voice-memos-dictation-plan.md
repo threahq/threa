@@ -522,19 +522,63 @@ This gives you a concrete answer for residency-sensitive customers today (Deepgr
 
 ---
 
-## 9. Milestones
+## 9. Implementation plan (reviewable, end-to-end PRs)
 
-| #   | Outcome                                                                                                                                                            | Estimate |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
-| 1   | Backend feature skeleton: `voice_sessions` table, session create/finish/abort handlers, repo, service, `TranscriptionStrategy` interface.                          | 0.5 d    |
-| 2   | `RealtimeElevenLabsStrategy` + realtime gateway (socket.io ns relaying to upstream WS); cost recording on close; manual test with a CLI frame feeder.              | 1.5 d    |
-| 3   | Frontend recorder: AudioWorklet → PCM16 frames; realtime transport emitting `voice:audio`; receive `voice:transcript:delta`. End-to-end round-trip.                | 1.5 d    |
-| 4   | Editor insert-stream (append + interim-replacement) wired to the live caret. Dictation visibly working.                                                            | 0.5 d    |
-| 5   | UX polish: desktop button placement, mobile FAB, recording states, waveform.                                                                                       | 1 d      |
-| 6   | Second strategy (`RealtimeDeepgramStrategy`) + batch (`BatchOpenRouterStrategy`) behind the toggle; residency resolver; settings UI (model, language, vocabulary). | 1 d      |
-| 7   | E2E + integration tests; cost telemetry verification.                                                                                                              | 0.5 d    |
+**Slicing principle:** the reviewer tests only from a phone against the deployed app, with no backend access. So a backend-only or frontend-only PR is untestable for them and is not allowed. We avoid both failure modes — the mega-PR and the useless half-slice — by shipping a **thin vertical walking skeleton first (PR 1) that actually transcribes speech into the composer**, then layering refinements that each (a) keep the feature working and shippable, (b) are independently reviewable, and (c) add something the reviewer can feel on a phone. We do **not** build backend and frontend separately and tie them together at the end; the "tie-together" is PR 1 itself, kept deliberately minimal.
 
-Total: ~6.5 days for v1 (transcription only, three swappable strategies). Drop to ~5.5 days if we ship only the ElevenLabs realtime strategy first (milestone 6 — the second/batch strategies, residency resolver, and full settings UI — becomes a follow-up). Tidy-up pass is a separate ~2-day follow-up.
+Each PR below is independently reviewable and leaves `main` in a working, demoable state.
+
+### PR 1 — Walking skeleton: tap-to-dictate, happy path (ElevenLabs only)
+
+The one unavoidably vertical PR. Smallest change that lets you tap a mic on your phone, talk, and watch words land in the composer. Everything non-essential is deferred to keep it reviewable.
+
+- **Backend:** `voice_sessions` migration (INV-17); session `start`/`stop` handlers + service + repo (INV-51); dedicated voice socket relay (§2.2) — client frames up, deltas down; `TranscriptionStrategy` interface + **only** `RealtimeElevenLabsStrategy`; `ELEVENLABS_API_KEY` in `env.ts`; a simple **hard max-duration auto-stop** (cheap runaway-cost guard for testing) — full idle/expiry logic comes in PR 2.
+- **Frontend:** mic button with the real **responsive placement** (desktop near send, **mobile FAB above send on focus**) since the reviewer is on mobile and needs it to test at all; hidden once typing (per §1); AudioWorklet → PCM16 16 kHz capture; dedicated voice socket client; **naive** caret insert (append final text — no interim-replacement polish yet); capability-detect and disable with a tooltip where unsupported.
+- **Deferred to later PRs:** interim-replacement/flicker handling, warm-linger socket, idle-timeout + 10-min expiry sweeper, error/resume UX, cost recording, residency, settings, Deepgram, batch, waveform.
+- **Phone test:** open a stream → tap mic → speak → final text appears in the composer → send.
+- **Estimate:** ~3 d (this is the big one; it's the irreducible end-to-end core).
+
+### PR 2 — Lifecycle & robustness (still ElevenLabs only)
+
+Makes the skeleton feel good and behave under real conditions. Reviewable as "dictation quality + safety."
+
+- Interim-replacement drain (overwrite interim span, commit on `isFinal`) — no composer flicker.
+- Warm-linger voice socket (~30–60 s keep-alive after stop; upstream provider socket torn down on stop — §2.2).
+- Idle-timeout auto-close (VAD silence) + 10-min hard `expires_at` + sweeper; `voice:transcription:error` surface + tap-to-resume; socket-drop preserves captured text; `visibilitychange` pause banner.
+- **Phone test:** talk with pauses; stop and resume within a few seconds (instant, no re-handshake); background the tab; force a drop — text is preserved, no flicker.
+- **Estimate:** ~1.5 d.
+
+### PR 3 — Cost telemetry & per-user caps
+
+- Record usage on session `close()` via `CostRecorder` with INV-19 metadata; `audioPricePerHour` read from `models.yaml` (INV-33); per-user concurrency cap + daily cost cap.
+- **Phone test:** dictate a bit, then confirm the spend shows up wherever existing AI cost is surfaced (cost is sliceable by `functionId: "voice_transcription"` per Decision #8).
+- **Estimate:** ~0.5 d.
+
+### PR 4 — Settings: language hint + vocabulary (ElevenLabs keyterms)
+
+- Settings → Voice & dictation: language hint, vocabulary field (`userPreferences.voice.vocabularyHints`), tidy-up toggle (off, deferred). Vocabulary wired as ElevenLabs realtime keyterms (≤50 terms). Model picker shows ElevenLabs only for now.
+- **Phone test:** add a custom term, dictate it, see biasing improve recognition.
+- **Estimate:** ~0.5 d.
+
+### PR 5 — Second provider (Deepgram) + residency resolver
+
+- `RealtimeDeepgramStrategy`; `voiceResidencyPolicy` (default `"any"`, Decision #7); residency-aware resolver + Deepgram-EU endpoint (§7.1); `DEEPGRAM_API_KEY`; model picker now offers ElevenLabs + Deepgram with their keyterm caps.
+- **Phone test:** switch provider in settings, dictate, compare quality/steering; set policy to `eu` and confirm routing/disable behavior.
+- **Estimate:** ~1 d.
+
+### PR 6 — Batch fallback + degraded-device path
+
+- `BatchOpenRouterStrategy` behind a dev/debug flag (§1.5); MediaRecorder webm/opus fallback for devices without AudioWorklet so the mic still works (degrades to batch).
+- **Phone test:** on an older device or with the flag, dictation still produces text via the batch path.
+- **Estimate:** ~0.5 d.
+
+### PR 7 — Tidy-up pass (deferred follow-up)
+
+Separate from v1 entirely. Small model cleans disfluencies/corrections; timing model (end-of-session vs per-chunk) decided when built (Decision #5). ~2 d.
+
+---
+
+**Sequencing notes.** PRs 1→2 are the recommended order and each builds on the last, but **3, 4, 5, 6 are independent of one another** once PR 2 lands — they can ship in any order or in parallel. v1 = PRs 1–6 (~7 d, matching the earlier estimate). If you want the absolute minimum first cut to play with, PRs 1–2 alone are a complete, shippable ElevenLabs dictation feature (~4.5 d); 3–6 are hardening and breadth.
 
 ---
 
@@ -559,11 +603,11 @@ All eight are now **decided** and recorded here for traceability.
 
 1. ✅ **Default provider — `elevenlabs:scribe-v2-realtime`.** Cheapest ($0.39/hr), lowest latency (~150 ms), STT-specialized, zero-retention. Deepgram Nova-3 is the swappable comparison/steering + EU-residency strategy. OpenAI ruled out (no steering in realtime sessions). Needs `ELEVENLABS_API_KEY` (+ `DEEPGRAM_API_KEY` for the comparison/EU path).
 2. ✅ **Realtime connection model — backend relay over a dedicated voice socket.** Backend WS relay (cost tracking + key safety + residency routing) wins over browser-direct. The client↔backend leg is its **own dedicated socket** opened lazily on first dictation, reused across the dictate-then-type flow, and **kept warm for a ≈30–60 s linger window after stop** so resuming is instant; the upstream provider socket is torn down on stop (no idle billing) while the cheap client↔backend pipe lingers. Reuses existing socket lifecycle/auth logic broken out for this. See §2.2.
-3. ✅ **Strategy coverage in v1 — start with ElevenLabs.** Ship ElevenLabs realtime first; Deepgram realtime + OpenRouter batch land in the fast follow (milestone 6) so you can A/B and so the EU-residency path exists.
+3. ✅ **Strategy coverage in v1 — start with ElevenLabs.** Ship ElevenLabs realtime first (PRs 1–2); Deepgram realtime lands in PR 5 and OpenRouter batch in PR 6 (§9) so you can A/B and so the EU-residency path exists.
 4. ✅ **Audio persistence — never persist.** This is **voice-to-type**, not voice memos: audio is transcribed and discarded, never written to S3 or disk (relies on providers' zero-retention modes, §6). If we ever add a distinct "voice memos" feature later, persistence gets added there via the existing attachments path — it does not change this v1 model.
 5. ✅ **Tidy-up timing model — deferred until we build it.** Not decided now and doesn't block v1; the tidy-up pass is itself deferred (§5). When we implement it we'll choose between end-of-session full rewrite and per-chunk re-rewrite then, informed by how good realtime self-correction turns out to be.
 6. ✅ **Vocabulary hints in v1 — yes.** Cheap to build; ElevenLabs (≤50 realtime terms) and Deepgram (≤100 words) both accept keyterm biasing, so it helps domain language immediately.
-7. ✅ **Data residency — no gating; default policy `"any"`.** We do **not** gate EU behind "coming soon" — the Deepgram-EU route (`api.eu.deepgram.com`, verified GA, drop-in hostname swap, same keys) folds into milestone 6 so residency-sensitive workspaces are supported at launch. The per-workspace `voiceResidencyPolicy` (§7.1) **defaults to `"any"`** (current usage is just two users who don't care); workspaces that need EU/US pinning can opt in, and unsatisfiable policies fail closed (mic disabled, never silently US).
+7. ✅ **Data residency — no gating; default policy `"any"`.** We do **not** gate EU behind "coming soon" — the Deepgram-EU route (`api.eu.deepgram.com`, verified GA, drop-in hostname swap, same keys) folds into PR 5 (§9) so residency-sensitive workspaces are supported at launch. The per-workspace `voiceResidencyPolicy` (§7.1) **defaults to `"any"`** (current usage is just two users who don't care); workspaces that need EU/US pinning can opt in, and unsatisfiable policies fail closed (mic disabled, never silently US).
 8. ✅ **Cost visibility — track, don't surface separately (yet).** Voice cost is recorded through the existing AI cost telemetry tagged `functionId: "voice_transcription"` (§3.5) so it's **easy to slice/visualize voice spend** in whatever cost view we already have, but we do **not** add a dedicated "voice spend this month" UI in v1 — dictation is virtually free at expected usage. Revisit if a power user ever runs it up.
 
 ---
