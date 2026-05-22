@@ -136,7 +136,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
         const source = audioContext.createMediaStreamSource(stream)
         const worklet = new AudioWorkletNode(audioContext, "pcm16-processor", {
-          processorOptions: { frameSamples: FRAME_SAMPLES },
+          processorOptions: { frameSamples: FRAME_SAMPLES, targetSampleRate: SAMPLE_RATE_HZ },
         })
         workletRef.current = worklet
         // Route through a muted gain so the graph stays pulled without playing
@@ -146,6 +146,9 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         source.connect(worklet)
         worklet.connect(muted)
         muted.connect(audioContext.destination)
+        // iOS Safari starts the context suspended; without this the worklet's
+        // process() never runs and no audio frames are produced.
+        if (audioContext.state === "suspended") await audioContext.resume()
 
         const socket = io(voiceUrl, { path: "/socket.io/", withCredentials: true, autoConnect: true })
         socketRef.current = socket
