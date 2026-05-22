@@ -18,20 +18,18 @@ describe("formatClock", () => {
 })
 
 describe("recordingRingShadow", () => {
-  it("layers three concentric destructive rings", () => {
+  it("layers a crisp inner ring and a soft outer ring", () => {
     const shadow = recordingRingShadow(0)
     expect(shadow.split(", ")).toEqual([
-      "0 0 0 1.00px hsl(var(--destructive) / 0.280)",
-      "0 0 0 3.00px hsl(var(--destructive) / 0.100)",
-      "0 0 0 6.00px hsl(var(--destructive) / 0.030)",
+      "0 0 0 1.00px hsl(var(--destructive) / 0.300)",
+      "0 0 0 2.50px hsl(var(--destructive) / 0.080)",
     ])
   })
 
   it("grows spread and opacity with the input level", () => {
     expect(recordingRingShadow(1).split(", ")).toEqual([
-      "0 0 0 2.50px hsl(var(--destructive) / 0.600)",
-      "0 0 0 9.00px hsl(var(--destructive) / 0.260)",
-      "0 0 0 16.00px hsl(var(--destructive) / 0.120)",
+      "0 0 0 2.00px hsl(var(--destructive) / 0.550)",
+      "0 0 0 6.50px hsl(var(--destructive) / 0.180)",
     ])
   })
 

@@ -9,16 +9,16 @@ import { useVoiceDictation, type VoiceDictationState } from "@/hooks/use-voice-d
 const NEAR_CAP_MS = 60_000
 
 // Voice-reactive halo for the recording state: a crisp inner ring gives the live
-// state a defined edge, while two softer rings bloom outward as the input level
-// rises so the button visibly "breathes" with the speaker's voice. Built purely
-// from layered box-shadows so it never reflows neighbors (INV-21) and reads the
-// same at both the 28px inline and 30px FAB sizes the button renders at.
+// state a defined edge, and a single soft ring breathes outward as the input
+// level rises so the button responds to the speaker's voice without bleeding
+// into neighboring controls. Built purely from layered box-shadows so it never
+// reflows neighbors (INV-21) and reads the same at both the 28px inline and 30px
+// FAB sizes the button renders at.
 export function recordingRingShadow(level: number): string {
   const l = Math.max(0, Math.min(1, level))
   return [
-    `0 0 0 ${(1 + l * 1.5).toFixed(2)}px hsl(var(--destructive) / ${(0.28 + l * 0.32).toFixed(3)})`,
-    `0 0 0 ${(3 + l * 6).toFixed(2)}px hsl(var(--destructive) / ${(0.1 + l * 0.16).toFixed(3)})`,
-    `0 0 0 ${(6 + l * 10).toFixed(2)}px hsl(var(--destructive) / ${(0.03 + l * 0.09).toFixed(3)})`,
+    `0 0 0 ${(1 + l * 1).toFixed(2)}px hsl(var(--destructive) / ${(0.3 + l * 0.25).toFixed(3)})`,
+    `0 0 0 ${(2.5 + l * 4).toFixed(2)}px hsl(var(--destructive) / ${(0.08 + l * 0.1).toFixed(3)})`,
   ].join(", ")
 }
 
@@ -107,18 +107,11 @@ export function MicButton({
   const recording = state === "recording"
   const remainingMs = maxDurationMs !== null ? maxDurationMs - elapsedMs : null
   const nearCap = remainingMs !== null && remainingMs <= NEAR_CAP_MS
-  // While recording (and motion is allowed), drive both the halo rings and the
-  // fill tint from the live input level so the whole button responds to speech
-  // instead of pulsing on a fixed timer. The fill deepens as the inner ring
-  // tightens, reinforcing the center; reduced-motion falls back to the static
-  // `bg-destructive/15` tint below (no level reactivity).
-  const recordingStyle =
-    recording && !prefersReducedMotion
-      ? {
-          boxShadow: recordingRingShadow(level),
-          backgroundColor: `hsl(var(--destructive) / ${(0.12 + level * 0.12).toFixed(3)})`,
-        }
-      : undefined
+  // While recording (and motion is allowed), drive the halo rings from the live
+  // input level so the button responds to speech instead of pulsing on a fixed
+  // timer. The fill stays the static `bg-destructive/15` tint (below) so only
+  // the ring moves; reduced-motion drops the ring and keeps the tint alone.
+  const recordingStyle = recording && !prefersReducedMotion ? { boxShadow: recordingRingShadow(level) } : undefined
 
   const handleClick = () => {
     if (state === "recording" || state === "connecting") {
@@ -155,10 +148,10 @@ export function MicButton({
             aria-label={state === "recording" ? "Stop dictation" : "Dictate a message"}
             aria-pressed={state === "recording"}
             className={cn(
-              "h-7 w-7 shrink-0 transition-[box-shadow,background-color] duration-100",
+              "h-7 w-7 shrink-0 transition-shadow duration-100",
               // The persistent destructive tint signals the live state on its
-              // own; the voice-reactive halo + fill (below) add motion only when
-              // the user hasn't opted out via prefers-reduced-motion.
+              // own; the voice-reactive halo (below) adds motion only when the
+              // user hasn't opted out via prefers-reduced-motion.
               recording && "bg-destructive/15 text-destructive",
               className
             )}
