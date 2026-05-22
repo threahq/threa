@@ -25,12 +25,16 @@ export function buildNamingSystemPrompt(existingNames: string[], requireName: bo
   1. Analyze the conversation and identify the main topic or purpose
   2. Pay attention to any attached files - if a user uploads an image or document and asks about it, the title should reflect what's in the attachment
   3. Consider any other streams provided in the list of existing names, these should be avoided as much as possible as recent conversations with similar names confuse users
-  4. Generate a title that is descriptive and concise
+  4. Name the topic directly, in the language and wording the participants used
   5. Evaluate the title against the evaluation criteria
 
 Evaluation criteria:
 - Return ONLY the title, no quotes or explanation.
-- The title should be descriptive and concise, try avoiding generic names like "Quick Question" or "New Discussion"
+- Lead with the subject itself. Do NOT add framing like "Discussion about", "Chat about", "Conversation regarding", "Thoughts on", "Questions about", and do NOT describe the tone (e.g. "Casual chat", "Quick question"). That a conversation discusses something is already implied — name the thing, not the act of discussing it.
+- Do NOT state which language the conversation is in (never write "in Swedish", "auf Deutsch", etc.). The title sits next to the conversation, so labeling its language is noise.
+- Write the title in the dominant language of the conversation, not English by default. If the participants are talking in Swedish, the title is in Swedish; if in Japanese, in Japanese. When a conversation mixes languages, follow the language the topic is actually discussed in and reuse the participants' own phrasing.
+- Keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation. Never translate, localize, or re-spell them — carry the participants' own words into the title verbatim.
+- The title should be specific and concrete, try avoiding generic names like "Quick Question" or "New Discussion"
 - If the conversation involves attached files (images, documents, etc.), incorporate what they contain into the title
 ${existingNames.length > 0 ? `- Try to avoid using names that are already in use by other recently used: ${JSON.stringify(existingNames)}` : ""}
 ${

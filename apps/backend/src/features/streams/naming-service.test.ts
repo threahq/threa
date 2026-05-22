@@ -214,6 +214,21 @@ describe("StreamNamingService", () => {
 
       expect(systemMessage).toContain("You MUST generate a title")
     })
+
+    test("should instruct the model to follow the conversation language and drop preamble", async () => {
+      mockGenerateText.mockResolvedValue({ value: "Title", response: {} })
+
+      await service.attemptAutoNaming("stream_123", false)
+
+      const calls = mockGenerateText.mock.calls
+      const lastCall = calls[calls.length - 1]?.[0] as { messages: Array<{ role: string; content: string }> }
+      const systemMessage = lastCall.messages.find((m) => m.role === "system")?.content ?? ""
+
+      expect(systemMessage).toContain("dominant language of the conversation")
+      expect(systemMessage).toContain("Do NOT state which language")
+      expect(systemMessage).toContain("Do NOT add framing")
+      expect(systemMessage).toContain("verbatim")
+    })
   })
 
   describe("edge cases", () => {

@@ -211,6 +211,53 @@ User: Can we hire a freelancer for this?`,
       wordCountRange: { min: 2, max: 5 },
     },
   },
+  // Language: title follows the conversation's language and drops preamble
+  {
+    id: "language-swedish-topic-001",
+    name: "Language: Swedish conversation stays in Swedish",
+    input: {
+      conversationText: `User: Jag funderar på att börja odla tomater på balkongen i sommar
+User: Vilken sort tror du passar bäst för ett soligt läge?
+User: Och hur ofta måste man vattna?`,
+      category: "language",
+    },
+    expectedOutput: {
+      // Should not label the language or use English framing words
+      nameNotContains: ["swedish", "svenska", "discussion", "chat", "conversation", "about"],
+      wordCountRange: { min: 2, max: 5 },
+    },
+  },
+  {
+    id: "language-proper-noun-001",
+    name: "Language: Product name preserved verbatim in Swedish chat",
+    input: {
+      conversationText: `User: Har du testat Lightroom för att redigera bilderna?
+User: Jag tycker färgerna blir bättre där än i Photoshop
+User: Men exporten känns långsam`,
+      category: "language",
+    },
+    expectedOutput: {
+      // Proper nouns must survive untranslated
+      nameContains: ["lightroom", "photoshop"],
+      nameNotContains: ["swedish", "svenska", "discussion", "chat", "conversation"],
+      wordCountRange: { min: 2, max: 5 },
+    },
+  },
+  {
+    id: "language-no-preamble-001",
+    name: "Language: English topic without 'Discussion about' preamble",
+    input: {
+      conversationText: `User: Let's figure out the seating chart for the wedding
+User: We have 120 guests and 12 tables
+User: The tricky part is keeping the two families apart`,
+      category: "casual",
+    },
+    expectedOutput: {
+      nameContains: ["seating", "wedding", "table"],
+      nameNotContains: ["discussion about", "chat about", "conversation about"],
+      wordCountRange: { min: 2, max: 5 },
+    },
+  },
   {
     id: "edge-code-heavy-001",
     name: "Edge: Heavy code content",

@@ -13,7 +13,7 @@ export interface StreamNamingInput {
   /** Whether a name is required (true for agent messages) */
   requireName?: boolean
   /** Category for organizing test cases */
-  category?: "technical" | "casual" | "question" | "minimal" | "duplicate-avoidance"
+  category?: "technical" | "casual" | "question" | "minimal" | "duplicate-avoidance" | "language"
 }
 
 /**
