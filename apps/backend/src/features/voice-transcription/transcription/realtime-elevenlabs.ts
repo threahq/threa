@@ -57,6 +57,8 @@ class ElevenLabsSession implements TranscriptionSession {
   private readonly errorCallbacks: Array<(e: TranscriptionError) => void> = []
   private ws: WebSocket | null = null
   private totalAudioMs = 0
+  private chunksSent = 0
+  private openedAt = 0
   private closed = false
 
   constructor(
@@ -83,6 +85,7 @@ class ElevenLabsSession implements TranscriptionSession {
       ws.addEventListener("open", () => {
         if (settled) return
         settled = true
+        this.openedAt = Date.now()
         resolve()
       })
 
@@ -102,6 +105,23 @@ class ElevenLabsSession implements TranscriptionSession {
           reject(new Error(`ElevenLabs realtime closed before open (code ${event.code})`))
           return
         }
+        // Diagnostic: a healthy take dies at ~10s, so capture the close code AND
+        // reason (ElevenLabs sends a human string here), whether we initiated it,
+        // and how much audio we'd actually relayed by then — enough to tell an
+        // upstream heartbeat/idle timeout apart from a delivery problem.
+        logger.info(
+          {
+            provider: "elevenlabs",
+            code: event.code,
+            reason: event.reason || null,
+            wasClean: event.wasClean,
+            initiatedByUs: this.closed,
+            chunksSent: this.chunksSent,
+            totalAudioMs: Math.round(this.totalAudioMs),
+            connectedMs: this.openedAt ? Date.now() - this.openedAt : null,
+          },
+          "ElevenLabs realtime socket closed"
+        )
         // A drop after open is only expected when we initiated the close. An
         // unsolicited close means the upstream went away mid-dictation; surface
         // it so the relay leaves its recording state instead of hanging (INV-11).
@@ -145,6 +165,7 @@ class ElevenLabsSession implements TranscriptionSession {
   pushAudio(frame: Buffer): void {
     if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return
     this.totalAudioMs += frame.length / BYTES_PER_MS
+    this.chunksSent++
     this.ws.send(
       JSON.stringify({
         message_type: "input_audio_chunk",
