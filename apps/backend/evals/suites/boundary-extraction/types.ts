@@ -73,6 +73,8 @@ export interface BoundaryExtractionExpected {
   expectConversationId?: string
   /** New topic should contain these words (if new conversation) */
   topicContains?: string[]
+  /** New topic should NOT contain these words (e.g. framing preamble, language labels) */
+  topicNotContains?: string[]
   /** Minimum confidence threshold */
   minConfidence?: number
   /** Should update completeness for these conversations */

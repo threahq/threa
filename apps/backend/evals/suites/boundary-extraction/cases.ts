@@ -355,4 +355,76 @@ Any ideas what's causing this?`,
       minConfidence: 0.7,
     },
   },
+
+  // Topic naming: lead with the subject, no framing preamble
+  {
+    id: "topic-naming-no-preamble-001",
+    name: "Topic naming: English topic without 'Discussion about' preamble",
+    input: {
+      newMessage: {
+        authorId: "user_abc123",
+        authorType: "user",
+        contentMarkdown:
+          "Let's lock down the seating chart for the wedding — 120 guests across 12 tables, and we need to keep the two families apart.",
+      },
+      activeConversations: [],
+      streamType: "channel",
+      category: "new-topic",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["seating", "wedding", "table"],
+      topicNotContains: ["discussion about", "chat about", "conversation about", "thoughts on"],
+      minConfidence: 0.7,
+    },
+  },
+
+  // Topic naming: follow the conversation's language, don't label it
+  {
+    id: "topic-naming-swedish-001",
+    name: "Topic naming: Swedish conversation stays in Swedish",
+    input: {
+      newMessage: {
+        authorId: "user_abc123",
+        authorType: "user",
+        contentMarkdown:
+          "Jag funderar på att börja odla tomater på balkongen i sommar. Vilken sort passar bäst för ett soligt läge, och hur ofta måste man vattna?",
+      },
+      activeConversations: [],
+      streamType: "channel",
+      category: "new-topic",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      // Topic must reuse the source conversation's Swedish wording, not translate to English
+      topicContains: ["tomat", "balkong"],
+      // Must not label the language or fall back to English framing
+      topicNotContains: ["swedish", "svenska", "discussion", "chat about", "conversation about"],
+      minConfidence: 0.7,
+    },
+  },
+
+  // Topic naming: keep proper nouns verbatim, don't translate them
+  {
+    id: "topic-naming-proper-noun-001",
+    name: "Topic naming: product names preserved verbatim in Swedish chat",
+    input: {
+      newMessage: {
+        authorId: "user_abc123",
+        authorType: "user",
+        contentMarkdown:
+          "Har du testat Lightroom för att redigera bilderna? Jag tycker färgerna blir bättre där än i Photoshop, men exporten känns långsam.",
+      },
+      activeConversations: [],
+      streamType: "channel",
+      category: "new-topic",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      // Proper nouns survive untranslated (evaluator passes on any one match)
+      topicContains: ["lightroom", "photoshop"],
+      topicNotContains: ["swedish", "svenska"],
+      minConfidence: 0.7,
+    },
+  },
 ]

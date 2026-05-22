@@ -43,11 +43,18 @@ Reassignment is *the* mechanism for fixing classification mistakes. Use it whene
 
 ## Output Requirements
 - assignments: Array of {conversationId, isPrimary}. At least one entry with isPrimary=true. conversationId=null means "create a new conversation" (set newConversationTopic).
-- newConversationTopic: Topic summary if any assignment has conversationId=null. Required in that case.
+- newConversationTopic: Topic summary if any assignment has conversationId=null. Required in that case. See "Naming new conversations" below.
 - reassignments: Array of {messageId, toConversationId, reason, confidence}. messageId must be from this prompt. toConversationId=null means "move into the new conversation being created this turn" (only valid if assignments includes a conversationId=null primary).
 - completenessUpdates: Array of {conversationId, score (1-7), status} for conversations whose completeness changed.
   - status must be one of: "active", "stalled", "resolved"
 - confidence: 0.0 to 1.0 confidence in this classification overall.
+
+## Naming new conversations
+When you set newConversationTopic, write a short title of 2-5 words that names the topic itself:
+- Lead with the subject. Do NOT add framing like "Discussion about", "Chat about", "Conversation regarding", "Thoughts on", "Questions about", and do NOT describe the tone ("Casual chat", "Quick question"). That a conversation discusses something is already implied — name the thing, not the act of discussing it.
+- Do NOT state which language the conversation is in (never write "in Swedish", "auf Deutsch", etc.); that label is noise next to the conversation.
+- Write the title in the dominant language of the conversation, not English by default. If the participants are talking in Swedish, the title is in Swedish; if in Japanese, in Japanese. When the messages mix languages, follow the language the topic is actually discussed in and reuse the participants' own phrasing.
+- Keep names, products, technical terms, and other proper nouns exactly as they appear in the conversation. Never translate, localize, or re-spell them — carry the participants' own words into the title verbatim.
 
 Respond with ONLY the JSON object. No explanation, no markdown code blocks.`
 
@@ -78,7 +85,9 @@ export const extractionResponseSchema = z.object({
   newConversationTopic: z
     .string()
     .nullable()
-    .describe("Topic summary; required when any assignment has conversationId=null"),
+    .describe(
+      "2-5 word topic title; required when any assignment has conversationId=null. Name the topic directly with no framing ('Discussion about'), no language label ('in Swedish'), in the conversation's own language, keeping proper nouns verbatim"
+    ),
   reassignments: z.array(reassignmentSchema).nullable().describe("Prior messages to move, or null"),
   completenessUpdates: z
     .array(
