@@ -15,6 +15,7 @@ type Config = {
   defaultDisplayName?: string
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
+  streamCursors?: Record<string, string>
 }
 
 type RuntimeSessionLink = {
@@ -38,6 +39,7 @@ interface StreamMessage {
   id: string
   authorType: string
   authorDisplayName?: string
+  sequence: string
   content: string
   createdAt: string
 }
@@ -46,6 +48,7 @@ let config: Config | undefined
 let timer: ReturnType<typeof setInterval> | undefined
 let pollInFlight = false
 let pending: ClaimedInvocation | undefined
+let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
 
 function validateConfig(value: unknown): Config | undefined {
@@ -217,12 +220,28 @@ function formatInvocationContext(messages: StreamMessage[], sourceMessageId: str
   ].join("\n")
 }
 
-async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<string> {
-  if (!config) return ""
+async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<{ context: string; cursor?: string }> {
+  if (!config) return { context: "" }
+  const cursor = config.streamCursors?.[invocation.activeStreamId]
+  const query = cursor ? `after=${encodeURIComponent(cursor)}&limit=50` : "limit=12"
   const body = await request<{ data: StreamMessage[] }>(
-    `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?limit=12`
+    `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?${query}`
   )
-  return formatInvocationContext(body.data, invocation.sourceMessageId)
+
+  const sourceIncluded = body.data.some((message) => message.id === invocation.sourceMessageId)
+  const messages = sourceIncluded
+    ? body.data
+    : (
+        await request<{ data: StreamMessage[] }>(
+          `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?limit=12`
+        )
+      ).data
+  const orderedMessages = [...messages].sort((a, b) => (BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1))
+
+  return {
+    context: formatInvocationContext(orderedMessages, invocation.sourceMessageId),
+    cursor: orderedMessages.at(-1)?.sequence,
+  }
 }
 
 async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
@@ -250,10 +269,11 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   if (!body.data) return
   pending = body.data
   pendingAssistantTexts = []
-  const context = await fetchInvocationContext(body.data).catch((error) => {
+  const { context, cursor } = await fetchInvocationContext(body.data).catch((error) => {
     ctx.ui.notify(`Threa remote context fetch failed: ${String(error)}`, "warning")
-    return ""
+    return { context: "" }
   })
+  pendingContextCursor = cursor
   await heartbeat("busy", `Working on ${body.data.id}`)
   setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
@@ -313,6 +333,13 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   void poll()
 }
 
+function advanceStreamCursor(invocation: ClaimedInvocation): void {
+  if (!config || !pendingContextCursor) return
+  config.streamCursors ??= {}
+  config.streamCursors[invocation.activeStreamId] = pendingContextCursor
+  saveConfig()
+}
+
 async function completePending(markdown: string): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
@@ -328,7 +355,9 @@ async function completePending(markdown: string): Promise<void> {
       },
     }),
   })
+  advanceStreamCursor(invocation)
   pending = undefined
+  pendingContextCursor = undefined
   pendingAssistantTexts = []
   await heartbeat("available")
 }
@@ -337,6 +366,7 @@ async function failPending(error: unknown): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
   pending = undefined
+  pendingContextCursor = undefined
   pendingAssistantTexts = []
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
