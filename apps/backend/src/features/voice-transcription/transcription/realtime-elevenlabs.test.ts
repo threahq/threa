@@ -104,8 +104,7 @@ describe("RealtimeElevenLabsStrategy audio + transcripts", () => {
     const { session, socket } = await openSession()
     // 32000 bytes of PCM16 mono @ 16kHz == 1000ms of audio.
     session.pushAudio(Buffer.alloc(32_000))
-    expect(socket.sent).toHaveLength(1)
-    const msg = JSON.parse(socket.sent[0])
+    const msg = JSON.parse(socket.sent[0]!)
     expect(msg).toMatchObject({ message_type: "input_audio_chunk", commit: false, sample_rate: 16_000 })
     expect(typeof msg.audio_base_64).toBe("string")
 

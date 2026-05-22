@@ -52,8 +52,14 @@ export function MicButton({
   const tooltip = tooltipFor({ supported, unsupportedReason, state, error })
 
   const handleClick = () => {
-    if (state === "recording" || state === "connecting") stop()
-    else start()
+    if (state === "recording" || state === "connecting") {
+      stop()
+      return
+    }
+    // Mid-teardown: ignore the click rather than re-entering start() before the
+    // previous take has finished tearing down.
+    if (state === "stopping") return
+    start()
   }
 
   return (
