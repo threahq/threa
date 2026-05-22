@@ -492,6 +492,7 @@ export class BoundaryExtractionService {
         lastMessagePreview: lastMessage?.contentMarkdown.slice(0, 100) ?? "",
         participantIds: c.participantIds,
         completenessScore: c.completenessScore,
+        status: c.status,
         contextMessageIds: contextIds,
       }
     })

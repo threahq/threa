@@ -65,6 +65,43 @@ export const boundaryExtractionCases: EvalCase<BoundaryExtractionInput, Boundary
     },
   },
 
+  {
+    id: "new-topic-after-resolved-001",
+    name: "New topic: Unrelated message after a resolved conversation",
+    input: {
+      newMessage: {
+        authorId: "user_abc123",
+        authorType: "user",
+        contentMarkdown: "Switching gears — can someone review my PR for the new billing export?",
+      },
+      activeConversations: [
+        {
+          id: "conv_deploy_done001",
+          topicSummary: "Deployment pipeline issues",
+          messageCount: 8,
+          lastMessagePreview: "Perfect, that fixed it! Thanks everyone.",
+          participantIds: ["user_abc123", "user_def456"],
+          completenessScore: 7,
+          status: "resolved",
+        },
+      ],
+      recentMessages: [
+        {
+          authorId: "user_def456",
+          authorType: "user",
+          contentMarkdown: "Perfect, that fixed it! Thanks everyone.",
+        },
+      ],
+      streamType: "channel",
+      category: "new-topic",
+    },
+    expectedOutput: {
+      expectNewConversation: true,
+      topicContains: ["billing", "export", "PR", "review"],
+      minConfidence: 0.7,
+    },
+  },
+
   // Continue existing conversation cases
   {
     id: "continue-direct-reply-001",

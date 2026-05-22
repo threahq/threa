@@ -84,7 +84,11 @@ function buildExtractionContext(input: BoundaryExtractionInput, workspaceId: str
   return {
     newMessage: toMessage(input.newMessage, streamId, 1),
     recentMessages: (input.recentMessages || []).map((m, i) => toMessage(m, streamId, i + 2)),
-    activeConversations: (input.activeConversations || []).map((c) => ({ ...c, contextMessageIds: [] })),
+    activeConversations: (input.activeConversations || []).map((c) => ({
+      ...c,
+      status: c.status ?? "active",
+      contextMessageIds: [],
+    })),
     streamType: input.streamType || "scratchpad",
     workspaceId,
   }
