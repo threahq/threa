@@ -30,6 +30,14 @@ export const BOUNDARY_EXTRACTION_PROMPT = `Analyze this new message and decide w
 From: {{AUTHOR}}
 Content: {{CONTENT}}
 
+## Choosing a conversation
+First decide whether this message continues an existing conversation or starts a new one. Assign it to an existing conversation (as primary) only when it genuinely continues that topic — judge by:
+- Topic continuity: does it advance the same subject the conversation is about?
+- Explicit references: does it reply to, quote, or build on something in that conversation?
+- Recency and flow: does it read as the next turn of an active back-and-forth?
+
+Start a NEW conversation (primary assignment with conversationId=null) when the message opens a topic that no active conversation covers — a new question, a new subject, or an unrelated aside. A short or ambiguous message that doesn't clearly continue any listed conversation is a new conversation, not a default into the most recent one. Do not attach a message to a conversation whose status is "resolved" unless it directly reopens that exact topic; a new topic after a resolved conversation is a new conversation. When in doubt between extending a stale/resolved conversation and starting fresh, start fresh.
+
 ## Multi-membership
 A message can belong to more than one conversation. If this new message clearly continues two different ongoing threads (e.g. a single ping that references two topics), assign it to both. Pick the conversation it MOST continues as primary; the others are secondaries. Most messages have only a primary assignment — only return secondaries when the message genuinely advances two distinct conversations.
 

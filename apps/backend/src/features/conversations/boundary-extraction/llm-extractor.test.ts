@@ -71,6 +71,7 @@ function createMockConversation(overrides: Partial<ConversationSummary> = {}): C
     lastMessagePreview: "Last message preview",
     participantIds: ["usr_test"],
     completenessScore: 3,
+    status: "active",
     contextMessageIds: [],
     ...overrides,
   }

@@ -91,7 +91,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
               const tag = c.isParent ? " [parent-thread]" : ""
               const contextIds =
                 c.contextMessageIds.length > 0 ? `, in-context messages: [${c.contextMessageIds.join(", ")}]` : ""
-              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})`
+              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})`
             })
             .join("\n")
         : "No active conversations in this stream yet."

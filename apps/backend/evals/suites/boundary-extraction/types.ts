@@ -14,6 +14,8 @@ export interface EvalConversationSummary {
   lastMessagePreview: string
   participantIds: string[]
   completenessScore: number
+  /** Lifecycle status; defaults to "active" when omitted. */
+  status?: ConversationStatus
 }
 
 /**
