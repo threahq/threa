@@ -5,8 +5,7 @@ import type { ScheduledMessageView } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatSendCountdown } from "@/lib/dates"
-import { getStreamName, streamFallbackLabel } from "@/lib/streams"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
 import { RelativeTime } from "@/components/relative-time"
@@ -41,13 +40,9 @@ export function ScheduledItem({ scheduled, workspaceId, onEdit, onCancel, onSend
   // everywhere keeps display and input consistent.
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
-  // Stream name resolution must go through the canonical helpers so #channels
-  // pick up their slug prefix and untitled streams get a context-appropriate
-  // fallback. The row may briefly outlive a membership the user no longer has;
-  // the empty-find branch covers that until the failure path catches it.
-  const streams = useWorkspaceStreams(workspaceId)
-  const stream = streams.find((s) => s.id === scheduled.streamId)
-  const streamName = stream ? (getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")) : "stream"
+  // The row may briefly outlive a membership the user no longer has; the
+  // "stream" fallback covers that until the failure path catches it.
+  const streamName = useStreamName(workspaceId, scheduled.streamId) ?? "stream"
 
   const preview = useMemo(
     () => stripMarkdownToInline(scheduled.contentMarkdown).trim() || "(empty)",

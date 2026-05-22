@@ -1,14 +1,12 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Archive, Bell, Check, CircleAlert, Trash2, Undo2 } from "lucide-react"
-import { StreamTypes } from "@threa/types"
-import type { SavedMessageView, SavedStatus, StreamType } from "@threa/types"
+import type { SavedMessageView, SavedStatus } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
-import { getStreamName, resolveDmDisplayName, streamFallbackLabel } from "@/lib/streams"
-import { useWorkspaceStreams, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
+import { useStreamName } from "@/hooks/use-stream-name"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { RelativeTime } from "@/components/relative-time"
 import { ReminderPopoverContent } from "@/components/timeline/reminder-popover-content"
@@ -29,16 +27,11 @@ export function SavedItem({ saved, workspaceId, onMarkDone, onArchive, onRestore
   const linkable = !isUnavailable && saved.message !== null
   const href = `/w/${workspaceId}/s/${saved.streamId}?m=${saved.messageId}`
   const previewText = resolvePreview(saved)
-  // Stream label routes through the canonical resolvers so DMs render the
-  // peer's name (the snapshot's `streamName` is null for DMs since DM names
-  // are viewer-specific and not persisted on the stream row). When the stream
-  // isn't in local cache (access lost, snapshot pre-dates membership churn)
-  // we fall back to the snapshot, then to a context-appropriate label.
-  const streams = useWorkspaceStreams(workspaceId)
-  const users = useWorkspaceUsers(workspaceId)
-  const dmPeers = useWorkspaceDmPeers(workspaceId)
-  const stream = streams.find((s) => s.id === saved.streamId)
-  const streamLabel = resolveStreamLabel(stream, saved, users, dmPeers)
+  // The backend snapshot's `streamName` is null for DMs (viewer-specific names
+  // aren't persisted on the stream row), so resolve from the workspace caches.
+  // The persisted snapshot is the last-resort fallback for rows whose stream
+  // is no longer cached (lost access).
+  const streamLabel = useStreamName(workspaceId, saved.streamId) ?? saved.message?.streamName ?? "Unknown"
 
   // Row-as-link: the content area navigates to the message when clicked.
   // Action buttons are siblings (not nested inside the Link) so their clicks
@@ -200,22 +193,4 @@ function resolvePreview(saved: SavedMessageView): string {
   if (saved.message) return stripMarkdownToInline(saved.message.contentMarkdown)
   if (saved.unavailableReason === "deleted") return "Original message was deleted"
   return "You no longer have access to this message"
-}
-
-function resolveStreamLabel(
-  stream: { id: string; type: StreamType; slug?: string | null; displayName?: string | null } | undefined,
-  saved: SavedMessageView,
-  users: Array<{ id: string; name: string }>,
-  dmPeers: Array<{ streamId: string; userId: string }>
-): string {
-  if (!stream) {
-    // No cached stream (lost access, archived membership). Fall back to the
-    // backend snapshot, then to a generic placeholder.
-    return saved.message?.streamName ?? "Unknown"
-  }
-  if (stream.type === StreamTypes.DM) {
-    const peerName = resolveDmDisplayName(stream.id, users, dmPeers)
-    if (peerName) return peerName
-  }
-  return getStreamName(stream) ?? streamFallbackLabel(stream.type, "generic")
 }
