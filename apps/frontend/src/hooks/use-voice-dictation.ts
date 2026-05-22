@@ -48,7 +48,13 @@ function resolveVoiceUrl(workspaceId: string): string | null {
   // Mirror SocketProvider's dev rewrite so phone-over-WiFi testing connects to
   // the right host instead of the worker's localhost.
   const base = import.meta.env.DEV ? config.wsUrl.replace("localhost", window.location.hostname) : config.wsUrl
-  return `${base}/voice`
+  // socket.io derives the namespace from the URL path, so `/voice` must sit
+  // before any query string. The wsUrl can carry a `?region=…` param (staging
+  // routes by it); naive concatenation would fold `/voice` into the region
+  // value and corrupt both the namespace and the route.
+  const url = new URL(base)
+  url.pathname = "/voice"
+  return url.toString()
 }
 
 /**
