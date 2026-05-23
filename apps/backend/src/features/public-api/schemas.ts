@@ -15,6 +15,7 @@ import {
   MEMO_TYPES,
   KNOWLEDGE_TYPES,
   EXTRACTION_CONTENT_TYPES,
+  AGENT_STEP_TYPES,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 
@@ -111,6 +112,13 @@ export const failInvocationSchema = z.object({
   instanceId: z.string().min(1).max(128),
   claimToken: z.string().min(1).max(256),
   errorMessage: z.string().min(1).max(1000),
+})
+
+export const recordInvocationStepSchema = z.object({
+  instanceId: z.string().min(1).max(128),
+  claimToken: z.string().min(1).max(256),
+  stepType: z.enum(AGENT_STEP_TYPES),
+  content: z.string().min(1).max(10_000),
 })
 
 export const listMessagesSchema = z

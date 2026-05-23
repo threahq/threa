@@ -157,7 +157,20 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
   })
 }
 
-async function traceHeartbeat(text: string): Promise<void> {
+async function recordTraceStep(stepType: string, content: string): Promise<void> {
+  if (!config || !pending) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${pending.id}/steps`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      claimToken: pending.claimToken,
+      stepType,
+      content,
+    }),
+  }).catch(() => undefined)
+}
+
+async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
   if (!pending) return
   const trimmed = text.trim().slice(0, 160)
   if (!trimmed) return
@@ -165,6 +178,7 @@ async function traceHeartbeat(text: string): Promise<void> {
   if (lastTraceHeartbeat?.text === trimmed && now - lastTraceHeartbeat.at < 5000) return
   lastTraceHeartbeat = { text: trimmed, at: now }
   await heartbeat("busy", trimmed).catch(() => undefined)
+  if (stepType) await recordTraceStep(stepType, trimmed)
 }
 
 function describeToolCall(event: ToolCallEvent): string {
@@ -630,20 +644,20 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("agent_start", async () => {
-    await traceHeartbeat("Thinking…")
+    await traceHeartbeat("Thinking…", "thinking")
   })
 
   pi.on("tool_call", async (event) => {
-    await traceHeartbeat(describeToolCall(event))
+    await traceHeartbeat(describeToolCall(event), "tool_call")
   })
 
   pi.on("tool_execution_end", async (event) => {
-    await traceHeartbeat(describeToolEnd(event))
+    await traceHeartbeat(describeToolEnd(event), event.isError ? "tool_error" : "tool_call")
   })
 
   pi.on("message_start", async (event) => {
     if (!pending || event.message.role !== "assistant") return
-    await traceHeartbeat("Composing response…")
+    await traceHeartbeat("Composing response…", "message_sent")
   })
 
   pi.on("message_end", async (event) => {

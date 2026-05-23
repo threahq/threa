@@ -39,6 +39,7 @@ import {
   renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
+  recordInvocationStepSchema,
 } from "./schemas"
 
 // ---------------------------------------------------------------------------
@@ -323,6 +324,7 @@ const runtimeSessionLinkSchema = z.object({
 })
 
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
+const invocationStepSchema = z.object({ invocationId: z.string(), sessionId: z.string(), stepId: z.string() })
 const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
 const completedInvocationSchema = z.object({ invocationId: z.string(), message: messageSchema.nullable() })
 
@@ -565,6 +567,22 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: renewInvocationClaimSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(renewedInvocationSchema),
+    canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/steps",
+    operationId: "recordBotInvocationStep",
+    summary: "Record a bot invocation trace step",
+    tags: ["Bot invocations"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE],
+    parameters: [
+      workspaceIdParam,
+      { name: "invocationId", in: "path", required: true, schema: { type: "string" }, description: "Invocation ID" },
+    ],
+    requestSchema: recordInvocationStepSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(invocationStepSchema),
     canReturn404: true,
   },
   {

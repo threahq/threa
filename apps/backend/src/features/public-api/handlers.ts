@@ -7,6 +7,7 @@ import type { BotChannelService } from "../api-keys"
 import type { EventService } from "../messaging"
 import {
   StreamRepository,
+  StreamEventRepository,
   StreamMemberRepository,
   getEffectiveDisplayName,
   type Stream,
@@ -26,15 +27,23 @@ import {
   toAttachmentSummary,
 } from "../attachments"
 import { BotRepository, type Bot } from "./bot-repository"
-import { AttachmentSafetyStatuses, AuthorTypes, sentViaApiKey, type AuthorType } from "@threa/types"
+import {
+  AgentSessionStatuses,
+  AgentStepTypes,
+  AttachmentSafetyStatuses,
+  AuthorTypes,
+  sentViaApiKey,
+  type AuthorType,
+} from "@threa/types"
 import { BotRuntimeService } from "../bot-runtimes"
 import { HttpError } from "@threa/backend-common"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { randomUUID } from "crypto"
-import { botId } from "../../lib/id"
+import { botId, eventId, stepId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
+import { AgentSessionRepository } from "../agents"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { listMyBotsSchema } from "./schemas"
 import type {
@@ -69,6 +78,7 @@ import {
   renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
+  recordInvocationStepSchema,
 } from "./schemas"
 
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
@@ -559,6 +569,39 @@ export function createPublicApiHandlers({
       })
       if (!invocation) return res.json({ data: null })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (bot && !bot.archivedAt) {
+        await withTransaction(pool, async (client) => {
+          const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
+          const session = await AgentSessionRepository.insertRunningOrSkip(client, {
+            id: invocation.id,
+            streamId: invocation.responseStreamId,
+            personaId: bot.id,
+            triggerMessageId: invocation.sourceMessageId,
+            initialSequence: latestSequence ?? 0n,
+          })
+          if (!session) return
+          const streamEvent = await StreamEventRepository.insert(client, {
+            id: eventId(),
+            streamId: invocation.responseStreamId,
+            eventType: "agent_session:started",
+            payload: {
+              sessionId: session.id,
+              personaId: bot.id,
+              personaName: bot.name,
+              triggerMessageId: invocation.sourceMessageId,
+              rerunContext: null,
+              startedAt: session.createdAt.toISOString(),
+            },
+            actorId: bot.id,
+            actorType: AuthorTypes.BOT,
+          })
+          await OutboxRepository.insert(client, "agent_session:started", {
+            workspaceId: req.workspaceId!,
+            streamId: invocation.responseStreamId,
+            event: streamEvent,
+          })
+        })
+      }
       res.json({
         data: {
           id: invocation.id,
@@ -602,6 +645,36 @@ export function createPublicApiHandlers({
           claimExpiresAt: renewed.claimExpiresAt?.toISOString() ?? null,
         },
       })
+    },
+
+    async recordBotInvocationStep(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = recordInvocationStepSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const claim = await botRuntimeService.findActiveClaim({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        instanceId: result.data.instanceId,
+        claimToken: result.data.claimToken,
+      })
+      if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      await assertStreamAccessible(req, claim.responseStreamId)
+      const steps = await AgentSessionRepository.findStepsBySession(pool, claim.id)
+      const now = new Date()
+      const step = await AgentSessionRepository.upsertStep(pool, {
+        id: stepId(),
+        sessionId: claim.id,
+        stepNumber: steps.length + 1,
+        stepType: result.data.stepType,
+        content: result.data.content,
+        startedAt: now,
+        completedAt: now,
+      })
+      await AgentSessionRepository.updateCurrentStepType(pool, claim.id, result.data.stepType)
+      res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },
 
     async completeBotInvocation(req: Request, res: Response) {
@@ -649,6 +722,38 @@ export function createPublicApiHandlers({
           claimToken: result.data.claimToken,
         })
         if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        const session = await AgentSessionRepository.findById(client, completed.id)
+        if (session?.status === AgentSessionStatuses.RUNNING) {
+          const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
+          const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
+            lastSeenSequence: latestSequence ?? 0n,
+            responseMessageId: message?.id ?? null,
+            sentMessageIds: message ? [message.id] : [],
+          })
+          if (finalizedSession) {
+            const steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
+            const completedAt = finalizedSession.completedAt ?? new Date()
+            const streamEvent = await StreamEventRepository.insert(client, {
+              id: eventId(),
+              streamId: completed.responseStreamId,
+              eventType: "agent_session:completed",
+              payload: {
+                sessionId: completed.id,
+                stepCount: steps.length,
+                messageCount: message ? 1 : 0,
+                duration: completedAt.getTime() - finalizedSession.createdAt.getTime(),
+                completedAt: completedAt.toISOString(),
+              },
+              actorId: bot.id,
+              actorType: AuthorTypes.BOT,
+            })
+            await OutboxRepository.insert(client, "agent_session:completed", {
+              workspaceId: req.workspaceId!,
+              streamId: completed.responseStreamId,
+              event: streamEvent,
+            })
+          }
+        }
         return { completed, message }
       })
       res.json({
