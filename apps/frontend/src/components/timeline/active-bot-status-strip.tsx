@@ -30,13 +30,13 @@ export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, clas
   return (
     <div
       className={cn(
-        "relative z-30 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground shadow-lg ring-1 ring-background/80",
+        "relative z-30 inline-flex max-w-[min(26rem,calc(100vw-2rem))] items-center gap-1.5 rounded-full bg-background px-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground shadow-sm ring-1 ring-border",
         className
       )}
       aria-live="polite"
     >
       <span className={cn("inline-block size-2 rounded-full", STATUS_DOT_CLASS[status])} aria-hidden="true" />
-      <span className="ml-2 font-medium text-foreground">{botName}</span>
+      <span className="text-foreground">{botName}</span>
       <span aria-hidden="true"> · </span>
       <span>{STATUS_COPY[status]}</span>
       <span aria-hidden="true"> · </span>

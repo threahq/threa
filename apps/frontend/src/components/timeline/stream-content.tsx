@@ -1493,12 +1493,14 @@ export function StreamContent({
               </div>
             )}
             {showBotRuntimePresence && activeBotPresence && (
-              <ActiveBotStatusStrip
-                botName={activeBotPresence.bot.name}
-                runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
-                status={activeBotPresence.presence?.status ?? "unknown"}
-                className="mx-4 mb-3"
-              />
+              <div className="pointer-events-none mx-4 mb-2 flex justify-center">
+                <ActiveBotStatusStrip
+                  botName={activeBotPresence.bot.name}
+                  runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
+                  status={activeBotPresence.presence?.status ?? "unknown"}
+                  className="pointer-events-auto"
+                />
+              </div>
             )}
             {(isMember || !isPublicChannel || !membershipResolved) && (
               <MessageInput
