@@ -1,20 +1,9 @@
 import { api } from "./client"
-import type { BotRuntimeStatus } from "@threa/types"
-
-export interface BotRuntimePresence {
-  botId: string
-  runtimeKind: string
-  instanceId: string
-  displayName: string | null
-  status: BotRuntimeStatus
-  acceptingInvocations: boolean
-  statusText: string | null
-  lastSeenAt: string
-}
+import type { BotRuntimePresenceSummary } from "@threa/types"
 
 export const botRuntimeApi = {
-  async getPresence(workspaceId: string, streamId: string): Promise<Record<string, BotRuntimePresence | null>> {
-    const res = await api.get<{ data: Record<string, BotRuntimePresence | null> }>(
+  async getPresence(workspaceId: string, streamId: string): Promise<Record<string, BotRuntimePresenceSummary | null>> {
+    const res = await api.get<{ data: Record<string, BotRuntimePresenceSummary | null> }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/bot-runtime-presence`
     )
     return res.data

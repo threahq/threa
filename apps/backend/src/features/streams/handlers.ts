@@ -180,7 +180,7 @@ interface Dependencies {
   eventService: EventService
   activityService?: ActivityService
   linkPreviewService: LinkPreviewService
-  botRuntimeService?: BotRuntimeService
+  botRuntimeService: BotRuntimeService
 }
 
 /**
@@ -691,7 +691,7 @@ export function createStreamHandlers({
       const botRuntimePresence = Object.fromEntries(
         await Promise.all(
           botMemberIds.map(async (botId) => {
-            const presence = await botRuntimeService?.findLatestPresence({ workspaceId, botId })
+            const presence = await botRuntimeService.findLatestPresence({ workspaceId, botId })
             return [botId, serializeBotRuntimePresence(presence ?? null)] as const
           })
         )
@@ -762,7 +762,7 @@ export function createStreamHandlers({
       const data = Object.fromEntries(
         await Promise.all(
           botMemberIds.map(async (botId) => {
-            const presence = await botRuntimeService?.findLatestPresence({ workspaceId, botId })
+            const presence = await botRuntimeService.findLatestPresence({ workspaceId, botId })
             return [botId, serializeBotRuntimePresence(presence ?? null)] as const
           })
         )
