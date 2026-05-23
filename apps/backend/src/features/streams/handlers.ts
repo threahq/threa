@@ -688,13 +688,9 @@ export function createStreamHandlers({
           eventService.getLatestSequence(streamId),
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
         ])
+      const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const botRuntimePresence = Object.fromEntries(
-        await Promise.all(
-          botMemberIds.map(async (botId) => {
-            const presence = await botRuntimeService.findLatestPresence({ workspaceId, botId })
-            return [botId, serializeBotRuntimePresence(presence ?? null)] as const
-          })
-        )
+        botMemberIds.map((botId) => [botId, serializeBotRuntimePresence(botRuntimePresences.get(botId) ?? null)])
       )
 
       const unreadCount = membership ? await streamService.getUnreadCount(streamId, membership.lastReadEventId) : 0
@@ -759,13 +755,9 @@ export function createStreamHandlers({
       const { streamId } = req.params
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
       const botMemberIds = await streamService.getBotMemberIds(workspaceId, streamId)
+      const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const data = Object.fromEntries(
-        await Promise.all(
-          botMemberIds.map(async (botId) => {
-            const presence = await botRuntimeService.findLatestPresence({ workspaceId, botId })
-            return [botId, serializeBotRuntimePresence(presence ?? null)] as const
-          })
-        )
+        botMemberIds.map((botId) => [botId, serializeBotRuntimePresence(botRuntimePresences.get(botId) ?? null)])
       )
       res.json({ data })
     },

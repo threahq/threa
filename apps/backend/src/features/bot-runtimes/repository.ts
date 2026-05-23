@@ -297,6 +297,18 @@ export const BotRuntimeInstanceRepository = {
     return result.rows[0] ? mapRuntimeInstance(result.rows[0]) : null
   },
 
+  async findLatestForBots(
+    db: Querier,
+    workspaceId: string,
+    botIds: string[]
+  ): Promise<Map<string, BotRuntimeInstance>> {
+    if (botIds.length === 0) return new Map()
+    const result = await db.query<BotRuntimeInstanceRow>(
+      sql`SELECT DISTINCT ON (bot_id) * FROM bot_runtime_instances WHERE workspace_id = ${workspaceId} AND bot_id = ANY(${botIds}) ORDER BY bot_id, last_seen_at DESC`
+    )
+    return new Map(result.rows.map((row) => [row.bot_id, mapRuntimeInstance(row)]))
+  },
+
   async upsertPresence(
     db: Querier,
     params: {
