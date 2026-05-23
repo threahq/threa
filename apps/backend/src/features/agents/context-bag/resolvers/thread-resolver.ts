@@ -100,7 +100,7 @@ export const ThreadResolver: Resolver<ThreadRef> = {
       // has no idea anything was attached. The renderer formats the metadata
       // inline below; full extraction content stays behind the existing
       // attachment tools so we don't duplicate the heavy enrichment path.
-      AttachmentRepository.findByMessageIds(db, messageIds),
+      AttachmentRepository.findByMessageIds(db, stream.workspaceId, messageIds),
     ])
 
     const items: RenderableMessage[] = withRoot.map((m) => {

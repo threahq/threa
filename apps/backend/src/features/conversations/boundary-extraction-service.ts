@@ -129,7 +129,7 @@ export class BoundaryExtractionService {
       // are the payload most likely to change the classification decision.
       // Surrounding-context attachments were almost always processed by their
       // own earlier boundary-extract runs.
-      const newMessageAttachments = await AttachmentRepository.findByMessageId(client, message.id)
+      const newMessageAttachments = await AttachmentRepository.findByMessageId(client, workspaceId, message.id)
       const newMessageAttachmentIds = newMessageAttachments.map((a) => a.id)
 
       const extractionContextBase: Omit<ExtractionContext, "attachmentsByMessageId"> = {
@@ -199,6 +199,7 @@ export class BoundaryExtractionService {
 
       const attachmentsByMessage = await AttachmentRepository.findByMessageIdsWithExtractions(
         this.pool,
+        workspaceId,
         attachmentTargetIds
       )
       const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)

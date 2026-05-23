@@ -215,11 +215,16 @@ export async function buildStreamContext(
 
   // Enrich with attachment context if requested
   if (options?.includeAttachments) {
-    context.conversationHistory = await enrichMessagesWithAttachments(db, context.conversationHistory, {
-      triggerMessageId: options.triggerMessageId,
-      storage: options.storage,
-      loadImages: options.loadImages,
-    })
+    context.conversationHistory = await enrichMessagesWithAttachments(
+      db,
+      stream.workspaceId,
+      context.conversationHistory,
+      {
+        triggerMessageId: options.triggerMessageId,
+        storage: options.storage,
+        loadImages: options.loadImages,
+      }
+    )
   }
 
   return context
@@ -523,6 +528,7 @@ export interface EnrichAttachmentsOptions {
  */
 export async function enrichMessagesWithAttachments(
   db: Querier,
+  workspaceId: string,
   messages: Message[],
   options?: EnrichAttachmentsOptions
 ): Promise<MessageWithAttachments[]> {
@@ -533,7 +539,7 @@ export async function enrichMessagesWithAttachments(
   const messageIds = messages.map((m) => m.id)
 
   // Batch fetch attachments for all messages
-  const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
+  const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, workspaceId, messageIds)
 
   // If no attachments, return messages as-is
   if (attachmentsByMessage.size === 0) {

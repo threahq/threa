@@ -275,7 +275,7 @@ export async function hydrateSharedMessageIds(
     // emitted on the source stream.
     const [authorNames, attachmentsByMessageId] = await Promise.all([
       resolveActorNames(db, workspaceId, actorIds),
-      AttachmentRepository.findByMessageIds(db, [...okMessages.keys()]),
+      AttachmentRepository.findByMessageIds(db, workspaceId, [...okMessages.keys()]),
     ])
     for (const [id, source] of okMessages) {
       const attachments = (attachmentsByMessageId.get(source.id) ?? []).map(toAttachmentSummary)

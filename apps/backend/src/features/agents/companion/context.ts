@@ -96,7 +96,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
 
   // Await attachment processing for trigger message so agent can access extracted content
   if (triggerMessage) {
-    const triggerAttachments = await AttachmentRepository.findByMessageId(db, messageId)
+    const triggerAttachments = await AttachmentRepository.findByMessageId(db, workspaceId, messageId)
     const attachmentIds = triggerAttachments.map((a) => a.id)
     if (attachmentIds.length > 0) {
       logger.info(

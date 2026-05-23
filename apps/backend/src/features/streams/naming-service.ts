@@ -128,7 +128,7 @@ export class StreamNamingService {
 
       // Fetch attachments for these messages (to get IDs for awaiting processing)
       const messageIds = messages.map((m) => m.id)
-      const attachmentsByMessage = await AttachmentRepository.findByMessageIds(client, messageIds)
+      const attachmentsByMessage = await AttachmentRepository.findByMessageIds(client, stream.workspaceId, messageIds)
 
       // Collect all attachment IDs
       const attachmentIds: string[] = []
@@ -170,7 +170,11 @@ export class StreamNamingService {
     const messageIds = messages.map((m) => m.id)
     let attachmentsByMessageId: Map<string, AttachmentWithExtraction[]>
     if (attachmentIds.length > 0) {
-      attachmentsByMessageId = await AttachmentRepository.findByMessageIdsWithExtractions(this.pool, messageIds)
+      attachmentsByMessageId = await AttachmentRepository.findByMessageIdsWithExtractions(
+        this.pool,
+        stream.workspaceId,
+        messageIds
+      )
     } else {
       attachmentsByMessageId = new Map()
     }

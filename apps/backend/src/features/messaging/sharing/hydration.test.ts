@@ -472,7 +472,7 @@ describe("hydrateSharedMessageIds", () => {
 
     await hydrateSharedMessageIds({} as any, "ws_1", VIEWER_ID, ["msg_a", "msg_b"])
     expect(findAttachments).toHaveBeenCalledTimes(1)
-    const calledWith = (findAttachments as any).mock.calls[0][1].sort()
+    const calledWith = (findAttachments as any).mock.calls[0][2].sort()
     expect(calledWith).toEqual(["msg_a", "msg_b"])
   })
 

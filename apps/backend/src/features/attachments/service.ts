@@ -197,14 +197,6 @@ export class AttachmentService {
     return AttachmentRepository.findByIds(this.pool, ids)
   }
 
-  async getByMessageId(messageId: string): Promise<Attachment[]> {
-    return AttachmentRepository.findByMessageId(this.pool, messageId)
-  }
-
-  async getByMessageIds(messageIds: string[]): Promise<Map<string, Attachment[]>> {
-    return AttachmentRepository.findByMessageIds(this.pool, messageIds)
-  }
-
   async getDownloadUrl(attachment: Attachment, options?: { download?: boolean }): Promise<string> {
     const responseContentDisposition = options?.download ? buildContentDisposition(attachment.filename) : undefined
     return this.storage.getSignedDownloadUrl(attachment.storagePath, { responseContentDisposition })

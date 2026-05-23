@@ -646,7 +646,7 @@ export class PersonaAgent {
               await AgentSessionRepository.updateLastSeenSequence(db, updateSessionId, sequence)
             },
             awaitAttachments: async (messageIds) => {
-              const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, messageIds)
+              const attachmentsByMessage = await AttachmentRepository.findByMessageIds(db, workspaceId, messageIds)
               const allAttachmentIds: string[] = []
               for (const attachments of attachmentsByMessage.values()) {
                 for (const a of attachments) allAttachmentIds.push(a.id)

@@ -140,17 +140,21 @@ export const AttachmentRepository = {
     return result.rows.map(mapRowToAttachment)
   },
 
-  async findByMessageId(client: Querier, messageId: string): Promise<Attachment[]> {
+  async findByMessageId(client: Querier, workspaceId: string, messageId: string): Promise<Attachment[]> {
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE message_id = ${messageId}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND message_id = ${messageId}`
     )
     return result.rows.map(mapRowToAttachment)
   },
 
-  async findByMessageIds(client: Querier, messageIds: string[]): Promise<Map<string, Attachment[]>> {
+  async findByMessageIds(
+    client: Querier,
+    workspaceId: string,
+    messageIds: string[]
+  ): Promise<Map<string, Attachment[]>> {
     if (messageIds.length === 0) return new Map()
     const result = await client.query<AttachmentRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE message_id = ANY(${messageIds})`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND message_id = ANY(${messageIds})`
     )
 
     const byMessage = new Map<string, Attachment[]>()
@@ -176,6 +180,7 @@ export const AttachmentRepository = {
    */
   async findByMessageIdsWithExtractions(
     client: Querier,
+    workspaceId: string,
     messageIds: string[]
   ): Promise<Map<string, AttachmentWithExtraction[]>> {
     if (messageIds.length === 0) return new Map()
@@ -192,7 +197,7 @@ export const AttachmentRepository = {
         e.full_text AS extraction_full_text
       FROM attachments a
       LEFT JOIN attachment_extractions e ON e.attachment_id = a.id
-      WHERE a.message_id = ANY(${messageIds})
+      WHERE a.workspace_id = ${workspaceId} AND a.message_id = ANY(${messageIds})
     `)
 
     const byMessage = new Map<string, AttachmentWithExtraction[]>()
