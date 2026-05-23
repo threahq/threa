@@ -5,6 +5,7 @@ interface ActiveBotStatusStripProps {
   botName: string
   runtimeDisplayName: string | null
   status: BotRuntimeStatus | "unknown"
+  statusText?: string | null
   className?: string
 }
 
@@ -24,7 +25,14 @@ const STATUS_DOT_CLASS: Record<BotRuntimeStatus | "unknown", string> = {
   unknown: "bg-muted-foreground/40",
 }
 
-export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, className }: ActiveBotStatusStripProps) {
+export function ActiveBotStatusStrip({
+  botName,
+  runtimeDisplayName,
+  status,
+  statusText,
+  className,
+}: ActiveBotStatusStripProps) {
+  const statusCopy = statusText?.trim() || STATUS_COPY[status]
   const detail = runtimeDisplayName ? runtimeDisplayName : "run /remote-control in Pi to connect"
 
   return (
@@ -38,7 +46,7 @@ export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, clas
       <span className={cn("inline-block size-2 rounded-full", STATUS_DOT_CLASS[status])} aria-hidden="true" />
       <span className="text-foreground">{botName}</span>
       <span aria-hidden="true"> · </span>
-      <span>{STATUS_COPY[status]}</span>
+      <span className="max-w-48 truncate">{statusCopy}</span>
       <span aria-hidden="true"> · </span>
       <span>{detail}</span>
     </div>
