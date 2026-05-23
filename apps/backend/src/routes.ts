@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Express, RequestHandler } from "express"
+import type { Server } from "socket.io"
 import { createAuthMiddleware } from "@threa/backend-common"
 import { createWorkspaceUserMiddleware } from "./middleware/workspace"
 import { createUploadMiddleware, createAvatarUploadMiddleware } from "./middleware/upload"
@@ -74,6 +75,7 @@ import type { PoolMonitor } from "./lib/observability"
 
 interface Dependencies {
   pool: Pool
+  io?: Server
   poolMonitor: PoolMonitor
   authService: AuthService
   workspaceService: WorkspaceService
@@ -575,6 +577,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     streamService,
     eventService,
     pool,
+    io: deps.io,
   })
   const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, publicAuth] as const
 

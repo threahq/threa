@@ -6,7 +6,6 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
   ToolCallEvent,
-  ToolExecutionEndEvent,
 } from "@earendil-works/pi-coding-agent"
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
@@ -209,10 +208,6 @@ function describeToolCall(event: ToolCallEvent): string {
     return `Listing ${String(input.path).slice(0, 80)}…`
   }
   return `Using ${event.toolName}…`
-}
-
-function describeToolEnd(event: ToolExecutionEndEvent): string {
-  return event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
 }
 
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
@@ -652,12 +647,13 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("tool_execution_end", async (event) => {
-    await traceHeartbeat(describeToolEnd(event), event.isError ? "tool_error" : "tool_call")
+    if (!event.isError) return
+    await traceHeartbeat(`${event.toolName} failed`, "tool_error")
   })
 
   pi.on("message_start", async (event) => {
     if (!pending || event.message.role !== "assistant") return
-    await traceHeartbeat("Composing response…", "message_sent")
+    await traceHeartbeat("Composing response…")
   })
 
   pi.on("message_end", async (event) => {
