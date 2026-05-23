@@ -590,6 +590,14 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.getMemo
   )
   app.post(
+    "/api/v1/workspaces/:workspaceId/attachments",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE),
+    rateLimits.upload,
+    upload,
+    publicApi.uploadAttachment
+  )
+  app.post(
     "/api/v1/workspaces/:workspaceId/attachments/search",
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_READ),

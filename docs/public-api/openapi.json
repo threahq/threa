@@ -496,6 +496,92 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/attachments": {
+      "post": {
+        "operationId": "uploadAttachment",
+        "summary": "Upload an attachment",
+        "tags": ["Attachments"],
+        "description": "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message.",
+        "security": [{ "apiKey": ["attachments:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": { "file": { "type": "string", "format": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "filename": { "type": "string" },
+                        "mimeType": { "type": "string" },
+                        "sizeBytes": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                        "processingStatus": {
+                          "type": "string",
+                          "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                        },
+                        "createdAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "filename", "mimeType", "sizeBytes", "processingStatus", "createdAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/attachments/search": {
       "post": {
         "operationId": "searchAttachments",
@@ -1331,6 +1417,38 @@
                                   "additionalProperties": { "type": "string" },
                                   "description": "External references attached by the sender. Always present; empty when unset."
                                 },
+                                "attachments": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": { "type": "string" },
+                                      "filename": { "type": "string" },
+                                      "mimeType": { "type": "string" },
+                                      "sizeBytes": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "processingStatus": {
+                                        "type": "string",
+                                        "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                      },
+                                      "width": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "height": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                    "additionalProperties": false
+                                  }
+                                },
                                 "editedAt": { "type": "string", "format": "date-time" },
                                 "createdAt": { "type": "string", "format": "date-time" }
                               },
@@ -1807,6 +1925,38 @@
                             "additionalProperties": { "type": "string" },
                             "description": "External references attached by the sender. Always present; empty when unset."
                           },
+                          "attachments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": { "type": "string" },
+                                "filename": { "type": "string" },
+                                "mimeType": { "type": "string" },
+                                "sizeBytes": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "processingStatus": {
+                                  "type": "string",
+                                  "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                },
+                                "width": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "height": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["id", "filename", "mimeType", "sizeBytes"],
+                              "additionalProperties": false
+                            }
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -1938,6 +2088,30 @@
                           "additionalProperties": { "type": "string" },
                           "description": "External references attached by the sender. Always present; empty when unset."
                         },
+                        "attachments": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": { "type": "string" },
+                              "filename": { "type": "string" },
+                              "mimeType": { "type": "string" },
+                              "sizeBytes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "processingStatus": {
+                                "type": "string",
+                                "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                              },
+                              "width": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                              "height": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+                            },
+                            "required": ["id", "filename", "mimeType", "sizeBytes"],
+                            "additionalProperties": false
+                          }
+                        },
                         "editedAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" }
                       },
@@ -2068,6 +2242,38 @@
                             "additionalProperties": { "type": "string" },
                             "description": "External references attached by the sender. Always present; empty when unset."
                           },
+                          "attachments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": { "type": "string" },
+                                "filename": { "type": "string" },
+                                "mimeType": { "type": "string" },
+                                "sizeBytes": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "processingStatus": {
+                                  "type": "string",
+                                  "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                },
+                                "width": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "height": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["id", "filename", "mimeType", "sizeBytes"],
+                              "additionalProperties": false
+                            }
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -2186,6 +2392,30 @@
                           "propertyNames": { "type": "string" },
                           "additionalProperties": { "type": "string" },
                           "description": "External references attached by the sender. Always present; empty when unset."
+                        },
+                        "attachments": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": { "type": "string" },
+                              "filename": { "type": "string" },
+                              "mimeType": { "type": "string" },
+                              "sizeBytes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "processingStatus": {
+                                "type": "string",
+                                "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                              },
+                              "width": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                              "height": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+                            },
+                            "required": ["id", "filename", "mimeType", "sizeBytes"],
+                            "additionalProperties": false
+                          }
                         },
                         "editedAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" }
