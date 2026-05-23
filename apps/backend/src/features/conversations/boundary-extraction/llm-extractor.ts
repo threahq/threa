@@ -2,7 +2,14 @@ import { NoObjectGeneratedError } from "ai"
 import type { AI } from "../../../lib/ai/ai"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import type { BoundaryExtractor, ExtractionContext, ExtractionResult, MessageAssignment, Reassignment } from "./types"
+import type {
+  AttachmentExtractContext,
+  BoundaryExtractor,
+  ExtractionContext,
+  ExtractionResult,
+  MessageAssignment,
+  Reassignment,
+} from "./types"
 import type { Message } from "../../messaging"
 import { logger } from "../../../lib/logger"
 import { StreamTypes } from "@threa/types"
@@ -12,6 +19,22 @@ import {
   BOUNDARY_EXTRACTION_PROMPT,
   type ExtractionResponse,
 } from "./config"
+
+/**
+ * Per-attachment character budget when rendering extracted text in the prompt.
+ * The new message's attachments get a bigger window because they are the
+ * payload most likely to change the classification decision; context messages
+ * use a smaller window (closer to a summary) to keep the prompt bounded.
+ */
+const NEW_MESSAGE_ATTACHMENT_CHARS = 2000
+const RECENT_ATTACHMENT_CHARS = 400
+
+function indent(text: string, prefix: string): string {
+  return text
+    .split("\n")
+    .map((line) => prefix + line)
+    .join("\n")
+}
 
 export class LLMBoundaryExtractor implements BoundaryExtractor {
   constructor(
@@ -96,17 +119,39 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
             .join("\n")
         : "No active conversations in this stream yet."
 
+    const attachmentsByMessageId = context.attachmentsByMessageId ?? new Map()
+
     const recentSection = context.recentMessages
-      .map(
-        (m) =>
-          `[${m.id}] ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
-      )
+      .map((m) => {
+        const head = `[${m.id}] ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
+        const atts = attachmentsByMessageId.get(m.id)
+        const attBlock = atts && atts.length > 0 ? `\n${this.renderAttachments(atts, RECENT_ATTACHMENT_CHARS)}` : ""
+        return head + attBlock
+      })
       .join("\n")
+
+    const newMessageAtts = attachmentsByMessageId.get(context.newMessage.id) ?? []
+    const newMessageAttachmentSection =
+      newMessageAtts.length > 0 ? `\n${this.renderAttachments(newMessageAtts, NEW_MESSAGE_ATTACHMENT_CHARS)}` : ""
 
     return BOUNDARY_EXTRACTION_PROMPT.replace("{{CONVERSATIONS}}", convSection)
       .replace("{{RECENT_MESSAGES}}", recentSection || "No recent messages.")
       .replace("{{AUTHOR}}", `${context.newMessage.authorType}:${context.newMessage.authorId.slice(-8)}`)
-      .replace("{{CONTENT}}", context.newMessage.contentMarkdown)
+      .replace("{{CONTENT}}", context.newMessage.contentMarkdown + newMessageAttachmentSection)
+  }
+
+  private renderAttachments(attachments: AttachmentExtractContext[], maxChars: number): string {
+    const lines = attachments.map((a) => {
+      const kind = a.contentType ?? a.mimeType
+      // Prefer fullText (transcript / OCR / parse). Fall back to summary so the
+      // model at least sees what the attachment is about when extraction is
+      // still summary-only (or has no fullText, e.g. image captions).
+      const body = (a.fullText ?? a.summary ?? "").trim()
+      if (!body) return `  [attachment ${a.filename} (${kind}): no extracted content]`
+      const truncated = body.length > maxChars ? body.slice(0, maxChars) + "…" : body
+      return `  [attachment ${a.filename} (${kind})]:\n${indent(truncated, "    ")}`
+    })
+    return lines.join("\n")
   }
 
   private validateResult(parsed: ExtractionResponse, context: ExtractionContext): ExtractionResult {

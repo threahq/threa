@@ -4,7 +4,9 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
+import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
 import type {
+  AttachmentExtractContext,
   BoundaryExtractor,
   ExtractionContext,
   ConversationSummary,
@@ -54,6 +56,40 @@ export class BoundaryExtractionService {
    * conversation and decides.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
+    // Phase 0: For channels/threads (which call the LLM), wait for the new
+    // message's attachments to finish processing so the classifier sees the
+    // transcript/OCR/parsed text alongside the written content. We deliberately
+    // only await the *new* message's attachments — surrounding context
+    // attachments were almost always processed by their own earlier
+    // boundary-extract runs, and waiting for them too would multiply latency
+    // for the common case.
+    //
+    // INV-41: awaitAttachmentProcessing releases its connection between polls.
+    // Do not wrap this in withClient.
+    const streamForAwait = await StreamRepository.findById(this.pool, streamId)
+    if (streamForAwait && streamForAwait.type !== StreamTypes.SCRATCHPAD) {
+      const newMessageAttachments = await AttachmentRepository.findByMessageId(this.pool, messageId)
+      const attachmentIds = newMessageAttachments.map((a) => a.id)
+      if (attachmentIds.length > 0) {
+        logger.debug(
+          { messageId, attachmentCount: attachmentIds.length },
+          "Boundary extraction awaiting attachment processing for new message"
+        )
+        const awaitResult = await awaitAttachmentProcessing(this.pool, attachmentIds)
+        if (!awaitResult.allCompleted) {
+          // Classify with whatever extractions exist; don't block forever.
+          logger.warn(
+            {
+              messageId,
+              completedCount: awaitResult.completedIds.length,
+              failedCount: awaitResult.failedOrTimedOutIds.length,
+            },
+            "Boundary extraction proceeding without all attachments processed"
+          )
+        }
+      }
+    }
+
     // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms)
     const fetchedData = await withClient(this.pool, async (client) => {
       const message = await MessageRepository.findById(client, messageId)
@@ -119,12 +155,24 @@ export class BoundaryExtractionService {
           ? this.buildConversationSummaries(parentMessageConversations, [], contextMessageIdSet)
           : undefined
 
+      // Pull attachments + extractions for the new message AND every context
+      // message in one batched query. We render fullText (transcript / OCR /
+      // parse) only for the new message in the prompt; for context messages we
+      // fall back to the short summary so the prompt stays bounded.
+      const attachmentTargetIds = [message.id, ...allContextMessageIds]
+      const attachmentsByMessage = await AttachmentRepository.findByMessageIdsWithExtractions(
+        client,
+        attachmentTargetIds
+      )
+      const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
+
       const extractionContext: ExtractionContext = {
         newMessage: message,
         recentMessages: allContextMessages,
         activeConversations,
         streamType: stream.type,
         parentMessageConversations: parentConversations,
+        attachmentsByMessageId,
         workspaceId: stream.workspaceId,
       }
 
@@ -497,6 +545,40 @@ export class BoundaryExtractionService {
       }
     })
   }
+}
+
+/**
+ * Build the per-message attachment-context map used by the LLM prompt. Only
+ * the new message keeps its full extracted text; context messages drop
+ * `fullText` (the prompt renderer falls back to `summary`, keeping the prompt
+ * bounded). Attachments with neither a summary nor fullText are dropped so the
+ * prompt does not get cluttered with empty entries.
+ */
+function buildAttachmentContextMap(
+  attachmentsByMessage: Map<string, AttachmentWithExtraction[]>,
+  newMessageId: string
+): Map<string, AttachmentExtractContext[]> {
+  const result = new Map<string, AttachmentExtractContext[]>()
+  for (const [msgId, attachments] of attachmentsByMessage) {
+    const contexts: AttachmentExtractContext[] = []
+    for (const a of attachments) {
+      const isNewMessage = msgId === newMessageId
+      const summary = a.extraction?.summary ?? null
+      const fullText = isNewMessage ? (a.extraction?.fullText ?? null) : null
+      // Drop attachments with no extracted text at all (e.g. still pending or
+      // a type that produces no extraction) — there is nothing useful to add.
+      if (!summary && !fullText) continue
+      contexts.push({
+        filename: a.filename,
+        mimeType: a.mimeType,
+        contentType: a.extraction?.contentType ?? null,
+        summary,
+        fullText,
+      })
+    }
+    if (contexts.length > 0) result.set(msgId, contexts)
+  }
+  return result
 }
 
 // Re-export type for service consumers
