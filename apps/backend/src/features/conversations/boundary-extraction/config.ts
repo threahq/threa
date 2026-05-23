@@ -14,6 +14,15 @@ export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
 /** Temperature for classification - low for consistency */
 export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
 
+/**
+ * Per-attachment character budget when rendering extracted text in the prompt.
+ * The new message's attachments get a bigger window because they are the
+ * payload most likely to change the classification decision; context messages
+ * use a smaller window (closer to a summary) to keep the prompt bounded.
+ */
+export const NEW_MESSAGE_ATTACHMENT_CHARS = 2000
+export const RECENT_ATTACHMENT_CHARS = 400
+
 /** System prompt for boundary extraction */
 export const BOUNDARY_EXTRACTION_SYSTEM_PROMPT = `You are a conversation boundary classifier. You analyze messages and output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose - just the JSON object.`
 
@@ -30,9 +39,12 @@ export const BOUNDARY_EXTRACTION_PROMPT = `Analyze this new message and decide w
 From: {{AUTHOR}}
 Content: {{CONTENT}}
 
+## Attachments
+Some messages above may include an indented \`[attachment <filename> (<kind>)]:\` block beneath them. That block is the extracted text of the attachment — the transcript for audio/video, OCR text for an image, the parsed body for a PDF/Word/Excel, etc. Treat that extracted text as **part of the message's content** when judging topic continuity: a voice memo whose transcript is about onboarding is an onboarding message even if its written content is empty. Pay particular attention to the new message's attachments, since a short or empty written body is often a wrapper around the real payload that lives in the attachment.
+
 ## Choosing a conversation
 First decide whether this message continues an existing conversation or starts a new one. Assign it to an existing conversation (as primary) only when it genuinely continues that topic — judge by:
-- Topic continuity: does it advance the same subject the conversation is about?
+- Topic continuity: does it advance the same subject the conversation is about? Use the attachment-extracted text as content here too.
 - Explicit references: does it reply to, quote, or build on something in that conversation?
 - Recency and flow: does it read as the next turn of an active back-and-forth?
 

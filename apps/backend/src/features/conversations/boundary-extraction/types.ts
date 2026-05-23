@@ -88,6 +88,24 @@ export interface ConversationSummary {
   contextMessageIds: string[]
 }
 
+/**
+ * Compact extraction summary for one attachment, shaped for the boundary
+ * extractor's prompt. `fullText` is the complete transcript / OCR / parse,
+ * `summary` is the AI-generated short description that is always present.
+ *
+ * The service decides per-message whether to populate `fullText` (typically
+ * only for the new message, where extracted content is most likely to change
+ * the classification decision) or leave it null and rely on `summary`.
+ */
+export interface AttachmentExtractContext {
+  filename: string
+  mimeType: string
+  /** "text" | "image" | "pdf" | "word" | "excel" | "video" | "audio" or whatever extractor recorded. */
+  contentType: string | null
+  summary: string | null
+  fullText: string | null
+}
+
 export interface ExtractionContext {
   newMessage: Message
   recentMessages: Message[]
@@ -95,6 +113,13 @@ export interface ExtractionContext {
   streamType: string
   /** For threads: conversations containing the parent message (in the parent channel) */
   parentMessageConversations?: ConversationSummary[]
+  /**
+   * Extracted text from attachments, keyed by message id. Includes the new
+   * message and any recent/context messages whose attachments produced a
+   * transcript, OCR text, or other extracted content. Empty/absent when no
+   * relevant attachments exist.
+   */
+  attachmentsByMessageId?: Map<string, AttachmentExtractContext[]>
   /** Workspace ID for cost tracking - required for cost attribution */
   workspaceId: string
 }

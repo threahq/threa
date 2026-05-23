@@ -4,7 +4,9 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
+import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
 import type {
+  AttachmentExtractContext,
   BoundaryExtractor,
   ExtractionContext,
   ConversationSummary,
@@ -54,16 +56,20 @@ export class BoundaryExtractionService {
    * conversation and decides.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
-    // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms)
+    // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms).
+    // Includes the new message's attachment IDs so we can await their processing
+    // once the connection is released (INV-41) — extractions for the full
+    // new+context set are fetched on the pool after the await, mirroring the
+    // pattern in streams/naming-service.ts.
     const fetchedData = await withClient(this.pool, async (client) => {
       const message = await MessageRepository.findById(client, messageId)
       if (!message) {
-        return { message: null, stream: null, extractionContext: null }
+        return { message: null, stream: null, extractionContextBase: null }
       }
 
       const stream = await StreamRepository.findById(client, streamId)
       if (!stream) {
-        return { message: null, stream: null, extractionContext: null }
+        return { message: null, stream: null, extractionContextBase: null }
       }
 
       // For scratchpads: just fetch existing conversations (no AI needed)
@@ -72,7 +78,7 @@ export class BoundaryExtractionService {
         return {
           message,
           stream,
-          extractionContext: null,
+          extractionContextBase: null,
           scratchpadConversations: existingConversations,
           validUpdateTargets: new Set<string>(),
         }
@@ -119,7 +125,14 @@ export class BoundaryExtractionService {
           ? this.buildConversationSummaries(parentMessageConversations, [], contextMessageIdSet)
           : undefined
 
-      const extractionContext: ExtractionContext = {
+      // New-message attachment IDs only — we await *just* these because they
+      // are the payload most likely to change the classification decision.
+      // Surrounding-context attachments were almost always processed by their
+      // own earlier boundary-extract runs.
+      const newMessageAttachments = await AttachmentRepository.findByMessageId(client, message.id)
+      const newMessageAttachmentIds = newMessageAttachments.map((a) => a.id)
+
+      const extractionContextBase: Omit<ExtractionContext, "attachmentsByMessageId"> = {
         newMessage: message,
         recentMessages: allContextMessages,
         activeConversations,
@@ -136,7 +149,9 @@ export class BoundaryExtractionService {
       return {
         message,
         stream,
-        extractionContext,
+        extractionContextBase,
+        newMessageAttachmentIds,
+        attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
         validReassignmentMessageIds: new Set(allContextMessageIds),
       }
@@ -150,11 +165,46 @@ export class BoundaryExtractionService {
     const {
       message,
       stream,
-      extractionContext,
+      extractionContextBase,
+      newMessageAttachmentIds,
+      attachmentTargetIds,
       scratchpadConversations,
       validUpdateTargets,
       validReassignmentMessageIds,
     } = fetchedData
+
+    // Phase 1.5 (channels/threads only): await new-message attachment processing
+    // with no DB connection held (INV-41), then fetch extractions for new +
+    // context messages on the pool (INV-30).
+    let extractionContext: ExtractionContext | null = null
+    if (extractionContextBase && attachmentTargetIds) {
+      if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
+        logger.debug(
+          { messageId, attachmentCount: newMessageAttachmentIds.length },
+          "Boundary extraction awaiting attachment processing for new message"
+        )
+        const awaitResult = await awaitAttachmentProcessing(this.pool, newMessageAttachmentIds)
+        if (!awaitResult.allCompleted) {
+          // Classify with whatever extractions exist; don't block forever.
+          logger.warn(
+            {
+              messageId,
+              completedCount: awaitResult.completedIds.length,
+              failedCount: awaitResult.failedOrTimedOutIds.length,
+            },
+            "Boundary extraction proceeding without all attachments processed"
+          )
+        }
+      }
+
+      const attachmentsByMessage = await AttachmentRepository.findByMessageIdsWithExtractions(
+        this.pool,
+        attachmentTargetIds
+      )
+      const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
+
+      extractionContext = { ...extractionContextBase, attachmentsByMessageId }
+    }
 
     // Phase 2: Determine conversation (AI call only for channels/threads, 1-5+ seconds!)
     let decision: ConversationDecision
@@ -497,6 +547,40 @@ export class BoundaryExtractionService {
       }
     })
   }
+}
+
+/**
+ * Build the per-message attachment-context map used by the LLM prompt. Only
+ * the new message keeps its full extracted text; context messages drop
+ * `fullText` (the prompt renderer falls back to `summary`, keeping the prompt
+ * bounded). Attachments with neither a summary nor fullText are dropped so the
+ * prompt does not get cluttered with empty entries.
+ */
+function buildAttachmentContextMap(
+  attachmentsByMessage: Map<string, AttachmentWithExtraction[]>,
+  newMessageId: string
+): Map<string, AttachmentExtractContext[]> {
+  const result = new Map<string, AttachmentExtractContext[]>()
+  for (const [msgId, attachments] of attachmentsByMessage) {
+    const contexts: AttachmentExtractContext[] = []
+    for (const a of attachments) {
+      const isNewMessage = msgId === newMessageId
+      const summary = a.extraction?.summary ?? null
+      const fullText = isNewMessage ? (a.extraction?.fullText ?? null) : null
+      // Drop attachments with no extracted text at all (e.g. still pending or
+      // a type that produces no extraction) — there is nothing useful to add.
+      if (!summary && !fullText) continue
+      contexts.push({
+        filename: a.filename,
+        mimeType: a.mimeType,
+        contentType: a.extraction?.contentType ?? null,
+        summary,
+        fullText,
+      })
+    }
+    if (contexts.length > 0) result.set(msgId, contexts)
+  }
+  return result
 }
 
 // Re-export type for service consumers

@@ -539,4 +539,179 @@ describe("LLMBoundaryExtractor", () => {
       expect(result.newConversationTopic?.length).toBe(100)
     })
   })
+
+  describe("attachment context", () => {
+    test("includes new-message attachment fullText in the prompt", async () => {
+      const newMessage = createMockMessage({ id: "msg_with_attachment", contentMarkdown: "voice memo" })
+      const existingConv = createMockConversation({ id: "conv_existing" })
+      const context = createMockContext({
+        streamType: "channel",
+        newMessage,
+        recentMessages: [newMessage],
+        activeConversations: [existingConv],
+        attachmentsByMessageId: new Map([
+          [
+            "msg_with_attachment",
+            [
+              {
+                filename: "onboarding.m4a",
+                mimeType: "audio/mp4",
+                contentType: "audio",
+                summary: "Short audio about onboarding",
+                fullText: "Hey team, today I want to talk about how we onboard new engineers.",
+              },
+            ],
+          ],
+        ]),
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_existing", isPrimary: true }],
+          confidence: 0.9,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      expect(mockGenerateObject).toHaveBeenCalledTimes(1)
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const call = calls[0]?.[0] ?? { messages: [] }
+      const userPrompt = call.messages.find((m) => m.role === "user")?.content ?? ""
+      expect(userPrompt).toContain("onboarding.m4a")
+      expect(userPrompt).toContain("Hey team, today I want to talk about how we onboard new engineers.")
+    })
+
+    test("uses summary (not fullText) for context messages even when fullText is provided", async () => {
+      const newMessage = createMockMessage({ id: "msg_new", contentMarkdown: "follow up" })
+      const contextMessage = createMockMessage({ id: "msg_ctx", contentMarkdown: "" })
+      const existingConv = createMockConversation({ id: "conv_existing" })
+      const context = createMockContext({
+        streamType: "channel",
+        newMessage,
+        recentMessages: [contextMessage, newMessage],
+        activeConversations: [existingConv],
+        attachmentsByMessageId: new Map([
+          [
+            "msg_ctx",
+            [
+              {
+                filename: "old.pdf",
+                mimeType: "application/pdf",
+                contentType: "pdf",
+                summary: "Quarterly results overview",
+                // Service strips fullText for non-new messages before passing
+                // it to the extractor, so simulate that here.
+                fullText: null,
+              },
+            ],
+          ],
+        ]),
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_existing", isPrimary: true }],
+          confidence: 0.85,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const call = calls[0]?.[0] ?? { messages: [] }
+      const userPrompt = call.messages.find((m) => m.role === "user")?.content ?? ""
+      expect(userPrompt).toContain("old.pdf")
+      expect(userPrompt).toContain("Quarterly results overview")
+    })
+
+    test("truncates very long attachment text in the new-message block", async () => {
+      const longTranscript = "x".repeat(5000)
+      const newMessage = createMockMessage({ id: "msg_long", contentMarkdown: "see attached" })
+      const existingConv = createMockConversation({ id: "conv_existing" })
+      const context = createMockContext({
+        streamType: "channel",
+        newMessage,
+        recentMessages: [newMessage],
+        activeConversations: [existingConv],
+        attachmentsByMessageId: new Map([
+          [
+            "msg_long",
+            [
+              {
+                filename: "long.m4a",
+                mimeType: "audio/mp4",
+                contentType: "audio",
+                summary: null,
+                fullText: longTranscript,
+              },
+            ],
+          ],
+        ]),
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_existing", isPrimary: true }],
+          confidence: 0.9,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const call = calls[0]?.[0] ?? { messages: [] }
+      const userPrompt = call.messages.find((m) => m.role === "user")?.content ?? ""
+      expect(userPrompt).toContain("long.m4a")
+      // Long transcript must be capped; we should not see the entire 5000-char body inline.
+      const xCount = (userPrompt.match(/x/g) ?? []).length
+      expect(xCount).toBeLessThan(longTranscript.length)
+      expect(userPrompt).toContain("…")
+    })
+
+    test("omits attachment block when extraction has neither summary nor fullText", async () => {
+      const newMessage = createMockMessage({ id: "msg_empty", contentMarkdown: "ping" })
+      const existingConv = createMockConversation({ id: "conv_existing" })
+      const context = createMockContext({
+        streamType: "channel",
+        newMessage,
+        recentMessages: [newMessage],
+        activeConversations: [existingConv],
+        attachmentsByMessageId: new Map(),
+      })
+
+      mockGenerateObject.mockResolvedValueOnce({
+        value: {
+          assignments: [{ conversationId: "conv_existing", isPrimary: true }],
+          confidence: 0.9,
+        },
+        response: { usage: {} },
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      })
+
+      await extractor.extract(context)
+
+      const calls = mockGenerateObject.mock.calls as unknown as Array<
+        [{ messages: { role: string; content: string }[] }]
+      >
+      const call = calls[0]?.[0] ?? { messages: [] }
+      const userPrompt = call.messages.find((m) => m.role === "user")?.content ?? ""
+      // The rendered (not instructional) attachment line lives directly under
+      // the message line with a 2-space indent. No rendered block here means
+      // no `  [attachment ` anywhere in the prompt.
+      expect(userPrompt).not.toContain("  [attachment ")
+    })
+  })
 })
