@@ -17,17 +17,10 @@ import {
   extractionResponseSchema,
   BOUNDARY_EXTRACTION_SYSTEM_PROMPT,
   BOUNDARY_EXTRACTION_PROMPT,
+  NEW_MESSAGE_ATTACHMENT_CHARS,
+  RECENT_ATTACHMENT_CHARS,
   type ExtractionResponse,
 } from "./config"
-
-/**
- * Per-attachment character budget when rendering extracted text in the prompt.
- * The new message's attachments get a bigger window because they are the
- * payload most likely to change the classification decision; context messages
- * use a smaller window (closer to a summary) to keep the prompt bounded.
- */
-const NEW_MESSAGE_ATTACHMENT_CHARS = 2000
-const RECENT_ATTACHMENT_CHARS = 400
 
 function indent(text: string, prefix: string): string {
   return text

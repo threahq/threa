@@ -56,50 +56,20 @@ export class BoundaryExtractionService {
    * conversation and decides.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
-    // Phase 0: For channels/threads (which call the LLM), wait for the new
-    // message's attachments to finish processing so the classifier sees the
-    // transcript/OCR/parsed text alongside the written content. We deliberately
-    // only await the *new* message's attachments — surrounding context
-    // attachments were almost always processed by their own earlier
-    // boundary-extract runs, and waiting for them too would multiply latency
-    // for the common case.
-    //
-    // INV-41: awaitAttachmentProcessing releases its connection between polls.
-    // Do not wrap this in withClient.
-    const streamForAwait = await StreamRepository.findById(this.pool, streamId)
-    if (streamForAwait && streamForAwait.type !== StreamTypes.SCRATCHPAD) {
-      const newMessageAttachments = await AttachmentRepository.findByMessageId(this.pool, messageId)
-      const attachmentIds = newMessageAttachments.map((a) => a.id)
-      if (attachmentIds.length > 0) {
-        logger.debug(
-          { messageId, attachmentCount: attachmentIds.length },
-          "Boundary extraction awaiting attachment processing for new message"
-        )
-        const awaitResult = await awaitAttachmentProcessing(this.pool, attachmentIds)
-        if (!awaitResult.allCompleted) {
-          // Classify with whatever extractions exist; don't block forever.
-          logger.warn(
-            {
-              messageId,
-              completedCount: awaitResult.completedIds.length,
-              failedCount: awaitResult.failedOrTimedOutIds.length,
-            },
-            "Boundary extraction proceeding without all attachments processed"
-          )
-        }
-      }
-    }
-
-    // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms)
+    // Phase 1: Fetch all data with withClient (no transaction, fast reads ~100-200ms).
+    // Includes the new message's attachment IDs so we can await their processing
+    // once the connection is released (INV-41) — extractions for the full
+    // new+context set are fetched on the pool after the await, mirroring the
+    // pattern in streams/naming-service.ts.
     const fetchedData = await withClient(this.pool, async (client) => {
       const message = await MessageRepository.findById(client, messageId)
       if (!message) {
-        return { message: null, stream: null, extractionContext: null }
+        return { message: null, stream: null, extractionContextBase: null }
       }
 
       const stream = await StreamRepository.findById(client, streamId)
       if (!stream) {
-        return { message: null, stream: null, extractionContext: null }
+        return { message: null, stream: null, extractionContextBase: null }
       }
 
       // For scratchpads: just fetch existing conversations (no AI needed)
@@ -108,7 +78,7 @@ export class BoundaryExtractionService {
         return {
           message,
           stream,
-          extractionContext: null,
+          extractionContextBase: null,
           scratchpadConversations: existingConversations,
           validUpdateTargets: new Set<string>(),
         }
@@ -155,24 +125,19 @@ export class BoundaryExtractionService {
           ? this.buildConversationSummaries(parentMessageConversations, [], contextMessageIdSet)
           : undefined
 
-      // Pull attachments + extractions for the new message AND every context
-      // message in one batched query. We render fullText (transcript / OCR /
-      // parse) only for the new message in the prompt; for context messages we
-      // fall back to the short summary so the prompt stays bounded.
-      const attachmentTargetIds = [message.id, ...allContextMessageIds]
-      const attachmentsByMessage = await AttachmentRepository.findByMessageIdsWithExtractions(
-        client,
-        attachmentTargetIds
-      )
-      const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
+      // New-message attachment IDs only — we await *just* these because they
+      // are the payload most likely to change the classification decision.
+      // Surrounding-context attachments were almost always processed by their
+      // own earlier boundary-extract runs.
+      const newMessageAttachments = await AttachmentRepository.findByMessageId(client, message.id)
+      const newMessageAttachmentIds = newMessageAttachments.map((a) => a.id)
 
-      const extractionContext: ExtractionContext = {
+      const extractionContextBase: Omit<ExtractionContext, "attachmentsByMessageId"> = {
         newMessage: message,
         recentMessages: allContextMessages,
         activeConversations,
         streamType: stream.type,
         parentMessageConversations: parentConversations,
-        attachmentsByMessageId,
         workspaceId: stream.workspaceId,
       }
 
@@ -184,7 +149,9 @@ export class BoundaryExtractionService {
       return {
         message,
         stream,
-        extractionContext,
+        extractionContextBase,
+        newMessageAttachmentIds,
+        attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
         validReassignmentMessageIds: new Set(allContextMessageIds),
       }
@@ -198,11 +165,46 @@ export class BoundaryExtractionService {
     const {
       message,
       stream,
-      extractionContext,
+      extractionContextBase,
+      newMessageAttachmentIds,
+      attachmentTargetIds,
       scratchpadConversations,
       validUpdateTargets,
       validReassignmentMessageIds,
     } = fetchedData
+
+    // Phase 1.5 (channels/threads only): await new-message attachment processing
+    // with no DB connection held (INV-41), then fetch extractions for new +
+    // context messages on the pool (INV-30).
+    let extractionContext: ExtractionContext | null = null
+    if (extractionContextBase && attachmentTargetIds) {
+      if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
+        logger.debug(
+          { messageId, attachmentCount: newMessageAttachmentIds.length },
+          "Boundary extraction awaiting attachment processing for new message"
+        )
+        const awaitResult = await awaitAttachmentProcessing(this.pool, newMessageAttachmentIds)
+        if (!awaitResult.allCompleted) {
+          // Classify with whatever extractions exist; don't block forever.
+          logger.warn(
+            {
+              messageId,
+              completedCount: awaitResult.completedIds.length,
+              failedCount: awaitResult.failedOrTimedOutIds.length,
+            },
+            "Boundary extraction proceeding without all attachments processed"
+          )
+        }
+      }
+
+      const attachmentsByMessage = await AttachmentRepository.findByMessageIdsWithExtractions(
+        this.pool,
+        attachmentTargetIds
+      )
+      const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
+
+      extractionContext = { ...extractionContextBase, attachmentsByMessageId }
+    }
 
     // Phase 2: Determine conversation (AI call only for channels/threads, 1-5+ seconds!)
     let decision: ConversationDecision

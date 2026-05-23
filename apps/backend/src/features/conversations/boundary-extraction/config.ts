@@ -14,6 +14,15 @@ export const BOUNDARY_EXTRACTION_MODEL_ID = "openrouter:openai/gpt-5.4-nano"
 /** Temperature for classification - low for consistency */
 export const BOUNDARY_EXTRACTION_TEMPERATURE = 0.2
 
+/**
+ * Per-attachment character budget when rendering extracted text in the prompt.
+ * The new message's attachments get a bigger window because they are the
+ * payload most likely to change the classification decision; context messages
+ * use a smaller window (closer to a summary) to keep the prompt bounded.
+ */
+export const NEW_MESSAGE_ATTACHMENT_CHARS = 2000
+export const RECENT_ATTACHMENT_CHARS = 400
+
 /** System prompt for boundary extraction */
 export const BOUNDARY_EXTRACTION_SYSTEM_PROMPT = `You are a conversation boundary classifier. You analyze messages and output ONLY valid JSON matching the required schema. No explanations, no markdown, no prose - just the JSON object.`
 
