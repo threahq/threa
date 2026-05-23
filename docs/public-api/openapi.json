@@ -1271,6 +1271,7 @@
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "finalMessageMarkdown": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "noResponse": { "type": "boolean" },
                   "metadata": {
                     "type": "object",
                     "propertyNames": {
@@ -1282,7 +1283,7 @@
                     "additionalProperties": { "type": "string", "maxLength": 256 }
                   }
                 },
-                "required": ["instanceId", "claimToken", "finalMessageMarkdown"],
+                "required": ["instanceId", "claimToken"],
                 "additionalProperties": false
               }
             }
@@ -1302,47 +1303,52 @@
                       "properties": {
                         "invocationId": { "type": "string" },
                         "message": {
-                          "type": "object",
-                          "properties": {
-                            "id": { "type": "string" },
-                            "streamId": { "type": "string" },
-                            "sequence": { "type": "string", "description": "Numeric sequence as string" },
-                            "authorId": { "type": "string" },
-                            "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
-                            "authorDisplayName": { "type": "string" },
-                            "content": { "type": "string" },
-                            "replyCount": {
-                              "type": "integer",
-                              "minimum": -9007199254740991,
-                              "maximum": 9007199254740991
-                            },
-                            "threadStreamId": { "type": "string" },
-                            "clientMessageId": { "type": "string" },
-                            "sentVia": {
-                              "description": "Present when message was sent via API on behalf of a user",
-                              "type": "string"
-                            },
-                            "metadata": {
+                          "anyOf": [
+                            {
                               "type": "object",
-                              "propertyNames": { "type": "string" },
-                              "additionalProperties": { "type": "string" },
-                              "description": "External references attached by the sender. Always present; empty when unset."
+                              "properties": {
+                                "id": { "type": "string" },
+                                "streamId": { "type": "string" },
+                                "sequence": { "type": "string", "description": "Numeric sequence as string" },
+                                "authorId": { "type": "string" },
+                                "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                                "authorDisplayName": { "type": "string" },
+                                "content": { "type": "string" },
+                                "replyCount": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "threadStreamId": { "type": "string" },
+                                "clientMessageId": { "type": "string" },
+                                "sentVia": {
+                                  "description": "Present when message was sent via API on behalf of a user",
+                                  "type": "string"
+                                },
+                                "metadata": {
+                                  "type": "object",
+                                  "propertyNames": { "type": "string" },
+                                  "additionalProperties": { "type": "string" },
+                                  "description": "External references attached by the sender. Always present; empty when unset."
+                                },
+                                "editedAt": { "type": "string", "format": "date-time" },
+                                "createdAt": { "type": "string", "format": "date-time" }
+                              },
+                              "required": [
+                                "id",
+                                "streamId",
+                                "sequence",
+                                "authorId",
+                                "authorType",
+                                "content",
+                                "replyCount",
+                                "metadata",
+                                "createdAt"
+                              ],
+                              "additionalProperties": false
                             },
-                            "editedAt": { "type": "string", "format": "date-time" },
-                            "createdAt": { "type": "string", "format": "date-time" }
-                          },
-                          "required": [
-                            "id",
-                            "streamId",
-                            "sequence",
-                            "authorId",
-                            "authorType",
-                            "content",
-                            "replyCount",
-                            "metadata",
-                            "createdAt"
-                          ],
-                          "additionalProperties": false
+                            { "type": "null" }
+                          ]
                         }
                       },
                       "required": ["invocationId", "message"],
