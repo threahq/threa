@@ -30,7 +30,7 @@ export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, clas
   return (
     <div
       className={cn(
-        "relative z-30 inline-flex max-w-[min(26rem,calc(100vw-2rem))] items-center gap-1.5 rounded-full bg-background px-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground shadow-sm ring-1 ring-border",
+        "relative z-30 inline-flex max-w-[min(26rem,calc(100vw-2rem))] items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-[11px] font-medium tracking-wide text-muted-foreground shadow-sm ring-1 ring-border",
         className
       )}
       aria-live="polite"
