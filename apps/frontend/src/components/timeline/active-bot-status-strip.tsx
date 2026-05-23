@@ -5,27 +5,27 @@ interface ActiveBotStatusStripProps {
   botName: string
   runtimeDisplayName: string | null
   status: BotRuntimeStatus | "unknown"
-  statusText?: string | null
   className?: string
 }
 
 const STATUS_COPY: Record<BotRuntimeStatus | "unknown", string> = {
-  available: "available",
-  busy: "busy",
-  offline: "offline",
-  error: "error",
-  unknown: "not linked",
+  available: "Available",
+  busy: "Working",
+  offline: "Offline",
+  error: "Error",
+  unknown: "Not linked",
 }
 
-export function ActiveBotStatusStrip({
-  botName,
-  runtimeDisplayName,
-  status,
-  statusText,
-  className,
-}: ActiveBotStatusStripProps) {
-  const detail =
-    statusText ?? (runtimeDisplayName ? `linked to ${runtimeDisplayName}` : "run /remote-control in Pi to connect")
+const STATUS_DOT_CLASS: Record<BotRuntimeStatus | "unknown", string> = {
+  available: "bg-emerald-500",
+  busy: "animate-pulse bg-amber-500",
+  offline: "bg-muted-foreground/40",
+  error: "animate-pulse bg-destructive",
+  unknown: "bg-muted-foreground/40",
+}
+
+export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, className }: ActiveBotStatusStripProps) {
+  const detail = runtimeDisplayName ? runtimeDisplayName : "run /remote-control in Pi to connect"
 
   return (
     <div
@@ -35,7 +35,8 @@ export function ActiveBotStatusStrip({
       )}
       aria-live="polite"
     >
-      <span className="font-medium text-foreground">{botName}</span>
+      <span className={cn("inline-block size-2 rounded-full", STATUS_DOT_CLASS[status])} aria-hidden="true" />
+      <span className="ml-2 font-medium text-foreground">{botName}</span>
       <span aria-hidden="true"> · </span>
       <span>{STATUS_COPY[status]}</span>
       <span aria-hidden="true"> · </span>
