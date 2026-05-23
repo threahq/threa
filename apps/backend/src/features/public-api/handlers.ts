@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
+import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
 import type { BotChannelService } from "../api-keys"
@@ -61,6 +62,7 @@ import type {
   WireAttachmentUrl,
   WireAttachmentUpload,
 } from "./routes"
+import type { AgentSessionStep } from "../agents/session-repository"
 import {
   publicSearchSchema,
   listStreamsSchema,
@@ -342,6 +344,23 @@ export interface PublicApiDeps {
   streamService: StreamService
   eventService: EventService
   pool: Pool
+  io?: Server
+}
+
+function serializeTraceStep(step: AgentSessionStep) {
+  return {
+    id: step.id,
+    sessionId: step.sessionId,
+    stepNumber: step.stepNumber,
+    stepType: step.stepType,
+    content: step.content as string | undefined,
+    sources: step.sources ?? undefined,
+    messageId: step.messageId ?? undefined,
+    tokensUsed: step.tokensUsed ?? undefined,
+    duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
+    startedAt: step.startedAt.toISOString(),
+    completedAt: step.completedAt?.toISOString(),
+  }
 }
 
 export function createPublicApiHandlers({
@@ -353,6 +372,7 @@ export function createPublicApiHandlers({
   streamService,
   eventService,
   pool,
+  io,
 }: PublicApiDeps) {
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
@@ -662,7 +682,10 @@ export function createPublicApiHandlers({
       })
       if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       await assertStreamAccessible(req, claim.responseStreamId)
-      const steps = await AgentSessionRepository.findStepsBySession(pool, claim.id)
+      const [steps, bot] = await Promise.all([
+        AgentSessionRepository.findStepsBySession(pool, claim.id),
+        BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
+      ])
       const now = new Date()
       const step = await AgentSessionRepository.upsertStep(pool, {
         id: stepId(),
@@ -674,6 +697,21 @@ export function createPublicApiHandlers({
         completedAt: now,
       })
       await AgentSessionRepository.updateCurrentStepType(pool, claim.id, result.data.stepType)
+      const sessionRoom = `ws:${req.workspaceId!}:agent_session:${claim.id}`
+      io?.to(sessionRoom).emit("agent_session:step:completed", {
+        sessionId: claim.id,
+        step: serializeTraceStep(step),
+      })
+      io?.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
+        workspaceId: req.workspaceId!,
+        streamId: claim.responseStreamId,
+        sessionId: claim.id,
+        triggerMessageId: claim.sourceMessageId,
+        personaName: bot?.name ?? "Pi Remote",
+        stepCount: step.stepNumber,
+        messageCount: 0,
+        currentStepType: result.data.stepType,
+      })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },
 
@@ -751,6 +789,9 @@ export function createPublicApiHandlers({
               workspaceId: req.workspaceId!,
               streamId: completed.responseStreamId,
               event: streamEvent,
+            })
+            io?.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
+              sessionId: completed.id,
             })
           }
         }
