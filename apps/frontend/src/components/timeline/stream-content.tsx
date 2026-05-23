@@ -241,7 +241,7 @@ export function StreamContent({
     queryKey: ["bot-runtime-presence", workspaceId, streamId],
     queryFn: () => botRuntimeApi.getPresence(workspaceId, streamId),
     enabled: !isDraft && showBotRuntimePresence && !!workspaceId && !!streamId,
-    refetchInterval: 10_000,
+    refetchInterval: 1_500,
   })
   const botRuntimePresence = botRuntimePresenceQuery.data ?? bootstrap?.botRuntimePresence ?? {}
   const activeBotPresence = useMemo(() => {
