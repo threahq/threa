@@ -649,6 +649,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     publicApi.renewBotInvocationClaim
   )
   app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/steps",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.recordBotInvocationStep
+  )
+  app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/complete",
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),

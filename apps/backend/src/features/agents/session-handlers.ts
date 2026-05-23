@@ -5,6 +5,7 @@ import { AgentSessionRepository } from "./session-repository"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { StreamMemberRepository } from "../streams"
 import { PersonaRepository } from "./persona-repository"
+import { BotRepository } from "../public-api/bot-repository"
 import type { AgentSessionWithSteps, AgentStepType } from "@threa/types"
 
 interface Dependencies {
@@ -30,10 +31,11 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
           return { error: "Session not found", status: 404 }
         }
 
-        const [stream, membership, persona, steps] = await Promise.all([
+        const [stream, membership, persona, bot, steps] = await Promise.all([
           StreamRepository.findById(db, session.streamId),
           StreamMemberRepository.findByStreamAndMember(db, session.streamId, userId),
           PersonaRepository.findById(db, session.personaId, workspaceId),
+          BotRepository.findById(db, workspaceId, session.personaId),
           AgentSessionRepository.findStepsBySession(db, sessionId),
         ])
 
@@ -43,8 +45,13 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         if (!membership) {
           return { error: "Not authorized to view this session", status: 403 }
         }
-        if (!persona) {
-          return { error: "Persona not found", status: 404 }
+        const actor = persona
+          ? { id: persona.id, name: persona.name, avatarUrl: null, avatarEmoji: persona.avatarEmoji }
+          : bot
+            ? { id: bot.id, name: bot.name, avatarUrl: bot.avatarUrl, avatarEmoji: bot.avatarEmoji ?? undefined }
+            : null
+        if (!actor) {
+          return { error: "Agent not found", status: 404 }
         }
 
         const relatedSessions = (
@@ -88,12 +95,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
             startedAt: step.startedAt.toISOString(),
             completedAt: step.completedAt?.toISOString(),
           })),
-          persona: {
-            id: persona.id,
-            name: persona.name,
-            avatarUrl: null, // Personas use avatarEmoji, not URL
-            avatarEmoji: persona.avatarEmoji,
-          },
+          persona: actor,
           relatedSessions: relatedSessions.map(mapSession),
         }
 
