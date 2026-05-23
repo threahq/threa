@@ -4,7 +4,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
-import type { BotChannelService } from "../api-keys"
+import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import type { EventService } from "../messaging"
 import {
   StreamRepository,
@@ -36,7 +36,8 @@ import {
   sentViaApiKey,
   type AuthorType,
 } from "@threa/types"
-import { BotRuntimeService } from "../bot-runtimes"
+import { BotRuntimeService, type BotRuntimeInstance } from "../bot-runtimes"
+import type { BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
@@ -44,7 +45,7 @@ import { randomUUID } from "crypto"
 import { botId, eventId, stepId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
-import { AgentSessionRepository } from "../agents"
+import { AgentSessionRepository, type AgentSessionStep } from "../agents"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { listMyBotsSchema } from "./schemas"
 import type {
@@ -62,7 +63,6 @@ import type {
   WireAttachmentUrl,
   WireAttachmentUpload,
 } from "./routes"
-import type { AgentSessionStep } from "../agents/session-repository"
 import {
   publicSearchSchema,
   listStreamsSchema,
@@ -455,6 +455,66 @@ export function createPublicApiHandlers({
     return attachment
   }
 
+  /**
+   * Fan a presence update out to every stream the bot is a member of. Frontend
+   * subscribes via the stream room and patches its cached bootstrap. Keeps the
+   * UI in sync without any client-side polling.
+   */
+  async function broadcastBotPresence(
+    workspaceId: string,
+    botId: string,
+    presence: BotRuntimeInstance | null
+  ): Promise<void> {
+    if (!io) return
+    const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
+    if (streamIds.length === 0) return
+    const payload = {
+      workspaceId,
+      botId,
+      presence: presence
+        ? {
+            botId: presence.botId,
+            runtimeKind: presence.runtimeKind,
+            instanceId: presence.instanceId,
+            displayName: presence.displayName,
+            status: presence.status,
+            acceptingInvocations: presence.acceptingInvocations,
+            statusText: presence.statusText,
+            lastSeenAt: presence.lastSeenAt.toISOString(),
+          }
+        : null,
+    }
+    for (const streamId of streamIds) {
+      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("bot_runtime:presence", { ...payload, streamId })
+    }
+  }
+
+  /**
+   * Touch presence as part of an invocation-side request (claim / step) so the
+   * Pi runtime does not need to send a separate heartbeat per poll tick. The
+   * caller decides which status to record; `statusText` is optional.
+   */
+  async function touchAndBroadcastPresence(params: {
+    workspaceId: string
+    botId: string
+    runtimeKind: BotRuntimeKind
+    instanceId: string
+    status: BotRuntimeStatus
+    acceptingInvocations: boolean
+    statusText?: string | null
+  }): Promise<void> {
+    const presence = await botRuntimeService.upsertPresenceFromBotKey({
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      runtimeKind: params.runtimeKind,
+      instanceId: params.instanceId,
+      status: params.status,
+      acceptingInvocations: params.acceptingInvocations,
+      statusText: params.statusText,
+    })
+    await broadcastBotPresence(params.workspaceId, params.botId, presence)
+  }
+
   return {
     async uploadAttachment(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -501,6 +561,7 @@ export function createPublicApiHandlers({
         botId: req.botApiKey.botId,
         ...result.data,
       })
+      await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({
         data: {
           ...presence,
@@ -578,6 +639,17 @@ export function createPublicApiHandlers({
       if (!result.success) {
         return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
       }
+      // Claim doubles as a heartbeat: refresh presence as "available" on every
+      // poll so Pi does not need a separate /presence call per tick. If a claim
+      // lands we'll overwrite to "busy" right after.
+      await touchAndBroadcastPresence({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        runtimeKind: result.data.runtimeKind,
+        instanceId: result.data.instanceId,
+        status: "available",
+        acceptingInvocations: true,
+      })
       const invocation = await botRuntimeService.claimNextInvocation({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
@@ -588,6 +660,15 @@ export function createPublicApiHandlers({
         claimToken: randomUUID(),
       })
       if (!invocation) return res.json({ data: null })
+      await touchAndBroadcastPresence({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        runtimeKind: result.data.runtimeKind,
+        instanceId: result.data.instanceId,
+        status: "busy",
+        acceptingInvocations: false,
+        statusText: "Starting…",
+      })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       if (bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
@@ -682,21 +763,25 @@ export function createPublicApiHandlers({
       })
       if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       await assertStreamAccessible(req, claim.responseStreamId)
-      const [steps, bot] = await Promise.all([
-        AgentSessionRepository.findStepsBySession(pool, claim.id),
-        BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
-      ])
+      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       const now = new Date()
-      const step = await AgentSessionRepository.upsertStep(pool, {
-        id: stepId(),
-        sessionId: claim.id,
-        stepNumber: steps.length + 1,
-        stepType: result.data.stepType,
-        content: result.data.content,
-        startedAt: now,
-        completedAt: now,
+      // Append + currentStepType must run in one transaction: appendStep takes
+      // a FOR UPDATE lock on the session row so concurrent step POSTs serialize
+      // and each gets a unique step_number (INV-20). Without it, two near-
+      // simultaneous Pi events would race on MAX(step_number) and one would
+      // overwrite the other.
+      const step = await withTransaction(pool, async (client) => {
+        const inserted = await AgentSessionRepository.appendStep(client, {
+          id: stepId(),
+          sessionId: claim.id,
+          stepType: result.data.stepType,
+          content: result.data.content,
+          startedAt: now,
+          completedAt: now,
+        })
+        await AgentSessionRepository.updateCurrentStepType(client, claim.id, result.data.stepType)
+        return inserted
       })
-      await AgentSessionRepository.updateCurrentStepType(pool, claim.id, result.data.stepType)
       const sessionRoom = `ws:${req.workspaceId!}:agent_session:${claim.id}`
       io?.to(sessionRoom).emit("agent_session:step:completed", {
         sessionId: claim.id,
@@ -711,6 +796,18 @@ export function createPublicApiHandlers({
         stepCount: step.stepNumber,
         messageCount: 0,
         currentStepType: result.data.stepType,
+      })
+      // Step recording also serves as a busy heartbeat — keeps the runtime's
+      // presence statusText in sync with the most recent trace step so Pi
+      // does not need to send a separate /presence call alongside each step.
+      await touchAndBroadcastPresence({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        runtimeKind: "pi-local",
+        instanceId: result.data.instanceId,
+        status: "busy",
+        acceptingInvocations: false,
+        statusText: result.data.content.trim().slice(0, 160) || null,
       })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },

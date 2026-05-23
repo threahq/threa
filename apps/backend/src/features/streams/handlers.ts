@@ -749,19 +749,6 @@ export function createStreamHandlers({
       })
     },
 
-    async botRuntimePresence(req: Request, res: Response) {
-      const userId = req.user!.id
-      const workspaceId = req.workspaceId!
-      const { streamId } = req.params
-      await streamService.validateStreamAccess(streamId, workspaceId, userId)
-      const botMemberIds = await streamService.getBotMemberIds(workspaceId, streamId)
-      const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
-      const data = Object.fromEntries(
-        botMemberIds.map((botId) => [botId, serializeBotRuntimePresence(botRuntimePresences.get(botId) ?? null)])
-      )
-      res.json({ data })
-    },
-
     async checkSlugAvailable(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 

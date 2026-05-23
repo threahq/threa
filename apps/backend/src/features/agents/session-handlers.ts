@@ -45,11 +45,12 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         if (!membership) {
           return { error: "Not authorized to view this session", status: 403 }
         }
-        const actor = persona
-          ? { id: persona.id, name: persona.name, avatarUrl: null, avatarEmoji: persona.avatarEmoji }
-          : bot
-            ? { id: bot.id, name: bot.name, avatarUrl: bot.avatarUrl, avatarEmoji: bot.avatarEmoji ?? undefined }
-            : null
+        let actor: { id: string; name: string; avatarUrl: string | null; avatarEmoji?: string | null } | null = null
+        if (persona) {
+          actor = { id: persona.id, name: persona.name, avatarUrl: null, avatarEmoji: persona.avatarEmoji }
+        } else if (bot) {
+          actor = { id: bot.id, name: bot.name, avatarUrl: bot.avatarUrl, avatarEmoji: bot.avatarEmoji ?? undefined }
+        }
         if (!actor) {
           return { error: "Agent not found", status: 404 }
         }
