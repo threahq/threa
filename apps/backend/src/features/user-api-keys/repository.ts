@@ -95,6 +95,22 @@ export const UserApiKeyRepository = {
    * Atomic revoke with ownership check — avoids select-then-update (INV-20).
    * Single UPDATE with all guards in the WHERE clause.
    */
+  async updateScopesOwned(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    id: string,
+    scopes: string[]
+  ): Promise<UserApiKeyRow | null> {
+    const result = await db.query<Record<string, unknown>>(sql`
+      UPDATE user_api_keys
+      SET scopes = ${scopes}
+      WHERE id = ${id} AND workspace_id = ${workspaceId} AND user_id = ${userId} AND revoked_at IS NULL
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   async revokeOwned(
     db: Querier,
     workspaceId: string,

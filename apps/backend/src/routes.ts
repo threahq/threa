@@ -487,6 +487,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const userApiKeys = createUserApiKeyHandlers({ userApiKeyService })
   app.get("/api/workspaces/:workspaceId/user-api-keys", ...authed, userApiKeys.list)
   app.post("/api/workspaces/:workspaceId/user-api-keys", ...authed, userApiKeys.create)
+  app.patch("/api/workspaces/:workspaceId/user-api-keys/:keyId", ...authed, userApiKeys.update)
   app.post("/api/workspaces/:workspaceId/user-api-keys/:keyId/revoke", ...authed, userApiKeys.revoke)
 
   // Voice dictation: HTTP creates/aborts the session; the dedicated /voice
@@ -509,6 +510,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/bots/:botId/restore", ...authed, requireBotManagement(), botHandlers.restore)
   app.get("/api/workspaces/:workspaceId/bots/:botId/keys", ...authed, requireBotManagement(), botHandlers.listKeys)
   app.post("/api/workspaces/:workspaceId/bots/:botId/keys", ...authed, requireBotManagement(), botHandlers.createKey)
+  app.patch(
+    "/api/workspaces/:workspaceId/bots/:botId/keys/:keyId",
+    ...authed,
+    requireBotManagement(),
+    botHandlers.updateKey
+  )
   app.post(
     "/api/workspaces/:workspaceId/bots/:botId/keys/:keyId/revoke",
     ...authed,

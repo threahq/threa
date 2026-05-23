@@ -59,6 +59,10 @@ const createBotKeySchema = z.object({
     }),
 })
 
+const updateBotKeySchema = z.object({
+  scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required"),
+})
+
 function serializeBotKey(row: BotApiKeyRow): BotApiKey {
   return {
     id: row.id,
@@ -352,6 +356,26 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       })
 
       res.status(201).json({ key: serializeBotKey(row), value })
+    },
+
+    /** PATCH /api/workspaces/:workspaceId/bots/:botId/keys/:keyId */
+    async updateKey(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const { botId: id, keyId } = req.params
+      const result = updateBotKeySchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: z.flattenError(result.error).fieldErrors,
+        })
+      }
+      const row = await botApiKeyService.updateScopes({
+        workspaceId,
+        botId: id,
+        keyId,
+        scopes: result.data.scopes as WorkspacePermissionSlug[],
+      })
+      res.json({ data: serializeBotKey(row) })
     },
 
     /** POST /api/workspaces/:workspaceId/bots/:botId/keys/:keyId/revoke */

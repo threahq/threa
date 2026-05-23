@@ -1,5 +1,5 @@
 import { api, API_BASE, parseApiError } from "./client"
-import type { Bot, BotApiKey, CreateBotApiKeyResponse } from "@threa/types"
+import type { Bot, BotApiKey, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threa/types"
 
 export interface CreateBotInput {
   type?: "shared" | "personal"
@@ -62,6 +62,18 @@ export const botsApi = {
 
   async createKey(workspaceId: string, botId: string, data: CreateBotKeyInput): Promise<CreateBotApiKeyResponse> {
     return api.post<CreateBotApiKeyResponse>(`/api/workspaces/${workspaceId}/bots/${botId}/keys`, data)
+  },
+
+  async updateKeyScopes(
+    workspaceId: string,
+    botId: string,
+    keyId: string,
+    scopes: WorkspacePermissionSlug[]
+  ): Promise<BotApiKey> {
+    const res = await api.patch<{ data: BotApiKey }>(`/api/workspaces/${workspaceId}/bots/${botId}/keys/${keyId}`, {
+      scopes,
+    })
+    return res.data
   },
 
   async revokeKey(workspaceId: string, botId: string, keyId: string): Promise<void> {

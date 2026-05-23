@@ -462,15 +462,31 @@ async function prepareFinalMarkdown(
 ): Promise<{ finalMarkdown: string; uploadedAttachments: UploadedAttachment[] }> {
   const extracted = extractAttachmentDirectives(markdown.trim())
   const uploadedAttachments: UploadedAttachment[] = []
+  const failedUploads: string[] = []
   for (const path of extracted.paths) {
-    uploadedAttachments.push(await uploadAttachment(path, cwd))
+    try {
+      uploadedAttachments.push(await uploadAttachment(path, cwd))
+    } catch (error) {
+      failedUploads.push(`${path}: ${String(error)}`)
+    }
   }
-  if (uploadedAttachments.length === 0) return { finalMarkdown: extracted.markdown || "Done.", uploadedAttachments }
   const attachmentLinks = uploadedAttachments.map(
     (attachment) => `- [${attachment.filename}](attachment:${attachment.id})`
   )
+  const uploadFailureNote =
+    failedUploads.length > 0
+      ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
+      : ""
   return {
-    finalMarkdown: [extracted.markdown, "Attachments:", ...attachmentLinks].filter(Boolean).join("\n\n"),
+    finalMarkdown:
+      [
+        extracted.markdown || "Done.",
+        attachmentLinks.length > 0 ? "Attachments:" : "",
+        ...attachmentLinks,
+        uploadFailureNote,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || "Done.",
     uploadedAttachments,
   }
 }
