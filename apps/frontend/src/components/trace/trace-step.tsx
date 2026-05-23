@@ -518,12 +518,165 @@ function renderStepContent(
           </div>
         )
       }
-      return <span>{content}</span>
+      return <ToolMarkdownContent content={content} isError={false} />
     }
+
+    case "tool_error":
+      return <ToolMarkdownContent content={content} isError={true} />
 
     default:
       return <span>{content}</span>
   }
+}
+
+/**
+ * Parsed shape of a Pi-formatted tool trace string. The Pi remote (and any
+ * other runtime that ships through `POST /bot-invocations/:id/steps`) writes
+ * tool_call / tool_error content as a markdown-ish blob:
+ *
+ *   <headline>            // e.g. "Running git diff", "Reading SKILL.md"
+ *
+ *   Arguments:            // optional, only on completed tool calls
+ *   ```json
+ *   { ... }
+ *   ```
+ *
+ *   Output:               // or "Error output:" on tool_error
+ *   ```
+ *   ...
+ *   ```
+ *
+ *   Details:              // optional
+ *   ```json
+ *   { ... }
+ *   ```
+ *
+ * The frontend previously dumped this string into a raw <span>, leaving the
+ * code fences as literal backtick characters. This parser splits it back into
+ * the headline + a list of named sections so the renderer can show a clean
+ * summary and tuck the bulky payloads behind collapsibles.
+ */
+interface ToolSection {
+  label: string
+  body: string
+  lang: string | null
+}
+
+function parseToolMarkdownContent(content: string): { headline: string; sections: ToolSection[] } {
+  const trimmed = content.trim()
+  if (!trimmed) return { headline: "", sections: [] }
+
+  const lines = trimmed.split("\n")
+  const headlineRaw = lines[0] ?? ""
+  // The "started" placeholder steps keep the trailing ellipsis ("Reading X…"),
+  // which is noise next to a clean section list — drop it so headlines read
+  // the same whether the tool finished or is still mid-flight.
+  const headline = headlineRaw.replace(/[…\.]+$/u, "").trim()
+
+  const sections: ToolSection[] = []
+  const sectionHeader = /^(Arguments|Output|Error output|Details):\s*$/
+
+  let i = 1
+  while (i < lines.length) {
+    const line = lines[i] ?? ""
+    const header = line.match(sectionHeader)
+    if (!header) {
+      i++
+      continue
+    }
+    const label = header[1]!
+    i++
+    let lang: string | null = null
+    let body = ""
+    const fence = lines[i]?.match(/^```(\w*)\s*$/)
+    if (fence) {
+      lang = fence[1] || null
+      i++
+      const bodyLines: string[] = []
+      while (i < lines.length && lines[i] !== "```") {
+        bodyLines.push(lines[i] ?? "")
+        i++
+      }
+      if (i < lines.length) i++ // closing fence
+      body = bodyLines.join("\n")
+    } else {
+      // No code fence — collect everything up to the next section header.
+      const bodyLines: string[] = []
+      while (i < lines.length && !(lines[i] ?? "").match(sectionHeader)) {
+        bodyLines.push(lines[i] ?? "")
+        i++
+      }
+      body = bodyLines.join("\n").trim()
+    }
+    sections.push({ label, body, lang })
+  }
+
+  return { headline, sections }
+}
+
+/**
+ * Renders a Pi-formatted tool_call / tool_error trace step. The headline
+ * (always visible) stays compact for fast scanning; each labeled section
+ * collapses behind a disclosure so a 10k-char `git diff` output doesn't blow
+ * the dialog open. On `tool_error` the "Error output" section opens by default
+ * because that's the part the reader actually wants to see.
+ */
+function ToolMarkdownContent({ content, isError }: { content: string; isError: boolean }) {
+  const { headline, sections } = parseToolMarkdownContent(content)
+  const headlineText = headline || (isError ? "Tool error" : "Tool call")
+
+  return (
+    <div className="space-y-2">
+      <div className="font-mono text-[12.5px] leading-snug break-words text-foreground/90">{headlineText}</div>
+      {sections.length > 0 && (
+        <div className="space-y-1.5">
+          {sections.map((section, i) => (
+            <ToolSectionDisclosure
+              key={`${section.label}-${i}`}
+              section={section}
+              defaultOpen={isError && section.label === "Error output"}
+              isError={isError && (section.label === "Error output" || section.label === "Details")}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolSectionDisclosure({
+  section,
+  defaultOpen,
+  isError,
+}: {
+  section: ToolSection
+  defaultOpen: boolean
+  isError: boolean
+}) {
+  const lineCount = section.body ? section.body.split("\n").length : 0
+  const lineLabel = `${lineCount} ${lineCount === 1 ? "line" : "lines"}`
+
+  return (
+    <Collapsible defaultOpen={defaultOpen}>
+      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors">
+        <ChevronRight className="w-3 h-3 transition-transform group-data-[state=open]:rotate-90" />
+        <span>{section.label}</span>
+        {lineCount > 0 && (
+          <span className="ml-1 font-normal normal-case tracking-normal text-muted-foreground/70">{lineLabel}</span>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre
+          className={cn(
+            "mt-1.5 rounded-md px-3 py-2 text-[11px] font-mono leading-snug overflow-x-auto whitespace-pre max-h-[320px] overflow-y-auto",
+            isError ? "bg-destructive/5 border border-destructive/20 text-foreground/90" : "bg-muted/60"
+          )}
+        >
+          <code>{section.body || "(empty)"}</code>
+        </pre>
+      </CollapsibleContent>
+    </Collapsible>
+  )
 }
 
 /**

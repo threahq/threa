@@ -258,6 +258,80 @@ describe("TraceStep", () => {
     expect(code.textContent).toContain("\n")
   })
 
+  it("renders Pi-formatted tool_call content with collapsed Output and visible headline", async () => {
+    // Pi remote ships markdown-ish content with a headline, then labeled
+    // sections (Arguments/Output/Details) wrapped in code fences. The
+    // previous renderer dumped the whole blob into a span, leaving the
+    // fences as literal backticks and forcing the dialog to scroll a 10k
+    // line of `git diff` output. The fix splits headline + sections and
+    // tucks each section behind a disclosure (collapsed by default).
+    const user = userEvent.setup()
+    const content = [
+      "Running git diff --stat",
+      "",
+      "Arguments:",
+      "```json",
+      '{\n  "command": "git diff --stat",\n  "timeout": 300\n}',
+      "```",
+      "",
+      "Output:",
+      "```",
+      "apps/backend/src/foo.ts | 11 +-",
+      "apps/backend/src/bar.ts | 59 +++",
+      "```",
+    ].join("\n")
+
+    render(
+      <MemoryRouter>
+        <TraceStep step={createStep({ stepType: "tool_call", content })} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+
+    // Headline always visible (without the literal "Output:" header text
+    // leaking from the source markdown).
+    expect(screen.getByText("Running git diff --stat")).toBeInTheDocument()
+    // Section bodies are collapsed by default, so the diff output should
+    // NOT be in the DOM yet.
+    expect(screen.queryByText(/apps\/backend\/src\/foo\.ts/)).not.toBeInTheDocument()
+    // Triggers exist for each section.
+    expect(screen.getByRole("button", { name: /Arguments/i })).toBeInTheDocument()
+    const outputTrigger = screen.getByRole("button", { name: /Output/i })
+    await user.click(outputTrigger)
+    expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
+  })
+
+  it("renders tool_error with the Error output section open by default", () => {
+    // For tool_error steps the reader almost always wants to see the failure
+    // message immediately — keeping it collapsed buries the most relevant
+    // detail. Arguments stay collapsed so the failure isn't crowded out.
+    const content = [
+      "Running git commit -F .tmp/commit-msg.txt",
+      "",
+      "Arguments:",
+      "```json",
+      '{ "command": "git commit -F .tmp/commit-msg.txt" }',
+      "```",
+      "",
+      "Error output:",
+      "```",
+      "fatal: pathspec 'apps/frontend/src/api/bot-runtime.ts' did not match any files",
+      "Command exited with code 128",
+      "```",
+    ].join("\n")
+
+    render(
+      <MemoryRouter>
+        <TraceStep step={createStep({ stepType: "tool_error", content })} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Running git commit -F .tmp/commit-msg.txt")).toBeInTheDocument()
+    // Error body is visible immediately.
+    expect(screen.getByText(/did not match any files/)).toBeInTheDocument()
+    // Arguments body stays collapsed.
+    expect(screen.queryByText(/git commit -F \.tmp\/commit-msg\.txt"/)).not.toBeInTheDocument()
+  })
+
   it("renders workspace_search content that arrives as a raw object without crashing", () => {
     // Regression for the crash where a step row's content was persisted as a
     // JSONB object (bypassing the pre-stringify convention), node-postgres
