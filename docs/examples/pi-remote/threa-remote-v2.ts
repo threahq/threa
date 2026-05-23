@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+  ToolCallEvent,
+  ToolExecutionEndEvent,
+} from "@earendil-works/pi-coding-agent"
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
 const STATUS_KEY = "threa-remote"
@@ -66,6 +72,7 @@ let pollInFlight = false
 let pending: ClaimedInvocation | undefined
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
+let lastTraceHeartbeat: { text: string; at: number } | undefined
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -148,6 +155,50 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
       statusText,
     }),
   })
+}
+
+async function traceHeartbeat(text: string): Promise<void> {
+  if (!pending) return
+  const trimmed = text.trim().slice(0, 160)
+  if (!trimmed) return
+  const now = Date.now()
+  if (lastTraceHeartbeat?.text === trimmed && now - lastTraceHeartbeat.at < 5000) return
+  lastTraceHeartbeat = { text: trimmed, at: now }
+  await heartbeat("busy", trimmed).catch(() => undefined)
+}
+
+function describeToolCall(event: ToolCallEvent): string {
+  const input = "input" in event ? event.input : undefined
+  if (event.toolName === "bash" && input && typeof input === "object" && "command" in input) {
+    return `Running ${String(input.command).split("\n")[0].slice(0, 80)}…`
+  }
+  if (
+    (event.toolName === "read" || event.toolName === "write") &&
+    input &&
+    typeof input === "object" &&
+    "path" in input
+  ) {
+    return `${event.toolName === "read" ? "Reading" : "Writing"} ${String(input.path).slice(0, 80)}…`
+  }
+  if (event.toolName === "edit" && input && typeof input === "object" && "path" in input) {
+    return `Editing ${String(input.path).slice(0, 80)}…`
+  }
+  if (
+    (event.toolName === "grep" || event.toolName === "find") &&
+    input &&
+    typeof input === "object" &&
+    "pattern" in input
+  ) {
+    return `Searching for ${String(input.pattern).slice(0, 80)}…`
+  }
+  if (event.toolName === "ls" && input && typeof input === "object" && "path" in input) {
+    return `Listing ${String(input.path).slice(0, 80)}…`
+  }
+  return `Using ${event.toolName}…`
+}
+
+function describeToolEnd(event: ToolExecutionEndEvent): string {
+  return event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
 }
 
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
@@ -343,12 +394,13 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   if (!body.data) return
   pending = body.data
   pendingAssistantTexts = []
+  lastTraceHeartbeat = undefined
   const { context, cursor } = await fetchInvocationContext(body.data, ctx.cwd).catch((error) => {
     ctx.ui.notify(`Threa remote context fetch failed: ${String(error)}`, "warning")
     return { context: "" }
   })
   pendingContextCursor = cursor
-  await heartbeat("busy", "Working…")
+  await heartbeat("busy", "Starting…")
   setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
     [
@@ -516,6 +568,7 @@ async function completePending(markdown: string, cwd: string): Promise<void> {
   pending = undefined
   pendingContextCursor = undefined
   pendingAssistantTexts = []
+  lastTraceHeartbeat = undefined
   await heartbeat("available")
 }
 
@@ -525,6 +578,7 @@ async function failPending(error: unknown): Promise<void> {
   pending = undefined
   pendingContextCursor = undefined
   pendingAssistantTexts = []
+  lastTraceHeartbeat = undefined
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
     body: JSON.stringify({
@@ -573,6 +627,23 @@ export default function (pi: ExtensionAPI): void {
     }
     await heartbeat("available")
     startPolling(pi, ctx)
+  })
+
+  pi.on("agent_start", async () => {
+    await traceHeartbeat("Thinking…")
+  })
+
+  pi.on("tool_call", async (event) => {
+    await traceHeartbeat(describeToolCall(event))
+  })
+
+  pi.on("tool_execution_end", async (event) => {
+    await traceHeartbeat(describeToolEnd(event))
+  })
+
+  pi.on("message_start", async (event) => {
+    if (!pending || event.message.role !== "assistant") return
+    await traceHeartbeat("Composing response…")
   })
 
   pi.on("message_end", async (event) => {
