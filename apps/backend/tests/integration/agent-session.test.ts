@@ -739,6 +739,103 @@ describe("Agent Session - Concurrency", () => {
     })
   })
 
+  describe("appendStep", () => {
+    test("assigns sequential step_numbers starting at 1", async () => {
+      const testSessionId = sessionId()
+      await withClient(pool, async (client) => {
+        await AgentSessionRepository.insert(client, {
+          id: testSessionId,
+          streamId: streamId(),
+          personaId: personaId(),
+          triggerMessageId: messageId(),
+          status: SessionStatuses.RUNNING,
+          serverId: "test-server",
+        })
+
+        const step1 = await AgentSessionRepository.appendStep(client, {
+          id: stepId(),
+          sessionId: testSessionId,
+          stepType: AgentStepTypes.THINKING,
+          content: "first",
+          startedAt: new Date(),
+        })
+        const step2 = await AgentSessionRepository.appendStep(client, {
+          id: stepId(),
+          sessionId: testSessionId,
+          stepType: AgentStepTypes.TOOL_CALL,
+          content: "second",
+          startedAt: new Date(),
+        })
+
+        expect(step1.stepNumber).toBe(1)
+        expect(step2.stepNumber).toBe(2)
+      })
+    })
+
+    test("concurrent appends serialize and all rows survive", async () => {
+      // Regression for the race in Pi-remote trace recording: two concurrent
+      // step POSTs both computed stepNumber = MAX+1, then ON CONFLICT
+      // DO UPDATE in upsertStep clobbered one row instead of appending two.
+      const testSessionId = sessionId()
+      await AgentSessionRepository.insert(pool, {
+        id: testSessionId,
+        streamId: streamId(),
+        personaId: personaId(),
+        triggerMessageId: messageId(),
+        status: SessionStatuses.RUNNING,
+        serverId: "test-server",
+      })
+
+      const callers = Array.from({ length: 8 }, (_, i) => i + 1)
+      const results = await Promise.all(
+        callers.map((n) =>
+          withClient(pool, async (client) => {
+            await client.query("BEGIN")
+            try {
+              const step = await AgentSessionRepository.appendStep(client, {
+                id: stepId(),
+                sessionId: testSessionId,
+                stepType: AgentStepTypes.TOOL_CALL,
+                content: `concurrent-${n}`,
+                startedAt: new Date(),
+              })
+              await client.query("COMMIT")
+              return step
+            } catch (err) {
+              await client.query("ROLLBACK").catch(() => undefined)
+              throw err
+            }
+          })
+        )
+      )
+
+      // Every caller must have produced a row — none clobbered.
+      const stepNumbers = results.map((s) => s.stepNumber).sort((a, b) => a - b)
+      expect(stepNumbers).toEqual(callers)
+
+      // And the DB must agree: 8 distinct step rows, contents intact.
+      const rows = await pool.query<{ step_number: number; content: unknown }>(
+        "SELECT step_number, content FROM agent_session_steps WHERE session_id = $1 ORDER BY step_number",
+        [testSessionId]
+      )
+      expect(rows.rows.map((r) => r.step_number)).toEqual(callers)
+      const contents = new Set(rows.rows.map((r) => r.content as string))
+      expect(contents.size).toBe(callers.length)
+    })
+
+    test("throws when session does not exist", async () => {
+      await expect(
+        AgentSessionRepository.appendStep(pool, {
+          id: stepId(),
+          sessionId: sessionId(),
+          stepType: AgentStepTypes.THINKING,
+          content: "orphan",
+          startedAt: new Date(),
+        })
+      ).rejects.toThrow(/agent_sessions row not found/)
+    })
+  })
+
   describe("insertRunningOrSkip", () => {
     test("concurrent inserts for same stream result in exactly one session", async () => {
       const testStreamId = streamId()

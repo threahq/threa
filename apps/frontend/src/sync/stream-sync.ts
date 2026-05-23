@@ -8,6 +8,7 @@ import {
   type LinkPreviewSummary,
   type ThreadSummary,
   type WorkspaceBootstrap,
+  type BotRuntimePresenceSummary,
 } from "@threa/types"
 import type { Socket } from "socket.io-client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -754,6 +755,33 @@ export function registerStreamSocketHandlers(
     await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
   }
 
+  // Bot runtime presence updates fan out to every stream room the bot is a
+  // member of. Patch the cached bootstrap so any open scratchpad showing the
+  // status strip re-renders without a refetch.
+  const handleBotRuntimePresence = (payload: {
+    workspaceId: string
+    streamId: string
+    botId: string
+    presence: BotRuntimePresenceSummary | null
+  }) => {
+    if (payload.streamId !== streamId) return
+    queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
+      if (!old) return old
+      const current = old.botRuntimePresence ?? {}
+      if (
+        current[payload.botId]?.lastSeenAt === payload.presence?.lastSeenAt &&
+        current[payload.botId]?.status === payload.presence?.status &&
+        current[payload.botId]?.statusText === payload.presence?.statusText
+      ) {
+        return old
+      }
+      return {
+        ...old,
+        botRuntimePresence: { ...current, [payload.botId]: payload.presence },
+      }
+    })
+  }
+
   socket.on("message:created", handleMessageCreated)
   socket.on("message:edited", handleMessageEdited)
   socket.on("message:deleted", handleMessageDeleted)
@@ -774,6 +802,7 @@ export function registerStreamSocketHandlers(
   socket.on("agent_session:deleted", handleAppendEvent)
   socket.on("link_preview:ready", handleLinkPreviewReady)
   socket.on("pointer:invalidated", handlePointerInvalidated)
+  socket.on("bot_runtime:presence", handleBotRuntimePresence)
 
   return () => {
     socket.off("message:created", handleMessageCreated)
@@ -796,5 +825,6 @@ export function registerStreamSocketHandlers(
     socket.off("agent_session:deleted", handleAppendEvent)
     socket.off("link_preview:ready", handleLinkPreviewReady)
     socket.off("pointer:invalidated", handlePointerInvalidated)
+    socket.off("bot_runtime:presence", handleBotRuntimePresence)
   }
 }

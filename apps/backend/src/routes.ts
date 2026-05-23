@@ -270,7 +270,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.get)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.update)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/bootstrap", ...authed, stream.bootstrap)
-  app.get("/api/workspaces/:workspaceId/streams/:streamId/bot-runtime-presence", ...authed, stream.botRuntimePresence)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId/companion", ...authed, stream.updateCompanionMode)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/pin", ...authed, stream.pin)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/notification-level", ...authed, stream.setNotificationLevel)
