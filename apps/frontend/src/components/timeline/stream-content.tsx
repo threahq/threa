@@ -3,7 +3,7 @@ import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtuoso } from "react-virtuoso"
 import { MessageSquare, ArrowDown, X, Move, Loader2, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
   useStreamSocket,
@@ -24,7 +24,7 @@ import {
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
-import { useWorkspaceStreams, useWorkspaceStreamMemberships } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceStreamMemberships, useWorkspaceBots } from "@/stores/workspace-store"
 import { useUser } from "@/auth"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
@@ -64,6 +64,7 @@ import {
   type BatchTimelineState,
 } from "./event-list"
 import { MessageInput } from "./message-input"
+import { ActiveBotStatusStrip } from "./active-bot-status-strip"
 import { JoinChannelBar } from "./join-channel-bar"
 import { ThreadParentMessage } from "../thread/thread-parent-message"
 import { EditLastMessageContext } from "./edit-last-message-context"
@@ -75,6 +76,7 @@ import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
+import { botRuntimeApi } from "@/api/bot-runtime"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -212,6 +214,7 @@ export function StreamContent({
 
   const idbStreams = useWorkspaceStreams(workspaceId)
   const idbMemberships = useWorkspaceStreamMemberships(workspaceId)
+  const workspaceBots = useWorkspaceBots(workspaceId)
   const idbStream = useMemo(() => idbStreams.find((candidate) => candidate.id === streamId), [idbStreams, streamId])
 
   // Resolve current workspace-scoped user ID. The hook deduplicates with SentMessageEvent instances.
@@ -233,6 +236,22 @@ export function StreamContent({
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
+  const showBotRuntimePresence = stream?.type === StreamTypes.SCRATCHPAD
+  const botRuntimePresenceQuery = useQuery({
+    queryKey: ["bot-runtime-presence", workspaceId, streamId],
+    queryFn: () => botRuntimeApi.getPresence(workspaceId, streamId),
+    enabled: !isDraft && showBotRuntimePresence && !!workspaceId && !!streamId,
+    refetchInterval: 10_000,
+  })
+  const botRuntimePresence = botRuntimePresenceQuery.data ?? bootstrap?.botRuntimePresence ?? {}
+  const activeBotPresence = useMemo(() => {
+    const botIds = bootstrap?.botMemberIds ?? Object.keys(botRuntimePresence)
+    const botId = botIds.find((candidate) => botRuntimePresence[candidate]) ?? botIds[0]
+    if (!botId) return null
+    const bot = workspaceBots.find((candidate) => candidate.id === botId)
+    if (!bot) return null
+    return { bot, presence: botRuntimePresence[botId] ?? null }
+  }, [bootstrap?.botMemberIds, botRuntimePresence, workspaceBots])
   const isArchived = stream?.archivedAt != null
   const isSystem = stream?.type === StreamTypes.SYSTEM
   const parentStreamId = stream?.parentStreamId
@@ -1470,6 +1489,16 @@ export function StreamContent({
                   streamId={streamId}
                   channelName={stream?.slug ?? stream?.displayName ?? ""}
                   onJoined={handleJoined}
+                />
+              </div>
+            )}
+            {showBotRuntimePresence && activeBotPresence && (
+              <div className="pointer-events-none mx-4 mb-2 mt-2 flex justify-center">
+                <ActiveBotStatusStrip
+                  botName={activeBotPresence.bot.name}
+                  runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
+                  status={activeBotPresence.presence?.status ?? "unknown"}
+                  className="pointer-events-auto"
                 />
               </div>
             )}

@@ -174,7 +174,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workosOrgService,
     pool,
   })
-  const stream = createStreamHandlers({ pool, streamService, eventService, activityService, linkPreviewService })
+  const botRuntimeService = new BotRuntimeService({ pool })
+  const stream = createStreamHandlers({
+    pool,
+    streamService,
+    eventService,
+    activityService,
+    linkPreviewService,
+    botRuntimeService,
+  })
   const message = createMessageHandlers({ pool, eventService, streamService, commandRegistry })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
   const search = createSearchHandlers({ pool, searchService })
@@ -260,6 +268,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.get)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.update)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/bootstrap", ...authed, stream.bootstrap)
+  app.get("/api/workspaces/:workspaceId/streams/:streamId/bot-runtime-presence", ...authed, stream.botRuntimePresence)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId/companion", ...authed, stream.updateCompanionMode)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/pin", ...authed, stream.pin)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/notification-level", ...authed, stream.setNotificationLevel)
@@ -550,7 +559,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   // Public API v1 — API key auth (workspace-scoped or user-scoped)
   const publicAuth = createPublicApiAuthMiddleware({ userApiKeyService, botApiKeyService, workspaceAuthzService, pool })
-  const botRuntimeService = new BotRuntimeService({ pool })
   const publicApi = createPublicApiHandlers({
     searchService,
     memoExplorerService,

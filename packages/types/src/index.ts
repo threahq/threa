@@ -311,6 +311,7 @@ export type {
   UpdateStreamInput,
   UpdateCompanionModeInput,
   StreamBootstrap,
+  BotRuntimePresenceSummary,
   StreamContextBagPayload,
   StreamContextRef,
   StreamContextRefSource,

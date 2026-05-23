@@ -25,6 +25,17 @@ export class BotRuntimeService {
     this.pool = deps.pool
   }
 
+  async findLatestPresence(params: { workspaceId: string; botId: string }): Promise<BotRuntimeInstance | null> {
+    return BotRuntimeInstanceRepository.findLatestForBot(this.pool, params.workspaceId, params.botId)
+  }
+
+  async findLatestPresences(params: {
+    workspaceId: string
+    botIds: string[]
+  }): Promise<Map<string, BotRuntimeInstance>> {
+    return BotRuntimeInstanceRepository.findLatestForBots(this.pool, params.workspaceId, params.botIds)
+  }
+
   async upsertPresenceFromBotKey(params: {
     workspaceId: string
     botId: string

@@ -276,7 +276,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     return { context: "" }
   })
   pendingContextCursor = cursor
-  await heartbeat("busy", `Working on ${body.data.id}`)
+  await heartbeat("busy", "Working…")
   setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
     [

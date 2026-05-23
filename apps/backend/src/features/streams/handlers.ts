@@ -5,6 +5,7 @@ import type { EventService } from "../messaging"
 import { collectSharedMessageIds, hydrateSharedMessageIds, type HydratedSharedMessage } from "../messaging"
 import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
+import type { BotRuntimeService } from "../bot-runtimes"
 import type { StreamEvent } from "./event-repository"
 import type { EventType, JSONContent, LinkPreviewSummary, StreamType } from "@threa/types"
 import { ARIADNE_PERSONA_SLUG, StreamTypes, SLUG_PATTERN, CompanionModes } from "@threa/types"
@@ -179,6 +180,7 @@ interface Dependencies {
   eventService: EventService
   activityService?: ActivityService
   linkPreviewService: LinkPreviewService
+  botRuntimeService: BotRuntimeService
 }
 
 /**
@@ -284,12 +286,28 @@ async function enrichEventsWithLinkPreviews(
   return applyLinkPreviewStateToEvents(events, previewMap, dismissals)
 }
 
+function serializeBotRuntimePresence(presence: Awaited<ReturnType<BotRuntimeService["findLatestPresence"]>>) {
+  return presence
+    ? {
+        botId: presence.botId,
+        runtimeKind: presence.runtimeKind,
+        instanceId: presence.instanceId,
+        displayName: presence.displayName,
+        status: presence.status,
+        acceptingInvocations: presence.acceptingInvocations,
+        statusText: presence.statusText,
+        lastSeenAt: presence.lastSeenAt.toISOString(),
+      }
+    : null
+}
+
 export function createStreamHandlers({
   pool,
   streamService,
   eventService,
   activityService,
   linkPreviewService,
+  botRuntimeService,
 }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
@@ -670,6 +688,10 @@ export function createStreamHandlers({
           eventService.getLatestSequence(streamId),
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
         ])
+      const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
+      const botRuntimePresence = Object.fromEntries(
+        botMemberIds.map((botId) => [botId, serializeBotRuntimePresence(botRuntimePresences.get(botId) ?? null)])
+      )
 
       const unreadCount = membership ? await streamService.getUnreadCount(streamId, membership.lastReadEventId) : 0
 
@@ -713,6 +735,7 @@ export function createStreamHandlers({
           sharedMessages,
           members,
           botMemberIds,
+          botRuntimePresence,
           membership,
           latestSequence: (latestSequence ?? 0n).toString(),
           snapshotAt,
@@ -724,6 +747,19 @@ export function createStreamHandlers({
           contextBag,
         },
       })
+    },
+
+    async botRuntimePresence(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      const botMemberIds = await streamService.getBotMemberIds(workspaceId, streamId)
+      const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
+      const data = Object.fromEntries(
+        botMemberIds.map((botId) => [botId, serializeBotRuntimePresence(botRuntimePresences.get(botId) ?? null)])
+      )
+      res.json({ data })
     },
 
     async checkSlugAvailable(req: Request, res: Response) {
