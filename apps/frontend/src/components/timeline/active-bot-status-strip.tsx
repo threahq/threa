@@ -30,7 +30,7 @@ export function ActiveBotStatusStrip({
   return (
     <div
       className={cn(
-        "rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground",
+        "relative z-30 rounded-lg border border-border bg-background px-3 py-2 text-sm text-muted-foreground shadow-lg ring-1 ring-background/80",
         className
       )}
       aria-live="polite"

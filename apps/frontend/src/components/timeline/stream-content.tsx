@@ -1497,7 +1497,7 @@ export function StreamContent({
                 runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
                 status={activeBotPresence.presence?.status ?? "unknown"}
                 statusText={activeBotPresence.presence?.statusText ?? null}
-                className="mx-4 mb-2"
+                className="mx-4 mb-3"
               />
             )}
             {(isMember || !isPublicChannel || !membershipResolved) && (
