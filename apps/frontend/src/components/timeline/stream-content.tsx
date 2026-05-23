@@ -236,10 +236,11 @@ export function StreamContent({
 
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
+  const showBotRuntimePresence = stream?.type === StreamTypes.SCRATCHPAD
   const botRuntimePresenceQuery = useQuery({
     queryKey: ["bot-runtime-presence", workspaceId, streamId],
     queryFn: () => botRuntimeApi.getPresence(workspaceId, streamId),
-    enabled: !isDraft && !!workspaceId && !!streamId,
+    enabled: !isDraft && showBotRuntimePresence && !!workspaceId && !!streamId,
     refetchInterval: 10_000,
   })
   const botRuntimePresence = botRuntimePresenceQuery.data ?? bootstrap?.botRuntimePresence ?? {}
@@ -1491,7 +1492,7 @@ export function StreamContent({
                 />
               </div>
             )}
-            {activeBotPresence && (
+            {showBotRuntimePresence && activeBotPresence && (
               <ActiveBotStatusStrip
                 botName={activeBotPresence.bot.name}
                 runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
