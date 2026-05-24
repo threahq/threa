@@ -758,6 +758,14 @@ export function registerStreamSocketHandlers(
   // Bot runtime presence updates fan out to every stream room the bot is a
   // member of. Patch the cached bootstrap so any open scratchpad showing the
   // status strip re-renders without a refetch.
+  //
+  // `lastSeenAt` is intentionally excluded from the equality check — Pi runtimes
+  // touch presence on every poll/step (multiple times per second during active
+  // sessions), but the UI only renders `status`, `statusText`, and
+  // `displayName`. Including `lastSeenAt` here forced the bootstrap cache to
+  // patch on every heartbeat, which cascaded into a full StreamContent
+  // re-render (and the heavy composer subtree with it) and made typing on
+  // mobile feel laggy whenever a bot was active.
   const handleBotRuntimePresence = (payload: {
     workspaceId: string
     streamId: string
@@ -768,17 +776,21 @@ export function registerStreamSocketHandlers(
     queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
       if (!old) return old
       const current = old.botRuntimePresence ?? {}
+      const previous = current[payload.botId] ?? null
+      const next = payload.presence
       if (
-        current[payload.botId]?.lastSeenAt === payload.presence?.lastSeenAt &&
-        current[payload.botId]?.status === payload.presence?.status &&
-        current[payload.botId]?.statusText === payload.presence?.statusText &&
-        current[payload.botId]?.displayName === payload.presence?.displayName
+        previous?.status === next?.status &&
+        previous?.statusText === next?.statusText &&
+        previous?.displayName === next?.displayName &&
+        previous?.acceptingInvocations === next?.acceptingInvocations &&
+        previous?.runtimeKind === next?.runtimeKind &&
+        previous?.instanceId === next?.instanceId
       ) {
         return old
       }
       return {
         ...old,
-        botRuntimePresence: { ...current, [payload.botId]: payload.presence },
+        botRuntimePresence: { ...current, [payload.botId]: next },
       }
     })
   }

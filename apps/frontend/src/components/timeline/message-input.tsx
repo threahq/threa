@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react"
+import { memo, useState, useCallback, useEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import { useNavigate } from "react-router-dom"
 import {
@@ -186,7 +186,13 @@ export function materializePendingAttachmentReferences(
   }
 }
 
-export function MessageInput({ workspaceId, streamId, disabled, disabledReason, autoFocus }: MessageInputProps) {
+// Memoized so trace/presence-driven re-renders of `StreamContent` (which fire
+// on every Pi step + heartbeat while a bot is active) don't tear through the
+// composer subtree. All props here are primitives that stay reference-stable
+// across `StreamContent` renders, so the default shallow comparison is enough.
+export const MessageInput = memo(MessageInputComponent)
+
+function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason, autoFocus }: MessageInputProps) {
   const editLastCtx = useEditLastMessage()
   const triggerEditLast = editLastCtx?.triggerEditLast
   const scrollToMessage = editLastCtx?.scrollToMessage
