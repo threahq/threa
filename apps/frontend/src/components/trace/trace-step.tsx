@@ -521,47 +521,20 @@ function renderStepContent(
       if (isStructuredToolTrace(structured)) {
         return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={false} />
       }
-      return <ToolMarkdownContent content={content} isError={false} />
+      return <span>{content}</span>
     }
 
     case "tool_error":
       if (isStructuredToolTrace(structured)) {
         return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={true} />
       }
-      return <ToolMarkdownContent content={content} isError={true} />
+      return <span>{content}</span>
 
     default:
       return <span>{content}</span>
   }
 }
 
-/**
- * Parsed shape of a Pi-formatted tool trace string. The Pi remote (and any
- * other runtime that ships through `POST /bot-invocations/:id/steps`) writes
- * tool_call / tool_error content as a markdown-ish blob:
- *
- *   <headline>            // e.g. "Running git diff", "Reading SKILL.md"
- *
- *   Arguments:            // optional, only on completed tool calls
- *   ```json
- *   { ... }
- *   ```
- *
- *   Output:               // or "Error output:" on tool_error
- *   ```
- *   ...
- *   ```
- *
- *   Details:              // optional
- *   ```json
- *   { ... }
- *   ```
- *
- * The frontend previously dumped this string into a raw <span>, leaving the
- * code fences as literal backtick characters. This parser splits it back into
- * the headline + a list of named sections so the renderer can show a clean
- * summary and tuck the bulky payloads behind collapsibles.
- */
 interface ToolSection {
   label: string
   body: string
@@ -576,95 +549,6 @@ interface StructuredToolTrace extends Record<string, unknown> {
 
 function isStructuredToolTrace(value: Record<string, unknown> | null): value is StructuredToolTrace {
   return value?.format === "pi_tool_trace"
-}
-
-function parseToolMarkdownContent(content: string): { headline: string; sections: ToolSection[] } {
-  const trimmed = content.trim()
-  if (!trimmed) return { headline: "", sections: [] }
-
-  const lines = trimmed.split("\n")
-  const headlineRaw = lines[0] ?? ""
-  // The "started" placeholder steps keep the trailing ellipsis ("Reading X…"),
-  // which is noise next to a clean section list — drop it so headlines read
-  // the same whether the tool finished or is still mid-flight.
-  const headline = headlineRaw.replace(/[…\.]+$/u, "").trim()
-
-  const sections: ToolSection[] = []
-  const sectionHeader = /^(Arguments|Output|Error output|Details):\s*$/
-
-  let i = 1
-  while (i < lines.length) {
-    const line = lines[i] ?? ""
-    const header = line.match(sectionHeader)
-    if (!header) {
-      i++
-      continue
-    }
-    const label = header[1]!
-    i++
-    let lang: string | null = null
-    let body = ""
-    const fence = lines[i]?.match(/^```(\w*)\s*$/)
-    if (fence) {
-      lang = fence[1] || null
-      i++
-      const bodyLines: string[] = []
-      while (i < lines.length && lines[i] !== "```") {
-        bodyLines.push(lines[i] ?? "")
-        i++
-      }
-      if (i < lines.length) i++ // closing fence
-      body = bodyLines.join("\n")
-    } else {
-      // No code fence — collect everything up to the next section header.
-      const bodyLines: string[] = []
-      while (i < lines.length && !(lines[i] ?? "").match(sectionHeader)) {
-        bodyLines.push(lines[i] ?? "")
-        i++
-      }
-      body = bodyLines.join("\n").trim()
-    }
-    sections.push({ label, body, lang })
-  }
-
-  if (sections.length > 0) return { headline, sections }
-  return parseInlineToolMarkdownContent(trimmed)
-}
-
-function parseInlineToolMarkdownContent(content: string): { headline: string; sections: ToolSection[] } {
-  const sectionHeader = /(Arguments|Output|Error output|Details):\s*/g
-  const matches = [...content.matchAll(sectionHeader)]
-  if (matches.length === 0) {
-    return { headline: content.replace(/[…\.]+$/u, "").trim(), sections: [] }
-  }
-
-  const headline = content
-    .slice(0, matches[0]!.index)
-    .replace(/[…\.]+$/u, "")
-    .trim()
-  const sections = matches.map((match, index) => {
-    const next = matches[index + 1]
-    const rawBody = content.slice(match.index! + match[0].length, next?.index ?? content.length).trim()
-    const fenced = rawBody.match(/^```(\w*)\s*([\s\S]*?)\s*```$/)
-    return {
-      label: match[1]!,
-      body: fenced ? fenced[2]!.trim() : rawBody,
-      lang: fenced?.[1] || null,
-    }
-  })
-  return { headline, sections }
-}
-
-/**
- * Renders a Pi-formatted tool_call / tool_error trace step. The headline
- * (always visible) stays compact for fast scanning; each labeled section
- * collapses behind a disclosure so a 10k-char `git diff` output doesn't blow
- * the dialog open. On `tool_error` the "Error output" section opens by default
- * because that's the part the reader actually wants to see.
- */
-function ToolMarkdownContent({ content, isError }: { content: string; isError: boolean }) {
-  const { headline, sections } = parseToolMarkdownContent(content)
-  return <ToolTraceContent headline={headline} sections={sections} isError={isError} />
 }
 
 function ToolTraceContent({
