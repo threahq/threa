@@ -87,7 +87,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "codeBlockCollapseThreshold",
     "blockquoteCollapseThreshold",
     "voiceTranscriptionModel",
-    "voicePolishEnabled",
+    "voicePolishLevel",
   ] as const
 
   for (const key of simpleKeys) {

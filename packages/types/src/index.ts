@@ -509,6 +509,10 @@ export {
   // Voice transcription model picker
   VOICE_TRANSCRIPTION_MODELS,
   type VoiceTranscriptionModelOption,
+  // Voice polish level
+  VOICE_POLISH_LEVEL_OPTIONS,
+  type VoicePolishLevel,
+  VoicePolishLevels,
   // Settings tabs
   SETTINGS_TAB_OPTIONS,
   SETTINGS_TABS,

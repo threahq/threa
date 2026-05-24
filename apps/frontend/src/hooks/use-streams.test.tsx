@@ -72,7 +72,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,
       voiceTranscriptionModel: null,
-      voicePolishEnabled: true,
+      voicePolishLevel: "opinionated",
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

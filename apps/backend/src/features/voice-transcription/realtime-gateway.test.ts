@@ -61,8 +61,8 @@ function fakeSocket(workosUserId = "workos_1") {
 function setup(overrides?: {
   open?: () => Promise<TranscriptionSession>
   getRelaySession?: (...args: unknown[]) => Promise<unknown>
-  voicePolishEnabled?: boolean
-  polishTranscript?: (args: { rawTranscript: string }) => Promise<string>
+  voicePolishLevel?: "none" | "minor" | "opinionated"
+  polishTranscript?: (args: { rawTranscript: string; level: string }) => Promise<string>
 }) {
   const upstream = fakeUpstream()
   const transcription = { open: mock(overrides?.open ?? (async () => upstream)) }
@@ -75,7 +75,7 @@ function setup(overrides?: {
     abortSession: mock(async () => {}),
   }
   const userPreferencesService = {
-    getPreferences: mock(async () => ({ voicePolishEnabled: overrides?.voicePolishEnabled ?? false })),
+    getPreferences: mock(async () => ({ voicePolishLevel: overrides?.voicePolishLevel ?? "none" })),
   }
   const polishTranscript = mock(
     overrides?.polishTranscript ?? (async ({ rawTranscript }: { rawTranscript: string }) => `P(${rawTranscript})`)
@@ -259,7 +259,7 @@ describe("registerVoiceGateway lifecycle", () => {
 
 describe("registerVoiceGateway polish", () => {
   it("emits a final raw delta tagged with the session chunkId and a polished event for it", async () => {
-    const { socket, upstream, polishTranscript } = setup({ voicePolishEnabled: true })
+    const { socket, upstream, polishTranscript } = setup({ voicePolishLevel: "opinionated" })
     await socket.trigger(
       "voice:start",
       START_PAYLOAD,
@@ -291,7 +291,7 @@ describe("registerVoiceGateway polish", () => {
   })
 
   it("interim deltas always ship as plain transcript:delta with no chunkId, even with polish enabled", async () => {
-    const { socket, upstream, polishTranscript } = setup({ voicePolishEnabled: true })
+    const { socket, upstream, polishTranscript } = setup({ voicePolishLevel: "opinionated" })
     await socket.trigger(
       "voice:start",
       START_PAYLOAD,
@@ -308,7 +308,7 @@ describe("registerVoiceGateway polish", () => {
 
   it("leaves the raw delta in place when polish rejects, with no polished event", async () => {
     const { socket, upstream } = setup({
-      voicePolishEnabled: true,
+      voicePolishLevel: "opinionated",
       polishTranscript: async () => {
         throw new Error("polish kaboom")
       },
@@ -332,7 +332,7 @@ describe("registerVoiceGateway polish", () => {
   })
 
   it("skips polish for empty final segments and forwards them as plain deltas with no chunkId", async () => {
-    const { socket, upstream, polishTranscript } = setup({ voicePolishEnabled: true })
+    const { socket, upstream, polishTranscript } = setup({ voicePolishLevel: "opinionated" })
     await socket.trigger(
       "voice:start",
       START_PAYLOAD,
@@ -349,10 +349,31 @@ describe("registerVoiceGateway polish", () => {
     })
   })
 
+  it("forwards the user's polish level to the polish transcript function", async () => {
+    const seenLevels: string[] = []
+    const { socket, upstream } = setup({
+      voicePolishLevel: "minor",
+      polishTranscript: async ({ rawTranscript, level }: { rawTranscript: string; level: string }) => {
+        seenLevels.push(level)
+        return `P(${rawTranscript})`
+      },
+    })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "hello", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(seenLevels).toEqual(["minor"])
+  })
+
   it("polishes the cumulative raw transcript and reuses the same session chunkId", async () => {
     const seenInputs: string[] = []
     const { socket, upstream } = setup({
-      voicePolishEnabled: true,
+      voicePolishLevel: "opinionated",
       polishTranscript: async ({ rawTranscript }: { rawTranscript: string }) => {
         seenInputs.push(rawTranscript)
         return `P(${rawTranscript})`

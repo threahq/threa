@@ -2,6 +2,7 @@ import type { Server } from "socket.io"
 import { ulid } from "ulid"
 import { z } from "zod"
 import type { AuthService } from "@threa/backend-common"
+import type { VoicePolishLevel } from "@threa/types"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
@@ -38,15 +39,16 @@ interface RelayState {
   maxDurationTimer: ReturnType<typeof setTimeout>
   finalized: boolean
   /**
-   * When true, finalized provider deltas trigger a cumulative polish: every
-   * raw final segment so far is joined and re-polished, then emitted as
+   * Polish level resolved from user prefs at start. "minor" / "opinionated"
+   * trigger a cumulative polish on every final final delta (every raw final
+   * segment so far is joined and re-polished, then emitted as
    * `voice:transcript:polished` so the client can swap its tracked session
-   * chunk to the new polished snapshot. This lets the model fix a
+   * chunk to the new polished snapshot). This is what lets the model fix a
    * self-correction in chunk N+1 by rewriting chunk N ("nine, no sorry eight"
-   * collapses to "eight"). When false, finals ship as plain
+   * collapses to "eight"). When "none", finals ship as plain
    * `voice:transcript:delta` with no `chunkId` and the client never tracks them.
    */
-  polishEnabled: boolean
+  polishLevel: VoicePolishLevel
   /**
    * Stable chunkId for the whole session: every final delta and every
    * polished event carries it, so the editor extends/replaces a single
@@ -180,13 +182,13 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         })
         resolvedUserId = row.userId
 
-        // Resolve polish preference once per session: a mid-session pref change
+        // Resolve polish level once per session: a mid-session pref change
         // doesn't change behavior for an in-flight take, which keeps the
         // session chunkId story consistent for the editor's chunk tracker.
-        let polishEnabled = false
+        let polishLevel: VoicePolishLevel = "none"
         try {
           const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
-          polishEnabled = prefs.voicePolishEnabled
+          polishLevel = prefs.voicePolishLevel
         } catch (err) {
           logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs lookup failed; defaulting polish off")
         }
@@ -223,7 +225,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             return
           }
           const raw = delta.text ?? ""
-          if (!state.polishEnabled || !raw.trim()) {
+          if (state.polishLevel === "none" || !raw.trim()) {
             // Polish off, or an empty terminating final (some providers emit
             // these) — pass straight through with no chunk tracking.
             socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
@@ -249,6 +251,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             try {
               const polished = await polishTranscript({
                 rawTranscript,
+                level: polishingState.polishLevel,
                 workspaceId: polishingState.workspaceId,
                 userId: polishingState.userId,
                 sessionId: polishingState.voiceSessionId,
@@ -284,7 +287,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           upstream,
           maxDurationTimer,
           finalized: false,
-          polishEnabled,
+          polishLevel,
           sessionChunkId,
           rawFinals: [],
           polishQueue: Promise.resolve(),

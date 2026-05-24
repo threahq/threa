@@ -160,10 +160,12 @@ function resolveVoiceUrl(workspaceId: string): string | null {
   return url.toString()
 }
 
-// Once a session ends, polished chunks stay swappable for a short window so the
-// user can flip the toggle on their way to read what landed. After this passes
-// we lock everything: the chunks become plain text and the toggle hides.
-const POST_SESSION_LOCK_MS = 30_000
+// Once a session ends, polished chunks stay swappable for a short window so
+// the user can flip the toggle on their way to read what landed. Kept short
+// so the "Showing polished" pill doesn't linger past the moment they're
+// glancing at it — the user wants to send the message, not stare at the
+// toggle.
+const POST_SESSION_LOCK_MS = 8_000
 
 /**
  * Drives one voice-dictation session: create the session over HTTP, capture
