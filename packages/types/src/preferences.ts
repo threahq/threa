@@ -110,7 +110,6 @@ export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 export interface VoiceTranscriptionModelOption {
   id: string
   name: string
-  provider: string
   description: string
 }
 
@@ -118,14 +117,12 @@ export const VOICE_TRANSCRIPTION_MODELS: readonly VoiceTranscriptionModelOption[
   {
     id: "elevenlabs:scribe-v2-realtime",
     name: "ElevenLabs Scribe v2",
-    provider: "ElevenLabs",
-    description: "Multilingual auto-detect. The current default.",
+    description: "Multilingual auto-detect. Higher accuracy across languages.",
   },
   {
     id: "deepgram:nova-3",
     name: "Deepgram Nova-3",
-    provider: "Deepgram",
-    description: "Lower latency, English-first. Good when ElevenLabs is slow or unavailable.",
+    description: "Multilingual auto-detect. Lower latency.",
   },
 ] as const
 
