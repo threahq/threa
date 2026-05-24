@@ -83,6 +83,11 @@ describe("RealtimeDeepgramStrategy connect", () => {
     expect(socket.url).toContain("endpointing=300")
   })
 
+  test("defaults to multilingual auto-detect when no language is provided", async () => {
+    const { socket } = await openSession()
+    expect(socket.url).toContain("language=multi")
+  })
+
   test("passes language when one is provided", async () => {
     const strategy = new RealtimeDeepgramStrategy({ apiKey: "k" })
     const p = strategy.open({ model: "deepgram:nova-3", language: "sv" })
@@ -90,6 +95,8 @@ describe("RealtimeDeepgramStrategy connect", () => {
     lastSocket!.simulateOpen()
     await p
     expect(lastSocket!.url).toContain("language=sv")
+    // The explicit language wins over the multilingual default.
+    expect(lastSocket!.url).not.toContain("language=multi")
   })
 
   test("rejects if the socket closes before opening", async () => {

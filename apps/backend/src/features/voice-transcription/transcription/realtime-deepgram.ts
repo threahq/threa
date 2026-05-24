@@ -88,7 +88,14 @@ class DeepgramSession implements TranscriptionSession {
       // same role VAD plays for ElevenLabs.
       endpointing: "300",
     })
-    if (this.opts.language) params.set("language", this.opts.language)
+    if (this.opts.language) {
+      params.set("language", this.opts.language)
+    } else {
+      // Nova-3 defaults to English-only when `language` is omitted, so Swedish
+      // (or any non-English) dictation comes back as garbled English. Enable
+      // multilingual auto-detect across Nova-3's supported set instead.
+      params.set("language", "multi")
+    }
     const url = `${REALTIME_URL}?${params.toString()}`
 
     // Bun's WebSocket accepts a non-standard options arg for request headers.
