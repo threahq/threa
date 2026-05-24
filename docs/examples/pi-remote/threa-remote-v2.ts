@@ -300,18 +300,26 @@ function formatToolResultTrace(event: ToolResultEvent): string {
   return truncateForTrace(sections.join("\n"))
 }
 
+function sanitizeTraceText(text: string): string {
+  return text
+    .replace(/, downloaded to [^)\n]+/g, "")
+    .replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+}
+
 function formatInvocationTrace(invocation: ClaimedInvocation, context: string): string {
   return truncateForTrace(
-    [
-      `Remote Threa invocation ${invocation.id}`,
-      `Source message: ${invocation.sourceMessageId}`,
-      "",
-      "Prompt:",
-      invocation.promptMarkdown,
-      context ? ["", context].join("\n") : "",
-    ]
-      .filter(Boolean)
-      .join("\n")
+    sanitizeTraceText(
+      [
+        `Remote Threa invocation ${invocation.id}`,
+        `Source message: ${invocation.sourceMessageId}`,
+        "",
+        "Prompt:",
+        invocation.promptMarkdown,
+        context ? ["", context].join("\n") : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
   )
 }
 
@@ -827,7 +835,8 @@ export default function (pi: ExtensionAPI): void {
     try {
       const finalText =
         pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
-      await recordTraceStep("message_sent", `Final response:\n\n${finalText}`, "Sent response")
+      const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
+      await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
       await completePending(finalText, ctx.cwd)
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {

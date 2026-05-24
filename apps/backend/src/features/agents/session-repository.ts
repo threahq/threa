@@ -500,7 +500,8 @@ export const AgentSessionRepository = {
    *
    * This method is safe for independent external-runtime HTTP requests: each
    * attempt computes the next number in the INSERT statement, and concurrent
-   * unique-key collisions retry instead of clobbering an existing step (INV-20).
+   * unique-key collisions retry until one insert wins instead of clobbering an
+   * existing step (INV-20).
    */
   async appendStep(db: Querier, params: AppendStepParams): Promise<AgentSessionStep> {
     const session = await db.query(sql`SELECT 1 FROM agent_sessions WHERE id = ${params.sessionId}`)
@@ -508,8 +509,7 @@ export const AgentSessionRepository = {
       throw new Error(`agent_sessions row not found for session id ${params.sessionId}`)
     }
 
-    const maxAttempts = 8
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    while (true) {
       const result = await db.query<StepRow>(
         sql`
           INSERT INTO agent_session_steps (
@@ -535,7 +535,6 @@ export const AgentSessionRepository = {
       )
       if (result.rows[0]) return mapRowToStep(result.rows[0])
     }
-    throw new Error(`Failed to append step for session id ${params.sessionId}`)
   },
 
   async upsertStep(db: Querier, params: UpsertStepParams): Promise<AgentSessionStep> {
