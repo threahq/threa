@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   X,
   Download,
@@ -13,7 +14,12 @@ import {
   PanelRightOpen,
   Loader2,
   Play,
+  FileText,
+  Globe,
+  Code2,
+  Eye,
 } from "lucide-react"
+import { TopbarLoadingIndicator } from "@/components/layout/topbar-loading-indicator"
 import { downloadImage, copyImage } from "@/lib/image-utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -21,10 +27,34 @@ import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zoomable-image"
 import { ZoomControls } from "@/components/gallery/zoom-controls"
+import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
+import { HtmlViewer } from "@/components/gallery/html-viewer"
+import { fetchTextContent } from "@/components/gallery/use-text-content"
 
 export type GalleryItem =
-  | { type: "image"; url: string; filename: string; attachmentId: string }
+  | { type: "image"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
   | { type: "video"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
+  | { type: "markdown"; url: string; filename: string; attachmentId: string }
+  | { type: "html"; url: string; filename: string; attachmentId: string }
+
+const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
+  image: "Image",
+  video: "Video",
+  markdown: "Markdown document",
+  html: "HTML document",
+}
+
+// Sidebar thumbnails are 124px wide — long filenames (URLs, slugs with the
+// extension at the tail) get unrecognizable when chopped from the end. Cut
+// from the middle instead so both the leading word and the extension survive.
+function truncateMiddle(filename: string, maxLength: number): string {
+  if (filename.length <= maxLength) return filename
+  const ellipsis = "…"
+  const budget = maxLength - ellipsis.length
+  const head = Math.ceil(budget / 2)
+  const tail = Math.floor(budget / 2)
+  return filename.slice(0, head) + ellipsis + filename.slice(-tail)
+}
 
 interface MediaGalleryProps {
   isOpen: boolean
@@ -70,6 +100,8 @@ interface GalleryMediaContentProps {
   zoomableRef?: React.Ref<ZoomableImageHandle>
   onZoomChange?: (zoomed: boolean) => void
   onScaleChange?: (scale: number) => void
+  /** Raw-source toggle; only consumed by markdown/html viewers. */
+  rawMode?: boolean
 }
 
 function GalleryMediaContent({
@@ -78,7 +110,28 @@ function GalleryMediaContent({
   zoomableRef,
   onZoomChange,
   onScaleChange,
+  rawMode = false,
 }: GalleryMediaContentProps) {
+  if (current.type === "markdown") {
+    if (!isActive) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <FileText className="h-10 w-10 text-white/30" />
+        </div>
+      )
+    }
+    return <MarkdownViewer url={current.url} filename={current.filename} rawMode={rawMode} />
+  }
+  if (current.type === "html") {
+    if (!isActive) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <Globe className="h-10 w-10 text-white/30" />
+        </div>
+      )
+    }
+    return <HtmlViewer url={current.url} filename={current.filename} rawMode={rawMode} />
+  }
   if (current.type === "video") {
     // Non-active video slides show poster so the <video> element doesn't load
     if (!isActive) {
@@ -114,20 +167,42 @@ function GalleryMediaContent({
       </div>
     )
   }
-  if (!current.url)
+  // While the full-resolution URL hasn't arrived yet, show the already-loaded
+  // thumbnail as a poster instead of a blank loader — matches the video path
+  // (poster while bytes stream in) and makes large-image opens feel instant.
+  // Poster fills the container with object-contain (same sizing strategy as
+  // the ZoomableImage poster fallback) so the swap into ZoomableImage when
+  // the URL arrives is pixel-for-pixel — no "small thumbnail → filled image"
+  // flash at the branch boundary.
+  if (!current.url) {
     return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-white/50" />
+      <div className="absolute inset-0">
+        {current.thumbnailUrl && (
+          <img
+            src={current.thumbnailUrl}
+            alt={current.filename}
+            className="absolute inset-0 h-full w-full object-contain select-none"
+            draggable={false}
+          />
+        )}
+        <TopbarLoadingIndicator visible className="bottom-auto top-0" />
       </div>
     )
+  }
   // Active image slide gets the zoomable viewport. Inactive slides stay as plain
   // <img> so we don't wire up gesture listeners for images the user isn't viewing.
+  // `key={current.attachmentId}` forces a fresh instance per attachment so internal
+  // state (loadedSrc, naturalDims) and the underlying <img> bitmap can't leak from
+  // a previously-viewed image — without this, rapidly toggling between two images
+  // can show the wrong image after a late onLoad fires against stale internal state.
   if (zoomableRef) {
     return (
       <ZoomableImage
+        key={current.attachmentId}
         ref={zoomableRef}
         src={current.url}
         alt={current.filename}
+        posterSrc={current.thumbnailUrl || undefined}
         onZoomChange={onZoomChange}
         onScaleChange={onScaleChange}
       />
@@ -146,6 +221,17 @@ function GalleryMediaContent({
 }
 
 function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
+  if (item.type === "markdown" || item.type === "html") {
+    const Icon = item.type === "markdown" ? FileText : Globe
+    return (
+      <div className="w-full h-20 min-w-0 flex flex-col items-center justify-center gap-1 bg-white/5 px-1">
+        <Icon className="h-5 w-5 text-white/60" />
+        <span className="block max-w-full overflow-hidden whitespace-nowrap text-[10px] text-white/50">
+          {truncateMiddle(item.filename, 18)}
+        </span>
+      </div>
+    )
+  }
   if (item.type === "video") {
     if (!item.thumbnailUrl) {
       return (
@@ -157,11 +243,11 @@ function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
       )
     }
     return (
-      <div className="relative">
+      <div className="relative w-full h-20 bg-black/40">
         <img
           src={item.thumbnailUrl}
           alt={item.filename}
-          className="w-full h-20 object-cover"
+          className="absolute inset-0 w-full h-full object-contain"
           loading="lazy"
           draggable={false}
         />
@@ -171,7 +257,11 @@ function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
       </div>
     )
   }
-  if (!item.url) {
+  // Prefer the already-loaded inline thumbnail URL for the sidebar so the panel
+  // isn't full of spinners waiting for the full-resolution variant to lazy-fetch
+  // on open. Fall back to full URL (if present) or a spinner.
+  const sidebarSrc = item.thumbnailUrl || item.url
+  if (!sidebarSrc) {
     return (
       <div className="w-full h-20 flex items-center justify-center bg-white/5">
         <Loader2 className="h-4 w-4 animate-spin text-white/40" />
@@ -179,7 +269,15 @@ function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
     )
   }
   return (
-    <img src={item.url} alt={item.filename} className="w-full h-20 object-cover" loading="lazy" draggable={false} />
+    <div className="relative w-full h-20 bg-black/40">
+      <img
+        src={sidebarSrc}
+        alt={item.filename}
+        className="absolute inset-0 w-full h-full object-contain"
+        loading="lazy"
+        draggable={false}
+      />
+    </div>
   )
 }
 
@@ -188,6 +286,10 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   const isMobile = useIsMobile()
   const [panelOpen, setPanelOpen] = useState(true)
   const [showArrows, setShowArrows] = useState(false)
+  // Source vs. rendered toggle for markdown/html slides. Persists across
+  // navigation within a session — if the user is reading raw markdown and
+  // arrows over to the next markdown file, they probably want raw there too.
+  const [rawMode, setRawMode] = useState(false)
   // containerWidth drives both slide sizing and strip transform calculations on mobile
   const [containerWidth, setContainerWidth] = useState(0)
 
@@ -231,6 +333,11 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   const lastTouchX = useRef(0)
   const lastTouchTime = useRef(0)
   const velocityX = useRef(0) // px/ms — used for flick-to-next even on short drags
+  // When a touch starts inside the markdown/html panel we relinquish the
+  // gesture entirely so native scroll can pan both axes (essential for wide
+  // code blocks and tables). Carousel swipe/dismiss still work from the
+  // surrounding gallery margin.
+  const skipGesture = useRef(false)
 
   // Ref mirror of currentIndex so ResizeObserver can read it without stale closures
   const currentIndexRef = useRef(currentIndex)
@@ -386,9 +493,24 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     }
   }, [workspaceId, current])
 
-  const handleCopy = useCallback(() => {
-    if (current?.type === "image" && current.url) copyImage(current.url)
+  const handleCopy = useCallback(async () => {
+    if (!current?.url) return
+    if (current.type === "image") {
+      copyImage(current.url)
+      return
+    }
+    if (current.type === "markdown" || current.type === "html") {
+      try {
+        const text = await fetchTextContent(current.url)
+        await navigator.clipboard.writeText(text)
+      } catch {
+        // Clipboard or fetch failed; nothing actionable for the user here.
+      }
+    }
   }, [current])
+
+  const canCopy = current?.type === "image" || current?.type === "markdown" || current?.type === "html"
+  const canToggleRaw = current?.type === "markdown" || current?.type === "html"
 
   // Keyboard navigation
   useEffect(() => {
@@ -411,11 +533,22 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   // at 60fps without React rendering in the hot path.
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    // The gallery owns every touch inside its Dialog. Stop React-tree bubbling
+    // before any early return — React events propagate up the React tree (not
+    // the DOM tree), so events from the Radix Portal still reach the message
+    // row's swipe-to-quote and long-press handlers if we don't stop them here.
+    e.stopPropagation()
     // When zoomed or pinching, the zoomable viewport owns the gesture — don't
     // start a carousel swipe in parallel (would cause the strip to drift while
     // the user is panning inside an image).
     if (isZoomedRef.current || e.touches.length > 1) return
-    e.stopPropagation()
+    const target = e.target as HTMLElement | null
+    if (target?.closest("[data-gallery-text-viewer]")) {
+      // Yield to native scroll inside the text panel.
+      skipGesture.current = true
+      return
+    }
+    skipGesture.current = false
     // Read where the strip actually is right now (could be mid-animation)
     // so we can continue from that exact position rather than jumping.
     if (stripRef.current) {
@@ -439,8 +572,9 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
-      if (isZoomedRef.current || e.touches.length > 1) return
       e.stopPropagation()
+      if (skipGesture.current) return
+      if (isZoomedRef.current || e.touches.length > 1) return
       const dx = e.touches[0].clientX - touchStartX.current
       const dy = e.touches[0].clientY - touchStartY.current
       touchDeltaX.current = dx
@@ -479,8 +613,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
 
   const handleTouchEnd = useCallback(
     (e: React.TouchEvent) => {
-      if (isZoomedRef.current) return
       e.stopPropagation()
+      if (skipGesture.current) {
+        skipGesture.current = false
+        return
+      }
+      if (isZoomedRef.current) return
       const dx = touchDeltaX.current
       const dy = touchDeltaY.current
       const vx = velocityX.current
@@ -544,6 +682,12 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
     (e: React.MouseEvent) => {
       if (!isMobile || !isMultiple) return
       if (isZoomedRef.current) return
+      // Tap-to-navigate inside the text panel would hijack link clicks, text
+      // selection, and code-block interactions. Taps in the surrounding margin
+      // still navigate — that's the only way to flip between text slides on
+      // mobile once swipe is relinquished to native scroll.
+      const target = e.target as HTMLElement | null
+      if (target?.closest("[data-gallery-text-viewer]")) return
       if (didSwipe.current) {
         didSwipe.current = false
         return
@@ -561,8 +705,13 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
   const handleZoomReset = useCallback(() => zoomableRef.current?.reset(), [])
 
   // ─── Action bar (shared between mobile/desktop) ─────────────────────────────
+  // Sits in a translucent dark pill so it stays readable against any backdrop
+  // (image, video poster, markdown panel, sandboxed iframe). The text viewers
+  // reserve their top inset (pt-14 / pt-16) so the pill never overlaps the
+  // panel chrome; `top-3 right-3` gives the pill visible breathing room from
+  // the screen edge instead of kissing it.
   const actionBar = (
-    <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+    <div className="absolute top-3 right-3 z-10 flex items-center gap-1 rounded-full bg-black/55 px-1 py-0.5 shadow-lg backdrop-blur-sm">
       {!isMobile && current?.type === "image" && (
         <ZoomControls
           subscribeScale={subscribeScale}
@@ -592,6 +741,18 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         </DropdownMenu>
       ) : (
         <>
+          {canToggleRaw && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
+              onClick={() => setRawMode((v) => !v)}
+              aria-pressed={rawMode}
+            >
+              {rawMode ? <Eye className="h-5 w-5" /> : <Code2 className="h-5 w-5" />}
+              <span className="sr-only">{rawMode ? "Show rendered preview" : "Show raw source"}</span>
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -599,17 +760,19 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
             onClick={handleDownload}
           >
             <Download className="h-5 w-5" />
-            <span className="sr-only">Download image</span>
+            <span className="sr-only">Download</span>
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
-            onClick={handleCopy}
-          >
-            <Copy className="h-5 w-5" />
-            <span className="sr-only">Copy image</span>
-          </Button>
+          {canCopy && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10 text-white hover:bg-white/20 rounded-full"
+              onClick={handleCopy}
+            >
+              <Copy className="h-5 w-5" />
+              <span className="sr-only">{current?.type === "image" ? "Copy image" : "Copy source"}</span>
+            </Button>
+          )}
         </>
       )}
       {!isMobile && isMultiple && (
@@ -649,7 +812,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
         >
           <DialogTitle className="sr-only">{current.filename}</DialogTitle>
           <DialogDescription className="sr-only">
-            {current.type === "image" ? "Image" : "Video"} {currentIndex + 1} of {items.length}
+            {GALLERY_TYPE_LABELS[current.type]} {currentIndex + 1} of {items.length}
           </DialogDescription>
 
           <div className="relative flex h-full overflow-hidden">
@@ -684,6 +847,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                           zoomableRef={i === currentIndex && item.type === "image" ? zoomableRef : undefined}
                           onZoomChange={i === currentIndex && item.type === "image" ? setIsZoomed : undefined}
                           onScaleChange={i === currentIndex && item.type === "image" ? publishScale : undefined}
+                          rawMode={i === currentIndex ? rawMode : false}
                         />
                       </div>
                     ))}
@@ -710,6 +874,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
                     zoomableRef={current.type === "image" ? zoomableRef : undefined}
                     onZoomChange={current.type === "image" ? setIsZoomed : undefined}
                     onScaleChange={current.type === "image" ? publishScale : undefined}
+                    rawMode={rawMode}
                   />
                 </div>
 
@@ -756,30 +921,38 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
             {!isMobile && isMultiple && panelOpen && (
               <div className="w-[140px] shrink-0 border-l border-white/10 bg-black/80 flex flex-col">
                 <ScrollArea className="flex-1">
-                  <div className="flex flex-col gap-1.5 p-2">
-                    {items.map((item, i) => (
-                      <button
-                        key={item.attachmentId}
-                        ref={(el) => {
-                          if (el) thumbnailRefs.current.set(i, el)
-                          else thumbnailRefs.current.delete(i)
-                        }}
-                        type="button"
-                        className={cn(
-                          "relative w-full rounded overflow-hidden border-2 transition-all",
-                          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                          i === currentIndex
-                            ? "border-white opacity-100"
-                            : "border-transparent opacity-50 hover:opacity-80"
-                        )}
-                        onClick={() => goTo(i)}
-                        aria-label={`View ${item.filename}`}
-                        aria-current={i === currentIndex ? "true" : undefined}
-                      >
-                        <GalleryThumbnailContent item={item} />
-                      </button>
-                    ))}
-                  </div>
+                  <TooltipProvider delayDuration={400}>
+                    <div className="flex flex-col gap-1.5 p-2">
+                      {items.map((item, i) => (
+                        <Tooltip key={item.attachmentId}>
+                          <TooltipTrigger asChild>
+                            <button
+                              ref={(el) => {
+                                if (el) thumbnailRefs.current.set(i, el)
+                                else thumbnailRefs.current.delete(i)
+                              }}
+                              type="button"
+                              className={cn(
+                                "relative w-full rounded overflow-hidden border-2 transition-all",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                                i === currentIndex
+                                  ? "border-white opacity-100"
+                                  : "border-transparent opacity-50 hover:opacity-80"
+                              )}
+                              onClick={() => goTo(i)}
+                              aria-label={`View ${item.filename}`}
+                              aria-current={i === currentIndex ? "true" : undefined}
+                            >
+                              <GalleryThumbnailContent item={item} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left" className="max-w-[260px] break-all">
+                            {item.filename}
+                          </TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  </TooltipProvider>
                 </ScrollArea>
               </div>
             )}

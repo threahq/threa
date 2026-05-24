@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useMemo } from "react"
-import { Download, FileText, File, Loader2, Copy, Play } from "lucide-react"
+import { Download, FileText, File, Loader2, Copy, Play, Globe } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
@@ -12,6 +12,7 @@ import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
+import { isHtmlAttachment, isMarkdownAttachment } from "@/lib/attachment-kind"
 import type { AttachmentSummary } from "@threa/types"
 
 interface AttachmentListProps {
@@ -26,6 +27,10 @@ interface AttachmentItemProps {
   attachment: AttachmentSummary
   workspaceId: string
   onImageClick?: (attachmentId: string) => void
+  /** Image variant: surface the resolved thumbnail URL to the parent so the
+   *  gallery sidebar can render the same small image instead of waiting for the
+   *  full-resolution variant to lazy-fetch on open. */
+  onThumbnailLoaded?: (attachmentId: string, thumbnailUrl: string) => void
   isHighlighted?: boolean
   deferHydration?: boolean
 }
@@ -126,6 +131,7 @@ function ImageAttachment({
   attachment,
   workspaceId,
   onImageClick,
+  onThumbnailLoaded,
   isHighlighted,
   deferHydration = false,
 }: AttachmentItemProps) {
@@ -147,6 +153,7 @@ function ImageAttachment({
         const url = await attachmentsApi.getDownloadUrl(workspaceId, attachment.id, { variant: "thumbnail" })
         if (mounted) {
           setThumbnailUrl(url)
+          onThumbnailLoaded?.(attachment.id, url)
         }
       } catch {
         if (mounted) {
@@ -160,7 +167,7 @@ function ImageAttachment({
     return () => {
       mounted = false
     }
-  }, [workspaceId, attachment.id, deferHydration])
+  }, [workspaceId, attachment.id, deferHydration, onThumbnailLoaded])
 
   // The box is interactable as soon as it mounts — the gallery fetches the
   // full-resolution image itself, so opening it never depends on the inline
@@ -415,6 +422,31 @@ function VideoAttachment({
   )
 }
 
+function OpenableFileChip({
+  attachment,
+  isHighlighted,
+  icon: Icon,
+  onOpen,
+}: {
+  attachment: AttachmentSummary
+  isHighlighted?: boolean
+  icon: typeof FileText
+  onOpen: (attachmentId: string) => void
+}) {
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className={cn("h-8 gap-2 text-xs", isHighlighted && "ring-2 ring-primary border-primary shadow-sm")}
+      onClick={() => onOpen(attachment.id)}
+    >
+      <Icon className="h-3.5 w-3.5" />
+      <span className="max-w-[150px] truncate">{attachment.filename}</span>
+      <span className="text-muted-foreground">{formatFileSize(attachment.sizeBytes)}</span>
+    </Button>
+  )
+}
+
 function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentItemProps) {
   const [isDownloading, setIsDownloading] = useState(false)
   const Icon = getFileIcon(attachment.mimeType)
@@ -456,6 +488,10 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const [loadedFullImageUrls, setLoadedFullImageUrls] = useState<Map<string, string>>(new Map())
   const [loadedThumbnails, setLoadedThumbnails] = useState<Map<string, string>>(new Map())
   const [loadedVideoUrls, setLoadedVideoUrls] = useState<Map<string, string>>(new Map())
+  // Markdown and HTML attachments share a single URL cache: both viewers just
+  // need a presigned URL (the markdown viewer fetches text from it, the HTML
+  // viewer hands it straight to a sandboxed iframe).
+  const [loadedTextUrls, setLoadedTextUrls] = useState<Map<string, string>>(new Map())
   const attachmentContext = useAttachmentContext()
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
   const { mediaAttachmentId, openMedia, closeMedia } = useMediaGallery()
@@ -482,8 +518,23 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     () => (attachments ?? []).filter((a) => !a.mimeType.startsWith("image/") && a.processingStatus === "failed"),
     [attachments]
   )
+  const markdownAttachments = useMemo(
+    () => (attachments ?? []).filter((a) => !a.processingStatus && isMarkdownAttachment(a)),
+    [attachments]
+  )
+  const htmlAttachments = useMemo(
+    () => (attachments ?? []).filter((a) => !a.processingStatus && isHtmlAttachment(a)),
+    [attachments]
+  )
   const fileAttachments = useMemo(
-    () => (attachments ?? []).filter((a) => !a.mimeType.startsWith("image/") && !a.processingStatus),
+    () =>
+      (attachments ?? []).filter(
+        (a) =>
+          !a.mimeType.startsWith("image/") &&
+          !a.processingStatus &&
+          !isMarkdownAttachment(a) &&
+          !isHtmlAttachment(a)
+      ),
     [attachments]
   )
 
@@ -495,6 +546,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     const imageItems: GalleryItem[] = imageAttachments.map((a) => ({
       type: "image" as const,
       url: loadedFullImageUrls.get(a.id) ?? "",
+      thumbnailUrl: loadedThumbnails.get(a.id) ?? "",
       filename: a.filename,
       attachmentId: a.id,
     }))
@@ -513,8 +565,31 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
         }
       })
 
-    return [...imageItems, ...videoItems]
-  }, [imageAttachments, videoAttachments, loadedFullImageUrls, loadedThumbnails, loadedVideoUrls])
+    const markdownItems: GalleryItem[] = markdownAttachments.map((a) => ({
+      type: "markdown" as const,
+      url: loadedTextUrls.get(a.id) ?? "",
+      filename: a.filename,
+      attachmentId: a.id,
+    }))
+
+    const htmlItems: GalleryItem[] = htmlAttachments.map((a) => ({
+      type: "html" as const,
+      url: loadedTextUrls.get(a.id) ?? "",
+      filename: a.filename,
+      attachmentId: a.id,
+    }))
+
+    return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems]
+  }, [
+    imageAttachments,
+    videoAttachments,
+    markdownAttachments,
+    htmlAttachments,
+    loadedFullImageUrls,
+    loadedThumbnails,
+    loadedVideoUrls,
+    loadedTextUrls,
+  ])
 
   // Called by VideoAttachment children when their thumbnail loads
   const registerThumbnailUrl = useCallback((attachmentId: string, thumbnailUrl: string) => {
@@ -539,6 +614,13 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   )
 
   const handleVideoClick = useCallback(
+    (attachmentId: string) => {
+      openMedia(attachmentId)
+    },
+    [openMedia]
+  )
+
+  const handleTextOpen = useCallback(
     (attachmentId: string) => {
       openMedia(attachmentId)
     },
@@ -614,6 +696,35 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     }
   }, [selectedAttachmentId, imageAttachments, loadedFullImageUrls, workspaceId])
 
+  // Lazy-fetch presigned URLs for markdown/html attachments when opened.
+  useEffect(() => {
+    if (!selectedAttachmentId) return
+    const isText =
+      markdownAttachments.some((a) => a.id === selectedAttachmentId) ||
+      htmlAttachments.some((a) => a.id === selectedAttachmentId)
+    if (!isText || loadedTextUrls.has(selectedAttachmentId)) return
+
+    let mounted = true
+    async function fetchTextUrl() {
+      try {
+        const url = await attachmentsApi.getDownloadUrl(workspaceId, selectedAttachmentId!)
+        if (mounted) {
+          setLoadedTextUrls((prev) => {
+            const next = new Map(prev)
+            next.set(selectedAttachmentId!, url)
+            return next
+          })
+        }
+      } catch {
+        console.error("Failed to get attachment URL")
+      }
+    }
+    fetchTextUrl()
+    return () => {
+      mounted = false
+    }
+  }, [selectedAttachmentId, markdownAttachments, htmlAttachments, loadedTextUrls, workspaceId])
+
   if (!attachments || attachments.length === 0) {
     return null
   }
@@ -631,6 +742,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
                 attachment={attachment}
                 workspaceId={workspaceId}
                 onImageClick={handleImageClick}
+                onThumbnailLoaded={registerThumbnailUrl}
                 isHighlighted={attachment.id === hoveredAttachmentId}
                 deferHydration={deferHydration}
               />
@@ -648,8 +760,26 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
             ))}
           </div>
         )}
-        {allFileAttachments.length > 0 && (
+        {(allFileAttachments.length > 0 || markdownAttachments.length > 0 || htmlAttachments.length > 0) && (
           <div className="flex flex-wrap gap-2">
+            {markdownAttachments.map((attachment) => (
+              <OpenableFileChip
+                key={attachment.id}
+                attachment={attachment}
+                isHighlighted={attachment.id === hoveredAttachmentId}
+                icon={FileText}
+                onOpen={handleTextOpen}
+              />
+            ))}
+            {htmlAttachments.map((attachment) => (
+              <OpenableFileChip
+                key={attachment.id}
+                attachment={attachment}
+                isHighlighted={attachment.id === hoveredAttachmentId}
+                icon={Globe}
+                onOpen={handleTextOpen}
+              />
+            ))}
             {allFileAttachments.map((attachment) => (
               <FileAttachment
                 key={attachment.id}

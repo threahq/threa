@@ -2,6 +2,7 @@ import { createContext, useContext, useCallback, useState, type ReactNode } from
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
 import { useMediaGallery } from "@/contexts"
+import { isHtmlAttachment, isMarkdownAttachment } from "@/lib/attachment-kind"
 
 interface Attachment {
   id: string
@@ -45,12 +46,18 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
       const isVideo = !isImage && !!attachment.processingStatus
       const isPlayableVideo =
         isVideo && (attachment.processingStatus === "completed" || attachment.processingStatus === "skipped")
+      // Markdown/HTML have first-class preview surfaces in the gallery, so an
+      // inline link to one should open the preview — matches what the chip
+      // below the message does. Without this, links from the same file would
+      // download while the sibling chip previews, which felt inconsistent.
+      const isPreviewableText =
+        !attachment.processingStatus && (isMarkdownAttachment(attachment) || isHtmlAttachment(attachment))
 
       try {
         if (metaKey) {
           const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId)
           window.open(url, "_blank")
-        } else if (isImage || isPlayableVideo) {
+        } else if (isImage || isPlayableVideo || isPreviewableText) {
           openMedia(attachmentId)
         } else {
           const url = await attachmentsApi.getDownloadUrl(workspaceId, attachmentId)
