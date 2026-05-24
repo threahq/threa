@@ -1,7 +1,9 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
-import type { BotInvocationCapability, BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
+import type { BotInvocationCapability, BotRuntimeKind, BotRuntimeStatus, BotTrait } from "@threa/types"
 import { withTransaction } from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
+import { BotRepository, type Bot } from "../public-api/bot-repository"
 import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
 import {
   BotInvocationRepository,
@@ -16,6 +18,24 @@ import {
 
 interface BotRuntimeServiceDeps {
   pool: Pool
+}
+
+function serializeBotForOutbox(bot: Bot) {
+  const common = {
+    id: bot.id,
+    workspaceId: bot.workspaceId,
+    traits: bot.traits,
+    slug: bot.slug,
+    name: bot.name,
+    description: bot.description,
+    avatarEmoji: bot.avatarEmoji,
+    avatarUrl: bot.avatarUrl,
+    archivedAt: bot.archivedAt?.toISOString() ?? null,
+    createdAt: bot.createdAt.toISOString(),
+    updatedAt: bot.updatedAt.toISOString(),
+  }
+  if (bot.type === "personal") return { ...common, type: "personal" as const, ownerUserId: bot.ownerUserId }
+  return { ...common, type: "shared" as const, ownerUserId: null }
 }
 
 export class BotRuntimeService {
@@ -94,6 +114,18 @@ export class BotRuntimeService {
     })
   }
 
+  async repairBotTraitsInTransaction(
+    db: Querier,
+    params: { workspaceId: string; botId: string; traits: readonly BotTrait[] }
+  ): Promise<void> {
+    const updated = await BotRepository.addTraitsIfMissing(db, params.botId, params.workspaceId, params.traits)
+    if (!updated) return
+    await OutboxRepository.insert(db, "bot:updated", {
+      workspaceId: params.workspaceId,
+      bot: serializeBotForOutbox(updated),
+    })
+  }
+
   async createOrLinkPiRemoteSession(params: {
     workspaceId: string
     botId: string
@@ -104,37 +136,51 @@ export class BotRuntimeService {
     linkedBy: string
     metadata?: Record<string, unknown>
   }): Promise<BotRuntimeSessionLink> {
-    return withTransaction(this.pool, async (client) => {
-      await BotRuntimeInstanceRepository.upsertPresence(client, {
-        id: botRuntimeInstanceId(),
-        workspaceId: params.workspaceId,
-        botId: params.botId,
-        runtimeKind: "pi-local",
-        instanceId: params.instanceId,
-        status: "available",
-        acceptingInvocations: true,
-        capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
-      })
-      await StreamActiveActorRepository.upsert(client, {
-        id: streamActiveActorId(),
-        workspaceId: params.workspaceId,
-        rootStreamId: params.rootStreamId,
-        actorType: "bot",
-        actorId: params.botId,
-        createdBy: params.linkedBy,
-      })
-      return BotRuntimeSessionLinkRepository.upsert(client, {
-        id: botRuntimeSessionLinkId(),
-        workspaceId: params.workspaceId,
-        botId: params.botId,
-        runtimeKind: "pi-local",
-        instanceId: params.instanceId,
-        runtimeSessionId: params.runtimeSessionId,
-        rootStreamId: params.rootStreamId,
-        activeStreamId: params.activeStreamId,
-        linkedBy: params.linkedBy,
-        metadata: params.metadata,
-      })
+    return withTransaction(this.pool, (client) => this.createOrLinkPiRemoteSessionInTransaction(client, params))
+  }
+
+  async createOrLinkPiRemoteSessionInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      instanceId: string
+      runtimeSessionId: string
+      rootStreamId: string
+      activeStreamId: string
+      linkedBy: string
+      metadata?: Record<string, unknown>
+    }
+  ): Promise<BotRuntimeSessionLink> {
+    await BotRuntimeInstanceRepository.upsertPresence(db, {
+      id: botRuntimeInstanceId(),
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      runtimeKind: "pi-local",
+      instanceId: params.instanceId,
+      status: "available",
+      acceptingInvocations: true,
+      capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
+    })
+    await StreamActiveActorRepository.upsert(db, {
+      id: streamActiveActorId(),
+      workspaceId: params.workspaceId,
+      rootStreamId: params.rootStreamId,
+      actorType: "bot",
+      actorId: params.botId,
+      createdBy: params.linkedBy,
+    })
+    return BotRuntimeSessionLinkRepository.upsert(db, {
+      id: botRuntimeSessionLinkId(),
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      runtimeKind: "pi-local",
+      instanceId: params.instanceId,
+      runtimeSessionId: params.runtimeSessionId,
+      rootStreamId: params.rootStreamId,
+      activeStreamId: params.activeStreamId,
+      linkedBy: params.linkedBy,
+      metadata: params.metadata,
     })
   }
 

@@ -43,4 +43,56 @@ describe("Pi remote trace safety", () => {
     expect(trace).not.toContain("oldText")
     expect(trace).not.toContain("secret")
   })
+
+  test("migrates legacy global enabled and stream cursors into session links", () => {
+    const migrated = __testing.migrateSessionState({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      streamCursors: { stream_a: "42" },
+      linkedSessions: {
+        session_1: {
+          linkId: "brsl_123",
+          rootStreamId: "stream_a",
+          activeStreamId: "stream_a",
+          runtimeSessionId: "session_1",
+          streamUrlPath: "/streams/stream_a",
+        },
+      },
+    })
+
+    expect(migrated.linkedSessions?.session_1.enabled).toBe(true)
+    expect(migrated.linkedSessions?.session_1.streamCursors).toEqual({ stream_a: "42" })
+  })
+
+  test("drops malformed linked session entries during migration", () => {
+    const migrated = __testing.migrateSessionState({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        session_1: null,
+      } as never,
+    })
+
+    expect(migrated.linkedSessions).toEqual({})
+  })
+
+  test("parses pasted self-configuration JSON", () => {
+    expect(
+      __testing.parseConfigPatch(`{
+        "baseUrl": " https://app.threa.io/ ",
+        "workspaceId": " ws_123 ",
+        "apiKey": " threa_bk_test ",
+        "pollMs": 1500,
+        "defaultDisplayName": " Local Pi "
+      }`)
+    ).toEqual({
+      baseUrl: "https://app.threa.io/",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      pollMs: 1500,
+      defaultDisplayName: "Local Pi",
+    })
+  })
 })
