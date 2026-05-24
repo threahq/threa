@@ -52,6 +52,14 @@ export class RealtimeDeepgramStrategy implements TranscriptionStrategy {
   }
 }
 
+/**
+ * Upper bound on how long {@link DeepgramSession.flush} will wait for the
+ * post-CloseStream final transcript before giving up. Deepgram is normally
+ * sub-second; the cap is just a safety net so the gateway doesn't hang on a
+ * dead upstream.
+ */
+const FLUSH_FINAL_WAIT_MS = 1500
+
 class DeepgramSession implements TranscriptionSession {
   private readonly deltaCallbacks: Array<(delta: TranscriptionDelta) => void> = []
   private readonly errorCallbacks: Array<(e: TranscriptionError) => void> = []
@@ -60,6 +68,8 @@ class DeepgramSession implements TranscriptionSession {
   private chunksSent = 0
   private openedAt = 0
   private closed = false
+  /** Resolves when the post-flush final transcript lands (or the timeout fires). */
+  private pendingFlush: (() => void) | null = null
 
   constructor(
     private readonly apiKey: string,
@@ -151,8 +161,10 @@ class DeepgramSession implements TranscriptionSession {
     switch (data.type) {
       case "Results": {
         const text = data.channel?.alternatives?.[0]?.transcript ?? ""
+        const isFinal = data.is_final === true
+        if (isFinal) this.resolvePendingFlush()
         if (!text) return
-        this.emitDelta({ text, isFinal: data.is_final === true })
+        this.emitDelta({ text, isFinal })
         return
       }
       case "Metadata":
@@ -177,9 +189,34 @@ class DeepgramSession implements TranscriptionSession {
 
   async flush(): Promise<void> {
     if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return
-    // Tells Deepgram to finalize any buffered audio and emit a final transcript
-    // segment without tearing down the socket.
+    // Deepgram's CloseStream is request-response: it asks the server to commit
+    // any buffered audio and reply with one last `is_final=true` Results frame.
+    // The gateway immediately calls close() after flush(), so if we returned
+    // here right away the socket teardown would race the final frame and the
+    // user's last utterance would silently disappear. Wait for the final
+    // Results (resolved from handleMessage) or the safety timeout.
     this.ws.send(JSON.stringify({ type: "CloseStream" }))
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingFlush = null
+        resolve()
+      }, FLUSH_FINAL_WAIT_MS)
+      this.pendingFlush = () => {
+        clearTimeout(timer)
+        resolve()
+      }
+    })
+  }
+
+  private resolvePendingFlush(): void {
+    if (!this.pendingFlush) return
+    const cb = this.pendingFlush
+    this.pendingFlush = null
+    // The server initiates a clean socket close right after the final Results
+    // frame. Mark closed so the upcoming close event isn't surfaced as a
+    // spurious UPSTREAM_CLOSED to the user.
+    this.closed = true
+    cb()
   }
 
   onDelta(cb: (delta: TranscriptionDelta) => void): void {

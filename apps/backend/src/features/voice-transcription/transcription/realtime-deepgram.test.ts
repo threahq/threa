@@ -113,11 +113,59 @@ describe("RealtimeDeepgramStrategy audio + transcripts", () => {
     expect(result.totalAudioMs).toBe(1000)
   })
 
-  test("flush sends a CloseStream control message", async () => {
+  test("flush sends CloseStream and resolves when the final Results frame arrives", async () => {
     const { session, socket } = await openSession()
-    await session.flush()
+    const deltas: TranscriptionDelta[] = []
+    session.onDelta((d) => deltas.push(d))
+
+    const flushed = session.flush()
+    // CloseStream has been sent, but flush is still awaiting the final frame.
     const msg = JSON.parse(socket.sent.at(-1) as string)
     expect(msg).toEqual({ type: "CloseStream" })
+
+    socket.dispatch("message", {
+      data: JSON.stringify({
+        type: "Results",
+        is_final: true,
+        channel: { alternatives: [{ transcript: "last word" }] },
+      }),
+    })
+
+    await flushed
+    expect(deltas).toEqual([{ text: "last word", isFinal: true }])
+  })
+
+  test("flush resolves on its safety timeout when no final frame ever lands", async () => {
+    const { session } = await openSession()
+    // The 1500ms guard timer is real; advance it explicitly so the test stays fast.
+    // Using fake timers would cross-pollute the test file, so settle for a real
+    // wait scoped to one short case.
+    const flushed = session.flush()
+    const start = Date.now()
+    await flushed
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeGreaterThanOrEqual(1400)
+  }, 5000)
+
+  test("a server-initiated close after a successful flush does NOT surface an error", async () => {
+    const { session, socket } = await openSession()
+    const errors: TranscriptionError[] = []
+    session.onError((e) => errors.push(e))
+
+    const flushed = session.flush()
+    socket.dispatch("message", {
+      data: JSON.stringify({
+        type: "Results",
+        is_final: true,
+        channel: { alternatives: [{ transcript: "ok" }] },
+      }),
+    })
+    await flushed
+    // Deepgram closes the socket itself right after the final frame. That
+    // socket teardown must not look like an unsolicited upstream drop.
+    socket.dispatch("close", { code: 1000 })
+
+    expect(errors).toEqual([])
   })
 
   test("Results with is_final=false emits an interim delta, is_final=true a final one", async () => {
