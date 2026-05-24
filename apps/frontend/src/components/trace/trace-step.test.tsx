@@ -300,6 +300,29 @@ describe("TraceStep", () => {
     expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
   })
 
+  it("renders structured Pi tool_call content without markdown parsing", async () => {
+    const user = userEvent.setup()
+    const content = JSON.stringify({
+      format: "pi_tool_trace",
+      headline: "Running git diff --stat",
+      sections: [
+        { label: "Arguments", body: '{\n  "command": "git diff --stat"\n}', lang: "json" },
+        { label: "Output", body: "apps/backend/src/foo.ts | 11 +-", lang: null },
+      ],
+    })
+
+    render(
+      <MemoryRouter>
+        <TraceStep step={createStep({ stepType: "tool_call", content })} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Running git diff --stat")).toBeInTheDocument()
+    expect(screen.queryByText(/apps\/backend\/src\/foo\.ts/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /Output/i }))
+    expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
+  })
+
   it("renders Pi-formatted tool_call content even when section markers arrive inline", async () => {
     const user = userEvent.setup()
     const content =
