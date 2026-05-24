@@ -159,7 +159,7 @@ export function AISettings() {
                 Use server default
               </Label>
               <p className="text-sm text-muted-foreground">
-                Use whatever provider Threa has configured as the default.
+                Let Threa pick the provider. We currently default to ElevenLabs Scribe v2.
               </p>
             </div>
           </div>
