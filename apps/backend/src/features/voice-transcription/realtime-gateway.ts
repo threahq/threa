@@ -70,6 +70,12 @@ interface RelayState {
   polishQueue: Promise<void>
 }
 
+// Cap how long an upstream error waits on in-flight polish before propagating
+// to the client. Long enough that a typical polish call (sub-second) lands
+// the polished swap; short enough that a stuck provider can't delay the
+// user-facing error past a heartbeat.
+const POLISH_DRAIN_ON_ERROR_MS = 2000
+
 function toBuffer(frame: unknown): Buffer | null {
   if (Buffer.isBuffer(frame)) return frame
   if (frame instanceof ArrayBuffer) return Buffer.from(frame)
@@ -273,7 +279,33 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
             }
           })
         })
-        upstream.onError((e) => socket.emit("voice:transcription:error", { voiceSessionId, ...e }))
+        upstream.onError((e) => {
+          // Drain in-flight polish so the polished swap can land BEFORE the
+          // client tears down on this error. ElevenLabs sometimes closes the
+          // socket ~10s in even on healthy sessions; without this drain the
+          // raw text stays in the editor and the user loses the polish.
+          // Socket.io preserves order within the namespace, so as long as we
+          // emit the error AFTER awaiting the polish promise, the client sees
+          // `voice:transcript:polished` (and applies it) before the error
+          // tears the take down. Bounded so a hung polish can't delay the
+          // error indefinitely.
+          const current = state
+          if (!current || current.finalized) {
+            socket.emit("voice:transcription:error", { voiceSessionId, ...e })
+            return
+          }
+          const drain = Promise.race([
+            current.polishQueue,
+            new Promise<void>((resolve) => setTimeout(resolve, POLISH_DRAIN_ON_ERROR_MS)),
+          ])
+          drain
+            .catch(() => {
+              /* polishQueue swallows its own errors */
+            })
+            .then(() => {
+              socket.emit("voice:transcription:error", { voiceSessionId, ...e })
+            })
+        })
 
         const maxDurationTimer = setTimeout(() => {
           socket.emit("voice:stopped", { reason: "max_duration" })

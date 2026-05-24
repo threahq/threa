@@ -118,6 +118,9 @@ describe("registerVoiceGateway voice:start", () => {
 
     upstream.fireDelta({ text: "hi", isFinal: true })
     upstream.fireError({ code: "INPUT_ERROR", message: "bad audio" })
+    // The error emit now awaits the polish drain (microtask) before propagating,
+    // even when polish is off, so wait one tick before asserting.
+    await new Promise((r) => setTimeout(r, 0))
 
     expect(socket.emitted).toContainEqual({
       event: "voice:transcript:delta",
@@ -368,6 +371,41 @@ describe("registerVoiceGateway polish", () => {
     await new Promise((r) => setTimeout(r, 0))
 
     expect(seenLevels).toEqual(["minor"])
+  })
+
+  it("drains the in-flight polish before emitting the upstream error so the polished swap reaches the client first", async () => {
+    let resolvePolish: (() => void) | null = null
+    const { socket, upstream } = setup({
+      voicePolishLevel: "opinionated",
+      polishTranscript: ({ rawTranscript }: { rawTranscript: string }) =>
+        new Promise<string>((r) => {
+          resolvePolish = () => r(`P(${rawTranscript})`)
+        }),
+    })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "hello world", isFinal: true })
+    // Polish is now in flight (hung on the unresolved promise above).
+    await Promise.resolve()
+    upstream.fireError({ code: "UPSTREAM_CLOSED", message: "10s ElevenLabs disconnect" })
+
+    // The error must not have shipped yet — polish hasn't resolved.
+    await Promise.resolve()
+    expect(socket.emitted.find((e) => e.event === "voice:transcription:error")).toBeUndefined()
+
+    // Resolve the polish. The drain awaits it, then emits the error.
+    resolvePolish!()
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    const errorIdx = socket.emitted.findIndex((e) => e.event === "voice:transcription:error")
+    const polishedIdx = socket.emitted.findIndex((e) => e.event === "voice:transcript:polished")
+    expect(polishedIdx).toBeGreaterThanOrEqual(0)
+    expect(errorIdx).toBeGreaterThan(polishedIdx)
   })
 
   it("polishes the cumulative raw transcript and reuses the same session chunkId", async () => {

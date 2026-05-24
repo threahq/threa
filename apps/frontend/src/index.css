@@ -359,6 +359,22 @@
   content: "";
 }
 
+/* Just-landed polished dictation chunks: a subtle dotted underline so the user
+   can spot the still-swappable region and hover (or tap) it to see both the
+   raw and polished versions. The decoration drops once the user edits inside
+   the chunk or the post-session grace window elapses. */
+.dictation-chunk {
+  text-decoration: underline dotted hsl(var(--primary) / 0.55);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+  cursor: help;
+  border-radius: 2px;
+  transition: background-color 120ms ease;
+}
+.dictation-chunk:hover {
+  background-color: hsl(var(--primary) / 0.08);
+}
+
 .ProseMirror > *:not(.ProseMirror-gapcursor) + *:not(.ProseMirror-gapcursor) {
   @apply mt-2;
 }

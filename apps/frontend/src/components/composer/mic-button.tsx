@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useVoiceDictation, type VoiceDictationState } from "@/hooks/use-voice-dictation"
+import { DictationChunkInspector } from "./dictation-chunk-inspector"
 
 // Surface the cap warning in the final stretch so the auto-stop isn't a surprise.
 const NEAR_CAP_MS = 60_000
@@ -93,6 +94,7 @@ export function MicButton({
     level,
     elapsedMs,
     maxDurationMs,
+    chunks,
     hasUnlockedChunks,
     showOriginal,
     setShowOriginal,
@@ -176,6 +178,10 @@ export function MicButton({
     // tooltip and the tooltip rendered over the pill, making it unclickable.
     // The trigger now wraps only the mic button itself.
     <span className="relative inline-flex">
+      {/* Floating per-chunk inspector: appears when the user hovers (desktop)
+          or taps (mobile) a polished chunk in the editor. Lives at MicButton
+          level so it has access to the live chunks map without lifting state. */}
+      {hasUnlockedChunks && <DictationChunkInspector chunks={chunks} onToggle={() => setShowOriginal(!showOriginal)} />}
       {recording && !polishPillVisible && (
         // Absolutely positioned so the running clock never shifts the composer
         // layout (INV-21). Switches to a remaining-time countdown with a
