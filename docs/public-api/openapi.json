@@ -1373,7 +1373,8 @@
                       "tool_error"
                     ]
                   },
-                  "content": { "type": "string", "minLength": 1, "maxLength": 10000 }
+                  "content": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                  "statusText": { "type": "string", "maxLength": 200 }
                 },
                 "required": ["instanceId", "claimToken", "stepType", "content"],
                 "additionalProperties": false
