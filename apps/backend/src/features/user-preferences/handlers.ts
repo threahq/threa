@@ -41,6 +41,9 @@ const updatePreferencesSchema = z.object({
     .min(BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN)
     .max(BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX)
     .optional(),
+  // Model id like "elevenlabs:scribe-v2-realtime". Validated against the model
+  // registry server-side when a session opens; this layer only bounds length.
+  voiceTranscriptionModel: z.string().max(100).nullable().optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({

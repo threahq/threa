@@ -35,4 +35,11 @@ describe("createTranscription", () => {
       /No transcription strategy/
     )
   })
+
+  test("rejects deepgram when no key is configured (provider disabled)", async () => {
+    const transcription = createTranscription({
+      modelRegistry: fakeRegistry(new Set(["deepgram:nova-3"])),
+    })
+    await expect(transcription.open({ model: "deepgram:nova-3" })).rejects.toThrow(/No transcription strategy/)
+  })
 })

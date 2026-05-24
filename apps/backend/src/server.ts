@@ -474,12 +474,13 @@ export async function startServer(): Promise<ServerInstance> {
   const userApiKeyService = new UserApiKeyServiceImpl(pool)
 
   // Voice dictation — session lifecycle service + the realtime STT factory.
-  // The factory only registers the ElevenLabs strategy when a key is present
-  // (empty string disables voice); fail loudly later if a session is opened
-  // without a configured provider (INV-11).
-  const voiceTranscriptionService = new VoiceTranscriptionService(pool)
+  // The factory only registers a provider strategy when its key is present
+  // (empty string disables that provider); fail loudly later if a session is
+  // opened with a model whose provider isn't configured (INV-11).
+  const voiceTranscriptionService = new VoiceTranscriptionService(pool, userPreferencesService)
   const transcription = createTranscription({
     elevenlabs: config.ai.elevenLabsApiKey ? { apiKey: config.ai.elevenLabsApiKey } : undefined,
+    deepgram: config.ai.deepgramApiKey ? { apiKey: config.ai.deepgramApiKey } : undefined,
     modelRegistry,
   })
 

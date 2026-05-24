@@ -1,6 +1,7 @@
 import type { ModelRegistry } from "../../../lib/ai/model-registry"
 import { logger } from "../../../lib/logger"
 import { parseModelProvider } from "../config"
+import { RealtimeDeepgramStrategy } from "./realtime-deepgram"
 import { RealtimeElevenLabsStrategy } from "./realtime-elevenlabs"
 
 /**
@@ -61,6 +62,8 @@ export interface TranscriptionStrategy {
 export interface TranscriptionFactoryConfig {
   /** Present when ELEVENLABS_API_KEY is configured; absent disables the provider. */
   elevenlabs?: { apiKey: string }
+  /** Present when DEEPGRAM_API_KEY is configured; absent disables the provider. */
+  deepgram?: { apiKey: string }
   modelRegistry: ModelRegistry
 }
 
@@ -80,6 +83,9 @@ export function createTranscription(config: TranscriptionFactoryConfig): Transcr
   const strategies = new Map<string, TranscriptionStrategy>()
   if (config.elevenlabs) {
     strategies.set("elevenlabs", new RealtimeElevenLabsStrategy({ apiKey: config.elevenlabs.apiKey }))
+  }
+  if (config.deepgram) {
+    strategies.set("deepgram", new RealtimeDeepgramStrategy({ apiKey: config.deepgram.apiKey }))
   }
 
   return {

@@ -2,20 +2,25 @@ import type { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
 import { voiceSessionId } from "../../lib/id"
 import { UserRepository } from "../workspaces"
+import { UserPreferencesService } from "../user-preferences"
 import { VoiceSessionRepository, type VoiceSessionRow } from "./repository"
 import { voiceConfig, parseModelProvider, type VoiceSessionStatus } from "./config"
 
 export class VoiceTranscriptionService {
-  private pool: Pool
-
-  constructor(pool: Pool) {
-    this.pool = pool
-  }
+  constructor(
+    private pool: Pool,
+    private userPreferencesService: UserPreferencesService
+  ) {}
 
   /**
    * Create an active dictation session. Provider is derived from the model
    * prefix; region is fixed to `us` for the PR1 skeleton — the residency
    * resolver that may route elsewhere (e.g. Deepgram-EU) lands in PR5.
+   *
+   * Model resolution order: explicit `params.model` (one-off override from the
+   * client) → the user's `voiceTranscriptionModel` preference → the configured
+   * default. This is what lets a user opt into Deepgram without UI: set the
+   * preference once and every session inherits it.
    */
   async createSession(params: {
     workspaceId: string
@@ -23,7 +28,11 @@ export class VoiceTranscriptionService {
     model?: string
     language?: string
   }): Promise<VoiceSessionRow> {
-    const model = params.model ?? voiceConfig.defaultModel
+    let model = params.model
+    if (!model) {
+      const prefs = await this.userPreferencesService.getPreferences(params.workspaceId, params.userId)
+      model = prefs.voiceTranscriptionModel ?? voiceConfig.defaultModel
+    }
     const provider = parseModelProvider(model)
     if (!provider) {
       throw new HttpError(`Invalid voice model: ${model}`, { status: 400, code: "INVALID_VOICE_MODEL" })

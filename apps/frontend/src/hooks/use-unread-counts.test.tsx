@@ -79,6 +79,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       scratchpadCustomPrompt: null,
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,
+      voiceTranscriptionModel: null,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",
