@@ -170,14 +170,18 @@ function GalleryMediaContent({
   // While the full-resolution URL hasn't arrived yet, show the already-loaded
   // thumbnail as a poster instead of a blank loader — matches the video path
   // (poster while bytes stream in) and makes large-image opens feel instant.
+  // Poster fills the container with object-contain (same sizing strategy as
+  // the ZoomableImage poster fallback) so the swap into ZoomableImage when
+  // the URL arrives is pixel-for-pixel — no "small thumbnail → filled image"
+  // flash at the branch boundary.
   if (!current.url) {
     return (
-      <div className="absolute inset-0 flex items-center justify-center">
+      <div className="absolute inset-0">
         {current.thumbnailUrl && (
           <img
             src={current.thumbnailUrl}
             alt={current.filename}
-            className="max-w-full max-h-full object-contain select-none"
+            className="absolute inset-0 h-full w-full object-contain select-none"
             draggable={false}
           />
         )}
