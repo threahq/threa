@@ -20,7 +20,7 @@ import { AccessibilitySettings } from "./accessibility-settings"
 
 const TAB_CONFIG: Record<SettingsTab, { label: string; description: string }> = {
   profile: { label: "Profile", description: "Identity and account details" },
-  ai: { label: "AI", description: "Scratchpad behavior and guidance" },
+  ai: { label: "AI", description: "Scratchpad behavior, guidance, and voice dictation" },
   appearance: { label: "Appearance", description: "Theme and message density" },
   datetime: { label: "Date & Time", description: "Timezone and formatting" },
   notifications: { label: "Notifications", description: "Alerts and push behavior" },
