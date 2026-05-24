@@ -5,7 +5,9 @@
 
 import { parseModelId } from "../../lib/ai/ai"
 
-export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
+// TEMPORARY: flipped to Deepgram for a mobile staging A/B. Revert to
+// `elevenlabs:scribe-v2-realtime` once we're happy.
+export const VOICE_DEFAULT_MODEL = "deepgram:nova-3"
 
 /** Status values for voice_sessions.status (validated in code, no DB enum — INV-3). */
 export const VOICE_SESSION_STATUSES = ["active", "finished", "aborted", "expired"] as const

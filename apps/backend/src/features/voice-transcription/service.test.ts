@@ -64,7 +64,7 @@ describe("VoiceTranscriptionService.createSession", () => {
     expect(insert).toHaveBeenCalledTimes(1)
     const arg = insert.mock.calls[0][1]
     expect(arg.model).toBe(voiceConfig.defaultModel)
-    expect(arg.provider).toBe("elevenlabs")
+    expect(arg.provider).toBe(voiceConfig.defaultModel.split(":")[0])
     expect(arg.region).toBe("us")
     expect(arg.language).toBeNull()
     expect(arg.expiresAt.getTime()).toBeGreaterThanOrEqual(before + voiceConfig.maxSessionMs)
