@@ -1,12 +1,17 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { QueryClient } from "@tanstack/react-query"
+import type { Socket } from "socket.io-client"
 import { db } from "@/db"
 import {
   applyStreamBootstrap,
   getLatestPersistedSequence,
+  registerStreamSocketHandlers,
   toCachedStreamBootstrap,
   updateMessageEvent,
+  type CachedStreamBootstrap,
 } from "./stream-sync"
-import type { StreamBootstrap, StreamEvent } from "@threa/types"
+import { streamKeys } from "@/hooks/use-streams"
+import type { BotRuntimePresenceSummary, StreamBootstrap, StreamEvent } from "@threa/types"
 
 // With fake-indexeddb loaded in test setup, Dexie works against a real
 // in-memory IndexedDB. No mocks needed — tests exercise actual queries.
@@ -756,5 +761,165 @@ describe("event display filtering", () => {
     ]
     const displayed = filterEventsForDisplay(idbEvents, 100n)
     expect(displayed.map((e) => e.sequence)).toEqual(["100", "120", "150", "200"])
+  })
+})
+
+describe("registerStreamSocketHandlers — bot_runtime:presence cache patching", () => {
+  // Active Pi runtimes touch presence on every poll/step (multiple times per
+  // second). The bootstrap cache must not be patched when only `lastSeenAt`
+  // advanced, or every active session bursts cascade re-renders through
+  // StreamContent and the composer subtree — that's what was making mobile
+  // typing feel laggy.
+
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+
+    return {
+      socket,
+      emit(event: string, payload: unknown) {
+        handlers.get(event)?.forEach((handler) => handler(payload))
+      },
+    }
+  }
+
+  function seedBootstrap(
+    queryClient: QueryClient,
+    streamId: string,
+    presence: Record<string, BotRuntimePresenceSummary | null>
+  ): CachedStreamBootstrap {
+    const base = makeBootstrap([], streamId)
+    const cached: CachedStreamBootstrap = {
+      ...base,
+      botRuntimePresence: presence,
+      windowVersion: 0,
+    }
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", streamId), cached)
+    return cached
+  }
+
+  function makePresence(overrides: Partial<BotRuntimePresenceSummary> = {}): BotRuntimePresenceSummary {
+    return {
+      botId: "bot_1",
+      runtimeKind: "pi-local",
+      instanceId: "inst_1",
+      displayName: "Pi-on-laptop",
+      status: "busy",
+      acceptingInvocations: false,
+      statusText: "Searching the workspace…",
+      lastSeenAt: new Date(1700000000000).toISOString(),
+      ...overrides,
+    }
+  }
+
+  it("does not patch the bootstrap cache when only lastSeenAt advances", () => {
+    const queryClient = new QueryClient()
+    const streamId = "stream_presence_skip"
+    const initial = seedBootstrap(queryClient, streamId, { bot_1: makePresence() })
+    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    emit("bot_runtime:presence", {
+      workspaceId: "ws_1",
+      streamId,
+      botId: "bot_1",
+      presence: makePresence({ lastSeenAt: new Date(1700000001000).toISOString() }),
+    })
+
+    // Same reference both ways — the cache value must stay identical so
+    // downstream `useStreamBootstrap` consumers don't re-render.
+    const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(after).toBe(before)
+    expect(after).toBe(initial)
+
+    cleanup()
+  })
+
+  it("patches the cache when statusText changes", () => {
+    const queryClient = new QueryClient()
+    const streamId = "stream_presence_text"
+    seedBootstrap(queryClient, streamId, { bot_1: makePresence({ statusText: "Searching the workspace…" }) })
+    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    emit("bot_runtime:presence", {
+      workspaceId: "ws_1",
+      streamId,
+      botId: "bot_1",
+      presence: makePresence({
+        statusText: "Composing reply…",
+        lastSeenAt: new Date(1700000001000).toISOString(),
+      }),
+    })
+
+    const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(after).not.toBe(before)
+    expect(after?.botRuntimePresence?.bot_1?.statusText).toBe("Composing reply…")
+
+    cleanup()
+  })
+
+  it("patches the cache when status flips even if statusText is unchanged", () => {
+    const queryClient = new QueryClient()
+    const streamId = "stream_presence_status"
+    seedBootstrap(queryClient, streamId, { bot_1: makePresence({ status: "busy" }) })
+    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    emit("bot_runtime:presence", {
+      workspaceId: "ws_1",
+      streamId,
+      botId: "bot_1",
+      presence: makePresence({
+        status: "available",
+        acceptingInvocations: true,
+        lastSeenAt: new Date(1700000002000).toISOString(),
+      }),
+    })
+
+    const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(after).not.toBe(before)
+    expect(after?.botRuntimePresence?.bot_1?.status).toBe("available")
+
+    cleanup()
+  })
+
+  it("ignores presence events for a different stream", () => {
+    const queryClient = new QueryClient()
+    const streamId = "stream_presence_other"
+    seedBootstrap(queryClient, streamId, { bot_1: makePresence() })
+    const before = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    emit("bot_runtime:presence", {
+      workspaceId: "ws_1",
+      streamId: "stream_other",
+      botId: "bot_1",
+      presence: makePresence({ statusText: "Different stream, ignore me" }),
+    })
+
+    const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
+    expect(after).toBe(before)
+
+    cleanup()
   })
 })
