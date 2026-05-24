@@ -351,7 +351,8 @@ export interface PublicApiDeps {
 }
 
 const SENSITIVE_VALUE_PATTERNS = [
-  /\b(?:sk|rk|pk|lf|wos|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/g,
+  /\b(?:sk|rk|pk|lf|wos|gh[a-z]|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
   /\b(?:Authorization|X-Api-Key|api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;\"'}]+/gi,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
 ]
