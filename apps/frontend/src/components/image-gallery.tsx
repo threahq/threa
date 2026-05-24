@@ -19,6 +19,7 @@ import {
   Code2,
   Eye,
 } from "lucide-react"
+import { TopbarLoadingIndicator } from "@/components/layout/topbar-loading-indicator"
 import { downloadImage, copyImage } from "@/lib/image-utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -172,19 +173,15 @@ function GalleryMediaContent({
   if (!current.url) {
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        {current.thumbnailUrl ? (
-          <>
-            <img
-              src={current.thumbnailUrl}
-              alt={current.filename}
-              className="max-w-full max-h-full object-contain select-none opacity-80"
-              draggable={false}
-            />
-            <Loader2 className="absolute h-8 w-8 animate-spin text-white/70" />
-          </>
-        ) : (
-          <Loader2 className="h-8 w-8 animate-spin text-white/50" />
+        {current.thumbnailUrl && (
+          <img
+            src={current.thumbnailUrl}
+            alt={current.filename}
+            className="max-w-full max-h-full object-contain select-none"
+            draggable={false}
+          />
         )}
+        <TopbarLoadingIndicator visible className="bottom-auto top-0" />
       </div>
     )
   }

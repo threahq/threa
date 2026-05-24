@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { TopbarLoadingIndicator } from "@/components/layout/topbar-loading-indicator"
 import { useZoomPan } from "@/hooks/use-zoom-pan"
 import { cn } from "@/lib/utils"
 
@@ -73,12 +73,11 @@ export const ZoomableImage = forwardRef<ZoomableImageHandle, ZoomableImageProps>
           aria-hidden
           className={cn(
             "pointer-events-none absolute inset-0 h-full w-full object-contain select-none transition-opacity duration-200",
-            decoded ? "opacity-0" : "opacity-80"
+            decoded ? "opacity-0" : "opacity-100"
           )}
           draggable={false}
         />
       )}
-      {!decoded && <Loader2 className="absolute h-8 w-8 animate-spin text-white/70" />}
       <img
         ref={imgRef}
         src={src}
@@ -91,6 +90,7 @@ export const ZoomableImage = forwardRef<ZoomableImageHandle, ZoomableImageProps>
         draggable={false}
         style={{ willChange: "transform" }}
       />
+      <TopbarLoadingIndicator visible={!decoded} className="bottom-auto top-0" />
     </div>
   )
 })
