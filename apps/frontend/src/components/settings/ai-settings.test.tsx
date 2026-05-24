@@ -10,8 +10,9 @@ import * as editorModule from "@/components/editor"
 
 const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)
 
-let mockPreferences: { scratchpadCustomPrompt: string | null } = {
+let mockPreferences: { scratchpadCustomPrompt: string | null; voiceTranscriptionModel: string | null } = {
   scratchpadCustomPrompt: "Current instructions",
+  voiceTranscriptionModel: null,
 }
 
 function extractText(node: JSONContent | undefined): string {
@@ -30,7 +31,7 @@ function createDoc(text: string): JSONContent {
 describe("AISettings", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    mockPreferences = { scratchpadCustomPrompt: "Current instructions" }
+    mockPreferences = { scratchpadCustomPrompt: "Current instructions", voiceTranscriptionModel: null }
     updatePreferenceMock.mockClear()
 
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
@@ -124,5 +125,39 @@ describe("AISettings", () => {
     await user.click(screen.getByRole("button", { name: "Reset" }))
 
     expect(editor.value).toBe("Current instructions")
+  })
+
+  it("selects 'Use server default' when no voice model preference is set", () => {
+    render(<AISettings />)
+
+    const defaultRadio = screen.getByRole("radio", { name: /Use server default/i }) as HTMLInputElement
+    expect(defaultRadio).toBeChecked()
+  })
+
+  it("saves the chosen voice transcription model", async () => {
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    await user.click(screen.getByRole("radio", { name: /Deepgram Nova-3/i }))
+
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceTranscriptionModel", "deepgram:nova-3")
+  })
+
+  it("clears the voice transcription override when 'Use server default' is picked", async () => {
+    mockPreferences.voiceTranscriptionModel = "deepgram:nova-3"
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    await user.click(screen.getByRole("radio", { name: /Use server default/i }))
+
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voiceTranscriptionModel", null)
+  })
+
+  it("shows the currently saved voice transcription model as selected", () => {
+    mockPreferences.voiceTranscriptionModel = "elevenlabs:scribe-v2-realtime"
+    render(<AISettings />)
+
+    const elevenLabsRadio = screen.getByRole("radio", { name: /ElevenLabs Scribe v2/i }) as HTMLInputElement
+    expect(elevenLabsRadio).toBeChecked()
   })
 })

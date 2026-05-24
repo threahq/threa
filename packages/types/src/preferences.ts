@@ -103,6 +103,32 @@ export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN = 0
 export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX = 500
 export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 
+// Voice transcription model picker options. The id is the registry id the
+// backend validates at session-open time. `null` means "use the server default"
+// (currently ElevenLabs Scribe v2 Realtime); the option list itself stays in
+// sync with what the backend's voice-transcription registry actually offers.
+export interface VoiceTranscriptionModelOption {
+  id: string
+  name: string
+  provider: string
+  description: string
+}
+
+export const VOICE_TRANSCRIPTION_MODELS: readonly VoiceTranscriptionModelOption[] = [
+  {
+    id: "elevenlabs:scribe-v2-realtime",
+    name: "ElevenLabs Scribe v2",
+    provider: "ElevenLabs",
+    description: "Multilingual auto-detect. The current default.",
+  },
+  {
+    id: "deepgram:nova-3",
+    name: "Deepgram Nova-3",
+    provider: "Deepgram",
+    description: "Lower latency, English-first. Good when ElevenLabs is slow or unavailable.",
+  },
+] as const
+
 // Settings tab options (for URL-driven settings dialog)
 export const SETTINGS_TAB_OPTIONS = [
   "profile",
