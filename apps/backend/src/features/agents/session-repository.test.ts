@@ -37,6 +37,29 @@ function createQuerierCapture(captured: { text: string | null; values: unknown[]
   }
 }
 
+describe("AgentSessionRepository.insertRunningOrSkip", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("skips conflicts from both the running-session index and session primary key", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db = createQuerierCapture(captured)
+
+    await AgentSessionRepository.insertRunningOrSkip(db, {
+      id: "binv_1",
+      streamId: "stream_1",
+      personaId: "bot_1",
+      triggerMessageId: "msg_1",
+      initialSequence: 5n,
+    })
+
+    expect(captured.text).not.toBeNull()
+    expect(captured.text).toContain("ON CONFLICT DO NOTHING")
+    expect(captured.text).not.toContain("ON CONFLICT (stream_id)")
+  })
+})
+
 describe("AgentSessionRepository.updateStatus SQL guards", () => {
   afterEach(() => {
     mock.restore()

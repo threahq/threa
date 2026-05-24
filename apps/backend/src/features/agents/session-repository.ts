@@ -198,10 +198,12 @@ export const AgentSessionRepository = {
   },
 
   /**
-   * Atomically insert a RUNNING session, failing if one already exists for the stream.
-   * Uses ON CONFLICT with the partial unique index to prevent race conditions.
+   * Atomically insert a RUNNING session, failing if one already exists for the stream
+   * or if this invocation already created its session on an earlier claim attempt.
+   * Uses ON CONFLICT DO NOTHING to cover both the partial running-session index
+   * and the primary key without surfacing a duplicate-key error.
    *
-   * @returns The created session, or null if a running session already exists
+   * @returns The created session, or null if a conflicting session already exists
    */
   async insertRunningOrSkip(
     db: Querier,
@@ -225,7 +227,7 @@ export const AgentSessionRepository = {
           ${params.serverId ? new Date() : null},
           ${params.initialSequence.toString()}
         )
-        ON CONFLICT (stream_id) WHERE status = 'running' DO NOTHING
+        ON CONFLICT DO NOTHING
         RETURNING ${sql.raw(SESSION_SELECT_FIELDS)}
       `
     )
