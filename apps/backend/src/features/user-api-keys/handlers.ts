@@ -17,6 +17,10 @@ const createKeySchema = z.object({
     }),
 })
 
+const updateKeySchema = z.object({
+  scopes: z.array(z.enum(API_KEY_ELIGIBLE_SCOPES)).min(1, "at least one scope is required"),
+})
+
 const revokeKeySchema = z.object({
   keyId: z.string().min(1),
 })
@@ -69,6 +73,28 @@ export function createUserApiKeyHandlers({ userApiKeyService }: Dependencies) {
       })
 
       res.status(201).json({ key: serializeKey(row), value })
+    },
+
+    async update(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const userId = req.user!.id
+      const { keyId } = req.params
+
+      const result = updateKeySchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: z.flattenError(result.error).fieldErrors,
+        })
+      }
+
+      const row = await userApiKeyService.updateScopes({
+        workspaceId,
+        userId,
+        keyId,
+        scopes: result.data.scopes as WorkspacePermissionSlug[],
+      })
+      res.json({ key: serializeKey(row) })
     },
 
     async revoke(req: Request, res: Response) {

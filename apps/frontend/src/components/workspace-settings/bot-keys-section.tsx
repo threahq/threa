@@ -55,6 +55,8 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
   const [showKeyValue, setShowKeyValue] = useState(false)
   const [copied, setCopied] = useState(false)
   const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null)
+  const [editTarget, setEditTarget] = useState<{ id: string; name: string } | null>(null)
+  const [editScopes, setEditScopes] = useState<Set<WorkspacePermissionSlug>>(new Set())
   const [revokedOpen, setRevokedOpen] = useState(false)
 
   const createKeyMutation = useMutation({
@@ -66,6 +68,16 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
       setKeyName("")
       setKeyScopes(new Set())
       setShowKeyForm(false)
+      queryClient.invalidateQueries({ queryKey: keysQueryKey })
+    },
+  })
+
+  const updateScopesMutation = useMutation({
+    mutationFn: (params: { keyId: string; scopes: WorkspacePermissionSlug[] }) =>
+      botsApi.updateKeyScopes(workspaceId, botId, params.keyId, params.scopes),
+    onSuccess: () => {
+      setEditTarget(null)
+      setEditScopes(new Set())
       queryClient.invalidateQueries({ queryKey: keysQueryKey })
     },
   })
@@ -91,6 +103,25 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
   const handleCreateKey = () => {
     if (!keyName.trim() || keyScopes.size === 0) return
     createKeyMutation.mutate({ name: keyName.trim(), scopes: [...keyScopes] })
+  }
+
+  const startEditingScopes = (key: BotApiKey) => {
+    setEditTarget({ id: key.id, name: key.name })
+    setEditScopes(new Set(key.scopes))
+  }
+
+  const toggleEditScope = (scope: WorkspacePermissionSlug) => {
+    setEditScopes((prev) => {
+      const next = new Set(prev)
+      if (next.has(scope)) next.delete(scope)
+      else next.add(scope)
+      return next
+    })
+  }
+
+  const handleUpdateScopes = () => {
+    if (!editTarget || editScopes.size === 0) return
+    updateScopesMutation.mutate({ keyId: editTarget.id, scopes: [...editScopes] })
   }
 
   const copyToClipboard = useCallback(async (text: string) => {
@@ -265,6 +296,19 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
                     variant="ghost"
                     size="icon"
                     className="shrink-0 h-8 w-8 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                    onClick={() => startEditingScopes(key)}
+                  >
+                    <Key className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground transition-colors" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Edit scopes</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0 h-8 w-8 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                     onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                   >
                     <Trash2 className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive transition-colors" />
@@ -306,6 +350,40 @@ export function BotKeysSection({ workspaceId, botId, isArchived }: BotKeysSectio
           </CollapsibleContent>
         </Collapsible>
       )}
+
+      {updateScopesMutation.error && (
+        <p className="text-sm text-destructive">Failed to update key scopes. Please try again.</p>
+      )}
+      {revokeKeyMutation.error && <p className="text-sm text-destructive">Failed to revoke key. Please try again.</p>}
+
+      {/* Edit scopes */}
+      <AlertDialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Edit API key scopes</AlertDialogTitle>
+            <AlertDialogDescription>
+              Update permissions for <strong className="text-foreground">{editTarget?.name}</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="max-h-80 overflow-auto rounded-md border divide-y">
+            {API_KEY_ELIGIBLE_PICKER_SCOPES.map((perm) => (
+              <label key={perm.slug} className="block px-3 py-2.5 cursor-pointer hover:bg-accent/50">
+                <span className="flex items-center gap-3">
+                  <Checkbox checked={editScopes.has(perm.slug)} onCheckedChange={() => toggleEditScope(perm.slug)} />
+                  <span className="text-sm font-medium">{perm.name}</span>
+                </span>
+                <p className="text-xs text-muted-foreground leading-relaxed ml-7 mt-0.5">{perm.description}</p>
+              </label>
+            ))}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleUpdateScopes} disabled={editScopes.size === 0}>
+              {updateScopesMutation.isPending ? "Saving..." : "Save scopes"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Revoke confirmation */}
       <AlertDialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>

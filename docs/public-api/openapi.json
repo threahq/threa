@@ -3,7 +3,7 @@
   "info": {
     "title": "Threa Public API",
     "version": "1.0.0",
-    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer thr_your_api_key_here\n```\n\nAPI keys are created by **workspace admins** in the Threa app under **Settings > API Keys**.\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to read bot invocation state.\n- `bot-invocations:write` — Grants access to claim, complete, or fail bot invocations.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
+    "description": "The Threa Public API lets you programmatically read and write messages, list streams, search, and more.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer thr_your_api_key_here\n```\n\nAPI keys are created by **workspace admins** in the Threa app under **Settings > API Keys**.\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search` — Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read` — Grants access to list and search accessible streams in a workspace.\n- `messages:read` — Grants access to read messages in accessible streams.\n- `messages:write` — Grants access to send, update, and delete messages in accessible streams.\n- `users:read` — Grants access to list and search workspace users.\n- `memos:read` — Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read` — Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write` — Grants access to upload and replace attachments in accessible streams.\n- `bot-runtime:read` — Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write` — Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read` — Grants access to read bot invocation state.\n- `bot-invocations:write` — Grants access to claim, complete, or fail bot invocations.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
   "security": [{ "apiKey": [] }],
@@ -493,6 +493,92 @@
           "401": { "description": "Missing or invalid API key" },
           "403": { "description": "Insufficient permissions or inaccessible resource" },
           "404": { "description": "Resource not found" }
+        }
+      }
+    },
+    "/api/v1/workspaces/{workspaceId}/attachments": {
+      "post": {
+        "operationId": "uploadAttachment",
+        "summary": "Upload an attachment",
+        "tags": ["Attachments"],
+        "description": "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message.",
+        "security": [{ "apiKey": ["attachments:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file"],
+                "properties": { "file": { "type": "string", "format": "binary" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "filename": { "type": "string" },
+                        "mimeType": { "type": "string" },
+                        "sizeBytes": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                        "processingStatus": {
+                          "type": "string",
+                          "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                        },
+                        "createdAt": { "type": "string", "format": "date-time" }
+                      },
+                      "required": ["id", "filename", "mimeType", "sizeBytes", "processingStatus", "createdAt"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
         }
       }
     },
@@ -1331,6 +1417,38 @@
                                   "additionalProperties": { "type": "string" },
                                   "description": "External references attached by the sender. Always present; empty when unset."
                                 },
+                                "attachments": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "id": { "type": "string" },
+                                      "filename": { "type": "string" },
+                                      "mimeType": { "type": "string" },
+                                      "sizeBytes": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "processingStatus": {
+                                        "type": "string",
+                                        "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                      },
+                                      "width": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      },
+                                      "height": {
+                                        "type": "integer",
+                                        "minimum": -9007199254740991,
+                                        "maximum": 9007199254740991
+                                      }
+                                    },
+                                    "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                    "additionalProperties": false
+                                  }
+                                },
                                 "editedAt": { "type": "string", "format": "date-time" },
                                 "createdAt": { "type": "string", "format": "date-time" }
                               },
@@ -1807,6 +1925,38 @@
                             "additionalProperties": { "type": "string" },
                             "description": "External references attached by the sender. Always present; empty when unset."
                           },
+                          "attachments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": { "type": "string" },
+                                "filename": { "type": "string" },
+                                "mimeType": { "type": "string" },
+                                "sizeBytes": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "processingStatus": {
+                                  "type": "string",
+                                  "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                },
+                                "width": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "height": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["id", "filename", "mimeType", "sizeBytes"],
+                              "additionalProperties": false
+                            }
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -1938,6 +2088,30 @@
                           "additionalProperties": { "type": "string" },
                           "description": "External references attached by the sender. Always present; empty when unset."
                         },
+                        "attachments": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": { "type": "string" },
+                              "filename": { "type": "string" },
+                              "mimeType": { "type": "string" },
+                              "sizeBytes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "processingStatus": {
+                                "type": "string",
+                                "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                              },
+                              "width": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                              "height": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+                            },
+                            "required": ["id", "filename", "mimeType", "sizeBytes"],
+                            "additionalProperties": false
+                          }
+                        },
                         "editedAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" }
                       },
@@ -2068,6 +2242,38 @@
                             "additionalProperties": { "type": "string" },
                             "description": "External references attached by the sender. Always present; empty when unset."
                           },
+                          "attachments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": { "type": "string" },
+                                "filename": { "type": "string" },
+                                "mimeType": { "type": "string" },
+                                "sizeBytes": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "processingStatus": {
+                                  "type": "string",
+                                  "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                },
+                                "width": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "height": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": ["id", "filename", "mimeType", "sizeBytes"],
+                              "additionalProperties": false
+                            }
+                          },
                           "editedAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" }
                         },
@@ -2186,6 +2392,30 @@
                           "propertyNames": { "type": "string" },
                           "additionalProperties": { "type": "string" },
                           "description": "External references attached by the sender. Always present; empty when unset."
+                        },
+                        "attachments": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": { "type": "string" },
+                              "filename": { "type": "string" },
+                              "mimeType": { "type": "string" },
+                              "sizeBytes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "processingStatus": {
+                                "type": "string",
+                                "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                              },
+                              "width": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 },
+                              "height": { "type": "integer", "minimum": -9007199254740991, "maximum": 9007199254740991 }
+                            },
+                            "required": ["id", "filename", "mimeType", "sizeBytes"],
+                            "additionalProperties": false
+                          }
                         },
                         "editedAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" }

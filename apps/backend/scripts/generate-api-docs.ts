@@ -117,6 +117,23 @@ function buildSpec() {
       }
     }
 
+    if (route.requestIn === "multipart") {
+      operation.requestBody = {
+        required: true,
+        content: {
+          "multipart/form-data": {
+            schema: {
+              type: "object",
+              required: ["file"],
+              properties: {
+                file: { type: "string", format: "binary" },
+              },
+            },
+          },
+        },
+      }
+    }
+
     // Responses
     const successStatus = String(route.successStatus ?? 200)
     const responses: Record<string, unknown> = {}

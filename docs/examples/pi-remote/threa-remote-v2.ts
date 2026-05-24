@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
-import { dirname, join } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
@@ -36,6 +36,13 @@ type ClaimedInvocation = {
   claimExpiresAt: string | null
 }
 
+interface AttachmentSummary {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+}
+
 interface StreamMessage {
   id: string
   authorType: string
@@ -43,6 +50,14 @@ interface StreamMessage {
   sequence: string
   content: string
   createdAt: string
+  attachments?: AttachmentSummary[]
+}
+
+interface UploadedAttachment {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
 }
 
 let config: Config | undefined
@@ -99,11 +114,12 @@ function setRemoteStatus(ctx: ExtensionContext, text: string): void {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!config) throw new Error("Threa remote config not loaded")
+  const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
   const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
+      ...(!isFormData && { "Content-Type": "application/json" }),
       ...init?.headers,
     },
   })
@@ -208,7 +224,11 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   ctx.ui.notify("Threa remote enabled", "info")
 }
 
-function formatInvocationContext(messages: StreamMessage[], sourceMessageId: string): string {
+function formatInvocationContext(
+  messages: StreamMessage[],
+  sourceMessageId: string,
+  downloadedAttachments: Map<string, string>
+): string {
   if (messages.length === 0) return ""
   const orderedMessages = [...messages].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   return [
@@ -216,12 +236,63 @@ function formatInvocationContext(messages: StreamMessage[], sourceMessageId: str
     ...orderedMessages.map((message) => {
       const author = message.authorDisplayName || message.authorType
       const marker = message.id === sourceMessageId ? " [source]" : ""
-      return `- ${author}${marker}: ${message.content}`
+      const attachments = (message.attachments ?? [])
+        .map((attachment) => {
+          const localPath = downloadedAttachments.get(attachment.id)
+          const localNote = localPath ? `, downloaded to ${localPath}` : ""
+          return `[${attachment.id}] ${attachment.filename} (${attachment.mimeType}, ${attachment.sizeBytes} bytes${localNote})`
+        })
+        .join("; ")
+      return `- ${author}${marker}: ${message.content}${attachments ? `\n  Attachments: ${attachments}` : ""}`
     }),
   ].join("\n")
 }
 
-async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<{ context: string; cursor?: string }> {
+function safeFilename(filename: string): string {
+  return filename.replace(/[\\/:*?"<>|]/g, "_").slice(0, 180) || "attachment"
+}
+
+async function downloadAttachment(
+  attachment: AttachmentSummary,
+  invocation: ClaimedInvocation,
+  cwd: string
+): Promise<string> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const body = await request<{ data: { url: string } }>(
+    `/api/v1/workspaces/${config.workspaceId}/attachments/${attachment.id}/url`
+  )
+  const response = await fetch(body.data.url)
+  if (!response.ok) throw new Error(`download failed with ${response.status}`)
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  const dir = join(cwd, ".threa-attachments", invocation.id)
+  mkdirSync(dir, { recursive: true })
+  const path = join(dir, safeFilename(attachment.filename))
+  writeFileSync(path, bytes)
+  return path
+}
+
+async function downloadContextAttachments(
+  messages: StreamMessage[],
+  invocation: ClaimedInvocation,
+  cwd: string
+): Promise<Map<string, string>> {
+  const downloaded = new Map<string, string>()
+  for (const message of messages) {
+    for (const attachment of message.attachments ?? []) {
+      try {
+        downloaded.set(attachment.id, await downloadAttachment(attachment, invocation, cwd))
+      } catch (error) {
+        console.warn(`Failed to download Threa attachment ${attachment.id}: ${String(error)}`)
+      }
+    }
+  }
+  return downloaded
+}
+
+async function fetchInvocationContext(
+  invocation: ClaimedInvocation,
+  cwd: string
+): Promise<{ context: string; cursor?: string }> {
   if (!config) return { context: "" }
   const cursor = config.streamCursors?.[invocation.activeStreamId]
   const query = cursor ? `after=${encodeURIComponent(cursor)}&limit=50` : "limit=12"
@@ -239,9 +310,10 @@ async function fetchInvocationContext(invocation: ClaimedInvocation): Promise<{ 
       ).data
   sourceIncluded = messages.some((message) => message.id === invocation.sourceMessageId)
   const orderedMessages = [...messages].sort((a, b) => (BigInt(a.sequence) < BigInt(b.sequence) ? -1 : 1))
+  const downloadedAttachments = await downloadContextAttachments(orderedMessages, invocation, cwd)
 
   return {
-    context: formatInvocationContext(orderedMessages, invocation.sourceMessageId),
+    context: formatInvocationContext(orderedMessages, invocation.sourceMessageId, downloadedAttachments),
     cursor: sourceIncluded ? orderedMessages.at(-1)?.sequence : undefined,
   }
 }
@@ -271,7 +343,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
   if (!body.data) return
   pending = body.data
   pendingAssistantTexts = []
-  const { context, cursor } = await fetchInvocationContext(body.data).catch((error) => {
+  const { context, cursor } = await fetchInvocationContext(body.data, ctx.cwd).catch((error) => {
     ctx.ui.notify(`Threa remote context fetch failed: ${String(error)}`, "warning")
     return { context: "" }
   })
@@ -283,6 +355,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
       `Remote Threa invocation ${body.data.id}.`,
       `Source message: ${body.data.sourceMessageId}`,
       "Respond normally; the extension will post your final answer back to Threa.",
+      "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
       body.data.promptMarkdown,
@@ -342,10 +415,86 @@ function advanceStreamCursor(invocation: ClaimedInvocation): void {
   saveConfig()
 }
 
-async function completePending(markdown: string): Promise<void> {
+function extractAttachmentDirectives(markdown: string): { markdown: string; paths: string[] } {
+  const paths: string[] = []
+  const lines = markdown.split("\n").filter((line) => {
+    const match = line.match(/^THREA_ATTACH:\s*(.+?)\s*$/)
+    if (!match) return true
+    paths.push(match[1])
+    return false
+  })
+  return { markdown: lines.join("\n").trim(), paths }
+}
+
+function guessMimeType(path: string): string {
+  const lower = path.toLowerCase()
+  if (lower.endsWith(".png")) return "image/png"
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg"
+  if (lower.endsWith(".gif")) return "image/gif"
+  if (lower.endsWith(".webp")) return "image/webp"
+  if (lower.endsWith(".svg")) return "image/svg+xml"
+  if (lower.endsWith(".html")) return "text/html"
+  if (lower.endsWith(".md")) return "text/markdown"
+  if (lower.endsWith(".txt")) return "text/plain"
+  if (lower.endsWith(".csv")) return "text/csv"
+  if (lower.endsWith(".pdf")) return "application/pdf"
+  return "application/octet-stream"
+}
+
+async function uploadAttachment(path: string, cwd: string): Promise<UploadedAttachment> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const absolutePath = resolve(cwd, path)
+  const stats = statSync(absolutePath)
+  if (!stats.isFile()) throw new Error(`${path} is not a file`)
+  const form = new FormData()
+  const bytes = readFileSync(absolutePath)
+  form.append("file", new Blob([bytes], { type: guessMimeType(absolutePath) }), basename(absolutePath))
+  const body = await request<{ data: UploadedAttachment }>(`/api/v1/workspaces/${config.workspaceId}/attachments`, {
+    method: "POST",
+    body: form,
+  })
+  return body.data
+}
+
+async function prepareFinalMarkdown(
+  markdown: string,
+  cwd: string
+): Promise<{ finalMarkdown: string; uploadedAttachments: UploadedAttachment[] }> {
+  const extracted = extractAttachmentDirectives(markdown.trim())
+  const uploadedAttachments: UploadedAttachment[] = []
+  const failedUploads: string[] = []
+  for (const path of extracted.paths) {
+    try {
+      uploadedAttachments.push(await uploadAttachment(path, cwd))
+    } catch (error) {
+      failedUploads.push(`${path}: ${String(error)}`)
+    }
+  }
+  const attachmentLinks = uploadedAttachments.map(
+    (attachment) => `- [${attachment.filename}](attachment:${attachment.id})`
+  )
+  const uploadFailureNote =
+    failedUploads.length > 0
+      ? ["Attachment upload failed:", ...failedUploads.map((failure) => `- ${failure}`)].join("\n")
+      : ""
+  return {
+    finalMarkdown:
+      [
+        extracted.markdown || "Done.",
+        attachmentLinks.length > 0 ? "Attachments:" : "",
+        ...attachmentLinks,
+        uploadFailureNote,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || "Done.",
+    uploadedAttachments,
+  }
+}
+
+async function completePending(markdown: string, cwd: string): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
-  const finalMarkdown = markdown.trim() || "Done."
+  const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, cwd)
   const noResponse = finalMarkdown === NO_RESPONSE_MARKER
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
@@ -357,6 +506,9 @@ async function completePending(markdown: string): Promise<void> {
         "pi.remote.invocationId": invocation.id,
         "pi.remote.instanceId": ensureInstanceId(),
         ...(noResponse && { "pi.remote.noResponse": "true" }),
+        ...(uploadedAttachments.length > 0 && {
+          "pi.remote.attachmentIds": uploadedAttachments.map((attachment) => attachment.id).join(","),
+        }),
       },
     }),
   })
@@ -434,7 +586,8 @@ export default function (pi: ExtensionAPI): void {
     if (!pending) return
     try {
       await completePending(
-        pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
+        pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages),
+        ctx.cwd
       )
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {

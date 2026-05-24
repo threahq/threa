@@ -127,6 +127,17 @@ export const workspacesApi = {
     return api.post<CreateUserApiKeyResponse>(`/api/workspaces/${workspaceId}/user-api-keys`, params)
   },
 
+  async updateUserApiKeyScopes(
+    workspaceId: string,
+    keyId: string,
+    scopes: WorkspacePermissionSlug[]
+  ): Promise<UserApiKey> {
+    const res = await api.patch<{ key: UserApiKey }>(`/api/workspaces/${workspaceId}/user-api-keys/${keyId}`, {
+      scopes,
+    })
+    return res.key
+  },
+
   async revokeUserApiKey(workspaceId: string, keyId: string): Promise<void> {
     await api.post(`/api/workspaces/${workspaceId}/user-api-keys/${keyId}/revoke`)
   },

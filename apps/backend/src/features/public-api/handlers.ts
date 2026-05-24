@@ -23,6 +23,7 @@ import {
   type AttachmentExtraction,
   type AttachmentWithExtraction,
   type AttachmentService,
+  toAttachmentSummary,
 } from "../attachments"
 import { BotRepository, type Bot } from "./bot-repository"
 import { AttachmentSafetyStatuses, AuthorTypes, sentViaApiKey, type AuthorType } from "@threa/types"
@@ -49,6 +50,7 @@ import type {
   WireAttachmentSearchResult,
   WireAttachmentDetails,
   WireAttachmentUrl,
+  WireAttachmentUpload,
 } from "./routes"
 import {
   publicSearchSchema,
@@ -103,7 +105,7 @@ function serializeMessage(
     editedAt: Date | null
     createdAt: Date
   },
-  opts?: { authorDisplayName?: string | null; threadStreamId?: string | null }
+  opts?: { authorDisplayName?: string | null; threadStreamId?: string | null; attachments?: Attachment[] }
 ): WireMessage {
   return {
     id: message.id,
@@ -119,6 +121,7 @@ function serializeMessage(
     ...(message.sentVia != null && { sentVia: message.sentVia }),
     // Always return metadata (possibly empty) so consumers can rely on the shape.
     metadata: message.metadata ?? {},
+    ...(opts?.attachments && opts.attachments.length > 0 && { attachments: opts.attachments.map(toAttachmentSummary) }),
     ...(message.editedAt != null && { editedAt: message.editedAt.toISOString() }),
     createdAt: message.createdAt.toISOString(),
   }
@@ -217,6 +220,17 @@ function serializeAttachmentSearchResult(result: AttachmentWithExtraction): Wire
     ...(result.streamId != null && { streamId: result.streamId }),
     ...(result.messageId != null && { messageId: result.messageId }),
     createdAt: result.createdAt.toISOString(),
+  }
+}
+
+function serializeAttachmentUpload(attachment: Attachment): WireAttachmentUpload {
+  return {
+    id: attachment.id,
+    filename: attachment.filename,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    processingStatus: attachment.processingStatus,
+    createdAt: attachment.createdAt.toISOString(),
   }
 }
 
@@ -412,6 +426,40 @@ export function createPublicApiHandlers({
   }
 
   return {
+    async uploadAttachment(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const uploadedBy = req.userApiKey ? req.user!.id : req.botApiKey?.botId
+      if (!uploadedBy) throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+
+      const file = req.file
+      if (!file || !file.key) {
+        return res.status(400).json({ error: "No file provided" })
+      }
+      const attachmentId = req.attachmentId
+      if (!attachmentId) {
+        throw new HttpError("Attachment id was not generated", { status: 500, code: "INTERNAL_ERROR" })
+      }
+
+      const uploadResult = await attachmentService.createForUpload({
+        id: attachmentId,
+        workspaceId,
+        uploadedBy,
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        sizeBytes: file.size,
+        storagePath: file.key,
+      })
+
+      if (uploadResult.status === "cleanup_failed") {
+        throw new HttpError("Attachment quarantined and cleanup failed", { status: 500, code: "INTERNAL_ERROR" })
+      }
+      if (uploadResult.status === "blocked") {
+        return res.status(400).json({ error: uploadResult.reason })
+      }
+
+      res.status(201).json({ data: serializeAttachmentUpload(uploadResult.attachment) })
+    },
+
     async upsertBotRuntimePresence(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
       const result = upsertPresenceSchema.safeParse(req.body)
@@ -985,9 +1033,10 @@ export function createPublicApiHandlers({
 
       // Resolve author display names and thread stream IDs
       const pageMessageIds = page.map((m) => m.id)
-      const [authorNames, threadMap] = await Promise.all([
+      const [authorNames, threadMap, attachmentsByMessage] = await Promise.all([
         resolveAuthorDisplayNames(pool, req.workspaceId!, page),
         StreamRepository.findThreadsForMessageIds(pool, streamId, pageMessageIds),
+        AttachmentRepository.findByMessageIds(pool, pageMessageIds),
       ])
 
       res.json({
@@ -995,6 +1044,7 @@ export function createPublicApiHandlers({
           serializeMessage(m, {
             authorDisplayName: authorNames.get(m.authorId) ?? null,
             threadStreamId: threadMap.get(m.id) ?? null,
+            attachments: attachmentsByMessage.get(m.id) ?? [],
           })
         ),
         hasMore,

@@ -17,3 +17,4 @@ playwright-report/
 
 # Agent tmp files
 .tmp/
+.threa-attachments/

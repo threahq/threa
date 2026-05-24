@@ -14,6 +14,18 @@ const STORED_PREFIX_LENGTH = 8 // chars stored for identification (after threa_u
 const ELIGIBLE_SCOPES = new Set<WorkspacePermissionSlug>(API_KEY_ELIGIBLE_SCOPES)
 const MAX_ACTIVE_KEYS_PER_USER = 25
 
+function validateScopes(scopes: WorkspacePermissionSlug[]): void {
+  for (const scope of scopes) {
+    if (!ELIGIBLE_SCOPES.has(scope)) {
+      throw new HttpError(`Invalid scope: ${scope}`, { status: 400, code: "INVALID_SCOPE" })
+    }
+  }
+
+  if (scopes.length === 0) {
+    throw new HttpError("At least one scope is required", { status: 400, code: "INVALID_SCOPE" })
+  }
+}
+
 function hashKey(value: string): string {
   return createHash("sha256").update(value).digest("hex")
 }
@@ -44,16 +56,7 @@ export class UserApiKeyService {
     scopes: WorkspacePermissionSlug[]
     expiresAt: Date | null
   }): Promise<{ row: UserApiKeyRow; value: string }> {
-    // Validate scopes
-    for (const scope of params.scopes) {
-      if (!ELIGIBLE_SCOPES.has(scope)) {
-        throw new HttpError(`Invalid scope: ${scope}`, { status: 400, code: "INVALID_SCOPE" })
-      }
-    }
-
-    if (params.scopes.length === 0) {
-      throw new HttpError("At least one scope is required", { status: 400, code: "INVALID_SCOPE" })
-    }
+    validateScopes(params.scopes)
 
     const value = generateKeyValue()
     const keyHash = hashKey(value)
@@ -95,6 +98,26 @@ export class UserApiKeyService {
 
   async listKeys(workspaceId: string, userId: string): Promise<UserApiKeyRow[]> {
     return UserApiKeyRepository.listByUser(this.pool, workspaceId, userId)
+  }
+
+  async updateScopes(params: {
+    workspaceId: string
+    userId: string
+    keyId: string
+    scopes: WorkspacePermissionSlug[]
+  }): Promise<UserApiKeyRow> {
+    validateScopes(params.scopes)
+    const row = await UserApiKeyRepository.updateScopesOwned(
+      this.pool,
+      params.workspaceId,
+      params.userId,
+      params.keyId,
+      params.scopes
+    )
+    if (!row) {
+      throw new HttpError("API key not found", { status: 404, code: "NOT_FOUND" })
+    }
+    return row
   }
 
   async revokeKey(workspaceId: string, userId: string, keyId: string): Promise<void> {

@@ -61,6 +61,16 @@ const streamSchema = z.object({
   archivedAt: z.string().datetime().optional(),
 })
 
+const attachmentSummarySchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int(),
+  processingStatus: z.enum(PROCESSING_STATUSES).optional(),
+  width: z.number().int().optional(),
+  height: z.number().int().optional(),
+})
+
 const messageSchema = z.object({
   id: z.string(),
   streamId: z.string(),
@@ -76,6 +86,7 @@ const messageSchema = z.object({
   metadata: z
     .record(z.string(), z.string())
     .describe("External references attached by the sender. Always present; empty when unset."),
+  attachments: z.array(attachmentSummarySchema).optional(),
   editedAt: z.string().datetime().optional(),
   createdAt: z.string().datetime(),
 })
@@ -245,6 +256,15 @@ const attachmentSearchResultSchema = z.object({
   createdAt: z.string().datetime(),
 })
 
+const attachmentUploadSchema = z.object({
+  id: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int(),
+  processingStatus: z.enum(PROCESSING_STATUSES),
+  createdAt: z.string().datetime(),
+})
+
 const attachmentDetailsSchema = z.object({
   id: z.string(),
   filename: z.string(),
@@ -393,7 +413,7 @@ export interface PublicApiRoute {
   /** Zod schema for query parameters (GET) or request body (POST/PATCH) */
   requestSchema?: z.ZodType
   /** Where the request schema applies */
-  requestIn?: "query" | "body"
+  requestIn?: "query" | "body" | "multipart"
   /** Zod schema for successful response body */
   responseSchema: z.ZodType
   /** HTTP status code for successful response */
@@ -441,6 +461,20 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     parameters: [workspaceIdParam, memoIdParam],
     responseSchema: dataEnvelope(memoDetailSchema),
     canReturn404: true,
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/attachments",
+    operationId: "uploadAttachment",
+    summary: "Upload an attachment",
+    description:
+      "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message.",
+    tags: ["Attachments"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE],
+    parameters: [workspaceIdParam],
+    requestIn: "multipart",
+    responseSchema: dataEnvelope(attachmentUploadSchema),
+    successStatus: 201,
   },
   {
     method: "post",
@@ -738,6 +772,7 @@ export {
   memoSearchResultSchema,
   memoDetailSchema,
   attachmentSearchResultSchema,
+  attachmentUploadSchema,
   attachmentDetailsSchema,
   attachmentUrlSchema,
   errorSchema,
@@ -754,5 +789,6 @@ export type WirePrincipal = z.infer<typeof principalSchema>
 export type WireMemoSearchResult = z.infer<typeof memoSearchResultSchema>
 export type WireMemoDetail = z.infer<typeof memoDetailSchema>
 export type WireAttachmentSearchResult = z.infer<typeof attachmentSearchResultSchema>
+export type WireAttachmentUpload = z.infer<typeof attachmentUploadSchema>
 export type WireAttachmentDetails = z.infer<typeof attachmentDetailsSchema>
 export type WireAttachmentUrl = z.infer<typeof attachmentUrlSchema>
