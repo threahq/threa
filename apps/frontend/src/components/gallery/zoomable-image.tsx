@@ -1,5 +1,7 @@
-import { forwardRef, useImperativeHandle, useRef } from "react"
+import { forwardRef, useImperativeHandle, useRef, useState } from "react"
+import { Loader2 } from "lucide-react"
 import { useZoomPan } from "@/hooks/use-zoom-pan"
+import { cn } from "@/lib/utils"
 
 export interface ZoomableImageHandle {
   reset: () => void
@@ -10,6 +12,11 @@ export interface ZoomableImageHandle {
 interface ZoomableImageProps {
   src: string
   alt: string
+  /** Low-resolution thumbnail to show underneath while the full-resolution
+   *  image decodes. Heavy originals can take several seconds to paint after
+   *  `src` lands; without a poster the viewport is blank between "src set"
+   *  and "bytes painted", which reads as the gallery being stuck. */
+  posterSrc?: string
   onZoomChange?: (zoomed: boolean) => void
   /** Fires synchronously on every scale change (including 60fps during pinch).
    *  Subscribers should be self-contained — using this to drive parent state
@@ -18,11 +25,17 @@ interface ZoomableImageProps {
 }
 
 export const ZoomableImage = forwardRef<ZoomableImageHandle, ZoomableImageProps>(function ZoomableImage(
-  { src, alt, onZoomChange, onScaleChange },
+  { src, alt, posterSrc, onZoomChange, onScaleChange },
   ref
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
+  // Track which src has actually painted. Comparing to the prop instead of
+  // a boolean handles src changes without a separate reset effect — the
+  // moment a new src lands, decoded flips false until the new image's
+  // onLoad fires.
+  const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
+  const decoded = loadedSrc === src
 
   const { isZoomed, zoomIn, zoomOut, reset } = useZoomPan({
     containerRef,
@@ -53,11 +66,28 @@ export const ZoomableImage = forwardRef<ZoomableImageHandle, ZoomableImageProps>
         userSelect: "none",
       }}
     >
+      {posterSrc && (
+        <img
+          src={posterSrc}
+          alt=""
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-0 h-full w-full object-contain select-none transition-opacity duration-200",
+            decoded ? "opacity-0" : "opacity-80"
+          )}
+          draggable={false}
+        />
+      )}
+      {!decoded && <Loader2 className="absolute h-8 w-8 animate-spin text-white/70" />}
       <img
         ref={imgRef}
         src={src}
         alt={alt}
-        className="max-w-full max-h-full object-contain select-none"
+        onLoad={() => setLoadedSrc(src)}
+        className={cn(
+          "max-w-full max-h-full object-contain select-none transition-opacity duration-200",
+          decoded ? "opacity-100" : "opacity-0"
+        )}
         draggable={false}
         style={{ willChange: "transform" }}
       />

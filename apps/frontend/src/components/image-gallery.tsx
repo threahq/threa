@@ -196,6 +196,7 @@ function GalleryMediaContent({
         ref={zoomableRef}
         src={current.url}
         alt={current.filename}
+        posterSrc={current.thumbnailUrl || undefined}
         onZoomChange={onZoomChange}
         onScaleChange={onScaleChange}
       />
@@ -763,9 +764,7 @@ export function MediaGallery({ isOpen, onClose, items, initialIndex, workspaceId
               onClick={handleCopy}
             >
               <Copy className="h-5 w-5" />
-              <span className="sr-only">
-                {current?.type === "image" ? "Copy image" : "Copy source"}
-              </span>
+              <span className="sr-only">{current?.type === "image" ? "Copy image" : "Copy source"}</span>
             </Button>
           )}
         </>
