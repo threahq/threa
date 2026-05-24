@@ -611,6 +611,31 @@ function parseToolMarkdownContent(content: string): { headline: string; sections
     sections.push({ label, body, lang })
   }
 
+  if (sections.length > 0) return { headline, sections }
+  return parseInlineToolMarkdownContent(trimmed)
+}
+
+function parseInlineToolMarkdownContent(content: string): { headline: string; sections: ToolSection[] } {
+  const sectionHeader = /(Arguments|Output|Error output|Details):\s*/g
+  const matches = [...content.matchAll(sectionHeader)]
+  if (matches.length === 0) {
+    return { headline: content.replace(/[…\.]+$/u, "").trim(), sections: [] }
+  }
+
+  const headline = content
+    .slice(0, matches[0]!.index)
+    .replace(/[…\.]+$/u, "")
+    .trim()
+  const sections = matches.map((match, index) => {
+    const next = matches[index + 1]
+    const rawBody = content.slice(match.index! + match[0].length, next?.index ?? content.length).trim()
+    const fenced = rawBody.match(/^```(\w*)\s*([\s\S]*?)\s*```$/)
+    return {
+      label: match[1]!,
+      body: fenced ? fenced[2]!.trim() : rawBody,
+      lang: fenced?.[1] || null,
+    }
+  })
   return { headline, sections }
 }
 

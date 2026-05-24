@@ -300,6 +300,23 @@ describe("TraceStep", () => {
     expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
   })
 
+  it("renders Pi-formatted tool_call content even when section markers arrive inline", async () => {
+    const user = userEvent.setup()
+    const content =
+      'Running cd /Users/kristofferremback/dev/personal/threa && git diff -- Arguments: ```json { "command": "git diff --stat" } ``` Output: ``` apps/backend/src/foo.ts | 11 +- ```'
+
+    render(
+      <MemoryRouter>
+        <TraceStep step={createStep({ stepType: "tool_call", content })} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText(/Running cd/)).toBeInTheDocument()
+    expect(screen.queryByText(/apps\/backend\/src\/foo\.ts/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /Output/i }))
+    expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
+  })
+
   it("renders tool_error with the Error output section open by default", () => {
     // For tool_error steps the reader almost always wants to see the failure
     // message immediately — keeping it collapsed buries the most relevant
