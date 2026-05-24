@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
-import { AgentReconsiderationDecisions, type AgentSessionStep } from "@threa/types"
+import {
+  AgentReconsiderationDecisions,
+  PI_TOOL_TRACE_FORMAT,
+  PiToolTraceSectionLabels,
+  type AgentSessionStep,
+} from "@threa/types"
 import { TraceStep } from "./trace-step"
 import * as relativeTimeModule from "@/components/relative-time"
 
@@ -261,11 +266,11 @@ describe("TraceStep", () => {
   it("renders structured Pi tool_call content without markdown parsing", async () => {
     const user = userEvent.setup()
     const content = JSON.stringify({
-      format: "pi_tool_trace",
+      format: PI_TOOL_TRACE_FORMAT,
       headline: "Running git diff --stat",
       sections: [
-        { label: "Arguments", body: '{\n  "command": "git diff --stat"\n}', lang: "json" },
-        { label: "Output", body: "apps/backend/src/foo.ts | 11 +-", lang: null },
+        { label: PiToolTraceSectionLabels.ARGUMENTS, body: '{\n  "command": "git diff --stat"\n}', lang: "json" },
+        { label: PiToolTraceSectionLabels.OUTPUT, body: "apps/backend/src/foo.ts | 11 +-", lang: null },
       ],
     })
 
@@ -286,12 +291,16 @@ describe("TraceStep", () => {
     // message immediately — keeping it collapsed buries the most relevant
     // detail. Arguments stay collapsed so the failure isn't crowded out.
     const content = JSON.stringify({
-      format: "pi_tool_trace",
+      format: PI_TOOL_TRACE_FORMAT,
       headline: "Running git commit -F .tmp/commit-msg.txt",
       sections: [
-        { label: "Arguments", body: '{ "command": "git commit -F .tmp/commit-msg.txt" }', lang: "json" },
         {
-          label: "Error output",
+          label: PiToolTraceSectionLabels.ARGUMENTS,
+          body: '{ "command": "git commit -F .tmp/commit-msg.txt" }',
+          lang: "json",
+        },
+        {
+          label: PiToolTraceSectionLabels.ERROR_OUTPUT,
           body: "fatal: pathspec 'apps/frontend/src/api/bot-runtime.ts' did not match any files\nCommand exited with code 128",
           lang: null,
         },

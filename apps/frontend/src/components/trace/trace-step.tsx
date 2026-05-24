@@ -1,8 +1,11 @@
 import { Link } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
+  PI_TOOL_TRACE_FORMAT,
+  PiToolTraceSectionLabels,
   type AgentSessionStep,
   type AgentStepType,
+  type PiToolTraceSectionLabel,
   type TraceSource,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
@@ -536,19 +539,19 @@ function renderStepContent(
 }
 
 interface ToolSection {
-  label: string
+  label: PiToolTraceSectionLabel
   body: string
   lang: string | null
 }
 
 interface StructuredToolTrace extends Record<string, unknown> {
-  format: "pi_tool_trace"
+  format: typeof PI_TOOL_TRACE_FORMAT
   headline?: string
   sections?: ToolSection[]
 }
 
 function isStructuredToolTrace(value: Record<string, unknown> | null): value is StructuredToolTrace {
-  return value?.format === "pi_tool_trace"
+  return value?.format === PI_TOOL_TRACE_FORMAT
 }
 
 function ToolTraceContent({
@@ -571,8 +574,12 @@ function ToolTraceContent({
             <ToolSectionDisclosure
               key={`${section.label}-${i}`}
               section={section}
-              defaultOpen={isError && section.label === "Error output"}
-              isError={isError && (section.label === "Error output" || section.label === "Details")}
+              defaultOpen={isError && section.label === PiToolTraceSectionLabels.ERROR_OUTPUT}
+              isError={
+                isError &&
+                (section.label === PiToolTraceSectionLabels.ERROR_OUTPUT ||
+                  section.label === PiToolTraceSectionLabels.DETAILS)
+              }
             />
           ))}
         </div>

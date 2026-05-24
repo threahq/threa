@@ -30,7 +30,6 @@ import {
 import { BotRepository, type Bot } from "./bot-repository"
 import {
   AgentSessionStatuses,
-  AgentStepTypes,
   AttachmentSafetyStatuses,
   AuthorTypes,
   BotRuntimeKinds,
@@ -524,23 +523,6 @@ export function createPublicApiHandlers({
     }
   }
 
-  function fallbackStatusTextForStep(stepType: string): string {
-    switch (stepType) {
-      case AgentStepTypes.CONTEXT_RECEIVED:
-        return "Loaded context…"
-      case AgentStepTypes.THINKING:
-        return "Thinking…"
-      case AgentStepTypes.TOOL_CALL:
-        return "Using tool…"
-      case AgentStepTypes.TOOL_ERROR:
-        return "Tool failed"
-      case AgentStepTypes.MESSAGE_SENT:
-        return "Sent response"
-      default:
-        return "Working…"
-    }
-  }
-
   return {
     async uploadAttachment(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -693,7 +675,6 @@ export function createPublicApiHandlers({
         instanceId: result.data.instanceId,
         status: "busy",
         acceptingInvocations: false,
-        statusText: "Starting…",
       })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       if (bot && !bot.archivedAt) {
@@ -838,7 +819,7 @@ export function createPublicApiHandlers({
         instanceId: result.data.instanceId,
         status: "busy",
         acceptingInvocations: false,
-        statusText: result.data.statusText?.trim() || fallbackStatusTextForStep(result.data.stepType),
+        statusText: result.data.statusText?.trim() || null,
       })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },

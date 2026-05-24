@@ -631,6 +631,18 @@ export const BotRuntimeKinds = {
   CUSTOM: "custom",
 } as const satisfies Record<string, BotRuntimeKind>
 
+export const PI_TOOL_TRACE_FORMAT = "pi_tool_trace" as const
+
+export const PI_TOOL_TRACE_SECTION_LABELS = ["Arguments", "Output", "Error output", "Details"] as const
+export type PiToolTraceSectionLabel = (typeof PI_TOOL_TRACE_SECTION_LABELS)[number]
+
+export const PiToolTraceSectionLabels = {
+  ARGUMENTS: "Arguments",
+  OUTPUT: "Output",
+  ERROR_OUTPUT: "Error output",
+  DETAILS: "Details",
+} as const satisfies Record<string, PiToolTraceSectionLabel>
+
 export const BOT_RUNTIME_SESSION_LINK_STATUSES = ["active", "paused", "ended"] as const
 export type BotRuntimeSessionLinkStatus = (typeof BOT_RUNTIME_SESSION_LINK_STATUSES)[number]
 

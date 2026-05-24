@@ -191,6 +191,10 @@ export {
   BOT_INVOCATION_CAPABILITIES,
   type BotInvocationCapability,
   BotInvocationCapabilities,
+  PI_TOOL_TRACE_FORMAT,
+  PI_TOOL_TRACE_SECTION_LABELS,
+  type PiToolTraceSectionLabel,
+  PiToolTraceSectionLabels,
   // Auth (social providers + magic auth)
   SOCIAL_PROVIDERS,
   type SocialProvider,
