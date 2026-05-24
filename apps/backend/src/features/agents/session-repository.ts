@@ -105,6 +105,19 @@ export interface UpsertStepParams {
   completedAt?: Date
 }
 
+// Append params (step_number is computed atomically — never passed by caller)
+export interface AppendStepParams {
+  id: string
+  sessionId: string
+  stepType: StepType
+  content?: unknown
+  sources?: TraceSource[]
+  messageId?: string
+  tokensUsed?: number
+  startedAt: Date
+  completedAt?: Date
+}
+
 // Mappers
 function mapRowToSession(row: SessionRow): AgentSession {
   return {
@@ -481,6 +494,48 @@ export const AgentSessionRepository = {
   },
 
   // ----- Steps -----
+
+  /**
+   * Append a new step at the next available step_number for the session.
+   *
+   * This method is safe for independent external-runtime HTTP requests: each
+   * attempt computes the next number in the INSERT statement, and concurrent
+   * unique-key collisions retry until one insert wins instead of clobbering an
+   * existing step (INV-20).
+   */
+  async appendStep(db: Querier, params: AppendStepParams): Promise<AgentSessionStep> {
+    const session = await db.query(sql`SELECT 1 FROM agent_sessions WHERE id = ${params.sessionId}`)
+    if (session.rowCount === 0) {
+      throw new Error(`agent_sessions row not found for session id ${params.sessionId}`)
+    }
+
+    while (true) {
+      const result = await db.query<StepRow>(
+        sql`
+          INSERT INTO agent_session_steps (
+            id, session_id, step_number, step_type, content, sources,
+            message_id, tokens_used, started_at, completed_at
+          )
+          SELECT
+            ${params.id},
+            ${params.sessionId},
+            COALESCE(MAX(step_number), 0) + 1,
+            ${params.stepType},
+            ${params.content != null ? JSON.stringify(params.content) : null},
+            ${params.sources ? JSON.stringify(params.sources) : null},
+            ${params.messageId ?? null},
+            ${params.tokensUsed ?? null},
+            ${params.startedAt},
+            ${params.completedAt ?? null}
+          FROM agent_session_steps
+          WHERE session_id = ${params.sessionId}
+          ON CONFLICT (session_id, step_number) DO NOTHING
+          RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
+        `
+      )
+      if (result.rows[0]) return mapRowToStep(result.rows[0])
+    }
+  },
 
   async upsertStep(db: Querier, params: UpsertStepParams): Promise<AgentSessionStep> {
     const result = await db.query<StepRow>(

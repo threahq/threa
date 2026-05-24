@@ -8,6 +8,7 @@ import {
   type LinkPreviewSummary,
   type ThreadSummary,
   type WorkspaceBootstrap,
+  type BotRuntimePresenceSummary,
 } from "@threa/types"
 import type { Socket } from "socket.io-client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -754,6 +755,46 @@ export function registerStreamSocketHandlers(
     await queryClient.invalidateQueries({ queryKey: streamKeys.events(workspaceId, streamId) })
   }
 
+  // Bot runtime presence updates fan out to every stream room the bot is a
+  // member of. Patch the cached bootstrap so any open scratchpad showing the
+  // status strip re-renders without a refetch.
+  //
+  // `lastSeenAt` is intentionally excluded from the equality check — Pi runtimes
+  // touch presence on every poll/step (multiple times per second during active
+  // sessions), but the UI only renders `status`, `statusText`, and
+  // `displayName`. Including `lastSeenAt` here forced the bootstrap cache to
+  // patch on every heartbeat, which cascaded into a full StreamContent
+  // re-render (and the heavy composer subtree with it) and made typing on
+  // mobile feel laggy whenever a bot was active.
+  const handleBotRuntimePresence = (payload: {
+    workspaceId: string
+    streamId: string
+    botId: string
+    presence: BotRuntimePresenceSummary | null
+  }) => {
+    if (payload.streamId !== streamId) return
+    queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (old) => {
+      if (!old) return old
+      const current = old.botRuntimePresence ?? {}
+      const previous = current[payload.botId] ?? null
+      const next = payload.presence
+      if (
+        previous?.status === next?.status &&
+        previous?.statusText === next?.statusText &&
+        previous?.displayName === next?.displayName &&
+        previous?.acceptingInvocations === next?.acceptingInvocations &&
+        previous?.runtimeKind === next?.runtimeKind &&
+        previous?.instanceId === next?.instanceId
+      ) {
+        return old
+      }
+      return {
+        ...old,
+        botRuntimePresence: { ...current, [payload.botId]: next },
+      }
+    })
+  }
+
   socket.on("message:created", handleMessageCreated)
   socket.on("message:edited", handleMessageEdited)
   socket.on("message:deleted", handleMessageDeleted)
@@ -774,6 +815,7 @@ export function registerStreamSocketHandlers(
   socket.on("agent_session:deleted", handleAppendEvent)
   socket.on("link_preview:ready", handleLinkPreviewReady)
   socket.on("pointer:invalidated", handlePointerInvalidated)
+  socket.on("bot_runtime:presence", handleBotRuntimePresence)
 
   return () => {
     socket.off("message:created", handleMessageCreated)
@@ -796,5 +838,6 @@ export function registerStreamSocketHandlers(
     socket.off("agent_session:deleted", handleAppendEvent)
     socket.off("link_preview:ready", handleLinkPreviewReady)
     socket.off("pointer:invalidated", handlePointerInvalidated)
+    socket.off("bot_runtime:presence", handleBotRuntimePresence)
   }
 }

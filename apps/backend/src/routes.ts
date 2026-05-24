@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Express, RequestHandler } from "express"
+import type { Server } from "socket.io"
 import { createAuthMiddleware } from "@threa/backend-common"
 import { createWorkspaceUserMiddleware } from "./middleware/workspace"
 import { createUploadMiddleware, createAvatarUploadMiddleware } from "./middleware/upload"
@@ -74,6 +75,7 @@ import type { PoolMonitor } from "./lib/observability"
 
 interface Dependencies {
   pool: Pool
+  io?: Server
   poolMonitor: PoolMonitor
   authService: AuthService
   workspaceService: WorkspaceService
@@ -268,7 +270,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.get)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId", ...authed, stream.update)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/bootstrap", ...authed, stream.bootstrap)
-  app.get("/api/workspaces/:workspaceId/streams/:streamId/bot-runtime-presence", ...authed, stream.botRuntimePresence)
   app.patch("/api/workspaces/:workspaceId/streams/:streamId/companion", ...authed, stream.updateCompanionMode)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/pin", ...authed, stream.pin)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/notification-level", ...authed, stream.setNotificationLevel)
@@ -575,6 +576,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     streamService,
     eventService,
     pool,
+    io: deps.io,
   })
   const publicMiddleware = [rateLimits.publicApiWorkspace, rateLimits.publicApiKey, publicAuth] as const
 
@@ -647,6 +649,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...publicMiddleware,
     requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
     publicApi.renewBotInvocationClaim
+  )
+  app.post(
+    "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/steps",
+    ...publicMiddleware,
+    requireApiKeyScope(WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE),
+    publicApi.recordBotInvocationStep
   )
   app.post(
     "/api/v1/workspaces/:workspaceId/bot-invocations/:invocationId/complete",

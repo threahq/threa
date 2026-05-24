@@ -502,9 +502,19 @@ export async function startServer(): Promise<ServerInstance> {
 
   const isProduction = process.env.NODE_ENV === "production"
   const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
+  const server = createServer(app)
+  const io = new SocketIOServer(server, {
+    path: "/socket.io/",
+    cors: {
+      origin: createCorsOriginChecker(config.corsAllowedOrigins),
+      credentials: true,
+    },
+  })
+  io.adapter(createAdapter(pools.realtime))
 
   registerRoutes(app, {
     pool,
+    io,
     poolMonitor,
     authService,
     workspaceService,
@@ -542,18 +552,6 @@ export async function startServer(): Promise<ServerInstance> {
   })
 
   app.use(errorHandler)
-
-  const server = createServer(app)
-
-  const io = new SocketIOServer(server, {
-    path: "/socket.io/",
-    cors: {
-      origin: createCorsOriginChecker(config.corsAllowedOrigins),
-      credentials: true,
-    },
-  })
-
-  io.adapter(createAdapter(pools.realtime))
 
   const userSocketRegistry = new UserSocketRegistry()
   const sessionAbortRegistry = new SessionAbortRegistry()

@@ -1,8 +1,11 @@
 import { Link } from "react-router-dom"
 import {
   AgentReconsiderationDecisions,
+  PI_TOOL_TRACE_FORMAT,
+  PiToolTraceSectionLabels,
   type AgentSessionStep,
   type AgentStepType,
+  type PiToolTraceSectionLabel,
   type TraceSource,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
@@ -518,12 +521,132 @@ function renderStepContent(
           </div>
         )
       }
+      if (isStructuredToolTrace(structured)) {
+        return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={false} />
+      }
+      if (looksLikeStructuredToolTrace(content)) {
+        return <TruncatedToolTraceContent content={content} isError={false} />
+      }
       return <span>{content}</span>
     }
+
+    case "tool_error":
+      if (isStructuredToolTrace(structured)) {
+        return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={true} />
+      }
+      if (looksLikeStructuredToolTrace(content)) {
+        return <TruncatedToolTraceContent content={content} isError={true} />
+      }
+      return <span>{content}</span>
 
     default:
       return <span>{content}</span>
   }
+}
+
+interface ToolSection {
+  label: PiToolTraceSectionLabel
+  body: string
+  lang: string | null
+}
+
+interface StructuredToolTrace extends Record<string, unknown> {
+  format: typeof PI_TOOL_TRACE_FORMAT
+  headline?: string
+  sections?: ToolSection[]
+}
+
+function isStructuredToolTrace(value: Record<string, unknown> | null): value is StructuredToolTrace {
+  return value?.format === PI_TOOL_TRACE_FORMAT
+}
+
+function looksLikeStructuredToolTrace(content: string): boolean {
+  return new RegExp(`"format"\\s*:\\s*"${PI_TOOL_TRACE_FORMAT}"`).test(content)
+}
+
+function TruncatedToolTraceContent({ content, isError }: { content: string; isError: boolean }) {
+  return (
+    <ToolTraceContent
+      headline={isError ? "Tool error trace was truncated" : "Tool trace was truncated"}
+      sections={[
+        {
+          label: PiToolTraceSectionLabels.DETAILS,
+          body: content,
+          lang: "json",
+        },
+      ]}
+      isError={isError}
+    />
+  )
+}
+
+function ToolTraceContent({
+  headline,
+  sections,
+  isError,
+}: {
+  headline?: string
+  sections: ToolSection[]
+  isError: boolean
+}) {
+  const headlineText = headline || (isError ? "Tool error" : "Tool call")
+
+  return (
+    <div className="space-y-2">
+      <div className="font-mono text-[12.5px] leading-snug break-words text-foreground/90">{headlineText}</div>
+      {sections.length > 0 && (
+        <div className="space-y-1.5">
+          {sections.map((section, i) => (
+            <ToolSectionDisclosure
+              key={`${section.label}-${i}`}
+              section={section}
+              defaultOpen={isError && section.label === PiToolTraceSectionLabels.ERROR_OUTPUT}
+              isError={
+                isError &&
+                (section.label === PiToolTraceSectionLabels.ERROR_OUTPUT ||
+                  section.label === PiToolTraceSectionLabels.DETAILS)
+              }
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolSectionDisclosure({
+  section,
+  defaultOpen,
+  isError,
+}: {
+  section: ToolSection
+  defaultOpen: boolean
+  isError: boolean
+}) {
+  const lineCount = section.body ? section.body.split("\n").length : 0
+  const lineLabel = `${lineCount} ${lineCount === 1 ? "line" : "lines"}`
+
+  return (
+    <Collapsible defaultOpen={defaultOpen}>
+      <CollapsibleTrigger className="group flex w-full items-center gap-1.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground transition-colors">
+        <ChevronRight className="w-3 h-3 transition-transform group-data-[state=open]:rotate-90" />
+        <span>{section.label}</span>
+        {lineCount > 0 && (
+          <span className="ml-1 font-normal normal-case tracking-normal text-muted-foreground/70">{lineLabel}</span>
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre
+          className={cn(
+            "mt-1.5 rounded-md px-3 py-2 text-[11px] font-mono leading-snug overflow-x-auto whitespace-pre max-h-[320px] overflow-y-auto",
+            isError ? "bg-destructive/5 border border-destructive/20 text-foreground/90" : "bg-muted/60"
+          )}
+        >
+          <code>{section.body || "(empty)"}</code>
+        </pre>
+      </CollapsibleContent>
+    </Collapsible>
+  )
 }
 
 /**

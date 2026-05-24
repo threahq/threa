@@ -3,7 +3,7 @@ import { useLocation, useSearchParams } from "react-router-dom"
 import { Virtuoso } from "react-virtuoso"
 import { MessageSquare, ArrowDown, X, Move, Loader2, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
   useStreamSocket,
@@ -76,7 +76,6 @@ import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
-import { botRuntimeApi } from "@/api/bot-runtime"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -237,13 +236,9 @@ export function StreamContent({
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
   const showBotRuntimePresence = stream?.type === StreamTypes.SCRATCHPAD
-  const botRuntimePresenceQuery = useQuery({
-    queryKey: ["bot-runtime-presence", workspaceId, streamId],
-    queryFn: () => botRuntimeApi.getPresence(workspaceId, streamId),
-    enabled: !isDraft && showBotRuntimePresence && !!workspaceId && !!streamId,
-    refetchInterval: 10_000,
-  })
-  const botRuntimePresence = botRuntimePresenceQuery.data ?? bootstrap?.botRuntimePresence ?? {}
+  // Presence ships with the stream bootstrap and is kept fresh via the
+  // `bot_runtime:presence` socket event handled in stream-sync. No polling.
+  const botRuntimePresence = bootstrap?.botRuntimePresence ?? {}
   const activeBotPresence = useMemo(() => {
     const botIds = bootstrap?.botMemberIds ?? Object.keys(botRuntimePresence)
     const botId = botIds.find((candidate) => botRuntimePresence[candidate]) ?? botIds[0]
@@ -1498,6 +1493,7 @@ export function StreamContent({
                   botName={activeBotPresence.bot.name}
                   runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
                   status={activeBotPresence.presence?.status ?? "unknown"}
+                  statusText={activeBotPresence.presence?.statusText ?? null}
                   className="pointer-events-auto"
                 />
               </div>

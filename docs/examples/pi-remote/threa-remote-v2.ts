@@ -1,11 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+  ToolCallEvent,
+  ToolResultEvent,
+} from "@earendil-works/pi-coding-agent"
 
 const CONFIG_PATH = join(homedir(), ".pi", "agent", "threa-remote.json")
 const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
+const FETCH_TIMEOUT_MS = 30_000
+const MAX_FAILURE_POLL_MS = 60_000
+const TRACE_CONTENT_MAX_CHARS = 9_500
+const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
+const PI_TOOL_TRACE_SECTION_LABELS = {
+  ARGUMENTS: "Arguments",
+  OUTPUT: "Output",
+  ERROR_OUTPUT: "Error output",
+  DETAILS: "Details",
+} as const
+
+type PiToolTraceSectionLabel = (typeof PI_TOOL_TRACE_SECTION_LABELS)[keyof typeof PI_TOOL_TRACE_SECTION_LABELS]
 
 type Config = {
   baseUrl: string
@@ -61,11 +79,16 @@ interface UploadedAttachment {
 }
 
 let config: Config | undefined
-let timer: ReturnType<typeof setInterval> | undefined
-let pollInFlight = false
+let timer: ReturnType<typeof setTimeout> | undefined
+let pollInFlightRunId: number | undefined
 let pending: ClaimedInvocation | undefined
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
+let pendingToolCalls = new Map<string, { headline: string }>()
+let lastTraceHeartbeat: { text: string; at: number } | undefined
+let consecutivePollFailures = 0
+let lastPollFailureSummary: string | undefined
+let pollingRunId = 0
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -108,14 +131,33 @@ function ensureInstanceId(): string {
   return config.instanceId
 }
 
-function setRemoteStatus(ctx: ExtensionContext, text: string): void {
-  ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg("muted", text))
+function setRemoteStatus(ctx: ExtensionContext, text: string, tone: "muted" | "error" = "muted"): void {
+  ctx.ui.setStatus(STATUS_KEY, ctx.ui.theme.fg(tone, text))
+}
+
+function summarizeError(error: unknown): string {
+  const cause =
+    error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined
+  const causeCode =
+    cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code) : ""
+  const message = error instanceof Error ? error.message : String(error)
+  return [message, causeCode ? `(${causeCode})` : ""].filter(Boolean).join(" ").replace(/\s+/g, " ").slice(0, 180)
+}
+
+async function fetchWithTimeout(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timeout)
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!config) throw new Error("Threa remote config not loaded")
   const isFormData = typeof FormData !== "undefined" && init?.body instanceof FormData
-  const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
+  const response = await fetchWithTimeout(`${config.baseUrl.replace(/\/$/, "")}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
@@ -124,8 +166,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!response.ok) {
-    const body = await response.text().catch(() => "")
-    throw new Error(`Threa API ${response.status}: ${body || response.statusText}`)
+    // Do not read the response body here. Server/proxy failures can return huge
+    // HTML documents; surfacing those in Pi eats context and memory.
+    throw new Error(`Threa API ${response.status}: ${response.statusText}`)
   }
   return (await response.json()) as T
 }
@@ -148,6 +191,235 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
       statusText,
     }),
   })
+}
+
+function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= max) return trimmed
+  return `${trimmed.slice(0, max)}\n\n…[trace content truncated; ${trimmed.length - max} more characters]`
+}
+
+async function recordTraceStep(stepType: string, content: string, statusText?: string): Promise<void> {
+  if (!config || !pending) return
+  const trimmed = truncateForTrace(content)
+  if (!trimmed) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${pending.id}/steps`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      claimToken: pending.claimToken,
+      stepType,
+      content: trimmed,
+      statusText: statusText?.trim().slice(0, 160),
+    }),
+  }).catch(() => undefined)
+}
+
+async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
+  if (!pending) return
+  const trimmed = safeStatusText(text)
+  if (!trimmed) return
+  const now = Date.now()
+  if (lastTraceHeartbeat?.text === trimmed && now - lastTraceHeartbeat.at < 5000) return
+  lastTraceHeartbeat = { text: trimmed, at: now }
+  if (stepType) {
+    await recordTraceStep(stepType, trimmed, trimmed)
+    return
+  }
+  await heartbeat("busy", trimmed).catch(() => undefined)
+}
+
+function safeStatusText(text: string): string {
+  const trimmed = text.trim()
+  const allowed = new Set([
+    "Thinking…",
+    "Loaded context…",
+    "Running shell command…",
+    "Reading file…",
+    "Reading sensitive file…",
+    "Writing file…",
+    "Editing file…",
+    "Searching files…",
+    "Listing directory…",
+    "Using tool…",
+    "Tool finished",
+    "Tool failed",
+    "Composing response…",
+    "Sent response",
+  ])
+  if (allowed.has(trimmed)) return trimmed
+  if (/^Finished [A-Za-z0-9_-]+$/.test(trimmed)) return "Tool finished"
+  if (/^[A-Za-z0-9_-]+ failed$/.test(trimmed)) return "Tool failed"
+  return "Working…"
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function basenameFromInputPath(path: unknown): string | undefined {
+  if (typeof path !== "string") return undefined
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts.at(-1)
+}
+
+function isSensitivePath(path: unknown): boolean {
+  if (typeof path !== "string") return false
+  return /(^|[\\/.])(?:env|npmrc|netrc|pypirc|pgpass|aws|credentials|config|secrets?|tokens?|keys?)(?:$|[.\\/-])/i.test(
+    path
+  )
+}
+
+function safeFileSummary(path: unknown): string {
+  if (isSensitivePath(path)) return "sensitive file"
+  const name = basenameFromInputPath(path)
+  return name ? `file ${name}` : "file"
+}
+
+function safeToolName(toolName: string): string {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(toolName) ? toolName : "tool"
+}
+
+function describeToolCall(event: ToolCallEvent): string {
+  const input = "input" in event ? event.input : undefined
+  const toolName = safeToolName(event.toolName)
+  if (event.toolName === "bash") return "Running shell command…"
+  if ((event.toolName === "read" || event.toolName === "write") && isObject(input) && "path" in input) {
+    if (event.toolName === "read" && isSensitivePath(input.path)) return "Reading sensitive file…"
+    return `${event.toolName === "read" ? "Reading" : "Writing"} ${safeFileSummary(input.path)}…`
+  }
+  if (event.toolName === "edit" && isObject(input) && "path" in input) return `Editing ${safeFileSummary(input.path)}…`
+  if (event.toolName === "grep" || event.toolName === "find") return "Searching files…"
+  if (event.toolName === "ls") return "Listing directory…"
+  return `Using ${toolName}…`
+}
+
+function textFromToolContent(content: unknown): string {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part
+      if (!part || typeof part !== "object" || !("type" in part)) return ""
+      if (part.type === "text" && "text" in part) return String(part.text)
+      if (part.type === "image") return "[image output]"
+      return ""
+    })
+    .filter(Boolean)
+    .join("\n")
+}
+
+function formatStructuredToolTrace(params: {
+  headline: string
+  sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }>
+}): string {
+  const sections = params.sections.map((section) => ({ ...section, originalBody: section.body }))
+
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const payload = JSON.stringify({
+      format: PI_TOOL_TRACE_FORMAT,
+      headline: params.headline,
+      sections: sections.map(({ originalBody: _originalBody, ...section }) => section),
+    })
+    if (payload.length <= TRACE_CONTENT_MAX_CHARS) return payload
+
+    const largestIndex = sections.reduce(
+      (largest, section, index) => (section.body.length > sections[largest]!.body.length ? index : largest),
+      0
+    )
+    const largest = sections[largestIndex]
+    if (!largest || largest.originalBody.length === 0) break
+
+    const overflow = payload.length - TRACE_CONTENT_MAX_CHARS
+    const currentVisibleLength = largest.body.includes("…[section truncated;")
+      ? largest.body.indexOf("\n\n…[section truncated;")
+      : largest.body.length
+    const nextVisibleLength = Math.max(0, currentVisibleLength - Math.max(overflow + 256, 512))
+    const omitted = largest.originalBody.length - nextVisibleLength
+    largest.body = `${largest.originalBody.slice(0, nextVisibleLength).trimEnd()}\n\n…[section truncated; ${omitted} more characters]`
+  }
+
+  return JSON.stringify({
+    format: PI_TOOL_TRACE_FORMAT,
+    headline: params.headline,
+    sections: [
+      {
+        label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
+        body: "Trace content was too large to serialize safely.",
+        lang: null,
+      },
+    ],
+  })
+}
+
+function safeToolArgumentSummary(event: ToolCallEvent): string {
+  const input = "input" in event ? event.input : undefined
+  const toolName = safeToolName(event.toolName)
+  if (event.toolName === "bash") return "Shell command omitted for safety."
+  if ((event.toolName === "read" || event.toolName === "write" || event.toolName === "edit") && isObject(input)) {
+    const action = event.toolName === "read" ? "Read" : event.toolName === "write" ? "Write" : "Edit"
+    return `${action} target: ${"path" in input ? safeFileSummary(input.path) : "file"}. File contents and patches omitted for safety.`
+  }
+  if (event.toolName === "grep" || event.toolName === "find") return "Search arguments omitted for safety."
+  if (event.toolName === "ls") return "Directory listing arguments omitted for safety."
+  return `Arguments for ${toolName} omitted for safety.`
+}
+
+function formatToolCallTrace(event: ToolCallEvent): string {
+  return formatStructuredToolTrace({
+    headline: describeToolCall(event).replace(/…$/, ""),
+    sections: [
+      {
+        label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
+        body: safeToolArgumentSummary(event),
+        lang: null,
+      },
+    ],
+  })
+}
+
+function summarizeToolOutput(output: string): string {
+  const text = output.trim()
+  if (!text) return "Tool produced no textual output."
+  const lines = text.split("\n").length
+  return `Tool output omitted for safety. Captured locally: ${text.length} characters across ${lines} ${lines === 1 ? "line" : "lines"}.`
+}
+
+function formatToolResultTrace(event: ToolResultEvent): string {
+  const call = pendingToolCalls.get(event.toolCallId)
+  const output = textFromToolContent(event.content)
+  const sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }> = []
+  sections.push({
+    label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
+    body: event.isError
+      ? `${summarizeToolOutput(output)} Error details omitted for safety.`
+      : summarizeToolOutput(output),
+    lang: null,
+  })
+  return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${safeToolName(event.toolName)}`, sections })
+}
+
+function sanitizeTraceText(text: string): string {
+  return text
+    .replace(/, downloaded to [^)\n]+/g, "")
+    .replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+}
+
+function formatInvocationTrace(invocation: ClaimedInvocation, context: string): string {
+  return truncateForTrace(
+    sanitizeTraceText(
+      [
+        `Remote Threa invocation ${invocation.id}`,
+        `Source message: ${invocation.sourceMessageId}`,
+        "",
+        "Prompt:",
+        invocation.promptMarkdown,
+        context ? ["", context].join("\n") : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
+  )
 }
 
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
@@ -199,9 +471,36 @@ function isEnabled(): boolean {
 }
 
 function stopPolling(): void {
-  if (timer) clearInterval(timer)
+  pollingRunId += 1
+  if (timer) clearTimeout(timer)
   timer = undefined
-  pollInFlight = false
+}
+
+function basePollMs(): number {
+  return Math.max(1000, config?.pollMs ?? 3000)
+}
+
+function failurePollMs(): number {
+  if (consecutivePollFailures <= 0) return basePollMs()
+  return Math.min(MAX_FAILURE_POLL_MS, basePollMs() * 2 ** Math.min(consecutivePollFailures - 1, 8))
+}
+
+function notePollSuccess(ctx: ExtensionContext): void {
+  if (consecutivePollFailures === 0) return
+  consecutivePollFailures = 0
+  lastPollFailureSummary = undefined
+  setRemoteStatus(ctx, pending ? `Threa remote: running ${pending.id}` : "Threa remote: linked")
+}
+
+function notePollFailure(ctx: ExtensionContext, error: unknown): void {
+  consecutivePollFailures += 1
+  const summary = summarizeError(error)
+  const retrySeconds = Math.ceil(failurePollMs() / 1000)
+  setRemoteStatus(ctx, `Threa remote: failed; retrying in ${retrySeconds}s`, "error")
+  if (summary !== lastPollFailureSummary) {
+    lastPollFailureSummary = summary
+    ctx.ui.notify(`Threa remote connection failed; retrying in background. ${summary}`, "warning")
+  }
 }
 
 async function disableRemote(ctx: ExtensionContext): Promise<void> {
@@ -318,15 +617,16 @@ async function fetchInvocationContext(
   }
 }
 
-async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
-  if (!config || !isEnabled()) return
+async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
+  if (!config || !isEnabled()) return false
   if (pending) {
     await renewPendingClaim()
-    return
+    return true
   }
-  if (!ctx.isIdle()) return
-  await heartbeat("available")
-
+  if (!ctx.isIdle()) return false
+  // /claim doubles as the per-tick heartbeat on the server: it refreshes
+  // presence as "available" before looking for work and as "busy" if a claim
+  // lands. Saves a round trip per poll versus calling /presence separately.
   const body = await request<{ data: ClaimedInvocation | null }>(
     `/api/v1/workspaces/${config.workspaceId}/bot-invocations/claim`,
     {
@@ -340,15 +640,17 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
     }
   )
 
-  if (!body.data) return
+  if (!body.data) return true
   pending = body.data
   pendingAssistantTexts = []
+  pendingToolCalls = new Map()
+  lastTraceHeartbeat = undefined
   const { context, cursor } = await fetchInvocationContext(body.data, ctx.cwd).catch((error) => {
-    ctx.ui.notify(`Threa remote context fetch failed: ${String(error)}`, "warning")
+    ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
     return { context: "" }
   })
   pendingContextCursor = cursor
-  await heartbeat("busy", "Working…")
+  await recordTraceStep("context_received", formatInvocationTrace(body.data, context), "Loaded context…")
   setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
     [
@@ -361,6 +663,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<voi
       body.data.promptMarkdown,
     ].join("\n")
   )
+  return true
 }
 
 function textFromContent(content: unknown): string {
@@ -393,18 +696,26 @@ function textFromAgentMessages(messages: unknown): string {
 function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!isEnabled()) return
   stopPolling()
+  const runId = ++pollingRunId
   const poll = async () => {
-    if (pollInFlight) return
-    pollInFlight = true
+    if (runId !== pollingRunId) return
+    if (pollInFlightRunId !== undefined) {
+      timer = setTimeout(() => void poll(), basePollMs())
+      return
+    }
+    pollInFlightRunId = runId
+    let delayMs = basePollMs()
     try {
-      await claimIfIdle(pi, ctx)
+      const contactedServer = await claimIfIdle(pi, ctx)
+      if (contactedServer) notePollSuccess(ctx)
     } catch (error) {
-      ctx.ui.notify(`Threa remote poll failed: ${String(error)}`, "warning")
+      notePollFailure(ctx, error)
+      delayMs = failurePollMs()
     } finally {
-      pollInFlight = false
+      if (pollInFlightRunId === runId) pollInFlightRunId = undefined
+      if (runId === pollingRunId) timer = setTimeout(() => void poll(), delayMs)
     }
   }
-  timer = setInterval(() => void poll(), Math.max(1000, config?.pollMs ?? 3000))
   void poll()
 }
 
@@ -516,6 +827,8 @@ async function completePending(markdown: string, cwd: string): Promise<void> {
   pending = undefined
   pendingContextCursor = undefined
   pendingAssistantTexts = []
+  pendingToolCalls = new Map()
+  lastTraceHeartbeat = undefined
   await heartbeat("available")
 }
 
@@ -525,6 +838,8 @@ async function failPending(error: unknown): Promise<void> {
   pending = undefined
   pendingContextCursor = undefined
   pendingAssistantTexts = []
+  pendingToolCalls = new Map()
+  lastTraceHeartbeat = undefined
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
     method: "POST",
     body: JSON.stringify({
@@ -534,6 +849,13 @@ async function failPending(error: unknown): Promise<void> {
     }),
   }).catch(() => undefined)
   await heartbeat("available").catch(() => undefined)
+}
+
+export const __testing = {
+  describeToolCall,
+  formatToolCallTrace,
+  formatToolResultTrace,
+  safeStatusText,
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -575,6 +897,38 @@ export default function (pi: ExtensionAPI): void {
     startPolling(pi, ctx)
   })
 
+  pi.on("agent_start", async () => {
+    await traceHeartbeat("Thinking…", "thinking")
+  })
+
+  pi.on("tool_call", async (event) => {
+    if (!pending) return
+    const description = describeToolCall(event)
+    pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, "") })
+    await recordTraceStep("tool_call", formatToolCallTrace(event), description)
+  })
+
+  pi.on("tool_result", async (event) => {
+    if (!pending) return
+    await recordTraceStep(
+      event.isError ? "tool_error" : "tool_call",
+      formatToolResultTrace(event),
+      event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
+    )
+    pendingToolCalls.delete(event.toolCallId)
+  })
+
+  pi.on("tool_execution_end", async (event) => {
+    if (!event.isError || !pendingToolCalls.has(event.toolCallId)) return
+    await traceHeartbeat(`${event.toolName} failed`, "tool_error")
+    pendingToolCalls.delete(event.toolCallId)
+  })
+
+  pi.on("message_start", async (event) => {
+    if (!pending || event.message.role !== "assistant") return
+    await traceHeartbeat("Composing response…")
+  })
+
   pi.on("message_end", async (event) => {
     if (!pending) return
     const text = textFromAssistantMessage(event.message)
@@ -585,10 +939,11 @@ export default function (pi: ExtensionAPI): void {
   pi.on("agent_end", async (event, ctx) => {
     if (!pending) return
     try {
-      await completePending(
-        pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages),
-        ctx.cwd
-      )
+      const finalText =
+        pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
+      const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
+      await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
+      await completePending(finalText, ctx.cwd)
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {
       ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")

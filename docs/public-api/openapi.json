@@ -1324,6 +1324,117 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/steps": {
+      "post": {
+        "operationId": "recordBotInvocationStep",
+        "summary": "Record a bot invocation trace step",
+        "tags": ["Bot invocations"],
+        "security": [{ "apiKey": ["bot-invocations:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          },
+          {
+            "name": "invocationId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Invocation ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "claimToken": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "stepType": {
+                    "type": "string",
+                    "enum": [
+                      "context_received",
+                      "thinking",
+                      "reconsidering",
+                      "web_search",
+                      "visit_page",
+                      "workspace_search",
+                      "github_access",
+                      "linear_access",
+                      "message_sent",
+                      "message_edited",
+                      "tool_call",
+                      "tool_error"
+                    ]
+                  },
+                  "content": { "type": "string", "minLength": 1, "maxLength": 10000 },
+                  "statusText": { "type": "string", "maxLength": 200 }
+                },
+                "required": ["instanceId", "claimToken", "stepType", "content"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "invocationId": { "type": "string" },
+                        "sessionId": { "type": "string" },
+                        "stepId": { "type": "string" }
+                      },
+                      "required": ["invocationId", "sessionId", "stepId"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/bot-invocations/{invocationId}/complete": {
       "post": {
         "operationId": "completeBotInvocation",

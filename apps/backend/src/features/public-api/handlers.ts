@@ -1,12 +1,14 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
+import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
-import type { BotChannelService } from "../api-keys"
+import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import type { EventService } from "../messaging"
 import {
   StreamRepository,
+  StreamEventRepository,
   StreamMemberRepository,
   getEffectiveDisplayName,
   type Stream,
@@ -26,15 +28,29 @@ import {
   toAttachmentSummary,
 } from "../attachments"
 import { BotRepository, type Bot } from "./bot-repository"
-import { AttachmentSafetyStatuses, AuthorTypes, sentViaApiKey, type AuthorType } from "@threa/types"
-import { BotRuntimeService } from "../bot-runtimes"
+import {
+  AgentSessionStatuses,
+  AttachmentSafetyStatuses,
+  AuthorTypes,
+  BotRuntimeKinds,
+  PI_TOOL_TRACE_FORMAT,
+  PI_TOOL_TRACE_SECTION_LABELS,
+  PiToolTraceSectionLabels,
+  sentViaApiKey,
+  type AuthorType,
+  type PiToolTraceSectionLabel,
+} from "@threa/types"
+import { BotRuntimeService, type BotRuntimeInstance } from "../bot-runtimes"
+import type { BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { randomUUID } from "crypto"
-import { botId } from "../../lib/id"
+import { botId, eventId, stepId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
+import { logger } from "../../lib/logger"
+import { AgentSessionRepository, type AgentSessionStep } from "../agents"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { listMyBotsSchema } from "./schemas"
 import type {
@@ -69,6 +85,7 @@ import {
   renewInvocationClaimSchema,
   completeInvocationSchema,
   failInvocationSchema,
+  recordInvocationStepSchema,
 } from "./schemas"
 
 function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
@@ -332,6 +349,124 @@ export interface PublicApiDeps {
   streamService: StreamService
   eventService: EventService
   pool: Pool
+  io?: Server
+}
+
+const SENSITIVE_VALUE_PATTERNS = [
+  /\b(?:sk|rk|pk|lf|wos|gh[a-z]|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/g,
+  /\bAKIA[0-9A-Z]{16}\b/g,
+  /\b(?:Authorization|X-Api-Key|api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;\"'}]+/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+]
+
+function redactSensitiveText(text: string): string {
+  let redacted = text
+  for (const pattern of SENSITIVE_VALUE_PATTERNS) redacted = redacted.replace(pattern, "[REDACTED]")
+  return redacted
+}
+
+function sanitizeStatusText(statusText?: string | null): string | null {
+  const trimmed = redactSensitiveText(statusText?.trim() ?? "")
+  if (!trimmed) return null
+  const allowed = new Set([
+    "Thinking…",
+    "Loaded context…",
+    "Running shell command…",
+    "Reading file…",
+    "Reading sensitive file…",
+    "Writing file…",
+    "Editing file…",
+    "Searching files…",
+    "Listing directory…",
+    "Using tool…",
+    "Tool finished",
+    "Tool failed",
+    "Working…",
+    "Composing response…",
+    "Sent response",
+  ])
+  if (allowed.has(trimmed)) return trimmed
+  return "Working…"
+}
+
+const TRACE_HEADLINE_MAX_CHARS = 200
+const TRACE_BODY_MAX_CHARS = 10_000
+const TRACE_LANG_MAX_CHARS = 32
+const TRACE_MAX_SECTIONS = 16
+
+const TRACE_SECTION_LABEL_SET: ReadonlySet<string> = new Set(PI_TOOL_TRACE_SECTION_LABELS)
+
+interface SafeTraceSection {
+  label: PiToolTraceSectionLabel
+  body: string
+  lang: string | null
+}
+
+function clampString(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value
+}
+
+function sanitizeTraceSection(section: unknown): SafeTraceSection | null {
+  if (!section || typeof section !== "object" || Array.isArray(section)) return null
+  const item = section as Record<string, unknown>
+  const rawLabel = typeof item.label === "string" ? item.label : ""
+  if (!TRACE_SECTION_LABEL_SET.has(rawLabel)) return null
+  const label = rawLabel as PiToolTraceSectionLabel
+  if (label === PiToolTraceSectionLabels.ARGUMENTS) {
+    return { label, body: "Tool arguments omitted for safety.", lang: null }
+  }
+  if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) {
+    return { label, body: "Tool output omitted for safety.", lang: null }
+  }
+  const body = typeof item.body === "string" ? clampString(redactSensitiveText(item.body), TRACE_BODY_MAX_CHARS) : ""
+  const lang = typeof item.lang === "string" ? clampString(item.lang, TRACE_LANG_MAX_CHARS) : null
+  return { label, body, lang }
+}
+
+// Trace step content is stored as-received from the bot runtime, after
+// best-effort sanitization. The official Pi extension is the security
+// boundary — it is responsible for never forwarding raw tool stdout, file
+// contents, or credentials. Third-party runtimes inherit the trust level
+// of the API key holder; the allowlist + regex here is defense-in-depth,
+// not a guarantee. Do not loosen this (relax the allowlist, drop the
+// length caps, or pass arbitrary fields through) without revisiting the
+// threat model — see docs/examples/pi-remote/ for the trusted-runtime
+// contract.
+export function sanitizeInvocationStepContent(content: string): string {
+  const redacted = redactSensitiveText(content)
+  try {
+    const parsed = JSON.parse(redacted) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return redacted
+    const trace = parsed as Record<string, unknown>
+    if (trace.format !== PI_TOOL_TRACE_FORMAT || !Array.isArray(trace.sections)) return redacted
+    const headline =
+      typeof trace.headline === "string"
+        ? clampString(redactSensitiveText(trace.headline), TRACE_HEADLINE_MAX_CHARS)
+        : ""
+    const sections = trace.sections
+      .slice(0, TRACE_MAX_SECTIONS)
+      .map(sanitizeTraceSection)
+      .filter((section): section is SafeTraceSection => section !== null)
+    return JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections })
+  } catch {
+    return redacted
+  }
+}
+
+function serializeTraceStep(step: AgentSessionStep) {
+  return {
+    id: step.id,
+    sessionId: step.sessionId,
+    stepNumber: step.stepNumber,
+    stepType: step.stepType,
+    content: step.content as string | undefined,
+    sources: step.sources ?? undefined,
+    messageId: step.messageId ?? undefined,
+    tokensUsed: step.tokensUsed ?? undefined,
+    duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
+    startedAt: step.startedAt.toISOString(),
+    completedAt: step.completedAt?.toISOString(),
+  }
 }
 
 export function createPublicApiHandlers({
@@ -343,6 +478,7 @@ export function createPublicApiHandlers({
   streamService,
   eventService,
   pool,
+  io,
 }: PublicApiDeps) {
   /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
   async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
@@ -425,6 +561,73 @@ export function createPublicApiHandlers({
     return attachment
   }
 
+  /**
+   * Fan a presence update out to every stream the bot is a member of. Frontend
+   * subscribes via the stream room and patches its cached bootstrap. Keeps the
+   * UI in sync without any client-side polling.
+   */
+  async function broadcastBotPresence(
+    workspaceId: string,
+    botId: string,
+    presence: BotRuntimeInstance | null
+  ): Promise<void> {
+    if (!io) return
+    const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
+    if (streamIds.length === 0) return
+    const payload = {
+      workspaceId,
+      botId,
+      presence: presence
+        ? {
+            botId: presence.botId,
+            runtimeKind: presence.runtimeKind,
+            instanceId: presence.instanceId,
+            displayName: presence.displayName,
+            status: presence.status,
+            acceptingInvocations: presence.acceptingInvocations,
+            statusText: presence.statusText,
+            lastSeenAt: presence.lastSeenAt.toISOString(),
+          }
+        : null,
+    }
+    for (const streamId of streamIds) {
+      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("bot_runtime:presence", { ...payload, streamId })
+    }
+  }
+
+  /**
+   * Touch presence as part of an invocation-side request (claim / step) so the
+   * Pi runtime does not need to send a separate heartbeat per poll tick. The
+   * caller decides which status to record; `statusText` is optional.
+   */
+  async function touchAndBroadcastPresence(params: {
+    workspaceId: string
+    botId: string
+    runtimeKind: BotRuntimeKind
+    instanceId: string
+    status: BotRuntimeStatus
+    acceptingInvocations: boolean
+    statusText?: string | null
+  }): Promise<void> {
+    try {
+      const presence = await botRuntimeService.upsertPresenceFromBotKey({
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeKind: params.runtimeKind,
+        instanceId: params.instanceId,
+        status: params.status,
+        acceptingInvocations: params.acceptingInvocations,
+        statusText: sanitizeStatusText(params.statusText),
+      })
+      await broadcastBotPresence(params.workspaceId, params.botId, presence)
+    } catch (err) {
+      logger.warn(
+        { err, workspaceId: params.workspaceId, botId: params.botId },
+        "Failed to update bot runtime presence"
+      )
+    }
+  }
+
   return {
     async uploadAttachment(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
@@ -470,7 +673,9 @@ export function createPublicApiHandlers({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         ...result.data,
+        statusText: sanitizeStatusText(result.data.statusText),
       })
+      await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({
         data: {
           ...presence,
@@ -548,6 +753,17 @@ export function createPublicApiHandlers({
       if (!result.success) {
         return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
       }
+      // Claim doubles as a heartbeat: refresh presence as "available" on every
+      // poll so Pi does not need a separate /presence call per tick. If a claim
+      // lands we'll overwrite to "busy" right after.
+      await touchAndBroadcastPresence({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        runtimeKind: result.data.runtimeKind,
+        instanceId: result.data.instanceId,
+        status: "available",
+        acceptingInvocations: true,
+      })
       const invocation = await botRuntimeService.claimNextInvocation({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
@@ -558,7 +774,48 @@ export function createPublicApiHandlers({
         claimToken: randomUUID(),
       })
       if (!invocation) return res.json({ data: null })
+      await touchAndBroadcastPresence({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        runtimeKind: result.data.runtimeKind,
+        instanceId: result.data.instanceId,
+        status: "busy",
+        acceptingInvocations: false,
+      })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      if (bot && !bot.archivedAt) {
+        await withTransaction(pool, async (client) => {
+          const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
+          const session = await AgentSessionRepository.insertRunningOrSkip(client, {
+            id: invocation.id,
+            streamId: invocation.responseStreamId,
+            personaId: bot.id,
+            triggerMessageId: invocation.sourceMessageId,
+            initialSequence: latestSequence ?? 0n,
+          })
+          if (!session) return
+          const streamEvent = await StreamEventRepository.insert(client, {
+            id: eventId(),
+            streamId: invocation.responseStreamId,
+            eventType: "agent_session:started",
+            payload: {
+              sessionId: session.id,
+              personaId: bot.id,
+              personaName: bot.name,
+              triggerMessageId: invocation.sourceMessageId,
+              rerunContext: null,
+              startedAt: session.createdAt.toISOString(),
+            },
+            actorId: bot.id,
+            actorType: AuthorTypes.BOT,
+          })
+          await OutboxRepository.insert(client, "agent_session:started", {
+            workspaceId: req.workspaceId!,
+            streamId: invocation.responseStreamId,
+            event: streamEvent,
+          })
+        })
+      }
       res.json({
         data: {
           id: invocation.id,
@@ -602,6 +859,75 @@ export function createPublicApiHandlers({
           claimExpiresAt: renewed.claimExpiresAt?.toISOString() ?? null,
         },
       })
+    },
+
+    async recordBotInvocationStep(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = recordInvocationStepSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const claim = await botRuntimeService.findActiveClaim({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        invocationId: req.params.invocationId,
+        instanceId: result.data.instanceId,
+        claimToken: result.data.claimToken,
+      })
+      if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+      await assertStreamAccessible(req, claim.responseStreamId)
+      const [bot, runtimePresence] = await Promise.all([
+        BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
+        botRuntimeService.findPresenceByInstance({
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey.botId,
+          instanceId: result.data.instanceId,
+        }),
+      ])
+      const now = new Date()
+      // Append + currentStepType must run in one transaction. appendStep is
+      // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
+      // append distinct rows instead of clobbering each other.
+      const step = await withTransaction(pool, async (client) => {
+        const inserted = await AgentSessionRepository.appendStep(client, {
+          id: stepId(),
+          sessionId: claim.id,
+          stepType: result.data.stepType,
+          content: sanitizeInvocationStepContent(result.data.content),
+          startedAt: now,
+          completedAt: now,
+        })
+        await AgentSessionRepository.updateCurrentStepType(client, claim.id, result.data.stepType)
+        return inserted
+      })
+      const sessionRoom = `ws:${req.workspaceId!}:agent_session:${claim.id}`
+      io?.to(sessionRoom).emit("agent_session:step:completed", {
+        sessionId: claim.id,
+        step: serializeTraceStep(step),
+      })
+      io?.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
+        workspaceId: req.workspaceId!,
+        streamId: claim.responseStreamId,
+        sessionId: claim.id,
+        triggerMessageId: claim.sourceMessageId,
+        personaName: bot?.name ?? "",
+        stepCount: step.stepNumber,
+        messageCount: 0,
+        currentStepType: result.data.stepType,
+      })
+      // Step recording also serves as a busy heartbeat — keeps the runtime's
+      // presence statusText in sync with the most recent trace step so Pi
+      // does not need to send a separate /presence call alongside each step.
+      await touchAndBroadcastPresence({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        runtimeKind: runtimePresence?.runtimeKind ?? BotRuntimeKinds.PI_LOCAL,
+        instanceId: result.data.instanceId,
+        status: "busy",
+        acceptingInvocations: false,
+        statusText: sanitizeStatusText(result.data.statusText),
+      })
+      res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },
 
     async completeBotInvocation(req: Request, res: Response) {
@@ -649,6 +975,41 @@ export function createPublicApiHandlers({
           claimToken: result.data.claimToken,
         })
         if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        const session = await AgentSessionRepository.findById(client, completed.id)
+        if (session?.status === AgentSessionStatuses.RUNNING) {
+          const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
+          const finalizedSession = await AgentSessionRepository.completeSession(client, completed.id, {
+            lastSeenSequence: latestSequence ?? 0n,
+            responseMessageId: message?.id ?? null,
+            sentMessageIds: message ? [message.id] : [],
+          })
+          if (finalizedSession) {
+            const steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
+            const completedAt = finalizedSession.completedAt ?? new Date()
+            const streamEvent = await StreamEventRepository.insert(client, {
+              id: eventId(),
+              streamId: completed.responseStreamId,
+              eventType: "agent_session:completed",
+              payload: {
+                sessionId: completed.id,
+                stepCount: steps.length,
+                messageCount: message ? 1 : 0,
+                duration: completedAt.getTime() - finalizedSession.createdAt.getTime(),
+                completedAt: completedAt.toISOString(),
+              },
+              actorId: bot.id,
+              actorType: AuthorTypes.BOT,
+            })
+            await OutboxRepository.insert(client, "agent_session:completed", {
+              workspaceId: req.workspaceId!,
+              streamId: completed.responseStreamId,
+              event: streamEvent,
+            })
+            io?.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
+              sessionId: completed.id,
+            })
+          }
+        }
         return { completed, message }
       })
       res.json({
