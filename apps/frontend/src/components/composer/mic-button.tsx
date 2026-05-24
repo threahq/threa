@@ -171,79 +171,85 @@ export function MicButton({
   const polishToggleAria = showOriginal ? "Switch to polished transcript" : "Switch to original transcript"
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="relative inline-flex">
-          {recording && !polishPillVisible && (
-            // Absolutely positioned so the running clock never shifts the
-            // composer layout (INV-21). Switches to a remaining-time countdown
-            // with a warning tint as the take nears the backend's hard cap.
-            // Hidden when the polish pill is present — the pill occupies the
-            // same slot and the clock would overlap it.
+    // Overlays live outside the tooltip trigger: when they were nested inside,
+    // hovering the polish pill (a DOM descendant of the trigger) fired the mic
+    // tooltip and the tooltip rendered over the pill, making it unclickable.
+    // The trigger now wraps only the mic button itself.
+    <span className="relative inline-flex">
+      {recording && !polishPillVisible && (
+        // Absolutely positioned so the running clock never shifts the composer
+        // layout (INV-21). Switches to a remaining-time countdown with a
+        // warning tint as the take nears the backend's hard cap. Hidden when
+        // the polish pill is present — the pill occupies the same slot and the
+        // clock would overlap it.
+        <span
+          className={cn(
+            "pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 select-none rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none whitespace-nowrap",
+            nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
+          )}
+        >
+          {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
+        </span>
+      )}
+      {polishPillVisible && (
+        // Polish toggle: an inline pill anchored above the mic so it sits
+        // right where the user is already looking after they stop talking.
+        // Absolute positioning (matches the clock pill) keeps composer layout
+        // stable (INV-21). The wrapper stays pointer-events-none so dead space
+        // around the pill doesn't intercept clicks aimed at the mic; the pill
+        // button re-enables pointer events for itself. The z-index keeps it
+        // above the mic tooltip in case they ever overlap.
+        <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 flex items-center gap-1 select-none whitespace-nowrap">
+          {recording && (
             <span
               className={cn(
-                "pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 select-none rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none whitespace-nowrap",
+                "rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none",
                 nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
               )}
             >
               {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
             </span>
           )}
-          {polishPillVisible && (
-            // Polish toggle: an inline pill anchored above the mic so it sits
-            // right where the user is already looking after they stop talking.
-            // Absolute positioning (matches the clock pill) keeps composer
-            // layout stable (INV-21). The pointer-events stays interactive on
-            // the toggle even while the surrounding span is decorative.
-            <span className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 flex items-center gap-1 select-none whitespace-nowrap">
-              {recording && (
-                <span
-                  className={cn(
-                    "rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none",
-                    nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
-                  )}
-                >
-                  {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
-                </span>
-              )}
-              <button
-                type="button"
-                aria-pressed={!showOriginal}
-                aria-label={polishToggleAria}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setShowOriginal(!showOriginal)
-                }}
-                className={cn(
-                  "pointer-events-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none shadow-sm transition-colors",
-                  showOriginal
-                    ? "border-border bg-background text-muted-foreground hover:bg-muted"
-                    : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
-                )}
-              >
-                <Sparkles className={cn("h-2.5 w-2.5", showOriginal && "opacity-50")} aria-hidden />
-                {polishLabel}
-              </button>
-            </span>
-          )}
-          {state === "error" && error && (
-            // The tooltip alone is invisible on touch (no hover), so a dropped
-            // take would look like it just stopped. Surface the reason inline as
-            // a compact toast with a caret pointing at the mic, which stays the
-            // tap-to-retry target. Absolute positioning keeps it from shifting
-            // the composer layout (INV-21).
-            <span
-              role="status"
-              className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
-            >
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              <span className="text-left">{error}</span>
-              <span
-                aria-hidden
-                className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
-              />
-            </span>
-          )}
+          <button
+            type="button"
+            aria-pressed={!showOriginal}
+            aria-label={polishToggleAria}
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowOriginal(!showOriginal)
+            }}
+            className={cn(
+              "pointer-events-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none shadow-sm transition-colors",
+              showOriginal
+                ? "border-border bg-background text-muted-foreground hover:bg-muted"
+                : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+            )}
+          >
+            <Sparkles className={cn("h-2.5 w-2.5", showOriginal && "opacity-50")} aria-hidden />
+            {polishLabel}
+          </button>
+        </span>
+      )}
+      {state === "error" && error && (
+        // The tooltip alone is invisible on touch (no hover), so a dropped
+        // take would look like it just stopped. Surface the reason inline as
+        // a compact toast with a caret pointing at the mic, which stays the
+        // tap-to-retry target. Absolute positioning keeps it from shifting
+        // the composer layout (INV-21).
+        <span
+          role="status"
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="text-left">{error}</span>
+          <span
+            aria-hidden
+            className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
+          />
+        </span>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
           <Button
             type="button"
             variant="ghost"
@@ -268,11 +274,11 @@ export function MicButton({
               <Mic className="h-4 w-4" />
             )}
           </Button>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="text-xs">
-        {tooltip}
-      </TooltipContent>
-    </Tooltip>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </span>
   )
 }

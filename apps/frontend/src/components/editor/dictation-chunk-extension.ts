@@ -81,6 +81,32 @@ export const DictationChunkExtension = Extension.create({
         ({ chunkId, text }) =>
         ({ state, tr, dispatch }) => {
           if (!text) return false
+          const set = DictationChunkPluginKey.getState(state)
+          const existing = set ? findChunk(set, chunkId) : null
+
+          if (existing) {
+            // Extend the existing chunk by inserting at its end position
+            // rather than at the user's caret. A dictation session keeps
+            // every emitted final inside one tracked range so the end-of-
+            // session polish swap can replace the whole thing as one piece —
+            // even if the user moved the caret away mid-take. The space we
+            // insert when butting against text is absorbed INTO the chunk so
+            // the decoration stays a single contiguous range.
+            const insertAt = existing.to
+            const charBefore = insertAt > 0 ? state.doc.textBetween(insertAt - 1, insertAt) : ""
+            const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""
+            const inserted = `${prefix}${text}`
+            tr.insertText(inserted, insertAt)
+            tr.setMeta(DictationChunkPluginKey, {
+              type: "replace",
+              chunkId,
+              from: existing.from,
+              to: insertAt + inserted.length,
+            } satisfies ChunkMeta)
+            if (dispatch) dispatch(tr.scrollIntoView())
+            return true
+          }
+
           const from = state.selection.from
           const charBefore = from > 0 ? state.doc.textBetween(from - 1, from) : ""
           const prefix = charBefore && !/\s/.test(charBefore) ? " " : ""

@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { createPolishTranscriptChunk, POLISH_MODEL } from "./polish"
+import { createPolishTranscript, POLISH_MODEL } from "./polish"
 import type { AI } from "../../lib/ai/ai"
 
 type GenerateTextArgs = Parameters<AI["generateText"]>[0]
@@ -12,14 +12,13 @@ function textResult(value: string) {
   return { value, response: undefined as never, usage: {} }
 }
 
-describe("createPolishTranscriptChunk", () => {
-  it("calls the small polish model with raw text and returns the trimmed polished value", async () => {
+describe("createPolishTranscript", () => {
+  it("calls the small polish model with the raw transcript and returns the trimmed polished value", async () => {
     const generateText = mock(async (_args: GenerateTextArgs) => textResult("  Hello, world.  ") as never)
-    const polish = createPolishTranscriptChunk({ ai: fakeAI(generateText) })
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
 
     const out = await polish({
-      raw: "hello world",
-      priorPolishedChunks: [],
+      rawTranscript: "hello world",
       workspaceId: "ws_1",
       userId: "user_1",
       sessionId: "voicesess_1",
@@ -32,13 +31,12 @@ describe("createPolishTranscriptChunk", () => {
     expect(call.context).toMatchObject({ workspaceId: "ws_1", userId: "user_1", origin: "user" })
   })
 
-  it("includes prior polished chunks in the user message but never echoes them back", async () => {
-    const generateText = mock(async (_args: GenerateTextArgs) => textResult("Two and three.") as never)
-    const polish = createPolishTranscriptChunk({ ai: fakeAI(generateText) })
+  it("sends the full cumulative transcript in the user message", async () => {
+    const generateText = mock(async (_args: GenerateTextArgs) => textResult("Polished.") as never)
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
 
     await polish({
-      raw: "two and three",
-      priorPolishedChunks: ["First chunk.", "Second chunk."],
+      rawTranscript: "one two three and four",
       workspaceId: "ws_1",
       userId: "user_1",
       sessionId: "voicesess_1",
@@ -47,20 +45,17 @@ describe("createPolishTranscriptChunk", () => {
     const call = generateText.mock.calls[0][0]
     const userMessage = call.messages.find((m: { role: string }) => m.role === "user")
     expect(typeof userMessage?.content).toBe("string")
-    expect(userMessage?.content).toContain("First chunk.")
-    expect(userMessage?.content).toContain("Second chunk.")
-    expect(userMessage?.content).toContain("two and three")
+    expect(userMessage?.content).toContain("one two three and four")
   })
 
   it("returns the raw text when the model call rejects (never throws)", async () => {
     const generateText = mock(async (_args: GenerateTextArgs) => {
       throw new Error("upstream down")
     })
-    const polish = createPolishTranscriptChunk({ ai: fakeAI(generateText) })
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
 
     const out = await polish({
-      raw: "hello world",
-      priorPolishedChunks: [],
+      rawTranscript: "hello world",
       workspaceId: "ws_1",
       userId: "user_1",
       sessionId: "voicesess_1",
@@ -71,11 +66,10 @@ describe("createPolishTranscriptChunk", () => {
 
   it("returns the raw text unchanged when the model returns an empty string", async () => {
     const generateText = mock(async (_args: GenerateTextArgs) => textResult("   ") as never)
-    const polish = createPolishTranscriptChunk({ ai: fakeAI(generateText) })
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
 
     const out = await polish({
-      raw: "non empty",
-      priorPolishedChunks: [],
+      rawTranscript: "non empty",
       workspaceId: "ws_1",
       userId: "user_1",
       sessionId: "voicesess_1",
@@ -86,11 +80,10 @@ describe("createPolishTranscriptChunk", () => {
 
   it("skips the model entirely for whitespace-only input", async () => {
     const generateText = mock(async (_args: GenerateTextArgs) => textResult("should not be called") as never)
-    const polish = createPolishTranscriptChunk({ ai: fakeAI(generateText) })
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
 
     const out = await polish({
-      raw: "   ",
-      priorPolishedChunks: [],
+      rawTranscript: "   ",
       workspaceId: "ws_1",
       userId: "user_1",
       sessionId: "voicesess_1",

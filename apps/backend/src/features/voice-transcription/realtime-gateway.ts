@@ -8,7 +8,7 @@ import { HttpError } from "../../lib/errors"
 import { voiceConfig } from "./config"
 import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
-import type { PolishTranscriptChunk } from "./polish"
+import type { PolishTranscript } from "./polish"
 import type { UserPreferencesService } from "../user-preferences"
 
 const startPayloadSchema = z.object({
@@ -21,7 +21,7 @@ interface Dependencies {
   voiceTranscriptionService: VoiceTranscriptionService
   transcription: Transcription
   userPreferencesService: UserPreferencesService
-  polishTranscriptChunk: PolishTranscriptChunk
+  polishTranscript: PolishTranscript
 }
 
 /**
@@ -38,19 +38,34 @@ interface RelayState {
   maxDurationTimer: ReturnType<typeof setTimeout>
   finalized: boolean
   /**
-   * When true, finalized provider deltas are routed through `polishTranscriptChunk`
-   * and delivered to the client as `voice:transcript:polished` (with both raw and
-   * polished text + a chunkId). When false they ship as plain `voice:transcript:delta`
-   * with `isFinal: true`, exactly as before.
+   * When true, finalized provider deltas trigger a cumulative polish: every
+   * raw final segment so far is joined and re-polished, then emitted as
+   * `voice:transcript:polished` so the client can swap its tracked session
+   * chunk to the new polished snapshot. This lets the model fix a
+   * self-correction in chunk N+1 by rewriting chunk N ("nine, no sorry eight"
+   * collapses to "eight"). When false, finals ship as plain
+   * `voice:transcript:delta` with no `chunkId` and the client never tracks them.
    */
   polishEnabled: boolean
   /**
-   * Polished tails from this session so the polish prompt can resolve list
-   * continuation and pronouns without re-reading the entire editor. Only
-   * polished output goes in (raw is noisy), and the builder caps both count
-   * and total char length.
+   * Stable chunkId for the whole session: every final delta and every
+   * polished event carries it, so the editor extends/replaces a single
+   * tracked range instead of accumulating per-chunk decorations.
    */
-  polishedHistory: string[]
+  sessionChunkId: string
+  /**
+   * Cumulative raw final segments collected this session. Joined with single
+   * spaces and re-polished on every final. Bounded only by the session's
+   * max duration — provider segments are short enough that this stays small.
+   */
+  rawFinals: string[]
+  /**
+   * Serializes polish work — out-of-order resolves would let an older
+   * polished snapshot land in the editor after a newer one, which would
+   * undo the model's incremental corrections. Each polish step awaits the
+   * previous one before reading `rawFinals` and emitting.
+   */
+  polishQueue: Promise<void>
 }
 
 function toBuffer(frame: unknown): Buffer | null {
@@ -71,7 +86,7 @@ function toBuffer(frame: unknown): Buffer | null {
  * with no durable read model to reconstruct.
  */
 export function registerVoiceGateway(io: Server, deps: Dependencies) {
-  const { authService, voiceTranscriptionService, transcription, userPreferencesService, polishTranscriptChunk } = deps
+  const { authService, voiceTranscriptionService, transcription, userPreferencesService, polishTranscript } = deps
   const namespace = io.of("/voice")
 
   // Same session-cookie auth as the main namespace (INV-35: reuse, don't fork).
@@ -102,6 +117,20 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         totalAudioMs = result.totalAudioMs
       } catch (err) {
         logger.warn({ err, voiceSessionId: current.voiceSessionId }, "Voice upstream close failed")
+      }
+
+      // Drain any polish call still in flight before responding to voice:stop
+      // so a late `voice:transcript:polished` doesn't race the socket close.
+      // On an aborted finalize the client is already gone; there is no
+      // socket to emit on, so don't pay the polish wait. The catch is
+      // unreachable (the queue swallows its own errors) but it's here so a
+      // defect in the chain can't tear down the whole finalize.
+      if (reason !== "aborted") {
+        try {
+          await current.polishQueue
+        } catch {
+          /* unreachable */
+        }
       }
 
       try {
@@ -152,8 +181,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         resolvedUserId = row.userId
 
         // Resolve polish preference once per session: a mid-session pref change
-        // doesn't change behavior for an in-flight take, which keeps the chunk
-        // event stream type-consistent for the editor's chunk tracker.
+        // doesn't change behavior for an in-flight take, which keeps the
+        // session chunkId story consistent for the editor's chunk tracker.
         let polishEnabled = false
         try {
           const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
@@ -179,55 +208,67 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           return
         }
 
+        const sessionChunkId = ulid()
+
         // Per-session payloads (plan §3): the client filters deltas by
         // voiceSessionId so a stale session can't leak text into a new one.
-        // Interim deltas always flow through unchanged — only finalized ones
-        // optionally branch through the polish path.
+        // Interim deltas always pass through unchanged. Finals are tagged with
+        // a session-wide chunkId only when polish is on, which signals the
+        // client to track them as a swappable chunk; with polish off, no
+        // chunkId is sent and the client commits them as plain text.
         upstream.onDelta((delta) => {
           if (!state) return
           if (!delta.isFinal) {
             socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
             return
           }
-          if (!state.polishEnabled) {
-            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
-            return
-          }
           const raw = delta.text ?? ""
-          // Skip empty finals (provider sometimes emits a terminating empty
-          // segment) — nothing to polish, nothing to commit.
-          if (!raw.trim()) {
+          if (!state.polishEnabled || !raw.trim()) {
+            // Polish off, or an empty terminating final (some providers emit
+            // these) — pass straight through with no chunk tracking.
             socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
             return
           }
-          const chunkId = ulid()
-          const priorPolishedSnapshot = state.polishedHistory.slice()
           const polishingState = state
-          void polishTranscriptChunk({
-            raw,
-            priorPolishedChunks: priorPolishedSnapshot,
-            workspaceId: polishingState.workspaceId,
-            userId: polishingState.userId,
-            sessionId: polishingState.voiceSessionId,
+          polishingState.rawFinals.push(raw)
+          socket.emit("voice:transcript:delta", {
+            voiceSessionId,
+            text: raw,
+            isFinal: true,
+            chunkId: polishingState.sessionChunkId,
           })
-            .then((polished) => {
-              // Ignore a polish that resolved after the take ended — the editor
-              // has already moved on and a late insert would land in the user's
-              // next message.
+          // Cumulative polish: each pass re-polishes the FULL transcript so
+          // far. That's what lets a later chunk rewrite an earlier one — the
+          // canonical example is "let's start at nine tonight, no sorry eight"
+          // collapsing to "let's start at eight tonight". The queue keeps
+          // emissions in order so a slow polish N can't clobber a faster
+          // polish N+1 already in the editor.
+          polishingState.polishQueue = polishingState.polishQueue.then(async () => {
+            if (state !== polishingState || polishingState.finalized) return
+            const rawTranscript = polishingState.rawFinals.join(" ")
+            try {
+              const polished = await polishTranscript({
+                rawTranscript,
+                workspaceId: polishingState.workspaceId,
+                userId: polishingState.userId,
+                sessionId: polishingState.voiceSessionId,
+              })
               if (state !== polishingState || polishingState.finalized) return
-              polishingState.polishedHistory.push(polished)
               socket.emit("voice:transcript:polished", {
                 voiceSessionId,
-                chunkId,
-                raw,
+                chunkId: polishingState.sessionChunkId,
+                raw: rawTranscript,
                 polished,
               })
-            })
-            .catch((err) => {
-              logger.warn({ err, voiceSessionId, chunkId }, "Polish emit failed; falling back to raw delta")
-              if (state !== polishingState || polishingState.finalized) return
-              socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
-            })
+            } catch (err) {
+              // Raw text is already in the editor (we emitted the delta above)
+              // — silently skip the polish swap on failure.
+              logger.warn(
+                { err, voiceSessionId, chunkId: polishingState.sessionChunkId },
+                "Voice transcript polish failed; leaving raw text in editor"
+              )
+            }
+          })
         })
         upstream.onError((e) => socket.emit("voice:transcription:error", { voiceSessionId, ...e }))
 
@@ -244,7 +285,9 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           maxDurationTimer,
           finalized: false,
           polishEnabled,
-          polishedHistory: [],
+          sessionChunkId,
+          rawFinals: [],
+          polishQueue: Promise.resolve(),
         }
         logger.debug({ voiceSessionId, workspaceId }, "Voice relay started")
         callback?.({ ok: true })
