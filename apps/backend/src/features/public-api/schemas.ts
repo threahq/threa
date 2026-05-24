@@ -119,6 +119,7 @@ export const recordInvocationStepSchema = z.object({
   claimToken: z.string().min(1).max(256),
   stepType: z.enum(AGENT_STEP_TYPES),
   content: z.string().min(1).max(10_000),
+  statusText: z.string().max(200).optional(),
 })
 
 export const listMessagesSchema = z

@@ -771,7 +771,8 @@ export function registerStreamSocketHandlers(
       if (
         current[payload.botId]?.lastSeenAt === payload.presence?.lastSeenAt &&
         current[payload.botId]?.status === payload.presence?.status &&
-        current[payload.botId]?.statusText === payload.presence?.statusText
+        current[payload.botId]?.statusText === payload.presence?.statusText &&
+        current[payload.botId]?.displayName === payload.presence?.displayName
       ) {
         return old
       }

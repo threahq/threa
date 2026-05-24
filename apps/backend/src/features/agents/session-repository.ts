@@ -498,47 +498,44 @@ export const AgentSessionRepository = {
   /**
    * Append a new step at the next available step_number for the session.
    *
-   * MUST be called inside a transaction. We take a row lock on the parent
-   * agent_sessions row (FOR UPDATE) so concurrent appenders for the same
-   * session serialize — without it two callers both read the same
-   * MAX(step_number)=N, both INSERT N+1, and the (session_id, step_number)
-   * unique index forces one into ON CONFLICT, clobbering the other (INV-20).
-   *
-   * Use this for external runtimes (e.g. Pi remote) that emit trace steps via
-   * independent HTTP requests. The in-process trace-emitter uses upsertStep
-   * because it owns a single monotonic counter per session.
+   * This method is safe for independent external-runtime HTTP requests: each
+   * attempt computes the next number in the INSERT statement, and concurrent
+   * unique-key collisions retry instead of clobbering an existing step (INV-20).
    */
-  async appendStep(client: Querier, params: AppendStepParams): Promise<AgentSessionStep> {
-    // Lock the parent row to serialize concurrent appenders. Also fails fast
-    // if the session doesn't exist — we have no FKs (INV-1) so the INSERT
-    // below would otherwise silently create an orphan step.
-    const lock = await client.query(sql`SELECT 1 FROM agent_sessions WHERE id = ${params.sessionId} FOR UPDATE`)
-    if (lock.rowCount === 0) {
+  async appendStep(db: Querier, params: AppendStepParams): Promise<AgentSessionStep> {
+    const session = await db.query(sql`SELECT 1 FROM agent_sessions WHERE id = ${params.sessionId}`)
+    if (session.rowCount === 0) {
       throw new Error(`agent_sessions row not found for session id ${params.sessionId}`)
     }
-    const result = await client.query<StepRow>(
-      sql`
-        INSERT INTO agent_session_steps (
-          id, session_id, step_number, step_type, content, sources,
-          message_id, tokens_used, started_at, completed_at
-        )
-        SELECT
-          ${params.id},
-          ${params.sessionId},
-          COALESCE(MAX(step_number), 0) + 1,
-          ${params.stepType},
-          ${params.content != null ? JSON.stringify(params.content) : null},
-          ${params.sources ? JSON.stringify(params.sources) : null},
-          ${params.messageId ?? null},
-          ${params.tokensUsed ?? null},
-          ${params.startedAt},
-          ${params.completedAt ?? null}
-        FROM agent_session_steps
-        WHERE session_id = ${params.sessionId}
-        RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
-      `
-    )
-    return mapRowToStep(result.rows[0])
+
+    const maxAttempts = 8
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const result = await db.query<StepRow>(
+        sql`
+          INSERT INTO agent_session_steps (
+            id, session_id, step_number, step_type, content, sources,
+            message_id, tokens_used, started_at, completed_at
+          )
+          SELECT
+            ${params.id},
+            ${params.sessionId},
+            COALESCE(MAX(step_number), 0) + 1,
+            ${params.stepType},
+            ${params.content != null ? JSON.stringify(params.content) : null},
+            ${params.sources ? JSON.stringify(params.sources) : null},
+            ${params.messageId ?? null},
+            ${params.tokensUsed ?? null},
+            ${params.startedAt},
+            ${params.completedAt ?? null}
+          FROM agent_session_steps
+          WHERE session_id = ${params.sessionId}
+          ON CONFLICT (session_id, step_number) DO NOTHING
+          RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
+        `
+      )
+      if (result.rows[0]) return mapRowToStep(result.rows[0])
+    }
+    throw new Error(`Failed to append step for session id ${params.sessionId}`)
   },
 
   async upsertStep(db: Querier, params: UpsertStepParams): Promise<AgentSessionStep> {

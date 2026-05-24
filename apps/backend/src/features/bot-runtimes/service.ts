@@ -29,6 +29,14 @@ export class BotRuntimeService {
     return BotRuntimeInstanceRepository.findLatestForBot(this.pool, params.workspaceId, params.botId)
   }
 
+  async findPresenceByInstance(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+  }): Promise<BotRuntimeInstance | null> {
+    return BotRuntimeInstanceRepository.findByInstance(this.pool, params)
+  }
+
   async findLatestPresences(params: {
     workspaceId: string
     botIds: string[]

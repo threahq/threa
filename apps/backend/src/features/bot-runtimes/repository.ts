@@ -297,6 +297,16 @@ export const BotRuntimeInstanceRepository = {
     return result.rows[0] ? mapRuntimeInstance(result.rows[0]) : null
   },
 
+  async findByInstance(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string }
+  ): Promise<BotRuntimeInstance | null> {
+    const result = await db.query<BotRuntimeInstanceRow>(
+      sql`SELECT * FROM bot_runtime_instances WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId} LIMIT 1`
+    )
+    return result.rows[0] ? mapRuntimeInstance(result.rows[0]) : null
+  },
+
   async findLatestForBots(
     db: Querier,
     workspaceId: string,

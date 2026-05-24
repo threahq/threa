@@ -33,6 +33,7 @@ import {
   AgentStepTypes,
   AttachmentSafetyStatuses,
   AuthorTypes,
+  BotRuntimeKinds,
   sentViaApiKey,
   type AuthorType,
 } from "@threa/types"
@@ -45,6 +46,7 @@ import { randomUUID } from "crypto"
 import { botId, eventId, stepId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
+import { logger } from "../../lib/logger"
 import { AgentSessionRepository, type AgentSessionStep } from "../agents"
 import { encodeCursor, decodeCursor } from "./cursor"
 import { listMyBotsSchema } from "./schemas"
@@ -503,16 +505,40 @@ export function createPublicApiHandlers({
     acceptingInvocations: boolean
     statusText?: string | null
   }): Promise<void> {
-    const presence = await botRuntimeService.upsertPresenceFromBotKey({
-      workspaceId: params.workspaceId,
-      botId: params.botId,
-      runtimeKind: params.runtimeKind,
-      instanceId: params.instanceId,
-      status: params.status,
-      acceptingInvocations: params.acceptingInvocations,
-      statusText: params.statusText,
-    })
-    await broadcastBotPresence(params.workspaceId, params.botId, presence)
+    try {
+      const presence = await botRuntimeService.upsertPresenceFromBotKey({
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        runtimeKind: params.runtimeKind,
+        instanceId: params.instanceId,
+        status: params.status,
+        acceptingInvocations: params.acceptingInvocations,
+        statusText: params.statusText,
+      })
+      await broadcastBotPresence(params.workspaceId, params.botId, presence)
+    } catch (err) {
+      logger.warn(
+        { err, workspaceId: params.workspaceId, botId: params.botId },
+        "Failed to update bot runtime presence"
+      )
+    }
+  }
+
+  function fallbackStatusTextForStep(stepType: string): string {
+    switch (stepType) {
+      case AgentStepTypes.CONTEXT_RECEIVED:
+        return "Loaded context…"
+      case AgentStepTypes.THINKING:
+        return "Thinking…"
+      case AgentStepTypes.TOOL_CALL:
+        return "Using tool…"
+      case AgentStepTypes.TOOL_ERROR:
+        return "Tool failed"
+      case AgentStepTypes.MESSAGE_SENT:
+        return "Sent response"
+      default:
+        return "Working…"
+    }
   }
 
   return {
@@ -763,13 +789,18 @@ export function createPublicApiHandlers({
       })
       if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       await assertStreamAccessible(req, claim.responseStreamId)
-      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      const [bot, runtimePresence] = await Promise.all([
+        BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
+        botRuntimeService.findPresenceByInstance({
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey.botId,
+          instanceId: result.data.instanceId,
+        }),
+      ])
       const now = new Date()
-      // Append + currentStepType must run in one transaction: appendStep takes
-      // a FOR UPDATE lock on the session row so concurrent step POSTs serialize
-      // and each gets a unique step_number (INV-20). Without it, two near-
-      // simultaneous Pi events would race on MAX(step_number) and one would
-      // overwrite the other.
+      // Append + currentStepType must run in one transaction. appendStep is
+      // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
+      // append distinct rows instead of clobbering each other.
       const step = await withTransaction(pool, async (client) => {
         const inserted = await AgentSessionRepository.appendStep(client, {
           id: stepId(),
@@ -792,7 +823,7 @@ export function createPublicApiHandlers({
         streamId: claim.responseStreamId,
         sessionId: claim.id,
         triggerMessageId: claim.sourceMessageId,
-        personaName: bot?.name ?? "Pi Remote",
+        personaName: bot?.name ?? "",
         stepCount: step.stepNumber,
         messageCount: 0,
         currentStepType: result.data.stepType,
@@ -803,11 +834,11 @@ export function createPublicApiHandlers({
       await touchAndBroadcastPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        runtimeKind: "pi-local",
+        runtimeKind: runtimePresence?.runtimeKind ?? BotRuntimeKinds.PI_LOCAL,
         instanceId: result.data.instanceId,
         status: "busy",
         acceptingInvocations: false,
-        statusText: result.data.content.trim().slice(0, 160) || null,
+        statusText: result.data.statusText?.trim() || fallbackStatusTextForStep(result.data.stepType),
       })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },

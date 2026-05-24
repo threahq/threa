@@ -69,8 +69,8 @@ interface UploadedAttachment {
 }
 
 let config: Config | undefined
-let timer: ReturnType<typeof setInterval> | undefined
-let pollInFlight = false
+let timer: ReturnType<typeof setTimeout> | undefined
+let pollInFlightRunId: number | undefined
 let pending: ClaimedInvocation | undefined
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
@@ -189,7 +189,7 @@ function truncateForTrace(text: string, max = 9_500): string {
   return `${trimmed.slice(0, max)}\n\n…[trace content truncated; ${trimmed.length - max} more characters]`
 }
 
-async function recordTraceStep(stepType: string, content: string): Promise<void> {
+async function recordTraceStep(stepType: string, content: string, statusText?: string): Promise<void> {
   if (!config || !pending) return
   const trimmed = truncateForTrace(content)
   if (!trimmed) return
@@ -200,6 +200,7 @@ async function recordTraceStep(stepType: string, content: string): Promise<void>
       claimToken: pending.claimToken,
       stepType,
       content: trimmed,
+      statusText: statusText?.trim().slice(0, 160),
     }),
   }).catch(() => undefined)
 }
@@ -211,10 +212,11 @@ async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
   const now = Date.now()
   if (lastTraceHeartbeat?.text === trimmed && now - lastTraceHeartbeat.at < 5000) return
   lastTraceHeartbeat = { text: trimmed, at: now }
-  // Step recording on the server also refreshes presence (status + statusText),
-  // so we skip a separate /presence call here. If there's no step type we have
-  // nothing to send — bail rather than firing a bare heartbeat.
-  if (stepType) await recordTraceStep(stepType, trimmed)
+  if (stepType) {
+    await recordTraceStep(stepType, trimmed, trimmed)
+    return
+  }
+  await heartbeat("busy", trimmed).catch(() => undefined)
 }
 
 function describeToolCall(event: ToolCallEvent): string {
@@ -365,7 +367,6 @@ function stopPolling(): void {
   pollingRunId += 1
   if (timer) clearTimeout(timer)
   timer = undefined
-  pollInFlight = false
 }
 
 function basePollMs(): number {
@@ -542,7 +543,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
     return { context: "" }
   })
   pendingContextCursor = cursor
-  await recordTraceStep("context_received", formatInvocationTrace(body.data, context))
+  await recordTraceStep("context_received", formatInvocationTrace(body.data, context), "Loaded context…")
   setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
   pi.sendUserMessage(
     [
@@ -591,8 +592,11 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   const runId = ++pollingRunId
   const poll = async () => {
     if (runId !== pollingRunId) return
-    if (pollInFlight) return
-    pollInFlight = true
+    if (pollInFlightRunId !== undefined) {
+      timer = setTimeout(() => void poll(), basePollMs())
+      return
+    }
+    pollInFlightRunId = runId
     let delayMs = basePollMs()
     try {
       const contactedServer = await claimIfIdle(pi, ctx)
@@ -601,7 +605,7 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
       notePollFailure(ctx, error)
       delayMs = failurePollMs()
     } finally {
-      pollInFlight = false
+      if (pollInFlightRunId === runId) pollInFlightRunId = undefined
       if (runId === pollingRunId) timer = setTimeout(() => void poll(), delayMs)
     }
   }
@@ -792,7 +796,11 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("tool_result", async (event) => {
     if (!pending) return
-    await recordTraceStep(event.isError ? "tool_error" : "tool_call", formatToolResultTrace(event))
+    await recordTraceStep(
+      event.isError ? "tool_error" : "tool_call",
+      formatToolResultTrace(event),
+      event.isError ? `${event.toolName} failed` : `Finished ${event.toolName}`
+    )
     pendingToolCalls.delete(event.toolCallId)
   })
 
@@ -819,7 +827,7 @@ export default function (pi: ExtensionAPI): void {
     try {
       const finalText =
         pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
-      await recordTraceStep("message_sent", `Final response:\n\n${finalText}`)
+      await recordTraceStep("message_sent", `Final response:\n\n${finalText}`, "Sent response")
       await completePending(finalText, ctx.cwd)
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {
