@@ -74,7 +74,7 @@ let pollInFlightRunId: number | undefined
 let pending: ClaimedInvocation | undefined
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
-let pendingToolCalls = new Map<string, string>()
+let pendingToolCalls = new Map<string, { headline: string; args: unknown }>()
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 let consecutivePollFailures = 0
 let lastPollFailureSummary: string | undefined
@@ -272,32 +272,34 @@ function formatJsonForTrace(value: unknown): string {
   }
 }
 
+function formatStructuredToolTrace(params: {
+  headline: string
+  sections: Array<{ label: string; body: string; lang: string | null }>
+}): string {
+  return truncateForTrace(JSON.stringify({ format: "pi_tool_trace", ...params }))
+}
+
 function formatToolCallTrace(event: ToolCallEvent): string {
-  return truncateForTrace(
-    [
-      `${describeToolCall(event).replace(/…$/, "")}`,
-      "",
-      "Arguments:",
-      "```json",
-      formatJsonForTrace(event.input),
-      "```",
-    ].join("\n")
-  )
+  return formatStructuredToolTrace({
+    headline: describeToolCall(event).replace(/…$/, ""),
+    sections: [{ label: "Arguments", body: formatJsonForTrace(event.input), lang: "json" }],
+  })
 }
 
 function formatToolResultTrace(event: ToolResultEvent): string {
-  const call = pendingToolCalls.get(event.toolCallId) ?? `Used ${event.toolName}`
+  const call = pendingToolCalls.get(event.toolCallId)
   const output = textFromToolContent(event.content)
-  const sections = [call, "", event.isError ? "Error output:" : "Output:"]
-  if (output.trim()) {
-    sections.push("```", output, "```")
-  } else {
-    sections.push(event.isError ? "(tool failed without textual output)" : "(no textual output)")
-  }
+  const sections: Array<{ label: string; body: string; lang: string | null }> = []
+  if (call) sections.push({ label: "Arguments", body: formatJsonForTrace(call.args), lang: "json" })
+  sections.push({
+    label: event.isError ? "Error output" : "Output",
+    body: output.trim() || (event.isError ? "(tool failed without textual output)" : "(no textual output)"),
+    lang: null,
+  })
   if (event.details !== undefined) {
-    sections.push("", "Details:", "```json", formatJsonForTrace(event.details), "```")
+    sections.push({ label: "Details", body: formatJsonForTrace(event.details), lang: "json" })
   }
-  return truncateForTrace(sections.join("\n"))
+  return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${event.toolName}`, sections })
 }
 
 function sanitizeTraceText(text: string): string {
@@ -798,8 +800,8 @@ export default function (pi: ExtensionAPI): void {
   pi.on("tool_call", async (event) => {
     if (!pending) return
     const description = describeToolCall(event)
-    pendingToolCalls.set(event.toolCallId, formatToolCallTrace(event))
-    await traceHeartbeat(description, "tool_call")
+    pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, ""), args: event.input })
+    await recordTraceStep("tool_call", formatToolCallTrace(event), description)
   })
 
   pi.on("tool_result", async (event) => {

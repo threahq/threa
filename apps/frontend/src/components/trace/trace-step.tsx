@@ -518,10 +518,16 @@ function renderStepContent(
           </div>
         )
       }
+      if (isStructuredToolTrace(structured)) {
+        return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={false} />
+      }
       return <ToolMarkdownContent content={content} isError={false} />
     }
 
     case "tool_error":
+      if (isStructuredToolTrace(structured)) {
+        return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={true} />
+      }
       return <ToolMarkdownContent content={content} isError={true} />
 
     default:
@@ -560,6 +566,16 @@ interface ToolSection {
   label: string
   body: string
   lang: string | null
+}
+
+interface StructuredToolTrace extends Record<string, unknown> {
+  format: "pi_tool_trace"
+  headline?: string
+  sections?: ToolSection[]
+}
+
+function isStructuredToolTrace(value: Record<string, unknown> | null): value is StructuredToolTrace {
+  return value?.format === "pi_tool_trace"
 }
 
 function parseToolMarkdownContent(content: string): { headline: string; sections: ToolSection[] } {
@@ -648,6 +664,18 @@ function parseInlineToolMarkdownContent(content: string): { headline: string; se
  */
 function ToolMarkdownContent({ content, isError }: { content: string; isError: boolean }) {
   const { headline, sections } = parseToolMarkdownContent(content)
+  return <ToolTraceContent headline={headline} sections={sections} isError={isError} />
+}
+
+function ToolTraceContent({
+  headline,
+  sections,
+  isError,
+}: {
+  headline?: string
+  sections: ToolSection[]
+  isError: boolean
+}) {
   const headlineText = headline || (isError ? "Tool error" : "Tool call")
 
   return (
