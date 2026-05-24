@@ -524,12 +524,18 @@ function renderStepContent(
       if (isStructuredToolTrace(structured)) {
         return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={false} />
       }
+      if (looksLikeStructuredToolTrace(content)) {
+        return <TruncatedToolTraceContent content={content} isError={false} />
+      }
       return <span>{content}</span>
     }
 
     case "tool_error":
       if (isStructuredToolTrace(structured)) {
         return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={true} />
+      }
+      if (looksLikeStructuredToolTrace(content)) {
+        return <TruncatedToolTraceContent content={content} isError={true} />
       }
       return <span>{content}</span>
 
@@ -552,6 +558,26 @@ interface StructuredToolTrace extends Record<string, unknown> {
 
 function isStructuredToolTrace(value: Record<string, unknown> | null): value is StructuredToolTrace {
   return value?.format === PI_TOOL_TRACE_FORMAT
+}
+
+function looksLikeStructuredToolTrace(content: string): boolean {
+  return new RegExp(`"format"\\s*:\\s*"${PI_TOOL_TRACE_FORMAT}"`).test(content)
+}
+
+function TruncatedToolTraceContent({ content, isError }: { content: string; isError: boolean }) {
+  return (
+    <ToolTraceContent
+      headline={isError ? "Tool error trace was truncated" : "Tool trace was truncated"}
+      sections={[
+        {
+          label: PiToolTraceSectionLabels.DETAILS,
+          body: content,
+          lang: "json",
+        },
+      ]}
+      isError={isError}
+    />
+  )
 }
 
 function ToolTraceContent({

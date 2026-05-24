@@ -14,6 +14,7 @@ const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
+const TRACE_CONTENT_MAX_CHARS = 9_500
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const PI_TOOL_TRACE_SECTION_LABELS = {
   ARGUMENTS: "Arguments",
@@ -192,7 +193,7 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
   })
 }
 
-function truncateForTrace(text: string, max = 9_500): string {
+function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
   const trimmed = text.trim()
   if (trimmed.length <= max) return trimmed
   return `${trimmed.slice(0, max)}\n\n…[trace content truncated; ${trimmed.length - max} more characters]`
@@ -285,7 +286,43 @@ function formatStructuredToolTrace(params: {
   headline: string
   sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }>
 }): string {
-  return truncateForTrace(JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, ...params }))
+  const sections = params.sections.map((section) => ({ ...section, originalBody: section.body }))
+
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const payload = JSON.stringify({
+      format: PI_TOOL_TRACE_FORMAT,
+      headline: params.headline,
+      sections: sections.map(({ originalBody: _originalBody, ...section }) => section),
+    })
+    if (payload.length <= TRACE_CONTENT_MAX_CHARS) return payload
+
+    const largestIndex = sections.reduce(
+      (largest, section, index) => (section.body.length > sections[largest]!.body.length ? index : largest),
+      0
+    )
+    const largest = sections[largestIndex]
+    if (!largest || largest.originalBody.length === 0) break
+
+    const overflow = payload.length - TRACE_CONTENT_MAX_CHARS
+    const currentVisibleLength = largest.body.includes("…[section truncated;")
+      ? largest.body.indexOf("\n\n…[section truncated;")
+      : largest.body.length
+    const nextVisibleLength = Math.max(0, currentVisibleLength - Math.max(overflow + 256, 512))
+    const omitted = largest.originalBody.length - nextVisibleLength
+    largest.body = `${largest.originalBody.slice(0, nextVisibleLength).trimEnd()}\n\n…[section truncated; ${omitted} more characters]`
+  }
+
+  return JSON.stringify({
+    format: PI_TOOL_TRACE_FORMAT,
+    headline: params.headline,
+    sections: [
+      {
+        label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
+        body: "Trace content was too large to serialize safely.",
+        lang: null,
+      },
+    ],
+  })
 }
 
 function formatToolCallTrace(event: ToolCallEvent): string {

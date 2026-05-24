@@ -286,6 +286,22 @@ describe("TraceStep", () => {
     expect(screen.getByText(/apps\/backend\/src\/foo\.ts/)).toBeInTheDocument()
   })
 
+  it("renders truncated structured Pi tool traces as a collapsed fallback", async () => {
+    const user = userEvent.setup()
+    const content = `{"format":"${PI_TOOL_TRACE_FORMAT}","headline":"Running git diff","sections":[{"label":"Output","body":"apps/frontend/src/foo.ts\\n…[trace content truncated; 51 more characters]`
+
+    render(
+      <MemoryRouter>
+        <TraceStep step={createStep({ stepType: "tool_call", content })} workspaceId="ws_1" streamId="stream_1" />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Tool trace was truncated")).toBeInTheDocument()
+    expect(screen.queryByText(/apps\/frontend\/src\/foo\.ts/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /Details/i }))
+    expect(screen.getByText(/apps\/frontend\/src\/foo\.ts/)).toBeInTheDocument()
+  })
+
   it("renders tool_error with the Error output section open by default", () => {
     // For tool_error steps the reader almost always wants to see the failure
     // message immediately — keeping it collapsed buries the most relevant
