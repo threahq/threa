@@ -536,38 +536,46 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // to swap its text, and tracks the result. If the editor refuses the swap
   // (the user typed inside that chunk), the chunk locks locally so the toggle
   // stops touching it on future flips.
-  const setShowOriginal = useCallback((target: boolean) => {
-    setShowOriginalState((current) => {
-      if (current === target) return current
-      setChunks((prev) => {
-        if (prev.size === 0) return prev
-        const next = new Map(prev)
-        for (const [chunkId, record] of prev) {
-          if (record.locked) continue
-          const newText = target ? record.raw : record.polished
-          const expectedText = record.currentlyShowing === "raw" ? record.raw : record.polished
-          if (newText === expectedText) {
-            // No textual difference (polish was a no-op for this chunk).
-            // Still update the bookkeeping so currentlyShowing reflects the
-            // user's intent.
-            next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
-            continue
-          }
-          const accepted = onChunkSwapRef.current?.({ chunkId, newText, expectedText }) ?? false
-          if (accepted) {
-            next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
-          } else {
-            // The editor rejected the swap (the user edited inside the chunk
-            // or the decoration was already gone) — give up on tracking this
-            // one so the toggle never tries to swap it again.
-            next.set(chunkId, { ...record, locked: true })
-          }
+  //
+  // The editor swap is a side effect, so we do it *outside* of any state
+  // updater — calling editor mutations inside a setState updater would fire
+  // them twice under concurrent rendering. Reads the live `chunks` map via
+  // closure; that's fine because the toggle button is only enabled when there
+  // is at least one chunk to act on (so the closure is fresh).
+  const setShowOriginal = useCallback(
+    (target: boolean) => {
+      if (target === showOriginal) return
+      if (chunks.size === 0) {
+        setShowOriginalState(target)
+        return
+      }
+      const next = new Map(chunks)
+      for (const [chunkId, record] of chunks) {
+        if (record.locked) continue
+        const newText = target ? record.raw : record.polished
+        const expectedText = record.currentlyShowing === "raw" ? record.raw : record.polished
+        if (newText === expectedText) {
+          // No textual difference (polish was a no-op for this chunk). Still
+          // update the bookkeeping so currentlyShowing reflects the user's
+          // intent.
+          next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
+          continue
         }
-        return next
-      })
-      return target
-    })
-  }, [])
+        const accepted = onChunkSwapRef.current?.({ chunkId, newText, expectedText }) ?? false
+        if (accepted) {
+          next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
+        } else {
+          // The editor rejected the swap (the user edited inside the chunk or
+          // the decoration was already gone) — give up on tracking this one so
+          // the toggle never tries to swap it again.
+          next.set(chunkId, { ...record, locked: true })
+        }
+      }
+      setChunks(next)
+      setShowOriginalState(target)
+    },
+    [chunks, showOriginal]
+  )
 
   // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
   // capture, so a take left "recording" would silently record nothing while the
