@@ -191,9 +191,14 @@ function GalleryMediaContent({
   }
   // Active image slide gets the zoomable viewport. Inactive slides stay as plain
   // <img> so we don't wire up gesture listeners for images the user isn't viewing.
+  // `key={current.attachmentId}` forces a fresh instance per attachment so internal
+  // state (loadedSrc, naturalDims) and the underlying <img> bitmap can't leak from
+  // a previously-viewed image — without this, rapidly toggling between two images
+  // can show the wrong image after a late onLoad fires against stale internal state.
   if (zoomableRef) {
     return (
       <ZoomableImage
+        key={current.attachmentId}
         ref={zoomableRef}
         src={current.url}
         alt={current.filename}
