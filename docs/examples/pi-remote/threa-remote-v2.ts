@@ -84,7 +84,7 @@ let pollInFlightRunId: number | undefined
 let pending: ClaimedInvocation | undefined
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
-let pendingToolCalls = new Map<string, { headline: string; args: unknown }>()
+let pendingToolCalls = new Map<string, { headline: string }>()
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 let consecutivePollFailures = 0
 let lastPollFailureSummary: string | undefined
@@ -217,7 +217,7 @@ async function recordTraceStep(stepType: string, content: string, statusText?: s
 
 async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
   if (!pending) return
-  const trimmed = text.trim().slice(0, 160)
+  const trimmed = safeStatusText(text)
   if (!trimmed) return
   const now = Date.now()
   if (lastTraceHeartbeat?.text === trimmed && now - lastTraceHeartbeat.at < 5000) return
@@ -229,34 +229,69 @@ async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
   await heartbeat("busy", trimmed).catch(() => undefined)
 }
 
+function safeStatusText(text: string): string {
+  const trimmed = text.trim()
+  const allowed = new Set([
+    "Thinking…",
+    "Loaded context…",
+    "Running shell command…",
+    "Reading file…",
+    "Reading sensitive file…",
+    "Writing file…",
+    "Editing file…",
+    "Searching files…",
+    "Listing directory…",
+    "Using tool…",
+    "Tool finished",
+    "Tool failed",
+    "Composing response…",
+    "Sent response",
+  ])
+  if (allowed.has(trimmed)) return trimmed
+  if (/^Finished [A-Za-z0-9_-]+$/.test(trimmed)) return "Tool finished"
+  if (/^[A-Za-z0-9_-]+ failed$/.test(trimmed)) return "Tool failed"
+  return "Working…"
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value)
+}
+
+function basenameFromInputPath(path: unknown): string | undefined {
+  if (typeof path !== "string") return undefined
+  const parts = path.split(/[\\/]+/).filter(Boolean)
+  return parts.at(-1)
+}
+
+function isSensitivePath(path: unknown): boolean {
+  if (typeof path !== "string") return false
+  return /(^|[\\/.])(?:env|npmrc|netrc|pypirc|pgpass|aws|credentials|config|secrets?|tokens?|keys?)(?:$|[.\\/-])/i.test(
+    path
+  )
+}
+
+function safeFileSummary(path: unknown): string {
+  if (isSensitivePath(path)) return "sensitive file"
+  const name = basenameFromInputPath(path)
+  return name ? `file ${name}` : "file"
+}
+
+function safeToolName(toolName: string): string {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(toolName) ? toolName : "tool"
+}
+
 function describeToolCall(event: ToolCallEvent): string {
   const input = "input" in event ? event.input : undefined
-  if (event.toolName === "bash" && input && typeof input === "object" && "command" in input) {
-    return `Running ${String(input.command).split("\n")[0].slice(0, 80)}…`
+  const toolName = safeToolName(event.toolName)
+  if (event.toolName === "bash") return "Running shell command…"
+  if ((event.toolName === "read" || event.toolName === "write") && isObject(input) && "path" in input) {
+    if (event.toolName === "read" && isSensitivePath(input.path)) return "Reading sensitive file…"
+    return `${event.toolName === "read" ? "Reading" : "Writing"} ${safeFileSummary(input.path)}…`
   }
-  if (
-    (event.toolName === "read" || event.toolName === "write") &&
-    input &&
-    typeof input === "object" &&
-    "path" in input
-  ) {
-    return `${event.toolName === "read" ? "Reading" : "Writing"} ${String(input.path).slice(0, 80)}…`
-  }
-  if (event.toolName === "edit" && input && typeof input === "object" && "path" in input) {
-    return `Editing ${String(input.path).slice(0, 80)}…`
-  }
-  if (
-    (event.toolName === "grep" || event.toolName === "find") &&
-    input &&
-    typeof input === "object" &&
-    "pattern" in input
-  ) {
-    return `Searching for ${String(input.pattern).slice(0, 80)}…`
-  }
-  if (event.toolName === "ls" && input && typeof input === "object" && "path" in input) {
-    return `Listing ${String(input.path).slice(0, 80)}…`
-  }
-  return `Using ${event.toolName}…`
+  if (event.toolName === "edit" && isObject(input) && "path" in input) return `Editing ${safeFileSummary(input.path)}…`
+  if (event.toolName === "grep" || event.toolName === "find") return "Searching files…"
+  if (event.toolName === "ls") return "Listing directory…"
+  return `Using ${toolName}…`
 }
 
 function textFromToolContent(content: unknown): string {
@@ -272,14 +307,6 @@ function textFromToolContent(content: unknown): string {
     })
     .filter(Boolean)
     .join("\n")
-}
-
-function formatJsonForTrace(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
 
 function formatStructuredToolTrace(params: {
@@ -325,32 +352,51 @@ function formatStructuredToolTrace(params: {
   })
 }
 
+function safeToolArgumentSummary(event: ToolCallEvent): string {
+  const input = "input" in event ? event.input : undefined
+  const toolName = safeToolName(event.toolName)
+  if (event.toolName === "bash") return "Shell command omitted for safety."
+  if ((event.toolName === "read" || event.toolName === "write" || event.toolName === "edit") && isObject(input)) {
+    const action = event.toolName === "read" ? "Read" : event.toolName === "write" ? "Write" : "Edit"
+    return `${action} target: ${"path" in input ? safeFileSummary(input.path) : "file"}. File contents and patches omitted for safety.`
+  }
+  if (event.toolName === "grep" || event.toolName === "find") return "Search arguments omitted for safety."
+  if (event.toolName === "ls") return "Directory listing arguments omitted for safety."
+  return `Arguments for ${toolName} omitted for safety.`
+}
+
 function formatToolCallTrace(event: ToolCallEvent): string {
   return formatStructuredToolTrace({
     headline: describeToolCall(event).replace(/…$/, ""),
-    sections: [{ label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, body: formatJsonForTrace(event.input), lang: "json" }],
+    sections: [
+      {
+        label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
+        body: safeToolArgumentSummary(event),
+        lang: null,
+      },
+    ],
   })
+}
+
+function summarizeToolOutput(output: string): string {
+  const text = output.trim()
+  if (!text) return "Tool produced no textual output."
+  const lines = text.split("\n").length
+  return `Tool output omitted for safety. Captured locally: ${text.length} characters across ${lines} ${lines === 1 ? "line" : "lines"}.`
 }
 
 function formatToolResultTrace(event: ToolResultEvent): string {
   const call = pendingToolCalls.get(event.toolCallId)
   const output = textFromToolContent(event.content)
   const sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }> = []
-  if (call)
-    sections.push({ label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, body: formatJsonForTrace(call.args), lang: "json" })
   sections.push({
     label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
-    body: output.trim() || (event.isError ? "(tool failed without textual output)" : "(no textual output)"),
+    body: event.isError
+      ? `${summarizeToolOutput(output)} Error details omitted for safety.`
+      : summarizeToolOutput(output),
     lang: null,
   })
-  if (event.details !== undefined) {
-    sections.push({
-      label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
-      body: formatJsonForTrace(event.details),
-      lang: "json",
-    })
-  }
-  return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${event.toolName}`, sections })
+  return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${safeToolName(event.toolName)}`, sections })
 }
 
 function sanitizeTraceText(text: string): string {
@@ -805,6 +851,13 @@ async function failPending(error: unknown): Promise<void> {
   await heartbeat("available").catch(() => undefined)
 }
 
+export const __testing = {
+  describeToolCall,
+  formatToolCallTrace,
+  formatToolResultTrace,
+  safeStatusText,
+}
+
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("remote-control", {
     description: "Create or link a Threa scratchpad to this Pi session",
@@ -851,7 +904,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("tool_call", async (event) => {
     if (!pending) return
     const description = describeToolCall(event)
-    pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, ""), args: event.input })
+    pendingToolCalls.set(event.toolCallId, { headline: description.replace(/…$/, "") })
     await recordTraceStep("tool_call", formatToolCallTrace(event), description)
   })
 

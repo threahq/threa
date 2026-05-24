@@ -33,6 +33,8 @@ import {
   AttachmentSafetyStatuses,
   AuthorTypes,
   BotRuntimeKinds,
+  PI_TOOL_TRACE_FORMAT,
+  PiToolTraceSectionLabels,
   sentViaApiKey,
   type AuthorType,
 } from "@threa/types"
@@ -348,6 +350,69 @@ export interface PublicApiDeps {
   io?: Server
 }
 
+const SENSITIVE_VALUE_PATTERNS = [
+  /\b(?:sk|rk|pk|lf|wos|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{10,}\b/g,
+  /\b(?:Authorization|X-Api-Key|api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;\"'}]+/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+]
+
+function redactSensitiveText(text: string): string {
+  let redacted = text
+  for (const pattern of SENSITIVE_VALUE_PATTERNS) redacted = redacted.replace(pattern, "[REDACTED]")
+  return redacted
+}
+
+function sanitizeStatusText(statusText?: string | null): string | null {
+  const trimmed = redactSensitiveText(statusText?.trim() ?? "")
+  if (!trimmed) return null
+  const allowed = new Set([
+    "Thinking…",
+    "Loaded context…",
+    "Running shell command…",
+    "Reading file…",
+    "Reading sensitive file…",
+    "Writing file…",
+    "Editing file…",
+    "Searching files…",
+    "Listing directory…",
+    "Using tool…",
+    "Tool finished",
+    "Tool failed",
+    "Working…",
+    "Composing response…",
+    "Sent response",
+  ])
+  if (allowed.has(trimmed)) return trimmed
+  return "Working…"
+}
+
+function sanitizeInvocationStepContent(content: string): string {
+  const redacted = redactSensitiveText(content)
+  try {
+    const parsed = JSON.parse(redacted) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return redacted
+    const trace = parsed as Record<string, unknown>
+    if (trace.format !== PI_TOOL_TRACE_FORMAT || !Array.isArray(trace.sections)) return redacted
+    return JSON.stringify({
+      ...trace,
+      sections: trace.sections.map((section) => {
+        if (!section || typeof section !== "object" || Array.isArray(section)) return section
+        const item = section as Record<string, unknown>
+        const label = typeof item.label === "string" ? item.label : ""
+        if (label === PiToolTraceSectionLabels.ARGUMENTS) {
+          return { ...item, body: "Tool arguments omitted for safety.", lang: null }
+        }
+        if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) {
+          return { ...item, body: "Tool output omitted for safety.", lang: null }
+        }
+        return { ...item, body: typeof item.body === "string" ? redactSensitiveText(item.body) : item.body }
+      }),
+    })
+  } catch {
+    return redacted
+  }
+}
+
 function serializeTraceStep(step: AgentSessionStep) {
   return {
     id: step.id,
@@ -512,7 +577,7 @@ export function createPublicApiHandlers({
         instanceId: params.instanceId,
         status: params.status,
         acceptingInvocations: params.acceptingInvocations,
-        statusText: params.statusText,
+        statusText: sanitizeStatusText(params.statusText),
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
     } catch (err) {
@@ -568,6 +633,7 @@ export function createPublicApiHandlers({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         ...result.data,
+        statusText: sanitizeStatusText(result.data.statusText),
       })
       await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({
@@ -787,7 +853,7 @@ export function createPublicApiHandlers({
           id: stepId(),
           sessionId: claim.id,
           stepType: result.data.stepType,
-          content: result.data.content,
+          content: sanitizeInvocationStepContent(result.data.content),
           startedAt: now,
           completedAt: now,
         })
@@ -819,7 +885,7 @@ export function createPublicApiHandlers({
         instanceId: result.data.instanceId,
         status: "busy",
         acceptingInvocations: false,
-        statusText: result.data.statusText?.trim() || null,
+        statusText: sanitizeStatusText(result.data.statusText),
       })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },
