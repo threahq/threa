@@ -34,9 +34,11 @@ import {
   AuthorTypes,
   BotRuntimeKinds,
   PI_TOOL_TRACE_FORMAT,
+  PI_TOOL_TRACE_SECTION_LABELS,
   PiToolTraceSectionLabels,
   sentViaApiKey,
   type AuthorType,
+  type PiToolTraceSectionLabel,
 } from "@threa/types"
 import { BotRuntimeService, type BotRuntimeInstance } from "../bot-runtimes"
 import type { BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
@@ -387,28 +389,56 @@ function sanitizeStatusText(statusText?: string | null): string | null {
   return "Working…"
 }
 
-function sanitizeInvocationStepContent(content: string): string {
+const TRACE_HEADLINE_MAX_CHARS = 200
+const TRACE_BODY_MAX_CHARS = 10_000
+const TRACE_LANG_MAX_CHARS = 32
+const TRACE_MAX_SECTIONS = 16
+
+const TRACE_SECTION_LABEL_SET: ReadonlySet<string> = new Set(PI_TOOL_TRACE_SECTION_LABELS)
+
+interface SafeTraceSection {
+  label: PiToolTraceSectionLabel
+  body: string
+  lang: string | null
+}
+
+function clampString(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value
+}
+
+function sanitizeTraceSection(section: unknown): SafeTraceSection | null {
+  if (!section || typeof section !== "object" || Array.isArray(section)) return null
+  const item = section as Record<string, unknown>
+  const rawLabel = typeof item.label === "string" ? item.label : ""
+  if (!TRACE_SECTION_LABEL_SET.has(rawLabel)) return null
+  const label = rawLabel as PiToolTraceSectionLabel
+  if (label === PiToolTraceSectionLabels.ARGUMENTS) {
+    return { label, body: "Tool arguments omitted for safety.", lang: null }
+  }
+  if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) {
+    return { label, body: "Tool output omitted for safety.", lang: null }
+  }
+  const body = typeof item.body === "string" ? clampString(redactSensitiveText(item.body), TRACE_BODY_MAX_CHARS) : ""
+  const lang = typeof item.lang === "string" ? clampString(item.lang, TRACE_LANG_MAX_CHARS) : null
+  return { label, body, lang }
+}
+
+export function sanitizeInvocationStepContent(content: string): string {
   const redacted = redactSensitiveText(content)
   try {
     const parsed = JSON.parse(redacted) as unknown
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return redacted
     const trace = parsed as Record<string, unknown>
     if (trace.format !== PI_TOOL_TRACE_FORMAT || !Array.isArray(trace.sections)) return redacted
-    return JSON.stringify({
-      ...trace,
-      sections: trace.sections.map((section) => {
-        if (!section || typeof section !== "object" || Array.isArray(section)) return section
-        const item = section as Record<string, unknown>
-        const label = typeof item.label === "string" ? item.label : ""
-        if (label === PiToolTraceSectionLabels.ARGUMENTS) {
-          return { ...item, body: "Tool arguments omitted for safety.", lang: null }
-        }
-        if (label === PiToolTraceSectionLabels.OUTPUT || label === PiToolTraceSectionLabels.ERROR_OUTPUT) {
-          return { ...item, body: "Tool output omitted for safety.", lang: null }
-        }
-        return { ...item, body: typeof item.body === "string" ? redactSensitiveText(item.body) : item.body }
-      }),
-    })
+    const headline =
+      typeof trace.headline === "string"
+        ? clampString(redactSensitiveText(trace.headline), TRACE_HEADLINE_MAX_CHARS)
+        : ""
+    const sections = trace.sections
+      .slice(0, TRACE_MAX_SECTIONS)
+      .map(sanitizeTraceSection)
+      .filter((section): section is SafeTraceSection => section !== null)
+    return JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections })
   } catch {
     return redacted
   }
