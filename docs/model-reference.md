@@ -213,6 +213,49 @@ All models use `provider:modelPath` format:
 
 ---
 
+## Speech-to-Text Models
+
+Realtime WebSocket speech-to-text providers used by voice dictation. The
+`TranscriptionStrategy` interface (in `apps/backend/src/features/voice-transcription/transcription/strategy.ts`)
+abstracts the per-provider wire protocol. A provider is only registered if its
+API key env var is set; with no key, sessions for that provider fail loudly at
+relay open time (INV-11).
+
+Users pick which provider to use via the `voiceTranscriptionModel` preference;
+omitted → server-configured default (`voiceConfig.defaultModel`).
+
+### elevenlabs:scribe-v2-realtime
+
+**Name:** ElevenLabs Scribe v2 Realtime
+
+**Description:** Multilingual realtime STT. Audio is sent as base64-wrapped JSON chunks; auto-commits on VAD silence.
+
+**Typical cost:** ~$0.39/hour of audio
+
+**Env var:** `ELEVENLABS_API_KEY`
+
+**When to use:**
+
+- Default voice dictation provider
+- Multilingual workspaces (auto-detects language by default)
+
+### deepgram:nova-3
+
+**Name:** Deepgram Nova-3
+
+**Description:** Realtime STT. Audio is sent as raw binary PCM16; auto-finalizes utterances on 300ms silence (`endpointing=300`).
+
+**Typical cost:** ~$0.46/hour of audio
+
+**Env var:** `DEEPGRAM_API_KEY`
+
+**When to use:**
+
+- Alternative when ElevenLabs is unavailable or a workspace prefers Deepgram for accuracy/latency on specific languages
+- Opt in per user via `voiceTranscriptionModel: "deepgram:nova-3"` preference
+
+---
+
 ## Deprecated Models (Do Not Use)
 
 **Claude 3 Series:**

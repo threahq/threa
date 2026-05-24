@@ -84,3 +84,10 @@ models:
     outputModalities: [text]
     streaming: realtime
     audioPricePerHour: 0.39
+
+  deepgram:nova-3:
+    name: Deepgram Nova-3
+    inputModalities: [audio]
+    outputModalities: [text]
+    streaming: realtime
+    audioPricePerHour: 0.46

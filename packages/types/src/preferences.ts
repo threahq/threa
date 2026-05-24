@@ -169,6 +169,12 @@ export interface UserPreferences {
   scratchpadCustomPrompt: string | null
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
+  /**
+   * Preferred voice dictation model id (e.g. "elevenlabs:scribe-v2-realtime",
+   * "deepgram:nova-3"). When null, the backend falls back to the configured
+   * default. The string is validated server-side against the model registry.
+   */
+  voiceTranscriptionModel: string | null
   keyboardShortcuts: KeyboardShortcuts
   accessibility: AccessibilityPreferences
   createdAt: string
@@ -192,6 +198,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
+  voiceTranscriptionModel: null,
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
 }
@@ -217,6 +224,7 @@ export interface UpdateUserPreferencesInput {
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
+  voiceTranscriptionModel?: string | null
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
 }

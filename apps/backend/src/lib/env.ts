@@ -9,6 +9,8 @@ export interface AIConfig {
   tavilyApiKey: string
   /** ElevenLabs API key for realtime speech-to-text (voice dictation). Empty string disables voice. */
   elevenLabsApiKey: string
+  /** Deepgram API key for realtime speech-to-text. Empty string disables Deepgram as a voice provider. */
+  deepgramApiKey: string
   /** Model for stream auto-naming, in provider:model format (e.g., "openrouter:anthropic/claude-haiku-4.5") */
   namingModel: string
   /** Model for conversational boundary extraction, in provider:model format */
@@ -154,6 +156,7 @@ export function loadConfig(): Config {
       openRouterApiKey: process.env.OPENROUTER_API_KEY || "",
       tavilyApiKey: process.env.TAVILY_API_KEY || "",
       elevenLabsApiKey: process.env.ELEVENLABS_API_KEY || "",
+      deepgramApiKey: process.env.DEEPGRAM_API_KEY || "",
       namingModel: process.env.AI_NAMING_MODEL || "openrouter:openai/gpt-5-mini",
       extractionModel: process.env.AI_EXTRACTION_MODEL || "openrouter:openai/gpt-5-mini",
     },
