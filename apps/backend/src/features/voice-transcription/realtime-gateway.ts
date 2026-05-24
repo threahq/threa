@@ -1,4 +1,5 @@
 import type { Server } from "socket.io"
+import { ulid } from "ulid"
 import { z } from "zod"
 import type { AuthService } from "@threa/backend-common"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
@@ -7,6 +8,8 @@ import { HttpError } from "../../lib/errors"
 import { voiceConfig } from "./config"
 import type { VoiceTranscriptionService } from "./service"
 import type { Transcription, TranscriptionSession } from "./transcription/strategy"
+import type { PolishTranscriptChunk } from "./polish"
+import type { UserPreferencesService } from "../user-preferences"
 
 const startPayloadSchema = z.object({
   workspaceId: z.string().min(1),
@@ -17,6 +20,8 @@ interface Dependencies {
   authService: AuthService
   voiceTranscriptionService: VoiceTranscriptionService
   transcription: Transcription
+  userPreferencesService: UserPreferencesService
+  polishTranscriptChunk: PolishTranscriptChunk
 }
 
 /**
@@ -32,6 +37,20 @@ interface RelayState {
   upstream: TranscriptionSession
   maxDurationTimer: ReturnType<typeof setTimeout>
   finalized: boolean
+  /**
+   * When true, finalized provider deltas are routed through `polishTranscriptChunk`
+   * and delivered to the client as `voice:transcript:polished` (with both raw and
+   * polished text + a chunkId). When false they ship as plain `voice:transcript:delta`
+   * with `isFinal: true`, exactly as before.
+   */
+  polishEnabled: boolean
+  /**
+   * Polished tails from this session so the polish prompt can resolve list
+   * continuation and pronouns without re-reading the entire editor. Only
+   * polished output goes in (raw is noisy), and the builder caps both count
+   * and total char length.
+   */
+  polishedHistory: string[]
 }
 
 function toBuffer(frame: unknown): Buffer | null {
@@ -52,7 +71,7 @@ function toBuffer(frame: unknown): Buffer | null {
  * with no durable read model to reconstruct.
  */
 export function registerVoiceGateway(io: Server, deps: Dependencies) {
-  const { authService, voiceTranscriptionService, transcription } = deps
+  const { authService, voiceTranscriptionService, transcription, userPreferencesService, polishTranscriptChunk } = deps
   const namespace = io.of("/voice")
 
   // Same session-cookie auth as the main namespace (INV-35: reuse, don't fork).
@@ -132,6 +151,17 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         })
         resolvedUserId = row.userId
 
+        // Resolve polish preference once per session: a mid-session pref change
+        // doesn't change behavior for an in-flight take, which keeps the chunk
+        // event stream type-consistent for the editor's chunk tracker.
+        let polishEnabled = false
+        try {
+          const prefs = await userPreferencesService.getPreferences(workspaceId, row.userId)
+          polishEnabled = prefs.voicePolishEnabled
+        } catch (err) {
+          logger.warn({ err, voiceSessionId, workspaceId }, "Voice prefs lookup failed; defaulting polish off")
+        }
+
         const upstream = await transcription.open({ model: row.model, language: row.language ?? undefined })
 
         // The socket disconnected while we were opening upstream — there is no
@@ -151,7 +181,54 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
 
         // Per-session payloads (plan §3): the client filters deltas by
         // voiceSessionId so a stale session can't leak text into a new one.
-        upstream.onDelta((delta) => socket.emit("voice:transcript:delta", { voiceSessionId, ...delta }))
+        // Interim deltas always flow through unchanged — only finalized ones
+        // optionally branch through the polish path.
+        upstream.onDelta((delta) => {
+          if (!state) return
+          if (!delta.isFinal) {
+            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
+            return
+          }
+          if (!state.polishEnabled) {
+            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
+            return
+          }
+          const raw = delta.text ?? ""
+          // Skip empty finals (provider sometimes emits a terminating empty
+          // segment) — nothing to polish, nothing to commit.
+          if (!raw.trim()) {
+            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
+            return
+          }
+          const chunkId = ulid()
+          const priorPolishedSnapshot = state.polishedHistory.slice()
+          const polishingState = state
+          void polishTranscriptChunk({
+            raw,
+            priorPolishedChunks: priorPolishedSnapshot,
+            workspaceId: polishingState.workspaceId,
+            userId: polishingState.userId,
+            sessionId: polishingState.voiceSessionId,
+          })
+            .then((polished) => {
+              // Ignore a polish that resolved after the take ended — the editor
+              // has already moved on and a late insert would land in the user's
+              // next message.
+              if (state !== polishingState || polishingState.finalized) return
+              polishingState.polishedHistory.push(polished)
+              socket.emit("voice:transcript:polished", {
+                voiceSessionId,
+                chunkId,
+                raw,
+                polished,
+              })
+            })
+            .catch((err) => {
+              logger.warn({ err, voiceSessionId, chunkId }, "Polish emit failed; falling back to raw delta")
+              if (state !== polishingState || polishingState.finalized) return
+              socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
+            })
+        })
         upstream.onError((e) => socket.emit("voice:transcription:error", { voiceSessionId, ...e }))
 
         const maxDurationTimer = setTimeout(() => {
@@ -166,6 +243,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           upstream,
           maxDurationTimer,
           finalized: false,
+          polishEnabled,
+          polishedHistory: [],
         }
         logger.debug({ voiceSessionId, workspaceId }, "Voice relay started")
         callback?.({ ok: true })

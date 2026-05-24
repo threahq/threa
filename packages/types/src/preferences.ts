@@ -198,6 +198,13 @@ export interface UserPreferences {
    * default. The string is validated server-side against the model registry.
    */
   voiceTranscriptionModel: string | null
+  /**
+   * When true, finalized dictation chunks are passed through a small LLM that
+   * cleans up punctuation/capitalization, adds light markdown structure, and
+   * places sensible emoji. Defaults on. The session UI exposes a session-scoped
+   * "Show original" toggle so the user can compare or revert per take.
+   */
+  voicePolishEnabled: boolean
   keyboardShortcuts: KeyboardShortcuts
   accessibility: AccessibilityPreferences
   createdAt: string
@@ -222,6 +229,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
   voiceTranscriptionModel: null,
+  voicePolishEnabled: true,
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
 }
@@ -248,6 +256,7 @@ export interface UpdateUserPreferencesInput {
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
   voiceTranscriptionModel?: string | null
+  voicePolishEnabled?: boolean
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
 }

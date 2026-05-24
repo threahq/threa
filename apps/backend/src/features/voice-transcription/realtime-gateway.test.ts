@@ -61,6 +61,8 @@ function fakeSocket(workosUserId = "workos_1") {
 function setup(overrides?: {
   open?: () => Promise<TranscriptionSession>
   getRelaySession?: (...args: unknown[]) => Promise<unknown>
+  voicePolishEnabled?: boolean
+  polishTranscriptChunk?: (args: { raw: string; priorPolishedChunks: string[] }) => Promise<string>
 }) {
   const upstream = fakeUpstream()
   const transcription = { open: mock(overrides?.open ?? (async () => upstream)) }
@@ -72,6 +74,13 @@ function setup(overrides?: {
     finishSession: mock(async () => {}),
     abortSession: mock(async () => {}),
   }
+  const userPreferencesService = {
+    getPreferences: mock(async () => ({ voicePolishEnabled: overrides?.voicePolishEnabled ?? false })),
+  }
+  const polishTranscriptChunk = mock(
+    overrides?.polishTranscriptChunk ??
+      (async ({ raw }: { raw: string; priorPolishedChunks: string[] }) => `polished:${raw}`)
+  )
 
   let connectionHandler: ((socket: unknown) => void) | undefined
   const namespace = {
@@ -86,12 +95,14 @@ function setup(overrides?: {
     authService: {} as never,
     voiceTranscriptionService: voiceTranscriptionService as never,
     transcription: transcription as never,
+    userPreferencesService: userPreferencesService as never,
+    polishTranscriptChunk: polishTranscriptChunk as never,
   })
 
   const socket = fakeSocket()
   connectionHandler!(socket)
 
-  return { socket, upstream, transcription, voiceTranscriptionService }
+  return { socket, upstream, transcription, voiceTranscriptionService, userPreferencesService, polishTranscriptChunk }
 }
 
 const START_PAYLOAD = { workspaceId: "ws_1", voiceSessionId: "voicesess_1" }
@@ -244,5 +255,116 @@ describe("registerVoiceGateway lifecycle", () => {
 
     expect(upstream.pushAudio).toHaveBeenCalledTimes(1)
     expect(Buffer.isBuffer((upstream.pushAudio as ReturnType<typeof mock>).mock.calls[0][0])).toBe(true)
+  })
+})
+
+describe("registerVoiceGateway polish", () => {
+  it("emits voice:transcript:polished with raw + polished when polish is enabled", async () => {
+    const { socket, upstream, polishTranscriptChunk } = setup({ voicePolishEnabled: true })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "hello world", isFinal: true })
+    // Polish resolves async; wait a tick.
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(polishTranscriptChunk).toHaveBeenCalledTimes(1)
+    const polishedEvent = socket.emitted.find((e) => e.event === "voice:transcript:polished")
+    expect(polishedEvent?.payload).toMatchObject({
+      voiceSessionId: "voicesess_1",
+      raw: "hello world",
+      polished: "polished:hello world",
+    })
+    expect((polishedEvent?.payload as { chunkId: string }).chunkId).toBeTruthy()
+  })
+
+  it("interim deltas always ship as plain transcript:delta, even with polish enabled", async () => {
+    const { socket, upstream, polishTranscriptChunk } = setup({ voicePolishEnabled: true })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "hello", isFinal: false })
+    await Promise.resolve()
+
+    expect(polishTranscriptChunk).not.toHaveBeenCalled()
+    expect(socket.emitted).toContainEqual({
+      event: "voice:transcript:delta",
+      payload: { voiceSessionId: "voicesess_1", text: "hello", isFinal: false },
+    })
+  })
+
+  it("falls back to plain transcript:delta when the polish call rejects", async () => {
+    const { socket, upstream } = setup({
+      voicePolishEnabled: true,
+      polishTranscriptChunk: async () => {
+        throw new Error("polish kaboom")
+      },
+    })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "hi there", isFinal: true })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(socket.emitted).toContainEqual({
+      event: "voice:transcript:delta",
+      payload: { voiceSessionId: "voicesess_1", text: "hi there", isFinal: true },
+    })
+    expect(socket.emitted.find((e) => e.event === "voice:transcript:polished")).toBeUndefined()
+  })
+
+  it("skips polish for empty final segments and forwards them as plain deltas", async () => {
+    const { socket, upstream, polishTranscriptChunk } = setup({ voicePolishEnabled: true })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "   ", isFinal: true })
+    await Promise.resolve()
+
+    expect(polishTranscriptChunk).not.toHaveBeenCalled()
+    expect(socket.emitted).toContainEqual({
+      event: "voice:transcript:delta",
+      payload: { voiceSessionId: "voicesess_1", text: "   ", isFinal: true },
+    })
+  })
+
+  it("passes prior polished chunks back to the polish call for context", async () => {
+    const seenPriors: string[][] = []
+    const { socket, upstream } = setup({
+      voicePolishEnabled: true,
+      polishTranscriptChunk: async ({ raw, priorPolishedChunks }: { raw: string; priorPolishedChunks: string[] }) => {
+        seenPriors.push([...priorPolishedChunks])
+        return `P(${raw})`
+      },
+    })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "one", isFinal: true })
+    await Promise.resolve()
+    await Promise.resolve()
+    upstream.fireDelta({ text: "two", isFinal: true })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(seenPriors[0]).toEqual([])
+    expect(seenPriors[1]).toEqual(["P(one)"])
   })
 })

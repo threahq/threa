@@ -44,6 +44,7 @@ const updatePreferencesSchema = z.object({
   // Model id like "elevenlabs:scribe-v2-realtime". Validated against the model
   // registry server-side when a session opens; this layer only bounds length.
   voiceTranscriptionModel: z.string().max(100).nullable().optional(),
+  voicePolishEnabled: z.boolean().optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({
