@@ -14,6 +14,15 @@ const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
+const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
+const PI_TOOL_TRACE_SECTION_LABELS = {
+  ARGUMENTS: "Arguments",
+  OUTPUT: "Output",
+  ERROR_OUTPUT: "Error output",
+  DETAILS: "Details",
+} as const
+
+type PiToolTraceSectionLabel = (typeof PI_TOOL_TRACE_SECTION_LABELS)[keyof typeof PI_TOOL_TRACE_SECTION_LABELS]
 
 type Config = {
   baseUrl: string
@@ -274,30 +283,35 @@ function formatJsonForTrace(value: unknown): string {
 
 function formatStructuredToolTrace(params: {
   headline: string
-  sections: Array<{ label: string; body: string; lang: string | null }>
+  sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }>
 }): string {
-  return truncateForTrace(JSON.stringify({ format: "pi_tool_trace", ...params }))
+  return truncateForTrace(JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, ...params }))
 }
 
 function formatToolCallTrace(event: ToolCallEvent): string {
   return formatStructuredToolTrace({
     headline: describeToolCall(event).replace(/…$/, ""),
-    sections: [{ label: "Arguments", body: formatJsonForTrace(event.input), lang: "json" }],
+    sections: [{ label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, body: formatJsonForTrace(event.input), lang: "json" }],
   })
 }
 
 function formatToolResultTrace(event: ToolResultEvent): string {
   const call = pendingToolCalls.get(event.toolCallId)
   const output = textFromToolContent(event.content)
-  const sections: Array<{ label: string; body: string; lang: string | null }> = []
-  if (call) sections.push({ label: "Arguments", body: formatJsonForTrace(call.args), lang: "json" })
+  const sections: Array<{ label: PiToolTraceSectionLabel; body: string; lang: string | null }> = []
+  if (call)
+    sections.push({ label: PI_TOOL_TRACE_SECTION_LABELS.ARGUMENTS, body: formatJsonForTrace(call.args), lang: "json" })
   sections.push({
-    label: event.isError ? "Error output" : "Output",
+    label: event.isError ? PI_TOOL_TRACE_SECTION_LABELS.ERROR_OUTPUT : PI_TOOL_TRACE_SECTION_LABELS.OUTPUT,
     body: output.trim() || (event.isError ? "(tool failed without textual output)" : "(no textual output)"),
     lang: null,
   })
   if (event.details !== undefined) {
-    sections.push({ label: "Details", body: formatJsonForTrace(event.details), lang: "json" })
+    sections.push({
+      label: PI_TOOL_TRACE_SECTION_LABELS.DETAILS,
+      body: formatJsonForTrace(event.details),
+      lang: "json",
+    })
   }
   return formatStructuredToolTrace({ headline: call?.headline ?? `Used ${event.toolName}`, sections })
 }
