@@ -5,6 +5,7 @@ import { categoryFromMime } from "@threa/types"
 import { Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Hash } from "lucide-react"
 import { attachmentsApi, type AttachmentExtractionContent, type AttachmentSearchItem } from "@/api/attachments"
 import { Button } from "@/components/ui/button"
+import { ProgressiveImage } from "@/components/ui/progressive-image"
 import { useFormattedDate } from "@/hooks"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFileSize } from "@/lib/file-size"
@@ -19,6 +20,9 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
   const { formatFull } = useFormattedDate()
   const [rawUrl, setRawUrl] = useState<string | null>(null)
   const [processedUrl, setProcessedUrl] = useState<string | null>(null)
+  // Image-only: fetched in parallel with the raw URL so the preview pane has
+  // something painted while the full-resolution variant streams in.
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -102,9 +106,21 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
   useEffect(() => {
     setRawUrl(null)
     setProcessedUrl(null)
+    setThumbnailUrl(null)
     setPreviewError(null)
     if (!item) return
     let cancelled = false
+    if (category === "image") {
+      attachmentsApi
+        .getDownloadUrl(workspaceId, item.id, { variant: "thumbnail" })
+        .then((url) => {
+          if (!cancelled) setThumbnailUrl(url)
+        })
+        .catch(() => {
+          // Thumbnail is best-effort — the raw fetch below still drives the
+          // real preview, and ProgressiveImage degrades to raw-only gracefully.
+        })
+    }
     attachmentsApi
       .getDownloadUrl(workspaceId, item.id, { variant: "raw" })
       .then((url) => {
@@ -152,16 +168,24 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
     if (previewError) {
       return <div className="px-6 py-4 text-xs text-muted-foreground">{previewError}</div>
     }
+    // Images bypass the "no rawUrl yet" fallback so the thumbnail can paint as
+    // soon as it lands — ProgressiveImage will then crossfade to the raw
+    // variant when it arrives.
+    if (category === "image" && (rawUrl || thumbnailUrl)) {
+      return (
+        <ProgressiveImage
+          src={rawUrl}
+          posterSrc={thumbnailUrl}
+          alt={selected.filename}
+          imgClassName="block max-h-[50vh] min-w-0 max-w-full"
+        />
+      )
+    }
     if (!rawUrl) {
       return (
         <div className={`flex h-16 w-16 items-center justify-center rounded-card ${meta.accent}`}>
           <Icon className="h-8 w-8" />
         </div>
-      )
-    }
-    if (category === "image") {
-      return (
-        <img src={rawUrl} alt={selected.filename} className="block max-h-[50vh] min-w-0 max-w-full object-contain" />
       )
     }
     if (category === "video") {
