@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import * as voiceDictation from "@/hooks/use-voice-dictation"
 import { MicButton, formatClock, recordingRingShadow } from "./mic-button"
@@ -82,6 +83,10 @@ describe("MicButton state surfaces", () => {
       level: 0,
       elapsedMs: 0,
       maxDurationMs: null,
+      chunks: new Map(),
+      hasUnlockedChunks: false,
+      showOriginal: false,
+      setShowOriginal: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
       ...overrides,
@@ -112,5 +117,37 @@ describe("MicButton state surfaces", () => {
 
     expect(screen.getByRole("button", { name: "Stop dictation" })).toBeEnabled()
     expect(screen.getByText("0:05")).toBeInTheDocument()
+  })
+
+  it("hides the polish toggle when there are no polished chunks to swap", () => {
+    mockDictation({ state: "recording", hasUnlockedChunks: false })
+    renderButton()
+
+    expect(screen.queryByRole("button", { name: /Switch to/i })).not.toBeInTheDocument()
+  })
+
+  it("offers a polish toggle once a chunk lands and reads as 'Showing polished' by default", () => {
+    mockDictation({ state: "recording", hasUnlockedChunks: true, showOriginal: false })
+    renderButton()
+
+    const toggle = screen.getByRole("button", { name: "Switch to original transcript" })
+    expect(toggle).toHaveTextContent("Showing polished")
+  })
+
+  it("flips to original when the toggle is clicked", async () => {
+    const setShowOriginal = vi.fn()
+    mockDictation({ state: "recording", hasUnlockedChunks: true, showOriginal: false, setShowOriginal })
+    const user = userEvent.setup()
+    renderButton()
+
+    await user.click(screen.getByRole("button", { name: "Switch to original transcript" }))
+    expect(setShowOriginal).toHaveBeenCalledWith(true)
+  })
+
+  it("keeps the toggle visible after stopping so the user can still flip what landed", () => {
+    mockDictation({ state: "idle", hasUnlockedChunks: true, showOriginal: true })
+    renderButton()
+
+    expect(screen.getByRole("button", { name: "Switch to polished transcript" })).toHaveTextContent("Showing original")
   })
 })

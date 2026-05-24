@@ -10,9 +10,14 @@ import * as editorModule from "@/components/editor"
 
 const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)
 
-let mockPreferences: { scratchpadCustomPrompt: string | null; voiceTranscriptionModel: string | null } = {
+let mockPreferences: {
+  scratchpadCustomPrompt: string | null
+  voiceTranscriptionModel: string | null
+  voicePolishEnabled: boolean
+} = {
   scratchpadCustomPrompt: "Current instructions",
   voiceTranscriptionModel: null,
+  voicePolishEnabled: true,
 }
 
 function extractText(node: JSONContent | undefined): string {
@@ -31,7 +36,11 @@ function createDoc(text: string): JSONContent {
 describe("AISettings", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    mockPreferences = { scratchpadCustomPrompt: "Current instructions", voiceTranscriptionModel: null }
+    mockPreferences = {
+      scratchpadCustomPrompt: "Current instructions",
+      voiceTranscriptionModel: null,
+      voicePolishEnabled: true,
+    }
     updatePreferenceMock.mockClear()
 
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
@@ -159,5 +168,44 @@ describe("AISettings", () => {
 
     const elevenLabsRadio = screen.getByRole("radio", { name: /ElevenLabs Scribe v2/i }) as HTMLInputElement
     expect(elevenLabsRadio).toBeChecked()
+  })
+
+  it("shows the polish toggle as on by default", () => {
+    render(<AISettings />)
+    const toggle = screen.getByRole("switch", { name: /Polish dictated text/i })
+    expect(toggle).toBeChecked()
+  })
+
+  it("turns polish off when the toggle is clicked", async () => {
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    await user.click(screen.getByRole("switch", { name: /Polish dictated text/i }))
+
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishEnabled", false)
+  })
+
+  it("turns polish back on when previously disabled", async () => {
+    mockPreferences.voicePolishEnabled = false
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    const toggle = screen.getByRole("switch", { name: /Polish dictated text/i })
+    expect(toggle).not.toBeChecked()
+
+    await user.click(toggle)
+
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishEnabled", true)
+  })
+
+  it("defaults the toggle to on when the preference is missing", () => {
+    mockPreferences = {
+      scratchpadCustomPrompt: null,
+      voiceTranscriptionModel: null,
+      voicePolishEnabled: undefined as unknown as boolean,
+    }
+    render(<AISettings />)
+    const toggle = screen.getByRole("switch", { name: /Polish dictated text/i })
+    expect(toggle).toBeChecked()
   })
 })

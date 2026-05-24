@@ -497,6 +497,18 @@ export function MessageComposer({
   // composer already has text — appended at the caret like committed speech.
   const insertTranscribedText = useCallback((text: string) => richEditorRef.current?.insertTranscribedText(text), [])
   const setDictationInterim = useCallback((text: string) => richEditorRef.current?.setDictationInterim(text), [])
+  // Polished-chunk wiring: the editor tracks each polished chunk by id so a
+  // session-wide toggle can swap them in-place between polished and raw.
+  const insertPolishedDictationChunk = useCallback(
+    (args: { chunkId: string; text: string }) => richEditorRef.current?.insertDictationChunk(args),
+    []
+  )
+  const swapDictationChunk = useCallback(
+    (args: { chunkId: string; newText: string; expectedText: string }) =>
+      richEditorRef.current?.replaceDictationChunkText(args) ?? false,
+    []
+  )
+  const lockAllDictationChunks = useCallback(() => richEditorRef.current?.lockAllDictationChunks(), [])
   // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
   // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
   const micButton = workspaceId ? (
@@ -506,6 +518,9 @@ export function MessageComposer({
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
       onActiveChange={setVoiceActive}
+      onInsertPolishedChunk={insertPolishedDictationChunk}
+      onChunkSwap={swapDictationChunk}
+      onLockAllChunks={lockAllDictationChunks}
       disabled={controlsDisabled}
     />
   ) : null
@@ -516,6 +531,9 @@ export function MessageComposer({
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
       onActiveChange={setVoiceActive}
+      onInsertPolishedChunk={insertPolishedDictationChunk}
+      onChunkSwap={swapDictationChunk}
+      onLockAllChunks={lockAllDictationChunks}
       disabled={controlsDisabled}
       className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
     />

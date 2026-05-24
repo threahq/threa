@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { usePreferences } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { VOICE_TRANSCRIPTION_MODELS, type JSONContent } from "@threa/types"
@@ -61,6 +62,15 @@ export function AISettings() {
       return
     }
     void updatePreference("voiceTranscriptionModel", next)
+  }
+
+  // Default to true so a missing preference (new account, in-flight migration)
+  // still reflects the "opt-out" stance — the user has to actively turn polish
+  // off rather than discover it was silently disabled.
+  const polishEnabled = preferences?.voicePolishEnabled ?? true
+  const handlePolishToggle = (next: boolean) => {
+    if (next === polishEnabled) return
+    void updatePreference("voicePolishEnabled", next)
   }
 
   return (
@@ -175,6 +185,29 @@ export function AISettings() {
             </div>
           ))}
         </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="voice-polish-toggle" className="text-sm font-medium cursor-pointer">
+              Polish dictated text
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              Run each finalized dictation chunk through a small fast model that tightens punctuation, capitalization,
+              and adds light markdown and sensible emoji. You can flip "Show original" on the live session to compare.
+            </p>
+          </div>
+          <Switch
+            id="voice-polish-toggle"
+            checked={polishEnabled}
+            onCheckedChange={handlePolishToggle}
+            disabled={isLoading}
+            aria-label="Polish dictated text"
+          />
+        </div>
       </section>
     </div>
   )

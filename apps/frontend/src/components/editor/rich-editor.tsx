@@ -40,6 +40,22 @@ export interface RichEditorHandle {
   insertTranscribedText(text: string): void
   /** Show the live (uncommitted) dictation hypothesis as a caret ghost; empty string clears it. */
   setDictationInterim(text: string): void
+  /**
+   * Insert a polished dictation chunk and start tracking its range so it can
+   * later be swapped (Show original / Show polished) or locked when the user
+   * edits inside it.
+   */
+  insertDictationChunk(args: { chunkId: string; text: string }): void
+  /**
+   * Swap a tracked chunk's text in place. Returns true if the swap happened,
+   * false if the chunk was missing or the user edited inside it (the chunk is
+   * locked in that case and the swap is skipped).
+   */
+  replaceDictationChunkText(args: { chunkId: string; newText: string; expectedText: string }): boolean
+  /** Drop tracking for a single chunk (leaves its text in the doc). */
+  lockDictationChunk(args: { chunkId: string }): void
+  /** Drop tracking for every chunk. */
+  lockAllDictationChunks(): void
   /** Access the TipTap editor instance for external toolbar rendering */
   getEditor(): import("@tiptap/react").Editor | null
 }
@@ -816,6 +832,35 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     [editor]
   )
 
+  const insertDictationChunk = useCallback(
+    ({ chunkId, text }: { chunkId: string; text: string }) => {
+      if (!editor || editor.isDestroyed || !text) return
+      editor.chain().focus().insertDictationChunk({ chunkId, text }).run()
+    },
+    [editor]
+  )
+
+  const replaceDictationChunkText = useCallback(
+    ({ chunkId, newText, expectedText }: { chunkId: string; newText: string; expectedText: string }) => {
+      if (!editor || editor.isDestroyed) return false
+      return editor.chain().replaceDictationChunkText({ chunkId, newText, expectedText }).run()
+    },
+    [editor]
+  )
+
+  const lockDictationChunk = useCallback(
+    ({ chunkId }: { chunkId: string }) => {
+      if (!editor || editor.isDestroyed) return
+      editor.chain().lockDictationChunk({ chunkId }).run()
+    },
+    [editor]
+  )
+
+  const lockAllDictationChunks = useCallback(() => {
+    if (!editor || editor.isDestroyed) return
+    editor.chain().lockAllDictationChunks().run()
+  }, [editor])
+
   // Expose imperative handle for parent to trigger insert actions
   useImperativeHandle(
     ref,
@@ -827,6 +872,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertEmoji: handleEmojiClick,
       insertTranscribedText,
       setDictationInterim,
+      insertDictationChunk,
+      replaceDictationChunkText,
+      lockDictationChunk,
+      lockAllDictationChunks,
       getEditor: () => editor,
     }),
     [
@@ -837,6 +886,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       handleEmojiClick,
       insertTranscribedText,
       setDictationInterim,
+      insertDictationChunk,
+      replaceDictationChunkText,
+      lockDictationChunk,
+      lockAllDictationChunks,
       editor,
     ]
   )
