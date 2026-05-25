@@ -33,6 +33,10 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
   return async ({ rawTranscript, level, workspaceId, userId, sessionId }) => {
     const trimmed = rawTranscript.trim()
     if (!trimmed) return rawTranscript
+    // Defense-in-depth: the gateway short-circuits before reaching here, but an
+    // explicit guard prevents a future caller from silently falling through to
+    // the "minor" branch (INV-11).
+    if (level === "none") return rawTranscript
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
 
