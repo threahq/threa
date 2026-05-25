@@ -223,17 +223,16 @@ describe("AttachmentList", () => {
       })
     })
 
-    it("should open PDF in new tab", async () => {
-      const attachment = createAttachment({ mimeType: "application/pdf" })
+    it("should open PDF in the media gallery instead of downloading it", async () => {
+      const user = userEvent.setup()
+      const attachment = createAttachment({ mimeType: "application/pdf", filename: "report.pdf" })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
-      const windowOpen = vi.spyOn(window, "open").mockImplementation(() => null)
-
-      const button = screen.getByRole("button")
-      fireEvent.click(button)
+      const button = screen.getByRole("button", { name: /report\.pdf/i })
+      await user.click(button)
 
       await waitFor(() => {
-        expect(windowOpen).toHaveBeenCalledWith("https://example.com/download", "_blank")
+        expect(screen.getByRole("dialog")).toBeInTheDocument()
       })
     })
   })

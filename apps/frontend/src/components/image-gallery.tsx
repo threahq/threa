@@ -29,6 +29,7 @@ import { ZoomableImage, type ZoomableImageHandle } from "@/components/gallery/zo
 import { ZoomControls } from "@/components/gallery/zoom-controls"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
+import { PdfViewer } from "@/components/gallery/pdf-viewer"
 import { fetchTextContent } from "@/components/gallery/use-text-content"
 
 export type GalleryItem =
@@ -36,12 +37,14 @@ export type GalleryItem =
   | { type: "video"; url: string; thumbnailUrl: string; filename: string; attachmentId: string }
   | { type: "markdown"; url: string; filename: string; attachmentId: string }
   | { type: "html"; url: string; filename: string; attachmentId: string }
+  | { type: "pdf"; url: string; filename: string; attachmentId: string }
 
 const GALLERY_TYPE_LABELS: Record<GalleryItem["type"], string> = {
   image: "Image",
   video: "Video",
   markdown: "Markdown document",
   html: "HTML document",
+  pdf: "PDF document",
 }
 
 // Sidebar thumbnails are 124px wide — long filenames (URLs, slugs with the
@@ -132,6 +135,16 @@ function GalleryMediaContent({
     }
     return <HtmlViewer url={current.url} filename={current.filename} rawMode={rawMode} />
   }
+  if (current.type === "pdf") {
+    if (!isActive) {
+      return (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <FileText className="h-10 w-10 text-white/30" />
+        </div>
+      )
+    }
+    return <PdfViewer url={current.url} filename={current.filename} />
+  }
   if (current.type === "video") {
     // Non-active video slides show poster so the <video> element doesn't load
     if (!isActive) {
@@ -221,8 +234,8 @@ function GalleryMediaContent({
 }
 
 function GalleryThumbnailContent({ item }: { item: GalleryItem }) {
-  if (item.type === "markdown" || item.type === "html") {
-    const Icon = item.type === "markdown" ? FileText : Globe
+  if (item.type === "markdown" || item.type === "html" || item.type === "pdf") {
+    const Icon = item.type === "html" ? Globe : FileText
     return (
       <div className="w-full h-20 min-w-0 flex flex-col items-center justify-center gap-1 bg-white/5 px-1">
         <Icon className="h-5 w-5 text-white/60" />
