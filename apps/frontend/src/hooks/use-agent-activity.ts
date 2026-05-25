@@ -219,9 +219,9 @@ export function useAgentActivity(events: StreamEvent[], socket: Socket | null): 
       result.set(session.triggerMessageId, {
         sessionId,
         personaName: progress?.personaName ?? session.personaName,
-        currentStepType: progress?.currentStepType ?? session.currentStepType,
-        stepCount: progress?.stepCount ?? session.stepCount,
-        messageCount: progress?.messageCount ?? session.messageCount,
+        currentStepType: progress ? progress.currentStepType : session.currentStepType,
+        stepCount: progress ? progress.stepCount : session.stepCount,
+        messageCount: progress ? progress.messageCount : session.messageCount,
         substep: progress?.substep ?? null,
         threadStreamId: progress?.threadStreamId,
       })
