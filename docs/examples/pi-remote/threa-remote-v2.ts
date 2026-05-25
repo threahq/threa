@@ -14,6 +14,7 @@ const STATUS_KEY = "threa-remote"
 const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
+const BUSY_HEARTBEAT_MS = 15_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const PI_TOOL_TRACE_SECTION_LABELS = {
@@ -32,8 +33,10 @@ type Config = {
   pollMs?: number
   instanceId?: string
   defaultDisplayName?: string
+  /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
+  /** Legacy global cursors; migrated to per-session link state on write. */
   streamCursors?: Record<string, string>
 }
 
@@ -43,7 +46,12 @@ type RuntimeSessionLink = {
   activeStreamId: string
   runtimeSessionId: string
   streamUrlPath: string
+  enabled?: boolean
+  debugPolling?: boolean
+  streamCursors?: Record<string, string>
 }
+
+type ConfigPatch = Pick<Config, "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName">
 
 type ClaimedInvocation = {
   id: string
@@ -78,17 +86,30 @@ interface UploadedAttachment {
   sizeBytes: number
 }
 
+interface BotPrincipal {
+  kind: "bot"
+  workspaceId: string
+  botId: string
+  botType: string
+  traits: string[]
+  ownerUserId: string
+}
+
 let config: Config | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
 let pollInFlightRunId: number | undefined
 let pending: ClaimedInvocation | undefined
+let steeredInvocations: Array<{ invocation: ClaimedInvocation; cursor?: string }> = []
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
 let pendingToolCalls = new Map<string, { headline: string }>()
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 let consecutivePollFailures = 0
 let lastPollFailureSummary: string | undefined
+let lastBusyHeartbeatAt = 0
+let lastPollDebugSummary: string | undefined
 let pollingRunId = 0
+let fallbackRuntimeSessionId: string | undefined
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -104,23 +125,48 @@ function validateConfig(value: unknown): Config | undefined {
     console.error(`Invalid ${CONFIG_PATH}: missing or invalid ${invalidFields.join(", ")}`)
     return undefined
   }
-  return candidate as Config
+  return migrateSessionState(candidate as Config)
 }
 
-function readConfig(): Config | undefined {
+function readStoredConfig(): Partial<Config> | undefined {
   if (!existsSync(CONFIG_PATH)) return undefined
   try {
-    return validateConfig(JSON.parse(readFileSync(CONFIG_PATH, "utf8")))
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as unknown
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Partial<Config>) : undefined
   } catch (error) {
     console.error(`Failed to parse ${CONFIG_PATH}: ${String(error)}`)
     return undefined
   }
 }
 
+function migrateSessionState(candidate: Config): Config {
+  if (!candidate.linkedSessions || typeof candidate.linkedSessions !== "object") return candidate
+  for (const [sessionId, link] of Object.entries(candidate.linkedSessions)) {
+    if (!link || typeof link !== "object") {
+      delete candidate.linkedSessions[sessionId]
+      continue
+    }
+    link.enabled ??= candidate.enabled ?? true
+    if (!link.streamCursors && candidate.streamCursors) {
+      const cursor = candidate.streamCursors[link.activeStreamId] ?? candidate.streamCursors[link.rootStreamId]
+      if (cursor) link.streamCursors = { [link.activeStreamId]: cursor }
+    }
+  }
+  return candidate
+}
+
+function readConfig(): Config | undefined {
+  const stored = readStoredConfig()
+  return stored ? validateConfig(stored) : undefined
+}
+
 function saveConfig(): void {
   if (!config) return
+  const persisted: Config = { ...config }
+  delete persisted.enabled
+  delete persisted.streamCursors
   mkdirSync(dirname(CONFIG_PATH), { recursive: true })
-  writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`)
+  writeFileSync(CONFIG_PATH, `${JSON.stringify(persisted, null, 2)}\n`)
 }
 
 function ensureInstanceId(): string {
@@ -129,6 +175,48 @@ function ensureInstanceId(): string {
   config.instanceId = `pi-${hostname()}-${crypto.randomUUID().slice(0, 8)}`
   saveConfig()
   return config.instanceId
+}
+
+function getRuntimeSessionId(ctx: ExtensionContext): string {
+  const sessionId = ctx.sessionManager.getSessionId()
+  if (sessionId) return sessionId
+  fallbackRuntimeSessionId ??= `pi-session-${Date.now()}`
+  return fallbackRuntimeSessionId
+}
+
+function getCurrentSessionLink(ctx: ExtensionContext): RuntimeSessionLink | undefined {
+  if (!config?.linkedSessions) return undefined
+  return config.linkedSessions[getRuntimeSessionId(ctx)]
+}
+
+function setCurrentSessionEnabled(ctx: ExtensionContext, enabled: boolean): RuntimeSessionLink | undefined {
+  const link = getCurrentSessionLink(ctx)
+  if (!link) return undefined
+  link.enabled = enabled
+  saveConfig()
+  return link
+}
+
+function isCurrentSessionEnabled(ctx: ExtensionContext): boolean {
+  return getCurrentSessionLink(ctx)?.enabled === true
+}
+
+function isPollDebugEnabled(ctx: ExtensionContext): boolean {
+  return getCurrentSessionLink(ctx)?.debugPolling === true
+}
+
+function setPollDebug(ctx: ExtensionContext, enabled: boolean): boolean {
+  const link = getCurrentSessionLink(ctx)
+  if (!link) return false
+  link.debugPolling = enabled
+  saveConfig()
+  return true
+}
+
+function emitPollDebug(ctx: ExtensionContext, summary: string): void {
+  lastPollDebugSummary = `${new Date().toISOString()} ${summary}`
+  if (!isPollDebugEnabled(ctx)) return
+  ctx.ui.notify(`Threa remote poll: ${summary}`, "info")
 }
 
 function setRemoteStatus(ctx: ExtensionContext, text: string, tone: "muted" | "error" = "muted"): void {
@@ -193,26 +281,44 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
   })
 }
 
+async function heartbeatBusyIfStale(statusText = "Working…"): Promise<boolean> {
+  const now = Date.now()
+  if (now - lastBusyHeartbeatAt < BUSY_HEARTBEAT_MS) return false
+  lastBusyHeartbeatAt = now
+  await heartbeat("busy", statusText)
+  return true
+}
+
 function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
   const trimmed = text.trim()
   if (trimmed.length <= max) return trimmed
   return `${trimmed.slice(0, max)}\n\n…[trace content truncated; ${trimmed.length - max} more characters]`
 }
 
-async function recordTraceStep(stepType: string, content: string, statusText?: string): Promise<void> {
-  if (!config || !pending) return
+async function recordInvocationTraceStep(
+  invocation: ClaimedInvocation,
+  stepType: string,
+  content: string,
+  statusText?: string
+): Promise<void> {
+  if (!config) return
   const trimmed = truncateForTrace(content)
   if (!trimmed) return
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${pending.id}/steps`, {
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/steps`, {
     method: "POST",
     body: JSON.stringify({
       instanceId: ensureInstanceId(),
-      claimToken: pending.claimToken,
+      claimToken: invocation.claimToken,
       stepType,
       content: trimmed,
       statusText: statusText?.trim().slice(0, 160),
     }),
   }).catch(() => undefined)
+}
+
+async function recordTraceStep(stepType: string, content: string, statusText?: string): Promise<void> {
+  if (!pending) return
+  await recordInvocationTraceStep(pending, stepType, content, statusText)
 }
 
 async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
@@ -424,7 +530,7 @@ function formatInvocationTrace(invocation: ClaimedInvocation, context: string): 
 
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
-  const runtimeSessionId = ctx.sessionManager.getSessionId() ?? `pi-session-${Date.now()}`
+  const runtimeSessionId = getRuntimeSessionId(ctx)
   const displayName = args.trim() || config.defaultDisplayName || ctx.cwd.split("/").pop() || "Pi"
 
   const body = await request<{ data: RuntimeSessionLink }>(
@@ -441,8 +547,15 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
     }
   )
 
+  const existing = config.linkedSessions?.[runtimeSessionId]
+  const legacyCursor =
+    config.streamCursors?.[body.data.activeStreamId] ?? config.streamCursors?.[body.data.rootStreamId]
   config.linkedSessions ??= {}
-  config.linkedSessions[runtimeSessionId] = body.data
+  config.linkedSessions[runtimeSessionId] = {
+    ...body.data,
+    enabled: true,
+    streamCursors: existing?.streamCursors ?? (legacyCursor ? { [body.data.activeStreamId]: legacyCursor } : undefined),
+  }
   saveConfig()
 
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
@@ -466,8 +579,8 @@ async function renewPendingClaim(): Promise<void> {
   pending.claimExpiresAt = body.data.claimExpiresAt
 }
 
-function isEnabled(): boolean {
-  return config?.enabled !== false
+function isEnabled(ctx: ExtensionContext): boolean {
+  return isCurrentSessionEnabled(ctx)
 }
 
 function stopPolling(): void {
@@ -503,24 +616,96 @@ function notePollFailure(ctx: ExtensionContext, error: unknown): void {
   }
 }
 
+function configTemplate(existing: Partial<Config> | undefined): string {
+  return JSON.stringify(
+    {
+      baseUrl: existing?.baseUrl ?? "https://app.threa.io",
+      workspaceId: existing?.workspaceId ?? "",
+      apiKey: existing?.apiKey ?? "",
+      pollMs: existing?.pollMs ?? 3000,
+      defaultDisplayName: existing?.defaultDisplayName ?? "Local Pi",
+    },
+    null,
+    2
+  )
+}
+
+function parseConfigPatch(text: string): ConfigPatch {
+  const parsed = JSON.parse(text) as unknown
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Expected a JSON object")
+  }
+  const candidate = parsed as Partial<ConfigPatch>
+  for (const field of ["baseUrl", "workspaceId", "apiKey"] as const) {
+    if (typeof candidate[field] !== "string" || candidate[field].trim().length === 0) {
+      throw new Error(`Missing required config field: ${field}`)
+    }
+  }
+  if (candidate.pollMs !== undefined && (typeof candidate.pollMs !== "number" || !Number.isFinite(candidate.pollMs))) {
+    throw new Error("pollMs must be a number")
+  }
+  if (candidate.defaultDisplayName !== undefined && typeof candidate.defaultDisplayName !== "string") {
+    throw new Error("defaultDisplayName must be a string")
+  }
+  const { baseUrl, workspaceId, apiKey } = candidate as ConfigPatch
+  return {
+    baseUrl: baseUrl.trim(),
+    workspaceId: workspaceId.trim(),
+    apiKey: apiKey.trim(),
+    pollMs: candidate.pollMs,
+    defaultDisplayName: candidate.defaultDisplayName?.trim() || undefined,
+  }
+}
+
+async function configureRemote(ctx: ExtensionCommandContext, args: string): Promise<void> {
+  const existing = readStoredConfig()
+  const input = args.trim() || (await ctx.ui.editor("Threa remote config", configTemplate(existing)))
+  if (!input) return
+  const patch = parseConfigPatch(input)
+  const next = validateConfig({ ...existing, ...patch })
+  if (!next) throw new Error(`Invalid ${CONFIG_PATH}`)
+  config = next
+  saveConfig()
+  ctx.ui.notify(`Saved Threa remote config to ${CONFIG_PATH}`, "info")
+}
+
+async function fetchBotPrincipal(): Promise<BotPrincipal | null> {
+  if (!config) return null
+  const body = await request<{ data: BotPrincipal | { kind: string } }>(`/api/v1/workspaces/${config.workspaceId}/me`)
+  return body.data.kind === "bot" ? (body.data as BotPrincipal) : null
+}
+
+function botTraitDiagnostics(principal: BotPrincipal | null): string[] {
+  if (!principal) return ["bot=<not a bot key>"]
+  const missing = ["active-scratchpad", "mentionable"].filter((trait) => !principal.traits.includes(trait))
+  return [
+    `bot=${principal.botId}`,
+    `botTraits=${principal.traits.length > 0 ? principal.traits.join(",") : "<none>"}`,
+    ...(missing.length > 0 ? [`missingTraits=${missing.join(",")}`] : []),
+  ]
+}
+
 async function disableRemote(ctx: ExtensionContext): Promise<void> {
   if (!config) return
-  config.enabled = false
-  saveConfig()
+  const link = setCurrentSessionEnabled(ctx, false)
   stopPolling()
   await failPending("Threa remote disabled")
   await heartbeat("offline").catch(() => undefined)
   setRemoteStatus(ctx, "Threa remote: off")
-  ctx.ui.notify("Threa remote disabled", "info")
+  ctx.ui.notify(link ? "Threa remote disabled for this Pi session" : "No Threa remote session is linked here", "info")
 }
 
 async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<void> {
   if (!config) return
-  config.enabled = true
-  saveConfig()
+  const link = setCurrentSessionEnabled(ctx, true)
+  if (!link) {
+    ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
+    return
+  }
+  lastBusyHeartbeatAt = 0
   await heartbeat("available")
   startPolling(pi, ctx)
-  ctx.ui.notify("Threa remote enabled", "info")
+  ctx.ui.notify("Threa remote enabled for this Pi session", "info")
 }
 
 function formatInvocationContext(
@@ -590,10 +775,11 @@ async function downloadContextAttachments(
 
 async function fetchInvocationContext(
   invocation: ClaimedInvocation,
-  cwd: string
+  cwd: string,
+  sessionLink: RuntimeSessionLink | undefined
 ): Promise<{ context: string; cursor?: string }> {
   if (!config) return { context: "" }
-  const cursor = config.streamCursors?.[invocation.activeStreamId]
+  const cursor = sessionLink?.streamCursors?.[invocation.activeStreamId]
   const query = cursor ? `after=${encodeURIComponent(cursor)}&limit=50` : "limit=12"
   const body = await request<{ data: StreamMessage[] }>(
     `/api/v1/workspaces/${config.workspaceId}/streams/${invocation.activeStreamId}/messages?${query}`
@@ -617,52 +803,97 @@ async function fetchInvocationContext(
   }
 }
 
-async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
-  if (!config || !isEnabled()) return false
-  if (pending) {
-    await renewPendingClaim()
-    return true
+async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvocation | null> {
+  if (!config) return null
+  const startedAt = Date.now()
+  try {
+    const body = await request<{ data: ClaimedInvocation | null }>(
+      `/api/v1/workspaces/${config.workspaceId}/bot-invocations/claim`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          runtimeKind: "pi-local",
+          instanceId: ensureInstanceId(),
+          supportedCapabilities: ["active-scratchpad", "mentionable"],
+          claimTtlSeconds: 120,
+        }),
+      }
+    )
+    emitPollDebug(
+      ctx,
+      body.data
+        ? `claimed ${body.data.id} in ${Date.now() - startedAt}ms`
+        : `no invocation in ${Date.now() - startedAt}ms`
+    )
+    return body.data
+  } catch (error) {
+    emitPollDebug(ctx, `failed after ${Date.now() - startedAt}ms: ${summarizeError(error)}`)
+    throw error
   }
-  if (!ctx.isIdle()) return false
-  // /claim doubles as the per-tick heartbeat on the server: it refreshes
-  // presence as "available" before looking for work and as "busy" if a claim
-  // lands. Saves a round trip per poll versus calling /presence separately.
-  const body = await request<{ data: ClaimedInvocation | null }>(
-    `/api/v1/workspaces/${config.workspaceId}/bot-invocations/claim`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        runtimeKind: "pi-local",
-        instanceId: ensureInstanceId(),
-        supportedCapabilities: ["active-scratchpad", "mentionable"],
-        claimTtlSeconds: 120,
-      }),
+}
+
+async function buildInvocationPrompt(
+  invocation: ClaimedInvocation,
+  ctx: ExtensionContext
+): Promise<{ prompt: string; cursor?: string; context: string }> {
+  const { context, cursor } = await fetchInvocationContext(invocation, ctx.cwd, getCurrentSessionLink(ctx)).catch(
+    (error): { context: string; cursor?: string } => {
+      ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
+      return { context: "" }
     }
   )
-
-  if (!body.data) return true
-  pending = body.data
-  pendingAssistantTexts = []
-  pendingToolCalls = new Map()
-  lastTraceHeartbeat = undefined
-  const { context, cursor } = await fetchInvocationContext(body.data, ctx.cwd).catch((error) => {
-    ctx.ui.notify(`Threa remote context fetch failed: ${summarizeError(error)}`, "warning")
-    return { context: "" }
-  })
-  pendingContextCursor = cursor
-  await recordTraceStep("context_received", formatInvocationTrace(body.data, context), "Loaded context…")
-  setRemoteStatus(ctx, `Threa remote: running ${body.data.id}`)
-  pi.sendUserMessage(
-    [
-      `Remote Threa invocation ${body.data.id}.`,
-      `Source message: ${body.data.sourceMessageId}`,
+  return {
+    context,
+    cursor,
+    prompt: [
+      `Remote Threa invocation ${invocation.id}.`,
+      `Source message: ${invocation.sourceMessageId}`,
       "Respond normally; the extension will post your final answer back to Threa.",
       "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
-      body.data.promptMarkdown,
-    ].join("\n")
-  )
+      invocation.promptMarkdown,
+    ].join("\n"),
+  }
+}
+
+async function injectInvocation(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  invocation: ClaimedInvocation,
+  steer: boolean
+): Promise<void> {
+  const { prompt, cursor, context } = await buildInvocationPrompt(invocation, ctx)
+  if (!pending) {
+    pending = invocation
+    pendingContextCursor = cursor
+    pendingAssistantTexts = []
+    pendingToolCalls = new Map()
+    lastTraceHeartbeat = undefined
+    await recordTraceStep("context_received", formatInvocationTrace(invocation, context), "Loaded context…")
+  } else {
+    steeredInvocations.push({ invocation, cursor })
+    await recordInvocationTraceStep(
+      invocation,
+      "context_received",
+      formatInvocationTrace(invocation, context),
+      "Loaded context…"
+    )
+  }
+  setRemoteStatus(ctx, `Threa remote: running ${pending.id}`)
+  pi.sendUserMessage(prompt, steer ? { deliverAs: "steer" } : undefined)
+}
+
+async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
+  if (!config || !isEnabled(ctx)) return false
+  if (pending) await renewPendingClaim()
+
+  const steer = pending !== undefined || !ctx.isIdle()
+  if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…")
+
+  const invocation = await claimNextInvocation(ctx)
+  if (!invocation) return true
+  await injectInvocation(pi, ctx, invocation, steer)
   return true
 }
 
@@ -694,7 +925,7 @@ function textFromAgentMessages(messages: unknown): string {
 }
 
 function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
-  if (!isEnabled()) return
+  if (!isEnabled(ctx)) return
   stopPolling()
   const runId = ++pollingRunId
   const poll = async () => {
@@ -719,10 +950,12 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
   void poll()
 }
 
-function advanceStreamCursor(invocation: ClaimedInvocation): void {
-  if (!config || !pendingContextCursor) return
-  config.streamCursors ??= {}
-  config.streamCursors[invocation.activeStreamId] = pendingContextCursor
+function advanceStreamCursor(invocation: ClaimedInvocation, ctx: ExtensionContext, cursor?: string): void {
+  if (!config || !cursor) return
+  const link = getCurrentSessionLink(ctx)
+  if (!link) return
+  link.streamCursors ??= {}
+  link.streamCursors[invocation.activeStreamId] = cursor
   saveConfig()
 }
 
@@ -802,10 +1035,41 @@ async function prepareFinalMarkdown(
   }
 }
 
-async function completePending(markdown: string, cwd: string): Promise<void> {
+async function completeInvocationNoResponse(invocation: ClaimedInvocation): Promise<void> {
+  if (!config) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      claimToken: invocation.claimToken,
+      noResponse: true,
+      metadata: {
+        "pi.remote.invocationId": invocation.id,
+        "pi.remote.instanceId": ensureInstanceId(),
+        "pi.remote.noResponse": "true",
+        "pi.remote.steered": "true",
+      },
+    }),
+  }).catch(() => undefined)
+}
+
+async function failInvocation(invocation: ClaimedInvocation, error: unknown): Promise<void> {
+  if (!config) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      claimToken: invocation.claimToken,
+      errorMessage: String(error).slice(0, 1000),
+    }),
+  }).catch(() => undefined)
+}
+
+async function completePending(markdown: string, ctx: ExtensionContext): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
-  const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, cwd)
+  const steered = steeredInvocations
+  const { finalMarkdown, uploadedAttachments } = await prepareFinalMarkdown(markdown, ctx.cwd)
   const noResponse = finalMarkdown === NO_RESPONSE_MARKER
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
@@ -823,31 +1087,32 @@ async function completePending(markdown: string, cwd: string): Promise<void> {
       },
     }),
   })
-  advanceStreamCursor(invocation)
+  await Promise.all(steered.map((item) => completeInvocationNoResponse(item.invocation)))
+  advanceStreamCursor(invocation, ctx, pendingContextCursor)
+  for (const item of steered) advanceStreamCursor(item.invocation, ctx, item.cursor)
   pending = undefined
+  steeredInvocations = []
   pendingContextCursor = undefined
   pendingAssistantTexts = []
   pendingToolCalls = new Map()
   lastTraceHeartbeat = undefined
+  lastBusyHeartbeatAt = 0
   await heartbeat("available")
 }
 
 async function failPending(error: unknown): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
+  const steered = steeredInvocations
+  await failInvocation(invocation, error)
+  await Promise.all(steered.map((item) => failInvocation(item.invocation, error)))
   pending = undefined
+  steeredInvocations = []
   pendingContextCursor = undefined
   pendingAssistantTexts = []
   pendingToolCalls = new Map()
   lastTraceHeartbeat = undefined
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/fail`, {
-    method: "POST",
-    body: JSON.stringify({
-      instanceId: ensureInstanceId(),
-      claimToken: invocation.claimToken,
-      errorMessage: String(error).slice(0, 1000),
-    }),
-  }).catch(() => undefined)
+  lastBusyHeartbeatAt = 0
   await heartbeat("available").catch(() => undefined)
 }
 
@@ -855,6 +1120,8 @@ export const __testing = {
   describeToolCall,
   formatToolCallTrace,
   formatToolResultTrace,
+  migrateSessionState,
+  parseConfigPatch,
   safeStatusText,
 }
 
@@ -862,12 +1129,20 @@ export default function (pi: ExtensionAPI): void {
   pi.registerCommand("remote-control", {
     description: "Create or link a Threa scratchpad to this Pi session",
     handler: async (args, ctx) => {
-      config = readConfig()
-      if (!config) {
-        ctx.ui.notify(`Missing ${CONFIG_PATH}`, "warning")
+      const trimmedArgs = args.trim()
+      const commandMatch = trimmedArgs.match(/^(\S+)(?:\s+([\s\S]*))?$/)
+      const command = commandMatch?.[1]?.toLowerCase() ?? ""
+      const commandArgs = commandMatch?.[2] ?? ""
+      if (command === "configure" || command === "config") {
+        await configureRemote(ctx, commandArgs)
         return
       }
-      const command = args.trim().toLowerCase()
+
+      config = readConfig()
+      if (!config) {
+        ctx.ui.notify(`Missing ${CONFIG_PATH}. Run /remote-control configure to paste setup JSON.`, "warning")
+        return
+      }
       if (command === "off" || command === "disable") {
         await disableRemote(ctx)
         return
@@ -876,12 +1151,44 @@ export default function (pi: ExtensionAPI): void {
         await enableRemote(pi, ctx)
         return
       }
-      if (command === "status") {
-        ctx.ui.notify(`Threa remote is ${isEnabled() ? "on" : "off"}${pending ? ` (${pending.id})` : ""}`, "info")
+      if (command === "debug-polls") {
+        const enabled = commandArgs.trim().toLowerCase() !== "off"
+        if (!setPollDebug(ctx, enabled)) {
+          ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
+          return
+        }
+        ctx.ui.notify(`Threa remote poll debug ${enabled ? "enabled" : "disabled"} for this Pi session`, "info")
         return
       }
-      config.enabled = true
-      await createRemoteSession(ctx, args)
+      if (command === "status" || command === "debug") {
+        const link = getCurrentSessionLink(ctx)
+        const state = link?.enabled === true ? "on" : "off"
+        const linked = link ? `linked to ${link.streamUrlPath}` : "not linked"
+        const principal = command === "debug" ? await fetchBotPrincipal().catch(() => null) : null
+        const details =
+          command === "debug" && config
+            ? [
+                `session=${getRuntimeSessionId(ctx)}`,
+                `instance=${config.instanceId ?? "<unset>"}`,
+                `workspace=${config.workspaceId}`,
+                `stream=${link?.activeStreamId ?? "<none>"}`,
+                ...botTraitDiagnostics(principal),
+                `debugPolling=${link?.debugPolling === true ? "on" : "off"}`,
+                `pending=${pending?.id ?? "<none>"}`,
+                `steered=${steeredInvocations.length}`,
+                `lastPoll=${lastPollDebugSummary ?? "<none>"}`,
+                `lastFailure=${lastPollFailureSummary ?? "<none>"}`,
+              ].join("\n")
+            : ""
+        ctx.ui.notify(
+          `Threa remote is ${state} for this Pi session (${linked})${pending ? `; running ${pending.id}` : ""}${
+            details ? `\n${details}` : ""
+          }`,
+          "info"
+        )
+        return
+      }
+      await createRemoteSession(ctx, trimmedArgs)
       startPolling(pi, ctx)
     },
   })
@@ -889,15 +1196,17 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     config = readConfig()
     if (!config) return
-    if (!isEnabled()) {
-      setRemoteStatus(ctx, "Threa remote: off")
+    if (!isEnabled(ctx)) {
+      setRemoteStatus(ctx, getCurrentSessionLink(ctx) ? "Threa remote: off" : "Threa remote: not linked")
       return
     }
+    lastBusyHeartbeatAt = 0
     await heartbeat("available")
     startPolling(pi, ctx)
   })
 
-  pi.on("agent_start", async () => {
+  pi.on("agent_start", async (_event, ctx) => {
+    if (config && isEnabled(ctx)) await heartbeatBusyIfStale("Thinking…").catch(() => undefined)
     await traceHeartbeat("Thinking…", "thinking")
   })
 
@@ -937,13 +1246,19 @@ export default function (pi: ExtensionAPI): void {
   })
 
   pi.on("agent_end", async (event, ctx) => {
-    if (!pending) return
+    if (!pending) {
+      if (config && isEnabled(ctx)) {
+        lastBusyHeartbeatAt = 0
+        await heartbeat("available").catch(() => undefined)
+      }
+      return
+    }
     try {
       const finalText =
         pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
       const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
       await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
-      await completePending(finalText, ctx.cwd)
+      await completePending(finalText, ctx)
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {
       ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")

@@ -316,6 +316,31 @@ export const BotRepository = {
     return mapRowToBot(result.rows[0])
   },
 
+  async addTraitsIfMissing(
+    db: Querier,
+    id: string,
+    workspaceId: string,
+    traits: readonly BotTrait[]
+  ): Promise<Bot | null> {
+    if (traits.length === 0) return null
+    for (const trait of traits) {
+      if (!KNOWN_BOT_TRAITS.has(trait)) {
+        throw new Error(`Bot addTraitsIfMissing: unknown trait "${trait}"`)
+      }
+    }
+    const result = await db.query<BotRow>(sql`
+      UPDATE bots
+      SET traits = ARRAY(SELECT DISTINCT trait FROM unnest(traits || ${traits}::text[]) AS trait ORDER BY trait),
+          updated_at = NOW()
+      WHERE id = ${id}
+        AND workspace_id = ${workspaceId}
+        AND archived_at IS NULL
+        AND NOT (traits @> ${traits}::text[])
+      RETURNING ${sql.raw(BOT_COLUMNS)}
+    `)
+    return result.rows[0] ? mapRowToBot(result.rows[0]) : null
+  },
+
   async updateAvatarUrl(db: Querier, id: string, workspaceId: string, avatarUrl: string | null): Promise<Bot | null> {
     const result = await db.query<BotRow>(sql`
       UPDATE bots

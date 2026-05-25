@@ -1,5 +1,5 @@
 import { api, API_BASE, parseApiError } from "./client"
-import type { Bot, BotApiKey, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threa/types"
+import type { Bot, BotApiKey, BotTrait, CreateBotApiKeyResponse, WorkspacePermissionSlug } from "@threa/types"
 
 export interface CreateBotInput {
   type?: "shared" | "personal"
@@ -7,6 +7,7 @@ export interface CreateBotInput {
   slug: string
   description?: string | null
   avatarEmoji?: string | null
+  traits?: BotTrait[]
 }
 
 export interface UpdateBotInput {
@@ -14,6 +15,7 @@ export interface UpdateBotInput {
   slug?: string
   description?: string | null
   avatarEmoji?: string | null
+  traits?: BotTrait[]
 }
 
 export interface CreateBotKeyInput {

@@ -701,6 +701,8 @@ export function createPublicApiHandlers({
         })
       }
 
+      const requiredRuntimeTraits = ["active-scratchpad"] as const
+
       const existingLink = await botRuntimeService.findActivePiRemoteSession({
         workspaceId: req.workspaceId!,
         botId: bot.id,
@@ -708,6 +710,13 @@ export function createPublicApiHandlers({
         runtimeSessionId: result.data.runtimeSessionId,
       })
       if (existingLink) {
+        await withTransaction(pool, (client) =>
+          botRuntimeService.repairBotTraitsInTransaction(client, {
+            workspaceId: req.workspaceId!,
+            botId: bot.id,
+            traits: requiredRuntimeTraits,
+          })
+        )
         return res.json({
           data: {
             linkId: existingLink.id,
@@ -725,15 +734,22 @@ export function createPublicApiHandlers({
         createdBy: bot.ownerUserId,
       })
       await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
-      const link = await botRuntimeService.createOrLinkPiRemoteSession({
-        workspaceId: req.workspaceId!,
-        botId: bot.id,
-        instanceId: result.data.instanceId,
-        runtimeSessionId: result.data.runtimeSessionId,
-        rootStreamId: stream.id,
-        activeStreamId: stream.id,
-        linkedBy: bot.ownerUserId,
-        metadata: { displayName: result.data.displayName, localCwd: result.data.localCwd ?? null },
+      const link = await withTransaction(pool, async (client) => {
+        await botRuntimeService.repairBotTraitsInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          traits: requiredRuntimeTraits,
+        })
+        return botRuntimeService.createOrLinkPiRemoteSessionInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          botId: bot.id,
+          instanceId: result.data.instanceId,
+          runtimeSessionId: result.data.runtimeSessionId,
+          rootStreamId: stream.id,
+          activeStreamId: stream.id,
+          linkedBy: bot.ownerUserId,
+          metadata: { displayName: result.data.displayName, localCwd: result.data.localCwd ?? null },
+        })
       })
 
       res.json({

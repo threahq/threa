@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { botsApi } from "@/api/bots"
+import type { BotTrait } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -22,6 +23,7 @@ import { ArrowLeft, Archive, ArchiveRestore, Upload, X } from "lucide-react"
 import { BotAvatar } from "./bot-avatar"
 import { BotKeysSection } from "./bot-keys-section"
 import { BotChannelsSection } from "./bot-channels-section"
+import { BotTraitsPicker } from "./bot-traits-picker"
 
 interface BotDetailProps {
   workspaceId: string
@@ -43,10 +45,11 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
   const [editName, setEditName] = useState("")
   const [editSlug, setEditSlug] = useState("")
   const [editDescription, setEditDescription] = useState("")
+  const [editTraits, setEditTraits] = useState<Set<BotTrait>>(() => new Set())
   const [archiveTarget, setArchiveTarget] = useState(false)
 
   const updateMutation = useMutation({
-    mutationFn: (data: { name?: string; slug?: string; description?: string | null }) =>
+    mutationFn: (data: { name?: string; slug?: string; description?: string | null; traits?: BotTrait[] }) =>
       botsApi.update(workspaceId, botId, data),
     onSuccess: () => {
       setEditing(false)
@@ -93,7 +96,17 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
     setEditName(bot.name)
     setEditSlug(bot.slug ?? "")
     setEditDescription(bot.description ?? "")
+    setEditTraits(new Set(bot.traits))
     setEditing(true)
+  }
+
+  const toggleEditTrait = (trait: BotTrait) => {
+    setEditTraits((current) => {
+      const next = new Set(current)
+      if (next.has(trait)) next.delete(trait)
+      else next.add(trait)
+      return next
+    })
   }
 
   const handleSave = () => {
@@ -102,6 +115,7 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
       name: editName.trim(),
       slug: editSlug.trim(),
       description: editDescription.trim() || null,
+      traits: Array.from(editTraits),
     })
   }
 
@@ -224,6 +238,7 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
               <Label className="text-xs text-muted-foreground">Description</Label>
               <Textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} />
             </div>
+            <BotTraitsPicker traits={editTraits} onToggle={toggleEditTrait} />
             <div className="flex items-center justify-between pt-1">
               <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
                 Cancel
@@ -250,6 +265,19 @@ export function BotDetail({ workspaceId, botId, onBack }: BotDetailProps) {
             </div>
             {bot.description && <p className="text-xs text-muted-foreground">{bot.description}</p>}
             {!bot.description && <p className="text-xs text-muted-foreground italic">No description</p>}
+            <div className="flex flex-wrap gap-1 pt-1">
+              {bot.traits.length > 0 ? (
+                bot.traits.map((trait) => (
+                  <Badge key={trait} variant="secondary" className="text-[11px] font-normal">
+                    {trait}
+                  </Badge>
+                ))
+              ) : (
+                <Badge variant="outline" className="text-[11px] font-normal text-muted-foreground">
+                  no capabilities
+                </Badge>
+              )}
+            </div>
           </div>
         )}
       </section>

@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
+import { WORKSPACE_PERMISSION_SCOPES, type BotTrait } from "@threa/types"
 import { botsApi, type CreateBotInput } from "@/api/bots"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -12,6 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Plus, BotIcon, ChevronRight, Globe, User } from "lucide-react"
 import { BotAvatar } from "./bot-avatar"
 import { BotDetail } from "./bot-detail"
+import { BotTraitsPicker } from "./bot-traits-picker"
 import { useCachedWorkspaceBootstrap, workspaceKeys } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { useWorkspaceBots } from "@/stores/workspace-store"
@@ -205,6 +206,7 @@ function CreateBotForm({ placeholder, isPending, error, onCancel, onCreate }: Cr
   const [name, setName] = useState("")
   const [slug, setSlug] = useState("")
   const [description, setDescription] = useState("")
+  const [traits, setTraits] = useState<Set<BotTrait>>(() => new Set())
   const [slugTouched, setSlugTouched] = useState(false)
 
   const handleNameChange = (value: string) => {
@@ -221,9 +223,23 @@ function CreateBotForm({ placeholder, isPending, error, onCancel, onCreate }: Cr
 
   const canSubmit = name.trim().length > 0 && slug.trim().length > 0 && !isPending
 
+  const toggleTrait = (trait: BotTrait) => {
+    setTraits((current) => {
+      const next = new Set(current)
+      if (next.has(trait)) next.delete(trait)
+      else next.add(trait)
+      return next
+    })
+  }
+
   const handleCreate = () => {
     if (!canSubmit) return
-    onCreate({ name: name.trim(), slug: slug.trim(), description: description.trim() || null })
+    onCreate({
+      name: name.trim(),
+      slug: slug.trim(),
+      description: description.trim() || null,
+      traits: Array.from(traits),
+    })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -276,6 +292,8 @@ function CreateBotForm({ placeholder, isPending, error, onCancel, onCreate }: Cr
           rows={2}
         />
       </div>
+
+      <BotTraitsPicker traits={traits} onToggle={toggleTrait} />
 
       <div className="flex items-center justify-between pt-1">
         <Button variant="ghost" size="sm" onClick={onCancel} disabled={isPending}>
