@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+import { useFloating, offset, flip, shift, autoUpdate } from "@floating-ui/react"
 import { Sparkles } from "lucide-react"
 import type { DictationChunkRecord } from "@/hooks/use-voice-dictation"
 import { cn } from "@/lib/utils"
@@ -9,14 +10,6 @@ interface DictationChunkInspectorProps {
   /** Flip the session-wide toggle. The popover stays open after a flip so the user can read the swapped text. */
   onToggle: () => void
 }
-
-interface AnchorState {
-  chunkId: string
-  rect: DOMRect
-}
-
-const POPOVER_WIDTH = 320
-const VIEWPORT_MARGIN = 8
 
 /**
  * Hover/tap inspector for the just-landed polished dictation chunk(s). The
@@ -29,18 +22,35 @@ const VIEWPORT_MARGIN = 8
  *   - Mouse: hover opens, leaving both the chunk and the popover closes.
  *   - Touch / click: tap the chunk to open, tap outside (or Escape) to close.
  *
- * The popover dismisses on scroll and on chunk removal (lock / new take) so it
- * can never anchor against a stale or invisible target. Rendered via a portal
- * so it can escape clipping ancestors in the composer chrome.
+ * Positioning uses `@floating-ui/react` (same stack as the editor's other
+ * floating UIs): `useFloating` + `offset` / `flip` / `shift` keep the popover
+ * on-screen across narrow viewports, and `autoUpdate` re-positions if the
+ * anchor moves (scroll, resize, editor reflow). The anchor is the live
+ * `data-chunk-id` element, so we don't cache a stale DOMRect across edits.
+ * Rendered via a portal so it can escape clipping ancestors in the composer
+ * chrome.
  */
 export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInspectorProps) {
-  const [anchor, setAnchor] = useState<AnchorState | null>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
+  const [anchor, setAnchor] = useState<{ chunkId: string; el: HTMLElement } | null>(null)
   // Keep the live chunks map accessible inside listener callbacks without
   // re-binding all the document listeners on every chunks-map identity change
   // (the map gets a new identity on every polish swap).
   const chunksRef = useRef(chunks)
   chunksRef.current = chunks
+
+  const { refs, floatingStyles } = useFloating({
+    placement: "top",
+    middleware: [offset(8), flip(), shift({ padding: 8 })],
+    whileElementsMounted: autoUpdate,
+    open: anchor !== null,
+  })
+
+  // Track the anchor element so floating-ui can recompute as it moves. When
+  // the anchor clears we drop the reference too so the floating element
+  // doesn't keep recomputing against a stale node.
+  useEffect(() => {
+    refs.setReference(anchor?.el ?? null)
+  }, [anchor, refs])
 
   // Drop the anchor when the underlying chunk goes away (got locked, or a new
   // take cleared the map). Without this the popover would point at empty
@@ -51,15 +61,19 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
     if (!record || record.locked) setAnchor(null)
   }, [chunks, anchor])
 
+  const isInsidePopover = useCallback(
+    (node: Node | null): boolean => {
+      const popover = refs.floating.current
+      return !!node && (popover?.contains(node) ?? false)
+    },
+    [refs.floating]
+  )
+
   useEffect(() => {
     function findChunkElement(target: EventTarget | null): HTMLElement | null {
       if (!(target instanceof Element)) return null
       const el = target.closest("[data-chunk-id]")
       return el instanceof HTMLElement ? el : null
-    }
-
-    function isInsidePopover(node: Node | null): boolean {
-      return !!node && (popoverRef.current?.contains(node) ?? false)
     }
 
     function onPointerOver(e: PointerEvent) {
@@ -72,7 +86,7 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
       if (!chunkId) return
       const record = chunksRef.current.get(chunkId)
       if (!record || record.locked) return
-      setAnchor({ chunkId, rect: el.getBoundingClientRect() })
+      setAnchor({ chunkId, el })
     }
 
     function onPointerOut(e: PointerEvent) {
@@ -96,7 +110,7 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
         if (!record || record.locked) return
         // Tapping the same chunk toggles closed; tapping a different one
         // re-anchors to it.
-        setAnchor((prev) => (prev?.chunkId === chunkId ? null : { chunkId, rect: el.getBoundingClientRect() }))
+        setAnchor((prev) => (prev?.chunkId === chunkId ? null : { chunkId, el }))
         return
       }
       setAnchor(null)
@@ -106,35 +120,21 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
       if (e.key === "Escape") setAnchor(null)
     }
 
-    function onScroll() {
-      setAnchor(null)
-    }
-
     document.addEventListener("pointerover", onPointerOver)
     document.addEventListener("pointerout", onPointerOut)
     document.addEventListener("click", onClick)
     document.addEventListener("keydown", onKey)
-    // Capture so we catch scrolls inside any composer/editor scroll container.
-    window.addEventListener("scroll", onScroll, true)
     return () => {
       document.removeEventListener("pointerover", onPointerOver)
       document.removeEventListener("pointerout", onPointerOut)
       document.removeEventListener("click", onClick)
       document.removeEventListener("keydown", onKey)
-      window.removeEventListener("scroll", onScroll, true)
     }
-  }, [])
+  }, [isInsidePopover])
 
   if (typeof document === "undefined" || !anchor) return null
   const record = chunks.get(anchor.chunkId)
   if (!record || record.locked) return null
-
-  // Position above the chunk, centered, clamped to the viewport so the popover
-  // never spills past the edge on narrow screens.
-  const centerX = anchor.rect.left + anchor.rect.width / 2
-  const maxLeft = window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN
-  const left = Math.max(VIEWPORT_MARGIN, Math.min(maxLeft, centerX - POPOVER_WIDTH / 2))
-  const bottom = window.innerHeight - anchor.rect.top + VIEWPORT_MARGIN
 
   const polishedActive = record.currentlyShowing === "polished"
   const rawActive = record.currentlyShowing === "raw"
@@ -142,11 +142,11 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
 
   return createPortal(
     <div
-      ref={popoverRef}
+      ref={refs.setFloating}
       role="dialog"
       aria-label="Dictation polish comparison"
-      className="fixed z-50 rounded-md border bg-popover p-3 text-popover-foreground shadow-md text-xs leading-relaxed animate-in fade-in-0 zoom-in-95 duration-100"
-      style={{ left, bottom, width: POPOVER_WIDTH }}
+      className="z-50 w-80 max-w-[calc(100vw-1rem)] rounded-md border bg-popover p-3 text-popover-foreground shadow-md text-xs leading-relaxed animate-in fade-in-0 zoom-in-95 duration-100"
+      style={floatingStyles}
     >
       <div className="space-y-2.5">
         <section>

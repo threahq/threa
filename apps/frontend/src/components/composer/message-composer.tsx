@@ -509,6 +509,10 @@ export function MessageComposer({
     []
   )
   const lockAllDictationChunks = useCallback(() => richEditorRef.current?.lockAllDictationChunks(), [])
+  const getDictationChunkText = useCallback(
+    (chunkId: string) => richEditorRef.current?.getDictationChunkText(chunkId) ?? null,
+    []
+  )
   // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
   // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
   const micButton = workspaceId ? (
@@ -521,6 +525,7 @@ export function MessageComposer({
       onInsertPolishedChunk={insertPolishedDictationChunk}
       onChunkSwap={swapDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
+      onGetChunkText={getDictationChunkText}
       disabled={controlsDisabled}
     />
   ) : null
@@ -534,6 +539,7 @@ export function MessageComposer({
       onInsertPolishedChunk={insertPolishedDictationChunk}
       onChunkSwap={swapDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
+      onGetChunkText={getDictationChunkText}
       disabled={controlsDisabled}
       className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
     />

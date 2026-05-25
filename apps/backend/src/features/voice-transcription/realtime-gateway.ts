@@ -303,6 +303,10 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
               /* polishQueue swallows its own errors */
             })
             .then(() => {
+              // A concurrent voice:stop / disconnect may have finalized the
+              // session while we were draining. Skip the error emit so the
+              // client doesn't see a spurious error flash after a clean stop.
+              if (current.finalized) return
               socket.emit("voice:transcription:error", { voiceSessionId, ...e })
             })
         })

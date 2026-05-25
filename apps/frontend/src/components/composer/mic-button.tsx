@@ -68,6 +68,13 @@ interface MicButtonProps {
   onChunkSwap?: (args: { chunkId: string; newText: string; expectedText: string }) => boolean
   /** Drop tracking for every chunk (post-session lock, or starting a new take). */
   onLockAllChunks?: () => void
+  /**
+   * Read the live text currently inside a tracked chunk from the editor.
+   * The hook uses this to supply a true `expectedText` for swap calls — the
+   * editor is the source of truth (mapping accounts for adjacent user edits),
+   * so a parallel prediction in the hook drifts.
+   */
+  onGetChunkText?: (chunkId: string) => string | null
   disabled?: boolean
   className?: string
   language?: string
@@ -81,6 +88,7 @@ export function MicButton({
   onInsertPolishedChunk,
   onChunkSwap,
   onLockAllChunks,
+  onGetChunkText,
   disabled,
   className,
   language,
@@ -106,6 +114,7 @@ export function MicButton({
     onPolishedChunkInserted: onInsertPolishedChunk,
     onChunkSwap,
     onLockAllChunks,
+    onGetChunkText,
     language,
   })
 

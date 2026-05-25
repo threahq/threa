@@ -67,6 +67,14 @@ interface UseVoiceDictationOptions {
   onChunkSwap?: (args: { chunkId: string; newText: string; expectedText: string }) => boolean
   /** Drop tracking for all polished chunks (e.g. session-expired or new take starting). */
   onLockAllChunks?: () => void
+  /**
+   * Read the live text currently inside a tracked chunk straight from the
+   * editor. The editor's decoration is the source of truth — when the user
+   * edits text adjacent to the chunk, ProseMirror's mapping updates the
+   * tracked range, and we want the actual mapped text rather than a
+   * parallel prediction. Returns null when the chunkId isn't tracked.
+   */
+  onGetChunkText?: (chunkId: string) => string | null
   language?: string
 }
 
@@ -181,7 +189,15 @@ const POST_SESSION_LOCK_MS = 8_000
  * expires or the user edits inside a chunk, at which point that chunk locks.
  */
 export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDictationResult {
-  const { workspaceId, onCommittedText, onPolishedChunkInserted, onChunkSwap, onLockAllChunks, language } = options
+  const {
+    workspaceId,
+    onCommittedText,
+    onPolishedChunkInserted,
+    onChunkSwap,
+    onLockAllChunks,
+    onGetChunkText,
+    language,
+  } = options
   const [state, setState] = useState<VoiceDictationState>("idle")
   const [error, setError] = useState<string | null>(null)
   const [interimText, setInterimText] = useState("")
@@ -220,6 +236,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   onChunkSwapRef.current = onChunkSwap
   const onLockAllChunksRef = useRef(onLockAllChunks)
   onLockAllChunksRef.current = onLockAllChunks
+  const onGetChunkTextRef = useRef(onGetChunkText)
+  onGetChunkTextRef.current = onGetChunkText
   // Read by the socket handler at insert time so the chunk lands in whichever
   // mode the toggle currently shows (the toggle can be flipped mid-session).
   const showOriginalRef = useRef(showOriginal)
@@ -227,11 +245,6 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // Post-session lock window: a single timer expires the whole session at once,
   // dropping editor-side tracking and clearing chunks state so the toggle hides.
   const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // The text currently sitting inside the session's tracked chunk. We mirror
-  // the editor's own append+space rule here so we can supply `expectedText`
-  // to swap calls without re-querying the editor each time — the editor uses
-  // expectedText to detect user edits inside the chunk and lock it.
-  const expectedChunkTextRef = useRef<string>("")
   // The session-wide chunkId for the active take, set on the first final
   // delta the backend tags. Reset when a new take starts.
   const sessionChunkIdRef = useRef<string | null>(null)
@@ -337,7 +350,6 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     setChunks((prev) => (prev.size === 0 ? prev : new Map()))
     setShowOriginalState(false)
     sessionChunkIdRef.current = null
-    expectedChunkTextRef.current = ""
   }, [])
 
   const fail = useCallback(
@@ -437,20 +449,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // a chunkId, it's a plain commit (polish off, or an empty/
           // terminating final).
           if (delta.chunkId && delta.text) {
-            // Mirror the editor extension's prefix rule so expectedChunkText
-            // stays in sync with what `state.doc.textBetween` would see:
-            // for an extension, a single space is inserted when the chunk's
-            // last char is non-whitespace, and absorbed INTO the chunk.
-            const prev = expectedChunkTextRef.current
-            const isFirst = !sessionChunkIdRef.current
-            if (isFirst) {
-              sessionChunkIdRef.current = delta.chunkId
-              expectedChunkTextRef.current = delta.text
-            } else if (/\s$/.test(prev)) {
-              expectedChunkTextRef.current = prev + delta.text
-            } else {
-              expectedChunkTextRef.current = prev + " " + delta.text
-            }
+            // First final of the take latches the session-wide chunkId.
+            // Subsequent finals extend the same tracked range in the editor;
+            // we no longer predict the chunk's text here — the editor's
+            // decoration is the source of truth and we read it via
+            // onGetChunkText when we need the canonical expectedText.
+            if (!sessionChunkIdRef.current) sessionChunkIdRef.current = delta.chunkId
             onPolishedChunkInsertedRef.current?.({ chunkId: delta.chunkId, text: delta.text })
           } else if (delta.text) {
             onCommittedTextRef.current(delta.text)
@@ -466,10 +470,20 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // showing right now (the toggle can be flipped mid-session). If the
           // editor accepts, update bookkeeping; if it rejects (the user edited
           // inside the chunk), lock and forget — the user's edit wins.
+          //
+          // The expectedText comes from the editor itself rather than a
+          // hook-side prediction: ProseMirror's mapping is the source of
+          // truth for what's currently inside the tracked range (including
+          // any spaces the extension absorbed when extending the chunk).
           const target = showOriginalRef.current ? chunk.raw : chunk.polished
-          const expected = expectedChunkTextRef.current
+          const expected = onGetChunkTextRef.current?.(chunk.chunkId) ?? null
           let accepted = true
-          if (target !== expected) {
+          if (expected === null) {
+            // No tracked chunk in the editor — either it was never inserted
+            // here or it has already been locked/cleared. Drop our tracking
+            // for it so the toggle never tries to act on a missing chunk.
+            accepted = false
+          } else if (target !== expected) {
             accepted =
               onChunkSwapRef.current?.({ chunkId: chunk.chunkId, newText: target, expectedText: expected }) ?? false
           }
@@ -488,12 +502,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             })
             return next
           })
-          if (accepted) {
-            expectedChunkTextRef.current = target
-          } else {
-            sessionChunkIdRef.current = null
-            expectedChunkTextRef.current = ""
-          }
+          if (!accepted) sessionChunkIdRef.current = null
         })
         socket.on("voice:transcription:error", (e: { code?: string }) => fail(friendlyTranscriptionError(e?.code)))
         socket.on("voice:stopped", () => {
@@ -616,7 +625,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       for (const [chunkId, record] of chunks) {
         if (record.locked) continue
         const newText = target ? record.raw : record.polished
-        const expectedText = record.currentlyShowing === "raw" ? record.raw : record.polished
+        // Query the editor for the true current text of this chunk. ProseMirror
+        // mapping absorbs adjacent edits into the tracked range, so the live
+        // decoration text is the only reliable expectedText.
+        const expectedText =
+          onGetChunkTextRef.current?.(chunkId) ?? (record.currentlyShowing === "raw" ? record.raw : record.polished)
         if (newText === expectedText) {
           // No textual difference (polish was a no-op for this chunk). Still
           // update the bookkeeping so currentlyShowing reflects the user's
@@ -627,19 +640,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         const accepted = onChunkSwapRef.current?.({ chunkId, newText, expectedText }) ?? false
         if (accepted) {
           next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
-          // Keep the expected-text mirror in sync with what we just put in
-          // the editor, so the next polish event's swap uses the right
-          // expectedText.
-          if (chunkId === sessionChunkIdRef.current) expectedChunkTextRef.current = newText
         } else {
           // The editor rejected the swap (the user edited inside the chunk or
           // the decoration was already gone) — give up on tracking this one so
           // the toggle never tries to swap it again.
           next.set(chunkId, { ...record, locked: true })
-          if (chunkId === sessionChunkIdRef.current) {
-            sessionChunkIdRef.current = null
-            expectedChunkTextRef.current = ""
-          }
+          if (chunkId === sessionChunkIdRef.current) sessionChunkIdRef.current = null
         }
       }
       setChunks(next)

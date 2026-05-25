@@ -5,6 +5,7 @@ import type { ResolvedPos } from "@tiptap/pm/model"
 import type { PluginKey } from "@tiptap/pm/state"
 import { useParams } from "react-router-dom"
 import { createEditorExtensions } from "./editor-extensions"
+import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { EditorToolbar } from "./editor-toolbar"
 import { serializeToMarkdown, parseMarkdown, type MentionTypeLookup } from "./editor-markdown"
@@ -56,6 +57,13 @@ export interface RichEditorHandle {
   lockDictationChunk(args: { chunkId: string }): void
   /** Drop tracking for every chunk. */
   lockAllDictationChunks(): void
+  /**
+   * Read the live text currently inside a tracked chunk. Returns null if the
+   * chunkId is no longer tracked (locked, never inserted, or already cleared).
+   * The dictation hook uses this as the canonical `expectedText` for swap calls,
+   * rather than maintaining a parallel prediction that drifts from the doc.
+   */
+  getDictationChunkText(chunkId: string): string | null
   /** Access the TipTap editor instance for external toolbar rendering */
   getEditor(): import("@tiptap/react").Editor | null
 }
@@ -861,6 +869,15 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     editor.chain().lockAllDictationChunks().run()
   }, [editor])
 
+  const getDictationChunkText = useCallback(
+    (chunkId: string): string | null => {
+      if (!editor || editor.isDestroyed) return null
+      const positions = getDictationChunkPositions(editor.state)
+      return positions.find((c) => c.chunkId === chunkId)?.text ?? null
+    },
+    [editor]
+  )
+
   // Expose imperative handle for parent to trigger insert actions
   useImperativeHandle(
     ref,
@@ -876,6 +893,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       replaceDictationChunkText,
       lockDictationChunk,
       lockAllDictationChunks,
+      getDictationChunkText,
       getEditor: () => editor,
     }),
     [
@@ -890,6 +908,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       replaceDictationChunkText,
       lockDictationChunk,
       lockAllDictationChunks,
+      getDictationChunkText,
       editor,
     ]
   )

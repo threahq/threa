@@ -17,6 +17,7 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
     replaceDictationChunkText: vi.fn(() => true),
     lockDictationChunk: vi.fn(),
     lockAllDictationChunks: vi.fn(),
+    getDictationChunkText: vi.fn(() => null),
     getEditor: vi.fn(() => null),
   }
 
