@@ -569,20 +569,26 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   await heartbeat("available", undefined, ctx)
 }
 
-async function renewPendingClaim(): Promise<void> {
-  if (!config || !pending) return
+async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void> {
+  if (!config) return
   const body = await request<{ data: { claimExpiresAt: string | null } }>(
-    `/api/v1/workspaces/${config.workspaceId}/bot-invocations/${pending.id}/renew`,
+    `/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/renew`,
     {
       method: "POST",
       body: JSON.stringify({
         instanceId: ensureInstanceId(),
-        claimToken: pending.claimToken,
+        claimToken: invocation.claimToken,
         claimTtlSeconds: 120,
       }),
     }
   )
-  pending.claimExpiresAt = body.data.claimExpiresAt
+  invocation.claimExpiresAt = body.data.claimExpiresAt
+}
+
+async function renewActiveClaims(): Promise<void> {
+  if (!pending) return
+  await renewInvocationClaim(pending)
+  await Promise.all(steeredInvocations.map((item) => renewInvocationClaim(item.invocation)))
 }
 
 function isEnabled(ctx: ExtensionContext): boolean {
@@ -901,7 +907,7 @@ async function injectInvocation(
 
 async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
   if (!config || !isEnabled(ctx)) return false
-  if (pending) await renewPendingClaim()
+  if (pending) await renewActiveClaims()
 
   const steer = pending !== undefined || !ctx.isIdle()
   if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…", ctx)
