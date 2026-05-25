@@ -19,7 +19,6 @@ export { CommandAvailabilityService } from "./availability"
 export type { ResolvedCommand, PiRuntimeCommandTarget } from "./availability"
 export {
   PI_SESSION_CONTROL_COMMAND_NAMES,
-  THINKING_LEVEL_COMMAND_SUGGESTIONS,
   listWorkspaceCommandInfos,
   listPiSessionControlCommandInfos,
 } from "./catalog"

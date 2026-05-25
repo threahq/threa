@@ -189,7 +189,12 @@ async function createLinkedPiSession(
       supportsActiveScratchpad: true,
       supportsPersistentSessions: true,
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+      thinkingLevels: ["off", "minimal", "low", "medium", "high"],
+      modelSuggestions: [
+        { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+        { value: "openai/gpt-5-high", label: "GPT-5 High" },
+      ],
     },
   })
   if (presence.status !== 200) {
@@ -213,11 +218,23 @@ describe("Stream-scoped Pi session-control commands", () => {
     const linked = await createLinkedPiSession(client, workspace.id, `list-${testRunId}`)
 
     const linkedBootstrap = await getBootstrap(client, workspace.id, linked.streamId)
-    const linkedNames = linkedBootstrap.commands?.map((c) => c.name) ?? []
+    const linkedCommands = linkedBootstrap.commands ?? []
+    const linkedNames = linkedCommands.map((c) => c.name)
     expect(linkedNames).toContain("compact")
     expect(linkedNames).toContain("model")
     expect(linkedNames).toContain("thinking")
     expect(linkedNames).toContain("skill")
+    expect(linkedNames).toContain("reload")
+
+    // /thinking suggestions reflect the runtime's advertised levels, not a backend-hardcoded list.
+    const thinkingCommand = linkedCommands.find((c) => c.name === "thinking")
+    const thinkingSuggestions = thinkingCommand?.args?.find((a) => a.name === "level")?.suggestions
+    expect(thinkingSuggestions?.map((s) => s.value)).toEqual(["off", "minimal", "low", "medium", "high"])
+
+    // /model suggestions reflect the runtime's advertised model list.
+    const modelCommand = linkedCommands.find((c) => c.name === "model")
+    const modelSuggestions = modelCommand?.args?.find((a) => a.name === "model")?.suggestions
+    expect(modelSuggestions?.map((s) => s.value)).toEqual(["anthropic/claude-sonnet-4-6", "openai/gpt-5-high"])
 
     // A separate scratchpad with no active Pi runtime should not expose
     // session-control commands.

@@ -1,17 +1,8 @@
 import { CommandKinds, CommandScopes, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandRegistry } from "./registry"
 
-export const PI_SESSION_CONTROL_COMMAND_NAMES = ["compact", "model", "thinking", "skill"] as const
+export const PI_SESSION_CONTROL_COMMAND_NAMES = ["compact", "model", "thinking", "skill", "reload"] as const
 export type PiSessionControlCommandName = (typeof PI_SESSION_CONTROL_COMMAND_NAMES)[number]
-
-export const THINKING_LEVEL_COMMAND_SUGGESTIONS = [
-  { value: "off", description: "Disable reasoning effort" },
-  { value: "minimal" },
-  { value: "low" },
-  { value: "medium" },
-  { value: "high" },
-  { value: "xhigh", label: "x-high" },
-] as const
 
 export function listServerCommandInfos(commandRegistry: CommandRegistry): CommandInfo[] {
   return commandRegistry.getCommandNames().map((name) => {
@@ -62,14 +53,9 @@ export function listPiSessionControlCommandInfos(): CommandInfo[] {
       description: "Set Pi thinking effort",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
-      args: [
-        {
-          name: "level",
-          required: true,
-          description: "Thinking effort",
-          suggestions: [...THINKING_LEVEL_COMMAND_SUGGESTIONS],
-        },
-      ],
+      // Level suggestions are model-specific; the resolver fills them in from the
+      // runtime's advertised `thinkingLevels` capability at listing time.
+      args: [{ name: "level", required: true, description: "Thinking effort" }],
     },
     {
       name: "skill",
@@ -77,6 +63,12 @@ export function listPiSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "query", required: true, description: "Skill name or search terms" }],
+    },
+    {
+      name: "reload",
+      description: "Reload Pi extensions, skills, prompts, and themes",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
     },
   ]
 }

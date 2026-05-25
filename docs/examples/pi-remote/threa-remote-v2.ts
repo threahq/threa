@@ -20,7 +20,7 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
-const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill"] as const
+const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload"] as const
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const
 type ThinkingLevel = (typeof THINKING_LEVELS)[number]
 const PI_TOOL_TRACE_SECTION_LABELS = {
@@ -39,6 +39,8 @@ type Config = {
   pollMs?: number
   instanceId?: string
   defaultDisplayName?: string
+  /** Pinned model identifiers (`provider/id`) rendered first by /model. */
+  preferredModels?: string[]
   /** Legacy global flag; migrated to per-session link state on write. */
   enabled?: boolean
   linkedSessions?: Record<string, RuntimeSessionLink>
@@ -57,7 +59,10 @@ type RuntimeSessionLink = {
   streamCursors?: Record<string, string>
 }
 
-type ConfigPatch = Pick<Config, "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName">
+type ConfigPatch = Pick<
+  Config,
+  "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels"
+>
 
 type ClaimedInvocation = {
   id: string
@@ -277,11 +282,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; label: string }> {
-  return ctx.modelRegistry
+  const preferred = new Set((config?.preferredModels ?? []).map((value) => value.toLowerCase()))
+  const ordered = ctx.modelRegistry
     .getAvailable()
     .filter((model) => model.input.includes("text"))
-    .slice(0, 30)
     .map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))
+  ordered.sort((a, b) => {
+    const aPref = preferred.has(a.value.toLowerCase())
+    const bPref = preferred.has(b.value.toLowerCase())
+    if (aPref !== bPref) return aPref ? -1 : 1
+    return 0
+  })
+  return ordered.slice(0, 30)
 }
 
 function buildRuntimeCapabilities(ctx?: ExtensionContext): Record<string, unknown> {
@@ -292,6 +304,7 @@ function buildRuntimeCapabilities(ctx?: ExtensionContext): Record<string, unknow
     supportsSessionControlCommands: true,
     sessionControlCommands: [...SESSION_CONTROL_COMMANDS],
     thinkingLevels: [...THINKING_LEVELS],
+    preferredModels: [...(config?.preferredModels ?? [])],
     ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
     ...(ctx && { modelSuggestions: buildModelSuggestions(ctx) }),
   }
@@ -668,6 +681,7 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       apiKey: existing?.apiKey ?? "",
       pollMs: existing?.pollMs ?? 3000,
       defaultDisplayName: existing?.defaultDisplayName ?? "Local Pi",
+      preferredModels: existing?.preferredModels ?? [],
     },
     null,
     2
@@ -691,6 +705,12 @@ function parseConfigPatch(text: string): ConfigPatch {
   if (candidate.defaultDisplayName !== undefined && typeof candidate.defaultDisplayName !== "string") {
     throw new Error("defaultDisplayName must be a string")
   }
+  if (
+    candidate.preferredModels !== undefined &&
+    (!Array.isArray(candidate.preferredModels) || candidate.preferredModels.some((value) => typeof value !== "string"))
+  ) {
+    throw new Error("preferredModels must be an array of strings")
+  }
   const { baseUrl, workspaceId, apiKey } = candidate as ConfigPatch
   return {
     baseUrl: baseUrl.trim(),
@@ -698,6 +718,7 @@ function parseConfigPatch(text: string): ConfigPatch {
     apiKey: apiKey.trim(),
     pollMs: candidate.pollMs,
     defaultDisplayName: candidate.defaultDisplayName?.trim() || undefined,
+    preferredModels: candidate.preferredModels?.map((value) => value.trim()).filter((value) => value.length > 0),
   }
 }
 
@@ -1038,6 +1059,44 @@ function getModelCandidates(ctx: ExtensionContext): ModelCandidate[] {
     .map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name, model }))
 }
 
+function groupModelCandidates(
+  ctx: ExtensionContext,
+  preferred: readonly string[]
+): { preferred: ModelCandidate[]; reasoning: ModelCandidate[]; standard: ModelCandidate[] } {
+  const candidates = getModelCandidates(ctx)
+  const preferredLower = new Set(preferred.map((value) => value.toLowerCase()))
+  const preferredList: ModelCandidate[] = []
+  const reasoning: ModelCandidate[] = []
+  const standard: ModelCandidate[] = []
+  for (const candidate of candidates) {
+    if (preferredLower.has(candidate.value.toLowerCase())) {
+      preferredList.push(candidate)
+      continue
+    }
+    if (candidate.model.reasoning === true) {
+      reasoning.push(candidate)
+    } else {
+      standard.push(candidate)
+    }
+  }
+  return { preferred: preferredList, reasoning, standard }
+}
+
+function renderModelGroup(title: string, candidates: ModelCandidate[]): string[] {
+  if (candidates.length === 0) return []
+  return [`**${title}**`, ...candidates.map((candidate) => `- \`${candidate.value}\` — ${candidate.label}`)]
+}
+
+function renderGroupedModelList(ctx: ExtensionContext): string {
+  const groups = groupModelCandidates(ctx, config?.preferredModels ?? [])
+  const sections = [
+    ...renderModelGroup("Preferred", groups.preferred),
+    ...renderModelGroup("Reasoning", groups.reasoning),
+    ...renderModelGroup("Standard", groups.standard),
+  ]
+  return sections.join("\n")
+}
+
 function resolveModelCandidate(
   ctx: ExtensionContext,
   query: string
@@ -1101,14 +1160,19 @@ async function runModelCommand(
   ctx: ExtensionContext
 ): Promise<void> {
   const current = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown"
+  const trimmed = args.trim()
   const resolved = resolveModelCandidate(ctx, args)
   if (!resolved.match) {
-    const lines = [
-      args.trim() ? `No unique model match for \`${args.trim()}\`.` : `Current model: \`${current}\`.`,
-      "Candidates:",
-      ...(resolved.candidates ?? []).map((candidate) => `- \`${candidate.value}\` — ${candidate.label}`),
-    ]
-    await completeInvocationWithMarkdown(invocation, lines.join("\n"), ctx)
+    // No args: show the full grouped catalog (Preferred / Reasoning / Standard).
+    // Ambiguous match: show just the candidates so the user can pick.
+    const body = trimmed
+      ? [
+          `No unique model match for \`${trimmed}\`.`,
+          "Candidates:",
+          ...(resolved.candidates ?? []).map((candidate) => `- \`${candidate.value}\` — ${candidate.label}`),
+        ].join("\n")
+      : `Current model: \`${current}\`.\n\n${renderGroupedModelList(ctx)}`
+    await completeInvocationWithMarkdown(invocation, body, ctx)
     return
   }
 
@@ -1132,6 +1196,14 @@ async function runThinkingCommand(
   pi.setThinkingLevel(level)
   const after = pi.getThinkingLevel()
   await completeInvocationWithMarkdown(invocation, `Thinking level changed: \`${before}\` → \`${after}\``, ctx)
+}
+
+async function runReloadCommand(invocation: ClaimedInvocation, ctx: ExtensionContext): Promise<void> {
+  // Complete the invocation before reload — `await ctx.reload()` emits session_shutdown
+  // for this runtime, so any acknowledgement after the await would run against a
+  // pre-reload extension instance and may not survive.
+  await completeInvocationWithMarkdown(invocation, "Reloading Pi extensions, skills, prompts, and themes…", ctx)
+  await ctx.reload()
 }
 
 async function runSkillCommand(
@@ -1189,6 +1261,9 @@ async function handleSessionControlInvocation(
         return
       case "skill":
         await runSkillCommand(pi, invocation, command.args, ctx)
+        return
+      case "reload":
+        await runReloadCommand(invocation, ctx)
         return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)

@@ -7,6 +7,7 @@ import {
   DISCUSS_WITH_ARIADNE_COMMAND,
   StreamTypes,
   botHasCapability,
+  type CommandArgumentSuggestion,
   type CommandInfo,
 } from "@threa/types"
 import { withClient, type Querier } from "../../db"
@@ -42,6 +43,10 @@ export interface PiRuntimeCommandTarget {
   targetRuntimeSessionId: string
   /** Lowercased canonical names the runtime currently advertises. */
   advertisedCommandNames: ReadonlySet<string>
+  /** Thinking levels the runtime supports for the current model. Empty = runtime did not advertise. */
+  advertisedThinkingLevels: readonly string[]
+  /** Model suggestions the runtime advertises for autocomplete. Empty = runtime did not advertise. */
+  advertisedModelSuggestions: readonly CommandArgumentSuggestion[]
 }
 
 interface PiRuntimeTargetInternal extends PiRuntimeCommandTarget {
@@ -103,7 +108,11 @@ export class CommandAvailabilityService {
       if (runtimeTarget) {
         for (const info of listPiSessionControlCommandInfos()) {
           if (!runtimeTarget.advertisedCommandNames.has(info.name.toLowerCase())) continue
-          commands.push({ info, executionKind: CommandKinds.BOT_RUNTIME, runtime: runtimeTarget })
+          commands.push({
+            info: applyAdvertisedSuggestions(info, runtimeTarget),
+            executionKind: CommandKinds.BOT_RUNTIME,
+            runtime: runtimeTarget,
+          })
         }
       }
 
@@ -184,8 +193,58 @@ async function resolvePiRuntimeCommandTarget(
     targetInstanceId: link.instanceId,
     targetRuntimeSessionId: link.runtimeSessionId,
     advertisedCommandNames,
+    advertisedThinkingLevels: resolveAdvertisedThinkingLevels(presence),
+    advertisedModelSuggestions: resolveAdvertisedModelSuggestions(presence),
     link,
     presence,
+  }
+}
+
+function resolveAdvertisedThinkingLevels(presence: BotRuntimeInstance): readonly string[] {
+  const raw = presence.capabilities.thinkingLevels
+  if (!Array.isArray(raw)) return []
+  return raw.filter((value): value is string => typeof value === "string")
+}
+
+function resolveAdvertisedModelSuggestions(presence: BotRuntimeInstance): readonly CommandArgumentSuggestion[] {
+  const raw = presence.capabilities.modelSuggestions
+  if (!Array.isArray(raw)) return []
+  const result: CommandArgumentSuggestion[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue
+    const candidate = entry as Record<string, unknown>
+    if (typeof candidate.value !== "string") continue
+    const suggestion: CommandArgumentSuggestion = { value: candidate.value }
+    if (typeof candidate.label === "string") suggestion.label = candidate.label
+    if (typeof candidate.description === "string") suggestion.description = candidate.description
+    result.push(suggestion)
+  }
+  return result
+}
+
+function applyAdvertisedSuggestions(info: CommandInfo, target: PiRuntimeCommandTarget): CommandInfo {
+  if (info.name === "thinking" && target.advertisedThinkingLevels.length > 0) {
+    return withArgSuggestions(
+      info,
+      "level",
+      target.advertisedThinkingLevels.map((value) => ({ value }))
+    )
+  }
+  if (info.name === "model" && target.advertisedModelSuggestions.length > 0) {
+    return withArgSuggestions(info, "model", target.advertisedModelSuggestions)
+  }
+  return info
+}
+
+function withArgSuggestions(
+  info: CommandInfo,
+  argName: string,
+  suggestions: readonly CommandArgumentSuggestion[]
+): CommandInfo {
+  if (!info.args) return info
+  return {
+    ...info,
+    args: info.args.map((arg) => (arg.name === argName ? { ...arg, suggestions: [...suggestions] } : arg)),
   }
 }
 

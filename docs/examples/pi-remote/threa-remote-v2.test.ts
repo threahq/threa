@@ -96,7 +96,7 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
     })
   })
 
