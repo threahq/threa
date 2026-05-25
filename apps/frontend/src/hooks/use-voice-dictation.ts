@@ -10,12 +10,71 @@ interface VoiceDelta {
   voiceSessionId: string
   text: string
   isFinal: boolean
+  /**
+   * Present only on finals when polish is enabled for the session. The same
+   * chunkId is reused for every final + every polished event in the session,
+   * so the editor tracks one growing range and the end-of-session polish swap
+   * targets it directly.
+   */
+  chunkId?: string
+}
+
+interface VoicePolishedChunk {
+  voiceSessionId: string
+  chunkId: string
+  raw: string
+  polished: string
+}
+
+export interface DictationChunkRecord {
+  /** Cumulative raw text the chunk would revert to if the toggle flips to "Show original". */
+  raw: string
+  /**
+   * Latest polished snapshot from the backend. Each new final delta triggers
+   * a cumulative polish whose output supersedes this — so an earlier
+   * misspoken phrase can be rewritten by a later self-correction.
+   */
+  polished: string
+  /** Whether the editor currently shows the polished or the raw text for this chunk. */
+  currentlyShowing: "polished" | "raw"
+  /**
+   * True once the chunk can no longer be swapped (the user edited inside it
+   * or the post-session grace window expired). Locked chunks stay in the doc
+   * as plain text.
+   */
+  locked: boolean
 }
 
 interface UseVoiceDictationOptions {
   workspaceId: string
-  /** Called with each committed (final) transcript span. */
+  /**
+   * Called with a committed (final) transcript span when polish is OFF for
+   * this session. When polish is ON, `onPolishedChunkInserted` is called
+   * instead and this never fires for that chunk.
+   */
   onCommittedText: (text: string) => void
+  /**
+   * Insert a polished chunk into the editor with tracking, so a later toggle
+   * can swap it back to raw. The text passed is whatever the toggle currently
+   * resolves to (polished by default).
+   */
+  onPolishedChunkInserted?: (args: { chunkId: string; text: string }) => void
+  /**
+   * Swap a tracked chunk's text in the editor. Must return true if the swap
+   * landed cleanly, false if the chunk was missing or the user edited inside
+   * it (the hook then locks that chunk locally so the toggle stops touching it).
+   */
+  onChunkSwap?: (args: { chunkId: string; newText: string; expectedText: string }) => boolean
+  /** Drop tracking for all polished chunks (e.g. session-expired or new take starting). */
+  onLockAllChunks?: () => void
+  /**
+   * Read the live text currently inside a tracked chunk straight from the
+   * editor. The editor's decoration is the source of truth — when the user
+   * edits text adjacent to the chunk, ProseMirror's mapping updates the
+   * tracked range, and we want the actual mapped text rather than a
+   * parallel prediction. Returns null when the chunkId isn't tracked.
+   */
+  onGetChunkText?: (chunkId: string) => string | null
   language?: string
 }
 
@@ -45,6 +104,18 @@ interface UseVoiceDictationResult {
    * session is created. Pair with `elapsedMs` to show a countdown near the cap.
    */
   maxDurationMs: number | null
+  /**
+   * Map of polished chunks landed in this session, keyed by chunkId. Empty
+   * when polish is off for the session or no final chunks have arrived yet.
+   * Insertion order matches the order the chunks landed in the editor.
+   */
+  chunks: ReadonlyMap<string, DictationChunkRecord>
+  /** True when there's at least one unlocked polished chunk the toggle can act on. */
+  hasUnlockedChunks: boolean
+  /** True when the toggle currently shows raw transcripts; false when it shows polished. */
+  showOriginal: boolean
+  /** Flip the session-wide toggle. Walks every unlocked chunk and swaps its text in the editor. */
+  setShowOriginal: (target: boolean) => void
   start: () => void
   stop: () => void
 }
@@ -97,21 +168,44 @@ function resolveVoiceUrl(workspaceId: string): string | null {
   return url.toString()
 }
 
+// Once a session ends, polished chunks stay swappable for a short window so
+// the user can flip the toggle on their way to read what landed. Kept short
+// so the "Showing polished" pill doesn't linger past the moment they're
+// glancing at it — the user wants to send the message, not stare at the
+// toggle.
+const POST_SESSION_LOCK_MS = 8_000
+
 /**
  * Drives one voice-dictation session: create the session over HTTP, capture
  * mic audio as PCM16 frames via an AudioWorklet, stream them up the dedicated
  * `/voice` socket namespace, and surface transcript spans. Committed (final)
  * spans are forwarded to `onCommittedText`; the in-flight hypothesis is exposed
  * live via `interimText` so callers can show words as they're spoken.
+ *
+ * When the user has polish enabled in preferences, the backend additionally
+ * emits `voice:transcript:polished` for each final chunk. The hook tracks each
+ * polished chunk so the session-wide "Show original" toggle can swap chunks
+ * between raw and polished text in-place — until the post-session grace window
+ * expires or the user edits inside a chunk, at which point that chunk locks.
  */
 export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDictationResult {
-  const { workspaceId, onCommittedText, language } = options
+  const {
+    workspaceId,
+    onCommittedText,
+    onPolishedChunkInserted,
+    onChunkSwap,
+    onLockAllChunks,
+    onGetChunkText,
+    language,
+  } = options
   const [state, setState] = useState<VoiceDictationState>("idle")
   const [error, setError] = useState<string | null>(null)
   const [interimText, setInterimText] = useState("")
   const [level, setLevel] = useState(0)
   const [elapsedMs, setElapsedMs] = useState(0)
   const [maxDurationMs, setMaxDurationMs] = useState<number | null>(null)
+  const [chunks, setChunks] = useState<Map<string, DictationChunkRecord>>(() => new Map())
+  const [showOriginal, setShowOriginalState] = useState(false)
   const supportRef = useRef(detectSupport())
 
   const socketRef = useRef<Socket | null>(null)
@@ -131,9 +225,29 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // resolves after the user has already stopped (or torn down) can't flip the
   // state machine back to "recording" with nothing behind it.
   const startGenerationRef = useRef(0)
-  // Keep the latest committed-text callback without re-subscribing the socket.
+  // Keep the latest callbacks without re-subscribing the socket or re-binding
+  // start()/stop(). The polished-chunk callback in particular fires from inside
+  // a socket handler that captured the editor handle at subscribe time.
   const onCommittedTextRef = useRef(onCommittedText)
   onCommittedTextRef.current = onCommittedText
+  const onPolishedChunkInsertedRef = useRef(onPolishedChunkInserted)
+  onPolishedChunkInsertedRef.current = onPolishedChunkInserted
+  const onChunkSwapRef = useRef(onChunkSwap)
+  onChunkSwapRef.current = onChunkSwap
+  const onLockAllChunksRef = useRef(onLockAllChunks)
+  onLockAllChunksRef.current = onLockAllChunks
+  const onGetChunkTextRef = useRef(onGetChunkText)
+  onGetChunkTextRef.current = onGetChunkText
+  // Read by the socket handler at insert time so the chunk lands in whichever
+  // mode the toggle currently shows (the toggle can be flipped mid-session).
+  const showOriginalRef = useRef(showOriginal)
+  showOriginalRef.current = showOriginal
+  // Post-session lock window: a single timer expires the whole session at once,
+  // dropping editor-side tracking and clearing chunks state so the toggle hides.
+  const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // The session-wide chunkId for the active take, set on the first final
+  // delta the backend tags. Reset when a new take starts.
+  const sessionChunkIdRef = useRef<string | null>(null)
 
   // Only one take dictates at a time across all composers. Starting a take stops
   // whichever was active first (flushing its tail). `coordinatedStop` is a stable
@@ -224,6 +338,20 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     coordinator.deactivate(coordinatedStop)
   }, [teardownAudio, updateInterim, coordinator, coordinatedStop])
 
+  // Drop tracking for every polished chunk: tell the editor to drop its
+  // decorations, clear our local map, and reset the toggle. Used by the
+  // post-session lock timer and on the start of a fresh take.
+  const lockAllChunks = useCallback(() => {
+    if (lockTimerRef.current !== null) {
+      clearTimeout(lockTimerRef.current)
+      lockTimerRef.current = null
+    }
+    onLockAllChunksRef.current?.()
+    setChunks((prev) => (prev.size === 0 ? prev : new Map()))
+    setShowOriginalState(false)
+    sessionChunkIdRef.current = null
+  }, [])
+
   const fail = useCallback(
     (message: string) => {
       // Don't throw away words the user already saw mid-segment — commit the
@@ -244,6 +372,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     coordinator.activate(coordinatedStop)
     setError(null)
     updateInterim("")
+    // Starting a new take supersedes any polished chunks from the previous
+    // session — drop their tracking and reset the toggle so the new take begins
+    // from a clean slate.
+    lockAllChunks()
     setState("connecting")
     const generation = ++startGenerationRef.current
 
@@ -305,16 +437,72 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           // Ignore deltas from a session we've already moved past so a stale
           // socket can't leak text into a new take (plan §3).
           if (delta.voiceSessionId !== sessionIdRef.current) return
-          if (delta.isFinal) {
-            // The segment endpointed: commit it for real and drop the live
-            // hypothesis so the next segment starts from a clean preview.
-            if (delta.text) onCommittedTextRef.current(delta.text)
-            updateInterim("")
-          } else {
+          if (!delta.isFinal) {
             // Running hypothesis for the current segment — each partial replaces
             // the prior one rather than appending.
             updateInterim(delta.text)
+            return
           }
+          // Final segment. With polish on, the backend tags it with a
+          // session-wide chunkId so the editor extends a single tracked
+          // range we can later swap to the polished snapshot. Without
+          // a chunkId, it's a plain commit (polish off, or an empty/
+          // terminating final).
+          if (delta.chunkId && delta.text) {
+            // First final of the take latches the session-wide chunkId.
+            // Subsequent finals extend the same tracked range in the editor;
+            // we no longer predict the chunk's text here — the editor's
+            // decoration is the source of truth and we read it via
+            // onGetChunkText when we need the canonical expectedText.
+            if (!sessionChunkIdRef.current) sessionChunkIdRef.current = delta.chunkId
+            onPolishedChunkInsertedRef.current?.({ chunkId: delta.chunkId, text: delta.text })
+          } else if (delta.text) {
+            onCommittedTextRef.current(delta.text)
+          }
+          updateInterim("")
+        })
+        socket.on("voice:transcript:polished", (chunk: VoicePolishedChunk) => {
+          // Stale chunk from a previous take — ignore it so polishing latency
+          // can't leak text into a new session.
+          if (chunk.voiceSessionId !== sessionIdRef.current) return
+          if (chunk.chunkId !== sessionChunkIdRef.current) return
+          // Swap the editor's session chunk to whichever mode the toggle is
+          // showing right now (the toggle can be flipped mid-session). If the
+          // editor accepts, update bookkeeping; if it rejects (the user edited
+          // inside the chunk), lock and forget — the user's edit wins.
+          //
+          // The expectedText comes from the editor itself rather than a
+          // hook-side prediction: ProseMirror's mapping is the source of
+          // truth for what's currently inside the tracked range (including
+          // any spaces the extension absorbed when extending the chunk).
+          const target = showOriginalRef.current ? chunk.raw : chunk.polished
+          const expected = onGetChunkTextRef.current?.(chunk.chunkId) ?? null
+          let accepted = true
+          if (expected === null) {
+            // No tracked chunk in the editor — either it was never inserted
+            // here or it has already been locked/cleared. Drop our tracking
+            // for it so the toggle never tries to act on a missing chunk.
+            accepted = false
+          } else if (target !== expected) {
+            accepted =
+              onChunkSwapRef.current?.({ chunkId: chunk.chunkId, newText: target, expectedText: expected }) ?? false
+          }
+          setChunks((prev) => {
+            const next = new Map(prev)
+            if (!accepted) {
+              const existing = prev.get(chunk.chunkId)
+              if (existing) next.set(chunk.chunkId, { ...existing, locked: true })
+              return next
+            }
+            next.set(chunk.chunkId, {
+              raw: chunk.raw,
+              polished: chunk.polished,
+              currentlyShowing: showOriginalRef.current ? "raw" : "polished",
+              locked: false,
+            })
+            return next
+          })
+          if (!accepted) sessionChunkIdRef.current = null
         })
         socket.on("voice:transcription:error", (e: { code?: string }) => fail(friendlyTranscriptionError(e?.code)))
         socket.on("voice:stopped", () => {
@@ -365,7 +553,18 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         fail(message)
       }
     })()
-  }, [state, workspaceId, language, fail, teardown, flushInterim, runMeter, coordinator, coordinatedStop])
+  }, [
+    state,
+    workspaceId,
+    language,
+    fail,
+    teardown,
+    flushInterim,
+    runMeter,
+    coordinator,
+    coordinatedStop,
+    lockAllChunks,
+  ])
 
   const stop = useCallback(() => {
     if (state !== "recording" && state !== "connecting") return
@@ -393,9 +592,67 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     } else {
       setState("idle")
     }
-  }, [state, teardownAudio, flushInterim, coordinator, coordinatedStop])
+    // The take is over — start the post-session lock countdown. The user gets a
+    // grace window to flip the toggle and read what landed before the chunks
+    // freeze as plain text. A new take or another stop resets the timer.
+    if (lockTimerRef.current !== null) clearTimeout(lockTimerRef.current)
+    lockTimerRef.current = setTimeout(() => {
+      lockTimerRef.current = null
+      lockAllChunks()
+    }, POST_SESSION_LOCK_MS)
+  }, [state, teardownAudio, flushInterim, coordinator, coordinatedStop, lockAllChunks])
   // Keep the stable coordinator handle pointed at the latest stop().
   stopRef.current = stop
+
+  // Flip the session-wide toggle. Walks every unlocked chunk, asks the editor
+  // to swap its text, and tracks the result. If the editor refuses the swap
+  // (the user typed inside that chunk), the chunk locks locally so the toggle
+  // stops touching it on future flips.
+  //
+  // The editor swap is a side effect, so we do it *outside* of any state
+  // updater — calling editor mutations inside a setState updater would fire
+  // them twice under concurrent rendering. Reads the live `chunks` map via
+  // closure; that's fine because the toggle button is only enabled when there
+  // is at least one chunk to act on (so the closure is fresh).
+  const setShowOriginal = useCallback(
+    (target: boolean) => {
+      if (target === showOriginal) return
+      if (chunks.size === 0) {
+        setShowOriginalState(target)
+        return
+      }
+      const next = new Map(chunks)
+      for (const [chunkId, record] of chunks) {
+        if (record.locked) continue
+        const newText = target ? record.raw : record.polished
+        // Query the editor for the true current text of this chunk. ProseMirror
+        // mapping absorbs adjacent edits into the tracked range, so the live
+        // decoration text is the only reliable expectedText.
+        const expectedText =
+          onGetChunkTextRef.current?.(chunkId) ?? (record.currentlyShowing === "raw" ? record.raw : record.polished)
+        if (newText === expectedText) {
+          // No textual difference (polish was a no-op for this chunk). Still
+          // update the bookkeeping so currentlyShowing reflects the user's
+          // intent.
+          next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
+          continue
+        }
+        const accepted = onChunkSwapRef.current?.({ chunkId, newText, expectedText }) ?? false
+        if (accepted) {
+          next.set(chunkId, { ...record, currentlyShowing: target ? "raw" : "polished" })
+        } else {
+          // The editor rejected the swap (the user edited inside the chunk or
+          // the decoration was already gone) — give up on tracking this one so
+          // the toggle never tries to swap it again.
+          next.set(chunkId, { ...record, locked: true })
+          if (chunkId === sessionChunkIdRef.current) sessionChunkIdRef.current = null
+        }
+      }
+      setChunks(next)
+      setShowOriginalState(target)
+    },
+    [chunks, showOriginal]
+  )
 
   // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
   // capture, so a take left "recording" would silently record nothing while the
@@ -412,17 +669,30 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
 
   // Abort a still-open session on unmount: disconnecting the socket makes the
   // gateway finalize it as aborted; if the socket never opened, abort over HTTP
-  // so it doesn't linger until the max-duration guard.
+  // so it doesn't linger until the max-duration guard. Also clear the lock
+  // timer so it doesn't fire against a torn-down editor handle.
   useEffect(() => {
     return () => {
       const sessionId = sessionIdRef.current
       const hadSocket = socketRef.current !== null
       teardown()
+      if (lockTimerRef.current !== null) {
+        clearTimeout(lockTimerRef.current)
+        lockTimerRef.current = null
+      }
       if (sessionId && !hadSocket) {
         void voiceApi.abortSession(workspaceId, sessionId).catch(() => {})
       }
     }
   }, [teardown, workspaceId])
+
+  let hasUnlockedChunks = false
+  for (const record of chunks.values()) {
+    if (!record.locked) {
+      hasUnlockedChunks = true
+      break
+    }
+  }
 
   return {
     state,
@@ -433,6 +703,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     level,
     elapsedMs,
     maxDurationMs,
+    chunks,
+    hasUnlockedChunks,
+    showOriginal,
+    setShowOriginal,
     start,
     stop,
   }

@@ -16,6 +16,7 @@ import {
   createTranscription,
   createVoiceSessionSweeper,
   registerVoiceGateway,
+  createPolishTranscript,
 } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
@@ -566,7 +567,14 @@ export async function startServer(): Promise<ServerInstance> {
 
   // Dedicated voice relay on its own namespace so audio frames don't share the
   // main namespace's room fan-out.
-  registerVoiceGateway(io, { authService, voiceTranscriptionService, transcription })
+  const polishTranscript = createPolishTranscript({ ai })
+  registerVoiceGateway(io, {
+    authService,
+    voiceTranscriptionService,
+    transcription,
+    userPreferencesService,
+    polishTranscript,
+  })
 
   const serverId = `server_${ulid()}`
 

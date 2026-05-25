@@ -28,6 +28,7 @@ import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import { QuoteReplyExtension } from "./quote-reply-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
 import { DictationPreview } from "./dictation-preview-extension"
+import { DictationChunkExtension } from "./dictation-chunk-extension"
 
 // Create lowlight instance with common languages
 const lowlight = createLowlight(common)
@@ -110,6 +111,10 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,
+
+    // Tracks ranges of polished dictation chunks so the session toggle can
+    // swap them back to raw transcript; inert unless chunks are added.
+    DictationChunkExtension,
   ]
 
   // Add mention extension if suggestion config provided

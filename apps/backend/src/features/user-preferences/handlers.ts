@@ -11,6 +11,7 @@ import {
   FONT_FAMILY_OPTIONS,
   MESSAGE_SEND_MODE_OPTIONS,
   LINK_PREVIEW_DEFAULT_OPTIONS,
+  VOICE_POLISH_LEVEL_OPTIONS,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
@@ -44,6 +45,7 @@ const updatePreferencesSchema = z.object({
   // Model id like "elevenlabs:scribe-v2-realtime". Validated against the model
   // registry server-side when a session opens; this layer only bounds length.
   voiceTranscriptionModel: z.string().max(100).nullable().optional(),
+  voicePolishLevel: z.enum(VOICE_POLISH_LEVEL_OPTIONS).optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({

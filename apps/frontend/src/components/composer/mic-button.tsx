@@ -1,9 +1,10 @@
 import { useEffect, useRef } from "react"
-import { Mic, Loader2, AlertTriangle } from "lucide-react"
+import { Mic, Loader2, AlertTriangle, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import { useVoiceDictation, type VoiceDictationState } from "@/hooks/use-voice-dictation"
+import { DictationChunkInspector } from "./dictation-chunk-inspector"
 
 // Surface the cap warning in the final stretch so the auto-stop isn't a surprise.
 const NEAR_CAP_MS = 60_000
@@ -56,6 +57,24 @@ interface MicButtonProps {
   onInterimText?: (text: string) => void
   /** Reports whether a take is in flight, so the host can keep its chrome (and this button) mounted while dictating. */
   onActiveChange?: (active: boolean) => void
+  /**
+   * Insert a polished chunk into the editor with tracking so a later toggle can
+   * swap it. When omitted, the polished pipeline is essentially disabled from
+   * the editor's POV (the backend still emits the events, but nothing tracks
+   * them) — surfaces that don't support inline swap can leave this off.
+   */
+  onInsertPolishedChunk?: (args: { chunkId: string; text: string }) => void
+  /** Swap a tracked chunk's text. Returns false if the user edited inside it. */
+  onChunkSwap?: (args: { chunkId: string; newText: string; expectedText: string }) => boolean
+  /** Drop tracking for every chunk (post-session lock, or starting a new take). */
+  onLockAllChunks?: () => void
+  /**
+   * Read the live text currently inside a tracked chunk from the editor.
+   * The hook uses this to supply a true `expectedText` for swap calls — the
+   * editor is the source of truth (mapping accounts for adjacent user edits),
+   * so a parallel prediction in the hook drifts.
+   */
+  onGetChunkText?: (chunkId: string) => string | null
   disabled?: boolean
   className?: string
   language?: string
@@ -66,16 +85,38 @@ export function MicButton({
   onInsertText,
   onInterimText,
   onActiveChange,
+  onInsertPolishedChunk,
+  onChunkSwap,
+  onLockAllChunks,
+  onGetChunkText,
   disabled,
   className,
   language,
 }: MicButtonProps) {
-  const { state, supported, unsupportedReason, error, interimText, level, elapsedMs, maxDurationMs, start, stop } =
-    useVoiceDictation({
-      workspaceId,
-      onCommittedText: onInsertText,
-      language,
-    })
+  const {
+    state,
+    supported,
+    unsupportedReason,
+    error,
+    interimText,
+    level,
+    elapsedMs,
+    maxDurationMs,
+    chunks,
+    hasUnlockedChunks,
+    showOriginal,
+    setShowOriginal,
+    start,
+    stop,
+  } = useVoiceDictation({
+    workspaceId,
+    onCommittedText: onInsertText,
+    onPolishedChunkInserted: onInsertPolishedChunk,
+    onChunkSwap,
+    onLockAllChunks,
+    onGetChunkText,
+    language,
+  })
 
   // Tell the host when a take is in flight. The mobile composer collapses its
   // action bar (and this button) on blur; without this signal a tap-outside
@@ -131,41 +172,99 @@ export function MicButton({
     start()
   }
 
+  // The polish toggle rides above the mic. It only appears once there is at
+  // least one polished chunk the user could actually swap — no dead chrome
+  // while the session is silent. It stays visible through the post-session
+  // grace window so a user can read the polished text and flip it after they
+  // stop talking; once the chunks lock, the pill disappears on its own.
+  const polishPillVisible = hasUnlockedChunks
+  const polishLabel = showOriginal ? "Showing original" : "Showing polished"
+  const polishToggleAria = showOriginal ? "Switch to polished transcript" : "Switch to original transcript"
+
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="relative inline-flex">
+    // Overlays live outside the tooltip trigger: when they were nested inside,
+    // hovering the polish pill (a DOM descendant of the trigger) fired the mic
+    // tooltip and the tooltip rendered over the pill, making it unclickable.
+    // The trigger now wraps only the mic button itself.
+    <span className="relative inline-flex">
+      {/* Floating per-chunk inspector: appears when the user hovers (desktop)
+          or taps (mobile) a polished chunk in the editor. Lives at MicButton
+          level so it has access to the live chunks map without lifting state. */}
+      {hasUnlockedChunks && <DictationChunkInspector chunks={chunks} onToggle={() => setShowOriginal(!showOriginal)} />}
+      {recording && !polishPillVisible && (
+        // Absolutely positioned so the running clock never shifts the composer
+        // layout (INV-21). Switches to a remaining-time countdown with a
+        // warning tint as the take nears the backend's hard cap. Hidden when
+        // the polish pill is present — the pill occupies the same slot and the
+        // clock would overlap it.
+        <span
+          className={cn(
+            "pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 select-none rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none whitespace-nowrap",
+            nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
+          )}
+        >
+          {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
+        </span>
+      )}
+      {polishPillVisible && (
+        // Polish toggle: an inline pill anchored above the mic so it sits
+        // right where the user is already looking after they stop talking.
+        // Absolute positioning (matches the clock pill) keeps composer layout
+        // stable (INV-21). The wrapper stays pointer-events-none so dead space
+        // around the pill doesn't intercept clicks aimed at the mic; the pill
+        // button re-enables pointer events for itself. The z-index keeps it
+        // above the mic tooltip in case they ever overlap.
+        <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2 flex items-center gap-1 select-none whitespace-nowrap">
           {recording && (
-            // Absolutely positioned so the running clock never shifts the
-            // composer layout (INV-21). Switches to a remaining-time countdown
-            // with a warning tint as the take nears the backend's hard cap.
             <span
               className={cn(
-                "pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 select-none rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none whitespace-nowrap",
+                "rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none",
                 nearCap ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"
               )}
             >
               {nearCap && remainingMs !== null ? `${formatClock(remainingMs)} left` : formatClock(elapsedMs)}
             </span>
           )}
-          {state === "error" && error && (
-            // The tooltip alone is invisible on touch (no hover), so a dropped
-            // take would look like it just stopped. Surface the reason inline as
-            // a compact toast with a caret pointing at the mic, which stays the
-            // tap-to-retry target. Absolute positioning keeps it from shifting
-            // the composer layout (INV-21).
-            <span
-              role="status"
-              className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
-            >
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              <span className="text-left">{error}</span>
-              <span
-                aria-hidden
-                className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
-              />
-            </span>
-          )}
+          <button
+            type="button"
+            aria-pressed={!showOriginal}
+            aria-label={polishToggleAria}
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowOriginal(!showOriginal)
+            }}
+            className={cn(
+              "pointer-events-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium leading-none shadow-sm transition-colors",
+              showOriginal
+                ? "border-border bg-background text-muted-foreground hover:bg-muted"
+                : "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
+            )}
+          >
+            <Sparkles className={cn("h-2.5 w-2.5", showOriginal && "opacity-50")} aria-hidden />
+            {polishLabel}
+          </button>
+        </span>
+      )}
+      {state === "error" && error && (
+        // The tooltip alone is invisible on touch (no hover), so a dropped
+        // take would look like it just stopped. Surface the reason inline as
+        // a compact toast with a caret pointing at the mic, which stays the
+        // tap-to-retry target. Absolute positioning keeps it from shifting
+        // the composer layout (INV-21).
+        <span
+          role="status"
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="text-left">{error}</span>
+          <span
+            aria-hidden
+            className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
+          />
+        </span>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
           <Button
             type="button"
             variant="ghost"
@@ -190,11 +289,11 @@ export function MicButton({
               <Mic className="h-4 w-4" />
             )}
           </Button>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="text-xs">
-        {tooltip}
-      </TooltipContent>
-    </Tooltip>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </span>
   )
 }

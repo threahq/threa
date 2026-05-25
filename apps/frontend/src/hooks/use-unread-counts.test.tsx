@@ -80,6 +80,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,
       voiceTranscriptionModel: null,
+      voicePolishLevel: "opinionated",
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

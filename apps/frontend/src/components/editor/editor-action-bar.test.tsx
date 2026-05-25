@@ -13,6 +13,11 @@ function renderBar(props: Partial<React.ComponentProps<typeof EditorActionBar>> 
     insertEmoji: vi.fn(),
     insertTranscribedText: vi.fn(),
     setDictationInterim: vi.fn(),
+    insertDictationChunk: vi.fn(),
+    replaceDictationChunkText: vi.fn(() => true),
+    lockDictationChunk: vi.fn(),
+    lockAllDictationChunks: vi.fn(),
+    getDictationChunkText: vi.fn(() => null),
     getEditor: vi.fn(() => null),
   }
 

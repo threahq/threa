@@ -103,6 +103,23 @@ export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN = 0
 export const BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX = 500
 export const DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD = 6
 
+// Voice polish level: how aggressively the polish model rewrites a finalized
+// dictation transcript. The id flows through the wire format and is mirrored
+// by the backend prompt builder.
+//   - "none"        → polish disabled; raw text commits straight to the editor
+//   - "minor"       → punctuation, capitalization, restored apostrophes; preserves
+//                     filler ("uh", "um") and never collapses self-corrections
+//   - "opinionated" → drops filler, applies "no sorry X" corrections, formats
+//                     lists, expands ":blush:"-style emoji shortcodes
+export const VOICE_POLISH_LEVEL_OPTIONS = ["none", "minor", "opinionated"] as const
+export type VoicePolishLevel = (typeof VOICE_POLISH_LEVEL_OPTIONS)[number]
+
+export const VoicePolishLevels = {
+  NONE: "none",
+  MINOR: "minor",
+  OPINIONATED: "opinionated",
+} as const satisfies Record<string, VoicePolishLevel>
+
 // Voice transcription model picker options. The id is the registry id the
 // backend validates at session-open time. `null` means "use the server default"
 // (currently ElevenLabs Scribe v2 Realtime); the option list itself stays in
@@ -198,6 +215,13 @@ export interface UserPreferences {
    * default. The string is validated server-side against the model registry.
    */
   voiceTranscriptionModel: string | null
+  /**
+   * How aggressively dictated transcripts are rewritten by the polish model.
+   * Defaults to "opinionated" so dictation lands clean by default. The session
+   * UI exposes a "Show original" toggle so the user can compare or revert
+   * per take.
+   */
+  voicePolishLevel: VoicePolishLevel
   keyboardShortcuts: KeyboardShortcuts
   accessibility: AccessibilityPreferences
   createdAt: string
@@ -222,6 +246,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
   voiceTranscriptionModel: null,
+  voicePolishLevel: "opinionated",
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
 }
@@ -248,6 +273,7 @@ export interface UpdateUserPreferencesInput {
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number
   voiceTranscriptionModel?: string | null
+  voicePolishLevel?: VoicePolishLevel
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
 }

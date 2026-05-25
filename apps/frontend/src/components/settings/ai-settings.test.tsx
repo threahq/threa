@@ -4,15 +4,20 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { forwardRef, useImperativeHandle } from "react"
 import { AISettings } from "./ai-settings"
-import type { JSONContent } from "@threa/types"
+import type { JSONContent, VoicePolishLevel } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
 
 const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)
 
-let mockPreferences: { scratchpadCustomPrompt: string | null; voiceTranscriptionModel: string | null } = {
+let mockPreferences: {
+  scratchpadCustomPrompt: string | null
+  voiceTranscriptionModel: string | null
+  voicePolishLevel: VoicePolishLevel
+} = {
   scratchpadCustomPrompt: "Current instructions",
   voiceTranscriptionModel: null,
+  voicePolishLevel: "opinionated",
 }
 
 function extractText(node: JSONContent | undefined): string {
@@ -31,7 +36,11 @@ function createDoc(text: string): JSONContent {
 describe("AISettings", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    mockPreferences = { scratchpadCustomPrompt: "Current instructions", voiceTranscriptionModel: null }
+    mockPreferences = {
+      scratchpadCustomPrompt: "Current instructions",
+      voiceTranscriptionModel: null,
+      voicePolishLevel: "opinionated",
+    }
     updatePreferenceMock.mockClear()
 
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
@@ -159,5 +168,45 @@ describe("AISettings", () => {
 
     const elevenLabsRadio = screen.getByRole("radio", { name: /ElevenLabs Scribe v2/i }) as HTMLInputElement
     expect(elevenLabsRadio).toBeChecked()
+  })
+
+  it("shows Opinionated as the selected polish level by default", () => {
+    render(<AISettings />)
+    const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
+    expect(radio).toBeChecked()
+  })
+
+  it("saves the chosen polish level", async () => {
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    await user.click(screen.getByRole("radio", { name: /^Minor$/i }))
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishLevel", "minor")
+  })
+
+  it("turns polish off when the Off level is selected", async () => {
+    const user = userEvent.setup()
+    render(<AISettings />)
+
+    await user.click(screen.getByRole("radio", { name: /^Off$/i }))
+    expect(updatePreferenceMock).toHaveBeenCalledWith("voicePolishLevel", "none")
+  })
+
+  it("reflects a saved 'minor' preference", () => {
+    mockPreferences.voicePolishLevel = "minor"
+    render(<AISettings />)
+    const minorRadio = screen.getByRole("radio", { name: /^Minor$/i }) as HTMLInputElement
+    expect(minorRadio).toBeChecked()
+  })
+
+  it("defaults to Opinionated when the preference is missing", () => {
+    mockPreferences = {
+      scratchpadCustomPrompt: null,
+      voiceTranscriptionModel: null,
+      voicePolishLevel: undefined as unknown as VoicePolishLevel,
+    }
+    render(<AISettings />)
+    const radio = screen.getByRole("radio", { name: /Opinionated/i }) as HTMLInputElement
+    expect(radio).toBeChecked()
   })
 })
