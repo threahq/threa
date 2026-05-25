@@ -89,6 +89,29 @@ describe("createPolishTranscript", () => {
     expect(content).toContain("self-corrections")
   })
 
+  it("tells the model to apply rules in the speaker's language (both prompts, not English-only)", async () => {
+    // INV-54: don't make semantic decisions with English-only heuristics. The
+    // examples in both prompts are English; this note is what tells the model
+    // to transpose them rather than treating "uh"/"um"/"colon" as literals.
+    const generateText = mock(async (_args: GenerateTextArgs) => textResult("ok") as never)
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+
+    for (const level of ["minor", "opinionated"] as const) {
+      generateText.mockClear()
+      await polish({
+        rawTranscript: "raw",
+        level,
+        workspaceId: "ws_1",
+        userId: "user_1",
+        sessionId: "voicesess_1",
+      })
+      const sys = generateText.mock.calls[0][0].messages.find((m: { role: string }) => m.role === "system")
+      const content = sys?.content as string
+      expect(content).toContain("detect the language")
+      expect(content).toContain("Never translate the transcript")
+    }
+  })
+
   it("bans em-dashes in both prompts (belt) and scrubs any that slip through (suspenders)", async () => {
     const generateText = mock(async (_args: GenerateTextArgs) => textResult("here's what I'm thinking — pie") as never)
     const polish = createPolishTranscript({ ai: fakeAI(generateText) })

@@ -45,6 +45,15 @@ export const POLISH_MODEL = "openrouter:openai/gpt-5.4-nano"
 export const POLISH_TIMEOUT_MS = 4500
 export const POLISH_MAX_TOKENS = 2048
 
+// The example vocabulary in both level prompts is English (fillers like "uh"
+// / "um", self-correction phrases like "no sorry", spoken shortcodes like
+// "colon X colon"). Modern multilingual models can transpose the intent to
+// other languages but do it more reliably when told explicitly. Without this
+// note, non-English transcripts see inconsistent filler dropping and the
+// spoken shortcode rules never fire (a Swede saying "kolon blush kolon"
+// doesn't match "colon").
+export const POLISH_LANGUAGE_NOTE = `Language: detect the language of the raw transcript and apply every rule below in that language. The examples are written in English for brevity — transpose them to the speaker's language (drop its filler words, recognize its self-correction phrases, match its words for "colon" / "at sign" / "slash command" before the shortcode rules, capitalize per its conventions, e.g., German noun capitalization). Never translate the transcript itself.`
+
 // Shared at the top of every polish system prompt. Two things matter to the
 // user strongly enough to bake into both levels:
 //   1. No em dashes ("—") and no en dashes ("–"). They read as AI-isms and
@@ -60,7 +69,11 @@ export const POLISH_SHARED_HARD_RULES = `Hard rules:
 - Output ONLY the polished transcript text. No commentary, no quotes around the result, no prefixes like "Here:" or "Polished:". Do not greet, do not add a leading newline.
 - If the raw text is already clean, return it unchanged.`
 
-export const POLISH_MINOR_SYSTEM_PROMPT = `You lightly clean up a dictated voice transcript for a chat composer. Apply ONLY minor fixes:
+export const POLISH_MINOR_SYSTEM_PROMPT = `You lightly clean up a dictated voice transcript for a chat composer.
+
+${POLISH_LANGUAGE_NOTE}
+
+Apply ONLY minor fixes:
 
 - Capitalization at sentence starts.
 - Terminal punctuation (., ?, !) where the speaker clearly ended a thought.
@@ -71,7 +84,11 @@ Do NOT remove filler words like "uh", "um", "yeah", "okay so" — keep them. Do 
 
 ${POLISH_SHARED_HARD_RULES}`
 
-export const POLISH_OPINIONATED_SYSTEM_PROMPT = `You polish a dictated voice transcript for a chat composer. The user spoke a full take in one or more bursts; the raw transcript may have run-on sentences, missing punctuation, lowercase starts, filler words, and self-corrections. Apply OPINIONATED corrections to make the message land cleanly:
+export const POLISH_OPINIONATED_SYSTEM_PROMPT = `You polish a dictated voice transcript for a chat composer. The user spoke a full take in one or more bursts; the raw transcript may have run-on sentences, missing punctuation, lowercase starts, filler words, and self-corrections.
+
+${POLISH_LANGUAGE_NOTE}
+
+Apply OPINIONATED corrections to make the message land cleanly:
 
 - Drop filler used as filler: "uh", "um", "uhm", "er", "you know", "I mean" (as filler), leading "okay so" / "alright so" / "right so" at the start of clauses, and standalone "yeah" / "yes" / "right" used as filler affirmations (not when they're substantive answers).
 - Apply the speaker's self-corrections. If they say "X, no sorry Y" / "X, scratch that Y" / "X, I mean Y" / "X, actually Y", drop the corrected-away portion and the correction phrase, keep only the correction. Example: raw "start the game at nine tonight, no sorry eight" -> polished "start the game at eight tonight".
