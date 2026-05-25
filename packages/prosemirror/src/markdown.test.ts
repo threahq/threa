@@ -488,3 +488,121 @@ describe("mention/channel whitespace boundary", () => {
     expect(content?.[0]?.type).toBe("mention")
   })
 })
+
+describe("@threa/prosemirror table round-trip", () => {
+  function cell(type: "tableHeader" | "tableCell", text: string): JSONContent {
+    return {
+      type,
+      attrs: { colspan: 1, rowspan: 1, colwidth: null },
+      content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : undefined }],
+    }
+  }
+
+  it("serializes a table to GFM markdown", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            { type: "tableRow", content: [cell("tableHeader", "Name"), cell("tableHeader", "Role")] },
+            { type: "tableRow", content: [cell("tableCell", "Alice"), cell("tableCell", "PM")] },
+            { type: "tableRow", content: [cell("tableCell", "Bob"), cell("tableCell", "Eng")] },
+          ],
+        },
+      ],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe(
+      ["| Name | Role |", "| --- | --- |", "| Alice | PM |", "| Bob | Eng |"].join("\n")
+    )
+  })
+
+  it("parses a GFM markdown table into table/tableRow/cell nodes", () => {
+    const markdown = ["| Name | Role |", "| --- | --- |", "| Alice | PM |", "| Bob | Eng |"].join("\n")
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]?.type).toBe("table")
+    expect(parsed.content?.[0]?.content).toHaveLength(3)
+    expect(parsed.content?.[0]?.content?.[0]?.content?.[0]).toEqual(cell("tableHeader", "Name"))
+    expect(parsed.content?.[0]?.content?.[1]?.content?.[0]).toEqual(cell("tableCell", "Alice"))
+  })
+
+  it("round-trips a table losslessly through markdown", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            { type: "tableRow", content: [cell("tableHeader", "h1"), cell("tableHeader", "h2")] },
+            { type: "tableRow", content: [cell("tableCell", "a"), cell("tableCell", "b")] },
+          ],
+        },
+      ],
+    }
+    const reparsed = parseMarkdown(serializeToMarkdown(doc))
+    expect(reparsed.content?.[0]).toEqual(doc.content![0])
+  })
+
+  it("escapes pipes in cell content and round-trips them back", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            { type: "tableRow", content: [cell("tableHeader", "code"), cell("tableHeader", "desc")] },
+            { type: "tableRow", content: [cell("tableCell", "a | b"), cell("tableCell", "or")] },
+          ],
+        },
+      ],
+    }
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toContain("a \\| b")
+    const reparsed = parseMarkdown(markdown)
+    expect(reparsed.content?.[0]?.content?.[1]?.content?.[0]).toEqual(cell("tableCell", "a | b"))
+  })
+
+  it("preserves inline marks inside table cells", () => {
+    const markdown = ["| heading |", "| --- |", "| **bold** and *italic* |"].join("\n")
+    const parsed = parseMarkdown(markdown)
+    const bodyCellContent = parsed.content?.[0]?.content?.[1]?.content?.[0]?.content?.[0]?.content
+    expect(bodyCellContent?.[0]).toEqual({ type: "text", text: "bold", marks: [{ type: "bold" }] })
+    expect(bodyCellContent?.[1]).toEqual({ type: "text", text: " and " })
+    expect(bodyCellContent?.[2]).toEqual({ type: "text", text: "italic", marks: [{ type: "italic" }] })
+  })
+
+  it("pads ragged body rows to the header width", () => {
+    const markdown = ["| a | b | c |", "| --- | --- | --- |", "| 1 | 2 |"].join("\n")
+    const parsed = parseMarkdown(markdown)
+    const rowCells = parsed.content?.[0]?.content?.[1]?.content
+    expect(rowCells).toHaveLength(3)
+    expect(rowCells?.[2]).toEqual({
+      type: "tableCell",
+      attrs: { colspan: 1, rowspan: 1, colwidth: null },
+      content: [{ type: "paragraph" }],
+    })
+  })
+
+  it("treats a paragraph that just contains pipes as plain text, not a table", () => {
+    // No separator row → not a table; previously this was a regression risk
+    // because the table detector saw a pipe-laden line and tried to parse it.
+    const parsed = parseMarkdown("foo | bar")
+    expect(parsed.content?.[0]?.type).toBe("paragraph")
+  })
+
+  it("serializes a CellSelection-style slice of bare tableRows as a single table", () => {
+    // ProseMirror's CellSelection produces a slice whose top-level children
+    // are bare `tableRow` nodes (no enclosing `table`). The copy handler
+    // wraps that in a doc and feeds it to `serializeToMarkdown`, so we need
+    // to recognize this shape.
+    const sliceDoc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "tableRow", content: [cell("tableHeader", "a"), cell("tableHeader", "b")] },
+        { type: "tableRow", content: [cell("tableCell", "1"), cell("tableCell", "2")] },
+      ],
+    }
+    expect(serializeToMarkdown(sliceDoc)).toBe(["| a | b |", "| --- | --- |", "| 1 | 2 |"].join("\n"))
+  })
+})

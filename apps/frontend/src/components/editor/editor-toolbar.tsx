@@ -14,6 +14,10 @@ import {
   ChevronDown,
   ListIndentIncrease,
   ListIndentDecrease,
+  Table as TableIcon,
+  Rows3,
+  Columns3,
+  Trash2,
 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
@@ -280,6 +284,7 @@ export function EditorToolbar({
         showTooltip={!isMobileInlineToolbar}
         keyboardAccessible={inline}
       />
+      <TableControls editor={editor} roomy={isMobileInlineToolbar} keyboardAccessible={inline} />
       {showSpecialInputControls && (
         <>
           <Separator orientation="vertical" className={separatorClassName} />
@@ -557,6 +562,155 @@ function StylePicker({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+function TableControls({
+  editor,
+  roomy,
+  keyboardAccessible,
+}: {
+  editor: Editor
+  roomy: boolean
+  keyboardAccessible: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const inTable = editor.isActive("table")
+
+  // When the cursor leaves the table, close the popover so the trigger reverts
+  // to the plain "Insert table" button. Without this the popover would stay
+  // open with disabled-looking controls.
+  useEffect(() => {
+    if (!inTable && open) setOpen(false)
+  }, [inTable, open])
+
+  if (!inTable) {
+    return (
+      <ToolbarButton
+        onAction={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+        icon={TableIcon}
+        label="Insert table"
+        roomy={roomy}
+        showTooltip={!roomy}
+        keyboardAccessible={keyboardAccessible}
+      />
+    )
+  }
+
+  const close = () => setOpen(false)
+  const run = (action: () => void) => () => {
+    action()
+    close()
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Edit table"
+          onPointerDown={(e) => {
+            // Match ToolbarButton's pointerdown-on-desktop pattern so focus
+            // doesn't leave the editor while the popover opens.
+            if (!roomy) e.preventDefault()
+          }}
+          onMouseDown={(e) => {
+            if (roomy) e.preventDefault()
+          }}
+          className={cn(
+            "p-0 shrink-0 bg-muted-foreground/20 text-foreground",
+            roomy
+              ? "h-9 w-9 min-w-9 active:bg-muted hover:bg-muted-foreground/20 hover:text-current"
+              : "h-8 w-8 hover:bg-muted-foreground/20"
+          )}
+          tabIndex={keyboardAccessible ? undefined : -1}
+        >
+          <TableIcon className="h-4 w-4 stroke-[2.5px]" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="top"
+        className="w-48 p-1"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
+        <TableMenuItem
+          icon={Rows3}
+          label="Add row above"
+          onAction={run(() => editor.chain().focus().addRowBefore().run())}
+        />
+        <TableMenuItem
+          icon={Rows3}
+          label="Add row below"
+          onAction={run(() => editor.chain().focus().addRowAfter().run())}
+        />
+        <TableMenuItem
+          icon={Columns3}
+          label="Add column left"
+          onAction={run(() => editor.chain().focus().addColumnBefore().run())}
+        />
+        <TableMenuItem
+          icon={Columns3}
+          label="Add column right"
+          onAction={run(() => editor.chain().focus().addColumnAfter().run())}
+        />
+        <Separator className="my-1" />
+        <TableMenuItem
+          icon={Trash2}
+          label="Delete row"
+          onAction={run(() => editor.chain().focus().deleteRow().run())}
+        />
+        <TableMenuItem
+          icon={Trash2}
+          label="Delete column"
+          onAction={run(() => editor.chain().focus().deleteColumn().run())}
+        />
+        <TableMenuItem
+          icon={Trash2}
+          label="Delete table"
+          danger
+          onAction={run(() => editor.chain().focus().deleteTable().run())}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+function TableMenuItem({
+  icon: Icon,
+  label,
+  onAction,
+  danger,
+}: {
+  icon: React.ComponentType<{ className?: string }>
+  label: string
+  onAction: () => void
+  danger?: boolean
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      // Mirror StylePicker's pointerdown handling so the editor selection is
+      // preserved while the table command runs.
+      onPointerDown={(e) => {
+        e.preventDefault()
+        onAction()
+      }}
+      onClick={(e) => {
+        if (e.detail === 0) onAction()
+      }}
+      className={cn(
+        "h-8 w-full justify-start gap-2 px-2 text-sm font-normal",
+        danger && "text-destructive hover:text-destructive"
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      {label}
+    </Button>
   )
 }
 

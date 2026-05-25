@@ -371,6 +371,85 @@ describe("multiline block paste handling", () => {
     editor.destroy()
   })
 
+  it("reconstructs a GFM table from a markdown paste", () => {
+    const editor = createTestEditor("")
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    const tableMarkdown = ["| Name | Role |", "| --- | --- |", "| Alice | PM |", "| Bob | Eng |"].join("\n")
+    insertPastedText(
+      editor,
+      tableMarkdown,
+      () => "user",
+      () => null
+    )
+
+    const tableNode = (editor.getJSON().content ?? []).find((b) => b.type === "table")
+    expect(tableNode).toBeDefined()
+    expect(tableNode?.content).toHaveLength(3)
+    expect(serializeToMarkdown(editor.getJSON())).toContain("| Alice | PM |")
+    editor.destroy()
+  })
+
+  it("round-trips a copied table back through paste", () => {
+    // Build a table doc, serialize it (the cut/copy path), then paste it back
+    // into a fresh editor. This is the in-app copy/paste scenario: the
+    // clipboard carries our own markdown, so the destination must rebuild the
+    // exact same structure.
+    const tableDoc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableHeader",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null },
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "h1" }] }],
+                },
+                {
+                  type: "tableHeader",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null },
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "h2" }] }],
+                },
+              ],
+            },
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null },
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "a" }] }],
+                },
+                {
+                  type: "tableCell",
+                  attrs: { colspan: 1, rowspan: 1, colwidth: null },
+                  content: [{ type: "paragraph", content: [{ type: "text", text: "b" }] }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const copied = serializeToMarkdown(tableDoc)
+
+    const editor = createTestEditor("")
+    editor.commands.setTextSelection(editor.state.doc.content.size)
+    insertPastedText(
+      editor,
+      copied,
+      () => "user",
+      () => null
+    )
+
+    // The re-serialized output must match the original markdown.
+    expect(serializeToMarkdown(editor.getJSON())).toBe(copied)
+    editor.destroy()
+  })
+
   it("reconstructs a sharedMessage when pasted into a non-empty paragraph", () => {
     const editor = createTestEditor("Hello ")
     editor.commands.setTextSelection(editor.state.doc.content.size)
