@@ -114,7 +114,7 @@ export function createCommandHandlers({ pool, commandAvailabilityService, botRun
           commandId: cmdId,
           name: parsed.name,
           args: parsed.args,
-        }) as unknown as Record<string, unknown>
+        })
         await botRuntimeService.createInvocationInTransaction(client, {
           workspaceId,
           rootStreamId: resolved.runtime.rootStreamId,

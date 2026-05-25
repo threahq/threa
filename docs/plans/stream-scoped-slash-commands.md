@@ -65,13 +65,15 @@ interface CommandInfo {
 
 ### Stream bootstrap
 
-Add `commands: CommandInfo[]` to `StreamBootstrap`. These are stream-scoped additions, not a replacement for workspace commands.
+Add `commands: CommandInfo[]` to `StreamBootstrap`. When present, this list is **authoritative** for the stream — it is the complete effective command list (workspace fallback commands plus runtime-conditional commands like `/compact`, intersected with what's actually available in this stream). The frontend uses the workspace list only as a fallback for surfaces where no stream bootstrap is loaded yet.
 
 Frontend effective commands:
 
 ```ts
-const effectiveCommands = dedupeByName([...workspaceMetadata.commands, ...streamBootstrap.commands])
+const effectiveCommands = streamBootstrap.commands ?? workspaceMetadata.commands
 ```
+
+Do **not** merge the two lists: `/invite` is a workspace fallback that does not belong in scratchpads, and `/compact` is only valid in a linked Pi scratchpad — merging would leak each into the wrong surface.
 
 ### Runtime capability advertisement
 

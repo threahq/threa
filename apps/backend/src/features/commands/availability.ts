@@ -40,6 +40,8 @@ export interface PiRuntimeCommandTarget {
   responseStreamId: string
   targetInstanceId: string
   targetRuntimeSessionId: string
+  /** Lowercased canonical names the runtime currently advertises. */
+  advertisedCommandNames: ReadonlySet<string>
 }
 
 interface PiRuntimeTargetInternal extends PiRuntimeCommandTarget {
@@ -100,6 +102,7 @@ export class CommandAvailabilityService {
       })
       if (runtimeTarget) {
         for (const info of listPiSessionControlCommandInfos()) {
+          if (!runtimeTarget.advertisedCommandNames.has(info.name.toLowerCase())) continue
           commands.push({ info, executionKind: CommandKinds.BOT_RUNTIME, runtime: runtimeTarget })
         }
       }
@@ -170,7 +173,8 @@ async function resolvePiRuntimeCommandTarget(
     typeof presence.capabilities.runtimeSessionId === "string" ? presence.capabilities.runtimeSessionId : null
   if (runtimeSessionId !== link.runtimeSessionId) return null
 
-  if (!supportsSessionControlCommands(presence)) return null
+  const advertisedCommandNames = resolveAdvertisedSessionControlCommandNames(presence)
+  if (advertisedCommandNames.size === 0) return null
 
   return {
     botId: bot.id,
@@ -179,17 +183,26 @@ async function resolvePiRuntimeCommandTarget(
     responseStreamId: stream.id,
     targetInstanceId: link.instanceId,
     targetRuntimeSessionId: link.runtimeSessionId,
+    advertisedCommandNames,
     link,
     presence,
   }
 }
 
-function supportsSessionControlCommands(presence: BotRuntimeInstance): boolean {
-  if (presence.capabilities.supportsSessionControlCommands !== true) return false
+/**
+ * Lowercased intersection of the canonical Pi session-control commands with
+ * what the runtime currently advertises. Empty set means "not supported".
+ * Returning the intersection (instead of a plain boolean) lets the caller
+ * surface exactly the commands the runtime can actually handle.
+ */
+function resolveAdvertisedSessionControlCommandNames(presence: BotRuntimeInstance): ReadonlySet<string> {
+  if (presence.capabilities.supportsSessionControlCommands !== true) return new Set()
   const advertised = presence.capabilities.sessionControlCommands
-  if (!Array.isArray(advertised)) return false
-  const advertisedNames = new Set(advertised.filter((value): value is string => typeof value === "string"))
-  return PI_SESSION_CONTROL_COMMAND_NAMES.some((name) => advertisedNames.has(name))
+  if (!Array.isArray(advertised)) return new Set()
+  const advertisedLower = new Set(
+    advertised.filter((value): value is string => typeof value === "string").map((value) => value.toLowerCase())
+  )
+  return new Set(PI_SESSION_CONTROL_COMMAND_NAMES.filter((name) => advertisedLower.has(name.toLowerCase())))
 }
 
 function dedupeCommands(commands: ResolvedCommand[]): ResolvedCommand[] {

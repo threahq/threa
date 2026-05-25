@@ -20,11 +20,17 @@ export interface RuntimeCommandInvocationMetadata {
   }
 }
 
+/**
+ * Returns the metadata bag in the shape BotRuntimeService expects
+ * (`Record<string, unknown>`). The internal shape is enforced by the
+ * `satisfies` clause so consumers parsing the bag back out (via
+ * `parseRuntimeCommandInvocationMetadata`) see the same fields.
+ */
 export function buildRuntimeCommandInvocationMetadata(params: {
   commandId: string
   name: string
   args: string
-}): RuntimeCommandInvocationMetadata {
+}): Record<string, unknown> {
   return {
     command: {
       id: params.commandId,
@@ -32,7 +38,7 @@ export function buildRuntimeCommandInvocationMetadata(params: {
       args: params.args,
       executionKind: CommandKinds.BOT_RUNTIME,
     },
-  }
+  } satisfies RuntimeCommandInvocationMetadata
 }
 
 export function parseRuntimeCommandInvocationMetadata(
