@@ -8,6 +8,8 @@ The current bot scratchpad invocation framework is **pull-based**. A bot instanc
 
 Bots also poll `GET /streams/:id/messages` to discover follow-up turns mid-session, and POST `/bot-runtime/presence` on a heartbeat cadence. Each of those is another worker invocation per cycle.
 
+**Why WS solves this:** WebSocket connections bypass the worker entirely (`docs/system-overview.md:54-57`). The frontend already uses `wss://ws-eu.threa.io` direct to the regional backend after fetching `/api/workspaces/:id/config` once. The upgrade itself crosses the worker once and counts as one request; frames thereafter do not. So a bot that opens one long-lived WS instead of polling every 2 s drops from ~1800 worker requests/hour to ~1 (plus whatever HTTP writes it makes).
+
 ## 2. Goals & Non-Goals
 
 **Goals**
@@ -99,13 +101,13 @@ A bot **cannot** subscribe to another bot's rooms. Both auto-joins are server-en
 
 All flow through the existing `BroadcastHandler`. Schema-only changes (new entries in `OutboxEventType` and a routing table for `bot:`-prefixed rooms).
 
-| Event                          | Payload                                                                                                | Target Room                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `bot_invocation:available`     | `{ workspaceId, botId, invocationId, requiredCapability, targetInstanceId?, targetRuntimeSessionId? }` | `bot:{ws}:{botId}:instance:{instanceId}` if `targetInstanceId` set, else `bot:{ws}:{botId}` |
-| `bot_invocation:claimed`       | `{ workspaceId, botId, invocationId, claimedByInstanceId }`                                            | `bot:{ws}:{botId}` (so siblings stop racing — best-effort nicety)                           |
-| `bot_invocation:cancelled`     | `{ workspaceId, botId, invocationId, reason }`                                                         | `bot:{ws}:{botId}`                                                                          |
-| `bot_session_link:invalidated` | `{ workspaceId, botId, instanceId, runtimeSessionId, rootStreamId }`                                   | `bot:{ws}:{botId}:instance:{instanceId}`                                                    |
-| `bot:active_actor:changed`     | `{ workspaceId, rootStreamId, previousActorId?, newActorId? }`                                         | `bot:{ws}:{botId}` for each affected bot                                                    |
+| Event                          | Payload                                                                                                          | Target Room                                                                                 |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `bot_invocation:available`     | `{ workspaceId, botId, invocationId, requiredCapability, targetInstanceId?, targetRuntimeSessionId? }`           | `bot:{ws}:{botId}:instance:{instanceId}` if `targetInstanceId` set, else `bot:{ws}:{botId}` |
+| `bot_invocation:claimed`       | `{ workspaceId, botId, invocationId }` (no `claimedByInstanceId` — siblings don't need to know each other's IDs) | `bot:{ws}:{botId}` (siblings learn "stop racing this one" — best-effort nicety)             |
+| `bot_invocation:cancelled`     | `{ workspaceId, botId, invocationId, reason }`                                                                   | `bot:{ws}:{botId}`                                                                          |
+| `bot_session_link:invalidated` | `{ workspaceId, botId, instanceId, runtimeSessionId, rootStreamId }`                                             | `bot:{ws}:{botId}:instance:{instanceId}`                                                    |
+| `bot:active_actor:changed`     | `{ workspaceId, rootStreamId, previousActorId?, newActorId? }`                                                   | `bot:{ws}:{botId}` for each affected bot                                                    |
 
 These are **purely informational pushes**. Persistence already happened. The bot reacts by issuing the appropriate HTTP call (claim, fetch, etc.).
 
@@ -117,11 +119,17 @@ These are **purely informational pushes**. Persistence already happened. The bot
 - Multi-instance correctness. `BroadcastHandler` already handles the "any backend can fan out" case via the postgres adapter.
 - Zero new infrastructure. We are not introducing a parallel pubsub.
 
-Concretely, `BotInvocationRepository.insertIdempotent` gets called inside `withTransaction`, alongside `OutboxRepository.insert(db, "bot_invocation:available", payload)`. The two existing call sites in `invocation-outbox-handler.ts:113-189` switch to a `*InTransaction` service variant.
+Concretely:
+
+- `BotInvocationRepository.insertIdempotent` runs inside `withTransaction`, alongside `OutboxRepository.insert(db, "bot_invocation:available", payload)`. Outbox event fires **only on first insert** (not on `ON CONFLICT` reuse) — detected via `RETURNING xmax = 0`. Test must assert no double-fire on second call with the same idempotency key.
+- The outbox handler at `invocation-outbox-handler.ts:113-189` invokes `createInvocation` once per mentioned bot in a loop. **Wrap the whole loop in one transaction** (`createInvocationsInTransaction(streamMessage, bots[])` taking the per-message context once) so we open one connection per inbound message instead of N. The current loop is N round-trips to a per-call `withTransaction`; the new pattern is one.
+- `StreamActiveActorRepository.upsert` (any code path that mutates `stream_active_actors`, including `BotRuntimeService.setActiveActor` and `createOrLinkPiRemoteSessionInTransaction`) must write a `bot:active_actor:changed` outbox event in the same transaction, with `affectedBotIds = [previousActorId, newActorId].filter(isBot)`. If a future caller mutates this table without going through the service method, the push is silently absent and bots miss "you are no longer the active actor" hints. **Discipline: there must be exactly one mutation path, and it must always emit.** Add a comment on the repository method pointing at the service wrapper.
 
 ### 4.7 Bootstrap on Connect / Reconnect (INV-53)
 
-On every `connection` event, the server emits `bot:bootstrap` directly to the joining socket with:
+**Order matters.** The server-side `bot:hello` handler runs `socket.join(...)` **before** issuing the bootstrap SELECT. If we read first and join second, a row inserted between the two would emit a push to an empty room and the bot would not see the invocation until the safety-backstop poll fires. Joining first means the bot may see the same invocation in both the live push and the bootstrap snapshot — dedupe by `invocationId` is the bot's responsibility, exactly mirroring how the user-facing socket reconciles `bootstrap → message:created` (INV-53).
+
+Bootstrap payload:
 
 ```ts
 {
@@ -145,31 +153,40 @@ The bootstrap is computed from a single DB read per scope (cap row count, e.g. l
 
 ### 4.8 Presence on WS
 
-- On `connection` (after auth + `bot:hello`), upsert `bot_runtime_instances` with `status = 'available'`, `accepting_invocations = true`. Same code path as `POST /bot-runtime/presence`.
-- A new in-memory `BotSocketRegistry` (mirror of the existing `UserSocketRegistry`) tracks `(workspaceId, botId, instanceId) → Set<Socket>`.
-- A backend-side ticker (e.g. every 25 s) batches `UPDATE bot_runtime_instances SET last_seen_at = NOW() WHERE (workspaceId, botId, instanceId) IN (...)` for all connected instances. One query per tick across all bots on the box, not one per bot — this is why we don't write per-frame.
-- On `disconnect`, the socket is removed from the registry. **After a 30 s grace window** with no reconnect from any socket of the same `(workspaceId, botId, instanceId)`, the registry calls `BotRuntimeInstanceRepository.markOffline(...)`. The grace absorbs Wi-Fi blips and laptop-lid-close events without flapping the UI.
-- HTTP `POST /bot-runtime/presence` is still supported for: explicit status changes (`'busy'`, `'paused'`), capability changes, **and public-key rotation under the E2E design**. WS connection just keeps `last_seen_at` fresh.
+The WS connection itself is the truth — there is **no periodic ticker** writing `last_seen_at` for connected sockets. Two competing truths would drift; we pick one.
 
-### 4.9 Backwards Compatibility
+- On `bot:hello` (after auth), upsert `bot_runtime_instances` with `status = 'available'`, `accepting_invocations = true`, `last_seen_at = NOW()`. Same code path as `POST /bot-runtime/presence`. **This is the only WS-driven write to `bot_runtime_instances` during a connection's lifetime.**
+- A new in-memory `BotSocketRegistry` (mirror of the existing `UserSocketRegistry`) tracks `(workspaceId, botId, instanceId) → Set<Socket>`. This is the live-online signal.
+- On `disconnect`, the socket is removed from the registry. **After a 30 s grace window** with no reconnect from any socket of the same `(workspaceId, botId, instanceId)`, the registry calls `BotRuntimeInstanceRepository.markOffline(...)` which sets `status='offline'`, `accepting_invocations=false`, and bumps `last_seen_at = NOW()`. The grace absorbs Wi-Fi blips and laptop-lid-close events without flapping the UI. **`markOffline` must NOT delete the row** — the row is the routing target for any `target_instance_id`-pinned invocations (`bot_invocations.target_instance_id`), and `BotInvocationRepository.claimOne` requires it to exist (`repository.ts:462-468`).
+- For "is this bot online right now?" surfaces (e.g. bot picker in the UI), readers should prefer `BotSocketRegistry.isOnline(scope)` over `last_seen_at`. The DB row remains useful for cross-instance reads (the registry is in-memory per-backend) and for offline bots — once `markOffline` runs, `last_seen_at` is fresh and accurate.
+- HTTP `POST /bot-runtime/presence` is still supported for: explicit status transitions (`'busy'`, `'paused'`), capability changes, **and public-key rotation under the E2E design**. Bots can call it any time, WS or no.
+
+### 4.9 Backwards Compatibility and Discovery
 
 - All HTTP endpoints unchanged. The HTTP-only bot polling at 2 s continues to work.
 - The new `/bot` namespace is purely additive. A bot that does not connect to it sees no behavior change.
 - The recommended fallback path for the new client: open WS; on connect failure (auth, network, region unreachable) or repeated disconnects, fall back to polling at the existing cadence. Backend has no special mode toggle — both transports just work.
 - **Polling reduction is opt-in on the client.** Once a bot is on WS, it can drop its claim-poll cadence from 2 s to 30 s as a safety backstop. Backend doesn't enforce this; it's a client decision.
-- Optional response header `X-Threa-WS-Available: 1` on `/bot-invocations/claim` so older clients can discover the new transport without us shipping a config endpoint. Newer clients ignore (they know).
+
+**`wsUrl` discovery.** WebSocket connections bypass the worker and go directly to the regional backend (`docs/system-overview.md:54-57`). Bots need to know the URL. Two paths, both shipped:
+
+1. **`GET /api/workspaces/:id/config`** already returns `{ region, wsUrl }` unauthenticated (the worker resolves the region from KV; see `apps/workspace-router/src/index.ts:257-271`). The bot SDK calls this once at startup and caches the URL. No new endpoint, no auth change.
+2. **Echo `wsUrl` in the `POST /bot-runtime/presence` response.** Saves the bot one HTTP round-trip on first connect, and keeps the field discoverable even if a future change moves it. Trivial backend change.
+
+Older bots that don't know about WS keep ignoring these fields — both endpoints are already serving them or extending them in a forward-compatible way.
 
 ### 4.10 E2E Encryption Alignment (PR #621)
 
-The wire shape across HTTP and WS must be identical (INV-E3 from #621). Concretely:
+Per [PR #621](https://github.com/threahq/threa/pull/621), the wire shape for messages and invocation steps must be identical across HTTP and WS — a top-level `{kind: 'plaintext' | 'e2e', ...}` discriminator carrying an opaque envelope that the server never decrypts. Reading that PR for the exact invariants and field names is worthwhile before implementing; the references here are conceptual.
 
-- **`bot:hello` payload accepts the same `publicKey: string` field** that PR #621 adds to the presence body. Persisted via the existing `bot_runtime_keys` table (introduced by #621). Key rotation continues via explicit `POST /bot-runtime/presence` — the WS path simply registers the current key.
-- **`bot_invocation:available` push is plaintext metadata only** — `invocationId`, `requiredCapability`, target hints. It carries **no message content**. The bot then `GET`s the source message over HTTP and decrypts client-side, identical to the HTTP-poll path. There is no E2E content in the push.
-- **If we later push `message:created` events to bots** (a v2 optimization, not in this scope), the envelope is forwarded **verbatim** — server never sees plaintext. That mirrors INV-E3.
-- **No preview content in pushes** (INV-E4). Pushes carry IDs and capability hints; the bot fetches what it needs.
+Concretely for this revamp:
+
+- **`bot:hello` payload accepts the same `publicKey` field** PR #621 adds to the presence body, with the same shape. Persisted via the `bot_runtime_keys` table introduced by #621. Explicit key rotation continues via `POST /bot-runtime/presence`; the WS path is incidental registration.
+- **`bot_invocation:available` push is plaintext metadata only** — `invocationId`, `requiredCapability`, target hints. It carries **no message content**, no preview text, no envelope. The bot fetches the source message over HTTP and decrypts client-side, identical to the HTTP-poll path. This matches the PR's "preview surfaces carry no content for E2E streams" stance.
+- **If we later push `message:created` envelopes to bots** (a v2 optimization, not in this scope), forwarding must be byte-verbatim — server never touches `ciphertext` or `envelope`. The PR explicitly requires this for socket fanout to match HTTP semantics.
 - **`bot_session_link:invalidated` is purely a routing signal** — no content, no key material. Safe on E2E streams.
 
-The transport revamp is intentionally orthogonal to the crypto revamp. If PR #621 lands first, this PR just preserves the existing field shape. If this PR lands first, PR #621 plugs into the same hello-handshake (adding `publicKey` to its schema) and the same outbox events (no content fields to encrypt).
+The transport revamp is intentionally orthogonal to the crypto revamp. If PR #621 lands first, this PR preserves its field shapes. If this PR lands first, PR #621 plugs into the same hello-handshake (adding `publicKey` to its Zod schema) and the same outbox events (no content fields to encrypt). Either ordering works.
 
 ## 5. Failure Modes & Disconnect Handling
 
@@ -179,7 +196,7 @@ The transport revamp is intentionally orthogonal to the crypto revamp. If PR #62
 | Backend dies between invocation insert and broadcast                  | n/a                                  | Outbox replays on next dispatcher cycle; bot gets the push within seconds                                                                                                       | Outbox pattern, INV-4                                                                                                     |
 | Bot connected to backend instance A; invocation created on instance B | n/a                                  | Postgres adapter fans out; bot on A sees the push                                                                                                                               | Already in place                                                                                                          |
 | Bot misses a push (rare; e.g. socket closed during emit)              | n/a                                  | Safety-backstop `POST /claim` at 30 s catches it                                                                                                                                | Bootstrap on reconnect handles the planned-disconnect case; backstop catches the unplanned-edge case                      |
-| Bot key revoked                                                       | Subsequent HTTP calls 401            | Next `validateKey` cache miss invalidates; existing WS continues until ping-timeout (≤60 s)                                                                                     | Add an explicit `bot:disconnect_all_for_key` event in v2; v1 accepts up to one ping cycle of leakage                      |
+| Bot key revoked                                                       | Subsequent HTTP calls 401            | Existing WS continues to receive pushes until a periodic re-validate fires (see §6 — included in v1)                                                                            | Re-validate the key on a 60 s ticker per socket; force-disconnect on revocation. Closes the data-exfil window cheaply.    |
 | Bot opens many WS connections                                         | Possible today via many keys         | Same                                                                                                                                                                            | Add a per-key connection cap in v2 (e.g. 10 concurrent). Out of scope for v1 — friends-and-family scale.                  |
 | Bot fails to call `/renew` in time                                    | Claim auto-expires, sibling picks up | Same                                                                                                                                                                            | Unchanged. WS does not change claim semantics.                                                                            |
 
@@ -190,10 +207,14 @@ The defining property: **HTTP is the truth, WS is the latency optimization.** Ev
 - **WS handshake auth is mandatory.** No anonymous `/bot` connections. Reject with `Error: "Authentication failed"` matching the existing socket-auth precedent.
 - **Bot can only join its own rooms.** Server auto-joins from `socket.data.bot`. No client-emitted `join` event in v1.
 - **Scope check on connect.** `BOT_RUNTIME_WRITE` required. Same scope as HTTP presence/sessions endpoints, so a key that can write presence over HTTP can connect over WS — no privilege escalation.
-- **CF Worker pass-through.** The `apps/workspace-router` worker already routes `/api/*` per-region. WS upgrade requests on the same path inherit the same routing — no worker change needed, and the worker counts the upgrade as one request, then stops counting frames (frames don't traverse the worker once upgraded). **This is the core cost saving.**
+- **`instanceId` and `runtimeSessionId` are room-name fragments.** Both must be pattern-constrained in the `bot:hello` Zod schema (e.g. `^[A-Za-z0-9_-]{1,64}$`) to prevent cross-namespace room collisions (`bot:{ws}:{botId}:instance:../user:hacker`). Plain Zod string validation is not enough — must be a regex (INV-55, INV-11).
+- **Revocation closure (60 s ticker per socket).** `BotApiKeyService.validateKey` has no cache today (`bot-api-key-service.ts:146-171` always hits the DB), so HTTP revocation is immediate. The WS keeps a stale-auth window unless we close it. v1 includes a per-socket 60 s re-validate ticker (~3 lines): on failure, force-disconnect the socket. Worst-case data-exfil window: ≤60 s of `bot_invocation:available` payloads (metadata only — invocation IDs and capability hints; no message content).
+- **Bot bootstrap is instance-scoped.** Pending-invocation reads filter `(status = 'pending' OR (status = 'claimed' AND claimed_by_instance_id = $instanceId))` so a reconnecting instance does not learn the existence of claims held by siblings.
+- **CF Worker pass-through.** WebSocket connections bypass the worker entirely (`docs/system-overview.md:54-57`); the upgrade itself is one worker request, then frames flow direct to the regional backend. No worker change needed.
 - **TLS termination is unchanged.** Same ALB / Express server.
 - **No new secrets.** The bot key already authorizes everything the WS connection lets it do.
-- **Observability for abuse.** Add Prometheus metrics: `bot_ws_connections_active{workspace_id, bot_id}`, `bot_ws_events_total{event_type, direction}`, `bot_ws_connection_duration_seconds`. Mirror of the existing `wsConnectionsActive` etc.
+- **Every backend instance must register the `/bot` namespace at boot.** `@socket.io/postgres-adapter` fans out per namespace; if instance A never called `io.of("/bot")`, broadcasts from B silently no-op on A's sockets. Document the invariant; no per-instance feature flag for the `/bot` namespace until we have a story for adapter-aware gating.
+- **Observability for abuse.** Add Prometheus metrics: `bot_ws_connections_active{workspace_id, bot_id}`, `bot_ws_events_total{event_type, direction}`, `bot_ws_connection_duration_seconds`. Mirror of the existing `wsConnectionsActive`.
 
 ## 7. Rollout Phases
 
@@ -213,9 +234,9 @@ The defining property: **HTTP is the truth, WS is the latency optimization.** Ev
 
 1. **Should bootstrap include an explicit `serverGeneratedAt` cursor that the bot persists across restarts?** Useful for "give me everything since X" semantics on long bot reboots. v1 just gives all pending; revisit if pending-list cap (100) becomes a problem.
 2. **Do we want a `bot:resync` server-initiated event to force a bot to re-bootstrap?** Useful if backend invariants change (e.g. major schema migration). v1: no, just disconnect; client reconnects → bootstrap is implicit.
-3. **Should `bot_invocation:claimed` go to the **whole** bot room or only the instance that lost?** Whole room is simpler; cost is one extra event per claim. Going with whole room.
-4. **Public-key registration on `bot:hello` — write on every connect, or only when changed?** PR #621 implies per-session, so per-connect is fine. Confirm with the e2e PR author.
-5. **Per-IP connection limits at the load balancer?** Out of scope for v1 (single-user scale).
+3. **Public-key registration on `bot:hello` — write on every connect, or only when changed?** PR #621 implies per-session, so per-connect is fine. Confirm with the e2e PR author.
+4. **Per-IP connection limits at the load balancer?** Out of scope for v1 (single-user scale).
+5. **`BroadcastHandler` throughput.** The handler is a single listener processing all outbox events sequentially. Adding 5 new event types doesn't increase throughput, just per-event latency. At single-user scale, fine. If bot events ever spike, a separate `BotBroadcastHandler` with a distinct `listenerId` can process the same outbox in parallel — same pattern as `BotInvocationOutboxHandler` already living alongside `BroadcastHandler`. Note for the future, not for v1.
 
 ## 9. Success Criteria
 

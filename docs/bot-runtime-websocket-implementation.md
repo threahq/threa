@@ -223,7 +223,7 @@ Mirror of `apps/backend/src/lib/user-socket-registry.ts`. Tracks `(workspaceId, 
 - `register(scope, socket)`
 - `unregister(socket)`
 - `count(scope): number`
-- `forEach(callback)` — for the periodic `last_seen_at` tick
+- `isOnline(scope): boolean` — for online-status queries; preferred over `last_seen_at` on this backend instance
 
 Plus a disconnect grace timer: on the last socket for a `(workspaceId, botId, instanceId)` going away, start a 30 s timer; if nothing reconnects in that window, call the supplied `onInstanceOffline(scope)` callback. Cancel the timer if any socket reconnects.
 
@@ -268,7 +268,16 @@ export function registerBotSocketHandlers(
 
         const { instanceId, runtimeSessionId, runtimeKind, publicKey, supportedCapabilities } = parsed.data
 
-        // 1. Upsert presence (writes that persist). Same code path as POST /bot-runtime/presence.
+        // 1. Auto-join rooms FIRST. Order matters: if we read bootstrap before
+        //    joining, an invocation inserted between SELECT and join would emit a
+        //    push to an empty room and the bot would miss it until the safety-
+        //    backstop poll. Joining first means the bot may see the same row in
+        //    both the live push and the bootstrap snapshot — bot dedupes by
+        //    invocationId. INV-53.
+        socket.join(`bot:${bot.workspaceId}:${bot.botId}`)
+        socket.join(`bot:${bot.workspaceId}:${bot.botId}:instance:${instanceId}`)
+
+        // 2. Upsert presence (writes that persist). Same code path as POST /bot-runtime/presence.
         await deps.botRuntimeService.upsertPresenceFromBotKey({
           workspaceId: bot.workspaceId,
           botId: bot.botId,
@@ -280,11 +289,7 @@ export function registerBotSocketHandlers(
           // publicKey: handled by the e2e PR (#621) when that lands.
         })
 
-        // 2. Auto-join rooms.
-        socket.join(`bot:${bot.workspaceId}:${bot.botId}`)
-        socket.join(`bot:${bot.workspaceId}:${bot.botId}:instance:${instanceId}`)
-
-        // 3. Register for presence ticker + disconnect grace.
+        // 3. Register for disconnect-grace tracking.
         deps.botSocketRegistry.register({ workspaceId: bot.workspaceId, botId: bot.botId, instanceId }, socket)
 
         // 4. Compute and emit bootstrap.
@@ -312,11 +317,45 @@ export function registerBotSocketHandlers(
 
 `buildBotBootstrap` lives in the same file and reads:
 
-- Pending invocations: `SELECT … FROM bot_invocations WHERE workspace_id = $1 AND actor_id = $2 AND status IN ('pending', 'claimed') AND (target_instance_id IS NULL OR target_instance_id = $3) AND (target_runtime_session_id IS NULL OR target_runtime_session_id = $4) AND required_capability = ANY($5) ORDER BY created_at LIMIT 100`. Including `'claimed'` and filtering out expired-claims-this-bot-owns is OK — the bot can no-op on rows it already knows about.
+- Pending invocations:
+  ```sql
+  SELECT id, required_capability, created_at, target_instance_id, target_runtime_session_id
+  FROM bot_invocations
+  WHERE workspace_id = $1
+    AND actor_id = $2
+    AND (
+      status = 'pending'
+      OR (status = 'claimed' AND claimed_by_instance_id = $3)
+    )
+    AND (target_instance_id IS NULL OR target_instance_id = $3)
+    AND (target_runtime_session_id IS NULL OR target_runtime_session_id = $4)
+    AND required_capability = ANY($5)
+  ORDER BY created_at
+  LIMIT 100
+  ```
+  The `claimed_by_instance_id = $3` filter is the M5 security note: a reconnecting instance does not learn of claims held by siblings. The `pending` branch picks up untargeted work the reconnecting instance can still race for.
 - Active actor map: `SELECT root_stream_id, actor_id FROM stream_active_actors WHERE workspace_id = $1 AND actor_type = 'bot' AND actor_id = $2`.
 - Active session links for this instance: `SELECT runtime_session_id, root_stream_id, active_stream_id FROM bot_runtime_session_links WHERE workspace_id = $1 AND bot_id = $2 AND instance_id = $3 AND status = 'active'`.
 
 All three are pure reads — pass `pool`, not `withClient` (INV-30).
+
+### 6.1 The `bot:hello` Zod Schema
+
+Critical: `instanceId` and `runtimeSessionId` become room-name fragments. Constrain them with a regex to prevent room-collision attacks (`instanceId: "../user:hacker"`).
+
+```ts
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+export const botHelloSchema = z.object({
+  instanceId: z.string().regex(SAFE_ID, "instanceId must match [A-Za-z0-9_-]{1,64}"),
+  runtimeSessionId: z.string().regex(SAFE_ID).optional(),
+  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+  publicKey: z.string().max(512).optional(), // base64 X25519 pubkey for PR #621
+  supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1).max(16),
+})
+```
+
+`SAFE_ID` is intentionally narrow. ULIDs match it (`[0-9A-HJKMNP-TV-Z]{26}`), as do existing instanceId conventions in the bot SDK. Anything outside it is a client bug or an attack.
 
 **Test:** `apps/backend/src/features/bot-runtimes/socket-handler.test.ts`. Use Socket.IO's in-process test harness (look at how `socket.ts` is tested today for the pattern). Cases:
 
@@ -326,32 +365,36 @@ All three are pure reads — pass `pool`, not `withClient` (INV-30).
 - Insert a row with `targetInstanceId = X`; connect with `instanceId = X` → row included; connect with `instanceId = Y` → row excluded.
 - After `bot:hello`, insert a new untargeted row via the service (which now writes an outbox event) → run the broadcast handler tick → socket receives `bot_invocation:available`.
 
-## 7. Presence Ticker
+## 7. Per-Socket Key Re-Validation Ticker
 
-**File:** `apps/backend/src/features/bot-runtimes/socket-handler.ts` (same file as Step 6; co-located lifecycle).
+**No periodic `last_seen_at` ticker.** We deliberately do NOT write `last_seen_at` on a schedule — the WS connection itself is the truth, surfaced via `BotSocketRegistry.isOnline(scope)`. Two truths would drift. `last_seen_at` is written on `bot:hello`, on `markOffline` (after grace), and on explicit `POST /bot-runtime/presence`. That's it.
 
-Add a single setInterval after namespace setup that runs every 25 s:
+**What we do add (security):** A per-socket key-revalidation ticker. `BotApiKeyService.validateKey` has no cache today (`bot-api-key-service.ts:146-171` always hits the DB), so HTTP revocation is immediate. Without this ticker, a revoked key keeps receiving `bot_invocation:available` pushes until the socket's ping-timeout (~60 s). Adding one DB lookup every 60 s per connected socket is cheap and closes the hole.
 
 ```ts
-const tickerId = setInterval(() => {
-  void tickPresence(deps).catch((err) => logger.warn({ err }, "Bot presence tick failed"))
-}, 25_000)
-// Expose stop() for graceful shutdown in server.ts:
-return { namespace: ns, stop: () => clearInterval(tickerId) }
+ns.on("connection", (socket) => {
+  // … bot:hello handler above …
+
+  const revalidateId = setInterval(async () => {
+    try {
+      const stillValid = await deps.botApiKeyService.validateKey(socket.handshake.auth.token)
+      if (!stillValid) socket.disconnect(true)
+    } catch (err) {
+      logger.warn({ err, socketId: socket.id }, "Bot key revalidate failed; disconnecting")
+      socket.disconnect(true)
+    }
+  }, 60_000)
+
+  socket.on("disconnect", () => {
+    clearInterval(revalidateId)
+    deps.botSocketRegistry.unregister(socket)
+  })
+})
 ```
 
-`tickPresence` collects all `(workspaceId, botId, instanceId)` from the registry and runs **one** batched UPDATE:
+The validator already runs hot on the request path; one extra read per minute per socket is rounding error at single-user scale and stays well below `BotApiKeyService`'s implicit budget at multi-user scale.
 
-```sql
-UPDATE bot_runtime_instances SET last_seen_at = NOW()
-WHERE (workspace_id, bot_id, instance_id) IN (
-  SELECT * FROM UNNEST($1::text[], $2::text[], $3::text[])
-)
-```
-
-If the registry is empty, skip the query entirely. This is the only per-tick DB cost, and it's amortized across every connected bot on the box.
-
-**Test:** Mock the registry to return three scopes; assert the batched UPDATE runs with three rows. Assert empty registry → no query.
+**Test:** Inject a fake `botApiKeyService` whose `validateKey` returns `null` after the third call; assert the socket disconnects on the 4th tick. Use `vi.useFakeTimers()`.
 
 ## 8. Wire Everything in `server.ts`
 
@@ -365,6 +408,9 @@ const botSocketRegistry = new BotSocketRegistry({
   graceMs: 30_000,
 })
 
+// IMPORTANT: every backend instance must call this at boot. @socket.io/postgres-adapter
+// fans out per-namespace; if instance A never registers /bot, broadcasts from B silently
+// no-op on A's sockets. Do not introduce per-instance gating for this namespace.
 const botGateway = registerBotSocketHandlers(io, {
   pool: pools.main,
   botApiKeyService,
@@ -379,33 +425,58 @@ const broadcastHandler = new BroadcastHandler({ io, botNamespace: botGateway.nam
 shutdownHooks.push(async () => { botGateway.stop(); })
 ```
 
-Add `BotRuntimeInstanceRepository.markOffline` (new method, single UPDATE setting `status = 'offline'`, `accepting_invocations = false`).
+Add `BotRuntimeInstanceRepository.markOffline` (new method): a single UPDATE that sets `status='offline'`, `accepting_invocations=false`, `last_seen_at=NOW()`. **Must NOT delete the row** — `BotInvocationRepository.claimOne` requires `EXISTS (… FROM bot_runtime_instances WHERE instance_id = …)` for `target_instance_id`-pinned invocations to remain claimable when the instance reconnects later. The `EXISTS` check does not filter on `status`, so an offline-but-present row stays claimable on reconnect; a deleted row would not.
 
-## 9. (Optional) HTTP Discovery Header
+## 9. Active-Actor Mutation Discipline
 
-**File:** `apps/backend/src/features/public-api/handlers.ts` — in `claimBotInvocation`, set:
+**Files:** `apps/backend/src/features/bot-runtimes/service.ts`, `apps/backend/src/features/bot-runtimes/repository.ts`.
+
+`bot:active_actor:changed` outbox events are emitted exclusively from a new `BotRuntimeService.setActiveActorInTransaction(db, params)` wrapper around `StreamActiveActorRepository.upsert`. Both current callers route through it:
+
+- `BotRuntimeService.setActiveActor` (the public single-shot path) calls it inside `withTransaction`.
+- `BotRuntimeService.createOrLinkPiRemoteSessionInTransaction` already inside a `withTransaction`; switches its direct `StreamActiveActorRepository.upsert` call to `setActiveActorInTransaction`.
+
+The wrapper:
+
+1. Reads the existing row inside the same tx (`StreamActiveActorRepository.findByRootStream`) to compute `previousActorType` / `previousActorId`.
+2. Upserts the new actor.
+3. If the actor identity actually changed (not a no-op update), emits `bot:active_actor:changed` with `affectedBotIds = [previous, new].filter(isBotActor).map(id => id)`.
+
+Add a comment to `StreamActiveActorRepository.upsert` pointing at the service wrapper: "Do not call this directly from outside this feature. Go through `BotRuntimeService.setActiveActorInTransaction` so the outbox event fires."
+
+**Test:** `service.test.ts` — change actor twice; assert two outbox events with correct `affectedBotIds`. Upsert with no change → no second event.
+
+## 10. Echo `wsUrl` in `POST /bot-runtime/presence` (Discovery)
+
+**File:** `apps/backend/src/features/public-api/handlers.ts` — in `upsertBotRuntimePresence`, include `wsUrl` in the response body so the bot SDK gets it on its very first HTTP call:
 
 ```ts
-res.setHeader("X-Threa-WS-Available", "1")
+return res.json({
+  instance: presence,
+  wsUrl: deps.regionWsUrl, // injected at handler factory time
+})
 ```
 
-Trivial; lets older clients log "WS available, consider upgrading" without us shipping a new endpoint. Skip if it complicates the response codec.
+`regionWsUrl` is read from env (`WS_URL` or similar — match whatever the frontend config endpoint uses today). Older bots ignore the extra field; new bots use it instead of hitting `GET /api/workspaces/:id/config` separately. Saves one worker invocation on bot startup.
 
-## 10. Test Plan Summary
+## 11. Test Plan Summary
 
-| Layer        | File                                                                      | What                                                                                                             |
-| ------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Outbox types | `apps/backend/src/lib/outbox/*.test.ts`                                   | Type-only; ensure existing tests pass                                                                            |
-| Service      | `apps/backend/src/features/bot-runtimes/service.test.ts`                  | `createInvocation` writes one row + one outbox event per fresh insert; second call with same key writes no event |
-| Broadcast    | `apps/backend/src/lib/outbox/broadcast-handler.test.ts`                   | Bot events route to `bot:` rooms on `/bot` namespace                                                             |
-| Socket auth  | `apps/backend/src/features/bot-runtimes/socket-auth.test.ts`              | Reject missing/invalid/throw; accept valid                                                                       |
-| Registry     | `apps/backend/src/features/bot-runtimes/bot-socket-registry.test.ts`      | Register/unregister/grace-timer                                                                                  |
-| Handler      | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts`           | Full lifecycle: connect → hello → bootstrap → push → disconnect                                                  |
-| Integration  | `apps/backend/src/features/bot-runtimes/socket-integration.test.ts` (new) | End-to-end via real Postgres: insert message → outbox → invocation row → outbox push → socket receives event     |
+| Layer         | File                                                                      | What                                                                                                                                           |
+| ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Outbox types  | `apps/backend/src/lib/outbox/*.test.ts`                                   | Type-only; ensure existing tests pass                                                                                                          |
+| Service       | `apps/backend/src/features/bot-runtimes/service.test.ts`                  | `createInvocation` writes one row + one outbox event per fresh insert; second call with same key writes no event                               |
+| Active actor  | `apps/backend/src/features/bot-runtimes/service.test.ts` (step 9)         | `setActiveActorInTransaction` emits `bot:active_actor_changed` only when identity changes; `affectedBotIds` covers both old and new bot actors |
+| Broadcast     | `apps/backend/src/lib/outbox/broadcast-handler.test.ts`                   | Bot events route to `bot:` rooms on `/bot` namespace                                                                                           |
+| Socket auth   | `apps/backend/src/features/bot-runtimes/socket-auth.test.ts`              | Reject missing/invalid/throw; accept valid                                                                                                     |
+| Registry      | `apps/backend/src/features/bot-runtimes/bot-socket-registry.test.ts`      | Register/unregister/grace-timer                                                                                                                |
+| Handler       | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts`           | Full lifecycle: connect → hello → bootstrap → push → disconnect                                                                                |
+| Revalidation  | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts` (step 7)  | Faked `validateKey` returns `null` after N ticks; socket disconnects on the next 60 s tick                                                     |
+| Presence echo | `apps/backend/src/features/public-api/handlers.test.ts` (step 10)         | `POST /bot-runtime/presence` response body includes `wsUrl` from injected `regionWsUrl`                                                        |
+| Integration   | `apps/backend/src/features/bot-runtimes/socket-integration.test.ts` (new) | End-to-end via real Postgres: insert message → outbox → invocation row → outbox push → socket receives event                                   |
 
 Run `bun run test` after each step. Stop and triage failures immediately (INV-22). If you isolate a flake to an unrelated suite, note it in the PR description rather than ignoring it.
 
-## 11. Files Created / Modified — Cheat Sheet
+## 12. Files Created / Modified — Cheat Sheet
 
 **New:**
 
@@ -418,11 +489,15 @@ Run `bun run test` after each step. Stop and triage failures immediately (INV-22
 
 - `apps/backend/src/lib/outbox/repository.ts` — event types + payloads + `BOT_SCOPED_EVENTS`
 - `apps/backend/src/lib/outbox/broadcast-handler.ts` — `dispatchBotEvent` branch, accept `botNamespace` dep
-- `apps/backend/src/features/bot-runtimes/service.ts` — `createInvocationInTransaction`, emit outbox event
-- `apps/backend/src/features/bot-runtimes/repository.ts` — `insertIdempotent` returns `wasNewlyInserted`, add `markOffline`
+- `apps/backend/src/features/bot-runtimes/service.ts` — `createInvocationInTransaction` (emits `bot_invocation:available`), `setActiveActorInTransaction` (emits `bot:active_actor_changed`), `createOrLinkPiRemoteSessionInTransaction` routes through the wrapper
+- `apps/backend/src/features/bot-runtimes/repository.ts` — `BotInvocationRepository.insertIdempotent` returns `wasNewlyInserted`, `claimOne` emits `bot_invocation:claimed`, `BotRuntimeInstanceRepository.markOffline` (new)
 - `apps/backend/src/features/bot-runtimes/index.ts` — export new public surface (INV-52)
 - `apps/backend/src/server.ts` — instantiate registry, register `/bot` namespace, pass to broadcaster, graceful shutdown hook
-- Optionally `apps/backend/src/features/public-api/handlers.ts` — response header
+- `apps/backend/src/features/public-api/handlers.ts` — `upsertBotRuntimePresence` response body includes `wsUrl`
+
+**New scripts:**
+
+- `scripts/smoke-bot-ws.ts` — see §13. Pure dev tool; not shipped, not imported.
 
 **Not touched:**
 
@@ -431,26 +506,71 @@ Run `bun run test` after each step. Stop and triage failures immediately (INV-22
 - `apps/frontend` (no frontend changes in this PR)
 - Bot SDK / Pi runtime (client adoption is a separate PR)
 
-## 12. Manual Smoke Test (Pre-merge)
+## 13. Manual Smoke Test (Pre-merge)
+
+Socket.IO multiplexes namespaces and ack callbacks over Engine.IO frames, so `wscat` won't work — `--auth-token` is not a wscat flag and even if it were, the raw `42[…]` framing would be rejected without an Engine.IO handshake. Use the in-repo `socket.io-client` instead.
 
 ```sh
 # Terminal 1: backend
 bun run dev:backend
 
 # Terminal 2: create or look up a bot key with BOT_RUNTIME_WRITE scope
-# (existing tooling — bot key creation is unchanged)
+# (existing tooling — bot key creation is unchanged). Export it for the script:
+export THREA_BOT_KEY=threa_bk_…
+export THREA_BACKEND_URL=http://localhost:4000
 
-# Terminal 3: open a WS to /bot
-wscat -c 'ws://localhost:4000/socket.io/?EIO=4&transport=websocket' \
-  --auth-token threa_bk_…  # or use a small node script with socket.io-client
-
-# Send:
-# 42["bot:hello",{"instanceId":"smoke","runtimeKind":"pi-local","supportedCapabilities":["mentionable","active-scratchpad"]}]
-
-# Expect: ACK with `{ok: true, bootstrap: {...}}`
-
-# Terminal 4: post a message with @<bot-slug> via the existing HTTP path or UI.
-# Expect Terminal 3 to receive: 42["bot_invocation:available", {invocationId: ..., ...}]
+# Terminal 3: smoke client (bun runs TS directly; socket.io-client is already in the workspace)
+bun run scripts/smoke-bot-ws.ts
 ```
 
-Capture the wire bytes for the PR description as proof. If the push doesn't arrive, check: outbox dispatcher running, `BroadcastHandler` got the new branch, namespace passed in correctly, room name matches.
+Where `scripts/smoke-bot-ws.ts` is:
+
+```ts
+import { io } from "socket.io-client"
+
+const url = process.env.THREA_BACKEND_URL ?? "http://localhost:4000"
+const token = process.env.THREA_BOT_KEY
+if (!token) throw new Error("Set THREA_BOT_KEY")
+
+const socket = io(`${url}/bot`, {
+  transports: ["websocket"],
+  auth: { token },
+})
+
+socket.on("connect", () => {
+  console.log("[smoke] connected", socket.id)
+  socket.emit(
+    "bot:hello",
+    {
+      instanceId: "smoke",
+      runtimeKind: "pi-local",
+      supportedCapabilities: ["mentionable", "active-scratchpad"],
+    },
+    (result: unknown) => {
+      console.log("[smoke] bot:hello ack →", JSON.stringify(result, null, 2))
+    }
+  )
+})
+
+socket.on("connect_error", (err) => console.error("[smoke] connect_error", err.message))
+socket.on("bot_invocation:available", (payload) => console.log("[smoke] available →", payload))
+socket.on("bot_invocation:claimed", (payload) => console.log("[smoke] claimed →", payload))
+socket.on("bot_invocation:cancelled", (payload) => console.log("[smoke] cancelled →", payload))
+socket.on("bot_session_link:invalidated", (payload) => console.log("[smoke] link_invalidated →", payload))
+socket.on("bot:active_actor_changed", (payload) => console.log("[smoke] active_actor →", payload))
+socket.on("disconnect", (reason) => console.log("[smoke] disconnect", reason))
+```
+
+Expected output:
+
+1. `[smoke] connected …`
+2. `[smoke] bot:hello ack → { ok: true, bootstrap: { pendingInvocations: [], … } }`
+3. From a fourth terminal, post a message that mentions the bot (existing HTTP or UI). Terminal 3 prints `[smoke] available → { invocationId: …, requiredCapability: "mentionable", … }`.
+
+Negative cases worth running once:
+
+- Unset `THREA_BOT_KEY`, rerun → `connect_error: Missing bot API key`.
+- Set `THREA_BOT_KEY=garbage`, rerun → `connect_error: Invalid bot API key`.
+- Set `THREA_BOT_KEY` to a key without `BOT_RUNTIME_WRITE` scope → `connect_error: Insufficient scope`.
+
+Capture stdout for the PR description as proof. If the push doesn't arrive after a mention, check in order: outbox dispatcher running, `BroadcastHandler` got the new bot branch, `botNamespace` passed in correctly at `server.ts`, room name matches `bot:{workspaceId}:{botId}`.
