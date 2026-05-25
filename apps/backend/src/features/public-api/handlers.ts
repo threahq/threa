@@ -574,6 +574,12 @@ export function createPublicApiHandlers({
     if (!io) return
     const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
     if (streamIds.length === 0) return
+    // Only pi-local runtimes create scratchpad session links; skip the lookup
+    // when there's no presence or the runtime kind can't have linked sessions.
+    const links =
+      presence?.runtimeKind === BotRuntimeKinds.PI_LOCAL
+        ? await botRuntimeService.findActivePiRemoteSessionsForStreams({ workspaceId, botId, streamIds })
+        : new Map<string, { instanceId: string; runtimeSessionId: string }>()
     const payload = {
       workspaceId,
       botId,
@@ -590,8 +596,19 @@ export function createPublicApiHandlers({
           }
         : null,
     }
+    const runtimeSessionId =
+      typeof presence?.capabilities.runtimeSessionId === "string" ? presence.capabilities.runtimeSessionId : null
     for (const streamId of streamIds) {
-      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("bot_runtime:presence", { ...payload, streamId })
+      const link = links.get(streamId)
+      const streamPresence =
+        link && (!presence || presence.instanceId !== link.instanceId || runtimeSessionId !== link.runtimeSessionId)
+          ? null
+          : payload.presence
+      io.to(`ws:${workspaceId}:stream:${streamId}`).emit("bot_runtime:presence", {
+        ...payload,
+        presence: streamPresence,
+        streamId,
+      })
     }
   }
 
@@ -605,6 +622,7 @@ export function createPublicApiHandlers({
     botId: string
     runtimeKind: BotRuntimeKind
     instanceId: string
+    runtimeSessionId?: string
     status: BotRuntimeStatus
     acceptingInvocations: boolean
     statusText?: string | null
@@ -617,6 +635,7 @@ export function createPublicApiHandlers({
         instanceId: params.instanceId,
         status: params.status,
         acceptingInvocations: params.acceptingInvocations,
+        capabilities: params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : undefined,
         statusText: sanitizeStatusText(params.statusText),
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
@@ -672,7 +691,15 @@ export function createPublicApiHandlers({
       const presence = await botRuntimeService.upsertPresenceFromBotKey({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        ...result.data,
+        runtimeKind: result.data.runtimeKind,
+        instanceId: result.data.instanceId,
+        displayName: result.data.displayName,
+        status: result.data.status,
+        acceptingInvocations: result.data.acceptingInvocations,
+        capabilities: {
+          ...result.data.capabilities,
+          ...(result.data.runtimeSessionId && { runtimeSessionId: result.data.runtimeSessionId }),
+        },
         statusText: sanitizeStatusText(result.data.statusText),
       })
       await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
@@ -777,6 +804,7 @@ export function createPublicApiHandlers({
         botId: req.botApiKey.botId,
         runtimeKind: result.data.runtimeKind,
         instanceId: result.data.instanceId,
+        runtimeSessionId: result.data.runtimeSessionId,
         status: "available",
         acceptingInvocations: true,
       })
@@ -785,6 +813,7 @@ export function createPublicApiHandlers({
         botId: req.botApiKey.botId,
         runtimeKind: result.data.runtimeKind,
         instanceId: result.data.instanceId,
+        runtimeSessionId: result.data.runtimeSessionId,
         supportedCapabilities: result.data.supportedCapabilities,
         claimTtlSeconds: result.data.claimTtlSeconds,
         claimToken: randomUUID(),
@@ -795,6 +824,7 @@ export function createPublicApiHandlers({
         botId: req.botApiKey.botId,
         runtimeKind: result.data.runtimeKind,
         instanceId: result.data.instanceId,
+        runtimeSessionId: invocation.targetRuntimeSessionId ?? result.data.runtimeSessionId,
         status: "busy",
         acceptingInvocations: false,
       })
@@ -934,11 +964,20 @@ export function createPublicApiHandlers({
       // Step recording also serves as a busy heartbeat — keeps the runtime's
       // presence statusText in sync with the most recent trace step so Pi
       // does not need to send a separate /presence call alongside each step.
+      // Capabilities is fully overwritten on upsert, so we have to re-supply
+      // the runtime's session id for untargeted invocations; otherwise the
+      // scratchpad's session-link filter would treat the runtime as stale and
+      // hide its presence mid-run.
+      const persistedRuntimeSessionId =
+        typeof runtimePresence?.capabilities.runtimeSessionId === "string"
+          ? runtimePresence.capabilities.runtimeSessionId
+          : undefined
       await touchAndBroadcastPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         runtimeKind: runtimePresence?.runtimeKind ?? BotRuntimeKinds.PI_LOCAL,
         instanceId: result.data.instanceId,
+        runtimeSessionId: claim.targetRuntimeSessionId ?? persistedRuntimeSessionId,
         status: "busy",
         acceptingInvocations: false,
         statusText: sanitizeStatusText(result.data.statusText),

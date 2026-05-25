@@ -67,6 +67,7 @@ export const listStreamsSchema = z.object({
 export const upsertPresenceSchema = z.object({
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
   instanceId: z.string().min(1).max(128),
+  runtimeSessionId: z.string().min(1).max(256).optional(),
   displayName: z.string().max(100).optional(),
   status: z.enum(BOT_RUNTIME_STATUSES),
   acceptingInvocations: z.boolean(),
@@ -85,6 +86,7 @@ export const createRuntimeSessionSchema = z.object({
 export const claimInvocationSchema = z.object({
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
   instanceId: z.string().min(1).max(128),
+  runtimeSessionId: z.string().min(1).max(256).optional(),
   supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
   claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
 })
