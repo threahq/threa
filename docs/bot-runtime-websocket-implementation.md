@@ -56,7 +56,8 @@ Extend `OutboxEventPayloadMap` with the five payloads. Keep them flat (no nested
   workspaceId: string
   botId: string
   invocationId: string
-  claimedByInstanceId: string
+  // No `claimedByInstanceId`. Siblings only need to know "stop racing this
+  // one" — not who beat them. Keeps the cross-instance leak surface minimal.
 }
 "bot_invocation:cancelled": {
   workspaceId: string
