@@ -574,7 +574,12 @@ export function createPublicApiHandlers({
     if (!io) return
     const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
     if (streamIds.length === 0) return
-    const links = await botRuntimeService.findActivePiRemoteSessionsForStreams({ workspaceId, botId, streamIds })
+    // Only pi-local runtimes create scratchpad session links; skip the lookup
+    // when there's no presence or the runtime kind can't have linked sessions.
+    const links =
+      presence?.runtimeKind === BotRuntimeKinds.PI_LOCAL
+        ? await botRuntimeService.findActivePiRemoteSessionsForStreams({ workspaceId, botId, streamIds })
+        : new Map<string, { instanceId: string; runtimeSessionId: string }>()
     const payload = {
       workspaceId,
       botId,
@@ -959,12 +964,20 @@ export function createPublicApiHandlers({
       // Step recording also serves as a busy heartbeat — keeps the runtime's
       // presence statusText in sync with the most recent trace step so Pi
       // does not need to send a separate /presence call alongside each step.
+      // Capabilities is fully overwritten on upsert, so we have to re-supply
+      // the runtime's session id for untargeted invocations; otherwise the
+      // scratchpad's session-link filter would treat the runtime as stale and
+      // hide its presence mid-run.
+      const persistedRuntimeSessionId =
+        typeof runtimePresence?.capabilities.runtimeSessionId === "string"
+          ? runtimePresence.capabilities.runtimeSessionId
+          : undefined
       await touchAndBroadcastPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         runtimeKind: runtimePresence?.runtimeKind ?? BotRuntimeKinds.PI_LOCAL,
         instanceId: result.data.instanceId,
-        runtimeSessionId: claim.targetRuntimeSessionId ?? undefined,
+        runtimeSessionId: claim.targetRuntimeSessionId ?? persistedRuntimeSessionId,
         status: "busy",
         acceptingInvocations: false,
         statusText: sanitizeStatusText(result.data.statusText),
