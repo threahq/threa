@@ -1227,8 +1227,16 @@ async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, att
   pendingRetry = undefined
   const invocation = pending
   const prompt = pendingInvocationPrompt
-  if (!invocation || !prompt) {
+  if (!invocation) {
     isWaitingForRetry = false
+    return
+  }
+  if (!prompt) {
+    // No prompt is recorded for the active turn (e.g. /skill, which calls beginPendingInvocation and
+    // then hands off to pi.sendUserMessage("/<skill>")). We can't auto-retry without the original
+    // prompt, so surface the rate limit as a failure instead of silently holding the claim open.
+    isWaitingForRetry = false
+    await failPending(pendingProviderError ?? "Rate limited and unable to auto-retry this command.", ctx)
     return
   }
   resetPendingTurnTexts()

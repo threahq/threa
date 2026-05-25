@@ -15,14 +15,6 @@ const dispatchCommandSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
 })
 
-export interface CommandDispatchedPayload {
-  commandId: string
-  name: string
-  args: string
-  status: "dispatched"
-  executionKind?: "server" | "bot-runtime"
-}
-
 interface Dependencies {
   pool: Pool
   commandAvailabilityService: CommandAvailabilityService

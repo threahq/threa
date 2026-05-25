@@ -11,7 +11,6 @@
 
 // HTTP handlers
 export { createCommandHandlers } from "./handlers"
-export type { CommandDispatchedPayload } from "./handlers"
 
 // Command registry, availability, catalog, and types
 export { CommandRegistry, parseCommand, isCommand } from "./registry"
