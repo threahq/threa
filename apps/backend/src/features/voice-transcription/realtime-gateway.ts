@@ -62,6 +62,16 @@ interface RelayState {
    */
   rawFinals: string[]
   /**
+   * Latest interim (uncommitted) hypothesis for the current segment. Updated
+   * on every interim delta and cleared whenever a final delta arrives (the
+   * final supersedes the partial). Promoted to a synthetic final if the
+   * upstream errors before the partial gets committed — otherwise everything
+   * the user spoke between the last final and the error would be polished as
+   * raw text by the client's flushInterim fallback (the spurious ElevenLabs
+   * "insufficient funds" close often fires before any final lands).
+   */
+  lastInterim: string
+  /**
    * Serializes polish work — out-of-order resolves would let an older
    * polished snapshot land in the editor after a newer one, which would
    * undo the model's incremental corrections. Each polish step awaits the
@@ -218,26 +228,12 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
 
         const sessionChunkId = ulid()
 
-        // Per-session payloads (plan §3): the client filters deltas by
-        // voiceSessionId so a stale session can't leak text into a new one.
-        // Interim deltas always pass through unchanged. Finals are tagged with
-        // a session-wide chunkId only when polish is on, which signals the
-        // client to track them as a swappable chunk; with polish off, no
-        // chunkId is sent and the client commits them as plain text.
-        upstream.onDelta((delta) => {
-          if (!state) return
-          if (!delta.isFinal) {
-            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
-            return
-          }
-          const raw = delta.text ?? ""
-          if (state.polishLevel === "none" || !raw.trim()) {
-            // Polish off, or an empty terminating final (some providers emit
-            // these) — pass straight through with no chunk tracking.
-            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
-            return
-          }
-          const polishingState = state
+        // Commit a raw final segment: push to the cumulative buffer, emit a
+        // tagged final delta (so the client extends its tracked chunk), and
+        // enqueue a cumulative polish pass. Used by both the normal final
+        // path and the interim-promotion-on-error path so the polish queue
+        // semantics are identical regardless of how the segment landed.
+        const commitPolishedFinal = (polishingState: RelayState, raw: string) => {
           polishingState.rawFinals.push(raw)
           socket.emit("voice:transcript:delta", {
             voiceSessionId,
@@ -278,6 +274,33 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
               )
             }
           })
+        }
+
+        // Per-session payloads (plan §3): the client filters deltas by
+        // voiceSessionId so a stale session can't leak text into a new one.
+        // Interim deltas always pass through unchanged. Finals are tagged with
+        // a session-wide chunkId only when polish is on, which signals the
+        // client to track them as a swappable chunk; with polish off, no
+        // chunkId is sent and the client commits them as plain text.
+        upstream.onDelta((delta) => {
+          if (!state) return
+          if (!delta.isFinal) {
+            // Track the latest interim so the error handler can promote it to
+            // a synthetic final if the upstream dies before the segment commits.
+            state.lastInterim = delta.text ?? ""
+            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
+            return
+          }
+          // A real final supersedes the pending interim.
+          state.lastInterim = ""
+          const raw = delta.text ?? ""
+          if (state.polishLevel === "none" || !raw.trim()) {
+            // Polish off, or an empty terminating final (some providers emit
+            // these) — pass straight through with no chunk tracking.
+            socket.emit("voice:transcript:delta", { voiceSessionId, ...delta })
+            return
+          }
+          commitPolishedFinal(state, raw)
         })
         upstream.onError((e) => {
           // Drain in-flight polish so the polished swap can land BEFORE the
@@ -293,6 +316,32 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           if (!current || current.finalized) {
             socket.emit("voice:transcription:error", { voiceSessionId, ...e })
             return
+          }
+          // Promote the pending interim to a synthetic final so the user
+          // doesn't lose what they just said. ElevenLabs' spurious
+          // "insufficient funds" close fires before the in-flight segment
+          // gets committed, so without this all the speech since the last
+          // committed_transcript exists only as interim text — which the
+          // client's flushInterim() would commit as RAW (unpolished). Promote
+          // it through the same path a real final takes: emit a tagged delta
+          // (so the client commits it as a tracked chunk and clears its
+          // interim ref, making flushInterim a no-op) and enqueue a polish
+          // pass that the drain below will then wait for. Best-effort: an
+          // interim is a hypothesis the provider hadn't yet finalized, so
+          // punctuation/spacing may drift from what would have been the real
+          // final — better an approximation than nothing.
+          const pendingInterim = current.lastInterim.trim()
+          if (pendingInterim) {
+            current.lastInterim = ""
+            if (current.polishLevel === "none") {
+              socket.emit("voice:transcript:delta", {
+                voiceSessionId,
+                text: pendingInterim,
+                isFinal: true,
+              })
+            } else {
+              commitPolishedFinal(current, pendingInterim)
+            }
           }
           const drain = Promise.race([
             current.polishQueue,
@@ -326,6 +375,7 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           polishLevel,
           sessionChunkId,
           rawFinals: [],
+          lastInterim: "",
           polishQueue: Promise.resolve(),
         }
         logger.debug({ voiceSessionId, workspaceId }, "Voice relay started")

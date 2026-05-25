@@ -442,4 +442,102 @@ describe("registerVoiceGateway polish", () => {
       polished: "P(one two)",
     })
   })
+
+  it("promotes the pending interim to a synthetic polished final when the upstream errors before committing it", async () => {
+    // ElevenLabs' spurious "insufficient funds" close fires before
+    // committed_transcript lands, so the speech since the last commit lives
+    // only as interim text. Without promotion the client's flushInterim
+    // would land that text in the editor as raw, unpolished words.
+    const { socket, upstream, polishTranscript } = setup({ voicePolishLevel: "opinionated" })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "let me start at nine", isFinal: false })
+    upstream.fireDelta({ text: "let me start at nine no sorry eight", isFinal: false })
+    upstream.fireError({ code: "UPSTREAM_CLOSED", message: "10s ElevenLabs disconnect" })
+
+    // Two micro-ticks: one for the polish promise to resolve, one for the
+    // drain .then() to run after it.
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(polishTranscript).toHaveBeenCalledTimes(1)
+    expect(polishTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ rawTranscript: "let me start at nine no sorry eight" })
+    )
+
+    const finalDeltas = socket.emitted.filter(
+      (e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal
+    )
+    expect(finalDeltas).toHaveLength(1)
+    expect(finalDeltas[0].payload).toMatchObject({
+      voiceSessionId: "voicesess_1",
+      text: "let me start at nine no sorry eight",
+      isFinal: true,
+    })
+    expect((finalDeltas[0].payload as { chunkId?: string }).chunkId).toBeTruthy()
+
+    const polishedIdx = socket.emitted.findIndex((e) => e.event === "voice:transcript:polished")
+    const errorIdx = socket.emitted.findIndex((e) => e.event === "voice:transcription:error")
+    expect(polishedIdx).toBeGreaterThanOrEqual(0)
+    expect(errorIdx).toBeGreaterThan(polishedIdx)
+  })
+
+  it("a real final clears the pending interim so the error path doesn't re-emit it", async () => {
+    // Without the clear, a final at t=1 followed by an error at t=2 would
+    // double-commit: once via the real final, again via promotion of the
+    // stale interim that preceded it.
+    const { socket, upstream, polishTranscript } = setup({ voicePolishLevel: "opinionated" })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "hello", isFinal: false })
+    upstream.fireDelta({ text: "hello world", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+    upstream.fireError({ code: "UPSTREAM_CLOSED", message: "10s ElevenLabs disconnect" })
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(polishTranscript).toHaveBeenCalledTimes(1)
+    const finalDeltas = socket.emitted.filter(
+      (e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal
+    )
+    expect(finalDeltas).toHaveLength(1)
+    expect(finalDeltas[0].payload).toMatchObject({ text: "hello world" })
+  })
+
+  it("promotes the pending interim as a plain (untagged) final when polish is off", async () => {
+    // Polish off + pending interim on error: still commit the text so the
+    // user doesn't lose it, but without a chunkId (no tracking, no polish).
+    const { socket, upstream, polishTranscript } = setup({ voicePolishLevel: "none" })
+    await socket.trigger(
+      "voice:start",
+      START_PAYLOAD,
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "halfway through a thought", isFinal: false })
+    upstream.fireError({ code: "UPSTREAM_CLOSED", message: "10s ElevenLabs disconnect" })
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(polishTranscript).not.toHaveBeenCalled()
+    const finalDeltas = socket.emitted.filter(
+      (e) => e.event === "voice:transcript:delta" && (e.payload as { isFinal: boolean }).isFinal
+    )
+    expect(finalDeltas).toHaveLength(1)
+    expect(finalDeltas[0].payload).toEqual({
+      voiceSessionId: "voicesess_1",
+      text: "halfway through a thought",
+      isFinal: true,
+    })
+    // No chunkId, since polish is off and the client should commit as plain text.
+    expect((finalDeltas[0].payload as { chunkId?: string }).chunkId).toBeUndefined()
+  })
 })
