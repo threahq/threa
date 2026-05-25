@@ -16,7 +16,13 @@ const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
+const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
+const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
+const SESSION_CONTROL_CAPABILITY = "session-control"
+const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill"] as const
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const
+type ThinkingLevel = (typeof THINKING_LEVELS)[number]
 const PI_TOOL_TRACE_SECTION_LABELS = {
   ARGUMENTS: "Arguments",
   OUTPUT: "Output",
@@ -60,6 +66,9 @@ type ClaimedInvocation = {
   promptMarkdown: string
   claimToken: string
   claimExpiresAt: string | null
+  trigger?: string
+  requiredCapability?: string
+  metadata?: Record<string, unknown>
 }
 
 interface AttachmentSummary {
@@ -102,7 +111,13 @@ let pending: ClaimedInvocation | undefined
 let steeredInvocations: Array<{ invocation: ClaimedInvocation; cursor?: string }> = []
 let pendingContextCursor: string | undefined
 let pendingAssistantTexts: string[] = []
+let pendingNonAssistantTexts: Array<{ role: string; text: string }> = []
 let pendingToolCalls = new Map<string, { headline: string }>()
+let pendingProviderError: string | undefined
+let pendingRetryAfterMs: number | undefined
+let pendingInvocationPrompt: string | undefined
+let pendingRetry: { timer: ReturnType<typeof setTimeout>; retryAt: number; attempts: number } | undefined
+let isWaitingForRetry = false
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 let consecutivePollFailures = 0
 let lastPollFailureSummary: string | undefined
@@ -261,6 +276,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
+function buildModelSuggestions(ctx: ExtensionContext): Array<{ value: string; label: string }> {
+  return ctx.modelRegistry
+    .getAvailable()
+    .filter((model) => model.input.includes("text"))
+    .slice(0, 30)
+    .map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name }))
+}
+
+function buildRuntimeCapabilities(ctx?: ExtensionContext): Record<string, unknown> {
+  return {
+    supportsActiveScratchpad: true,
+    supportsPersistentSessions: true,
+    supportsMentionInvocations: true,
+    supportsSessionControlCommands: true,
+    sessionControlCommands: [...SESSION_CONTROL_COMMANDS],
+    thinkingLevels: [...THINKING_LEVELS],
+    ...(ctx?.model && { currentModel: `${ctx.model.provider}/${ctx.model.id}` }),
+    ...(ctx && { modelSuggestions: buildModelSuggestions(ctx) }),
+  }
+}
+
 async function heartbeat(
   status: "available" | "busy" | "offline" | "error",
   statusText?: string,
@@ -277,11 +313,7 @@ async function heartbeat(
       displayName: config.defaultDisplayName,
       status,
       acceptingInvocations: status === "available",
-      capabilities: {
-        supportsActiveScratchpad: true,
-        supportsPersistentSessions: true,
-        supportsMentionInvocations: true,
-      },
+      capabilities: buildRuntimeCapabilities(ctx),
       statusText,
     }),
   })
@@ -815,18 +847,26 @@ async function fetchInvocationContext(
   }
 }
 
-function buildClaimInvocationPayload(instanceId: string, runtimeSessionId: string): Record<string, unknown> {
+function buildClaimInvocationPayload(
+  instanceId: string,
+  runtimeSessionId: string,
+  options?: { includeSessionControl?: boolean }
+): Record<string, unknown> {
+  const supportedCapabilities = ["active-scratchpad", "mentionable"]
+  if (options?.includeSessionControl) supportedCapabilities.push(SESSION_CONTROL_CAPABILITY)
   return {
     runtimeKind: "pi-local",
     instanceId,
     runtimeSessionId,
-    supportedCapabilities: ["active-scratchpad", "mentionable"],
+    supportedCapabilities,
     claimTtlSeconds: 120,
   }
 }
 
 function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown> {
-  return buildClaimInvocationPayload(ensureInstanceId(), getRuntimeSessionId(ctx))
+  return buildClaimInvocationPayload(ensureInstanceId(), getRuntimeSessionId(ctx), {
+    includeSessionControl: !pending && ctx.isIdle(),
+  })
 }
 
 async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvocation | null> {
@@ -851,6 +891,54 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
     emitPollDebug(ctx, `failed after ${Date.now() - startedAt}ms: ${summarizeError(error)}`)
     throw error
   }
+}
+
+type RuntimeCommandMetadata = { id: string; name: string; args: string; executionKind: "bot-runtime" }
+
+function getRuntimeCommand(invocation: ClaimedInvocation): RuntimeCommandMetadata | null {
+  const command = invocation.metadata?.command
+  if (!command || typeof command !== "object") return null
+  const value = command as Record<string, unknown>
+  if (value.executionKind !== "bot-runtime") return null
+  if (typeof value.id !== "string" || typeof value.name !== "string" || typeof value.args !== "string") return null
+  return { id: value.id, name: value.name, args: value.args, executionKind: "bot-runtime" }
+}
+
+function isSessionControlInvocation(invocation: ClaimedInvocation): boolean {
+  return invocation.requiredCapability === SESSION_CONTROL_CAPABILITY || getRuntimeCommand(invocation) !== null
+}
+
+function normalizeThinkingLevel(input: string): ThinkingLevel | null {
+  const normalized = input
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "")
+  if (normalized === "none") return "off"
+  if (normalized === "xhigh") return "xhigh"
+  return THINKING_LEVELS.includes(normalized as ThinkingLevel) ? (normalized as ThinkingLevel) : null
+}
+
+async function completeInvocationWithMarkdown(
+  invocation: ClaimedInvocation,
+  finalMessageMarkdown: string,
+  ctx?: ExtensionContext
+): Promise<void> {
+  if (!config) return
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      claimToken: invocation.claimToken,
+      finalMessageMarkdown,
+      metadata: {
+        "pi.remote.invocationId": invocation.id,
+        "pi.remote.instanceId": ensureInstanceId(),
+        "pi.remote.sessionControl": "true",
+      },
+    }),
+  })
+  lastBusyHeartbeatAt = 0
+  await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
 
 async function buildInvocationPrompt(
@@ -878,6 +966,35 @@ async function buildInvocationPrompt(
   }
 }
 
+function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string): void {
+  pending = invocation
+  pendingContextCursor = cursor
+  pendingAssistantTexts = []
+  pendingNonAssistantTexts = []
+  pendingToolCalls = new Map()
+  pendingProviderError = undefined
+  pendingRetryAfterMs = undefined
+  pendingInvocationPrompt = undefined
+  clearPendingRetry()
+  isWaitingForRetry = false
+  lastTraceHeartbeat = undefined
+}
+
+function clearPendingRetry(): void {
+  if (!pendingRetry) return
+  clearTimeout(pendingRetry.timer)
+  pendingRetry = undefined
+}
+
+function resetPendingTurnTexts(): void {
+  pendingAssistantTexts = []
+  pendingNonAssistantTexts = []
+  pendingToolCalls = new Map()
+  pendingProviderError = undefined
+  pendingRetryAfterMs = undefined
+  lastTraceHeartbeat = undefined
+}
+
 async function injectInvocation(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -886,11 +1003,8 @@ async function injectInvocation(
 ): Promise<void> {
   const { prompt, cursor, context } = await buildInvocationPrompt(invocation, ctx)
   if (!pending) {
-    pending = invocation
-    pendingContextCursor = cursor
-    pendingAssistantTexts = []
-    pendingToolCalls = new Map()
-    lastTraceHeartbeat = undefined
+    beginPendingInvocation(invocation, cursor)
+    pendingInvocationPrompt = prompt
     await recordTraceStep("context_received", formatInvocationTrace(invocation, context), "Loaded context…")
   } else {
     steeredInvocations.push({ invocation, cursor })
@@ -905,15 +1019,250 @@ async function injectInvocation(
   pi.sendUserMessage(prompt, steer ? { deliverAs: "steer" } : undefined)
 }
 
+function compactSession(ctx: ExtensionContext, customInstructions?: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    ctx.compact({
+      customInstructions: customInstructions?.trim() || undefined,
+      onComplete: () => resolve(),
+      onError: (error) => reject(error),
+    })
+  })
+}
+
+type ModelCandidate = { value: string; label: string; model: NonNullable<ExtensionContext["model"]> }
+
+function getModelCandidates(ctx: ExtensionContext): ModelCandidate[] {
+  return ctx.modelRegistry
+    .getAvailable()
+    .filter((model) => model.input.includes("text"))
+    .map((model) => ({ value: `${model.provider}/${model.id}`, label: model.name, model }))
+}
+
+function resolveModelCandidate(
+  ctx: ExtensionContext,
+  query: string
+): { match?: ModelCandidate; candidates?: ModelCandidate[] } {
+  const normalized = query.trim().toLowerCase()
+  const candidates = getModelCandidates(ctx)
+  if (!normalized) return { candidates: candidates.slice(0, 10) }
+
+  const exact = candidates.filter(
+    (candidate) =>
+      candidate.value.toLowerCase() === normalized ||
+      candidate.model.id.toLowerCase() === normalized ||
+      candidate.label.toLowerCase() === normalized
+  )
+  if (exact.length === 1) return { match: exact[0] }
+  if (exact.length > 1) return { candidates: exact.slice(0, 10) }
+
+  const fuzzy = candidates.filter(
+    (candidate) =>
+      candidate.value.toLowerCase().includes(normalized) || candidate.label.toLowerCase().includes(normalized)
+  )
+  if (fuzzy.length === 1) return { match: fuzzy[0] }
+  return { candidates: fuzzy.slice(0, 10) }
+}
+
+type PiCommand = ReturnType<ExtensionAPI["getCommands"]>[number]
+
+function displaySkillName(command: PiCommand): string {
+  return command.name.startsWith("skill:") ? command.name.slice("skill:".length) : command.name
+}
+
+function resolveSkillCommand(pi: ExtensionAPI, query: string): { match?: PiCommand; candidates: PiCommand[] } {
+  const normalized = query.trim().toLowerCase()
+  const skills = pi.getCommands().filter((command) => command.source === "skill")
+  if (!normalized) return { candidates: skills.slice(0, 10) }
+
+  const exact = skills.filter((command) => {
+    const display = displaySkillName(command).toLowerCase()
+    return command.name.toLowerCase() === normalized || display === normalized
+  })
+  if (exact.length === 1) return { match: exact[0], candidates: exact }
+  if (exact.length > 1) return { candidates: exact.slice(0, 10) }
+
+  const fuzzy = skills.filter((command) => {
+    const haystack = [command.name, displaySkillName(command), command.description ?? ""].join(" ").toLowerCase()
+    return haystack.includes(normalized)
+  })
+  if (fuzzy.length === 1) return { match: fuzzy[0], candidates: fuzzy }
+  return { candidates: fuzzy.slice(0, 10) }
+}
+
+async function runCompactCommand(invocation: ClaimedInvocation, args: string, ctx: ExtensionContext): Promise<void> {
+  await compactSession(ctx, args)
+  await completeInvocationWithMarkdown(invocation, "Compacted the linked Pi session.", ctx)
+}
+
+async function runModelCommand(
+  pi: ExtensionAPI,
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext
+): Promise<void> {
+  const current = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown"
+  const resolved = resolveModelCandidate(ctx, args)
+  if (!resolved.match) {
+    const lines = [
+      args.trim() ? `No unique model match for \`${args.trim()}\`.` : `Current model: \`${current}\`.`,
+      "Candidates:",
+      ...(resolved.candidates ?? []).map((candidate) => `- \`${candidate.value}\` — ${candidate.label}`),
+    ]
+    await completeInvocationWithMarkdown(invocation, lines.join("\n"), ctx)
+    return
+  }
+
+  const ok = await pi.setModel(resolved.match.model)
+  if (!ok) throw new Error(`No API key configured for ${resolved.match.value}`)
+  await completeInvocationWithMarkdown(invocation, `Model changed: \`${current}\` → \`${resolved.match.value}\``, ctx)
+}
+
+async function runThinkingCommand(
+  pi: ExtensionAPI,
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext
+): Promise<void> {
+  const level = normalizeThinkingLevel(args)
+  if (!level) {
+    await completeInvocationWithMarkdown(invocation, `Usage: \`/thinking ${THINKING_LEVELS.join("|")}\``, ctx)
+    return
+  }
+  const before = pi.getThinkingLevel()
+  pi.setThinkingLevel(level)
+  const after = pi.getThinkingLevel()
+  await completeInvocationWithMarkdown(invocation, `Thinking level changed: \`${before}\` → \`${after}\``, ctx)
+}
+
+async function runSkillCommand(
+  pi: ExtensionAPI,
+  invocation: ClaimedInvocation,
+  args: string,
+  ctx: ExtensionContext
+): Promise<void> {
+  const resolved = resolveSkillCommand(pi, args)
+  if (!resolved.match) {
+    const lines = [
+      args.trim() ? `No unique skill match for \`${args.trim()}\`.` : "Tell me which skill to run.",
+      "Candidates:",
+      ...resolved.candidates.map(
+        (candidate) => `- \`/${candidate.name}\`${candidate.description ? ` — ${candidate.description}` : ""}`
+      ),
+    ]
+    await completeInvocationWithMarkdown(invocation, lines.join("\n"), ctx)
+    return
+  }
+
+  beginPendingInvocation(invocation)
+  await recordInvocationTraceStep(
+    invocation,
+    "context_received",
+    `Resolved /skill ${args} to /${resolved.match.name}`,
+    "Resolved skill…"
+  )
+  setRemoteStatus(ctx, `Threa remote: running ${invocation.id}`)
+  pi.sendUserMessage(`/${resolved.match.name}`)
+}
+
+async function handleSessionControlInvocation(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  invocation: ClaimedInvocation
+): Promise<void> {
+  const command = getRuntimeCommand(invocation)
+  if (!command) {
+    await failInvocation(invocation, "Missing runtime command metadata")
+    return
+  }
+
+  try {
+    await heartbeat("busy", `Running /${command.name}…`, ctx)
+    switch (command.name) {
+      case "compact":
+        await runCompactCommand(invocation, command.args, ctx)
+        return
+      case "model":
+        await runModelCommand(pi, invocation, command.args, ctx)
+        return
+      case "thinking":
+        await runThinkingCommand(pi, invocation, command.args, ctx)
+        return
+      case "skill":
+        await runSkillCommand(pi, invocation, command.args, ctx)
+        return
+      default:
+        await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
+    }
+  } catch (error) {
+    await failInvocation(invocation, error)
+    lastBusyHeartbeatAt = 0
+    await heartbeat("available", undefined, ctx).catch(() => undefined)
+  }
+}
+
+async function scheduleProviderRetry(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  retryAfterMs: number,
+  attempt: number
+): Promise<void> {
+  if (!pending) return
+  const retryAt = Date.now() + retryAfterMs
+  const notice = formatRetryNotice(retryAfterMs, attempt)
+  await recordTraceStep("rate_limited", notice, "Rate limited; waiting…").catch(() => undefined)
+  setRemoteStatus(ctx, `Threa remote: retry ${formatLocalTime(new Date(retryAt))}`)
+  lastBusyHeartbeatAt = 0
+  await heartbeat("busy", notice.slice(0, 160), ctx).catch(() => undefined)
+  isWaitingForRetry = true
+  pendingRetry = {
+    timer: setTimeout(() => {
+      void executeProviderRetry(pi, ctx, attempt)
+    }, retryAfterMs),
+    retryAt,
+    attempts: attempt,
+  }
+}
+
+async function executeProviderRetry(pi: ExtensionAPI, ctx: ExtensionContext, attempt: number): Promise<void> {
+  pendingRetry = undefined
+  const invocation = pending
+  const prompt = pendingInvocationPrompt
+  if (!invocation || !prompt) {
+    isWaitingForRetry = false
+    return
+  }
+  resetPendingTurnTexts()
+  isWaitingForRetry = false
+  await recordTraceStep(
+    "rate_limit_retry",
+    `Retrying after rate limit (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS}).`,
+    "Retrying…"
+  ).catch(() => undefined)
+  setRemoteStatus(ctx, `Threa remote: running ${invocation.id}`)
+  lastBusyHeartbeatAt = 0
+  await heartbeat("busy", "Retrying after rate limit…", ctx).catch(() => undefined)
+  pi.sendUserMessage(prompt)
+}
+
 async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boolean> {
   if (!config || !isEnabled(ctx)) return false
   if (pending) await renewActiveClaims()
+
+  if (isWaitingForRetry) {
+    const retryAt = pendingRetry ? formatLocalTime(new Date(pendingRetry.retryAt)) : "soon"
+    await heartbeatBusyIfStale(`Rate limited; retrying around ${retryAt}`, ctx)
+    return true
+  }
 
   const steer = pending !== undefined || !ctx.isIdle()
   if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…", ctx)
 
   const invocation = await claimNextInvocation(ctx)
   if (!invocation) return true
+  if (isSessionControlInvocation(invocation)) {
+    await handleSessionControlInvocation(pi, ctx, invocation)
+    return true
+  }
   await injectInvocation(pi, ctx, invocation, steer)
   return true
 }
@@ -933,16 +1282,120 @@ function textFromContent(content: unknown): string {
     .join("\n")
 }
 
-function textFromAssistantMessage(message: unknown): string {
-  if (!message || typeof message !== "object" || !("role" in message) || message.role !== "assistant") return ""
-  if (!("content" in message)) return ""
-  return textFromContent(message.content).trim()
+function captureMessageText(message: unknown): { role: string; text: string } | null {
+  if (!message || typeof message !== "object" || !("role" in message) || !("content" in message)) return null
+  const role = String((message as { role: unknown }).role)
+  // Skip user (our injected prompt echoed back) and tool (covered by tool_call/tool_result events).
+  if (role === "user" || role === "tool") return null
+  const text = textFromContent((message as { content: unknown }).content).trim()
+  return text ? { role, text } : null
 }
 
 function textFromAgentMessages(messages: unknown): string {
   if (!Array.isArray(messages)) return "Done."
-  const text = messages.map(textFromAssistantMessage).filter(Boolean).join("\n\n").trim()
-  return text || "Done."
+  const captured = messages
+    .map(captureMessageText)
+    .filter((item): item is { role: string; text: string } => item !== null)
+  if (captured.length === 0) return "Done."
+  const assistant = captured
+    .filter((item) => item.role === "assistant")
+    .map((item) => item.text)
+    .join("\n\n")
+    .trim()
+  if (assistant) return assistant
+  return (
+    captured
+      .map((item) => item.text)
+      .join("\n\n")
+      .trim() || "Done."
+  )
+}
+
+function readHeader(headers: unknown, name: string): string | undefined {
+  if (!headers || typeof headers !== "object") return undefined
+  const target = name.toLowerCase()
+  for (const [key, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (key.toLowerCase() !== target) continue
+    if (typeof value === "string") return value
+    if (Array.isArray(value) && typeof value[0] === "string") return value[0]
+  }
+  return undefined
+}
+
+function parseRetryAfter(headers: unknown, now: number = Date.now()): number | undefined {
+  const raw = readHeader(headers, "retry-after")?.trim()
+  if (!raw) return undefined
+  if (/^\d+(\.\d+)?$/.test(raw)) {
+    const seconds = Number(raw)
+    return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds * 1000) : undefined
+  }
+  const parsed = Date.parse(raw)
+  if (!Number.isFinite(parsed)) return undefined
+  return Math.max(0, parsed - now)
+}
+
+function formatLocalTime(date: Date): string {
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
+}
+
+function formatDuration(ms: number): string {
+  const totalMin = Math.round(ms / 60_000)
+  if (totalMin < 1) return "<1 min"
+  if (totalMin < 60) return `${totalMin} min`
+  const hours = Math.floor(totalMin / 60)
+  const minutes = totalMin % 60
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`
+}
+
+function describeProviderError(status: number, headers: unknown, now: number = Date.now()): string {
+  const retryAfterMs = parseRetryAfter(headers, now)
+  if (status === 429) {
+    if (retryAfterMs === undefined) return "Error: model provider rate-limited the request (HTTP 429)."
+    const retryAt = new Date(now + retryAfterMs)
+    return `Error: model provider rate-limited the request (HTTP 429). Try again around ${formatLocalTime(retryAt)} (in ~${formatDuration(retryAfterMs)}).`
+  }
+  if (status === 401 || status === 403) return `Error: model provider denied the request (HTTP ${status}).`
+  if (status >= 500) return `Error: model provider returned a server error (HTTP ${status}).`
+  return `Error: model provider returned HTTP ${status}.`
+}
+
+function formatRetryNotice(retryAfterMs: number, attempt: number, now: number = Date.now()): string {
+  const retryAt = new Date(now + retryAfterMs)
+  const attemptNote = attempt > 1 ? ` (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS})` : ""
+  return `Rate limited by model provider. Will retry around ${formatLocalTime(retryAt)} (in ~${formatDuration(retryAfterMs)})${attemptNote}.`
+}
+
+function extractAgentEndError(event: unknown): string | undefined {
+  if (!event || typeof event !== "object") return undefined
+  const error = (event as { error?: unknown }).error
+  if (typeof error === "string") {
+    const trimmed = error.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+  }
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message
+    if (typeof message === "string") {
+      const trimmed = message.trim()
+      return trimmed.length > 0 ? trimmed : undefined
+    }
+  }
+  return undefined
+}
+
+function resolveFinalText(
+  event: unknown,
+  state: {
+    assistantTexts: string[]
+    otherTexts: Array<{ role: string; text: string }>
+    providerError?: string
+  }
+): string {
+  if (state.assistantTexts.length > 0) return state.assistantTexts.join("\n\n")
+  if (state.providerError) return state.providerError
+  const eventError = extractAgentEndError(event)
+  if (eventError) return eventError
+  if (state.otherTexts.length > 0) return state.otherTexts.map((item) => item.text).join("\n\n")
+  return textFromAgentMessages((event as { messages?: unknown } | undefined)?.messages)
 }
 
 function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
@@ -1115,7 +1568,13 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   steeredInvocations = []
   pendingContextCursor = undefined
   pendingAssistantTexts = []
+  pendingNonAssistantTexts = []
   pendingToolCalls = new Map()
+  pendingProviderError = undefined
+  pendingRetryAfterMs = undefined
+  pendingInvocationPrompt = undefined
+  clearPendingRetry()
+  isWaitingForRetry = false
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx)
@@ -1131,7 +1590,13 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   steeredInvocations = []
   pendingContextCursor = undefined
   pendingAssistantTexts = []
+  pendingNonAssistantTexts = []
   pendingToolCalls = new Map()
+  pendingProviderError = undefined
+  pendingRetryAfterMs = undefined
+  pendingInvocationPrompt = undefined
+  clearPendingRetry()
+  isWaitingForRetry = false
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx).catch(() => undefined)
@@ -1142,9 +1607,23 @@ export const __testing = {
   formatToolCallTrace,
   formatToolResultTrace,
   buildClaimInvocationPayload,
+  buildRuntimeCapabilities,
+  getRuntimeCommand,
+  normalizeThinkingLevel,
   migrateSessionState,
   parseConfigPatch,
   safeStatusText,
+  captureMessageText,
+  textFromAgentMessages,
+  extractAgentEndError,
+  resolveFinalText,
+  parseRetryAfter,
+  describeProviderError,
+  formatRetryNotice,
+  formatDuration,
+  formatLocalTime,
+  MAX_AUTO_RETRY_MS,
+  MAX_RETRY_ATTEMPTS,
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -1262,9 +1741,21 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("message_end", async (event) => {
     if (!pending) return
-    const text = textFromAssistantMessage(event.message)
-    if (!text) return
-    pendingAssistantTexts.push(text)
+    const captured = captureMessageText(event.message)
+    if (!captured) return
+    if (captured.role === "assistant") pendingAssistantTexts.push(captured.text)
+    else pendingNonAssistantTexts.push(captured)
+  })
+
+  pi.on("after_provider_response", async (event) => {
+    if (!pending) return
+    const raw = event as { status?: unknown; headers?: unknown }
+    const status = typeof raw.status === "number" ? raw.status : 0
+    if (status < 400) return
+    pendingProviderError = describeProviderError(status, raw.headers)
+    const retryAfterMs = parseRetryAfter(raw.headers)
+    pendingRetryAfterMs =
+      status === 429 && retryAfterMs !== undefined && retryAfterMs <= MAX_AUTO_RETRY_MS ? retryAfterMs : undefined
   })
 
   pi.on("agent_end", async (event, ctx) => {
@@ -1275,9 +1766,20 @@ export default function (pi: ExtensionAPI): void {
       }
       return
     }
+    if (isWaitingForRetry) return
+    if (pendingRetryAfterMs !== undefined && pendingAssistantTexts.length === 0) {
+      const attempt = (pendingRetry?.attempts ?? 0) + 1
+      if (attempt <= MAX_RETRY_ATTEMPTS) {
+        await scheduleProviderRetry(pi, ctx, pendingRetryAfterMs, attempt)
+        return
+      }
+    }
     try {
-      const finalText =
-        pendingAssistantTexts.length > 0 ? pendingAssistantTexts.join("\n\n") : textFromAgentMessages(event.messages)
+      const finalText = resolveFinalText(event, {
+        assistantTexts: pendingAssistantTexts,
+        otherTexts: pendingNonAssistantTexts,
+        providerError: pendingProviderError,
+      })
       const traceFinalText = extractAttachmentDirectives(finalText).markdown || NO_RESPONSE_MARKER
       await recordTraceStep("message_sent", `Final response:\n\n${sanitizeTraceText(traceFinalText)}`, "Sent response")
       await completePending(finalText, ctx)

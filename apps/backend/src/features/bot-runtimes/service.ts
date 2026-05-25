@@ -1,6 +1,12 @@
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
-import type { BotInvocationCapability, BotRuntimeKind, BotRuntimeStatus, BotTrait } from "@threa/types"
+import type {
+  BotInvocationCapability,
+  BotInvocationTrigger,
+  BotRuntimeKind,
+  BotRuntimeStatus,
+  BotTrait,
+} from "@threa/types"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
@@ -184,7 +190,12 @@ export class BotRuntimeService {
       instanceId: params.instanceId,
       status: "available",
       acceptingInvocations: true,
-      capabilities: { supportsActiveScratchpad: true, supportsPersistentSessions: true },
+      capabilities: {
+        supportsActiveScratchpad: true,
+        supportsPersistentSessions: true,
+        supportsSessionControlCommands: true,
+        sessionControlCommands: ["compact", "model", "thinking", "skill"],
+      },
     })
     await StreamActiveActorRepository.upsert(db, {
       id: streamActiveActorId(),
@@ -215,7 +226,7 @@ export class BotRuntimeService {
     sourceMessageId: string
     responseStreamId: string
     actorId: string
-    trigger: "mention" | "active-scratchpad"
+    trigger: BotInvocationTrigger
     requiredCapability: BotInvocationCapability
     promptMarkdown: string
     authorUserId: string
@@ -224,7 +235,29 @@ export class BotRuntimeService {
     targetRuntimeSessionId?: string | null
     metadata?: Record<string, unknown>
   }): Promise<BotInvocation> {
-    return BotInvocationRepository.insertIdempotent(this.pool, {
+    return this.createInvocationInTransaction(this.pool, params)
+  }
+
+  async createInvocationInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      rootStreamId: string
+      activeStreamId: string
+      sourceMessageId: string
+      responseStreamId: string
+      actorId: string
+      trigger: BotInvocationTrigger
+      requiredCapability: BotInvocationCapability
+      promptMarkdown: string
+      authorUserId: string
+      mentionedActorSlugs?: string[]
+      targetInstanceId?: string | null
+      targetRuntimeSessionId?: string | null
+      metadata?: Record<string, unknown>
+    }
+  ): Promise<BotInvocation> {
+    return BotInvocationRepository.insertIdempotent(db, {
       id: botInvocationId(),
       workspaceId: params.workspaceId,
       rootStreamId: params.rootStreamId,
@@ -323,5 +356,19 @@ export class BotRuntimeService {
     errorMessage: string
   }): Promise<BotInvocation | null> {
     return BotInvocationRepository.failClaim(this.pool, params)
+  }
+
+  async failInvocationInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      invocationId: string
+      instanceId: string
+      claimToken: string
+      errorMessage: string
+    }
+  ): Promise<BotInvocation | null> {
+    return BotInvocationRepository.failClaim(db, params)
   }
 }

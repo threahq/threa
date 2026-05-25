@@ -20,7 +20,7 @@ import { createSearchHandlers } from "./features/search"
 import { createMemoHandlers } from "./features/memos"
 import { createEmojiHandlers } from "./features/emoji"
 import { createConversationHandlers } from "./features/conversations"
-import { createCommandHandlers } from "./features/commands"
+import { CommandAvailabilityService, createCommandHandlers } from "./features/commands"
 import { createUserPreferencesHandlers } from "./features/user-preferences"
 import { createAIUsageHandlers } from "./features/ai-usage"
 import type { AI } from "./lib/ai/ai"
@@ -165,18 +165,19 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   const authHandlers = createAuthHandlers()
   const avatarUpload = createAvatarUploadMiddleware()
+  const botRuntimeService = new BotRuntimeService({ pool })
+  const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
   const workspace = createWorkspaceHandlers({
     workspaceService,
     streamService,
     userPreferencesService,
     invitationService,
     activityService,
-    commandRegistry,
+    commandAvailabilityService,
     avatarService,
     workosOrgService,
     pool,
   })
-  const botRuntimeService = new BotRuntimeService({ pool })
   const stream = createStreamHandlers({
     pool,
     streamService,
@@ -184,6 +185,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     activityService,
     linkPreviewService,
     botRuntimeService,
+    commandAvailabilityService,
   })
   const message = createMessageHandlers({ pool, eventService, streamService, commandRegistry })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
@@ -191,7 +193,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const memo = createMemoHandlers({ pool, memoExplorerService })
   const emoji = createEmojiHandlers()
   const conversation = createConversationHandlers({ conversationService, streamService })
-  const command = createCommandHandlers({ pool, commandRegistry, streamService })
+  const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
   const aiUsage = createAIUsageHandlers({ pool })
   const debug = createDebugHandlers({ pool, poolMonitor })

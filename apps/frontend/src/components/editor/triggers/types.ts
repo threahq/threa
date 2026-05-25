@@ -1,3 +1,5 @@
+import type { CommandArgumentInfo, CommandKind, CommandScope } from "@threa/types"
+
 /**
  * Base interface for mentionable entities (users, personas, broadcast).
  */
@@ -30,6 +32,9 @@ export interface CommandItem {
   name: string
   description: string
   category?: string
+  kind?: CommandKind
+  scope?: CommandScope
+  args?: CommandArgumentInfo[]
   /**
    * Client-action id. When present the suggestion list invokes the matching
    * handler directly instead of inserting a `/command` node that'd be sent

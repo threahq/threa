@@ -313,6 +313,7 @@ const claimedInvocationSchema = z.object({
   claimToken: z.string(),
   claimExpiresAt: z.string().datetime(),
   runtimeSessionId: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown()),
 })
 
 const runtimeSessionLinkSchema = z.object({

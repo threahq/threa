@@ -1,4 +1,5 @@
 import type { Pool } from "pg"
+import { CommandKinds } from "@threa/types"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandDispatchedOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
@@ -12,6 +13,7 @@ interface CommandDispatchedEventPayload {
   name: string
   args: string
   status: string
+  executionKind?: string
 }
 
 export interface CommandHandlerConfig {
@@ -98,6 +100,11 @@ export class CommandHandler implements OutboxHandler {
           const payload = event.payload as CommandDispatchedOutboxPayload
           const { event: commandEvent, workspaceId, streamId, authorId } = payload
           const eventPayload = commandEvent.payload as CommandDispatchedEventPayload
+
+          if (eventPayload.executionKind && eventPayload.executionKind !== CommandKinds.SERVER) {
+            seen.push(event.id)
+            continue
+          }
 
           logger.info(
             { commandId: eventPayload.commandId, commandName: eventPayload.name, streamId },

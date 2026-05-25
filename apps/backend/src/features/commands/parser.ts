@@ -35,8 +35,8 @@ export function parseCommand(content: string): ParsedCommand | null {
     return null
   }
 
-  // Match: / followed by command name (word chars), then optional whitespace + args
-  const match = trimmed.match(/^\/(\w+)(?:\s+(.*))?$/s)
+  // Match: / followed by command name (word chars or hyphens), then optional whitespace + args
+  const match = trimmed.match(/^\/([\w-]+)(?:\s+(.*))?$/s)
 
   if (!match) {
     // Starts with / but no valid command name (e.g., "/ " or "/123")

@@ -114,6 +114,8 @@ export interface StreamBootstrap {
   /** Bot IDs that have been granted access to this stream. */
   botMemberIds: string[]
   botRuntimePresence?: Record<string, BotRuntimePresenceSummary | null>
+  /** Complete slash-command list effective for this stream. Live backend returns this. */
+  commands?: CommandInfo[]
   membership: StreamMember | null
   latestSequence: string
   /**
@@ -433,16 +435,41 @@ export const CommandKinds = {
    * action (navigation, mutation) instead of round-tripping to the backend.
    */
   CLIENT_ACTION: "client-action",
+  /** Bot-runtime command: dispatched as a targeted bot invocation. */
+  BOT_RUNTIME: "bot-runtime",
 } as const
 export type CommandKind = (typeof CommandKinds)[keyof typeof CommandKinds]
+
+export const CommandScopes = {
+  WORKSPACE: "workspace",
+  STREAM: "stream",
+} as const
+export type CommandScope = (typeof CommandScopes)[keyof typeof CommandScopes]
+
+export interface CommandArgumentSuggestion {
+  value: string
+  label?: string
+  description?: string
+}
+
+export interface CommandArgumentInfo {
+  name: string
+  required?: boolean
+  description?: string
+  suggestions?: CommandArgumentSuggestion[]
+}
 
 export interface CommandInfo {
   name: string
   description: string
   /** Omitted for backwards compat = "server" (previous behaviour). */
   kind?: CommandKind
+  /** Workspace commands are globally known; stream commands depend on active stream context. */
+  scope?: CommandScope
   /** For `kind: "client-action"`, the stable id the frontend dispatches on. */
   clientActionId?: string
+  /** Optional first-pass argument metadata. UI can ignore this until argument autocomplete exists. */
+  args?: CommandArgumentInfo[]
 }
 
 export interface WorkspaceBootstrap {
@@ -619,6 +646,8 @@ export interface CommandDispatchedPayload {
   name: string
   args: string
   status: "dispatched"
+  /** Missing means legacy server command. */
+  executionKind?: Extract<CommandKind, "server" | "bot-runtime">
 }
 
 export interface CommandCompletedPayload {

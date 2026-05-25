@@ -378,6 +378,9 @@ export type {
   // Commands
   CommandInfo,
   CommandKind,
+  CommandScope,
+  CommandArgumentInfo,
+  CommandArgumentSuggestion,
   DispatchCommandInput,
   DispatchCommandResponse,
   DispatchCommandError,
@@ -401,7 +404,7 @@ export type {
 export { DEVICE_KEY_LENGTH } from "./api"
 
 // Command kind constants
-export { CommandKinds } from "./api"
+export { CommandKinds, CommandScopes } from "./api"
 
 // Discuss-with-Ariadne client-action id (single source of truth)
 export const DISCUSS_WITH_ARIADNE_COMMAND = "discuss-with-ariadne" as const
