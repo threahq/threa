@@ -71,7 +71,9 @@ export function PdfViewer({ url, filename, variant = "gallery" }: PdfViewerProps
     return isInline ? (
       <div className="w-full">{renderer}</div>
     ) : (
-      <div className="absolute inset-0 pb-16 pt-14 sm:py-16">{renderer}</div>
+      <div data-gallery-text-viewer="true" className="absolute inset-0 pb-16 pt-14 sm:py-16">
+        {renderer}
+      </div>
     )
   }
 

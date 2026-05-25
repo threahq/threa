@@ -66,6 +66,7 @@ export default function PdfPagesRenderer({ url, filename, variant }: PdfPagesRen
   if (errored) {
     return (
       <div
+        data-gallery-text-viewer="true"
         className={
           isGallery
             ? "flex flex-col items-center gap-2 text-white/70"
