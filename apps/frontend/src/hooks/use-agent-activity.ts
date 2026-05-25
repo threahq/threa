@@ -61,7 +61,16 @@ export function useAgentActivity(events: StreamEvent[], socket: Socket | null): 
   // Derive running sessions from events array (bootstrap source of truth for streams
   // that contain session lifecycle events, e.g. threads and scratchpads)
   const runningSessions = useMemo(() => {
-    const started = new Map<string, { triggerMessageId: string; personaName: string }>()
+    const started = new Map<
+      string,
+      {
+        triggerMessageId: string
+        personaName: string
+        currentStepType: AgentStepType | null
+        stepCount: number
+        messageCount: number
+      }
+    >()
     const terminated = new Set<string>()
 
     for (const event of events) {
@@ -71,6 +80,9 @@ export function useAgentActivity(events: StreamEvent[], socket: Socket | null): 
           started.set(payload.sessionId, {
             triggerMessageId: payload.triggerMessageId,
             personaName: payload.personaName,
+            currentStepType: payload.currentStepType ?? null,
+            stepCount: payload.stepCount ?? 0,
+            messageCount: payload.messageCount ?? 0,
           })
           break
         }
@@ -207,9 +219,9 @@ export function useAgentActivity(events: StreamEvent[], socket: Socket | null): 
       result.set(session.triggerMessageId, {
         sessionId,
         personaName: progress?.personaName ?? session.personaName,
-        currentStepType: progress?.currentStepType ?? null,
-        stepCount: progress?.stepCount ?? 0,
-        messageCount: progress?.messageCount ?? 0,
+        currentStepType: progress ? progress.currentStepType : session.currentStepType,
+        stepCount: progress ? progress.stepCount : session.stepCount,
+        messageCount: progress ? progress.messageCount : session.messageCount,
         substep: progress?.substep ?? null,
         threadStreamId: progress?.threadStreamId,
       })

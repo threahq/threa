@@ -13,7 +13,7 @@ import {
   toAttachmentSummary,
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamPersonaParticipantRepository } from "../agents"
+import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
 import { attachmentReferenceId, eventId, messageId, messageVersionId, streamId as generateStreamId } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { serializeBigInt } from "@threa/backend-common"
@@ -1457,9 +1457,33 @@ export class EventService {
           })
         : new Map<string, string>()
 
+    const startedSessionIds = events
+      .filter((e) => e.eventType === "agent_session:started")
+      .map((e) => (e.payload as { sessionId?: unknown }).sessionId)
+      .filter((id): id is string => typeof id === "string")
+    const runningSessionProgress =
+      startedSessionIds.length > 0
+        ? await AgentSessionRepository.findProgressSnapshotsByIds(this.pool, startedSessionIds)
+        : new Map()
+
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")
       .map((event) => {
+        if (event.eventType === "agent_session:started") {
+          const payload = event.payload as { sessionId?: string }
+          const progress = payload.sessionId ? runningSessionProgress.get(payload.sessionId) : undefined
+          return progress
+            ? {
+                ...event,
+                payload: {
+                  ...payload,
+                  stepCount: progress.stepCount,
+                  messageCount: progress.messageCount,
+                  currentStepType: progress.currentStepType,
+                },
+              }
+            : event
+        }
         if (event.eventType !== "message_created") return event
         const payload = event.payload as MessageCreatedPayload
         const threadData = threadDataMap.get(payload.messageId)
