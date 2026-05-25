@@ -78,6 +78,16 @@ describe("Pi remote trace safety", () => {
     expect(migrated.linkedSessions).toEqual({})
   })
 
+  test("includes the Pi session id when claiming invocations", () => {
+    expect(__testing.buildClaimInvocationPayload("pi-host-123", "pi-session-abc")).toMatchObject({
+      runtimeKind: "pi-local",
+      instanceId: "pi-host-123",
+      runtimeSessionId: "pi-session-abc",
+      supportedCapabilities: ["active-scratchpad", "mentionable"],
+      claimTtlSeconds: 120,
+    })
+  })
+
   test("parses pasted self-configuration JSON", () => {
     expect(
       __testing.parseConfigPatch(`{

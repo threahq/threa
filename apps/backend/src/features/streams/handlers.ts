@@ -301,6 +301,15 @@ function serializeBotRuntimePresence(presence: Awaited<ReturnType<BotRuntimeServ
     : null
 }
 
+function presenceMatchesRuntimeSessionLink(
+  presence: Awaited<ReturnType<BotRuntimeService["findLatestPresence"]>>,
+  link: { instanceId: string; runtimeSessionId: string } | null | undefined
+): boolean {
+  if (!link) return true
+  if (!presence || presence.instanceId !== link.instanceId) return false
+  return presence.capabilities.runtimeSessionId === link.runtimeSessionId
+}
+
 export function createStreamHandlers({
   pool,
   streamService,
@@ -689,8 +698,23 @@ export function createStreamHandlers({
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
         ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
+      const botRuntimeLinkByBotId =
+        stream.type === StreamTypes.SCRATCHPAD
+          ? await botRuntimeService.findActivePiRemoteSessionsForBotsInStream({
+              workspaceId,
+              botIds: botMemberIds,
+              streamId: stream.id,
+            })
+          : new Map<string, { instanceId: string; runtimeSessionId: string }>()
       const botRuntimePresence = Object.fromEntries(
-        botMemberIds.map((botId) => [botId, serializeBotRuntimePresence(botRuntimePresences.get(botId) ?? null)])
+        botMemberIds.map((botId) => {
+          const presence = botRuntimePresences.get(botId) ?? null
+          const link = botRuntimeLinkByBotId.get(botId)
+          return [
+            botId,
+            serializeBotRuntimePresence(presenceMatchesRuntimeSessionLink(presence, link) ? presence : null),
+          ]
+        })
       )
 
       const unreadCount = membership ? await streamService.getUnreadCount(streamId, membership.lastReadEventId) : 0

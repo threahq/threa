@@ -907,6 +907,7 @@
                     "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
                   },
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "displayName": { "type": "string", "maxLength": 100 },
                   "status": { "type": "string", "enum": ["available", "busy", "offline", "error"] },
                   "acceptingInvocations": { "type": "boolean" },
@@ -1124,6 +1125,7 @@
                     "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
                   },
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "supportedCapabilities": {
                     "minItems": 1,
                     "type": "array",

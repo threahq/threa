@@ -114,6 +114,30 @@ export class BotRuntimeService {
     })
   }
 
+  async findActivePiRemoteSessionsForStreams(params: {
+    workspaceId: string
+    botId: string
+    streamIds: string[]
+  }): Promise<Map<string, BotRuntimeSessionLink>> {
+    return BotRuntimeSessionLinkRepository.findActiveByStreams(this.pool, {
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      activeStreamIds: params.streamIds,
+    })
+  }
+
+  async findActivePiRemoteSessionsForBotsInStream(params: {
+    workspaceId: string
+    botIds: string[]
+    streamId: string
+  }): Promise<Map<string, BotRuntimeSessionLink>> {
+    return BotRuntimeSessionLinkRepository.findActiveByBotsAndStream(this.pool, {
+      workspaceId: params.workspaceId,
+      botIds: params.botIds,
+      activeStreamId: params.streamId,
+    })
+  }
+
   async repairBotTraitsInTransaction(
     db: Querier,
     params: { workspaceId: string; botId: string; traits: readonly BotTrait[] }
@@ -224,6 +248,7 @@ export class BotRuntimeService {
     workspaceId: string
     botId: string
     instanceId: string
+    runtimeSessionId?: string
     runtimeKind: BotRuntimeKind
     claimToken: string
     supportedCapabilities: BotInvocationCapability[]

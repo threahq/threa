@@ -261,13 +261,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T
 }
 
-async function heartbeat(status: "available" | "busy" | "offline" | "error", statusText?: string): Promise<void> {
+async function heartbeat(
+  status: "available" | "busy" | "offline" | "error",
+  statusText?: string,
+  ctx?: ExtensionContext
+): Promise<void> {
   if (!config) return
+  const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`, {
     method: "POST",
     body: JSON.stringify({
       runtimeKind: "pi-local",
       instanceId: ensureInstanceId(),
+      runtimeSessionId,
       displayName: config.defaultDisplayName,
       status,
       acceptingInvocations: status === "available",
@@ -281,11 +287,11 @@ async function heartbeat(status: "available" | "busy" | "offline" | "error", sta
   })
 }
 
-async function heartbeatBusyIfStale(statusText = "Working…"): Promise<boolean> {
+async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionContext): Promise<boolean> {
   const now = Date.now()
   if (now - lastBusyHeartbeatAt < BUSY_HEARTBEAT_MS) return false
   lastBusyHeartbeatAt = now
-  await heartbeat("busy", statusText)
+  await heartbeat("busy", statusText, ctx)
   return true
 }
 
@@ -560,7 +566,7 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
 
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
   setRemoteStatus(ctx, `Threa remote: ${displayName}`)
-  await heartbeat("available")
+  await heartbeat("available", undefined, ctx)
 }
 
 async function renewPendingClaim(): Promise<void> {
@@ -689,8 +695,8 @@ async function disableRemote(ctx: ExtensionContext): Promise<void> {
   if (!config) return
   const link = setCurrentSessionEnabled(ctx, false)
   stopPolling()
-  await failPending("Threa remote disabled")
-  await heartbeat("offline").catch(() => undefined)
+  await failPending("Threa remote disabled", ctx)
+  await heartbeat("offline", undefined, ctx).catch(() => undefined)
   setRemoteStatus(ctx, "Threa remote: off")
   ctx.ui.notify(link ? "Threa remote disabled for this Pi session" : "No Threa remote session is linked here", "info")
 }
@@ -703,7 +709,7 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
     return
   }
   lastBusyHeartbeatAt = 0
-  await heartbeat("available")
+  await heartbeat("available", undefined, ctx)
   startPolling(pi, ctx)
   ctx.ui.notify("Threa remote enabled for this Pi session", "info")
 }
@@ -803,6 +809,20 @@ async function fetchInvocationContext(
   }
 }
 
+function buildClaimInvocationPayload(instanceId: string, runtimeSessionId: string): Record<string, unknown> {
+  return {
+    runtimeKind: "pi-local",
+    instanceId,
+    runtimeSessionId,
+    supportedCapabilities: ["active-scratchpad", "mentionable"],
+    claimTtlSeconds: 120,
+  }
+}
+
+function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown> {
+  return buildClaimInvocationPayload(ensureInstanceId(), getRuntimeSessionId(ctx))
+}
+
 async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvocation | null> {
   if (!config) return null
   const startedAt = Date.now()
@@ -811,12 +831,7 @@ async function claimNextInvocation(ctx: ExtensionContext): Promise<ClaimedInvoca
       `/api/v1/workspaces/${config.workspaceId}/bot-invocations/claim`,
       {
         method: "POST",
-        body: JSON.stringify({
-          runtimeKind: "pi-local",
-          instanceId: ensureInstanceId(),
-          supportedCapabilities: ["active-scratchpad", "mentionable"],
-          claimTtlSeconds: 120,
-        }),
+        body: JSON.stringify(buildClaimInvocationBody(ctx)),
       }
     )
     emitPollDebug(
@@ -889,7 +904,7 @@ async function claimIfIdle(pi: ExtensionAPI, ctx: ExtensionContext): Promise<boo
   if (pending) await renewPendingClaim()
 
   const steer = pending !== undefined || !ctx.isIdle()
-  if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…")
+  if (steer) await heartbeatBusyIfStale(pending ? "Working on Threa invocation…" : "Busy in Pi…", ctx)
 
   const invocation = await claimNextInvocation(ctx)
   if (!invocation) return true
@@ -1097,10 +1112,10 @@ async function completePending(markdown: string, ctx: ExtensionContext): Promise
   pendingToolCalls = new Map()
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
-  await heartbeat("available")
+  await heartbeat("available", undefined, ctx)
 }
 
-async function failPending(error: unknown): Promise<void> {
+async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void> {
   if (!config || !pending) return
   const invocation = pending
   const steered = steeredInvocations
@@ -1113,13 +1128,14 @@ async function failPending(error: unknown): Promise<void> {
   pendingToolCalls = new Map()
   lastTraceHeartbeat = undefined
   lastBusyHeartbeatAt = 0
-  await heartbeat("available").catch(() => undefined)
+  await heartbeat("available", undefined, ctx).catch(() => undefined)
 }
 
 export const __testing = {
   describeToolCall,
   formatToolCallTrace,
   formatToolResultTrace,
+  buildClaimInvocationPayload,
   migrateSessionState,
   parseConfigPatch,
   safeStatusText,
@@ -1201,12 +1217,12 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     lastBusyHeartbeatAt = 0
-    await heartbeat("available")
+    await heartbeat("available", undefined, ctx)
     startPolling(pi, ctx)
   })
 
   pi.on("agent_start", async (_event, ctx) => {
-    if (config && isEnabled(ctx)) await heartbeatBusyIfStale("Thinking…").catch(() => undefined)
+    if (config && isEnabled(ctx)) await heartbeatBusyIfStale("Thinking…", ctx).catch(() => undefined)
     await traceHeartbeat("Thinking…", "thinking")
   })
 
@@ -1249,7 +1265,7 @@ export default function (pi: ExtensionAPI): void {
     if (!pending) {
       if (config && isEnabled(ctx)) {
         lastBusyHeartbeatAt = 0
-        await heartbeat("available").catch(() => undefined)
+        await heartbeat("available", undefined, ctx).catch(() => undefined)
       }
       return
     }
@@ -1262,14 +1278,14 @@ export default function (pi: ExtensionAPI): void {
       setRemoteStatus(ctx, "Threa remote: linked")
     } catch (error) {
       ctx.ui.notify(`Failed to complete Threa invocation: ${String(error)}`, "warning")
-      await failPending(error)
+      await failPending(error, ctx)
     }
   })
 
   pi.on("session_shutdown", async (_event, ctx) => {
     stopPolling()
-    await failPending("Pi session shut down")
-    await heartbeat("offline").catch(() => undefined)
+    await failPending("Pi session shut down", ctx)
+    await heartbeat("offline", undefined, ctx).catch(() => undefined)
     ctx.ui.setStatus(STATUS_KEY, undefined)
   })
 }

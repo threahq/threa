@@ -392,6 +392,28 @@ export const BotRuntimeSessionLinkRepository = {
     )
     return result.rows[0] ? mapSessionLink(result.rows[0]) : null
   },
+
+  async findActiveByStreams(
+    db: Querier,
+    params: { workspaceId: string; botId: string; activeStreamIds: string[] }
+  ): Promise<Map<string, BotRuntimeSessionLink>> {
+    if (params.activeStreamIds.length === 0) return new Map()
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT DISTINCT ON (active_stream_id) * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND active_stream_id = ANY(${params.activeStreamIds}) AND status = 'active' ORDER BY active_stream_id, updated_at DESC`
+    )
+    return new Map(result.rows.map((row) => [row.active_stream_id, mapSessionLink(row)]))
+  },
+
+  async findActiveByBotsAndStream(
+    db: Querier,
+    params: { workspaceId: string; botIds: string[]; activeStreamId: string }
+  ): Promise<Map<string, BotRuntimeSessionLink>> {
+    if (params.botIds.length === 0) return new Map()
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT DISTINCT ON (bot_id) * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ANY(${params.botIds}) AND active_stream_id = ${params.activeStreamId} AND status = 'active' ORDER BY bot_id, updated_at DESC`
+    )
+    return new Map(result.rows.map((row) => [row.bot_id, mapSessionLink(row)]))
+  },
 }
 
 export const BotInvocationRepository = {
@@ -424,6 +446,7 @@ export const BotInvocationRepository = {
       workspaceId: string
       botId: string
       instanceId: string
+      runtimeSessionId?: string
       runtimeKind: BotRuntimeKind
       claimToken: string
       supportedCapabilities: BotInvocationCapability[]
@@ -444,6 +467,7 @@ export const BotInvocationRepository = {
               AND r.runtime_kind = ${params.runtimeKind}
           )
           AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
+          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId ?? null})
           AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
         ORDER BY created_at ASC, id ASC
         FOR UPDATE SKIP LOCKED
