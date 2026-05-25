@@ -65,7 +65,7 @@ export function PdfViewer({ url, filename, variant = "gallery" }: PdfViewerProps
         </a>
       </div>
     ) : (
-      <div className="absolute inset-0 flex items-center justify-center px-6">
+      <div data-gallery-text-viewer="true" className="absolute inset-0 flex items-center justify-center px-6">
         <a
           href={url}
           target="_blank"
