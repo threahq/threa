@@ -1,5 +1,11 @@
-import { Download, ExternalLink, FileText } from "lucide-react"
+import { lazy, Suspense } from "react"
+import { FileText, Loader2 } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
+
+// Code-split: PDF.js is ~300KB gz. Only ships when a PDF preview is opened on
+// a viewport where we render pages ourselves (mobile). Desktop hands the URL
+// to the browser's native viewer via the iframe path below.
+const PdfPagesRenderer = lazy(() => import("./pdf-pages-renderer"))
 
 interface PdfViewerProps {
   url: string
@@ -12,20 +18,22 @@ interface PdfViewerProps {
 }
 
 /**
- * Renders a PDF attachment by handing the presigned URL to an iframe and
- * letting the browser's built-in PDF viewer take over. The presigned URL is
+ * Renders a PDF attachment. On desktop we hand the presigned URL to an iframe
+ * and let the browser's built-in PDF viewer take over — its toolbar, search,
+ * print, and zoom are better than anything we'd ship. The presigned URL is
  * served with `Content-Type: application/pdf` and without a `download`
  * Content-Disposition (see attachments service `getDownloadUrl`), so Chrome,
  * Firefox, and desktop Safari render it inline.
  *
- * No sandbox attribute: the built-in PDF viewer is a trusted browser
- * component, and tightening the sandbox the way HtmlViewer does (`sandbox=""`)
- * also disables the PDF viewer itself in Chromium.
+ * No sandbox attribute on the iframe: the built-in PDF viewer is a trusted
+ * browser component, and tightening the sandbox the way HtmlViewer does
+ * (`sandbox=""`) also disables the PDF viewer itself in Chromium.
  *
- * Mobile browsers (iOS Safari, Android Chrome) don't reliably render PDFs in
- * an iframe — they fall back to a download prompt or open the file outside
- * the page. On mobile we render an explicit "Open PDF" tile instead so the
- * user gets a working affordance rather than a blank iframe.
+ * Mobile browsers (iOS Safari, Android WebView, older Android Chrome) don't
+ * reliably render PDFs in an iframe — they fall back to a download prompt or
+ * open the file outside the page. On mobile we render PDF.js pages into
+ * canvases instead so the user gets an actual inline preview rather than just
+ * a download tile.
  */
 export function PdfViewer({ url, filename, variant = "gallery" }: PdfViewerProps) {
   const isInline = variant === "inline"
@@ -44,46 +52,26 @@ export function PdfViewer({ url, filename, variant = "gallery" }: PdfViewerProps
   }
 
   if (isMobile) {
-    return isInline ? (
-      <div className="w-full">
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="mx-auto flex w-full max-w-[800px] flex-col items-center justify-center gap-3 rounded-lg border border-border bg-card px-6 py-10 text-center transition-colors hover:border-primary"
-        >
-          <div className="flex h-14 w-14 items-center justify-center rounded-card bg-red-500/15 text-red-600 dark:text-red-400">
-            <FileText className="h-7 w-7" />
-          </div>
-          <div className="space-y-1">
-            <div className="text-sm font-medium text-foreground">{filename}</div>
-            <div className="inline-flex items-center gap-1 text-xs text-primary">
-              <ExternalLink className="h-3 w-3" />
-              Open PDF
-            </div>
-          </div>
-        </a>
+    const fallback = isInline ? (
+      <div className="flex h-32 w-full items-center justify-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading PDF…
       </div>
     ) : (
-      <div data-gallery-text-viewer="true" className="absolute inset-0 flex items-center justify-center px-6">
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          className="flex flex-col items-center gap-4 rounded-lg bg-white/10 px-8 py-10 text-center text-white backdrop-blur-sm transition-colors hover:bg-white/15"
-        >
-          <div className="flex h-16 w-16 items-center justify-center rounded-card bg-white/15">
-            <FileText className="h-8 w-8" />
-          </div>
-          <div className="space-y-1">
-            <div className="text-sm font-medium">{filename}</div>
-            <div className="inline-flex items-center gap-1 text-xs text-white/70">
-              <Download className="h-3 w-3" />
-              Open PDF
-            </div>
-          </div>
-        </a>
+      <div className="absolute inset-0 flex items-center justify-center gap-2 text-xs text-white/70">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading PDF…
       </div>
+    )
+    const renderer = (
+      <Suspense fallback={fallback}>
+        <PdfPagesRenderer url={url} filename={filename} variant={variant} />
+      </Suspense>
+    )
+    return isInline ? (
+      <div className="w-full">{renderer}</div>
+    ) : (
+      <div className="absolute inset-0 pb-16 pt-14 sm:py-16">{renderer}</div>
     )
   }
 
