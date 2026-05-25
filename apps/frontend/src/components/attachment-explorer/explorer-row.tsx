@@ -26,7 +26,7 @@ export function ExplorerRow({ workspaceId, item, isSelected, onSelect }: Explore
     if (category !== "image") return
     let cancelled = false
     attachmentsApi
-      .getDownloadUrl(workspaceId, item.id, { variant: "raw" })
+      .getDownloadUrl(workspaceId, item.id, { variant: "thumbnail" })
       .then((url) => {
         if (!cancelled) setThumbnailUrl(url)
       })

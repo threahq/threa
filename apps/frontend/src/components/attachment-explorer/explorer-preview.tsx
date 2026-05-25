@@ -2,10 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { Link } from "react-router-dom"
 import { useQuery, type UseQueryResult } from "@tanstack/react-query"
 import { categoryFromMime } from "@threa/types"
-import { Check, ChevronDown, ChevronUp, Copy, Download, ExternalLink, Hash } from "lucide-react"
+import { Check, ChevronDown, ChevronUp, Code2, Copy, Download, ExternalLink, Eye, Hash } from "lucide-react"
 import { attachmentsApi, type AttachmentExtractionContent, type AttachmentSearchItem } from "@/api/attachments"
 import { Button } from "@/components/ui/button"
+import { HtmlViewer } from "@/components/gallery/html-viewer"
+import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
+import { ProgressiveImage } from "@/components/ui/progressive-image"
 import { useFormattedDate } from "@/hooks"
+import { isHtmlAttachment, isMarkdownAttachment } from "@/lib/attachment-kind"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFileSize } from "@/lib/file-size"
 import { CATEGORY_META } from "./category"
@@ -19,10 +23,16 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
   const { formatFull } = useFormattedDate()
   const [rawUrl, setRawUrl] = useState<string | null>(null)
   const [processedUrl, setProcessedUrl] = useState<string | null>(null)
+  // Image-only: fetched in parallel with the raw URL so the preview pane has
+  // something painted while the full-resolution variant streams in.
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const [isTruncated, setIsTruncated] = useState(false)
+  // Source vs. rendered toggle for markdown/html. Resets per item so a fresh
+  // selection always lands on the rendered view.
+  const [rawMode, setRawMode] = useState(false)
   const previewRef = useRef<HTMLPreElement | null>(null)
   const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Tracks which attachment is currently selected so handleCopy can drop
@@ -37,6 +47,7 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
     setExpanded(false)
     setCopied(false)
     setIsTruncated(false)
+    setRawMode(false)
     if (copyResetTimerRef.current) {
       clearTimeout(copyResetTimerRef.current)
       copyResetTimerRef.current = null
@@ -102,9 +113,21 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
   useEffect(() => {
     setRawUrl(null)
     setProcessedUrl(null)
+    setThumbnailUrl(null)
     setPreviewError(null)
     if (!item) return
     let cancelled = false
+    if (category === "image") {
+      attachmentsApi
+        .getDownloadUrl(workspaceId, item.id, { variant: "thumbnail" })
+        .then((url) => {
+          if (!cancelled) setThumbnailUrl(url)
+        })
+        .catch(() => {
+          // Thumbnail is best-effort — the raw fetch below still drives the
+          // real preview, and ProgressiveImage degrades to raw-only gracefully.
+        })
+    }
     attachmentsApi
       .getDownloadUrl(workspaceId, item.id, { variant: "raw" })
       .then((url) => {
@@ -147,21 +170,38 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
     selected.streamId && selected.messageId ? `/w/${workspaceId}/s/${selected.streamId}?m=${selected.messageId}` : null
   // Browsers handle iPhone .mov source poorly; prefer the transcoded mp4 when ready.
   const playbackUrl = category === "video" ? (processedUrl ?? rawUrl) : rawUrl
+  const isMarkdown = isMarkdownAttachment(selected)
+  const isHtml = isHtmlAttachment(selected)
+  const canToggleRaw = isMarkdown || isHtml
 
   function renderMedia() {
     if (previewError) {
       return <div className="px-6 py-4 text-xs text-muted-foreground">{previewError}</div>
+    }
+    // Images bypass the "no rawUrl yet" fallback so the thumbnail can paint as
+    // soon as it lands — ProgressiveImage will then crossfade to the raw
+    // variant when it arrives.
+    if (category === "image" && (rawUrl || thumbnailUrl)) {
+      return (
+        <ProgressiveImage
+          src={rawUrl}
+          posterSrc={thumbnailUrl}
+          alt={selected.filename}
+          imgClassName="block max-h-[50vh] min-w-0 max-w-full"
+        />
+      )
+    }
+    if (isMarkdown && rawUrl) {
+      return <MarkdownViewer url={rawUrl} filename={selected.filename} rawMode={rawMode} variant="inline" />
+    }
+    if (isHtml && rawUrl) {
+      return <HtmlViewer url={rawUrl} filename={selected.filename} rawMode={rawMode} variant="inline" />
     }
     if (!rawUrl) {
       return (
         <div className={`flex h-16 w-16 items-center justify-center rounded-card ${meta.accent}`}>
           <Icon className="h-8 w-8" />
         </div>
-      )
-    }
-    if (category === "image") {
-      return (
-        <img src={rawUrl} alt={selected.filename} className="block max-h-[50vh] min-w-0 max-w-full object-contain" />
       )
     }
     if (category === "video") {
@@ -276,6 +316,19 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
                   <ExternalLink className="h-3.5 w-3.5" />
                   Show message
                 </Link>
+              </Button>
+            ) : null}
+            {canToggleRaw ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setRawMode((v) => !v)}
+                aria-pressed={rawMode}
+                aria-label={rawMode ? "Show rendered preview" : "Show raw source"}
+                className="gap-1"
+              >
+                {rawMode ? <Eye className="h-3.5 w-3.5" /> : <Code2 className="h-3.5 w-3.5" />}
+                {rawMode ? "Rendered" : "Source"}
               </Button>
             ) : null}
             {rawUrl ? (
