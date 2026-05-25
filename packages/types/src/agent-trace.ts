@@ -101,6 +101,10 @@ export interface AgentSessionStartedPayload {
   personaName: string
   triggerMessageId: string
   rerunContext?: AgentSessionRerunContext | null
+  /** Bootstrap-only snapshot for running sessions; live updates still use agent_session:progress. */
+  stepCount?: number
+  messageCount?: number
+  currentStepType?: AgentStepType | null
   startedAt: string
 }
 

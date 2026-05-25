@@ -44,6 +44,13 @@ interface StepRow {
   completed_at: Date | null
 }
 
+interface SessionProgressSnapshotRow {
+  id: string
+  current_step_type: string | null
+  step_count: string
+  message_count: number
+}
+
 // Domain types (camelCase)
 export interface AgentSession {
   id: string
@@ -77,6 +84,13 @@ export interface AgentSessionStep {
   tokensUsed: number | null
   startedAt: Date
   completedAt: Date | null
+}
+
+export interface AgentSessionProgressSnapshot {
+  sessionId: string
+  currentStepType: StepType | null
+  stepCount: number
+  messageCount: number
 }
 
 // Insert params
@@ -268,6 +282,38 @@ export const AgentSessionRepository = {
       `
     )
     return result.rows.map(mapRowToSession)
+  },
+
+  async findProgressSnapshotsByIds(
+    db: Querier,
+    sessionIds: string[]
+  ): Promise<Map<string, AgentSessionProgressSnapshot>> {
+    if (sessionIds.length === 0) return new Map()
+    const result = await db.query<SessionProgressSnapshotRow>(
+      sql`
+        SELECT
+          s.id,
+          s.current_step_type,
+          COUNT(st.id) AS step_count,
+          COALESCE(array_length(s.sent_message_ids, 1), 0) AS message_count
+        FROM agent_sessions s
+        LEFT JOIN agent_session_steps st ON st.session_id = s.id
+        WHERE s.id = ANY(${sessionIds})
+          AND s.status = ${SessionStatuses.RUNNING}
+        GROUP BY s.id, s.current_step_type, s.sent_message_ids
+      `
+    )
+    return new Map(
+      result.rows.map((row) => [
+        row.id,
+        {
+          sessionId: row.id,
+          currentStepType: row.current_step_type as StepType | null,
+          stepCount: Number(row.step_count),
+          messageCount: row.message_count,
+        },
+      ])
+    )
   },
 
   async findLatestBySupersedesSession(db: Querier, supersedesSessionId: string): Promise<AgentSession | null> {
