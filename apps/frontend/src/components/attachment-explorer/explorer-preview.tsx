@@ -7,9 +7,10 @@ import { attachmentsApi, type AttachmentExtractionContent, type AttachmentSearch
 import { Button } from "@/components/ui/button"
 import { HtmlViewer } from "@/components/gallery/html-viewer"
 import { MarkdownViewer } from "@/components/gallery/markdown-viewer"
+import { PdfViewer } from "@/components/gallery/pdf-viewer"
 import { ProgressiveImage } from "@/components/ui/progressive-image"
 import { useFormattedDate } from "@/hooks"
-import { isHtmlAttachment, isMarkdownAttachment } from "@/lib/attachment-kind"
+import { isHtmlAttachment, isMarkdownAttachment, isPdfAttachment } from "@/lib/attachment-kind"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatFileSize } from "@/lib/file-size"
 import { CATEGORY_META } from "./category"
@@ -172,6 +173,7 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
   const playbackUrl = category === "video" ? (processedUrl ?? rawUrl) : rawUrl
   const isMarkdown = isMarkdownAttachment(selected)
   const isHtml = isHtmlAttachment(selected)
+  const isPdf = isPdfAttachment(selected)
   const canToggleRaw = isMarkdown || isHtml
 
   function renderMedia() {
@@ -196,6 +198,9 @@ export function ExplorerPreview({ workspaceId, item }: ExplorerPreviewProps) {
     }
     if (isHtml && rawUrl) {
       return <HtmlViewer url={rawUrl} filename={selected.filename} rawMode={rawMode} variant="inline" />
+    }
+    if (isPdf && rawUrl) {
+      return <PdfViewer url={rawUrl} filename={selected.filename} variant="inline" />
     }
     if (!rawUrl) {
       return (

@@ -12,7 +12,7 @@ import { useAttachmentContext } from "@/lib/markdown/attachment-context"
 import { useMediaGallery } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
-import { isHtmlAttachment, isMarkdownAttachment } from "@/lib/attachment-kind"
+import { isHtmlAttachment, isMarkdownAttachment, isPdfAttachment } from "@/lib/attachment-kind"
 import type { AttachmentSummary } from "@threa/types"
 
 interface AttachmentListProps {
@@ -455,12 +455,7 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
     setIsDownloading(true)
     try {
       const url = await attachmentsApi.getDownloadUrl(workspaceId, attachment.id)
-      // Open in new tab for PDFs, download for other types
-      if (attachment.mimeType === "application/pdf") {
-        window.open(url, "_blank")
-      } else {
-        triggerDownload(url, attachment.filename)
-      }
+      triggerDownload(url, attachment.filename)
     } catch (error) {
       console.error("Failed to download attachment:", error)
     } finally {
@@ -488,9 +483,10 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
   const [loadedFullImageUrls, setLoadedFullImageUrls] = useState<Map<string, string>>(new Map())
   const [loadedThumbnails, setLoadedThumbnails] = useState<Map<string, string>>(new Map())
   const [loadedVideoUrls, setLoadedVideoUrls] = useState<Map<string, string>>(new Map())
-  // Markdown and HTML attachments share a single URL cache: both viewers just
-  // need a presigned URL (the markdown viewer fetches text from it, the HTML
-  // viewer hands it straight to a sandboxed iframe).
+  // Markdown, HTML, and PDF attachments share a single URL cache: each viewer
+  // just needs a presigned URL (the markdown viewer fetches text from it, the
+  // HTML viewer hands it straight to a sandboxed iframe, the PDF viewer hands
+  // it straight to the browser's built-in PDF renderer).
   const [loadedTextUrls, setLoadedTextUrls] = useState<Map<string, string>>(new Map())
   const attachmentContext = useAttachmentContext()
   const hoveredAttachmentId = attachmentContext?.hoveredAttachmentId ?? null
@@ -526,6 +522,10 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     () => (attachments ?? []).filter((a) => !a.processingStatus && isHtmlAttachment(a)),
     [attachments]
   )
+  const pdfAttachments = useMemo(
+    () => (attachments ?? []).filter((a) => !a.processingStatus && isPdfAttachment(a)),
+    [attachments]
+  )
   const fileAttachments = useMemo(
     () =>
       (attachments ?? []).filter(
@@ -533,7 +533,8 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
           !a.mimeType.startsWith("image/") &&
           !a.processingStatus &&
           !isMarkdownAttachment(a) &&
-          !isHtmlAttachment(a)
+          !isHtmlAttachment(a) &&
+          !isPdfAttachment(a)
       ),
     [attachments]
   )
@@ -579,12 +580,20 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
       attachmentId: a.id,
     }))
 
-    return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems]
+    const pdfItems: GalleryItem[] = pdfAttachments.map((a) => ({
+      type: "pdf" as const,
+      url: loadedTextUrls.get(a.id) ?? "",
+      filename: a.filename,
+      attachmentId: a.id,
+    }))
+
+    return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems, ...pdfItems]
   }, [
     imageAttachments,
     videoAttachments,
     markdownAttachments,
     htmlAttachments,
+    pdfAttachments,
     loadedFullImageUrls,
     loadedThumbnails,
     loadedVideoUrls,
@@ -696,13 +705,14 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     }
   }, [selectedAttachmentId, imageAttachments, loadedFullImageUrls, workspaceId])
 
-  // Lazy-fetch presigned URLs for markdown/html attachments when opened.
+  // Lazy-fetch presigned URLs for markdown/html/pdf attachments when opened.
   useEffect(() => {
     if (!selectedAttachmentId) return
-    const isText =
+    const needsUrl =
       markdownAttachments.some((a) => a.id === selectedAttachmentId) ||
-      htmlAttachments.some((a) => a.id === selectedAttachmentId)
-    if (!isText || loadedTextUrls.has(selectedAttachmentId)) return
+      htmlAttachments.some((a) => a.id === selectedAttachmentId) ||
+      pdfAttachments.some((a) => a.id === selectedAttachmentId)
+    if (!needsUrl || loadedTextUrls.has(selectedAttachmentId)) return
 
     let mounted = true
     async function fetchTextUrl() {
@@ -723,7 +733,7 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     return () => {
       mounted = false
     }
-  }, [selectedAttachmentId, markdownAttachments, htmlAttachments, loadedTextUrls, workspaceId])
+  }, [selectedAttachmentId, markdownAttachments, htmlAttachments, pdfAttachments, loadedTextUrls, workspaceId])
 
   if (!attachments || attachments.length === 0) {
     return null
@@ -760,7 +770,10 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
             ))}
           </div>
         )}
-        {(allFileAttachments.length > 0 || markdownAttachments.length > 0 || htmlAttachments.length > 0) && (
+        {(allFileAttachments.length > 0 ||
+          markdownAttachments.length > 0 ||
+          htmlAttachments.length > 0 ||
+          pdfAttachments.length > 0) && (
           <div className="flex flex-wrap gap-2">
             {markdownAttachments.map((attachment) => (
               <OpenableFileChip
@@ -777,6 +790,15 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
                 attachment={attachment}
                 isHighlighted={attachment.id === hoveredAttachmentId}
                 icon={Globe}
+                onOpen={handleTextOpen}
+              />
+            ))}
+            {pdfAttachments.map((attachment) => (
+              <OpenableFileChip
+                key={attachment.id}
+                attachment={attachment}
+                isHighlighted={attachment.id === hoveredAttachmentId}
+                icon={FileText}
                 onOpen={handleTextOpen}
               />
             ))}

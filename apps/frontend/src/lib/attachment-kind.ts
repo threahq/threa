@@ -17,3 +17,8 @@ export function isHtmlAttachment(a: AttachmentTypeShape): boolean {
   if (a.mimeType === "text/html" || a.mimeType === "application/xhtml+xml") return true
   return /\.x?html?$/i.test(a.filename)
 }
+
+export function isPdfAttachment(a: AttachmentTypeShape): boolean {
+  if (a.mimeType === "application/pdf" || a.mimeType === "application/x-pdf") return true
+  return /\.pdf$/i.test(a.filename)
+}
