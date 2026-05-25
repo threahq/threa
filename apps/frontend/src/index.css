@@ -455,6 +455,42 @@
   @apply my-4 border-border;
 }
 
+/* GFM tables — composer styling mirrors how the timeline renders the same
+ * markdown so the user gets WYSIWYG parity. The `tableWrapper` div is emitted
+ * by @tiptap/extension-table with `renderWrapper: true`, and gives us a
+ * scrolling container so wide tables don't push the composer past the viewport
+ * on narrow chat columns / mobile. */
+.ProseMirror .tableWrapper {
+  @apply my-2 w-full overflow-x-auto;
+}
+
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.ProseMirror table td,
+.ProseMirror table th {
+  @apply border border-border px-2 py-1 align-top text-sm;
+  min-width: 4rem;
+  position: relative;
+}
+
+.ProseMirror table th {
+  @apply bg-muted text-left font-semibold;
+}
+
+.ProseMirror table p {
+  margin: 0;
+}
+
+/* ProseMirror's selectedCell decoration: highlight cells in the current
+ * selection so users can see which row/column a command will affect. */
+.ProseMirror table .selectedCell {
+  background-color: hsl(var(--primary) / 0.12);
+}
+
 /* Gapcursor base: collapse to zero space in the document flow */
 .ProseMirror .ProseMirror-gapcursor {
   pointer-events: none;

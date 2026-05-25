@@ -18,6 +18,10 @@ import ListItem from "@tiptap/extension-list-item"
 import Heading from "@tiptap/extension-heading"
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight"
 import { common, createLowlight } from "lowlight"
+import { Table } from "@tiptap/extension-table/table"
+import { TableRow } from "@tiptap/extension-table/row"
+import { TableHeader } from "@tiptap/extension-table/header"
+import { TableCell } from "@tiptap/extension-table/cell"
 
 import { MentionExtension, type MentionOptions } from "./triggers/mention-extension"
 import { ChannelExtension, type ChannelOptions } from "./triggers/channel-extension"
@@ -89,6 +93,20 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
       lowlight,
       defaultLanguage: "plaintext",
     }),
+
+    // GFM tables. Default cell content (`block+`) is intentionally kept so
+    // pasting a table whose cells contain inline marks or hard breaks works
+    // — the markdown serializer flattens those to a single line of pipes.
+    // `renderWrapper: true` emits the standard `<div class="tableWrapper">`
+    // around the table so the composer can scroll wide tables horizontally
+    // on narrow viewports, matching how the timeline displays them.
+    Table.configure({
+      resizable: false,
+      renderWrapper: true,
+    }),
+    TableRow,
+    TableHeader,
+    TableCell,
 
     // Auto-link URLs (makes them clickable)
     BoundaryAwareLink.configure({
