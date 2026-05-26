@@ -560,4 +560,57 @@ export const BotInvocationRepository = {
       RETURNING *`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
   },
+
+  /**
+   * Snapshot for `/bot` namespace bootstrap. Returns two disjoint lists:
+   *  - `available`: rows this runtime could claim right now (pending, or
+   *    `claimed` with an expired claim) filtered to its capabilities and the
+   *    steering target. Used to replay anything that piled up while the
+   *    socket was offline.
+   *  - `ownedClaims`: live `claimed` rows already owned by this instance.
+   *    Returned regardless of `since` so a reconnect cannot drop work that
+   *    is in flight.
+   *
+   * `since` filters `available` only (24h lookback default at the service
+   * layer). Pass `null` to disable filtering — the first bootstrap after
+   * cold start has nothing to compare against.
+   */
+  async findBootstrapInvocations(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      instanceId: string
+      runtimeSessionId: string | null
+      supportedCapabilities: BotInvocationCapability[]
+      since: Date | null
+    }
+  ): Promise<{ available: BotInvocation[]; ownedClaims: BotInvocation[] }> {
+    const [availableResult, ownedClaimsResult] = await Promise.all([
+      db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND required_capability = ANY(${params.supportedCapabilities})
+          AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
+          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
+          AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
+          AND (${params.since}::timestamptz IS NULL OR created_at >= ${params.since})
+        ORDER BY created_at ASC, id ASC
+        LIMIT 200`),
+      db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND status = 'claimed'
+          AND claimed_by_instance_id = ${params.instanceId}
+          AND claim_expires_at > NOW()
+        ORDER BY created_at ASC, id ASC
+        LIMIT 200`),
+    ])
+    return {
+      available: availableResult.rows.map(mapInvocation),
+      ownedClaims: ownedClaimsResult.rows.map(mapInvocation),
+    }
+  },
 }

@@ -8,6 +8,7 @@ import {
   isOneOfOutboxEventType,
   isAuthorScopedEvent,
   isUserScopedEvent,
+  isBotScopedEvent,
   type OutboxEvent,
   type StreamCreatedOutboxPayload,
   type StreamMemberAddedOutboxPayload,
@@ -16,6 +17,12 @@ import {
   type AttachmentTranscodedOutboxPayload,
   type AttachmentThumbnailedOutboxPayload,
   type MessagesMovedOutboxPayload,
+  type BotInvocationAvailableOutboxPayload,
+  type BotInvocationClaimedOutboxPayload,
+  type BotInvocationCancelledOutboxPayload,
+  type BotSessionLinkInvalidatedOutboxPayload,
+  type BotActiveActorChangedOutboxPayload,
+  type BotResyncOutboxPayload,
 } from "./repository"
 import { logger } from "../logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
@@ -132,6 +139,14 @@ export class BroadcastHandler implements OutboxHandler {
   private broadcastEvent(event: OutboxEvent): void {
     const { workspaceId } = event.payload
 
+    // Bot-scoped events ride the `/bot` namespace and use bot/instance/session
+    // rooms so siblings on the same bot can stop racing each other (claimed,
+    // cancelled) and steered work reaches exactly one instance/session.
+    if (isBotScopedEvent(event)) {
+      this.dispatchBotEvent(event)
+      return
+    }
+
     // User-scoped events: emit to the target user's room
     if (isUserScopedEvent(event)) {
       const { targetUserId } = event.payload as ActivityCreatedOutboxPayload
@@ -239,6 +254,82 @@ export class BroadcastHandler implements OutboxHandler {
       this.io.to(`ws:${workspaceId}:stream:${streamId}`).emit(event.eventType, event.payload)
     } else {
       this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
+    }
+  }
+
+  /**
+   * Routes bot-scoped outbox events to the `/bot` namespace. Picks the
+   * narrowest room a payload supports so steered work reaches exactly one
+   * runtime and broadcast events still reach every racing sibling.
+   *
+   * Room scheme (set up by the `/bot` namespace handler on connect):
+   *   bot:{workspaceId}                                          — workspace-wide
+   *   bot:{workspaceId}:bot:{botId}                              — every instance of one bot
+   *   bot:{workspaceId}:bot:{botId}:instance:{instanceId}        — one instance
+   *   bot:{workspaceId}:bot:{botId}:session:{runtimeSessionId}   — one Pi-local session
+   */
+  private dispatchBotEvent(event: OutboxEvent): void {
+    const { workspaceId } = event.payload
+    const botNs = this.io.of("/bot")
+
+    if (isOutboxEventType(event, "bot_invocation:available")) {
+      const payload = event.payload as BotInvocationAvailableOutboxPayload
+      if (payload.targetRuntimeSessionId) {
+        botNs
+          .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.targetRuntimeSessionId}`)
+          .emit(event.eventType, payload)
+      } else if (payload.targetInstanceId) {
+        botNs
+          .to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.targetInstanceId}`)
+          .emit(event.eventType, payload)
+      } else {
+        botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
+      }
+      return
+    }
+
+    if (isOutboxEventType(event, "bot_invocation:claimed")) {
+      const payload = event.payload as BotInvocationClaimedOutboxPayload
+      // Tell every sibling on this bot to stop racing — the winner already
+      // owns the row in Postgres, so an extra emit to the winner is harmless.
+      botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
+      return
+    }
+
+    if (isOutboxEventType(event, "bot_invocation:cancelled")) {
+      const payload = event.payload as BotInvocationCancelledOutboxPayload
+      botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
+      return
+    }
+
+    if (isOutboxEventType(event, "bot_session_link:invalidated")) {
+      const payload = event.payload as BotSessionLinkInvalidatedOutboxPayload
+      botNs.to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`).emit(event.eventType, payload)
+      return
+    }
+
+    if (isOutboxEventType(event, "bot:active_actor_changed")) {
+      const payload = event.payload as BotActiveActorChangedOutboxPayload
+      // `affectedBotIds` covers the displaced and the new bot (when either is
+      // a bot). Empty array = persona<->persona swap with no bots to notify.
+      for (const botId of payload.affectedBotIds) {
+        botNs.to(`bot:${workspaceId}:bot:${botId}`).emit(event.eventType, payload)
+      }
+      return
+    }
+
+    if (isOutboxEventType(event, "bot:resync")) {
+      const payload = event.payload as BotResyncOutboxPayload
+      if (payload.instanceId && payload.botId) {
+        botNs
+          .to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`)
+          .emit(event.eventType, payload)
+      } else if (payload.botId) {
+        botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
+      } else {
+        botNs.to(`bot:${workspaceId}`).emit(event.eventType, payload)
+      }
+      return
     }
   }
 }

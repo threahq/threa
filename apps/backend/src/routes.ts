@@ -107,6 +107,7 @@ interface Dependencies {
   userApiKeyService: UserApiKeyService
   voiceTranscriptionService: VoiceTranscriptionService
   botApiKeyService: BotApiKeyService
+  botRuntimeService: BotRuntimeService
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
@@ -146,6 +147,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userApiKeyService,
     voiceTranscriptionService,
     botApiKeyService,
+    botRuntimeService,
     storage,
     ai,
     controlPlaneClient,

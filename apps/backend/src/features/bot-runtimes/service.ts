@@ -337,6 +337,39 @@ export class BotRuntimeService {
     return invocation
   }
 
+  /**
+   * Snapshot the runtime needs on socket connect or resync. The cursor floor
+   * is the smaller of `sinceCursor` and `now - 24h` so a long-disconnected
+   * runtime catches up but a stale cursor cannot blow up the result set.
+   *
+   * The `serverGeneratedAt` echo lets the runtime reuse this exact timestamp
+   * as `sinceCursor` on the next bootstrap without trusting its local clock.
+   */
+  async getBootstrapForRuntime(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId?: string | null
+    supportedCapabilities: BotInvocationCapability[]
+    sinceCursor?: Date | null
+  }): Promise<{
+    serverGeneratedAt: Date
+    available: BotInvocation[]
+    ownedClaims: BotInvocation[]
+  }> {
+    const lookbackFloor = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const since = params.sinceCursor && params.sinceCursor > lookbackFloor ? params.sinceCursor : lookbackFloor
+    const { available, ownedClaims } = await BotInvocationRepository.findBootstrapInvocations(this.pool, {
+      workspaceId: params.workspaceId,
+      botId: params.botId,
+      instanceId: params.instanceId,
+      runtimeSessionId: params.runtimeSessionId ?? null,
+      supportedCapabilities: params.supportedCapabilities,
+      since,
+    })
+    return { serverGeneratedAt: new Date(), available, ownedClaims }
+  }
+
   async claimNextInvocation(params: {
     workspaceId: string
     botId: string

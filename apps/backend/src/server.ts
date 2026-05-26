@@ -98,6 +98,7 @@ import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
+import { BotRuntimeService, BotSocketRegistry, attachBotNamespace } from "./features/bot-runtimes"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
@@ -488,6 +489,11 @@ export async function startServer(): Promise<ServerInstance> {
   // Bot API key service — self-managed keys for bot integrations
   const botApiKeyService = new BotApiKeyService(pool)
 
+  // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
+  // namespace. One instance shared between HTTP routes (claim/complete/fail)
+  // and the WebSocket namespace handler (presence + bootstrap).
+  const botRuntimeService = new BotRuntimeService({ pool })
+
   // Workspace authz mirror service — shared by routes (middleware + handlers,
   // public API auth) and feature services that need to gate on workspace
   // permissions outside the request middleware chain.
@@ -547,6 +553,7 @@ export async function startServer(): Promise<ServerInstance> {
     userApiKeyService,
     voiceTranscriptionService,
     botApiKeyService,
+    botRuntimeService,
     storage,
     ai,
     controlPlaneClient,
@@ -556,6 +563,13 @@ export async function startServer(): Promise<ServerInstance> {
 
   const userSocketRegistry = new UserSocketRegistry()
   const sessionAbortRegistry = new SessionAbortRegistry()
+  const botSocketRegistry = new BotSocketRegistry()
+
+  // Bot runtime namespace — runtimes authenticate with a `threa_bk_*` key and
+  // get invocation pushes over WebSocket so they no longer poll the HTTP
+  // claim endpoint every second.
+  attachBotNamespace({ io, botRuntimeService, botApiKeyService, botSocketRegistry })
+
   registerSocketHandlers(io, {
     pool,
     authService,
