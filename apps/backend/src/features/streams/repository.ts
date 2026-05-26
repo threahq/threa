@@ -491,7 +491,13 @@ export const StreamRepository = {
 
     const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
 
-    // CTE to get last message per stream
+    // CTE to get last message per stream. LEFT JOIN against
+    // `e2e_scratchpads` so the workspace bootstrap surfaces the E2E flag
+    // inline — without it, cold-loaded sidebar rows have undefined
+    // `e2eEnabled` until the per-stream bootstrap fires, which would let
+    // the composer briefly treat an existing E2E scratchpad as plaintext
+    // (the backend INV-E1 gate would still reject, but the UX shows an
+    // unexplained 400).
     const SELECT_WITH_PREVIEW = `
       WITH last_messages AS (
         SELECT DISTINCT ON (stream_id)
@@ -511,9 +517,11 @@ export const StreamRepository = {
         lm.author_id as last_message_author_id,
         lm.author_type as last_message_author_type,
         lm.content_json as last_message_content,
-        lm.created_at as last_message_at
+        lm.created_at as last_message_at,
+        e.owner_user_key_id AS e2e_owner_user_key_id
       FROM streams s
       LEFT JOIN last_messages lm ON lm.stream_id = s.id
+      LEFT JOIN e2e_scratchpads e ON e.stream_id = s.id
     `
 
     // Build query with visibility filter if user's membership stream IDs provided

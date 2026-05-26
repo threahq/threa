@@ -709,3 +709,11 @@ export type SocialProvider = (typeof SOCIAL_PROVIDERS)[number]
 // Length of the WorkOS Magic Auth code. Shared between the backend Zod schema
 // and the frontend OTP input so both sides accept the same shape.
 export const MAGIC_CODE_LENGTH = 6
+
+// Placeholder stored in `messages.content_markdown` / `content_json` for
+// messages in an E2E scratchpad. The canonical payload lives in
+// `messages.ciphertext` + `messages.envelope`; this value keeps the NOT NULL
+// projection columns satisfied and gives accidental plaintext rendering a
+// visible sentinel (zero-width space). Must stay byte-identical across
+// backend insert, frontend encrypt, and frontend decrypt paths.
+export const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "​"

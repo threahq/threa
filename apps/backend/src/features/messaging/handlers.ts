@@ -8,7 +8,7 @@ import type { Message } from "./repository"
 import { StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
-import type { CommandDispatchedPayload } from "@threa/types"
+import { type CommandDispatchedPayload, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 import { serializeBigInt } from "@threa/backend-common"
 import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
@@ -70,10 +70,31 @@ const createMessageMarkdownToDmSchema = z.object({
 // `contentJson` / `contentMarkdown` are intentionally absent: the handler
 // substitutes opaque placeholders for the projection so plaintext consumers
 // short-circuit on `e2eScratchpads.isE2eStream`.
+//
+// Size caps bound the per-message storage footprint — without them a
+// workspace member could post multi-MB envelopes that never decrypt for
+// anyone but bloat `messages.envelope` (JSONB) and `messages.ciphertext`
+// (BYTEA). 1 MB of base64 ciphertext leaves ~750 KB of plaintext, plenty
+// for messages; the 100-recipient cap covers Phase 4 per-device wraps.
+const MAX_E2E_CIPHERTEXT_BASE64_BYTES = 1_000_000
+const MAX_E2E_RECIPIENTS = 100
+const MAX_E2E_RECIPIENT_FIELD_BYTES = 4096
+const e2eRecipientSchema = z.object({
+  recipientKeyId: z.string().min(1).max(256),
+  enc: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
+  ct: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
+})
+const e2eEnvelopeSchema = z.object({
+  v: z.number().int().positive(),
+  ciphertext: z.string().min(1).max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
+  iv: z.string().min(1).max(64),
+  aad: z.string().max(4096),
+  recipients: z.array(e2eRecipientSchema).min(1).max(MAX_E2E_RECIPIENTS),
+})
 const createMessageE2eToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
-  ciphertext: z.string().min(1, "ciphertext is required"),
-  envelope: z.unknown(),
+  ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
+  envelope: e2eEnvelopeSchema,
   e2eVersion: z.number().int().positive(),
   clientMessageId: z.string().min(1).optional(),
 })
@@ -163,9 +184,9 @@ function serializeMessage(msg: Message) {
 
 // Plaintext consumers (search index, message-formatter, outbox handlers) gate
 // on `isE2eStream` before reading these fields, so the value never reaches a
-// user. The constant exists only to keep the NOT NULL projection columns
-// satisfied and to make accidental rendering surface a visible sentinel.
-const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "​"
+// user. `E2E_PLACEHOLDER_CONTENT_MARKDOWN` is shared from `@threa/types` so
+// the frontend decrypt path can detect it byte-identically; we derive the
+// JSON doc shape locally because ProseMirror types aren't worth shipping.
 const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
   type: "doc",
   content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],

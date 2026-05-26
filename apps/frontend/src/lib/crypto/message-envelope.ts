@@ -2,15 +2,12 @@ import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@tiptap/react"
 import { buildMessageAad, decryptPayloadAsString, encryptPayload, ENVELOPE_VERSION, type Envelope } from "./envelope"
 
-/**
- * Placeholder text the backend stores in `contentMarkdown` / `contentJson`
- * for E2E messages. Kept here so the inbound decrypt path can detect the
- * placeholder shape — anything else means we already have plaintext.
- *
- * Must stay byte-identical with `E2E_PLACEHOLDER_CONTENT_MARKDOWN` in
- * `apps/backend/src/features/messaging/handlers.ts`.
- */
-export const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "​"
+// The placeholder text the backend stores in `contentMarkdown` / `contentJson`
+// for E2E messages is the single source of truth in @threa/types so the
+// backend insert path and the frontend decrypt path stay byte-identical.
+// Re-exported so callers of this module don't have to cross the type-barrier
+// for both the envelope helpers and the placeholder constant.
+export { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 
 export interface EncryptMessageInput {
   contentMarkdown: string

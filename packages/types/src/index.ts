@@ -199,6 +199,8 @@ export {
   SOCIAL_PROVIDERS,
   type SocialProvider,
   MAGIC_CODE_LENGTH,
+  // E2E placeholder shared between backend insert and frontend encrypt/decrypt
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
 } from "./constants"
 
 // Domain entities (wire format)
