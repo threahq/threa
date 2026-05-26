@@ -4,7 +4,7 @@ import { BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } 
 import type { BotRuntimeService } from "./service"
 import type { BotInvocation } from "./repository"
 import type { BotApiKeyService } from "../public-api"
-import { createBotSocketAuthMiddleware, type BotSocketData } from "./socket-auth"
+import { createBotSocketAuthMiddleware, readSocketToken, type BotSocketData } from "./socket-auth"
 import { BotSocketRegistry } from "./bot-socket-registry"
 import { logger } from "../../lib/logger"
 
@@ -30,6 +30,13 @@ interface BotSocketHandlerDeps {
   botRuntimeService: BotRuntimeService
   botApiKeyService: BotApiKeyService
   botSocketRegistry: BotSocketRegistry
+  /**
+   * How often (ms) to re-check that the connecting key is still valid.
+   * `BotApiKeyService.validateKey` has no cache, so HTTP revocation is
+   * immediate on the next request — but a long-lived WS would otherwise
+   * keep receiving pushes until the engine ping timeout. Default 60s.
+   */
+  keyRevalidationIntervalMs?: number
 }
 
 interface JoinedRoomState {
@@ -50,6 +57,7 @@ interface JoinedRoomState {
  */
 export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
   const { io, botRuntimeService, botApiKeyService, botSocketRegistry } = deps
+  const keyRevalidationIntervalMs = deps.keyRevalidationIntervalMs ?? 60_000
   const namespace = io.of("/bot")
 
   namespace.use(createBotSocketAuthMiddleware(botApiKeyService))
@@ -71,6 +79,25 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     socket.join(`bot:${workspaceId}`)
 
     let joined: JoinedRoomState | null = null
+
+    // Periodic key revalidation. validateKey hits the DB every time so HTTP
+    // revocation takes effect on the next tick (default 60s) instead of
+    // having to wait for the engine's ping timeout.
+    const token = readSocketToken(socket)
+    const revalidationTimer: ReturnType<typeof setInterval> | null = token
+      ? setInterval(async () => {
+          try {
+            const stillValid = await botApiKeyService.validateKey(token)
+            if (!stillValid) {
+              logger.info({ workspaceId, botId, keyId: auth.keyId }, "bot socket key revoked, disconnecting")
+              socket.disconnect(true)
+            }
+          } catch (err) {
+            logger.warn({ err, workspaceId, botId, keyId: auth.keyId }, "bot socket key revalidate failed")
+            socket.disconnect(true)
+          }
+        }, keyRevalidationIntervalMs)
+      : null
 
     socket.on("bot:hello", async (payload: unknown, ack?: (response: BotHelloResponse) => void): Promise<void> => {
       const parsed = helloSchema.safeParse(payload)
@@ -149,6 +176,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     })
 
     socket.on("disconnect", () => {
+      if (revalidationTimer) clearInterval(revalidationTimer)
       if (joined) {
         botSocketRegistry.unregister({ workspaceId, botId, instanceId: joined.instanceId }, socket)
       }

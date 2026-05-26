@@ -21,7 +21,7 @@ export interface BotSocketData {
 
 export function createBotSocketAuthMiddleware(botApiKeyService: BotApiKeyService) {
   return async (socket: Socket, next: (err?: ExtendedError) => void): Promise<void> => {
-    const token = readToken(socket)
+    const token = readSocketToken(socket)
     if (!token) {
       next(new Error("Missing bot API key"))
       return
@@ -59,7 +59,17 @@ export function createBotSocketAuthMiddleware(botApiKeyService: BotApiKeyService
   }
 }
 
-function readToken(socket: Socket): string | null {
+/**
+ * Reads the bot API key from a Socket.IO handshake. Tried in order:
+ *  1. `socket.handshake.auth.token` — the standard Socket.IO client path
+ *  2. `Authorization: Bearer …` — for embedded clients that can only set
+ *     `extraHeaders`, not the `auth` payload
+ *
+ * Exported so the namespace handler can re-validate the same token on a
+ * periodic ticker without stashing it on `socket.data` (one fewer copy of
+ * the secret living past the auth handshake).
+ */
+export function readSocketToken(socket: Socket): string | null {
   const auth = socket.handshake.auth as Record<string, unknown> | undefined
   const fromAuth = auth?.token
   if (typeof fromAuth === "string" && fromAuth.length > 0) return fromAuth
