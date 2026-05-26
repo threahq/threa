@@ -473,6 +473,7 @@
 .ProseMirror table td,
 .ProseMirror table th {
   @apply border border-border px-2 py-1 align-top text-sm;
+
   min-width: 4rem;
   position: relative;
 }
@@ -488,7 +489,7 @@
 /* ProseMirror's selectedCell decoration: highlight cells in the current
  * selection so users can see which row/column a command will affect. */
 .ProseMirror table .selectedCell {
-  background-color: hsl(var(--primary) / 0.12);
+  @apply bg-primary/[0.12];
 }
 
 /* Gapcursor base: collapse to zero space in the document flow */

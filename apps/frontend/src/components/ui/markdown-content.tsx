@@ -1,6 +1,7 @@
-import { memo, type ReactNode } from "react"
+import { memo, useMemo, type ReactNode } from "react"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
+import { normalizeMarkdownTables } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { MentionProvider, type MentionType } from "@/lib/markdown/mention-context"
@@ -55,13 +56,17 @@ function urlTransform(url: string): string {
  * Uses fallback mention styling (all mentions styled as users).
  */
 export const MarkdownContent = memo(function MarkdownContent({ content, className, messageId }: MarkdownContentProps) {
+  // remark-gfm rejects tables with blank lines between rows, which LLM output
+  // and some pasted markdown contain. Collapsing those blanks lets the table
+  // render instead of falling through to plain paragraphs.
+  const normalizedContent = useMemo(() => normalizeMarkdownTables(content), [content])
   const body = (
     // min-w-0 + break-words: prevent long URLs, paths, and tokens from
     // overflowing the flex message-content column. overflow-wrap inherits,
     // so links, inline code, and mention chips pick it up automatically.
     <div className={cn("markdown-content min-w-0 break-words", className)}>
       <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} urlTransform={urlTransform}>
-        {content}
+        {normalizedContent}
       </Markdown>
     </div>
   )

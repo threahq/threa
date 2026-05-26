@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { parseMarkdown, serializeToMarkdown } from "./markdown"
+import { normalizeMarkdownTables, parseMarkdown, serializeToMarkdown } from "./markdown"
 import type { JSONContent } from "@threa/types"
 
 describe("@threa/prosemirror markdown attachment metadata", () => {
@@ -604,5 +604,64 @@ describe("@threa/prosemirror table round-trip", () => {
       ],
     }
     expect(serializeToMarkdown(sliceDoc)).toBe(["| a | b |", "| --- | --- |", "| 1 | 2 |"].join("\n"))
+  })
+
+  it("parses GFM rows without outer pipes", () => {
+    // GFM allows outer pipes to be optional. LLMs frequently emit this form.
+    const markdown = ["Name | Role", "--- | ---", "Alice | PM"].join("\n")
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]?.type).toBe("table")
+    expect(parsed.content?.[0]?.content).toHaveLength(2)
+  })
+
+  it("rejects a header/separator pair with mismatched column counts", () => {
+    // If the separator row has a different number of cells than the header,
+    // the structure is malformed — fall back to plain paragraphs rather than
+    // pretending we have a coherent table.
+    const markdown = ["| a | b | c |", "| --- | --- |", "| 1 | 2 | 3 |"].join("\n")
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]?.type).not.toBe("table")
+  })
+
+  it("escapes a literal <br> in cell content so round-trip preserves it", () => {
+    // `<br>` is our serialized form of an in-cell paragraph break, so a user
+    // who types literal `<br>` must be escaped to avoid colliding with the
+    // grammar separator.
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            { type: "tableRow", content: [cell("tableHeader", "h")] },
+            { type: "tableRow", content: [cell("tableCell", "use <br> to break")] },
+          ],
+        },
+      ],
+    }
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toContain("&lt;br&gt;")
+    const reparsed = parseMarkdown(markdown)
+    expect(reparsed.content?.[0]?.content?.[1]?.content?.[0]).toEqual(cell("tableCell", "use <br> to break"))
+  })
+})
+
+describe("@threa/prosemirror normalizeMarkdownTables", () => {
+  it("collapses blank lines between pipe rows so LLM tables parse", () => {
+    const input = ["| a | b |", "| --- | --- |", "", "| 1 | 2 |", "", "| 3 | 4 |"].join("\n")
+    const normalized = normalizeMarkdownTables(input)
+    expect(normalized).toBe(["| a | b |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"].join("\n"))
+  })
+
+  it("preserves blank lines that are not between pipe rows", () => {
+    const input = ["paragraph one", "", "paragraph two"].join("\n")
+    expect(normalizeMarkdownTables(input)).toBe(input)
+  })
+
+  it("parses tables with blank lines between body rows", () => {
+    const markdown = ["| name | age |", "| --- | --- |", "", "| Kris | 31 |", "", "| Ada | 28 |"].join("\n")
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]?.type).toBe("table")
+    expect(parsed.content?.[0]?.content).toHaveLength(3)
   })
 })

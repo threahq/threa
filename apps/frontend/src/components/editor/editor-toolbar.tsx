@@ -640,38 +640,45 @@ function TableControls({
           icon={Rows3}
           label="Add row above"
           onAction={run(() => editor.chain().focus().addRowBefore().run())}
+          keyboardAccessible={keyboardAccessible}
         />
         <TableMenuItem
           icon={Rows3}
           label="Add row below"
           onAction={run(() => editor.chain().focus().addRowAfter().run())}
+          keyboardAccessible={keyboardAccessible}
         />
         <TableMenuItem
           icon={Columns3}
           label="Add column left"
           onAction={run(() => editor.chain().focus().addColumnBefore().run())}
+          keyboardAccessible={keyboardAccessible}
         />
         <TableMenuItem
           icon={Columns3}
           label="Add column right"
           onAction={run(() => editor.chain().focus().addColumnAfter().run())}
+          keyboardAccessible={keyboardAccessible}
         />
         <Separator className="my-1" />
         <TableMenuItem
           icon={Trash2}
           label="Delete row"
           onAction={run(() => editor.chain().focus().deleteRow().run())}
+          keyboardAccessible={keyboardAccessible}
         />
         <TableMenuItem
           icon={Trash2}
           label="Delete column"
           onAction={run(() => editor.chain().focus().deleteColumn().run())}
+          keyboardAccessible={keyboardAccessible}
         />
         <TableMenuItem
           icon={Trash2}
           label="Delete table"
           danger
           onAction={run(() => editor.chain().focus().deleteTable().run())}
+          keyboardAccessible={keyboardAccessible}
         />
       </PopoverContent>
     </Popover>
@@ -683,11 +690,13 @@ function TableMenuItem({
   label,
   onAction,
   danger,
+  keyboardAccessible,
 }: {
   icon: React.ComponentType<{ className?: string }>
   label: string
   onAction: () => void
   danger?: boolean
+  keyboardAccessible?: boolean
 }) {
   return (
     <Button
@@ -707,6 +716,7 @@ function TableMenuItem({
         "h-8 w-full justify-start gap-2 px-2 text-sm font-normal",
         danger && "text-destructive hover:text-destructive"
       )}
+      tabIndex={keyboardAccessible ? undefined : -1}
     >
       <Icon className="h-4 w-4 shrink-0" />
       {label}

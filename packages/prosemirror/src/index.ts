@@ -9,6 +9,7 @@
 export {
   serializeToMarkdown,
   parseMarkdown,
+  normalizeMarkdownTables,
   INLINE_MARKDOWN_PATTERN,
   type MentionTypeLookup,
   type EmojiLookup,
