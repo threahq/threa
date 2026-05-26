@@ -20,6 +20,7 @@ Add to `OutboxEventType` union (after `link_preview:dismissed`):
   | "bot_invocation:cancelled"
   | "bot_session_link:invalidated"
   | "bot:active_actor_changed"
+  | "bot:resync"
 ```
 
 Add a new exported tag for bot-scoped events so `BroadcastHandler` can route them with a dedicated branch (parallel to `STREAM_SCOPED_EVENTS` / `USER_SCOPED_EVENTS`):
@@ -31,6 +32,7 @@ export const BOT_SCOPED_EVENTS = [
   "bot_invocation:cancelled",
   "bot_session_link:invalidated",
   "bot:active_actor_changed",
+  "bot:resync",
 ] as const satisfies readonly OutboxEventType[]
 
 export type BotScopedEventType = (typeof BOT_SCOPED_EVENTS)[number]
@@ -83,6 +85,15 @@ Extend `OutboxEventPayloadMap` with the five payloads. Keep them flat (no nested
   // For routing: the set of bots that need to know. Computed at insert time
   // from the previous + new actor IDs. Keeps the dispatcher routing-pure.
   affectedBotIds: string[]
+}
+"bot:resync": {
+  workspaceId: string
+  // Targeting: most-specific wins at routing time. Leave both null for
+  // workspace-wide bot resync. Setting only botId targets that bot across
+  // all its instances. Setting both targets one instance.
+  botId: string | null
+  instanceId: string | null
+  reason: string  // free-form; logged, not parsed by the bot
 }
 ```
 
@@ -161,14 +172,17 @@ if (isBotScopedEvent(event)) {
 
 `dispatchBotEvent` resolves the target room(s) per event type. Reference table (keep this in the source as a comment):
 
-| `event.eventType`                                    | Room(s)                                            |
-| ---------------------------------------------------- | -------------------------------------------------- |
-| `bot_invocation:available` (with `targetInstanceId`) | `bot:{ws}:{botId}:instance:{targetInstanceId}`     |
-| `bot_invocation:available` (no `targetInstanceId`)   | `bot:{ws}:{botId}`                                 |
-| `bot_invocation:claimed`                             | `bot:{ws}:{botId}`                                 |
-| `bot_invocation:cancelled`                           | `bot:{ws}:{botId}`                                 |
-| `bot_session_link:invalidated`                       | `bot:{ws}:{botId}:instance:{instanceId}`           |
-| `bot:active_actor_changed`                           | `bot:{ws}:{botId}` for each id in `affectedBotIds` |
+| `event.eventType`                                    | Room(s)                                                             |
+| ---------------------------------------------------- | ------------------------------------------------------------------- |
+| `bot_invocation:available` (with `targetInstanceId`) | `bot:{ws}:{botId}:instance:{targetInstanceId}`                      |
+| `bot_invocation:available` (no `targetInstanceId`)   | `bot:{ws}:{botId}`                                                  |
+| `bot_invocation:claimed`                             | `bot:{ws}:{botId}`                                                  |
+| `bot_invocation:cancelled`                           | `bot:{ws}:{botId}`                                                  |
+| `bot_session_link:invalidated`                       | `bot:{ws}:{botId}:instance:{instanceId}`                            |
+| `bot:active_actor_changed`                           | `bot:{ws}:{botId}` for each id in `affectedBotIds`                  |
+| `bot:resync` (`instanceId` set)                      | `bot:{ws}:{botId}:instance:{instanceId}`                            |
+| `bot:resync` (`botId` set, no `instanceId`)          | `bot:{ws}:{botId}`                                                  |
+| `bot:resync` (workspace-wide)                        | `bot:{ws}` (all sockets in the `/bot` namespace for this workspace) |
 
 Crucially: emit on `io.of("/bot")`, not the default namespace. Inject the bot namespace as a dependency on `BroadcastHandler` so we don't reach for a global. Current constructor takes `io: Server`; add `botIo: Namespace` (or pass both as `{ defaultNs, botNs }`).
 
@@ -260,6 +274,7 @@ export function registerBotSocketHandlers(
           runtimeKind?: BotRuntimeKind
           publicKey?: string
           supportedCapabilities?: BotInvocationCapability[]
+          sinceCursor?: string // ISO; persisted server-emitted cursor from a prior hello
         },
         ack?: (result: { ok: true; bootstrap: BotBootstrap } | { ok: false; error: string }) => void
       ) => {
@@ -267,7 +282,7 @@ export function registerBotSocketHandlers(
         const parsed = botHelloSchema.safeParse(payload)
         if (!parsed.success) return ack?.({ ok: false, error: "Invalid bot:hello payload" })
 
-        const { instanceId, runtimeSessionId, runtimeKind, publicKey, supportedCapabilities } = parsed.data
+        const { instanceId, runtimeSessionId, runtimeKind, publicKey, supportedCapabilities, sinceCursor } = parsed.data
 
         // 1. Auto-join rooms FIRST. Order matters: if we read bootstrap before
         //    joining, an invocation inserted between SELECT and join would emit a
@@ -275,6 +290,7 @@ export function registerBotSocketHandlers(
         //    backstop poll. Joining first means the bot may see the same row in
         //    both the live push and the bootstrap snapshot — bot dedupes by
         //    invocationId. INV-53.
+        socket.join(`bot:${bot.workspaceId}`) // workspace-wide bot:resync
         socket.join(`bot:${bot.workspaceId}:${bot.botId}`)
         socket.join(`bot:${bot.workspaceId}:${bot.botId}:instance:${instanceId}`)
 
@@ -287,19 +303,34 @@ export function registerBotSocketHandlers(
           status: "available",
           acceptingInvocations: true,
           capabilities: { supportedCapabilities },
-          // publicKey: handled by the e2e PR (#621) when that lands.
+          // publicKey: see step 2a below — per-session, not handled here.
         })
+
+        // 2a. Per-session public-key registration (PR #621). The key is keyed
+        //     by (workspaceId, botId, runtimeSessionId) and written once per
+        //     session. Reconnects with the same runtimeSessionId no-op the
+        //     write. Service decides whether to upsert based on row existence.
+        if (publicKey && runtimeSessionId) {
+          await deps.botRuntimeService.registerSessionKeyIfAbsent({
+            workspaceId: bot.workspaceId,
+            botId: bot.botId,
+            runtimeSessionId,
+            publicKey,
+          })
+        }
 
         // 3. Register for disconnect-grace tracking.
         deps.botSocketRegistry.register({ workspaceId: bot.workspaceId, botId: bot.botId, instanceId }, socket)
 
-        // 4. Compute and emit bootstrap.
+        // 4. Compute and emit bootstrap. Server stamps a fresh serverGeneratedAt
+        //    that the bot persists and sends back on the next hello as sinceCursor.
         const bootstrap = await buildBotBootstrap(deps.pool, {
           workspaceId: bot.workspaceId,
           botId: bot.botId,
           instanceId,
           runtimeSessionId,
           supportedCapabilities,
+          sinceCursor,
         })
 
         ack?.({ ok: true, bootstrap })
@@ -316,7 +347,18 @@ export function registerBotSocketHandlers(
 }
 ```
 
-`buildBotBootstrap` lives in the same file and reads:
+`buildBotBootstrap` lives in the same file and returns:
+
+```ts
+{
+  serverGeneratedAt: string,    // ISO; client persists, sends back as sinceCursor next time
+  pendingInvocations: …,
+  activeActorByStream: …,
+  activeSessionLinks: …,
+}
+```
+
+`serverGeneratedAt` is `new Date().toISOString()` taken at the start of the bootstrap read (before the SELECTs, so the cursor is a lower bound on what could have been observed in the snapshot). Reads:
 
 - Pending invocations:
   ```sql
@@ -325,8 +367,15 @@ export function registerBotSocketHandlers(
   WHERE workspace_id = $1
     AND actor_id = $2
     AND (
-      status = 'pending'
-      OR (status = 'claimed' AND claimed_by_instance_id = $3)
+      -- Always include claims owned by this instance (in-progress work the bot must drive),
+      -- regardless of cursor — the bot can't drop these even if it's been offline a week.
+      (status = 'claimed' AND claimed_by_instance_id = $3)
+      OR (
+        status = 'pending'
+        -- Cursor: $6 is null on cold start OR when the cursor is too old (validated in JS
+        -- against a maxLookback, e.g. 24h, before reaching SQL).
+        AND ($6::timestamptz IS NULL OR created_at > $6)
+      )
     )
     AND (target_instance_id IS NULL OR target_instance_id = $3)
     AND (target_runtime_session_id IS NULL OR target_runtime_session_id = $4)
@@ -334,9 +383,9 @@ export function registerBotSocketHandlers(
   ORDER BY created_at
   LIMIT 100
   ```
-  The `claimed_by_instance_id = $3` filter is the M5 security note: a reconnecting instance does not learn of claims held by siblings. The `pending` branch picks up untargeted work the reconnecting instance can still race for.
-- Active actor map: `SELECT root_stream_id, actor_id FROM stream_active_actors WHERE workspace_id = $1 AND actor_type = 'bot' AND actor_id = $2`.
-- Active session links for this instance: `SELECT runtime_session_id, root_stream_id, active_stream_id FROM bot_runtime_session_links WHERE workspace_id = $1 AND bot_id = $2 AND instance_id = $3 AND status = 'active'`.
+  The `claimed_by_instance_id = $3` filter is the M5 security note: a reconnecting instance does not learn of claims held by siblings. The `pending` branch picks up untargeted work the reconnecting instance can still race for. The `$6` cursor (when valid) trims unbounded historical pending lists after long offlines; in JS, validate it parses, is in the past, and is no older than `BOOTSTRAP_MAX_LOOKBACK_MS` (24h) — otherwise pass `NULL` and log a `bootstrap_cursor_stale` metric.
+- Active actor map: `SELECT root_stream_id, actor_id FROM stream_active_actors WHERE workspace_id = $1 AND actor_type = 'bot' AND actor_id = $2`. **Not cursor-filtered** — this is "current state", not a delta. A bot that reconnects needs to know where it currently is the active actor, not where it became active since the cursor.
+- Active session links for this instance: `SELECT runtime_session_id, root_stream_id, active_stream_id FROM bot_runtime_session_links WHERE workspace_id = $1 AND bot_id = $2 AND instance_id = $3 AND status = 'active'`. Also not cursor-filtered (same reasoning).
 
 All three are pure reads — pass `pool`, not `withClient` (INV-30).
 
@@ -353,6 +402,10 @@ export const botHelloSchema = z.object({
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
   publicKey: z.string().max(512).optional(), // base64 X25519 pubkey for PR #621
   supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1).max(16),
+  // ISO timestamp the server emitted on a prior bootstrap. Bot persists across
+  // restarts and sends back to scope the pending-invocation snapshot. Server
+  // ignores values that are in the future, malformed, or older than 24h.
+  sinceCursor: z.string().datetime({ offset: true }).optional(),
 })
 ```
 
@@ -460,24 +513,75 @@ return res.json({
 
 `regionWsUrl` is read from env (`WS_URL` or similar — match whatever the frontend config endpoint uses today). Older bots ignore the extra field; new bots use it instead of hitting `GET /api/workspaces/:id/config` separately. Saves one worker invocation on bot startup.
 
-## 11. Test Plan Summary
+## 11. Server-Initiated Resync (`bot:resync`)
 
-| Layer         | File                                                                      | What                                                                                                                                           |
-| ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Outbox types  | `apps/backend/src/lib/outbox/*.test.ts`                                   | Type-only; ensure existing tests pass                                                                                                          |
-| Service       | `apps/backend/src/features/bot-runtimes/service.test.ts`                  | `createInvocation` writes one row + one outbox event per fresh insert; second call with same key writes no event                               |
-| Active actor  | `apps/backend/src/features/bot-runtimes/service.test.ts` (step 9)         | `setActiveActorInTransaction` emits `bot:active_actor_changed` only when identity changes; `affectedBotIds` covers both old and new bot actors |
-| Broadcast     | `apps/backend/src/lib/outbox/broadcast-handler.test.ts`                   | Bot events route to `bot:` rooms on `/bot` namespace                                                                                           |
-| Socket auth   | `apps/backend/src/features/bot-runtimes/socket-auth.test.ts`              | Reject missing/invalid/throw; accept valid                                                                                                     |
-| Registry      | `apps/backend/src/features/bot-runtimes/bot-socket-registry.test.ts`      | Register/unregister/grace-timer                                                                                                                |
-| Handler       | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts`           | Full lifecycle: connect → hello → bootstrap → push → disconnect                                                                                |
-| Revalidation  | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts` (step 7)  | Faked `validateKey` returns `null` after N ticks; socket disconnects on the next 60 s tick                                                     |
-| Presence echo | `apps/backend/src/features/public-api/handlers.test.ts` (step 10)         | `POST /bot-runtime/presence` response body includes `wsUrl` from injected `regionWsUrl`                                                        |
-| Integration   | `apps/backend/src/features/bot-runtimes/socket-integration.test.ts` (new) | End-to-end via real Postgres: insert message → outbox → invocation row → outbox push → socket receives event                                   |
+**File:** `apps/backend/src/features/bot-runtimes/service.ts`.
+
+The server emits `bot:resync` when it needs a connected bot to discard its in-memory snapshot and rerun the `bot:hello` handshake. There is no automatic trigger in v1 — the helper exists so internal callers (admin endpoints, future migration scripts) can request a refresh.
+
+```ts
+async requestResyncInTransaction(
+  db: Querier,
+  params: { workspaceId: string; botId?: string; instanceId?: string; reason: string }
+): Promise<void> {
+  // Targeting precedence is enforced at insert time: if instanceId is set,
+  // botId must also be set. The routing branch in BroadcastHandler reads the
+  // narrowest field that is set.
+  if (params.instanceId && !params.botId) {
+    throw new BadRequestError("instanceId requires botId")
+  }
+  await OutboxRepository.insert(db, "bot:resync", {
+    workspaceId: params.workspaceId,
+    botId: params.botId ?? null,
+    instanceId: params.instanceId ?? null,
+    reason: params.reason,
+  })
+}
+```
+
+Routing in `BroadcastHandler.dispatchBotEvent`:
+
+```ts
+case "bot:resync": {
+  const { workspaceId, botId, instanceId } = event.payload
+  const room = instanceId
+    ? `bot:${workspaceId}:${botId}:instance:${instanceId}`
+    : botId
+      ? `bot:${workspaceId}:${botId}`
+      : `bot:${workspaceId}`
+  this.deps.botNamespace.to(room).emit("bot:resync", { reason: event.payload.reason })
+  return
+}
+```
+
+The emitted client payload deliberately omits `workspaceId` / `botId` / `instanceId` — the receiving bot already knows its own scope from `bot:hello`, and re-emitting them would leak nothing useful while bloating the wire.
+
+**Client contract** (informational; the bot SDK adoption PR implements it): on receipt of `bot:resync`, the bot SDK runs the same `bot:hello` flow it would on reconnect, including its persisted `sinceCursor`. Server replies with a fresh bootstrap. Bot reconciles by `invocationId` dedupe (INV-53 pattern).
+
+**Test:** `service.test.ts` — `requestResyncInTransaction` writes one outbox row with correct routing fields; rejects `instanceId` without `botId`. `broadcast-handler.test.ts` — routes to the narrowest applicable room for each of the three targeting shapes.
+
+## 12. Test Plan Summary
+
+| Layer           | File                                                                      | What                                                                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Outbox types    | `apps/backend/src/lib/outbox/*.test.ts`                                   | Type-only; ensure existing tests pass                                                                                                                                                                              |
+| Service         | `apps/backend/src/features/bot-runtimes/service.test.ts`                  | `createInvocation` writes one row + one outbox event per fresh insert; second call with same key writes no event                                                                                                   |
+| Active actor    | `apps/backend/src/features/bot-runtimes/service.test.ts` (step 9)         | `setActiveActorInTransaction` emits `bot:active_actor_changed` only when identity changes; `affectedBotIds` covers both old and new bot actors                                                                     |
+| Broadcast       | `apps/backend/src/lib/outbox/broadcast-handler.test.ts`                   | Bot events route to `bot:` rooms on `/bot` namespace                                                                                                                                                               |
+| Socket auth     | `apps/backend/src/features/bot-runtimes/socket-auth.test.ts`              | Reject missing/invalid/throw; accept valid                                                                                                                                                                         |
+| Registry        | `apps/backend/src/features/bot-runtimes/bot-socket-registry.test.ts`      | Register/unregister/grace-timer                                                                                                                                                                                    |
+| Handler         | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts`           | Full lifecycle: connect → hello → bootstrap → push → disconnect                                                                                                                                                    |
+| Bootstrap       | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts`           | `serverGeneratedAt` is monotonic across reconnects; `sinceCursor` filters pending; stale cursor (>24h) falls back to no-filter; claimed-by-me invocations always included regardless of cursor                     |
+| Per-session key | `apps/backend/src/features/bot-runtimes/service.test.ts`                  | `registerSessionKeyIfAbsent` writes on first call for a `runtimeSessionId`, no-ops on second call (same session) and on second call with a different `publicKey` — explicit rotation must go through HTTP presence |
+| Resync          | `apps/backend/src/features/bot-runtimes/service.test.ts` (step 11)        | `requestResyncInTransaction` writes one outbox event with correct targeting; rejects `instanceId` without `botId`                                                                                                  |
+| Resync routing  | `apps/backend/src/lib/outbox/broadcast-handler.test.ts` (step 11)         | `bot:resync` routes to instance / bot / workspace room depending on which fields are set                                                                                                                           |
+| Revalidation    | `apps/backend/src/features/bot-runtimes/socket-handler.test.ts` (step 7)  | Faked `validateKey` returns `null` after N ticks; socket disconnects on the next 60 s tick                                                                                                                         |
+| Presence echo   | `apps/backend/src/features/public-api/handlers.test.ts` (step 10)         | `POST /bot-runtime/presence` response body includes `wsUrl` from injected `regionWsUrl`                                                                                                                            |
+| Integration     | `apps/backend/src/features/bot-runtimes/socket-integration.test.ts` (new) | End-to-end via real Postgres: insert message → outbox → invocation row → outbox push → socket receives event                                                                                                       |
 
 Run `bun run test` after each step. Stop and triage failures immediately (INV-22). If you isolate a flake to an unrelated suite, note it in the PR description rather than ignoring it.
 
-## 12. Files Created / Modified — Cheat Sheet
+## 13. Files Created / Modified — Cheat Sheet
 
 **New:**
 
@@ -490,7 +594,7 @@ Run `bun run test` after each step. Stop and triage failures immediately (INV-22
 
 - `apps/backend/src/lib/outbox/repository.ts` — event types + payloads + `BOT_SCOPED_EVENTS`
 - `apps/backend/src/lib/outbox/broadcast-handler.ts` — `dispatchBotEvent` branch, accept `botNamespace` dep
-- `apps/backend/src/features/bot-runtimes/service.ts` — `createInvocationInTransaction` (emits `bot_invocation:available`), `setActiveActorInTransaction` (emits `bot:active_actor_changed`), `createOrLinkPiRemoteSessionInTransaction` routes through the wrapper
+- `apps/backend/src/features/bot-runtimes/service.ts` — `createInvocationInTransaction` (emits `bot_invocation:available`), `setActiveActorInTransaction` (emits `bot:active_actor_changed`), `createOrLinkPiRemoteSessionInTransaction` routes through the wrapper, `registerSessionKeyIfAbsent` (per-session pubkey, step 6), `requestResyncInTransaction` (emits `bot:resync`, step 11)
 - `apps/backend/src/features/bot-runtimes/repository.ts` — `BotInvocationRepository.insertIdempotent` returns `wasNewlyInserted`, `claimOne` emits `bot_invocation:claimed`, `BotRuntimeInstanceRepository.markOffline` (new)
 - `apps/backend/src/features/bot-runtimes/index.ts` — export new public surface (INV-52)
 - `apps/backend/src/server.ts` — instantiate registry, register `/bot` namespace, pass to broadcaster, graceful shutdown hook
@@ -507,7 +611,7 @@ Run `bun run test` after each step. Stop and triage failures immediately (INV-22
 - `apps/frontend` (no frontend changes in this PR)
 - Bot SDK / Pi runtime (client adoption is a separate PR)
 
-## 13. Manual Smoke Test (Pre-merge)
+## 14. Manual Smoke Test (Pre-merge)
 
 Socket.IO multiplexes namespaces and ack callbacks over Engine.IO frames, so `wscat` won't work — `--auth-token` is not a wscat flag and even if it were, the raw `42[…]` framing would be rejected without an Engine.IO handshake. Use the in-repo `socket.io-client` instead.
 
@@ -559,6 +663,7 @@ socket.on("bot_invocation:claimed", (payload) => console.log("[smoke] claimed �
 socket.on("bot_invocation:cancelled", (payload) => console.log("[smoke] cancelled →", payload))
 socket.on("bot_session_link:invalidated", (payload) => console.log("[smoke] link_invalidated →", payload))
 socket.on("bot:active_actor_changed", (payload) => console.log("[smoke] active_actor →", payload))
+socket.on("bot:resync", (payload) => console.log("[smoke] resync →", payload))
 socket.on("disconnect", (reason) => console.log("[smoke] disconnect", reason))
 ```
 

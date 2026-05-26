@@ -108,8 +108,9 @@ All flow through the existing `BroadcastHandler`. Schema-only changes (new entri
 | `bot_invocation:cancelled`     | `{ workspaceId, botId, invocationId, reason }`                                                                   | `bot:{ws}:{botId}`                                                                          |
 | `bot_session_link:invalidated` | `{ workspaceId, botId, instanceId, runtimeSessionId, rootStreamId }`                                             | `bot:{ws}:{botId}:instance:{instanceId}`                                                    |
 | `bot:active_actor:changed`     | `{ workspaceId, rootStreamId, previousActorId?, newActorId? }`                                                   | `bot:{ws}:{botId}` for each affected bot                                                    |
+| `bot:resync`                   | `{ workspaceId, botId?, instanceId?, reason }`                                                                   | most-specific of: `bot:{ws}:{botId}:instance:{instanceId}` → `bot:{ws}:{botId}` → workspace |
 
-These are **purely informational pushes**. Persistence already happened. The bot reacts by issuing the appropriate HTTP call (claim, fetch, etc.).
+These are **purely informational pushes**. Persistence already happened. The bot reacts by issuing the appropriate HTTP call (claim, fetch, etc.), or — for `bot:resync` — by re-running the `bot:hello` handshake.
 
 ### 4.6 Outbox-First (INV-4, INV-7)
 
@@ -133,7 +134,7 @@ Bootstrap payload:
 
 ```ts
 {
-  serverTime: string,            // ISO; lets the bot reason about clock skew
+  serverGeneratedAt: string,     // ISO; cursor the bot persists for the next reconnect (Q1)
   pendingInvocations: Array<{    // capability-filtered, instance-targeted-or-untargeted
     invocationId, requiredCapability, createdAt,
     targetInstanceId, targetRuntimeSessionId,
@@ -146,6 +147,22 @@ Bootstrap payload:
   }>,
 }
 ```
+
+**Cursor (`serverGeneratedAt`).** The bot persists this across restarts (local sqlite / file / whatever — bot SDK's choice) and includes it on the next `bot:hello` as `sinceCursor?: string`. Server semantics:
+
+- If `sinceCursor` is provided **and not older than `maxLookback` (e.g. 24 h)**, filter pending-invocations to `created_at > sinceCursor`.
+- Otherwise (no cursor, or stale cursor), return the full pending set (still capped at 100). Stale cursor → log + treat as cold start; the bot's local state was already gone or out of date.
+- Invocations claimed by **this** instance are always returned regardless of cursor — they are in-progress work the bot must still drive to completion.
+
+The cursor is advisory. A bot that loses its local state simply omits `sinceCursor` and gets a full snapshot. Server always echoes back the new `serverGeneratedAt` so the bot can advance the cursor without coordinating client clock.
+
+**Server-initiated re-sync (`bot:resync`).** A sixth outbox event type that asks a bot (or all bots, or one instance) to discard its in-memory state and run the `bot:hello` handshake again. Triggers:
+
+- Admin operation flipping a workspace setting that affects bot behavior.
+- Future schema migrations where the invocation shape changes.
+- Operator-side "something looks off, please refresh" knob.
+
+Payload: `{ workspaceId, botId?: string, instanceId?: string, reason: string }`. Routing is the most specific room available — instance room if `instanceId` set, bot room if only `botId`, workspace room (all bot connections in workspace) if neither. The bot SDK responds by emitting `bot:hello` again with its persisted cursor. Server returns a fresh bootstrap; bot reconciles by `invocationId` dedupe (INV-53 pattern).
 
 The bot then issues `POST /claim` for each pending invocation it wants to take, exactly the same as if it had received a live `bot_invocation:available` push. Bootstrap closes the gap between "what I missed while disconnected" and "what's pending now," matching INV-53 (subscription pairs with bootstrap, bootstrap invalidated on resubscribe).
 
@@ -181,7 +198,7 @@ Per [PR #621](https://github.com/threahq/threa/pull/621), the wire shape for mes
 
 Concretely for this revamp:
 
-- **`bot:hello` payload accepts the same `publicKey` field** PR #621 adds to the presence body, with the same shape. Persisted via the `bot_runtime_keys` table introduced by #621. Explicit key rotation continues via `POST /bot-runtime/presence`; the WS path is incidental registration.
+- **`bot:hello` payload accepts the same `publicKey` field** PR #621 adds to the presence body, with the same shape. Persisted via the `bot_runtime_keys` table introduced by #621. **Per-session semantics:** the WS handler upserts the row keyed by `(workspaceId, botId, runtimeSessionId)` and writes the key once per session — on first `bot:hello` for that `runtimeSessionId`, the key is stored; subsequent reconnects with the same `runtimeSessionId` no-op the key write (still upsert the row's `last_seen_at` if applicable). Explicit key rotation continues via `POST /bot-runtime/presence`; the WS path is incidental registration. (Confirm against PR #621 before implementing — the runtimeSessionId-keyed table shape is sketched here but the canonical column names live in that PR.)
 - **`bot_invocation:available` push is plaintext metadata only** — `invocationId`, `requiredCapability`, target hints. It carries **no message content**, no preview text, no envelope. The bot fetches the source message over HTTP and decrypts client-side, identical to the HTTP-poll path. This matches the PR's "preview surfaces carry no content for E2E streams" stance.
 - **If we later push `message:created` envelopes to bots** (a v2 optimization, not in this scope), forwarding must be byte-verbatim — server never touches `ciphertext` or `envelope`. The PR explicitly requires this for socket fanout to match HTTP semantics.
 - **`bot_session_link:invalidated` is purely a routing signal** — no content, no key material. Safe on E2E streams.
@@ -232,11 +249,16 @@ The defining property: **HTTP is the truth, WS is the latency optimization.** Ev
 
 ## 8. Open Questions
 
-1. **Should bootstrap include an explicit `serverGeneratedAt` cursor that the bot persists across restarts?** Useful for "give me everything since X" semantics on long bot reboots. v1 just gives all pending; revisit if pending-list cap (100) becomes a problem.
-2. **Do we want a `bot:resync` server-initiated event to force a bot to re-bootstrap?** Useful if backend invariants change (e.g. major schema migration). v1: no, just disconnect; client reconnects → bootstrap is implicit.
-3. **Public-key registration on `bot:hello` — write on every connect, or only when changed?** PR #621 implies per-session, so per-connect is fine. Confirm with the e2e PR author.
-4. **Per-IP connection limits at the load balancer?** Out of scope for v1 (single-user scale).
-5. **`BroadcastHandler` throughput.** The handler is a single listener processing all outbox events sequentially. Adding 5 new event types doesn't increase throughput, just per-event latency. At single-user scale, fine. If bot events ever spike, a separate `BotBroadcastHandler` with a distinct `listenerId` can process the same outbox in parallel — same pattern as `BotInvocationOutboxHandler` already living alongside `BroadcastHandler`. Note for the future, not for v1.
+Resolved:
+
+1. **Bootstrap cursor.** Yes — bootstrap returns `serverGeneratedAt` and the bot persists it across restarts. On next `bot:hello` the bot sends it back as `sinceCursor`, and the server filters pending-invocations to `created_at > sinceCursor` when present and recent enough. Always echo a fresh `serverGeneratedAt` so the bot can advance the cursor without depending on its own clock. See §4.7 for the full semantics.
+2. **`bot:resync` event.** Yes — added as a sixth outbox event type. Server-initiated, routes to the most specific room (instance → bot → workspace). Bot reacts by re-running `bot:hello` with its persisted cursor.
+3. **Public-key registration on `bot:hello`.** Per session — keyed by `(workspaceId, botId, runtimeSessionId)`. Write once per session on first hello, no-op on reconnects with the same `runtimeSessionId`. Matches PR #621's per-session model. See §4.10.
+4. **`BroadcastHandler` throughput (deferred).** Single listener stays for v1. If bot events ever spike, split into a separate `BotBroadcastHandler` with its own `listenerId` consuming the same outbox in parallel — same pattern as `BotInvocationOutboxHandler` already living alongside `BroadcastHandler`. Note for v2.
+
+Still open:
+
+5. **Per-IP connection limits at the load balancer?** Out of scope for v1 (friends-and-family scale). Revisit when more than a handful of bot keys are live.
 
 ## 9. Success Criteria
 
