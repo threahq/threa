@@ -11,13 +11,21 @@ import * as editorModule from "@/components/editor"
 
 let isMobileMockValue = false
 
+type MockEditorInstance = {
+  id: string
+  getJSON: () => JSONContent
+  isActive: () => boolean
+  on: () => void
+  off: () => void
+}
+
 const MockRichEditor = forwardRef<
   {
     focus: () => void
     insertMention: () => void
     insertSlash: () => void
     insertEmoji: () => void
-    getEditor: () => { id: string; getJSON: () => JSONContent } | null
+    getEditor: () => MockEditorInstance | null
   },
   {
     value: JSONContent
@@ -31,12 +39,19 @@ const MockRichEditor = forwardRef<
 >(function MockRichEditor({ value, onChange, onSubmit, placeholder, disabled, ariaLabel, ariaDescribedBy }, ref) {
   const valueRef = { current: value }
   valueRef.current = value
-  const [editorInstance, setEditorInstance] = useState<{
-    id: string
-    getJSON: () => JSONContent
-  } | null>(null)
+  const [editorInstance, setEditorInstance] = useState<MockEditorInstance | null>(null)
   useEffect(() => {
-    const timer = setTimeout(() => setEditorInstance({ id: "mock-editor", getJSON: () => valueRef.current }), 0)
+    const timer = setTimeout(
+      () =>
+        setEditorInstance({
+          id: "mock-editor",
+          getJSON: () => valueRef.current,
+          isActive: () => false,
+          on: () => undefined,
+          off: () => undefined,
+        }),
+      0
+    )
     return () => clearTimeout(timer)
   }, [])
 

@@ -261,6 +261,7 @@ export function MessageComposer({
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
   const [formatOpen, setFormatOpen] = useState(false)
+  const [isInTable, setIsInTable] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
   const [mobileFocused, setMobileFocused] = useState(false)
   const [mobileLinkPopoverOpen, setMobileLinkPopoverOpen] = useState(false)
@@ -327,6 +328,25 @@ export function MessageComposer({
     },
     []
   )
+
+  // Track whether the caret is inside a table so we can surface a discoverability
+  // hint on mobile — the floating selection toolbar is suppressed on mobile, so
+  // without this hint there's no visible cue that the format toolbar holds row
+  // and column controls.
+  useEffect(() => {
+    if (!mobileToolbarEditor) {
+      setIsInTable(false)
+      return
+    }
+    const update = () => setIsInTable(mobileToolbarEditor.isActive("table"))
+    update()
+    mobileToolbarEditor.on("selectionUpdate", update)
+    mobileToolbarEditor.on("update", update)
+    return () => {
+      mobileToolbarEditor.off("selectionUpdate", update)
+      mobileToolbarEditor.off("update", update)
+    }
+  }, [mobileToolbarEditor])
 
   // Build the send mode hint text (reactive to preference changes).
   // Expanded (fullscreen) and mobile always use cmdEnter — on mobile the send button
@@ -850,6 +870,23 @@ export function MessageComposer({
                 <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
                 <div className="pointer-events-auto">{sendButton}</div>
               </div>
+            )}
+
+            {/* Mobile-only table hint — the floating selection toolbar is
+               suppressed on mobile (it conflicts with the OS selection popup),
+               so without this banner there's no visible cue that the row /
+               column / delete controls live behind the Aa button. */}
+            {isMobile && mobileChromeOpen && isInTable && !formatOpen && (
+              <button
+                type="button"
+                onClick={() => setFormatOpen(true)}
+                onMouseDown={(e) => e.preventDefault()}
+                className="flex items-center gap-2 self-start rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
+              >
+                Editing table — tap{" "}
+                <span className="rounded bg-background px-1 py-0.5 text-[11px] font-bold leading-none">Aa</span> to add
+                or delete rows and columns
+              </button>
             )}
 
             {/* Editor — always mounted to preserve state; hidden in preview mode */}
