@@ -116,6 +116,18 @@ interface UseVoiceDictationResult {
   showOriginal: boolean
   /** Flip the session-wide toggle. Walks every unlocked chunk and swaps its text in the editor. */
   setShowOriginal: (target: boolean) => void
+  /**
+   * Non-fatal warning that the selected input device is producing silence.
+   * Fires in two cases:
+   *   - Initial silence: the analyser has been at zero since the take began
+   *     (Bluetooth headset stuck on A2DP, wired headphones with no working
+   *     mic, OS-muted input) — surfaces fast (~2.5s).
+   *   - Lost signal: the take was capturing audio and then went dead (HFP
+   *     dropped, USB glitch) — surfaces slower (~5s) so legitimate pauses
+   *     don't nag.
+   * Null otherwise. Clears automatically once signal returns.
+   */
+  noAudioWarning: string | null
   start: () => void
   stop: () => void
 }
@@ -140,6 +152,41 @@ const SAMPLE_RATE_HZ = 16_000
 // If the server never acks voice:stop (dropped connection mid-stop), fall
 // through anyway so the button can't hang in the "stopping" state forever.
 const STOP_ACK_TIMEOUT_MS = 3000
+
+// Silence-detection thresholds. Two failure modes to catch:
+//
+// 1. Initial silence: the analyser was at zero from the moment the take began.
+//    The selected input is dead (Bluetooth headset stuck on A2DP, wired
+//    headphones with no working mic, OS-muted input). Fires fast (2.5s)
+//    because there's no ambiguity — a working mic shows ambient ADC dither
+//    within milliseconds.
+//
+// 2. Lost signal: the take WAS capturing audio and then went silent — e.g. a
+//    Bluetooth headset that briefly entered HFP and then dropped back, a USB
+//    glitch, a profile renegotiation. Fires slower (5s) to give legitimate
+//    pauses (taking a breath, thinking mid-sentence) room before nagging.
+//
+// `peakLevelInTakeRef >= NO_AUDIO_PEAK_THRESHOLD` separates the two cases:
+// peak only ever ratchets up, so if it's still below the floor we're in
+// case 1; otherwise we're in case 2 and the question becomes "how long since
+// the LAST signal crossing".
+export const NO_AUDIO_INITIAL_WAIT_MS = 2500
+export const NO_AUDIO_SILENCE_WAIT_MS = 5000
+export const NO_AUDIO_PEAK_THRESHOLD = 0.003
+
+export function shouldWarnNoAudio(args: { elapsedMs: number; silenceMs: number; peakLevel: number }): boolean {
+  if (args.peakLevel >= NO_AUDIO_PEAK_THRESHOLD) {
+    return args.silenceMs >= NO_AUDIO_SILENCE_WAIT_MS
+  }
+  return args.elapsedMs >= NO_AUDIO_INITIAL_WAIT_MS
+}
+
+export function noAudioWarningMessage(args: { deviceLabel: string | null; everHadSignal: boolean }): string {
+  const device = args.deviceLabel && args.deviceLabel.trim().length > 0 ? args.deviceLabel : "your microphone"
+  return args.everHadSignal
+    ? `Audio from ${device} dropped — check it's still active or switch inputs`
+    : `We're not hearing audio from ${device} — try a different input device`
+}
 
 function detectSupport(): { supported: boolean; reason: string | null } {
   if (typeof window === "undefined") return { supported: false, reason: "Voice input is unavailable here" }
@@ -221,6 +268,19 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const smoothedLevelRef = useRef(0)
   const lastSetLevelRef = useRef(0)
   const lastElapsedTickRef = useRef(0)
+  // Silence detection. Peak tracks the highest smoothed level seen in the
+  // current take (used as a "have we EVER had signal" proxy — it only ratchets
+  // up). `lastSignalAt` tracks the timestamp of the most recent tick that
+  // crossed the threshold, so the lost-signal warning can measure "time since
+  // we last heard anything". `deviceLabel` is the human-readable input name
+  // from the MediaStreamTrack so the warning can name the offending mic.
+  // `warningShownRef` mirrors the React state so the rAF tick can avoid
+  // setState churn when the condition hasn't flipped.
+  const peakLevelInTakeRef = useRef(0)
+  const lastSignalAtRef = useRef(0)
+  const deviceLabelRef = useRef<string | null>(null)
+  const warningShownRef = useRef(false)
+  const [noAudioWarning, setNoAudioWarning] = useState<string | null>(null)
   // Bumped on every start() and every teardown/stop so a `voice:start` ACK that
   // resolves after the user has already stopped (or torn down) can't flip the
   // state machine back to "recording" with nothing behind it.
@@ -280,6 +340,13 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     analyserRef.current = null
     smoothedLevelRef.current = 0
     lastSetLevelRef.current = 0
+    peakLevelInTakeRef.current = 0
+    lastSignalAtRef.current = 0
+    deviceLabelRef.current = null
+    if (warningShownRef.current) {
+      warningShownRef.current = false
+      setNoAudioWarning(null)
+    }
     setLevel(0)
     setElapsedMs(0)
     workletRef.current?.port.close()
@@ -313,14 +380,36 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       const prev = smoothedLevelRef.current
       const next = prev + (target - prev) * (target > prev ? 0.5 : 0.12)
       smoothedLevelRef.current = next
+      if (next > peakLevelInTakeRef.current) peakLevelInTakeRef.current = next
       if (Math.abs(next - lastSetLevelRef.current) >= 0.02) {
         lastSetLevelRef.current = next
         setLevel(next)
       }
       const now = performance.now()
+      // Stamp the last-signal timestamp every tick the smoothed level crosses
+      // the floor. Used by the lost-signal branch of shouldWarnNoAudio so a
+      // take that briefly captured audio then went dead (e.g. headphone HFP
+      // dropping back to A2DP mid-take) is still surfaced to the user.
+      if (next >= NO_AUDIO_PEAK_THRESHOLD) lastSignalAtRef.current = now
       if (now - lastElapsedTickRef.current >= 250) {
         lastElapsedTickRef.current = now
-        setElapsedMs(now - recordingStartRef.current)
+        const elapsed = now - recordingStartRef.current
+        setElapsedMs(elapsed)
+        const peak = peakLevelInTakeRef.current
+        const everHadSignal = peak >= NO_AUDIO_PEAK_THRESHOLD
+        // Time since last signal crossing. If we've never had signal,
+        // lastSignalAt is still 0 / take-start, so this reduces to elapsed —
+        // but the initial-silence branch in shouldWarnNoAudio ignores it
+        // anyway and gates on elapsed alone.
+        const silenceMs = everHadSignal ? now - lastSignalAtRef.current : elapsed
+        const shouldWarn = shouldWarnNoAudio({ elapsedMs: elapsed, silenceMs, peakLevel: peak })
+        if (shouldWarn && !warningShownRef.current) {
+          warningShownRef.current = true
+          setNoAudioWarning(noAudioWarningMessage({ deviceLabel: deviceLabelRef.current, everHadSignal }))
+        } else if (!shouldWarn && warningShownRef.current) {
+          warningShownRef.current = false
+          setNoAudioWarning(null)
+        }
       }
       meterRafRef.current = requestAnimationFrame(tick)
     }
@@ -379,6 +468,38 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     setState("connecting")
     const generation = ++startGenerationRef.current
 
+    // iOS Safari only honors AudioContext creation and resume() inside a user
+    // gesture — and "inside" means the synchronous body of the gesture handler,
+    // not its async continuations. Awaiting `voiceApi.createSession()` or
+    // `getUserMedia()` first crosses the await boundary and the subsequent
+    // `new AudioContext()` / `.resume()` calls silently no-op: the context stays
+    // suspended, the worklet's process() never runs, and the upstream receives
+    // nothing while everything *looks* fine. So we construct + kick the context
+    // synchronously here, before any awaits, and let the async setup below
+    // attach nodes and the mic stream to it once they're ready.
+    const AudioCtx =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    // Don't pin the context to 16kHz. Firefox (incl. Android) throws from
+    // createMediaStreamSource when the context rate differs from the mic
+    // track's native rate instead of resampling like Chrome does. Run at the
+    // device's native rate and let the worklet downsample to the 16kHz the
+    // upstream STT expects (its targetSampleRate handles the conversion).
+    const audioContext = new AudioCtx()
+    audioContextRef.current = audioContext
+    void audioContext.resume().catch(() => {})
+    // iOS Safari also suspends contexts MID-TAKE on various triggers (page
+    // backgrounding, silent-mode toggle, sometimes spontaneous power-save).
+    // When that happens, the worklet's process() stops running and no audio
+    // reaches the upstream — but no error fires either, so the take just
+    // goes silent. Auto-resume puts the graph back to work; if it can't
+    // resume (genuinely backgrounded), the next tick will fail and the
+    // existing teardown paths take over.
+    audioContext.onstatechange = () => {
+      if (audioContext.state === "suspended") {
+        audioContext.resume().catch(() => {})
+      }
+    }
+
     void (async () => {
       try {
         const voiceUrl = resolveVoiceUrl(workspaceId)
@@ -391,20 +512,41 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         sessionIdRef.current = session.voiceSessionId
         setMaxDurationMs(session.maxDurationMs)
 
+        // Don't ask the browser to apply echo cancellation or noise suppression.
+        // On iOS Safari + Bluetooth headsets this is a known cause of silent
+        // audio: Apple's voice-processing path interprets the headset's
+        // already-cleaned signal as noise and zeros it out — the analyser keeps
+        // showing a faint level (from internal processing tail) while the
+        // worklet receives nothing real. ElevenLabs's STT does its own noise
+        // handling, so we just want the rawest mono signal the OS will give us.
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+          audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         })
         streamRef.current = stream
+        const track = stream.getAudioTracks()[0]
+        // Capture the device label so the silence-detection warning can name
+        // the offending input ("AirPods Pro", "MacBook Pro Microphone"). The
+        // label is populated post-permission; if the browser hides it we fall
+        // back to a generic phrasing in the message builder.
+        deviceLabelRef.current = track?.label || null
+        // Track-level mute fires when the OS revokes the input mid-take — most
+        // commonly a Bluetooth headset renegotiating profiles, or the user
+        // muting at the system level. The track stays alive but produces no
+        // frames; without this listener the take silently dies. Surface it
+        // through the same warning channel so the user knows the input
+        // dropped, and clear it on unmute so a recovered headset doesn't
+        // leave stale chrome.
+        if (track) {
+          track.onmute = () => {
+            warningShownRef.current = true
+            setNoAudioWarning(noAudioWarningMessage({ deviceLabel: deviceLabelRef.current, everHadSignal: true }))
+          }
+          track.onunmute = () => {
+            warningShownRef.current = false
+            setNoAudioWarning(null)
+          }
+        }
 
-        const AudioCtx =
-          window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-        // Don't pin the context to 16kHz. Firefox (incl. Android) throws from
-        // createMediaStreamSource when the context rate differs from the mic
-        // track's native rate instead of resampling like Chrome does. Run at the
-        // device's native rate and let the worklet downsample to the 16kHz the
-        // upstream STT expects (its targetSampleRate handles the conversion).
-        const audioContext = new AudioCtx()
-        audioContextRef.current = audioContext
         await audioContext.audioWorklet.addModule("/worklets/pcm16-processor.js")
 
         const source = audioContext.createMediaStreamSource(stream)
@@ -426,9 +568,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         analyser.smoothingTimeConstant = 0.4
         source.connect(analyser)
         analyserRef.current = analyser
-        // iOS Safari starts the context suspended; without this the worklet's
-        // process() never runs and no audio frames are produced.
-        if (audioContext.state === "suspended") await audioContext.resume()
+        // The context was created and resume()'d synchronously at the top of
+        // start() (iOS Safari user-gesture requirement). By the time we get
+        // here it should be running; if it isn't, kick it once more in case
+        // the synchronous resume lost a race with this async setup.
+        if (audioContext.state === "suspended") await audioContext.resume().catch(() => {})
 
         const socket = io(voiceUrl, { path: "/socket.io/", withCredentials: true, autoConnect: true })
         socketRef.current = socket
@@ -537,6 +681,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             }
             recordingStartRef.current = performance.now()
             lastElapsedTickRef.current = 0
+            peakLevelInTakeRef.current = 0
+            lastSignalAtRef.current = recordingStartRef.current
             setElapsedMs(0)
             runMeter()
             setState("recording")
@@ -707,6 +853,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     hasUnlockedChunks,
     showOriginal,
     setShowOriginal,
+    noAudioWarning,
     start,
     stop,
   }

@@ -106,6 +106,7 @@ export function MicButton({
     hasUnlockedChunks,
     showOriginal,
     setShowOriginal,
+    noAudioWarning,
     start,
     stop,
   } = useVoiceDictation({
@@ -191,12 +192,34 @@ export function MicButton({
           or taps (mobile) a polished chunk in the editor. Lives at MicButton
           level so it has access to the live chunks map without lifting state. */}
       {hasUnlockedChunks && <DictationChunkInspector chunks={chunks} onToggle={() => setShowOriginal(!showOriginal)} />}
-      {recording && !polishPillVisible && (
+      {recording && noAudioWarning && (
+        // No-signal warning: the analyser has seen literal silence for the
+        // grace window, so the selected input is dead (Bluetooth headset that
+        // didn't switch to HFP/HSP, wired headphones with no mic wired in,
+        // muted at the OS layer). Replaces the clock pill — the user needs
+        // this far more than a m:ss readout right now. Absolute-positioned to
+        // keep the composer layout stable (INV-21). The pill is non-fatal,
+        // doesn't tear the take down; if the user fixes the input the warning
+        // clears automatically when signal returns.
+        <span
+          role="status"
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[16rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-amber-600 px-2.5 py-1.5 text-[11px] font-medium leading-snug text-amber-50 shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="text-left">{noAudioWarning}</span>
+          <span
+            aria-hidden
+            className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-amber-600"
+          />
+        </span>
+      )}
+      {recording && !polishPillVisible && !noAudioWarning && (
         // Absolutely positioned so the running clock never shifts the composer
         // layout (INV-21). Switches to a remaining-time countdown with a
         // warning tint as the take nears the backend's hard cap. Hidden when
         // the polish pill is present — the pill occupies the same slot and the
-        // clock would overlap it.
+        // clock would overlap it. Also hidden when the no-audio warning is up;
+        // the warning takes the slot.
         <span
           className={cn(
             "pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 select-none rounded-full px-1.5 py-0.5 text-[10px] font-medium tabular-nums leading-none whitespace-nowrap",
