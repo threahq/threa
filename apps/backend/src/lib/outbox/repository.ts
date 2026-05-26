@@ -9,6 +9,7 @@ import type {
   UserPreferences,
   LastMessagePreview,
   Bot as WireBot,
+  BotInvocationCapability,
   SavedMessageView,
   ScheduledMessageView,
   WorkspaceInvitableRole,
@@ -75,6 +76,12 @@ export type OutboxEventType =
   | "link_preview:dismissed"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
+  | "bot_invocation:available"
+  | "bot_invocation:claimed"
+  | "bot_invocation:cancelled"
+  | "bot_session_link:invalidated"
+  | "bot:active_actor_changed"
+  | "bot:resync"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -514,6 +521,59 @@ export interface BotUpdatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
 }
 
+// Bot-runtime WebSocket pushes. All routed on the dedicated `/bot` namespace,
+// keyed by botId rather than streamId/userId. Carry metadata only — never
+// message content or anything the worker shouldn't see; the bot fetches the
+// authoritative row via HTTP. See docs/bot-runtime-websocket-plan.md.
+export interface BotInvocationAvailableOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  invocationId: string
+  requiredCapability: BotInvocationCapability
+  targetInstanceId: string | null
+  targetRuntimeSessionId: string | null
+  createdAt: string
+}
+
+export interface BotInvocationClaimedOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  invocationId: string
+  // Deliberately omits `claimedByInstanceId` — siblings only need "stop racing
+  // this one", not the winning instance's identity.
+}
+
+export interface BotInvocationCancelledOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  invocationId: string
+  reason: "source_message_deleted" | "bot_archived" | "manual"
+}
+
+export interface BotSessionLinkInvalidatedOutboxPayload extends WorkspaceScopedPayload {
+  botId: string
+  instanceId: string
+  runtimeSessionId: string
+  rootStreamId: string
+  reason: "user_unlinked" | "instance_offline" | "manual"
+}
+
+export interface BotActiveActorChangedOutboxPayload extends WorkspaceScopedPayload {
+  rootStreamId: string
+  previousActorType: "bot" | "persona" | null
+  previousActorId: string | null
+  newActorType: "bot" | "persona" | null
+  newActorId: string | null
+  // Routing fan-out: computed at insert time from previous + new actor IDs so
+  // the dispatcher can stay pure routing without re-reading actor identity.
+  affectedBotIds: string[]
+}
+
+export interface BotResyncOutboxPayload extends WorkspaceScopedPayload {
+  // Most-specific target wins at routing time. Both null = workspace-wide.
+  // `instanceId` requires `botId` (enforced at insert).
+  botId: string | null
+  instanceId: string | null
+  reason: string
+}
+
 // Link preview event payloads
 export interface LinkPreviewReadyOutboxPayload extends StreamScopedPayload {
   messageId: string
@@ -595,6 +655,12 @@ export interface OutboxEventPayloadMap {
   "attachment:transcoded": AttachmentTranscodedOutboxPayload
   "attachment:thumbnailed": AttachmentThumbnailedOutboxPayload
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
+  "bot_invocation:available": BotInvocationAvailableOutboxPayload
+  "bot_invocation:claimed": BotInvocationClaimedOutboxPayload
+  "bot_invocation:cancelled": BotInvocationCancelledOutboxPayload
+  "bot_session_link:invalidated": BotSessionLinkInvalidatedOutboxPayload
+  "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
+  "bot:resync": BotResyncOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]
@@ -707,6 +773,32 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
  */
 export function isUserScopedEvent(event: OutboxEvent): event is OutboxEvent<UserScopedEventType> {
   return USER_SCOPED_EVENTS.includes(event.eventType as UserScopedEventType)
+}
+
+/** Events routed on the dedicated `/bot` Socket.IO namespace, keyed by botId. */
+export type BotScopedEventType =
+  | "bot_invocation:available"
+  | "bot_invocation:claimed"
+  | "bot_invocation:cancelled"
+  | "bot_session_link:invalidated"
+  | "bot:active_actor_changed"
+  | "bot:resync"
+
+const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
+  "bot_invocation:available",
+  "bot_invocation:claimed",
+  "bot_invocation:cancelled",
+  "bot_session_link:invalidated",
+  "bot:active_actor_changed",
+  "bot:resync",
+]
+
+/**
+ * Type guard for bot-scoped events. BroadcastHandler routes these to the `/bot`
+ * namespace and per-bot rooms instead of the default namespace.
+ */
+export function isBotScopedEvent(event: OutboxEvent): event is OutboxEvent<BotScopedEventType> {
+  return BOT_SCOPED_EVENTS.includes(event.eventType as BotScopedEventType)
 }
 
 export { OUTBOX_CHANNEL } from "@threa/backend-common"

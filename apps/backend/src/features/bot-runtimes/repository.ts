@@ -160,6 +160,10 @@ interface BotInvocationRow {
   completed_at: Date | null
 }
 
+interface BotInvocationRowWithInsertMarker extends BotInvocationRow {
+  was_newly_inserted: boolean
+}
+
 const knownRuntimeKinds = new Set<string>(BOT_RUNTIME_KINDS)
 const knownRuntimeStatuses = new Set<string>(BOT_RUNTIME_STATUSES)
 const knownInvocationStatuses = new Set<string>(BOT_INVOCATION_STATUSES)
@@ -262,6 +266,10 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
 }
 
 export const StreamActiveActorRepository = {
+  // Do not call this directly from outside this feature. Mutate active actors
+  // through `BotRuntimeService.setActiveActorInTransaction` so the
+  // `bot:active_actor_changed` outbox event is emitted in the same tx — bots
+  // (especially Pi remote) rely on that push to learn they've been displaced.
   async upsert(
     db: Querier,
     params: {
@@ -431,13 +439,19 @@ export const BotInvocationRepository = {
       | "updatedAt"
       | "completedAt"
     >
-  ): Promise<BotInvocation> {
+  ): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
+    // `xmax = 0` is the Postgres idiom for "this row was inserted, not updated"
+    // — it stays zero on a fresh INSERT and becomes non-zero on ON CONFLICT DO
+    // UPDATE, even when the UPDATE writes the same value. Lets callers (the
+    // bot-runtime service) decide whether to emit `bot_invocation:available`
+    // without paying for a pre-check round-trip.
     const result =
-      await db.query<BotInvocationRow>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata)
+      await db.query<BotInvocationRowWithInsertMarker>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata)
       VALUES (${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${params.actorType}, ${params.actorId}, ${params.trigger}, ${params.requiredCapability}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.mentionedActorSlugs}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata})
       ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) DO UPDATE SET updated_at = bot_invocations.updated_at
-      RETURNING *`)
-    return mapInvocation(result.rows[0]!)
+      RETURNING *, (xmax = 0) AS was_newly_inserted`)
+    const row = result.rows[0]!
+    return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
   },
 
   async claimOne(
