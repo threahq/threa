@@ -93,6 +93,12 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
     socket.join(`bot:${workspaceId}`)
 
     let joined: JoinedRoomState | null = null
+    // Synchronous guard against a runtime that sends two `bot:hello` frames
+    // before the first chain settles. The `joined` flag is only assigned
+    // after three awaits, so checking it alone leaks both hellos through and
+    // we'd double-upsert presence + send two acks. This flag flips to `true`
+    // BEFORE the first await and clears in both success and catch paths.
+    let helloInFlight = false
 
     // Periodic key revalidation. validateKey hits the DB every time so HTTP
     // revocation takes effect on the next tick (default 60s) instead of
@@ -125,13 +131,16 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
         return
       }
 
-      if (joined) {
+      if (joined || helloInFlight) {
         // One hello per connection. A runtime that wants to change its
         // capabilities should reconnect — otherwise the room set would
-        // drift from the registry entry.
+        // drift from the registry entry. `helloInFlight` covers the
+        // synchronous race where two frames arrive before the first chain
+        // completes; `joined` covers any hello after a successful one.
         ack?.({ ok: false, error: "bot:hello already received on this connection" })
         return
       }
+      helloInFlight = true
 
       const data = parsed.data
       const runtimeSessionId = data.runtimeSessionId ?? null
@@ -195,6 +204,10 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
         socket.leave(botRoom)
         socket.leave(instanceRoom)
         if (sessionRoom) socket.leave(sessionRoom)
+        // Reset the in-flight flag so a retried hello on the same connection
+        // can re-enter. `joined` stays null on the error path so the next
+        // hello sees a clean slate.
+        helloInFlight = false
         logger.error({ err, workspaceId, botId, instanceId: data.instanceId }, "bot:hello bootstrap failed")
         ack?.({ ok: false, error: "Internal error during bootstrap" })
       }

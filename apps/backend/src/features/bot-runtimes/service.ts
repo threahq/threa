@@ -7,7 +7,7 @@ import type {
   BotRuntimeStatus,
   BotTrait,
 } from "@threa/types"
-import { withTransaction } from "../../db"
+import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
 import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
@@ -125,7 +125,15 @@ export class BotRuntimeService {
       createdBy: string
     }
   ): Promise<StreamActiveActor> {
-    const existing = await StreamActiveActorRepository.findByRootStream(db, params.workspaceId, params.rootStreamId)
+    // FOR UPDATE serializes concurrent active-actor swaps on the same root
+    // stream so the read of `previousActorId` and the subsequent UPSERT
+    // observe a consistent before/after pair — otherwise the outbox event
+    // could carry a stale displaced actor (INV-20).
+    const existing = await StreamActiveActorRepository.findByRootStreamForUpdate(
+      db,
+      params.workspaceId,
+      params.rootStreamId
+    )
     const upserted = await StreamActiveActorRepository.upsert(db, {
       id: streamActiveActorId(),
       ...params,
@@ -338,9 +346,15 @@ export class BotRuntimeService {
   }
 
   /**
-   * Snapshot the runtime needs on socket connect or resync. The cursor floor
-   * is the smaller of `sinceCursor` and `now - 24h` so a long-disconnected
-   * runtime catches up but a stale cursor cannot blow up the result set.
+   * Snapshot the runtime needs on socket connect or resync. Runs all reads on
+   * one connection inside a `REPEATABLE READ READ ONLY` tx so all four sub-
+   * selects (available, ownedClaims, active actors, session links) see the
+   * same MVCC point-in-time — otherwise an invocation claimed mid-bootstrap
+   * could appear in neither list.
+   *
+   * Cursor floor is the smaller of `sinceCursor` and `now - 24h`. A future
+   * cursor (clock-skewed bot) falls back to the 24h floor rather than
+   * silently emptying the result set.
    *
    * The `serverGeneratedAt` echo lets the runtime reuse this exact timestamp
    * as `sinceCursor` on the next bootstrap without trusting its local clock.
@@ -359,34 +373,45 @@ export class BotRuntimeService {
     activeActorByStream: StreamActiveActor[]
     activeSessionLinks: BotRuntimeSessionLink[]
   }> {
-    const lookbackFloor = new Date(Date.now() - 24 * 60 * 60 * 1000)
-    const since = params.sinceCursor && params.sinceCursor > lookbackFloor ? params.sinceCursor : lookbackFloor
-    const [bootstrap, activeActorByStream, activeSessionLinks] = await Promise.all([
-      BotInvocationRepository.findBootstrapInvocations(this.pool, {
-        workspaceId: params.workspaceId,
-        botId: params.botId,
-        instanceId: params.instanceId,
-        runtimeSessionId: params.runtimeSessionId ?? null,
-        supportedCapabilities: params.supportedCapabilities,
-        since,
-      }),
-      StreamActiveActorRepository.findActiveForBot(this.pool, {
-        workspaceId: params.workspaceId,
-        botId: params.botId,
-      }),
-      BotRuntimeSessionLinkRepository.findActiveByBotInstance(this.pool, {
-        workspaceId: params.workspaceId,
-        botId: params.botId,
-        instanceId: params.instanceId,
-      }),
-    ])
-    return {
-      serverGeneratedAt: new Date(),
-      available: bootstrap.available,
-      ownedClaims: bootstrap.ownedClaims,
-      activeActorByStream,
-      activeSessionLinks,
-    }
+    const now = new Date()
+    const lookbackFloor = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const cursor = params.sinceCursor ?? null
+    const since = cursor && cursor > lookbackFloor && cursor <= now ? cursor : lookbackFloor
+    return withClient(this.pool, async (db) => {
+      await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+      try {
+        const [bootstrap, activeActorByStream, activeSessionLinks] = await Promise.all([
+          BotInvocationRepository.findBootstrapInvocations(db, {
+            workspaceId: params.workspaceId,
+            botId: params.botId,
+            instanceId: params.instanceId,
+            runtimeSessionId: params.runtimeSessionId ?? null,
+            supportedCapabilities: params.supportedCapabilities,
+            since,
+          }),
+          StreamActiveActorRepository.findActiveForBot(db, {
+            workspaceId: params.workspaceId,
+            botId: params.botId,
+          }),
+          BotRuntimeSessionLinkRepository.findActiveByBotInstance(db, {
+            workspaceId: params.workspaceId,
+            botId: params.botId,
+            instanceId: params.instanceId,
+          }),
+        ])
+        await db.query("COMMIT")
+        return {
+          serverGeneratedAt: now,
+          available: bootstrap.available,
+          ownedClaims: bootstrap.ownedClaims,
+          activeActorByStream,
+          activeSessionLinks,
+        }
+      } catch (err) {
+        await db.query("ROLLBACK").catch(() => {})
+        throw err
+      }
+    })
   }
 
   async claimNextInvocation(params: {

@@ -58,6 +58,10 @@ describe("BotRuntimeService outbox emission", () => {
     return spyOn(db, "withTransaction").mockImplementation(async (_pool, fn) => fn(fakeQuerier as never))
   }
 
+  function patchWithClient() {
+    return spyOn(db, "withClient").mockImplementation(async (_pool, fn) => fn(fakeQuerier as never))
+  }
+
   describe("createInvocation", () => {
     it("emits bot_invocation:available when the row is freshly inserted", async () => {
       patchWithTransaction()
@@ -184,7 +188,7 @@ describe("BotRuntimeService outbox emission", () => {
     }
 
     it("emits bot:active_actor_changed with both displaced + new bot ids", async () => {
-      spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue(
+      spyOn(StreamActiveActorRepository, "findByRootStreamForUpdate").mockResolvedValue(
         makeActor({ actorType: "bot", actorId: "bot_old" })
       )
       spyOn(StreamActiveActorRepository, "upsert").mockResolvedValue(
@@ -216,7 +220,7 @@ describe("BotRuntimeService outbox emission", () => {
     })
 
     it("does not emit when identity is unchanged", async () => {
-      spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue(
+      spyOn(StreamActiveActorRepository, "findByRootStreamForUpdate").mockResolvedValue(
         makeActor({ actorType: "bot", actorId: "bot_alice" })
       )
       spyOn(StreamActiveActorRepository, "upsert").mockResolvedValue(
@@ -237,7 +241,7 @@ describe("BotRuntimeService outbox emission", () => {
     })
 
     it("populates affectedBotIds with only the new actor when displacing a persona", async () => {
-      spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue(
+      spyOn(StreamActiveActorRepository, "findByRootStreamForUpdate").mockResolvedValue(
         makeActor({ actorType: "persona", actorId: "persona_x" })
       )
       spyOn(StreamActiveActorRepository, "upsert").mockResolvedValue(
@@ -261,6 +265,7 @@ describe("BotRuntimeService outbox emission", () => {
 
   describe("getBootstrapForRuntime", () => {
     it("returns activeActorByStream and activeSessionLinks alongside invocations", async () => {
+      patchWithClient()
       const actor: StreamActiveActor = {
         id: "saa_1",
         workspaceId: "ws_1",
@@ -305,6 +310,74 @@ describe("BotRuntimeService outbox emission", () => {
       expect(result.available).toHaveLength(1)
       expect(result.activeActorByStream).toEqual([actor])
       expect(result.activeSessionLinks).toEqual([link])
+    })
+
+    it("opens a REPEATABLE READ READ ONLY transaction so all reads share a snapshot", async () => {
+      patchWithClient()
+      const querySpy = spyOn(fakeQuerier, "query") as unknown as { mock: { calls: unknown[][] } }
+      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({ available: [], ownedClaims: [] })
+      spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([])
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([])
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      await service.getBootstrapForRuntime({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        supportedCapabilities: ["active-scratchpad"],
+      })
+
+      const queries = querySpy.mock.calls.map((c) => c[0] as string)
+      expect(queries).toContain("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+      expect(queries).toContain("COMMIT")
+    })
+
+    it("clamps a future sinceCursor to the 24h lookback floor", async () => {
+      patchWithClient()
+      const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
+        available: [],
+        ownedClaims: [],
+      })
+      spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([])
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([])
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const futureCursor = new Date(Date.now() + 60 * 60 * 1000) // +1h
+      await service.getBootstrapForRuntime({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        supportedCapabilities: ["active-scratchpad"],
+        sinceCursor: futureCursor,
+      })
+
+      const sincePassed = (findSpy.mock.calls[0]?.[1] as { since: Date }).since
+      expect(sincePassed.getTime()).toBeLessThan(futureCursor.getTime())
+      // Should be within the 24h lookback window, not in the future.
+      expect(sincePassed.getTime()).toBeLessThanOrEqual(Date.now())
+      expect(sincePassed.getTime()).toBeGreaterThanOrEqual(Date.now() - 25 * 60 * 60 * 1000)
+    })
+
+    it("honors a recent sinceCursor inside the 24h window", async () => {
+      patchWithClient()
+      const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
+        available: [],
+        ownedClaims: [],
+      })
+      spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([])
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([])
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const recentCursor = new Date(Date.now() - 60 * 60 * 1000) // -1h
+      await service.getBootstrapForRuntime({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        supportedCapabilities: ["active-scratchpad"],
+        sinceCursor: recentCursor,
+      })
+
+      expect((findSpy.mock.calls[0]?.[1] as { since: Date }).since).toEqual(recentCursor)
     })
   })
 
