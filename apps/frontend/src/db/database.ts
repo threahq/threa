@@ -243,6 +243,7 @@ export interface PendingOperation {
     | "update_scheduled_message"
     | "cancel_scheduled_message"
     | "send_scheduled_now"
+    | "dispatch_command"
   payload: Record<string, unknown>
   createdAt: number
   retryCount: number

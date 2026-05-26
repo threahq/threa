@@ -945,6 +945,7 @@ async function completeInvocationWithMarkdown(
   ctx?: ExtensionContext
 ): Promise<void> {
   if (!config) return
+  await recordInvocationTraceStep(invocation, "response", finalMessageMarkdown, "Composing response…")
   await request(`/api/v1/workspaces/${config.workspaceId}/bot-invocations/${invocation.id}/complete`, {
     method: "POST",
     body: JSON.stringify({
@@ -1149,6 +1150,7 @@ function resolveSkillCommand(pi: ExtensionAPI, query: string): { match?: PiComma
 }
 
 async function runCompactCommand(invocation: ClaimedInvocation, args: string, ctx: ExtensionContext): Promise<void> {
+  await recordInvocationTraceStep(invocation, "tool_call", "Compacting the linked Pi session…", "Compacting session…")
   await compactSession(ctx, args)
   await completeInvocationWithMarkdown(invocation, "Compacted the linked Pi session.", ctx)
 }
@@ -1249,6 +1251,7 @@ async function handleSessionControlInvocation(
 
   try {
     await heartbeat("busy", `Running /${command.name}…`, ctx)
+    await recordInvocationTraceStep(invocation, "context_received", `Running /${command.name}${command.args ? ` ${command.args}` : ""}`, `Running /${command.name}…`)
     switch (command.name) {
       case "compact":
         await runCompactCommand(invocation, command.args, ctx)

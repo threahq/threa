@@ -103,9 +103,16 @@ async function cleanupStaleOptimisticEvents(streamId: string): Promise<void> {
     .filter((e) => e.id.startsWith("temp_"))
     .toArray()
 
+  const pendingCommandEventIds = new Set(
+    (await db.pendingOperations.where("type").equals("dispatch_command").toArray())
+      .map((op) => op.payload.optimisticEventId)
+      .filter((id): id is string => typeof id === "string")
+  )
+
   for (const temp of tempEvents) {
+    if (temp._status === "failed") continue
     const stillPending = await db.pendingMessages.get(temp.id)
-    if (!stillPending) {
+    if (!stillPending && !pendingCommandEventIds.has(temp.id)) {
       await db.events.delete(temp.id)
     }
   }
@@ -264,7 +271,7 @@ export async function applyStreamBootstrap(
   bootstrap: StreamBootstrap
 ): Promise<void> {
   const now = Date.now()
-  await db.transaction("rw", [db.events, db.streams, db.pendingMessages], async () => {
+  await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations], async () => {
     await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
   })
 }
