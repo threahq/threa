@@ -6,6 +6,7 @@ import { collectSharedMessageIds, hydrateSharedMessageIds, type HydratedSharedMe
 import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
 import type { BotRuntimeService } from "../bot-runtimes"
+import type { CommandAvailabilityService } from "../commands"
 import type { StreamEvent } from "./event-repository"
 import type { EventType, JSONContent, LinkPreviewSummary, StreamType } from "@threa/types"
 import { ARIADNE_PERSONA_SLUG, StreamTypes, SLUG_PATTERN, CompanionModes } from "@threa/types"
@@ -181,6 +182,7 @@ interface Dependencies {
   activityService?: ActivityService
   linkPreviewService: LinkPreviewService
   botRuntimeService: BotRuntimeService
+  commandAvailabilityService: CommandAvailabilityService
 }
 
 /**
@@ -317,6 +319,7 @@ export function createStreamHandlers({
   activityService,
   linkPreviewService,
   botRuntimeService,
+  commandAvailabilityService,
 }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
@@ -698,6 +701,7 @@ export function createStreamHandlers({
           activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
         ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
+      const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
       const botRuntimeLinkByBotId =
         stream.type === StreamTypes.SCRATCHPAD
           ? await botRuntimeService.findActivePiRemoteSessionsForBotsInStream({
@@ -760,6 +764,7 @@ export function createStreamHandlers({
           members,
           botMemberIds,
           botRuntimePresence,
+          commands,
           membership,
           latestSequence: (latestSequence ?? 0n).toString(),
           snapshotAt,

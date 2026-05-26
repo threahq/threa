@@ -674,23 +674,28 @@ export const BotInvocationStatuses = {
   EXPIRED: "expired",
 } as const satisfies Record<string, BotInvocationStatus>
 
-export const BOT_INVOCATION_TRIGGERS = ["mention", "active-scratchpad"] as const
+export const BOT_INVOCATION_TRIGGERS = ["mention", "active-scratchpad", "session-control"] as const
 export type BotInvocationTrigger = (typeof BOT_INVOCATION_TRIGGERS)[number]
 
 export const BotInvocationTriggers = {
   MENTION: "mention",
   ACTIVE_SCRATCHPAD: "active-scratchpad",
+  SESSION_CONTROL: "session-control",
 } as const satisfies Record<string, BotInvocationTrigger>
 
-export const BOT_INVOCATION_CAPABILITIES = ["mentionable", "active-scratchpad"] as const
+export const BOT_INVOCATION_CAPABILITIES = ["mentionable", "active-scratchpad", "session-control"] as const
 export type BotInvocationCapability = (typeof BOT_INVOCATION_CAPABILITIES)[number]
 
 export const BotInvocationCapabilities = {
   MENTIONABLE: "mentionable",
   ACTIVE_SCRATCHPAD: "active-scratchpad",
+  SESSION_CONTROL: "session-control",
 } as const satisfies Record<string, BotInvocationCapability>
 
-export function botHasCapability(bot: { traits: readonly BotTrait[] }, capability: BotInvocationCapability): boolean {
+export function botHasCapability(
+  bot: { traits: readonly BotTrait[] },
+  capability: Extract<BotInvocationCapability, BotTrait>
+): boolean {
   return bot.traits.includes(capability)
 }
 

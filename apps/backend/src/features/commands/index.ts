@@ -11,11 +11,25 @@
 
 // HTTP handlers
 export { createCommandHandlers } from "./handlers"
-export type { CommandDispatchedPayload } from "./handlers"
 
-// Command registry and types
+// Command registry, availability, catalog, and types
 export { CommandRegistry, parseCommand, isCommand } from "./registry"
 export type { Command, CommandContext, CommandResult } from "./registry"
+export { CommandAvailabilityService } from "./availability"
+export type { ResolvedCommand, PiRuntimeCommandTarget } from "./availability"
+export {
+  PI_SESSION_CONTROL_COMMAND_NAMES,
+  listWorkspaceCommandInfos,
+  listPiSessionControlCommandInfos,
+} from "./catalog"
+export {
+  buildRuntimeCommandInvocationMetadata,
+  parseRuntimeCommandInvocationMetadata,
+  insertCommandDispatchedEvent,
+  insertCommandCompletedEvent,
+  insertCommandFailedEvent,
+} from "./events"
+export type { RuntimeCommandInvocationMetadata } from "./events"
 
 // Outbox handler
 export { CommandHandler } from "./outbox-handler"

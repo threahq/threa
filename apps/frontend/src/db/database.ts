@@ -461,8 +461,15 @@ export interface CachedWorkspaceMetadata {
   commands: Array<{
     name: string
     description: string
-    kind?: "server" | "client-action"
+    kind?: "server" | "client-action" | "bot-runtime"
+    scope?: "workspace" | "stream"
     clientActionId?: string
+    args?: Array<{
+      name: string
+      required?: boolean
+      description?: string
+      suggestions?: Array<{ value: string; label?: string; description?: string }>
+    }>
   }>
   _cachedAt: number
 }

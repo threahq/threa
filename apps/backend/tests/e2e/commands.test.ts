@@ -6,17 +6,22 @@
  */
 
 import { describe, test, expect } from "bun:test"
+import { BotInvocationCapabilities, BotTraits, WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import {
   TestClient,
   loginAs,
   createWorkspace,
   createChannel,
+  createScratchpad,
   joinWorkspace,
   joinStream,
   dispatchCommand,
   getBootstrap,
   listEvents,
   getUserId,
+  createBot,
+  createBotKey,
+  botApiPost,
 } from "../client"
 
 const testRunId = Math.random().toString(36).substring(7)
@@ -125,5 +130,207 @@ describe("Command Visibility E2E", () => {
     expect(cmdEventsB.length).toBe(1)
     expect(cmdEventsB[0].actorId).toBe(userIdB)
     expect((cmdEventsB[0].payload as { commandId: string }).commandId).toBe(cmdB.commandId)
+  })
+})
+
+interface LinkedPiSession {
+  bot: { id: string; ownerUserId: string | null }
+  apiKey: string
+  streamId: string
+  runtimeSessionId: string
+  instanceId: string
+}
+
+async function createLinkedPiSession(
+  client: TestClient,
+  workspaceId: string,
+  suffix: string
+): Promise<LinkedPiSession> {
+  const bot = await createBot(client, workspaceId, {
+    type: "personal",
+    name: `Pi ${suffix}`,
+    slug: `pi-${suffix}`,
+    traits: [BotTraits.ACTIVE_SCRATCHPAD, BotTraits.MENTIONABLE],
+  })
+
+  const apiKey = await createBotKey(client, workspaceId, bot.id, [
+    WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE,
+    WORKSPACE_PERMISSION_SCOPES.BOT_INVOCATIONS_WRITE,
+  ])
+
+  const instanceId = `inst-${suffix}`
+  const runtimeSessionId = `sess-${suffix}`
+
+  const session = await botApiPost<{
+    data: { activeStreamId: string; rootStreamId: string; runtimeSessionId: string }
+  }>(client, workspaceId, "/bot-runtime/sessions", apiKey, {
+    runtimeKind: "pi-local",
+    instanceId,
+    runtimeSessionId,
+    displayName: `Pi ${suffix}`,
+    localCwd: "/tmp/threa-test",
+  })
+  if (session.status !== 200) {
+    throw new Error(`Create runtime session failed: ${JSON.stringify(session.data)}`)
+  }
+
+  // Advertise session-control capabilities. /bot-runtime/sessions does not set
+  // capabilities on its own, so the availability service won't surface
+  // session-control commands until presence has been heartbeated.
+  const presence = await botApiPost(client, workspaceId, "/bot-runtime/presence", apiKey, {
+    runtimeKind: "pi-local",
+    instanceId,
+    runtimeSessionId,
+    displayName: `Pi ${suffix}`,
+    status: "available",
+    acceptingInvocations: true,
+    capabilities: {
+      runtimeSessionId,
+      supportsActiveScratchpad: true,
+      supportsPersistentSessions: true,
+      supportsSessionControlCommands: true,
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+      thinkingLevels: ["off", "minimal", "low", "medium", "high"],
+      modelSuggestions: [
+        { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+        { value: "openai/gpt-5-high", label: "GPT-5 High" },
+      ],
+    },
+  })
+  if (presence.status !== 200) {
+    throw new Error(`Presence heartbeat failed: ${JSON.stringify(presence.data)}`)
+  }
+
+  return {
+    bot,
+    apiKey,
+    streamId: session.data.data.activeStreamId,
+    runtimeSessionId,
+    instanceId,
+  }
+}
+
+describe("Stream-scoped Pi session-control commands", () => {
+  test("Pi session-control commands are only listed in linked Pi scratchpads", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-cmd-list"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Cmd WS ${testRunId}`)
+    const linked = await createLinkedPiSession(client, workspace.id, `list-${testRunId}`)
+
+    const linkedBootstrap = await getBootstrap(client, workspace.id, linked.streamId)
+    const linkedCommands = linkedBootstrap.commands ?? []
+    const linkedNames = linkedCommands.map((c) => c.name)
+    expect(linkedNames).toContain("compact")
+    expect(linkedNames).toContain("model")
+    expect(linkedNames).toContain("thinking")
+    expect(linkedNames).toContain("skill")
+    expect(linkedNames).toContain("reload")
+
+    // /thinking suggestions reflect the runtime's advertised levels, not a backend-hardcoded list.
+    const thinkingCommand = linkedCommands.find((c) => c.name === "thinking")
+    const thinkingSuggestions = thinkingCommand?.args?.find((a) => a.name === "level")?.suggestions
+    expect(thinkingSuggestions?.map((s) => s.value)).toEqual(["off", "minimal", "low", "medium", "high"])
+
+    // /model suggestions reflect the runtime's advertised model list.
+    const modelCommand = linkedCommands.find((c) => c.name === "model")
+    const modelSuggestions = modelCommand?.args?.find((a) => a.name === "model")?.suggestions
+    expect(modelSuggestions?.map((s) => s.value)).toEqual(["anthropic/claude-sonnet-4-6", "openai/gpt-5-high"])
+
+    // A separate scratchpad with no active Pi runtime should not expose
+    // session-control commands.
+    const scratchpad = await createScratchpad(client, workspace.id, "off")
+    const unlinkedBootstrap = await getBootstrap(client, workspace.id, scratchpad.id)
+    const unlinkedNames = unlinkedBootstrap.commands?.map((c) => c.name) ?? []
+    expect(unlinkedNames).not.toContain("compact")
+    expect(unlinkedNames).not.toContain("thinking")
+
+    // Channels keep /invite but never offer session-control commands.
+    const channel = await createChannel(client, workspace.id, `pi-cmd-${testRunId}`, "public")
+    const channelBootstrap = await getBootstrap(client, workspace.id, channel.id)
+    const channelNames = channelBootstrap.commands?.map((c) => c.name) ?? []
+    expect(channelNames).toContain("invite")
+    expect(channelNames).not.toContain("compact")
+  })
+
+  test("runtime command dispatch creates a targeted session-control invocation", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-cmd-dispatch"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Cmd Dispatch WS ${testRunId}`)
+    const linked = await createLinkedPiSession(client, workspace.id, `dispatch-${testRunId}`)
+
+    const dispatch = await dispatchCommand(client, workspace.id, linked.streamId, "/thinking high")
+    expect(dispatch.success).toBe(true)
+    expect(dispatch.command).toBe("thinking")
+    expect((dispatch.event.payload as { executionKind?: string }).executionKind).toBe("bot-runtime")
+
+    const claim = await botApiPost<{
+      data: {
+        id: string
+        requiredCapability: string
+        metadata: Record<string, unknown>
+        runtimeSessionId: string | null
+        claimToken: string
+      } | null
+    }>(client, workspace.id, "/bot-invocations/claim", linked.apiKey, {
+      runtimeKind: "pi-local",
+      instanceId: linked.instanceId,
+      runtimeSessionId: linked.runtimeSessionId,
+      supportedCapabilities: [BotInvocationCapabilities.SESSION_CONTROL],
+      claimTtlSeconds: 120,
+    })
+
+    expect(claim.status).toBe(200)
+    expect(claim.data.data).not.toBeNull()
+    expect(claim.data.data?.requiredCapability).toBe(BotInvocationCapabilities.SESSION_CONTROL)
+    expect(claim.data.data?.runtimeSessionId).toBe(linked.runtimeSessionId)
+    const command = claim.data.data?.metadata.command as { name?: string; id?: string } | undefined
+    expect(command?.name).toBe("thinking")
+    expect(command?.id).toBe(dispatch.commandId)
+  })
+
+  test("session-control invocation completion writes command_completed", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("pi-cmd-complete"), "Pi Command User")
+    const workspace = await createWorkspace(client, `Pi Cmd Complete WS ${testRunId}`)
+    const linked = await createLinkedPiSession(client, workspace.id, `complete-${testRunId}`)
+
+    const dispatch = await dispatchCommand(client, workspace.id, linked.streamId, "/thinking high")
+
+    const claim = await botApiPost<{
+      data: {
+        id: string
+        metadata: Record<string, unknown>
+        claimToken: string
+      } | null
+    }>(client, workspace.id, "/bot-invocations/claim", linked.apiKey, {
+      runtimeKind: "pi-local",
+      instanceId: linked.instanceId,
+      runtimeSessionId: linked.runtimeSessionId,
+      supportedCapabilities: [BotInvocationCapabilities.SESSION_CONTROL],
+      claimTtlSeconds: 120,
+    })
+    expect(claim.status).toBe(200)
+    const invocation = claim.data.data
+    if (!invocation) throw new Error("Expected to claim the dispatched invocation")
+    const metadataCommand = invocation.metadata.command as { id: string }
+    expect(metadataCommand.id).toBe(dispatch.commandId)
+
+    const complete = await botApiPost(
+      client,
+      workspace.id,
+      `/bot-invocations/${invocation.id}/complete`,
+      linked.apiKey,
+      {
+        instanceId: linked.instanceId,
+        claimToken: invocation.claimToken,
+        finalMessageMarkdown: "Thinking level changed: `low` → `high`",
+      }
+    )
+    expect(complete.status).toBe(200)
+
+    const events = await listEvents(client, workspace.id, linked.streamId)
+    const completed = events.find((event) => event.eventType === "command_completed")
+    expect(completed).toBeDefined()
+    expect((completed?.payload as { commandId?: string } | undefined)?.commandId).toBe(dispatch.commandId)
   })
 })

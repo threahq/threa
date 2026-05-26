@@ -86,6 +86,140 @@ describe("Pi remote trace safety", () => {
       supportedCapabilities: ["active-scratchpad", "mentionable"],
       claimTtlSeconds: 120,
     })
+    expect(
+      __testing.buildClaimInvocationPayload("pi-host-123", "pi-session-abc", { includeSessionControl: true })
+    ).toMatchObject({
+      supportedCapabilities: ["active-scratchpad", "mentionable", "session-control"],
+    })
+  })
+
+  test("advertises session-control command capabilities", () => {
+    expect(__testing.buildRuntimeCapabilities()).toMatchObject({
+      supportsSessionControlCommands: true,
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+    })
+  })
+
+  test("parses runtime command invocation metadata", () => {
+    expect(
+      __testing.getRuntimeCommand({
+        id: "binv_1",
+        activeStreamId: "stream_1",
+        sourceMessageId: "cmd_1",
+        promptMarkdown: "/thinking high",
+        claimToken: "claim",
+        claimExpiresAt: null,
+        metadata: { command: { id: "cmd_1", name: "thinking", args: "high", executionKind: "bot-runtime" } },
+      })
+    ).toEqual({ id: "cmd_1", name: "thinking", args: "high", executionKind: "bot-runtime" })
+  })
+
+  test("normalizes thinking level aliases", () => {
+    expect(__testing.normalizeThinkingLevel("x-high")).toBe("xhigh")
+    expect(__testing.normalizeThinkingLevel("none")).toBe("off")
+    expect(__testing.normalizeThinkingLevel("bogus")).toBeNull()
+  })
+
+  test("forwards model provider errors instead of the default Done. fallback", () => {
+    const limitMessage = "Error: You have hit your ChatGPT usage limit (plus plan). Try again in ~139 min."
+
+    expect(__testing.resolveFinalText({ error: limitMessage }, { assistantTexts: [], otherTexts: [] })).toBe(
+      limitMessage
+    )
+    expect(
+      __testing.resolveFinalText({ error: { message: limitMessage } }, { assistantTexts: [], otherTexts: [] })
+    ).toBe(limitMessage)
+  })
+
+  test("prefers captured assistant text over an event error", () => {
+    expect(
+      __testing.resolveFinalText({ error: "rate limited" }, { assistantTexts: ["here is the answer"], otherTexts: [] })
+    ).toBe("here is the answer")
+  })
+
+  test("falls back to captured non-assistant message text when assistant produced nothing", () => {
+    expect(
+      __testing.resolveFinalText(
+        { messages: [] },
+        { assistantTexts: [], otherTexts: [{ role: "system", text: "usage limit hit" }] }
+      )
+    ).toBe("usage limit hit")
+  })
+
+  test("extracts non-assistant content from event.messages as the last-resort fallback", () => {
+    expect(
+      __testing.resolveFinalText(
+        { messages: [{ role: "system", content: "usage limit hit" }] },
+        { assistantTexts: [], otherTexts: [] }
+      )
+    ).toBe("usage limit hit")
+  })
+
+  test("ignores user-role echoes when picking the final response", () => {
+    expect(
+      __testing.resolveFinalText(
+        { messages: [{ role: "user", content: "the original prompt" }] },
+        { assistantTexts: [], otherTexts: [] }
+      )
+    ).toBe("Done.")
+  })
+
+  test("returns Done. only when nothing useful is captured", () => {
+    expect(__testing.resolveFinalText({}, { assistantTexts: [], otherTexts: [] })).toBe("Done.")
+  })
+
+  test("prefers the captured provider error over message scans", () => {
+    expect(
+      __testing.resolveFinalText(
+        { messages: [{ role: "system", content: "something else" }] },
+        { assistantTexts: [], otherTexts: [], providerError: "Error: model provider rate-limited the request." }
+      )
+    ).toBe("Error: model provider rate-limited the request.")
+  })
+
+  test("parseRetryAfter understands the seconds form of Retry-After", () => {
+    expect(__testing.parseRetryAfter({ "retry-after": "120" })).toBe(120_000)
+    expect(__testing.parseRetryAfter({ "Retry-After": "0.5" })).toBe(500)
+  })
+
+  test("parseRetryAfter understands HTTP-date form of Retry-After", () => {
+    const now = Date.parse("2026-05-25T12:00:00Z")
+    const future = new Date(now + 90_000).toUTCString()
+    expect(__testing.parseRetryAfter({ "retry-after": future }, now)).toBe(90_000)
+  })
+
+  test("parseRetryAfter clamps past dates to 0 and rejects garbage", () => {
+    const now = Date.parse("2026-05-25T12:00:00Z")
+    const past = new Date(now - 30_000).toUTCString()
+    expect(__testing.parseRetryAfter({ "retry-after": past }, now)).toBe(0)
+    expect(__testing.parseRetryAfter({ "retry-after": "not a date" }, now)).toBeUndefined()
+    expect(__testing.parseRetryAfter({}, now)).toBeUndefined()
+  })
+
+  test("describeProviderError composes a 429 message with the exact local retry time", () => {
+    const now = Date.parse("2026-05-25T12:00:00Z")
+    const message = __testing.describeProviderError(429, { "retry-after": "139" }, now + 139_000 * 0)
+    expect(message).toContain("HTTP 429")
+    expect(message).toMatch(/Try again around \d{2}:\d{2}/)
+    expect(message).toContain("in ~")
+  })
+
+  test("describeProviderError handles other status codes without retry info", () => {
+    expect(__testing.describeProviderError(401, {})).toContain("HTTP 401")
+    expect(__testing.describeProviderError(503, {})).toContain("HTTP 503")
+    expect(__testing.describeProviderError(429, {})).toBe("Error: model provider rate-limited the request (HTTP 429).")
+  })
+
+  test("formatRetryNotice mentions the attempt number once past the first try", () => {
+    expect(__testing.formatRetryNotice(60_000, 1)).not.toContain("attempt")
+    expect(__testing.formatRetryNotice(60_000, 2)).toContain(`attempt 2 of ${__testing.MAX_RETRY_ATTEMPTS}`)
+  })
+
+  test("formatDuration rounds reasonably across minute/hour boundaries", () => {
+    expect(__testing.formatDuration(10_000)).toBe("<1 min")
+    expect(__testing.formatDuration(5 * 60_000)).toBe("5 min")
+    expect(__testing.formatDuration(60 * 60_000)).toBe("1h")
+    expect(__testing.formatDuration(139 * 60_000)).toBe("2h 19m")
   })
 
   test("parses pasted self-configuration JSON", () => {

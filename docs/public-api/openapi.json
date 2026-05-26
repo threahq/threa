@@ -1129,7 +1129,7 @@
                   "supportedCapabilities": {
                     "minItems": 1,
                     "type": "array",
-                    "items": { "type": "string", "enum": ["mentionable", "active-scratchpad"] }
+                    "items": { "type": "string", "enum": ["mentionable", "active-scratchpad", "session-control"] }
                   },
                   "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 }
                 },
@@ -1169,14 +1169,25 @@
                               "required": ["type", "id", "slug"],
                               "additionalProperties": false
                             },
-                            "trigger": { "type": "string", "enum": ["mention", "active-scratchpad"] },
-                            "requiredCapability": { "type": "string", "enum": ["mentionable", "active-scratchpad"] },
+                            "trigger": {
+                              "type": "string",
+                              "enum": ["mention", "active-scratchpad", "session-control"]
+                            },
+                            "requiredCapability": {
+                              "type": "string",
+                              "enum": ["mentionable", "active-scratchpad", "session-control"]
+                            },
                             "promptMarkdown": { "type": "string" },
                             "authorUserId": { "type": "string" },
                             "mentionedActorSlugs": { "type": "array", "items": { "type": "string" } },
                             "claimToken": { "type": "string" },
                             "claimExpiresAt": { "type": "string", "format": "date-time" },
-                            "runtimeSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+                            "runtimeSessionId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                            "metadata": {
+                              "type": "object",
+                              "propertyNames": { "type": "string" },
+                              "additionalProperties": {}
+                            }
                           },
                           "required": [
                             "id",
@@ -1193,7 +1204,8 @@
                             "mentionedActorSlugs",
                             "claimToken",
                             "claimExpiresAt",
-                            "runtimeSessionId"
+                            "runtimeSessionId",
+                            "metadata"
                           ],
                           "additionalProperties": false
                         },

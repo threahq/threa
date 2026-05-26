@@ -32,6 +32,7 @@ import {
   AgentSessionStatuses,
   AttachmentSafetyStatuses,
   AuthorTypes,
+  BotInvocationCapabilities,
   BotRuntimeKinds,
   PI_TOOL_TRACE_FORMAT,
   PI_TOOL_TRACE_SECTION_LABELS,
@@ -41,6 +42,11 @@ import {
   type PiToolTraceSectionLabel,
 } from "@threa/types"
 import { BotRuntimeService, type BotRuntimeInstance } from "../bot-runtimes"
+import {
+  insertCommandCompletedEvent,
+  insertCommandFailedEvent,
+  parseRuntimeCommandInvocationMetadata,
+} from "../commands"
 import type { BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
 import { normalizeMessage, toEmoji } from "../emoji"
@@ -829,7 +835,8 @@ export function createPublicApiHandlers({
         acceptingInvocations: false,
       })
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
-      if (bot && !bot.archivedAt) {
+      const isSessionControl = invocation.requiredCapability === BotInvocationCapabilities.SESSION_CONTROL
+      if (!isSessionControl && bot && !bot.archivedAt) {
         await withTransaction(pool, async (client) => {
           const latestSequence = await eventService.getLatestSequence(invocation.responseStreamId)
           const session = await AgentSessionRepository.insertRunningOrSkip(client, {
@@ -879,6 +886,7 @@ export function createPublicApiHandlers({
           claimToken: invocation.claimToken!,
           claimExpiresAt: invocation.claimExpiresAt!.toISOString(),
           runtimeSessionId: invocation.targetRuntimeSessionId,
+          metadata: invocation.metadata,
         },
       })
     },
@@ -1030,6 +1038,19 @@ export function createPublicApiHandlers({
           claimToken: result.data.claimToken,
         })
         if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+        const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
+        if (runtimeCommand) {
+          await insertCommandCompletedEvent(client, {
+            workspaceId: req.workspaceId!,
+            streamId: completed.responseStreamId,
+            userId: completed.authorUserId,
+            commandId: runtimeCommand.id,
+            result: {
+              invocationId: completed.id,
+              ...(message && { messageId: message.id }),
+            },
+          })
+        }
         const session = await AgentSessionRepository.findById(client, completed.id)
         if (session?.status === AgentSessionStatuses.RUNNING) {
           const latestSequence = await eventService.getLatestSequence(completed.responseStreamId)
@@ -1081,15 +1102,30 @@ export function createPublicApiHandlers({
       if (!result.success) {
         return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
       }
-      const failed = await botRuntimeService.failInvocation({
-        workspaceId: req.workspaceId!,
-        botId: req.botApiKey.botId,
-        invocationId: req.params.invocationId,
-        instanceId: result.data.instanceId,
-        claimToken: result.data.claimToken,
-        errorMessage: result.data.errorMessage,
+      const failed = await withTransaction(pool, async (client) => {
+        const failed = await botRuntimeService.failInvocationInTransaction(client, {
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey!.botId,
+          invocationId: req.params.invocationId,
+          instanceId: result.data.instanceId,
+          claimToken: result.data.claimToken,
+          errorMessage: result.data.errorMessage,
+        })
+        if (!failed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
+
+        const runtimeCommand = parseRuntimeCommandInvocationMetadata(failed.metadata)
+        if (runtimeCommand) {
+          await insertCommandFailedEvent(client, {
+            workspaceId: req.workspaceId!,
+            streamId: failed.responseStreamId,
+            userId: failed.authorUserId,
+            commandId: runtimeCommand.id,
+            error: result.data.errorMessage,
+          })
+        }
+
+        return failed
       })
-      if (!failed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       res.json({ data: { invocationId: failed.id, status: failed.status } })
     },
 

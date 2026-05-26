@@ -1,39 +1,34 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { withTransaction } from "../../db"
-import { CommandRegistry, parseCommand } from "./registry"
-import type { StreamService } from "../streams"
-import { StreamEventRepository } from "../streams"
-import { OutboxRepository } from "../../lib/outbox"
-import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { serializeBigInt } from "@threa/backend-common"
+import { BotInvocationCapabilities, BotInvocationTriggers, CommandKinds } from "@threa/types"
+import { withTransaction } from "../../db"
+import { commandId as generateCommandId } from "../../lib/id"
+import { parseCommand } from "./registry"
+import type { CommandAvailabilityService } from "./availability"
+import type { BotRuntimeService } from "../bot-runtimes"
+import { buildRuntimeCommandInvocationMetadata, insertCommandDispatchedEvent } from "./events"
 
 const dispatchCommandSchema = z.object({
   command: z.string().min(1, "command is required"),
   streamId: z.string().min(1, "streamId is required"),
 })
 
-export interface CommandDispatchedPayload {
-  commandId: string
-  name: string
-  args: string
-  status: "dispatched"
-}
-
 interface Dependencies {
   pool: Pool
-  commandRegistry: CommandRegistry
-  streamService: StreamService
+  commandAvailabilityService: CommandAvailabilityService
+  botRuntimeService: BotRuntimeService
 }
 
-export function createCommandHandlers({ pool, commandRegistry, streamService }: Dependencies) {
+export function createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService }: Dependencies) {
   return {
     /**
      * Dispatch a slash command.
      *
-     * This validates the command, creates a command_dispatched event,
-     * queues the command for execution, and returns an ack.
+     * This validates the command against the stream-effective command list,
+     * creates a command_dispatched event, and routes execution to either the
+     * server command worker or a targeted bot-runtime invocation.
      */
     async dispatch(req: Request, res: Response) {
       const userId = req.user!.id
@@ -49,28 +44,6 @@ export function createCommandHandlers({ pool, commandRegistry, streamService }: 
       }
 
       const { command: commandString, streamId } = result.data
-
-      // Validate stream access
-      const [stream, isStreamMember] = await Promise.all([
-        streamService.getStreamById(streamId),
-        streamService.isMember(streamId, userId),
-      ])
-
-      if (!stream || stream.workspaceId !== workspaceId) {
-        return res.status(404).json({
-          success: false,
-          error: "Stream not found",
-        })
-      }
-
-      if (!isStreamMember) {
-        return res.status(403).json({
-          success: false,
-          error: "Not a member of this stream",
-        })
-      }
-
-      // Parse the command
       const parsed = parseCommand(commandString)
       if (!parsed) {
         return res.status(400).json({
@@ -79,52 +52,88 @@ export function createCommandHandlers({ pool, commandRegistry, streamService }: 
         })
       }
 
-      // Look up the command
-      const cmd = commandRegistry.get(parsed.name)
-      if (!cmd) {
+      const resolved = await commandAvailabilityService.resolveCommand({
+        workspaceId,
+        userId,
+        streamId,
+        name: parsed.name,
+      })
+
+      if (!resolved) {
+        const availableCommands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
         return res.status(404).json({
           success: false,
           error: `Unknown command: ${parsed.name}`,
-          availableCommands: commandRegistry.getCommandNames(),
+          availableCommands: availableCommands.map((command) => command.name),
         })
       }
 
-      // Create command_dispatched event
-      const cmdId = generateCommandId()
-      const evtId = eventId()
+      if (resolved.executionKind === CommandKinds.CLIENT_ACTION) {
+        return res.status(400).json({
+          success: false,
+          error: "Client-action commands cannot be dispatched to the server",
+        })
+      }
 
-      // Create event and publish to outbox in a single transaction.
-      // The command listener will pick up the outbox event and dispatch the job,
-      // ensuring durability (job is only dispatched after event is committed).
-      const event = await withTransaction(pool, async (client) => {
-        const evt = await StreamEventRepository.insert(client, {
-          id: evtId,
-          streamId,
-          eventType: "command_dispatched",
-          payload: {
+      const cmdId = generateCommandId()
+
+      if (resolved.executionKind === CommandKinds.SERVER) {
+        const event = await withTransaction(pool, (client) =>
+          insertCommandDispatchedEvent(client, {
+            workspaceId,
+            streamId,
+            userId,
             commandId: cmdId,
             name: parsed.name,
             args: parsed.args,
-            status: "dispatched",
-          } satisfies CommandDispatchedPayload,
-          actorId: userId,
-          actorType: "user",
-        })
+            executionKind: CommandKinds.SERVER,
+          })
+        )
 
-        // Publish to outbox for:
-        // 1. Author-only broadcast (real-time)
-        // 2. Command listener to dispatch job (durability)
-        await OutboxRepository.insert(client, "command:dispatched", {
+        return res.status(202).json({
+          success: true,
+          commandId: cmdId,
+          command: parsed.name,
+          args: parsed.args,
+          event: serializeBigInt(event),
+        })
+      }
+
+      const event = await withTransaction(pool, async (client) => {
+        const evt = await insertCommandDispatchedEvent(client, {
           workspaceId,
           streamId,
-          event: serializeBigInt(evt),
-          authorId: userId,
+          userId,
+          commandId: cmdId,
+          name: parsed.name,
+          args: parsed.args,
+          executionKind: CommandKinds.BOT_RUNTIME,
+        })
+
+        const metadata = buildRuntimeCommandInvocationMetadata({
+          commandId: cmdId,
+          name: parsed.name,
+          args: parsed.args,
+        })
+        await botRuntimeService.createInvocationInTransaction(client, {
+          workspaceId,
+          rootStreamId: resolved.runtime.rootStreamId,
+          activeStreamId: resolved.runtime.activeStreamId,
+          sourceMessageId: cmdId,
+          responseStreamId: resolved.runtime.responseStreamId,
+          actorId: resolved.runtime.botId,
+          trigger: BotInvocationTriggers.SESSION_CONTROL,
+          requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
+          promptMarkdown: `/${parsed.name}${parsed.args ? ` ${parsed.args}` : ""}`,
+          authorUserId: userId,
+          targetInstanceId: resolved.runtime.targetInstanceId,
+          targetRuntimeSessionId: resolved.runtime.targetRuntimeSessionId,
+          metadata,
         })
 
         return evt
       })
 
-      // Return ack with command details
       res.status(202).json({
         success: true,
         commandId: cmdId,
@@ -135,14 +144,10 @@ export function createCommandHandlers({ pool, commandRegistry, streamService }: 
     },
 
     /**
-     * List available commands with their metadata.
+     * List workspace-level fallback commands with their metadata.
      */
     list(_req: Request, res: Response) {
-      const commands = commandRegistry.getCommandNames().map((name) => {
-        const cmd = commandRegistry.get(name)!
-        return { name, description: cmd.description }
-      })
-      res.json({ commands })
+      res.json({ commands: commandAvailabilityService.listWorkspaceCommands() })
     },
   }
 }

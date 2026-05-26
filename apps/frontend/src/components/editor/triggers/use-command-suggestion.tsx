@@ -1,9 +1,12 @@
 import { useCallback, useMemo } from "react"
 import { useParams } from "react-router-dom"
-import { StreamTypes, DISCUSS_WITH_ARIADNE_COMMAND } from "@threa/types"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
-import { useWorkspaceMetadata, useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceMetadata } from "@/stores/workspace-store"
+import { streamKeys } from "@/hooks/use-streams"
+import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { useSuggestion } from "./use-suggestion"
 
 /**
@@ -19,16 +22,11 @@ function filterCommands(items: CommandItem[], query: string): CommandItem[] {
   )
 }
 
-function isInviteAllowed(streamId: string | undefined, streams: import("@/db").CachedStream[]): boolean {
-  if (!streamId) return false
-  const stream = streams.find((s) => s.id === streamId)
-  if (!stream) return false
-  if (stream.type === StreamTypes.CHANNEL) return true
-  if (stream.type === StreamTypes.THREAD && stream.rootStreamId) {
-    const rootStream = streams.find((s) => s.id === stream.rootStreamId)
-    return rootStream?.type === StreamTypes.CHANNEL
-  }
-  return false
+export function resolveEffectiveCommandInfos(
+  workspaceCommands: readonly CommandInfo[] | undefined,
+  streamCommands: readonly CommandInfo[] | undefined
+): readonly CommandInfo[] {
+  return streamCommands ?? workspaceCommands ?? []
 }
 
 /**
@@ -44,14 +42,20 @@ function isInviteAllowed(streamId: string | undefined, streams: import("@/db").C
 export function useCommandSuggestion() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const metadata = useWorkspaceMetadata(workspaceId)
-  const streams = useWorkspaceStreams(workspaceId)
+  const queryClient = useQueryClient()
+  const streamBootstrapKey = workspaceId && streamId ? streamKeys.bootstrap(workspaceId, streamId) : null
+  const { data: streamBootstrap } = useQuery({
+    queryKey: streamBootstrapKey ?? ["streams", "bootstrap", workspaceId ?? "", ""],
+    queryFn: () =>
+      streamBootstrapKey ? (queryClient.getQueryData<CachedStreamBootstrap>(streamBootstrapKey) ?? null) : null,
+    enabled: false,
+    staleTime: Infinity,
+  })
 
   const commands = useMemo<CommandItem[]>(() => {
-    if (!metadata?.commands) return []
-    const inviteAllowed = isInviteAllowed(streamId, streams)
-    return metadata.commands
+    const effective = resolveEffectiveCommandInfos(metadata?.commands, streamBootstrap?.commands)
+    return effective
       .filter((cmd) => {
-        if (cmd.name === "invite") return inviteAllowed
         // Gate discuss-with-ariadne on there being a source stream to reference.
         if (cmd.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) return !!streamId
         return true
@@ -59,9 +63,12 @@ export function useCommandSuggestion() {
       .map((cmd) => ({
         name: cmd.name,
         description: cmd.description,
+        kind: cmd.kind,
+        scope: cmd.scope,
+        args: cmd.args,
         clientActionId: cmd.clientActionId,
       }))
-  }, [metadata?.commands, streamId, streams])
+  }, [metadata?.commands, streamBootstrap?.commands, streamId])
 
   const renderList = useCallback(
     (props: {

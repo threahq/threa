@@ -2,11 +2,8 @@ import type { Pool } from "pg"
 import type { CommandExecuteJobData, JobHandler } from "../../lib/queue"
 import type { CommandRegistry, CommandContext } from "./registry"
 import { withTransaction } from "../../db"
-import { StreamEventRepository } from "../streams"
-import { OutboxRepository } from "../../lib/outbox"
-import { eventId } from "../../lib/id"
-import { serializeBigInt } from "@threa/backend-common"
 import { logger } from "../../lib/logger"
+import { insertCommandCompletedEvent, insertCommandFailedEvent } from "./events"
 
 export interface CommandCompletedPayload {
   commandId: string
@@ -106,27 +103,15 @@ interface CompletedEventParams {
 async function createCompletedEvent(pool: Pool, params: CompletedEventParams): Promise<void> {
   const { commandId, workspaceId, streamId, userId, result } = params
 
-  await withTransaction(pool, async (client) => {
-    const evtId = eventId()
-    const evt = await StreamEventRepository.insert(client, {
-      id: evtId,
-      streamId,
-      eventType: "command_completed",
-      payload: {
-        commandId,
-        result,
-      } satisfies CommandCompletedPayload,
-      actorId: userId,
-      actorType: "user",
-    })
-
-    await OutboxRepository.insert(client, "command:completed", {
+  await withTransaction(pool, (client) =>
+    insertCommandCompletedEvent(client, {
+      commandId,
       workspaceId,
       streamId,
-      authorId: userId,
-      event: serializeBigInt(evt),
+      userId,
+      result,
     })
-  })
+  )
 }
 
 interface FailedEventParams {
@@ -140,25 +125,13 @@ interface FailedEventParams {
 async function createFailedEvent(pool: Pool, params: FailedEventParams): Promise<void> {
   const { commandId, workspaceId, streamId, userId, error } = params
 
-  await withTransaction(pool, async (client) => {
-    const evtId = eventId()
-    const evt = await StreamEventRepository.insert(client, {
-      id: evtId,
-      streamId,
-      eventType: "command_failed",
-      payload: {
-        commandId,
-        error,
-      } satisfies CommandFailedPayload,
-      actorId: userId,
-      actorType: "user",
-    })
-
-    await OutboxRepository.insert(client, "command:failed", {
+  await withTransaction(pool, (client) =>
+    insertCommandFailedEvent(client, {
+      commandId,
       workspaceId,
       streamId,
-      authorId: userId,
-      event: serializeBigInt(evt),
+      userId,
+      error,
     })
-  })
+  )
 }

@@ -7,6 +7,7 @@ import type { Socket } from "socket.io-client"
 import { INTERNAL_API_KEY_HEADER } from "@threa/backend-common"
 import {
   WORKSPACE_ROLE_SLUGS,
+  type CommandInfo,
   type MoveMessagesToThreadResponse,
   type ValidateMoveMessagesToThreadResponse,
   type WorkspaceInvitableRole,
@@ -520,6 +521,7 @@ export interface BootstrapData {
   unreadCount: number
   mentionCount: number
   activityCount: number
+  commands?: CommandInfo[]
 }
 
 export async function getBootstrap(
@@ -774,6 +776,63 @@ export async function dispatchCommand(
     throw new Error(`Dispatch command failed: ${JSON.stringify(data)}`)
   }
   return data
+}
+
+export interface BotSummary {
+  id: string
+  workspaceId: string
+  type: "personal" | "shared"
+  slug: string | null
+  name: string
+  ownerUserId: string | null
+}
+
+export async function createBot(
+  client: TestClient,
+  workspaceId: string,
+  body: {
+    type: "personal" | "shared"
+    name: string
+    slug?: string
+    traits?: string[]
+    description?: string | null
+    avatarEmoji?: string | null
+  }
+): Promise<BotSummary> {
+  const { status, data } = await client.post<{ data: BotSummary }>(`/api/workspaces/${workspaceId}/bots`, body)
+  if (status !== 201) {
+    throw new Error(`Create bot failed: ${JSON.stringify(data)}`)
+  }
+  return data.data
+}
+
+export async function createBotKey(
+  client: TestClient,
+  workspaceId: string,
+  botId: string,
+  scopes: string[],
+  name = "runtime-test"
+): Promise<string> {
+  const { status, data } = await client.post<{ value: string }>(`/api/workspaces/${workspaceId}/bots/${botId}/keys`, {
+    name,
+    scopes,
+  })
+  if (status !== 201) {
+    throw new Error(`Create bot key failed: ${JSON.stringify(data)}`)
+  }
+  return data.value
+}
+
+export function botApiPost<T = unknown>(
+  client: TestClient,
+  workspaceId: string,
+  path: string,
+  apiKey: string,
+  body: unknown
+) {
+  return client.request<T>("POST", `/api/v1/workspaces/${workspaceId}${path}`, body, {
+    Authorization: `Bearer ${apiKey}`,
+  })
 }
 
 export async function getEmojis(client: TestClient, workspaceId: string): Promise<EmojiEntry[]> {
