@@ -69,6 +69,7 @@ import {
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
 import { UserE2eKeysService } from "./features/user-e2e-keys"
+import { E2eScratchpadsService } from "./features/e2e-scratchpads"
 import { createS3Storage } from "./lib/storage/s3-client"
 import {
   OutboxDispatcher,
@@ -250,6 +251,7 @@ export async function startServer(): Promise<ServerInstance> {
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
+  const e2eScratchpadsService = new E2eScratchpadsService(pool)
 
   // Search and embedding services
   const embeddingService = config.useStubAI ? new StubEmbeddingService() : new EmbeddingService({ ai })
@@ -529,6 +531,7 @@ export async function startServer(): Promise<ServerInstance> {
     conversationService,
     userPreferencesService,
     userE2eKeysService,
+    e2eScratchpadsService,
     invitationService,
     activityService,
     savedMessagesService,

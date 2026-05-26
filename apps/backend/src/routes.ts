@@ -66,6 +66,7 @@ import type { StorageProvider } from "./lib/storage/s3-client"
 import type { CommandRegistry } from "./features/commands"
 import type { UserPreferencesService } from "./features/user-preferences"
 import type { UserE2eKeysService } from "./features/user-e2e-keys"
+import type { E2eScratchpadsService } from "./features/e2e-scratchpads"
 import type { AvatarService } from "./features/workspaces"
 import type { BotChannelService } from "./features/api-keys"
 import type { LinkPreviewService } from "./features/link-previews"
@@ -89,6 +90,7 @@ interface Dependencies {
   conversationService: ConversationService
   userPreferencesService: UserPreferencesService
   userE2eKeysService: UserE2eKeysService
+  e2eScratchpadsService: E2eScratchpadsService
   invitationService: InvitationService
   activityService: ActivityService
   savedMessagesService: SavedMessagesService
@@ -129,6 +131,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     conversationService,
     userPreferencesService,
     userE2eKeysService,
+    e2eScratchpadsService,
     invitationService,
     activityService,
     savedMessagesService,
@@ -191,7 +194,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     botRuntimeService,
     commandAvailabilityService,
   })
-  const message = createMessageHandlers({ pool, eventService, streamService, commandRegistry })
+  const message = createMessageHandlers({
+    pool,
+    eventService,
+    streamService,
+    commandRegistry,
+    e2eScratchpadsService,
+  })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
   const search = createSearchHandlers({ pool, searchService })
   const memo = createMemoHandlers({ pool, memoExplorerService })

@@ -47,6 +47,9 @@ function createMessage(overrides: Partial<Message> & { id: string }): Message {
     editedAt: null,
     deletedAt: null,
     createdAt: new Date("2024-01-01T10:00:00Z"),
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
   }
   return { ...base, ...overrides }
 }

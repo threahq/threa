@@ -64,6 +64,9 @@ function fakeMessage(overrides: Partial<Message> = {}): Message {
     editedAt: null,
     deletedAt: null,
     createdAt: NOW,
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
     ...overrides,
   }
 }
