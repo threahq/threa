@@ -222,6 +222,15 @@ describe("Pi remote trace safety", () => {
     expect(__testing.formatDuration(139 * 60_000)).toBe("2h 19m")
   })
 
+  test("builds scratchpad URLs from configured base URL and stream path", () => {
+    expect(__testing.buildScratchpadUrl("https://app.threa.io", "/workspaces/ws_123/streams/stream_123")).toBe(
+      "https://app.threa.io/workspaces/ws_123/streams/stream_123"
+    )
+    expect(__testing.buildScratchpadUrl("https://app.threa.io/app/", "streams/stream_123")).toBe(
+      "https://app.threa.io/app/streams/stream_123"
+    )
+  })
+
   test("parses pasted self-configuration JSON", () => {
     expect(
       __testing.parseConfigPatch(`{

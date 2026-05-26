@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { homedir, hostname } from "node:os"
+import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 import type {
   ExtensionAPI,
@@ -23,6 +25,9 @@ const SESSION_CONTROL_CAPABILITY = "session-control"
 const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload"] as const
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const
 type ThinkingLevel = (typeof THINKING_LEVELS)[number]
+const execFileAsync = promisify(execFile)
+const OPEN_URL_TIMEOUT_MS = 10_000
+
 const PI_TOOL_TRACE_SECTION_LABELS = {
   ARGUMENTS: "Arguments",
   OUTPUT: "Output",
@@ -215,6 +220,28 @@ function setCurrentSessionEnabled(ctx: ExtensionContext, enabled: boolean): Runt
   link.enabled = enabled
   saveConfig()
   return link
+}
+
+function buildScratchpadUrl(baseUrl: string, streamUrlPath: string): string {
+  return new URL(streamUrlPath, baseUrl).toString()
+}
+
+async function openExternalUrl(url: string): Promise<void> {
+  const os = platform()
+  if (os === "darwin") {
+    try {
+      await execFileAsync("open", ["-a", "Threa", url], { timeout: OPEN_URL_TIMEOUT_MS })
+      return
+    } catch {
+      await execFileAsync("open", [url], { timeout: OPEN_URL_TIMEOUT_MS })
+      return
+    }
+  }
+  if (os === "win32") {
+    await execFileAsync("cmd", ["/c", "start", "", url], { timeout: OPEN_URL_TIMEOUT_MS })
+    return
+  }
+  await execFileAsync("xdg-open", [url], { timeout: OPEN_URL_TIMEOUT_MS })
 }
 
 function isCurrentSessionEnabled(ctx: ExtensionContext): boolean {
@@ -1251,7 +1278,12 @@ async function handleSessionControlInvocation(
 
   try {
     await heartbeat("busy", `Running /${command.name}…`, ctx)
-    await recordInvocationTraceStep(invocation, "context_received", `Running /${command.name}${command.args ? ` ${command.args}` : ""}`, `Running /${command.name}…`)
+    await recordInvocationTraceStep(
+      invocation,
+      "context_received",
+      `Running /${command.name}${command.args ? ` ${command.args}` : ""}`,
+      `Running /${command.name}…`
+    )
     switch (command.name) {
       case "compact":
         await runCompactCommand(invocation, command.args, ctx)
@@ -1697,6 +1729,7 @@ export const __testing = {
   getRuntimeCommand,
   normalizeThinkingLevel,
   migrateSessionState,
+  buildScratchpadUrl,
   parseConfigPatch,
   safeStatusText,
   captureMessageText,
@@ -1736,6 +1769,21 @@ export default function (pi: ExtensionAPI): void {
       }
       if (command === "on" || command === "enable") {
         await enableRemote(pi, ctx)
+        return
+      }
+      if (command === "open") {
+        const link = getCurrentSessionLink(ctx)
+        if (!link) {
+          ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
+          return
+        }
+        const url = buildScratchpadUrl(config.baseUrl, link.streamUrlPath)
+        try {
+          await openExternalUrl(url)
+          ctx.ui.notify(`Opening Threa scratchpad: ${url}`, "info")
+        } catch (error) {
+          ctx.ui.notify(`Could not open Threa scratchpad: ${String(error)}\n${url}`, "error")
+        }
         return
       }
       if (command === "debug-polls") {
