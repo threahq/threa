@@ -533,3 +533,7 @@ export function useSyncEngine(): SyncEngine {
   if (!engine) throw new Error("useSyncEngine must be used within a SyncEngineContext provider")
   return engine
 }
+
+export function useOptionalSyncEngine(): SyncEngine | null {
+  return useContext(SyncEngineContext)
+}

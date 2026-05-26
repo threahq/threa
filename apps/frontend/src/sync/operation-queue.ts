@@ -1,6 +1,7 @@
-import { db } from "@/db"
-import type { PendingOperation } from "@/db/database"
-import type { ScheduleMessageInput, ScheduledMessageView } from "@threa/types"
+import { db, sequenceToNum } from "@/db"
+import type { CachedEvent, PendingOperation } from "@/db/database"
+import type { CommandFailedPayload, ScheduleMessageInput, ScheduledMessageView } from "@threa/types"
+import { ApiError, commandsApi } from "@/api"
 import { persistScheduledRows, replaceLocalScheduledRow } from "@/hooks/use-scheduled"
 
 function getRetryDelay(retryCount: number): number {
@@ -28,6 +29,40 @@ interface ScheduledServiceLike {
   create: (workspaceId: string, input: ScheduleMessageInput) => Promise<ScheduledMessageView>
   delete: (workspaceId: string, id: string) => Promise<void>
   sendNow: (workspaceId: string, id: string) => Promise<ScheduledMessageView>
+}
+
+function isPermanentCommandDispatchError(error: unknown): error is ApiError {
+  return ApiError.isApiError(error) && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429
+}
+
+async function markCommandDispatchFailed(
+  workspaceId: string,
+  optimisticEventId: string,
+  error: Error
+): Promise<void> {
+  const dispatched = await db.events.get(optimisticEventId)
+  if (!dispatched) return
+  const failedEvent: CachedEvent = {
+    id: `${optimisticEventId}:failed`,
+    workspaceId,
+    streamId: dispatched.streamId,
+    sequence: (Number(dispatched.sequence) + 1).toString(),
+    eventType: "command_failed",
+    payload: {
+      commandId: optimisticEventId,
+      error: error.message,
+    } satisfies CommandFailedPayload,
+    actorId: dispatched.actorId,
+    actorType: dispatched.actorType,
+    createdAt: new Date().toISOString(),
+    _sequenceNum: sequenceToNum((Number(dispatched.sequence) + 1).toString()),
+    _status: "failed",
+    _cachedAt: Date.now(),
+  }
+  await db.transaction("rw", db.events, async () => {
+    await db.events.update(optimisticEventId, { _status: "failed" })
+    await db.events.put(failedEvent)
+  })
 }
 
 /**
@@ -154,5 +189,29 @@ async function executeOperation(
       // conflict synchronously and the user re-saves with the latest
       // version. This case is reserved for a future opt-in.
       throw new Error("update_scheduled_message replay is not implemented")
+
+    case "dispatch_command": {
+      const optimisticEventId = payload.optimisticEventId as string
+      try {
+        const result = await commandsApi.dispatch(workspaceId, {
+          streamId: payload.streamId as string,
+          command: payload.command as string,
+        })
+        if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
+        await db.transaction("rw", db.events, async () => {
+          await db.events.delete(optimisticEventId).catch(() => undefined)
+          await db.events.put({
+            ...result.event,
+            workspaceId,
+            _sequenceNum: sequenceToNum(result.event.sequence),
+            _cachedAt: Date.now(),
+          })
+        })
+      } catch (error) {
+        if (!isPermanentCommandDispatchError(error)) throw error
+        await markCommandDispatchFailed(workspaceId, optimisticEventId, error)
+      }
+      break
+    }
   }
 }

@@ -22,13 +22,13 @@ import type { ComposerControlHandle } from "@/components/composer"
 import { useScheduleMessage } from "@/hooks"
 import { toast } from "sonner"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { commandsApi } from "@/api"
 import { extractCommandNode } from "@/lib/commands"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, type QuoteReplyData } from "./quote-reply-context"
 import { consumeShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
+import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
 
@@ -201,6 +201,7 @@ function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason
   const { stream, sendMessage } = useStreamOrDraft(workspaceId, streamId)
   const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const scheduleMessageMutation = useScheduleMessage(workspaceId)
+  const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId)
   const draftKey = getDraftMessageKey({ type: "stream", streamId })
 
   // Broadcast/mention filtering, member/bot allow-lists, and the admin gate
@@ -475,16 +476,9 @@ function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason
 
         const commandMarkdown = serializeToMarkdown(normalizedContent).trim()
         try {
-          const result = await commandsApi.dispatch(workspaceId, {
-            command: commandMarkdown,
-            streamId,
-          })
-
-          if (!result.success) {
-            setError(result.error)
-          }
+          await queueCommand({ commandMarkdown, commandName: commandNode.name })
         } catch {
-          setError("Failed to dispatch command. Please try again.")
+          setError("Failed to queue command. Please try again.")
         } finally {
           composer.setIsSending(false)
         }
@@ -526,7 +520,7 @@ function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason
         composer.setIsSending(false)
       }
     },
-    [composer, sendMessage, navigate, workspaceId, streamId, startDiscussWithAriadne]
+    [composer, sendMessage, navigate, workspaceId, streamId, startDiscussWithAriadne, queueCommand]
   )
 
   /**
