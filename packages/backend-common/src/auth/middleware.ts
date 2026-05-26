@@ -22,6 +22,14 @@ declare global {
       workosUserId?: string
       /** Full WorkOS identity from authenticated session */
       authUser?: AuthenticatedUser
+      /**
+       * Latest valid sealed session for the active account. Equals the rotated
+       * sealed when this request triggered a refresh, otherwise the original
+       * cookie value. Handlers that re-park or re-set the active cookie MUST
+       * read this — `req.cookies[SESSION_COOKIE_NAME]` is the pre-refresh
+       * value, which WorkOS has already revoked after refresh-token rotation.
+       */
+      sealedSession?: string
     }
   }
 }
@@ -51,6 +59,7 @@ export function createAuthMiddleware({ authService }: Dependencies) {
 
     req.workosUserId = result.user.id
     req.authUser = result.user
+    req.sealedSession = result.refreshed && result.sealedSession ? result.sealedSession : session
     next()
   }
 }

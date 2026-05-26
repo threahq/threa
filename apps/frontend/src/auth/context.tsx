@@ -14,7 +14,14 @@ declare global {
 
 interface AuthContextValue extends AuthState {
   login: (redirectTo?: string, opts?: { intent?: "add" }) => void
-  logout: () => void
+  /**
+   * Log out of one or all accounts on this browser. `scope: "current"` revokes
+   * just the active session and promotes a parked alt (the user stays signed
+   * in to the next account). Default `"all"` empties the local cookie jar of
+   * every signed-in account on this browser (parked WorkOS sessions stay
+   * intact server-side — explicit revoke is the `/api/accounts/remove` path).
+   */
+  logout: (opts?: { scope?: "current" | "all" }) => void
   refetch: () => Promise<void>
 }
 
@@ -179,7 +186,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     window.location.href = `${API_BASE}/api/auth/login${qs ? `?${qs}` : ""}`
   }, [])
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (opts?: { scope?: "current" | "all" }) => {
+    const scope = opts?.scope ?? "all"
     // Clean up push subscriptions on logout:
     // 1. Tell backend to remove all records for this browser's endpoint (cross-workspace)
     // 2. Unsubscribe from the browser push service to prevent post-logout notifications
@@ -188,6 +196,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // never rejects, so a worker stranded in "installing" (common with the dev
     // injectManifest module SW) would hang this step — and the redirect below —
     // forever. Cap the whole best-effort block so logout always proceeds.
+    //
+    // The push subscription is a per-browser endpoint shared across accounts,
+    // so cleaning it up belongs to both scopes — we don't want post-logout
+    // notifications for an account the user just signed out of either way.
     const pushCleanup = (async () => {
       const registration = await navigator.serviceWorker?.ready
       const subscription = await registration?.pushManager.getSubscription()
@@ -207,8 +219,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     ]).catch(() => {})
     clearCachedUser()
     clearLastWorkspaceId()
+    // `clearAllCachedData` uses the active-account `db` proxy, so it drops
+    // exactly the current account's IDB. Promoted-account IDB (a separate
+    // named handle) is untouched, which is what scope=current wants.
     await clearAllCachedData().catch(() => {})
-    window.location.href = `${API_BASE}/api/auth/logout`
+    window.location.href =
+      scope === "current" ? `${API_BASE}/api/auth/logout?scope=current` : `${API_BASE}/api/auth/logout`
   }, [])
 
   const value: AuthContextValue = {

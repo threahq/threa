@@ -72,14 +72,26 @@ export class AccountsService {
   // Validate every parked alt cookie in parallel (never a serial loop). A
   // slot whose sealed session fails validation comes back `ok:false` and is
   // reclaimable on the next write (self-heals corrupt/expired alts).
-  private async resolveAlts(cookies: Record<string, string>): Promise<ResolvedAlt[]> {
+  //
+  // WorkOS access tokens are short-lived and `session.refresh()` rotates the
+  // refresh token — the pre-refresh sealed value is dead the moment refresh
+  // runs. We MUST write the rotated sealed back to the alt cookie and surface
+  // it to callers; otherwise a switcher view (or any GET that calls this) kills
+  // the parked session for good. Mirrors what `createAuthMiddleware` already
+  // does for the active cookie.
+  private async resolveAlts(res: Response, cookies: Record<string, string>): Promise<ResolvedAlt[]> {
     const alts = readAltSessionCookies(cookies)
     const auths = await Promise.all(alts.map((a) => this.authService.authenticateSession(a.sealed)))
     return alts.map((a, i) => {
       const r = auths[i]
-      return r.success && r.user
-        ? { slot: a.slot, sealed: a.sealed, ok: true, user: r.user }
-        : { slot: a.slot, sealed: a.sealed, ok: false }
+      if (!r.success || !r.user) {
+        return { slot: a.slot, sealed: a.sealed, ok: false }
+      }
+      const sealed = r.refreshed && r.sealedSession ? r.sealedSession : a.sealed
+      if (sealed !== a.sealed) {
+        setAltSessionCookie(res, a.slot, sealed)
+      }
+      return { slot: a.slot, sealed, ok: true, user: r.user }
     })
   }
 
@@ -113,7 +125,12 @@ export class AccountsService {
       return { ok: true }
     }
 
-    const alts = await this.resolveAlts(cookies)
+    // If WorkOS rotated the prev session while we were validating it, the
+    // pre-refresh sealed is now revoked. Park the rotated value so the slot
+    // doesn't hold a dead token.
+    const prevSealedToPark = prevAuth.refreshed && prevAuth.sealedSession ? prevAuth.sealedSession : prevActiveSealed
+
+    const alts = await this.resolveAlts(res, cookies)
     const validAlts = alts.filter((a) => a.ok && a.user)
 
     // The new account is already parked: promote it, park the previous active
@@ -121,7 +138,7 @@ export class AccountsService {
     const existing = validAlts.find((a) => a.user?.id === newUserId)
     if (existing) {
       setSessionCookie(res, newSealed)
-      setAltSessionCookie(res, existing.slot, prevActiveSealed)
+      setAltSessionCookie(res, existing.slot, prevSealedToPark)
       for (const a of validAlts) {
         if (a.slot !== existing.slot && a.user?.id === newUserId) {
           clearAltSessionCookie(res, a.slot)
@@ -146,12 +163,13 @@ export class AccountsService {
       return { ok: false, code: "MAX_ACCOUNTS_REACHED" }
     }
 
-    setAltSessionCookie(res, freeSlot, prevActiveSealed)
+    setAltSessionCookie(res, freeSlot, prevSealedToPark)
     setSessionCookie(res, newSealed)
     return { ok: true }
   }
 
   async list(
+    res: Response,
     cookies: Record<string, string>,
     activeUser: ActiveUser
   ): Promise<{ accounts: AccountSummary[]; maxAccounts: number }> {
@@ -165,10 +183,13 @@ export class AccountsService {
     ]
 
     // Coalesce on read: hide any alt that resolves to the active account or to
-    // an account already surfaced by an earlier (lower) slot. GET stays
-    // Set-Cookie-free; slot reconciliation is deferred to the next write.
+    // an account already surfaced by an earlier (lower) slot. Slot
+    // reconciliation (clearing coalesced duplicates) is still deferred to the
+    // next write, but `resolveAlts` does write rotated sealed values back when
+    // WorkOS refreshes during validation — without that the parked session
+    // would be revoked the instant the switcher view triggered a refresh.
     const seen = new Set<string>([activeUser.id])
-    for (const alt of await this.resolveAlts(cookies)) {
+    for (const alt of await this.resolveAlts(res, cookies)) {
       if (alt.ok && alt.user) {
         if (seen.has(alt.user.id)) continue
         seen.add(alt.user.id)
@@ -207,11 +228,12 @@ export class AccountsService {
    * already-seen id are de-duped; stale alts (failed validation) skipped.
    */
   async resolve(
+    res: Response,
     cookies: Record<string, string>,
     activeUser: ActiveUser,
     q: { userId?: string; workspaceId?: string }
   ): Promise<{ ownerUserId: string }> {
-    const alts = await this.resolveAlts(cookies)
+    const alts = await this.resolveAlts(res, cookies)
     const seen = new Set<string>()
     const signedInIds: string[] = []
     for (const id of [activeUser.id, ...alts.flatMap((a) => (a.ok && a.user ? [a.user.id] : []))]) {
@@ -260,15 +282,18 @@ export class AccountsService {
       throw new HttpError("Account is already active", { status: 409, code: "ALREADY_ACTIVE" })
     }
 
-    const alts = await this.resolveAlts(cookies)
+    const alts = await this.resolveAlts(res, cookies)
     const target = alts.find((a) => a.ok && a.user?.id === targetUserId)
     if (!target || !target.user) {
       throw new HttpError("Account not found", { status: 404, code: "ACCOUNT_NOT_FOUND" })
     }
 
     // Deterministic Set-Cookie order so a mid-flight failure never strands a
-    // session: promote target, park the old active into the slot the target
-    // just vacated (always free), then drop any duplicate slots.
+    // session: promote target (using the latest sealed `resolveAlts` returned,
+    // not the pre-refresh value the browser sent), park the old active into
+    // the slot the target just vacated (always free), then drop any duplicate
+    // slots. `activeSealed` is whatever the auth middleware surfaced — that's
+    // the rotated value when this request triggered a refresh.
     setSessionCookie(res, target.sealed)
     setAltSessionCookie(res, target.slot, activeSealed)
     for (const alt of alts) {
@@ -299,7 +324,7 @@ export class AccountsService {
       return { removedId: targetUserId }
     }
 
-    const alts = await this.resolveAlts(cookies)
+    const alts = await this.resolveAlts(res, cookies)
 
     if (targetUserId === activeUser.id) {
       // Removing the active account: kill its WorkOS session for real, plus
