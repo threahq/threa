@@ -468,6 +468,38 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     setState("connecting")
     const generation = ++startGenerationRef.current
 
+    // iOS Safari only honors AudioContext creation and resume() inside a user
+    // gesture — and "inside" means the synchronous body of the gesture handler,
+    // not its async continuations. Awaiting `voiceApi.createSession()` or
+    // `getUserMedia()` first crosses the await boundary and the subsequent
+    // `new AudioContext()` / `.resume()` calls silently no-op: the context stays
+    // suspended, the worklet's process() never runs, and the upstream receives
+    // nothing while everything *looks* fine. So we construct + kick the context
+    // synchronously here, before any awaits, and let the async setup below
+    // attach nodes and the mic stream to it once they're ready.
+    const AudioCtx =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    // Don't pin the context to 16kHz. Firefox (incl. Android) throws from
+    // createMediaStreamSource when the context rate differs from the mic
+    // track's native rate instead of resampling like Chrome does. Run at the
+    // device's native rate and let the worklet downsample to the 16kHz the
+    // upstream STT expects (its targetSampleRate handles the conversion).
+    const audioContext = new AudioCtx()
+    audioContextRef.current = audioContext
+    void audioContext.resume().catch(() => {})
+    // iOS Safari also suspends contexts MID-TAKE on various triggers (page
+    // backgrounding, silent-mode toggle, sometimes spontaneous power-save).
+    // When that happens, the worklet's process() stops running and no audio
+    // reaches the upstream — but no error fires either, so the take just
+    // goes silent. Auto-resume puts the graph back to work; if it can't
+    // resume (genuinely backgrounded), the next tick will fail and the
+    // existing teardown paths take over.
+    audioContext.onstatechange = () => {
+      if (audioContext.state === "suspended") {
+        audioContext.resume().catch(() => {})
+      }
+    }
+
     void (async () => {
       try {
         const voiceUrl = resolveVoiceUrl(workspaceId)
@@ -515,15 +547,6 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           }
         }
 
-        const AudioCtx =
-          window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
-        // Don't pin the context to 16kHz. Firefox (incl. Android) throws from
-        // createMediaStreamSource when the context rate differs from the mic
-        // track's native rate instead of resampling like Chrome does. Run at the
-        // device's native rate and let the worklet downsample to the 16kHz the
-        // upstream STT expects (its targetSampleRate handles the conversion).
-        const audioContext = new AudioCtx()
-        audioContextRef.current = audioContext
         await audioContext.audioWorklet.addModule("/worklets/pcm16-processor.js")
 
         const source = audioContext.createMediaStreamSource(stream)
@@ -545,21 +568,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         analyser.smoothingTimeConstant = 0.4
         source.connect(analyser)
         analyserRef.current = analyser
-        // iOS Safari starts the context suspended; without this the worklet's
-        // process() never runs and no audio frames are produced.
-        if (audioContext.state === "suspended") await audioContext.resume()
-        // iOS Safari also suspends contexts MID-TAKE on various triggers (page
-        // backgrounding, silent-mode toggle, sometimes spontaneous power-save).
-        // When that happens, the worklet's process() stops running and no audio
-        // reaches the upstream — but no error fires either, so the take just
-        // goes silent. Auto-resume puts the graph back to work; if it can't
-        // resume (genuinely backgrounded), the next tick will fail and the
-        // existing teardown paths take over.
-        audioContext.onstatechange = () => {
-          if (audioContext.state === "suspended") {
-            audioContext.resume().catch(() => {})
-          }
-        }
+        // The context was created and resume()'d synchronously at the top of
+        // start() (iOS Safari user-gesture requirement). By the time we get
+        // here it should be running; if it isn't, kick it once more in case
+        // the synchronous resume lost a race with this async setup.
+        if (audioContext.state === "suspended") await audioContext.resume().catch(() => {})
 
         const socket = io(voiceUrl, { path: "/socket.io/", withCredentials: true, autoConnect: true })
         socketRef.current = socket
