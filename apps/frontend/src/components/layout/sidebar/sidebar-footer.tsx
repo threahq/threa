@@ -2,8 +2,9 @@ import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutR
 import { ChevronUp, DollarSign, LogOut, Settings, User as UserIcon, Users } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { accountsApi } from "@/api"
+import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
+import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
 import { useSettings, useSidebar } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -117,7 +118,7 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
   const handleLogout = useCallback(async () => {
     try {
       const data = await queryClient.fetchQuery({
-        queryKey: ["accounts", "list"],
+        queryKey: ACCOUNTS_LIST_KEY,
         queryFn: () => accountsApi.list(),
         staleTime: 10_000,
       })
@@ -126,7 +127,7 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev)
-            next.set("logout-confirm", "")
+            next.set(LOGOUT_CONFIRM_PARAM, "")
             return next
           },
           { replace: true }

@@ -31,6 +31,10 @@ const magicVerifySchema = z.object({
   intent: z.literal("add"),
 })
 
+const logoutQuerySchema = z.object({
+  scope: z.enum(["current"]).optional(),
+})
+
 /**
  * Validate that a forwarded host is an allowed staging subdomain.
  * Prevents open redirect via X-Forwarded-Host spoofing.
@@ -190,7 +194,8 @@ export function createControlPlaneAuthHandlers({
     async logout(req: Request, res: Response) {
       const session = req.cookies[SESSION_COOKIE_NAME]
       const forwardedHost = req.headers["x-forwarded-host"] as string | undefined
-      const scope = typeof req.query.scope === "string" ? req.query.scope : undefined
+      const queryParse = logoutQuerySchema.safeParse(req.query)
+      const scope = queryParse.success ? queryParse.data.scope : undefined
 
       // Where we land on a same-app redirect (no WorkOS round-trip). Falls
       // back to the configured frontend origin, then "/" — same precedence the
@@ -210,8 +215,12 @@ export function createControlPlaneAuthHandlers({
         if (auth.success && auth.user) {
           const alts = readAltSessionCookies(req.cookies)
           if (alts.length > 0) {
+            // WorkOS may have rotated the refresh token during authenticate;
+            // the pre-refresh `session` is dead at WorkOS, so revoke must use
+            // the post-refresh sealed (parallels addAndParkActive).
+            const sealedToRevoke = auth.refreshed && auth.sealedSession ? auth.sealedSession : session
             try {
-              await accountsService.remove(res, req.cookies, session, auth.user, auth.user.id)
+              await accountsService.remove(res, req.cookies, sealedToRevoke, auth.user, auth.user.id)
               return res.redirect(sameAppOrigin)
             } catch {
               // Fall through to full logout if the promote path fails — the

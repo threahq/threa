@@ -14,6 +14,12 @@ export interface AccountSummary {
   state: "active" | "parked" | "stale"
 }
 
+// Shared TanStack Query key for the accounts switcher list. Several surfaces
+// (sidebar logout pre-check, switcher dialog, logout-scope dialog) read the
+// same query — keeping the key in one place stops a cache-miss bug from
+// sneaking in when one consumer drifts.
+export const ACCOUNTS_LIST_KEY = ["accounts", "list"] as const
+
 export const accountsApi = {
   // Bare-workspace form: "which signed-in account owns this workspace?" — used
   // by the cross-account deep-link guard. 404s on ambiguity (a workspace more

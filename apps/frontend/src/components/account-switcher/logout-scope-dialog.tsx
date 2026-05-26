@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { LogOut, Users } from "lucide-react"
-import { accountsApi } from "@/api"
+import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -15,8 +15,10 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 
-const ACCOUNTS_LIST_KEY = ["accounts", "list"]
-const SEARCH_PARAM = "logout-confirm"
+// Search-param sentinel that opens the dialog. Exported so the sidebar (and
+// any other "log out" surface) sets the same key — drifting strings would
+// silently leave the confirm dialog closed and skip the multi-account check.
+export const LOGOUT_CONFIRM_PARAM = "logout-confirm"
 
 /**
  * Confirm dialog shown when the user clicks "Log out" with more than one
@@ -31,7 +33,7 @@ const SEARCH_PARAM = "logout-confirm"
 export function LogoutScopeDialog() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [mounted, setMounted] = useState(false)
-  const isOpen = searchParams.get(SEARCH_PARAM) !== null
+  const isOpen = searchParams.get(LOGOUT_CONFIRM_PARAM) !== null
   const { logout, user } = useAuth()
 
   // Mirror AccountSwitcherDialog: defer until after hydration so the
@@ -50,7 +52,7 @@ export function LogoutScopeDialog() {
 
   const close = () => {
     const next = new URLSearchParams(searchParams)
-    next.delete(SEARCH_PARAM)
+    next.delete(LOGOUT_CONFIRM_PARAM)
     setSearchParams(next, { replace: true })
   }
 

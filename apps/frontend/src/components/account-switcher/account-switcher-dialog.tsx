@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Check, LogIn, Trash2, UserPlus } from "lucide-react"
 import { toast } from "sonner"
-import { accountsApi, type AccountSummary } from "@/api"
+import { ACCOUNTS_LIST_KEY, accountsApi, type AccountSummary } from "@/api"
 import { useAccountScope, useAuth } from "@/auth"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,6 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { getInitials } from "@/lib/initials"
 
-const ACCOUNTS_LIST_KEY = ["accounts", "list"]
 const SEARCH_PARAM = "account-switcher"
 
 interface AccountRowProps {
