@@ -137,4 +137,30 @@ describe("e2e session store", () => {
     expect(state.status).toBe("unknown")
     expect(state.privateKey).toBeNull()
   })
+
+  it("loadE2eKeyForUser cannot clobber a concurrent setupNewKey's unlocked state", async () => {
+    // Race: loadE2eKeyForUser starts while a setupNewKey is already in flight.
+    // Make the server GET resolve *after* the setupNewKey landed so the load's
+    // trailing setState would otherwise overwrite the unlocked status.
+    let releaseGet: () => void = () => {}
+    const getGate = new Promise<void>((resolve) => {
+      releaseGet = resolve
+    })
+    vi.spyOn(e2eKeysApi, "get").mockImplementation(async () => {
+      await getGate
+      return serverKey
+    })
+
+    const loadPromise = loadE2eKeyForUser(WORKSPACE_ID, USER_ID)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", FAST_PARAMS)
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+
+    releaseGet()
+    await loadPromise
+
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state.status).toBe("unlocked")
+    expect(state.privateKey).not.toBeNull()
+    expect(state.keyId).toBe(serverKey?.keyId)
+  })
 })

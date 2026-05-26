@@ -179,8 +179,12 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
     kdfSalt: base64ToBytes(server.kdfSalt),
     kdfParams: server.kdfParams,
   }
-  scope.cachedKey = view
   await writeCacheRow(workspaceId, userId, view, server.createdAt)
+  // Re-check after the IDB write: a concurrent setupNewKey / unlock that fired
+  // during that await may already have set status:"unlocked"; we must not
+  // overwrite that fresher state with status:"locked" below.
+  if (scope.loadGeneration !== generation) return
+  scope.cachedKey = view
 
   // Server may have rotated the key on another device. If so, blow away any
   // unwrapped private key we had — it no longer matches the wrapped bundle.
@@ -206,9 +210,10 @@ export async function setupNewKey(
   params: KdfParams = DEFAULT_KDF_PARAMS
 ): Promise<void> {
   const scope = getOrCreateScope(workspaceId, userId)
-  // Invalidate any in-flight loadE2eKeyForUser so its eventual response
-  // can't overwrite the unlocked state we're about to set below.
-  scope.loadGeneration++
+  // Bump + snapshot. The bump invalidates any in-flight loadE2eKeyForUser; the
+  // snapshot lets us detect a *later* writer that bumped past us so we don't
+  // clobber their state when our slow awaits finally resolve.
+  const generation = ++scope.loadGeneration
   setState(workspaceId, userId, { error: null })
 
   const salt = generateSalt()
@@ -222,6 +227,7 @@ export async function setupNewKey(
     kdfSalt: bytesToBase64(salt),
     kdfParams: params,
   })
+  if (scope.loadGeneration !== generation) return
 
   const view: CachedKeyView = {
     keyId: serverKey.keyId,
@@ -230,8 +236,9 @@ export async function setupNewKey(
     kdfSalt: base64ToBytes(serverKey.kdfSalt),
     kdfParams: serverKey.kdfParams,
   }
-  scope.cachedKey = view
   await writeCacheRow(workspaceId, userId, view, serverKey.createdAt)
+  if (scope.loadGeneration !== generation) return
+  scope.cachedKey = view
   setState(workspaceId, userId, {
     status: "unlocked",
     keyId: view.keyId,
@@ -252,11 +259,12 @@ export async function unlock(workspaceId: string, userId: string, passphrase: st
   if (!cached) {
     throw new Error("No wrapped key available to unlock")
   }
-  scope.loadGeneration++
+  const generation = ++scope.loadGeneration
   setState(workspaceId, userId, { status: "unlocking", error: null })
   try {
     const kek = await deriveKEK(passphrase, cached.kdfSalt, cached.kdfParams)
     const privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek)
+    if (scope.loadGeneration !== generation) return
     setState(workspaceId, userId, {
       status: "unlocked",
       keyId: cached.keyId,
@@ -265,8 +273,10 @@ export async function unlock(workspaceId: string, userId: string, passphrase: st
       error: null,
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to unlock encrypted scratchpads"
-    setState(workspaceId, userId, { status: "locked", error: message, privateKey: null })
+    if (scope.loadGeneration === generation) {
+      const message = err instanceof Error ? err.message : "Failed to unlock encrypted scratchpads"
+      setState(workspaceId, userId, { status: "locked", error: message, privateKey: null })
+    }
     throw err
   }
 }
@@ -289,7 +299,7 @@ export async function rotatePassphrase(
   const scope = getOrCreateScope(workspaceId, userId)
   const cached = scope.cachedKey
   if (!cached) throw new Error("No wrapped key available to rotate")
-  scope.loadGeneration++
+  const generation = ++scope.loadGeneration
 
   const oldKek = await deriveKEK(oldPassphrase, cached.kdfSalt, cached.kdfParams)
   const privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, oldKek)
@@ -304,6 +314,7 @@ export async function rotatePassphrase(
     kdfSalt: bytesToBase64(newSalt),
     kdfParams: params,
   })
+  if (scope.loadGeneration !== generation) return
 
   const view: CachedKeyView = {
     keyId: serverKey.keyId,
@@ -312,8 +323,9 @@ export async function rotatePassphrase(
     kdfSalt: base64ToBytes(serverKey.kdfSalt),
     kdfParams: serverKey.kdfParams,
   }
-  scope.cachedKey = view
   await writeCacheRow(workspaceId, userId, view, serverKey.createdAt)
+  if (scope.loadGeneration !== generation) return
+  scope.cachedKey = view
   setState(workspaceId, userId, {
     status: "unlocked",
     keyId: view.keyId,
@@ -331,10 +343,12 @@ export async function rotatePassphrase(
  */
 export async function revokeKeyForUser(workspaceId: string, userId: string): Promise<void> {
   const scope = getOrCreateScope(workspaceId, userId)
-  scope.loadGeneration++
+  const generation = ++scope.loadGeneration
   await e2eKeysApi.revoke(workspaceId)
-  scope.cachedKey = null
+  if (scope.loadGeneration !== generation) return
   await db.e2eKeys.delete(`${workspaceId}:${userId}`)
+  if (scope.loadGeneration !== generation) return
+  scope.cachedKey = null
   setState(workspaceId, userId, { status: "no-key", keyId: null, publicKey: null, privateKey: null, error: null })
 }
 
