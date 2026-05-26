@@ -688,20 +688,32 @@ function parseSharedMessageLine(line: string): { authorName: string; streamId: s
  *   | c | d |
  *
  * which remark-gfm and our own parser both reject. The collapse is restricted
- * to blank lines flanked by lines that look like a GFM table row (start with
- * `|`) so that ordinary paragraphs containing a stray pipe aren't merged.
+ * to blank lines flanked by lines our table grammar recognises as rows or
+ * separators (with or without outer pipes) so that ordinary paragraphs
+ * containing a stray pipe aren't merged. Fenced code blocks are passed through
+ * unchanged so example markdown inside a snippet isn't rewritten.
  */
 export function normalizeMarkdownTables(markdown: string): string {
   const lines = markdown.split("\n")
   const out: string[] = []
+  let inFence = false
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
+    if (line.startsWith("```")) {
+      inFence = !inFence
+      out.push(line)
+      continue
+    }
+    if (inFence) {
+      out.push(line)
+      continue
+    }
     if (
       line.trim() === "" &&
       out.length > 0 &&
-      looksLikePipeRow(out[out.length - 1]) &&
+      isCollapsibleTableLine(out[out.length - 1]) &&
       i + 1 < lines.length &&
-      looksLikePipeRow(lines[i + 1])
+      isCollapsibleTableLine(lines[i + 1])
     ) {
       continue
     }
@@ -710,9 +722,8 @@ export function normalizeMarkdownTables(markdown: string): string {
   return out.join("\n")
 }
 
-function looksLikePipeRow(line: string): boolean {
-  const trimmed = line.trim()
-  return trimmed.startsWith("|") && trimmed.length > 1
+function isCollapsibleTableLine(line: string): boolean {
+  return isTableRowLine(line) || isTableSeparatorLine(line)
 }
 
 function isTableRowLine(line: string | undefined): boolean {

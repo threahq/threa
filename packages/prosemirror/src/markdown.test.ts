@@ -653,8 +653,22 @@ describe("@threa/prosemirror normalizeMarkdownTables", () => {
     expect(normalized).toBe(["| a | b |", "| --- | --- |", "| 1 | 2 |", "| 3 | 4 |"].join("\n"))
   })
 
+  it("collapses blank lines between pipeless rows", () => {
+    // GFM accepts outer-pipe-less rows; LLM output uses this form too.
+    const input = ["Name | Role", "--- | ---", "", "Alice | PM", "", "Bob | Eng"].join("\n")
+    const normalized = normalizeMarkdownTables(input)
+    expect(normalized).toBe(["Name | Role", "--- | ---", "Alice | PM", "Bob | Eng"].join("\n"))
+  })
+
   it("preserves blank lines that are not between pipe rows", () => {
     const input = ["paragraph one", "", "paragraph two"].join("\n")
+    expect(normalizeMarkdownTables(input)).toBe(input)
+  })
+
+  it("leaves blank lines inside fenced code blocks untouched", () => {
+    // A markdown sample shown inside a code fence must not be rewritten — the
+    // user is documenting the literal source, not asking us to render it.
+    const input = ["```", "| a | b |", "", "| --- | --- |", "```"].join("\n")
     expect(normalizeMarkdownTables(input)).toBe(input)
   })
 
