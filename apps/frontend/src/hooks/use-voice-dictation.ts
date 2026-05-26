@@ -149,25 +149,39 @@ const SAMPLE_RATE_HZ = 16_000
 // through anyway so the button can't hang in the "stopping" state forever.
 const STOP_ACK_TIMEOUT_MS = 3000
 
-// Silence-detection thresholds. A working mic in even a very quiet room
-// produces ambient signal (breathing, faint motion, room tone) within a couple
-// of seconds and the smoothed level crosses this floor easily. A dead input —
-// e.g. a Bluetooth headset whose A2DP/HFP profile didn't switch, or wired
-// headphones whose mic isn't actually wired in — leaves the analyser at zero
-// because the audio graph is genuinely delivering zeros, so the smoothed level
-// stays at 0 forever. If we haven't seen ANY signal cross the floor within the
-// wait window, the input is dead and the user needs to know — otherwise they
-// stare at a recording mic that never produces a transcript.
-export const NO_AUDIO_WAIT_MS = 2500
+// Silence-detection thresholds. Two failure modes to catch:
+//
+// 1. Initial silence: the analyser was at zero from the moment the take began.
+//    The selected input is dead (Bluetooth headset stuck on A2DP, wired
+//    headphones with no working mic, OS-muted input). Fires fast (2.5s)
+//    because there's no ambiguity — a working mic shows ambient ADC dither
+//    within milliseconds.
+//
+// 2. Lost signal: the take WAS capturing audio and then went silent — e.g. a
+//    Bluetooth headset that briefly entered HFP and then dropped back, a USB
+//    glitch, a profile renegotiation. Fires slower (5s) to give legitimate
+//    pauses (taking a breath, thinking mid-sentence) room before nagging.
+//
+// `peakLevelInTakeRef >= NO_AUDIO_PEAK_THRESHOLD` separates the two cases:
+// peak only ever ratchets up, so if it's still below the floor we're in
+// case 1; otherwise we're in case 2 and the question becomes "how long since
+// the LAST signal crossing".
+export const NO_AUDIO_INITIAL_WAIT_MS = 2500
+export const NO_AUDIO_SILENCE_WAIT_MS = 5000
 export const NO_AUDIO_PEAK_THRESHOLD = 0.003
 
-export function shouldWarnNoAudio(elapsedMs: number, peakLevel: number): boolean {
-  return elapsedMs >= NO_AUDIO_WAIT_MS && peakLevel < NO_AUDIO_PEAK_THRESHOLD
+export function shouldWarnNoAudio(args: { elapsedMs: number; silenceMs: number; peakLevel: number }): boolean {
+  if (args.peakLevel >= NO_AUDIO_PEAK_THRESHOLD) {
+    return args.silenceMs >= NO_AUDIO_SILENCE_WAIT_MS
+  }
+  return args.elapsedMs >= NO_AUDIO_INITIAL_WAIT_MS
 }
 
-export function noAudioWarningMessage(deviceLabel: string | null): string {
-  const device = deviceLabel && deviceLabel.trim().length > 0 ? deviceLabel : "your microphone"
-  return `We're not hearing audio from ${device} — try a different input device`
+export function noAudioWarningMessage(args: { deviceLabel: string | null; everHadSignal: boolean }): string {
+  const device = args.deviceLabel && args.deviceLabel.trim().length > 0 ? args.deviceLabel : "your microphone"
+  return args.everHadSignal
+    ? `Audio from ${device} dropped — check it's still active or switch inputs`
+    : `We're not hearing audio from ${device} — try a different input device`
 }
 
 function detectSupport(): { supported: boolean; reason: string | null } {
@@ -251,11 +265,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const lastSetLevelRef = useRef(0)
   const lastElapsedTickRef = useRef(0)
   // Silence detection. Peak tracks the highest smoothed level seen in the
-  // current take; deviceLabel is the human-readable input name from the
-  // MediaStreamTrack so the warning can name the offending mic. `warningShownRef`
-  // mirrors the React state so the rAF tick can avoid setState churn when the
-  // condition hasn't flipped.
+  // current take (used as a "have we EVER had signal" proxy — it only ratchets
+  // up). `lastSignalAt` tracks the timestamp of the most recent tick that
+  // crossed the threshold, so the lost-signal warning can measure "time since
+  // we last heard anything". `deviceLabel` is the human-readable input name
+  // from the MediaStreamTrack so the warning can name the offending mic.
+  // `warningShownRef` mirrors the React state so the rAF tick can avoid
+  // setState churn when the condition hasn't flipped.
   const peakLevelInTakeRef = useRef(0)
+  const lastSignalAtRef = useRef(0)
   const deviceLabelRef = useRef<string | null>(null)
   const warningShownRef = useRef(false)
   const [noAudioWarning, setNoAudioWarning] = useState<string | null>(null)
@@ -319,6 +337,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     smoothedLevelRef.current = 0
     lastSetLevelRef.current = 0
     peakLevelInTakeRef.current = 0
+    lastSignalAtRef.current = 0
     deviceLabelRef.current = null
     if (warningShownRef.current) {
       warningShownRef.current = false
@@ -363,17 +382,26 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         setLevel(next)
       }
       const now = performance.now()
+      // Stamp the last-signal timestamp every tick the smoothed level crosses
+      // the floor. Used by the lost-signal branch of shouldWarnNoAudio so a
+      // take that briefly captured audio then went dead (e.g. headphone HFP
+      // dropping back to A2DP mid-take) is still surfaced to the user.
+      if (next >= NO_AUDIO_PEAK_THRESHOLD) lastSignalAtRef.current = now
       if (now - lastElapsedTickRef.current >= 250) {
         lastElapsedTickRef.current = now
         const elapsed = now - recordingStartRef.current
         setElapsedMs(elapsed)
-        // Once we've seen real signal we don't second-guess later quiet stretches —
-        // the user may simply have paused mid-take. The warning is only for inputs
-        // that have produced nothing at all since the take began.
-        const shouldWarn = shouldWarnNoAudio(elapsed, peakLevelInTakeRef.current)
+        const peak = peakLevelInTakeRef.current
+        const everHadSignal = peak >= NO_AUDIO_PEAK_THRESHOLD
+        // Time since last signal crossing. If we've never had signal,
+        // lastSignalAt is still 0 / take-start, so this reduces to elapsed —
+        // but the initial-silence branch in shouldWarnNoAudio ignores it
+        // anyway and gates on elapsed alone.
+        const silenceMs = everHadSignal ? now - lastSignalAtRef.current : elapsed
+        const shouldWarn = shouldWarnNoAudio({ elapsedMs: elapsed, silenceMs, peakLevel: peak })
         if (shouldWarn && !warningShownRef.current) {
           warningShownRef.current = true
-          setNoAudioWarning(noAudioWarningMessage(deviceLabelRef.current))
+          setNoAudioWarning(noAudioWarningMessage({ deviceLabel: deviceLabelRef.current, everHadSignal }))
         } else if (!shouldWarn && warningShownRef.current) {
           warningShownRef.current = false
           setNoAudioWarning(null)
@@ -600,6 +628,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             recordingStartRef.current = performance.now()
             lastElapsedTickRef.current = 0
             peakLevelInTakeRef.current = 0
+            lastSignalAtRef.current = recordingStartRef.current
             setElapsedMs(0)
             runMeter()
             setState("recording")
