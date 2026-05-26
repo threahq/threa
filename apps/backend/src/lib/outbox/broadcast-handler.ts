@@ -310,8 +310,14 @@ export class BroadcastHandler implements OutboxHandler {
       // No emitter wired yet — pairs with the session-unlink service path
       // (admin "kick" + offline-grace). Routing lives here so when the
       // emitter lands it just inserts the outbox row.
+      //
+      // Session room (not instance): the link is keyed to one runtime
+      // session, so siblings on the same instance running other sessions
+      // should keep their work. Narrowest-wins.
       const payload = event.payload as BotSessionLinkInvalidatedOutboxPayload
-      botNs.to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`).emit(event.eventType, payload)
+      botNs
+        .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
+        .emit(event.eventType, payload)
       return
     }
 

@@ -123,9 +123,11 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
       const runtimeSessionId = data.runtimeSessionId ?? null
 
       try {
-        // Presence upsert mirrors the HTTP `upsertPresenceFromBotKey` path so
-        // a runtime that just switched transports doesn't appear offline
-        // while it waits for its next claim/heartbeat tick.
+        // Presence upsert + bootstrap read run FIRST so an error leaves no
+        // socket-side state to roll back: the rooms are still empty, the
+        // registry has no entry, and `joined` is still null so a retried
+        // hello on the same connection works. Only after both succeed do
+        // we wire the socket up to receive future pushes.
         await botRuntimeService.upsertPresenceFromBotKey({
           workspaceId,
           botId,
@@ -140,19 +142,6 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           },
         })
 
-        socket.join(`bot:${workspaceId}:bot:${botId}`)
-        socket.join(`bot:${workspaceId}:bot:${botId}:instance:${data.instanceId}`)
-        if (runtimeSessionId) {
-          socket.join(`bot:${workspaceId}:bot:${botId}:session:${runtimeSessionId}`)
-        }
-
-        joined = {
-          instanceId: data.instanceId,
-          runtimeKind: data.runtimeKind,
-          runtimeSessionId,
-        }
-        botSocketRegistry.register({ workspaceId, botId, instanceId: data.instanceId }, socket)
-
         const bootstrap = await botRuntimeService.getBootstrapForRuntime({
           workspaceId,
           botId,
@@ -161,6 +150,18 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           supportedCapabilities: data.supportedCapabilities,
           sinceCursor: data.sinceCursor ? new Date(data.sinceCursor) : null,
         })
+
+        socket.join(`bot:${workspaceId}:bot:${botId}`)
+        socket.join(`bot:${workspaceId}:bot:${botId}:instance:${data.instanceId}`)
+        if (runtimeSessionId) {
+          socket.join(`bot:${workspaceId}:bot:${botId}:session:${runtimeSessionId}`)
+        }
+        botSocketRegistry.register({ workspaceId, botId, instanceId: data.instanceId }, socket)
+        joined = {
+          instanceId: data.instanceId,
+          runtimeKind: data.runtimeKind,
+          runtimeSessionId,
+        }
 
         const response: BotHelloResponse = {
           ok: true,

@@ -40,7 +40,7 @@ Bots also poll `GET /streams/:id/messages` to discover follow-up turns mid-sessi
 
 ### 4.1 Hybrid HTTP + WebSocket
 
-```
+```text
                      ┌──────────────────────────────────────┐
    Pi / bot runtime  │                                      │
                      │  1. POST /bot-runtime/presence       │  ← HTTP (writes that persist)
@@ -109,7 +109,7 @@ All flow through the existing `BroadcastHandler`. Schema-only changes (new entri
 | `bot_invocation:claimed`       | `{ workspaceId, botId, invocationId }` (no `claimedByInstanceId` — siblings don't need to know each other's IDs) | `bot:{ws}:{botId}` (siblings learn "stop racing this one" — best-effort nicety)             |
 | `bot_invocation:cancelled`     | `{ workspaceId, botId, invocationId, reason }`                                                                   | `bot:{ws}:{botId}`                                                                          |
 | `bot_session_link:invalidated` | `{ workspaceId, botId, instanceId, runtimeSessionId, rootStreamId }`                                             | `bot:{ws}:{botId}:instance:{instanceId}`                                                    |
-| `bot:active_actor:changed`     | `{ workspaceId, rootStreamId, previousActorId?, newActorId? }`                                                   | `bot:{ws}:{botId}` for each affected bot                                                    |
+| `bot:active_actor_changed`     | `{ workspaceId, rootStreamId, previousActorId?, newActorId? }`                                                   | `bot:{ws}:bot:{botId}` for each affected bot                                                |
 | `bot:resync`                   | `{ workspaceId, botId?, instanceId?, reason }`                                                                   | most-specific of: `bot:{ws}:{botId}:instance:{instanceId}` → `bot:{ws}:{botId}` → workspace |
 
 These are **purely informational pushes**. Persistence already happened. The bot reacts by issuing the appropriate HTTP call (claim, fetch, etc.), or — for `bot:resync` — by re-running the `bot:hello` handshake.
@@ -126,7 +126,7 @@ Concretely:
 
 - `BotInvocationRepository.insertIdempotent` runs inside `withTransaction`, alongside `OutboxRepository.insert(db, "bot_invocation:available", payload)`. Outbox event fires **only on first insert** (not on `ON CONFLICT` reuse) — detected via `RETURNING xmax = 0`. Test must assert no double-fire on second call with the same idempotency key.
 - The outbox handler at `invocation-outbox-handler.ts:113-189` invokes `createInvocation` once per mentioned bot in a loop. **Wrap the whole loop in one transaction** (`createInvocationsInTransaction(streamMessage, bots[])` taking the per-message context once) so we open one connection per inbound message instead of N. The current loop is N round-trips to a per-call `withTransaction`; the new pattern is one.
-- `StreamActiveActorRepository.upsert` (any code path that mutates `stream_active_actors`, including `BotRuntimeService.setActiveActor` and `createOrLinkPiRemoteSessionInTransaction`) must write a `bot:active_actor:changed` outbox event in the same transaction, with `affectedBotIds = [previousActorId, newActorId].filter(isBot)`. If a future caller mutates this table without going through the service method, the push is silently absent and bots miss "you are no longer the active actor" hints. **Discipline: there must be exactly one mutation path, and it must always emit.** Add a comment on the repository method pointing at the service wrapper.
+- `StreamActiveActorRepository.upsert` (any code path that mutates `stream_active_actors`, including `BotRuntimeService.setActiveActor` and `createOrLinkPiRemoteSessionInTransaction`) must write a `bot:active_actor_changed` outbox event in the same transaction, with `affectedBotIds = [previousActorId, newActorId].filter(isBot)`. If a future caller mutates this table without going through the service method, the push is silently absent and bots miss "you are no longer the active actor" hints. **Discipline: there must be exactly one mutation path, and it must always emit.** Add a comment on the repository method pointing at the service wrapper.
 
 ### 4.7 Bootstrap on Connect / Reconnect (INV-53)
 

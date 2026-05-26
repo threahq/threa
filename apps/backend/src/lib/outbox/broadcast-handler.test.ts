@@ -544,7 +544,17 @@ describe("BroadcastHandler", () => {
       payload: event.payload,
       namespace: "/bot",
     })
-    expect(emitChains.filter((e) => e.eventType === "bot_invocation:available")).toHaveLength(1)
+    // Instance room must not also receive it — the per-session subscriber is a
+    // strict subset of the per-instance set, so a second emit would deliver
+    // duplicates to the session socket.
+    expect(
+      emitChains.some(
+        (e) =>
+          e.eventType === "bot_invocation:available" &&
+          e.room === "bot:ws_1:bot:bot_alice:instance:inst_42" &&
+          e.namespace === "/bot"
+      )
+    ).toBe(false)
   })
 
   it("fans bot:active_actor_changed to every affected bot room", async () => {
