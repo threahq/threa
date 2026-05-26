@@ -23,9 +23,9 @@ import {
   useQueueDraftMessage,
   useComposerHeightPublish,
   useStashComposer,
+  useWorkspaceUserId,
 } from "@/hooks"
 import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
-import { useUser } from "@/auth"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { onDraftPromoted } from "@/lib/draft-promotions"
@@ -63,7 +63,6 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const [searchParams] = useSearchParams()
   const highlightMessageId = searchParams.get("m")
   const { panelId, openPanel, getPanelUrl, closePanel } = usePanel()
-  const user = useUser()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
@@ -88,6 +87,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   })
   const stream = idbPanelStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
+  const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
 
   // Show loading indicator only for real streams (not drafts) and only when actively loading after initial data
   const showLoadingIndicator = !isDraft && !!panelId && getStreamState(panelId) === "loading"
@@ -102,8 +102,8 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const draftThreadPendingEvents = useStreamEvents(isDraft ? (panelId ?? undefined) : undefined)
   const hasDraftThreadPendingEvents = isDraft && draftThreadPendingEvents && draftThreadPendingEvents.length > 0
   const draftThreadTimelineItems = useMemo(
-    () => (hasDraftThreadPendingEvents ? groupTimelineItems(draftThreadPendingEvents!, user?.id) : []),
-    [hasDraftThreadPendingEvents, draftThreadPendingEvents, user?.id]
+    () => (hasDraftThreadPendingEvents ? groupTimelineItems(draftThreadPendingEvents!, currentWorkspaceUserId ?? undefined) : []),
+    [hasDraftThreadPendingEvents, draftThreadPendingEvents, currentWorkspaceUserId]
   )
   const cachedParentMessage = useMemo(() => {
     if (!draftInfo || !parentCachedEvents) return null
