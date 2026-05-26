@@ -480,15 +480,40 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         sessionIdRef.current = session.voiceSessionId
         setMaxDurationMs(session.maxDurationMs)
 
+        // Don't ask the browser to apply echo cancellation or noise suppression.
+        // On iOS Safari + Bluetooth headsets this is a known cause of silent
+        // audio: Apple's voice-processing path interprets the headset's
+        // already-cleaned signal as noise and zeros it out — the analyser keeps
+        // showing a faint level (from internal processing tail) while the
+        // worklet receives nothing real. ElevenLabs's STT does its own noise
+        // handling, so we just want the rawest mono signal the OS will give us.
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+          audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
         })
         streamRef.current = stream
+        const track = stream.getAudioTracks()[0]
         // Capture the device label so the silence-detection warning can name
         // the offending input ("AirPods Pro", "MacBook Pro Microphone"). The
         // label is populated post-permission; if the browser hides it we fall
         // back to a generic phrasing in the message builder.
-        deviceLabelRef.current = stream.getAudioTracks()[0]?.label || null
+        deviceLabelRef.current = track?.label || null
+        // Track-level mute fires when the OS revokes the input mid-take — most
+        // commonly a Bluetooth headset renegotiating profiles, or the user
+        // muting at the system level. The track stays alive but produces no
+        // frames; without this listener the take silently dies. Surface it
+        // through the same warning channel so the user knows the input
+        // dropped, and clear it on unmute so a recovered headset doesn't
+        // leave stale chrome.
+        if (track) {
+          track.onmute = () => {
+            warningShownRef.current = true
+            setNoAudioWarning(noAudioWarningMessage({ deviceLabel: deviceLabelRef.current, everHadSignal: true }))
+          }
+          track.onunmute = () => {
+            warningShownRef.current = false
+            setNoAudioWarning(null)
+          }
+        }
 
         const AudioCtx =
           window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
@@ -523,6 +548,18 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         // iOS Safari starts the context suspended; without this the worklet's
         // process() never runs and no audio frames are produced.
         if (audioContext.state === "suspended") await audioContext.resume()
+        // iOS Safari also suspends contexts MID-TAKE on various triggers (page
+        // backgrounding, silent-mode toggle, sometimes spontaneous power-save).
+        // When that happens, the worklet's process() stops running and no audio
+        // reaches the upstream — but no error fires either, so the take just
+        // goes silent. Auto-resume puts the graph back to work; if it can't
+        // resume (genuinely backgrounded), the next tick will fail and the
+        // existing teardown paths take over.
+        audioContext.onstatechange = () => {
+          if (audioContext.state === "suspended") {
+            audioContext.resume().catch(() => {})
+          }
+        }
 
         const socket = io(voiceUrl, { path: "/socket.io/", withCredentials: true, autoConnect: true })
         socketRef.current = socket
