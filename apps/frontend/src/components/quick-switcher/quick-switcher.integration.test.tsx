@@ -11,6 +11,7 @@ import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
+import * as createEncryptedScratchpadModule from "@/hooks/use-create-encrypted-scratchpad"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamsApiModule from "@/api/streams"
@@ -128,6 +129,14 @@ function installSpies() {
   vi.spyOn(hooksModule, "useCreateStream").mockReturnValue({
     mutateAsync: vi.fn(),
   } as unknown as ReturnType<typeof hooksModule.useCreateStream>)
+  // `useCreateEncryptedScratchpad` reaches into `useSyncEngine`, which throws
+  // outside a SyncEngineProvider. The QuickSwitcher tests don't mount one, so
+  // stub the hook out instead of wiring a sync engine into the test harness.
+  vi.spyOn(createEncryptedScratchpadModule, "useCreateEncryptedScratchpad").mockReturnValue(
+    vi.fn(async () => "stream_e2e_test") as unknown as ReturnType<
+      typeof createEncryptedScratchpadModule.useCreateEncryptedScratchpad
+    >
+  )
   vi.spyOn(hooksModule, "useSearch").mockImplementation(
     () =>
       ({
