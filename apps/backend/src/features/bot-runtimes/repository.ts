@@ -332,10 +332,15 @@ export const BotRuntimeInstanceRepository = {
       acceptingInvocations: boolean
       capabilities: Record<string, unknown>
       statusText?: string | null
+      mergeCapabilities?: boolean
     }
   ): Promise<BotRuntimeInstance> {
-    const result =
-      await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text)
+    const result = params.mergeCapabilities
+      ? await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text)
+      VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.statusText ?? null})
+      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, capabilities = bot_runtime_instances.capabilities || EXCLUDED.capabilities, status_text = EXCLUDED.status_text, last_seen_at = NOW(), updated_at = NOW()
+      RETURNING *`)
+      : await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text)
       VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.statusText ?? null})
       ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, capabilities = EXCLUDED.capabilities, status_text = EXCLUDED.status_text, last_seen_at = NOW(), updated_at = NOW()
       RETURNING *`)

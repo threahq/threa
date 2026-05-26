@@ -643,6 +643,7 @@ export function createPublicApiHandlers({
         acceptingInvocations: params.acceptingInvocations,
         capabilities: params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : undefined,
         statusText: sanitizeStatusText(params.statusText),
+        mergeCapabilities: true,
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
     } catch (err) {
