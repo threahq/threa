@@ -12,6 +12,7 @@ import type { EventType, JSONContent, LinkPreviewSummary, StreamType } from "@th
 import { ARIADNE_PERSONA_SLUG, StreamTypes, SLUG_PATTERN, CompanionModes } from "@threa/types"
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
+import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { serializeBigInt } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
@@ -45,6 +46,15 @@ const createStreamSchema = z
      * the backend crashes on boot.
      */
     contextBag: z.lazy(() => contextBagSchema).optional(),
+    /**
+     * E2E activation at stream-creation time. When `e2eEnabled` is true,
+     * `ownerKeyId` must reference the caller's active key in
+     * `user_e2e_keys`; the handler verifies ownership and the service marks
+     * the stream in `e2e_scratchpads` inside the same transaction as the
+     * stream insert. Only scratchpads can be E2E in Phase 1.
+     */
+    e2eEnabled: z.literal(true).optional(),
+    e2eOwnerKeyId: z.string().min(1).optional(),
   })
   .refine((data) => data.type !== "channel" || data.slug, {
     message: "Slug is required for channels",
@@ -57,6 +67,18 @@ const createStreamSchema = z
   .refine((data) => !data.contextBag || data.type === "scratchpad", {
     message: "contextBag is only supported on scratchpad creation",
     path: ["contextBag"],
+  })
+  .refine((data) => !data.e2eEnabled || data.type === "scratchpad", {
+    message: "E2E encryption is only supported on scratchpad creation",
+    path: ["e2eEnabled"],
+  })
+  .refine((data) => !data.e2eEnabled || !!data.e2eOwnerKeyId, {
+    message: "e2eOwnerKeyId is required when e2eEnabled is true",
+    path: ["e2eOwnerKeyId"],
+  })
+  .refine((data) => !data.e2eEnabled || !data.contextBag, {
+    message: "contextBag and E2E are mutually exclusive in Phase 1",
+    path: ["e2eEnabled"],
   })
 
 const updateStreamSchema = z.object({
@@ -363,7 +385,26 @@ export function createStreamHandlers({
         parentMessageId,
         memberIds,
         contextBag,
+        e2eEnabled,
+        e2eOwnerKeyId,
       } = result.data
+
+      // Verify the caller owns the referenced E2E key BEFORE we hand off to
+      // the service. Phase 1 invariant: the stream's `owner_user_key_id`
+      // must always be an active key the caller actually controls — anything
+      // else would let an attacker bind a scratchpad to someone else's
+      // pubkey and lock the real owner out.
+      let resolvedE2eOwnerKeyId: string | undefined
+      if (e2eEnabled) {
+        const key = await UserE2eKeysRepository.getByKeyId(pool, workspaceId, e2eOwnerKeyId!)
+        if (!key || key.userId !== userId || key.revokedAt !== null) {
+          throw new HttpError("E2E key not found, revoked, or not owned by caller", {
+            status: 400,
+            code: "E2E_KEY_INVALID",
+          })
+        }
+        resolvedE2eOwnerKeyId = key.keyId
+      }
 
       // When a contextBag is attached, the stream must be a companion-mode
       // scratchpad with Ariadne as the persona — otherwise subsequent user
@@ -373,6 +414,14 @@ export function createStreamHandlers({
       // of truth.
       let resolvedCompanionMode = companionMode
       let resolvedPersonaId = companionPersonaId
+      if (e2eEnabled) {
+        // INV-E1: companion mode would broadcast plaintext from Ariadne into
+        // an encrypted stream. Force-off rather than rejecting so the
+        // Quickswitcher entry point doesn't have to coordinate with whatever
+        // companion default the workspace ships with.
+        resolvedCompanionMode = CompanionModes.OFF
+        resolvedPersonaId = undefined
+      }
       if (contextBag) {
         // Verify the caller can read every referenced ref BEFORE we persist
         // the bag. INV-8 workspace scoping plus per-kind access checks
@@ -416,6 +465,7 @@ export function createStreamHandlers({
         memberIds,
         createdBy: userId,
         contextBag,
+        e2e: resolvedE2eOwnerKeyId ? { ownerKeyId: resolvedE2eOwnerKeyId } : undefined,
       })
 
       res.status(201).json({ stream })

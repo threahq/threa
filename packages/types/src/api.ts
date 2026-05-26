@@ -48,6 +48,13 @@ export interface CreateStreamInput {
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */
   contextBag?: ContextBag
+  /**
+   * Mark the new scratchpad as end-to-end encrypted. When true,
+   * `e2eOwnerKeyId` must reference the caller's active UIK; the backend
+   * forces `companionMode` off because Ariadne can't see ciphertext.
+   */
+  e2eEnabled?: true
+  e2eOwnerKeyId?: string
 }
 
 export interface UpdateStreamInput {
