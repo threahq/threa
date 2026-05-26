@@ -15,6 +15,7 @@
   "dependencies": {
     "@floating-ui/react": "^0.27.16",
     "@hookform/resolvers": "^5.2.2",
+    "@hpke/core": "^1.9.0",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",
@@ -78,6 +79,7 @@
     "dexie": "^4.2.1",
     "dexie-react-hooks": "^4.2.0",
     "embla-carousel-react": "^8.6.0",
+    "hash-wasm": "^4.12.0",
     "input-otp": "^1.4.2",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.561.0",

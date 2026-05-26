@@ -68,6 +68,7 @@ import {
   StubBoundaryExtractor,
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
+import { UserE2eKeysService } from "./features/user-e2e-keys"
 import { createS3Storage } from "./lib/storage/s3-client"
 import {
   OutboxDispatcher,
@@ -248,6 +249,7 @@ export async function startServer(): Promise<ServerInstance> {
     : new StreamNamingService(pool, ai, configResolver, messageFormatter)
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
+  const userE2eKeysService = new UserE2eKeysService(pool)
 
   // Search and embedding services
   const embeddingService = config.useStubAI ? new StubEmbeddingService() : new EmbeddingService({ ai })
@@ -526,6 +528,7 @@ export async function startServer(): Promise<ServerInstance> {
     memoExplorerService,
     conversationService,
     userPreferencesService,
+    userE2eKeysService,
     invitationService,
     activityService,
     savedMessagesService,
