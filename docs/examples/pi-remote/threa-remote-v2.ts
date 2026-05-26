@@ -1828,7 +1828,7 @@ export default function (pi: ExtensionAPI): void {
     },
   })
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (event, ctx) => {
     config = readConfig()
     if (!config) return
     if (!isEnabled(ctx)) {
@@ -1838,6 +1838,7 @@ export default function (pi: ExtensionAPI): void {
     lastBusyHeartbeatAt = 0
     await heartbeat("available", undefined, ctx)
     startPolling(pi, ctx)
+    if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
   })
 
   pi.on("agent_start", async (_event, ctx) => {
@@ -1924,8 +1925,12 @@ export default function (pi: ExtensionAPI): void {
     }
   })
 
-  pi.on("session_shutdown", async (_event, ctx) => {
+  pi.on("session_shutdown", async (event, ctx) => {
     stopPolling()
+    if (event.reason === "reload" && config && isEnabled(ctx)) {
+      setRemoteStatus(ctx, "Threa remote: reloading…")
+      return
+    }
     await failPending("Pi session shut down", ctx)
     await heartbeat("offline", undefined, ctx).catch(() => undefined)
     ctx.ui.setStatus(STATUS_KEY, undefined)
