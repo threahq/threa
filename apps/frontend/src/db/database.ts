@@ -9,6 +9,7 @@ import type {
   StreamType,
   WorkspaceRoleSlug,
 } from "@threa/types"
+import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 
 const WORKSPACE_USERS_STORE = "workspaceUsers"
@@ -465,7 +466,7 @@ export interface CachedE2eKey {
   publicKey: string // base64
   encryptedPrivateBundle: string // base64
   kdfSalt: string // base64
-  kdfParams: { algorithm: "argon2id"; m: number; t: number; p: number; version: number }
+  kdfParams: KdfParams
   createdAt: string
   _cachedAt: number
 }

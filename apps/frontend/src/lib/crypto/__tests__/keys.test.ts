@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { generateUIK, unwrapPrivate, wrapPrivate } from "../keys"
+import { fingerprintPublicKey, generateUIK, unwrapPrivate, wrapPrivate } from "../keys"
 import { deriveKEK, generateSalt, DEFAULT_KDF_PARAMS } from "../passphrase"
 import { encryptPayload, decryptPayloadAsString } from "../envelope"
 
 // Argon2id on the desktop CI runs in ~50ms with the defaults below; tighten
-// further if test runtime becomes an issue. Real-device benchmarks happen in
-// the setup modal, not here.
+// further if test runtime becomes an issue.
 const FAST_PARAMS = { ...DEFAULT_KDF_PARAMS, m: 8 * 1024, t: 1 }
 
 describe("UIK lifecycle", () => {
@@ -52,6 +51,28 @@ describe("UIK lifecycle", () => {
     const tampered = new Uint8Array(wrapped)
     tampered[0] = 99
     await expect(unwrapPrivate(tampered, kek)).rejects.toThrow(/Unsupported private bundle version/)
+  })
+})
+
+describe("fingerprintPublicKey", () => {
+  it("is deterministic for the same bytes", async () => {
+    const pk = new Uint8Array(32).map((_, i) => i)
+    const a = await fingerprintPublicKey(pk)
+    const b = await fingerprintPublicKey(pk)
+    expect(a).toBe(b)
+  })
+
+  it("differs when any byte differs", async () => {
+    const a = new Uint8Array(32).map((_, i) => i)
+    const b = new Uint8Array(32).map((_, i) => i)
+    b[0] = (b[0]! + 1) & 0xff
+    expect(await fingerprintPublicKey(a)).not.toBe(await fingerprintPublicKey(b))
+  })
+
+  it("renders four 4-char hex groups separated by spaces", async () => {
+    const pk = new Uint8Array(32)
+    const fp = await fingerprintPublicKey(pk)
+    expect(fp).toMatch(/^[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}$/)
   })
 })
 

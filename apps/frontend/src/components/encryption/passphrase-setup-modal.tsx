@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -13,7 +13,9 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { cn } from "@/lib/utils"
 import { setupNewKey } from "@/stores/e2e-session-store"
+import { scorePassphrase, type PassphraseScore } from "./passphrase-strength"
 
 interface PassphraseSetupModalProps {
   open: boolean
@@ -24,6 +26,32 @@ interface PassphraseSetupModalProps {
 }
 
 const MIN_PASSPHRASE_LENGTH = 10
+
+const STRENGTH_PIP_CLASSES = [
+  "bg-destructive",
+  "bg-destructive/80",
+  "bg-amber-500",
+  "bg-emerald-500/80",
+  "bg-emerald-500",
+] as const
+
+function PassphraseStrengthMeter({ score }: { score: PassphraseScore }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex gap-1" aria-hidden>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className={cn("h-1 flex-1 rounded-full", i <= score.level ? STRENGTH_PIP_CLASSES[score.level] : "bg-muted")}
+          />
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground" aria-live="polite">
+        <span className="font-medium text-foreground">{score.label}.</span> {score.description}
+      </p>
+    </div>
+  )
+}
 
 /**
  * First-time setup flow: collects a passphrase + confirmation, derives the
@@ -46,6 +74,7 @@ export function PassphraseSetupModal({
 
   const passphraseTooShort = passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH
   const mismatched = confirm.length > 0 && passphrase !== confirm
+  const strength = useMemo(() => scorePassphrase(passphrase), [passphrase])
   const canSubmit =
     !submitting &&
     !passphraseTooShort &&
@@ -116,6 +145,7 @@ export function PassphraseSetupModal({
                 placeholder={`At least ${MIN_PASSPHRASE_LENGTH} characters`}
                 aria-invalid={passphraseTooShort}
               />
+              {passphrase.length > 0 && <PassphraseStrengthMeter score={strength} />}
               {passphraseTooShort && (
                 <p className="text-xs text-destructive">Use at least {MIN_PASSPHRASE_LENGTH} characters.</p>
               )}

@@ -71,3 +71,18 @@ export async function unwrapPrivate(bundle: Uint8Array, kek: CryptoKey): Promise
   const privBytes = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, kek, ciphertext))
   return importRecipientPrivateKey(privBytes)
 }
+
+/**
+ * Short, human-verifiable fingerprint of a public key — SHA-256 of the raw
+ * bytes, first 8 bytes, rendered as four 4-character hex groups separated by
+ * spaces. Surfaces in the unlock modal so users can confirm which key they're
+ * about to unlock against (especially after a cross-device rotation).
+ */
+export async function fingerprintPublicKey(publicKey: Uint8Array): Promise<string> {
+  // Copy onto a fresh ArrayBuffer-backed view so WebCrypto's BufferSource
+  // typing accepts it (TS 5.7+ rejects the `ArrayBufferLike` default).
+  const input = new Uint8Array(publicKey)
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", input))
+  const hex = Array.from(digest.slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("")
+  return hex.match(/.{1,4}/g)!.join(" ")
+}

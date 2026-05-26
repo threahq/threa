@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { base64ToBytes, bytesToBase64 } from "@/lib/crypto/encoding"
-import { decryptPayloadAsString, encryptPayload } from "@/lib/crypto/envelope"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
 import { db, type CachedE2eKey } from "@/db"
@@ -417,36 +416,4 @@ export function useE2eSession(workspaceId: string, userId: string): E2eSessionSt
 export function resetE2eSessionStoreCache(): void {
   scopes.clear()
   listeners.clear()
-}
-
-/**
- * Convenience wrappers around the envelope primitives bound to the active
- * unlocked key. Useful from UI flows that want to encrypt/decrypt without
- * threading the private key through every layer.
- */
-export async function encryptForSelf(
-  workspaceId: string,
-  userId: string,
-  payload: Uint8Array | string,
-  aad?: Uint8Array
-) {
-  const scope = scopes.get(scopeKey(workspaceId, userId))
-  if (!scope?.state.publicKey || !scope.state.keyId) {
-    throw new Error("E2E identity key not available")
-  }
-  return encryptPayload({
-    payload,
-    aad,
-    recipients: [{ recipientKeyId: scope.state.keyId, publicKey: scope.state.publicKey }],
-  })
-}
-
-export async function decryptFromSelfAsString(
-  workspaceId: string,
-  userId: string,
-  envelope: Parameters<typeof decryptPayloadAsString>[0]["envelope"]
-): Promise<string> {
-  const privateKey = requireUnlockedPrivateKey(workspaceId, userId)
-  const scope = scopes.get(scopeKey(workspaceId, userId))!
-  return decryptPayloadAsString({ envelope, privateKey, recipientKeyId: scope.state.keyId! })
 }

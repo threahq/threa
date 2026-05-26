@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,7 +12,8 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { unlock } from "@/stores/e2e-session-store"
+import { fingerprintPublicKey } from "@/lib/crypto/keys"
+import { unlock, useE2eSession } from "@/stores/e2e-session-store"
 
 interface PassphraseUnlockModalProps {
   open: boolean
@@ -34,9 +35,27 @@ export function PassphraseUnlockModal({
   onOpenChange,
   onUnlocked,
 }: PassphraseUnlockModalProps) {
+  const session = useE2eSession(workspaceId, userId)
   const [passphrase, setPassphrase] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fingerprint, setFingerprint] = useState<string | null>(null)
+
+  // Recompute the fingerprint whenever the active public key changes
+  // (cross-device rotation can swap it under us while the modal is open).
+  useEffect(() => {
+    let cancelled = false
+    if (!session.publicKey) {
+      setFingerprint(null)
+      return
+    }
+    void fingerprintPublicKey(session.publicKey).then((fp) => {
+      if (!cancelled) setFingerprint(fp)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [session.publicKey])
 
   const reset = () => {
     setPassphrase("")
@@ -79,6 +98,12 @@ export function PassphraseUnlockModal({
         </ResponsiveDialogHeader>
         <form onSubmit={handleSubmit}>
           <ResponsiveDialogBody className="space-y-4 py-4">
+            {fingerprint && (
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Key fingerprint</p>
+                <p className="font-mono text-xs tracking-wider text-foreground">{fingerprint}</p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="e2e-unlock-passphrase">Passphrase</Label>
               <Input

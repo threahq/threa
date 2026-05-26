@@ -1,3 +1,4 @@
+import type { KdfParams } from "@/lib/crypto/passphrase"
 import { api, ApiError } from "./client"
 
 /**
@@ -10,7 +11,7 @@ export interface E2eKeyResponse {
   publicKey: string
   encryptedPrivateBundle: string
   kdfSalt: string
-  kdfParams: { algorithm: "argon2id"; m: number; t: number; p: number; version: number }
+  kdfParams: KdfParams
   createdAt: string
 }
 
@@ -18,7 +19,7 @@ export interface SetE2eKeyInput {
   publicKey: string
   encryptedPrivateBundle: string
   kdfSalt: string
-  kdfParams: { algorithm: "argon2id"; m: number; t: number; p: number; version: number }
+  kdfParams: KdfParams
 }
 
 export interface SetE2eKeyResponse {

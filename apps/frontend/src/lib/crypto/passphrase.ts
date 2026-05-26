@@ -4,11 +4,9 @@ import { argon2id } from "hash-wasm"
  * Passphrase → KEK derivation via Argon2id.
  *
  * Defaults aim at roughly 250 ms on a mid-range phone (a Pixel 6a-class
- * device). The right way to tune these is `benchmark()` on the user's actual
- * device, not by ear — see the Risk Areas section of the plan doc. The
- * parameters travel with the encrypted bundle so a device that finishes the
- * derivation has everything it needs to repeat it later, even if defaults
- * change.
+ * device). The parameters travel with the encrypted bundle so a device that
+ * finishes the derivation has everything it needs to repeat it later, even
+ * if defaults change.
  */
 
 export interface KdfParams {
@@ -71,26 +69,4 @@ export function generateSalt(): Uint8Array {
   const salt = new Uint8Array(16)
   crypto.getRandomValues(salt)
   return salt
-}
-
-/**
- * Run a single Argon2id derivation and time it. Used by the setup modal so we
- * can adjust `t` downward when the user's device is much slower than the
- * mid-range phone we target.
- *
- * Returns the time the derivation took, in milliseconds.
- */
-export async function benchmark(params: KdfParams = DEFAULT_KDF_PARAMS): Promise<number> {
-  const salt = generateSalt()
-  const start = performance.now()
-  await argon2id({
-    password: "benchmark-only-not-a-real-passphrase",
-    salt,
-    iterations: params.t,
-    parallelism: params.p,
-    memorySize: params.m,
-    hashLength: KEK_LENGTH_BYTES,
-    outputType: "binary",
-  })
-  return performance.now() - start
 }
