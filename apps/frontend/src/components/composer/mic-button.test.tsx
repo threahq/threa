@@ -87,6 +87,7 @@ describe("MicButton state surfaces", () => {
       hasUnlockedChunks: false,
       showOriginal: false,
       setShowOriginal: vi.fn(),
+      noAudioWarning: null,
       start: vi.fn(),
       stop: vi.fn(),
       ...overrides,

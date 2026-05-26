@@ -116,6 +116,14 @@ interface UseVoiceDictationResult {
   showOriginal: boolean
   /** Flip the session-wide toggle. Walks every unlocked chunk and swaps its text in the editor. */
   setShowOriginal: (target: boolean) => void
+  /**
+   * Non-fatal warning that the selected input device is producing silence —
+   * surfaced after a brief grace window when the analyser sees no signal at
+   * all. Null otherwise. Most common cause: a Bluetooth headset that didn't
+   * switch to its HFP/HSP profile, or a wired headphone selected as default
+   * input but with no working mic. Clears immediately when signal appears.
+   */
+  noAudioWarning: string | null
   start: () => void
   stop: () => void
 }
@@ -140,6 +148,27 @@ const SAMPLE_RATE_HZ = 16_000
 // If the server never acks voice:stop (dropped connection mid-stop), fall
 // through anyway so the button can't hang in the "stopping" state forever.
 const STOP_ACK_TIMEOUT_MS = 3000
+
+// Silence-detection thresholds. A working mic in even a very quiet room
+// produces ambient signal (breathing, faint motion, room tone) within a couple
+// of seconds and the smoothed level crosses this floor easily. A dead input —
+// e.g. a Bluetooth headset whose A2DP/HFP profile didn't switch, or wired
+// headphones whose mic isn't actually wired in — leaves the analyser at zero
+// because the audio graph is genuinely delivering zeros, so the smoothed level
+// stays at 0 forever. If we haven't seen ANY signal cross the floor within the
+// wait window, the input is dead and the user needs to know — otherwise they
+// stare at a recording mic that never produces a transcript.
+export const NO_AUDIO_WAIT_MS = 2500
+export const NO_AUDIO_PEAK_THRESHOLD = 0.003
+
+export function shouldWarnNoAudio(elapsedMs: number, peakLevel: number): boolean {
+  return elapsedMs >= NO_AUDIO_WAIT_MS && peakLevel < NO_AUDIO_PEAK_THRESHOLD
+}
+
+export function noAudioWarningMessage(deviceLabel: string | null): string {
+  const device = deviceLabel && deviceLabel.trim().length > 0 ? deviceLabel : "your microphone"
+  return `We're not hearing audio from ${device} — try a different input device`
+}
 
 function detectSupport(): { supported: boolean; reason: string | null } {
   if (typeof window === "undefined") return { supported: false, reason: "Voice input is unavailable here" }
@@ -221,6 +250,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const smoothedLevelRef = useRef(0)
   const lastSetLevelRef = useRef(0)
   const lastElapsedTickRef = useRef(0)
+  // Silence detection. Peak tracks the highest smoothed level seen in the
+  // current take; deviceLabel is the human-readable input name from the
+  // MediaStreamTrack so the warning can name the offending mic. `warningShownRef`
+  // mirrors the React state so the rAF tick can avoid setState churn when the
+  // condition hasn't flipped.
+  const peakLevelInTakeRef = useRef(0)
+  const deviceLabelRef = useRef<string | null>(null)
+  const warningShownRef = useRef(false)
+  const [noAudioWarning, setNoAudioWarning] = useState<string | null>(null)
   // Bumped on every start() and every teardown/stop so a `voice:start` ACK that
   // resolves after the user has already stopped (or torn down) can't flip the
   // state machine back to "recording" with nothing behind it.
@@ -280,6 +318,12 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     analyserRef.current = null
     smoothedLevelRef.current = 0
     lastSetLevelRef.current = 0
+    peakLevelInTakeRef.current = 0
+    deviceLabelRef.current = null
+    if (warningShownRef.current) {
+      warningShownRef.current = false
+      setNoAudioWarning(null)
+    }
     setLevel(0)
     setElapsedMs(0)
     workletRef.current?.port.close()
@@ -313,6 +357,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       const prev = smoothedLevelRef.current
       const next = prev + (target - prev) * (target > prev ? 0.5 : 0.12)
       smoothedLevelRef.current = next
+      if (next > peakLevelInTakeRef.current) peakLevelInTakeRef.current = next
       if (Math.abs(next - lastSetLevelRef.current) >= 0.02) {
         lastSetLevelRef.current = next
         setLevel(next)
@@ -320,7 +365,19 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       const now = performance.now()
       if (now - lastElapsedTickRef.current >= 250) {
         lastElapsedTickRef.current = now
-        setElapsedMs(now - recordingStartRef.current)
+        const elapsed = now - recordingStartRef.current
+        setElapsedMs(elapsed)
+        // Once we've seen real signal we don't second-guess later quiet stretches —
+        // the user may simply have paused mid-take. The warning is only for inputs
+        // that have produced nothing at all since the take began.
+        const shouldWarn = shouldWarnNoAudio(elapsed, peakLevelInTakeRef.current)
+        if (shouldWarn && !warningShownRef.current) {
+          warningShownRef.current = true
+          setNoAudioWarning(noAudioWarningMessage(deviceLabelRef.current))
+        } else if (!shouldWarn && warningShownRef.current) {
+          warningShownRef.current = false
+          setNoAudioWarning(null)
+        }
       }
       meterRafRef.current = requestAnimationFrame(tick)
     }
@@ -395,6 +452,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         })
         streamRef.current = stream
+        // Capture the device label so the silence-detection warning can name
+        // the offending input ("AirPods Pro", "MacBook Pro Microphone"). The
+        // label is populated post-permission; if the browser hides it we fall
+        // back to a generic phrasing in the message builder.
+        deviceLabelRef.current = stream.getAudioTracks()[0]?.label || null
 
         const AudioCtx =
           window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
@@ -537,6 +599,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
             }
             recordingStartRef.current = performance.now()
             lastElapsedTickRef.current = 0
+            peakLevelInTakeRef.current = 0
             setElapsedMs(0)
             runMeter()
             setState("recording")
@@ -707,6 +770,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     hasUnlockedChunks,
     showOriginal,
     setShowOriginal,
+    noAudioWarning,
     start,
     stop,
   }
