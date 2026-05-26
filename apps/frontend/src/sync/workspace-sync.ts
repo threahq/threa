@@ -1646,7 +1646,14 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>,
   staleStreamIds: Set<string>,
   terminalStreamIds: Set<string>,
-  fetchStartedAt?: number
+  fetchStartedAt?: number,
+  /**
+   * Workspace-scoped viewer id used by the per-stream bootstrap apply to
+   * decrypt E2E message payloads. Optional so callers without that context
+   * (tests, older paths) keep compiling — decryption is best-effort and
+   * silently skipped when omitted.
+   */
+  userId: string | null = null
 ): Promise<WorkspaceBootstrap> {
   const now = Date.now()
 
@@ -1755,7 +1762,7 @@ export async function applyReconnectBootstrapBatch(
       }
 
       for (const [streamId, bootstrap] of streamBootstraps) {
-        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now)
+        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, userId)
       }
 
       if (terminalStreamIds.size > 0) {

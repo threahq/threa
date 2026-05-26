@@ -268,10 +268,29 @@ export interface CreateDmMessageInputMarkdown {
 }
 
 /**
- * Union type - API accepts either JSON or Markdown input.
- * Backend detects format by presence of `contentJson` vs `content` field.
+ * E2E input format - used by clients sending ciphertext into a scratchpad
+ * marked in `e2e_scratchpads`. Backend verifies the stream is E2E (INV-E1)
+ * and stores `ciphertext` / `envelope` on the projection while substituting
+ * a placeholder for `contentJson` / `contentMarkdown`.
  */
-export type CreateMessageInput = CreateMessageInputJson | CreateMessageInputMarkdown
+export interface CreateMessageInputE2e {
+  streamId: string
+  /** Base64-encoded AES-GCM ciphertext from `encryptPayload`. */
+  ciphertext: string
+  /** Envelope shape returned by `encryptPayload` (recipients + IV + AAD). */
+  envelope: unknown
+  /** Envelope protocol version — backend rejects unknown values loudly. */
+  e2eVersion: number
+  /** Client-generated idempotency key to prevent duplicate sends on retry */
+  clientMessageId?: string
+}
+
+/**
+ * Union type - API accepts either JSON, Markdown, or E2E ciphertext input.
+ * Backend detects format by presence of `contentJson` / `content` /
+ * `ciphertext` field and gates each against the stream's E2E flag.
+ */
+export type CreateMessageInput = CreateMessageInputJson | CreateMessageInputMarkdown | CreateMessageInputE2e
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown
 
 /**

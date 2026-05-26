@@ -80,6 +80,14 @@ export class SyncEngine {
   private currentStreamId: string | undefined = undefined
   private visibleStreamIds: string[] = []
   private currentUser: { id: string } | null = null
+  /**
+   * Workspace-scoped user id (`UserId`) for the active session — distinct
+   * from `currentUser.id`, which is the WorkOS auth id. The E2E session
+   * store keys by workspace user id (the same id stored in `e2e_keys` and
+   * on `e2e_scratchpads`), so the message decrypt path needs this one.
+   * Resolved by the React layer once `useWorkspaceUsers` has the row.
+   */
+  private currentWorkspaceUserId: string | null = null
   /** Last workspace bootstrap error, if any. Consumers can check this for 404/403 handling. */
   lastWorkspaceError: unknown = null
 
@@ -105,6 +113,11 @@ export class SyncEngine {
   /** Update the current auth user (called from React when auth state settles). */
   setCurrentUser(user: { id: string } | null): void {
     this.currentUser = user
+  }
+
+  /** Update the workspace-scoped user id (called from React once `useWorkspaceUsers` resolves it). */
+  setCurrentWorkspaceUserId(id: string | null): void {
+    this.currentWorkspaceUserId = id
   }
 
   /**
@@ -326,7 +339,8 @@ export class SyncEngine {
           successfulStreamBootstraps,
           staleStreamIds,
           terminalStreamIds,
-          fetchStartedAt
+          fetchStartedAt,
+          this.currentWorkspaceUserId
         )
 
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
@@ -431,7 +445,15 @@ export class SyncEngine {
 
     if (!this.subscribedStreams.has(streamId)) {
       this.subscribedStreams.add(streamId)
-      const cleanup = registerStreamSocketHandlers(this.socket, this.deps.workspaceId, streamId, this.deps.queryClient)
+      const cleanup = registerStreamSocketHandlers(
+        this.socket,
+        this.deps.workspaceId,
+        streamId,
+        this.deps.queryClient,
+        {
+          getCurrentUserId: () => this.currentWorkspaceUserId,
+        }
+      )
       this.streamHandlerCleanups.set(streamId, cleanup)
     }
 
@@ -482,7 +504,7 @@ export class SyncEngine {
       const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
       const after = previousBootstrap ? await getLatestPersistedSequence(streamId) : null
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
-      await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+      await applyStreamBootstrap(workspaceId, streamId, bootstrap, this.currentWorkspaceUserId)
 
       queryClient.setQueryData<CachedStreamBootstrap>(queryKey, (currentBootstrap) =>
         toCachedStreamBootstrap(bootstrap, currentBootstrap ?? previousBootstrap, {

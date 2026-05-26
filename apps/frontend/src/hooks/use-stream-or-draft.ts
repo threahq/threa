@@ -4,6 +4,8 @@ import { useNavigate } from "react-router-dom"
 import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
+import { encryptMessage } from "@/lib/crypto/message-envelope"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -548,6 +550,36 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         createdAt: now,
       }
 
+      // If the destination is an E2E scratchpad, encrypt the markdown body
+      // to the owner's UIK and stash the ciphertext on the pending row. The
+      // drain loop is identity-agnostic — encryption happens here, while the
+      // unwrapped private key (and the matching pubkey) live in this scope.
+      let e2eFields:
+        | Pick<NonNullable<Awaited<ReturnType<typeof encryptMessage>>>, "ciphertext" | "envelope" | "e2eVersion">
+        | undefined
+      if (idbStream?.e2eEnabled && idbStream.e2eOwnerKeyId) {
+        const session = getE2eSessionState(workspaceId, currentUserId)
+        if (session.status !== "unlocked" || !session.publicKey) {
+          throw new Error("Unlock encrypted scratchpads before sending")
+        }
+        if (session.keyId !== idbStream.e2eOwnerKeyId) {
+          // The owner of the scratchpad isn't the viewer (or the viewer's UIK
+          // rotated past the one the scratchpad was created with). Phase-1
+          // MVP encrypts owner-to-self only; a rotation/sharing flow is a
+          // follow-up — fail loud rather than write a ciphertext nobody can
+          // decrypt.
+          throw new Error("Encrypted scratchpad is addressed to a key you no longer hold")
+        }
+        e2eFields = await encryptMessage({
+          contentMarkdown,
+          streamId,
+          messageId: clientId,
+          senderId: currentUserId,
+          recipientKeyId: idbStream.e2eOwnerKeyId,
+          recipientPublicKey: session.publicKey,
+        })
+      }
+
       markPending(clientId)
 
       // Persist to IndexedDB — this is the durable enqueue step.
@@ -562,6 +594,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         attachmentIds: input.attachmentIds,
         createdAt: Date.now(),
         retryCount: 0,
+        ...(e2eFields ?? {}),
       })
 
       await db.events.add({
