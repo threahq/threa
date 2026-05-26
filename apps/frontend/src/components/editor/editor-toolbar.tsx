@@ -619,14 +619,15 @@ function TableControls({
             if (roomy) e.preventDefault()
           }}
           className={cn(
-            "p-0 shrink-0 bg-muted-foreground/20 text-foreground",
+            "px-1.5 shrink-0 gap-0.5 bg-muted-foreground/20 text-foreground",
             roomy
-              ? "h-9 w-9 min-w-9 active:bg-muted hover:bg-muted-foreground/20 hover:text-current"
-              : "h-8 w-8 hover:bg-muted-foreground/20"
+              ? "h-9 active:bg-muted hover:bg-muted-foreground/20 hover:text-current"
+              : "h-8 hover:bg-muted-foreground/20"
           )}
           tabIndex={keyboardAccessible ? undefined : -1}
         >
           <TableIcon className="h-4 w-4 stroke-[2.5px]" />
+          <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
