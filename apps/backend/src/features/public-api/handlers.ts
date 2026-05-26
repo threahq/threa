@@ -505,8 +505,18 @@ export function buildRuntimeWsHint(
   // the request host is a loopback address — production must set
   // BOT_RUNTIME_WS_URL.
   const host = req.get("host") ?? ""
-  const hostname = host.split(":")[0]
-  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
+  // Strip the port. IPv6 hosts arrive bracketed (e.g. `[::1]:4000`), so
+  // splitting on `:` would yield `[`. Pull the address out of the brackets
+  // first; otherwise take the part before the last colon.
+  let hostname: string
+  if (host.startsWith("[")) {
+    const close = host.indexOf("]")
+    hostname = close === -1 ? host : host.slice(1, close)
+  } else {
+    const lastColon = host.lastIndexOf(":")
+    hostname = lastColon === -1 ? host : host.slice(0, lastColon)
+  }
+  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
   if (!isLoopback) {
     throw new HttpError("BOT_RUNTIME_WS_URL must be configured outside local development", {
       status: 503,

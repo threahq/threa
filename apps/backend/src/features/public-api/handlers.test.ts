@@ -171,6 +171,13 @@ describe("buildRuntimeWsHint", () => {
     expect(result.url).toBe("wss://127.0.0.1:4000")
   })
 
+  test("accepts a bracketed IPv6 loopback Host header", () => {
+    // `[::1]:4000`.split(":")[0] is `[`, which would otherwise fail the
+    // loopback check and 503 legitimate IPv6 dev requests.
+    const result = buildRuntimeWsHint(makeRequest({ host: "[::1]:4000" }), null)
+    expect(result).toEqual({ url: "ws://[::1]:4000", path: "/socket.io/", namespace: "/bot" })
+  })
+
   test("refuses to advertise a WS endpoint built from a non-loopback Host header", () => {
     // The Host header is attacker-controllable, so the dev fallback must not
     // hand a runtime a spoofed origin to dial with its API key.
