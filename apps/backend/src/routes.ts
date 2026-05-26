@@ -173,7 +173,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   const authHandlers = createAuthHandlers()
   const avatarUpload = createAvatarUploadMiddleware()
-  const botRuntimeService = new BotRuntimeService({ pool })
   const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
   const workspace = createWorkspaceHandlers({
     workspaceService,
