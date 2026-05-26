@@ -2,7 +2,6 @@ import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   ResponsiveDialog,
@@ -16,6 +15,7 @@ import {
 import { cn } from "@/lib/utils"
 import { setupNewKey } from "@/stores/e2e-session-store"
 import { scorePassphrase, type PassphraseScore } from "./passphrase-strength"
+import { RevealablePassphraseInput } from "./revealable-passphrase-input"
 
 interface PassphraseSetupModalProps {
   open: boolean
@@ -135,9 +135,8 @@ export function PassphraseSetupModal({
 
             <div className="space-y-2">
               <Label htmlFor="e2e-passphrase">Passphrase</Label>
-              <Input
+              <RevealablePassphraseInput
                 id="e2e-passphrase"
-                type="password"
                 value={passphrase}
                 onChange={(e) => setPassphrase(e.target.value)}
                 autoComplete="new-password"
@@ -153,9 +152,8 @@ export function PassphraseSetupModal({
 
             <div className="space-y-2">
               <Label htmlFor="e2e-passphrase-confirm">Confirm passphrase</Label>
-              <Input
+              <RevealablePassphraseInput
                 id="e2e-passphrase-confirm"
-                type="password"
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
                 autoComplete="new-password"

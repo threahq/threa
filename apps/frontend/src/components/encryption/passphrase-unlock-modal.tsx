@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
   ResponsiveDialog,
@@ -14,6 +13,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { fingerprintPublicKey } from "@/lib/crypto/keys"
 import { unlock, useE2eSession } from "@/stores/e2e-session-store"
+import { RevealablePassphraseInput } from "./revealable-passphrase-input"
 
 interface PassphraseUnlockModalProps {
   open: boolean
@@ -106,9 +106,8 @@ export function PassphraseUnlockModal({
             )}
             <div className="space-y-2">
               <Label htmlFor="e2e-unlock-passphrase">Passphrase</Label>
-              <Input
+              <RevealablePassphraseInput
                 id="e2e-unlock-passphrase"
-                type="password"
                 value={passphrase}
                 onChange={(e) => setPassphrase(e.target.value)}
                 autoComplete="current-password"
