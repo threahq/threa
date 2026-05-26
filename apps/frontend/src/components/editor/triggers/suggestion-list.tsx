@@ -1,6 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react"
 import { useFloating, offset, flip, shift, autoUpdate, type Placement } from "@floating-ui/react"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 
 /**
@@ -116,7 +115,7 @@ function SuggestionListInner<T>(
       role="listbox"
       aria-label={ariaLabel}
     >
-      <ScrollArea className="max-h-[280px]">
+      <div className="max-h-[min(280px,50dvh)] overflow-y-auto overscroll-contain touch-pan-y [-webkit-overflow-scrolling:touch]">
         <div className="p-1">
           {isEmpty ? (
             <div className="px-2.5 py-2 text-sm text-muted-foreground">{emptyState}</div>
@@ -143,7 +142,7 @@ function SuggestionListInner<T>(
             ))
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
