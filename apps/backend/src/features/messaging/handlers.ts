@@ -179,7 +179,12 @@ function normalizeContent(input: z.infer<typeof createPlaintextMessageSchema> | 
 }
 
 function serializeMessage(msg: Message) {
-  return serializeBigInt(msg)
+  // `msg.ciphertext` is a Node `Buffer` (BYTEA → driver), which `serializeBigInt`
+  // would walk with `Object.entries` and emit as a byte-indexed object on the
+  // wire. Base64-encode to match the `Message.ciphertext: string | null`
+  // contract clients expect.
+  const ciphertext = msg.ciphertext ? msg.ciphertext.toString("base64") : null
+  return serializeBigInt({ ...msg, ciphertext })
 }
 
 // Plaintext consumers (search index, message-formatter, outbox handlers) gate
@@ -257,8 +262,10 @@ export function createMessageHandlers({
       // INV-E1: a plaintext request must not land in an E2E stream and an E2E
       // request must not land in a plaintext stream. Either direction would
       // produce a row that violates the encryption guarantee, so we mismatch
-      // here before any insert occurs.
-      const isE2eStream = await e2eScratchpadsService.isE2eStream(workspaceId, streamId)
+      // here before any insert occurs. `resolveWritableMessageStream` already
+      // populates `e2eEnabled` off the `e2e_scratchpads` LEFT JOIN, so we read
+      // it off the resolved stream instead of issuing a second SELECT.
+      const isE2eStream = stream.e2eEnabled === true
       const isE2eRequest = "ciphertext" in data
       if (isE2eStream !== isE2eRequest) {
         return res.status(400).json({

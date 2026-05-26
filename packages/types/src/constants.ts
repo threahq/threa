@@ -715,5 +715,6 @@ export const MAGIC_CODE_LENGTH = 6
 // `messages.ciphertext` + `messages.envelope`; this value keeps the NOT NULL
 // projection columns satisfied and gives accidental plaintext rendering a
 // visible sentinel (zero-width space). Must stay byte-identical across
-// backend insert, frontend encrypt, and frontend decrypt paths.
-export const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "​"
+// backend insert, frontend encrypt, and frontend decrypt paths — the explicit
+// \u200B escape keeps the source readable instead of a literal invisible byte.
+export const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "\u200B"

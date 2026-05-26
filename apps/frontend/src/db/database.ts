@@ -860,6 +860,9 @@ export async function clearAllCachedData(): Promise<void> {
       db.savedMessages.clear(),
       db.scheduledMessages.clear(),
       db.stashedDrafts.clear(),
+      // Wrapped private bundles are tied to the logging-out identity — drop
+      // them so the next account starts without inherited key material.
+      db.e2eKeys.clear(),
       // Note: we keep pendingMessages to retry sending after re-login
     ])
   } finally {

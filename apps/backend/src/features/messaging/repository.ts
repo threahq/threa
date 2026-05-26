@@ -773,10 +773,7 @@ export const MessageRepository = {
     // Find thread streams for these parent messages and get their messages
     const result = await db.query<MessageRow & { parent_message_id: string }>(sql`
       SELECT
-        m.id, m.stream_id, m.sequence, m.author_id, m.author_type,
-        m.content_json, m.content_markdown, m.reply_count,
-        m.client_message_id, m.sent_via, m.metadata,
-        m.edited_at, m.deleted_at, m.created_at,
+        ${sql.raw(QUALIFIED_SELECT_FIELDS)},
         s.parent_message_id
       FROM messages m
       JOIN streams s ON m.stream_id = s.id

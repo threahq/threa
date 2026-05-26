@@ -190,30 +190,38 @@ async function pruneBootstrapReplaceWindow(streamId: string, bootstrap: StreamBo
   }
 }
 
+/**
+ * Decrypt any E2E `message_created` events the backend stamped with placeholder
+ * content. Plaintext events pass through untouched. If the user is locked, the
+ * placeholder survives — a later subscribe/bootstrap pass after unlock will
+ * refill the plaintext. Called BEFORE opening the IDB transaction in the apply
+ * paths so the (asynchronous, non-Dexie) decrypt work doesn't hold the
+ * transaction open — awaiting non-Dexie promises inside `db.transaction` can
+ * tear the transaction down on some browsers.
+ */
+export async function decryptBootstrapEventsIfNeeded(
+  bootstrap: StreamBootstrap,
+  workspaceId: string,
+  userId: string | null
+): Promise<StreamBootstrap> {
+  if (!bootstrap.stream.e2eEnabled || bootstrap.events.length === 0) return bootstrap
+  return {
+    ...bootstrap,
+    events: await Promise.all(bootstrap.events.map((event) => decryptEventPayloadIfNeeded(event, workspaceId, userId))),
+  }
+}
+
 async function writeBootstrapEventsAndStream(
   workspaceId: string,
   streamId: string,
   bootstrap: StreamBootstrap,
   now: number,
-  userId: string | null
+  _userId: string | null
 ): Promise<void> {
   await cleanupStaleOptimisticEvents(streamId)
 
   if (bootstrap.syncMode !== "append") {
     await pruneBootstrapReplaceWindow(streamId, bootstrap)
-  }
-
-  // Decrypt any E2E message_created events the backend stamped with
-  // placeholder content before merging them into IDB. Plaintext events pass
-  // through untouched. If the user is locked, the placeholder survives — a
-  // later subscribe/bootstrap pass after unlock will refill the plaintext.
-  if (bootstrap.events.length > 0 && bootstrap.stream.e2eEnabled) {
-    bootstrap = {
-      ...bootstrap,
-      events: await Promise.all(
-        bootstrap.events.map((event) => decryptEventPayloadIfNeeded(event, workspaceId, userId))
-      ),
-    }
   }
 
   if (bootstrap.events.length > 0) {
@@ -329,9 +337,13 @@ export async function applyStreamBootstrap(
   bootstrap: StreamBootstrap,
   userId: string | null = null
 ): Promise<void> {
+  // Decrypt outside the Dexie transaction so HPKE/AES-GCM work doesn't hold
+  // the IDB transaction open (Dexie tears down transactions that await
+  // unrelated promises).
+  const decrypted = await decryptBootstrapEventsIfNeeded(bootstrap, workspaceId, userId)
   const now = Date.now()
   await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations], async () => {
-    await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, userId)
+    await writeBootstrapEventsAndStream(workspaceId, streamId, decrypted, now, userId)
   })
 }
 

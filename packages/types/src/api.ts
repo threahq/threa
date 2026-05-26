@@ -35,7 +35,7 @@ import type { WorkspacePermissionSlug } from "./workspace-permissions"
 // Streams API
 // ============================================================================
 
-export interface CreateStreamInput {
+interface CreateStreamInputBase {
   type: StreamType
   displayName?: string
   slug?: string
@@ -48,14 +48,24 @@ export interface CreateStreamInput {
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */
   contextBag?: ContextBag
-  /**
-   * Mark the new scratchpad as end-to-end encrypted. When true,
-   * `e2eOwnerKeyId` must reference the caller's active UIK; the backend
-   * forces `companionMode` off because Ariadne can't see ciphertext.
-   */
-  e2eEnabled?: true
-  e2eOwnerKeyId?: string
 }
+
+/**
+ * Discriminated union on `e2eEnabled` so the compiler enforces that an E2E
+ * scratchpad creation carries an owner key id, and a plaintext stream can't
+ * smuggle one in. The backend forces `companionMode` off on the E2E branch
+ * because Ariadne can't see ciphertext.
+ */
+export type CreateStreamInput =
+  | (CreateStreamInputBase & {
+      e2eEnabled: true
+      /** Must reference the caller's active, non-revoked UIK. */
+      e2eOwnerKeyId: string
+    })
+  | (CreateStreamInputBase & {
+      e2eEnabled?: false
+      e2eOwnerKeyId?: never
+    })
 
 export interface UpdateStreamInput {
   displayName?: string

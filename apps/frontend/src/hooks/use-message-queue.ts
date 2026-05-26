@@ -219,6 +219,14 @@ export function useMessageQueue(): void {
           // E2E branch — encryption already happened at queue time so the
           // drain stays identity-agnostic. The backend's INV-E1 gate
           // rejects this variant on plaintext streams loudly.
+          if (next.attachmentIds && next.attachmentIds.length > 0) {
+            // The enqueue path (`useStreamOrDraft.sendMessage`) refuses E2E
+            // sends carrying attachments; a row that reaches the drain with
+            // both is a contract bug, not a recoverable state. Fail loud so
+            // the failed-message UI surfaces it instead of silently dropping
+            // the chip the optimistic event already rendered.
+            throw new Error("Attachments aren't supported in encrypted scratchpads yet")
+          }
           await messageService.create(next.workspaceId, next.streamId, {
             streamId: next.streamId,
             ciphertext: next.ciphertext,

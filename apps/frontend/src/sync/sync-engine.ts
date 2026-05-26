@@ -117,7 +117,19 @@ export class SyncEngine {
 
   /** Update the workspace-scoped user id (called from React once `useWorkspaceUsers` resolves it). */
   setCurrentWorkspaceUserId(id: string | null): void {
+    if (this.currentWorkspaceUserId === id) return
+    const justBecameAvailable = this.currentWorkspaceUserId === null && id !== null
     this.currentWorkspaceUserId = id
+    if (justBecameAvailable) {
+      // The decrypt-on-arrival path keys off this id; any stream bootstrap
+      // that landed before it resolved cached placeholders into IDB. Replay
+      // the visible-stream refreshes so those rows pick up plaintext now
+      // that the viewer is identified — the current stream + the sidebar's
+      // visible window covers what the user can actually see.
+      for (const streamId of this.getVisibleServerStreamIds()) {
+        void this.refreshStreamAfterNavigation(streamId)
+      }
+    }
   }
 
   /**

@@ -554,15 +554,27 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // to the owner's UIK and stash the ciphertext on the pending row. The
       // drain loop is identity-agnostic — encryption happens here, while the
       // unwrapped private key (and the matching pubkey) live in this scope.
+      // Read e2e flags off `baseStream` (which already prefers `idbStream` and
+      // falls back to the server-resolved row), so a first-load send that
+      // arrives before the per-stream IDB row mirrors the workspace-bootstrap
+      // row still encrypts instead of writing plaintext that INV-E1 rejects.
+      const e2eEnabled = baseStream?.e2eEnabled === true
+      const e2eOwnerKeyId = baseStream?.e2eOwnerKeyId
       let e2eFields:
         | Pick<NonNullable<Awaited<ReturnType<typeof encryptMessage>>>, "ciphertext" | "envelope" | "e2eVersion">
         | undefined
-      if (idbStream?.e2eEnabled && idbStream.e2eOwnerKeyId) {
+      if (e2eEnabled && e2eOwnerKeyId) {
+        if (input.attachmentIds && input.attachmentIds.length > 0) {
+          // Phase-1 MVP doesn't support encrypted attachments. Fail loud at
+          // enqueue rather than silently dropping the ids in the drain loop
+          // (which would show the optimistic chip and then never deliver).
+          throw new Error("Attachments aren't supported in encrypted scratchpads yet")
+        }
         const session = getE2eSessionState(workspaceId, currentUserId)
         if (session.status !== "unlocked" || !session.publicKey) {
           throw new Error("Unlock encrypted scratchpads before sending")
         }
-        if (session.keyId !== idbStream.e2eOwnerKeyId) {
+        if (session.keyId !== e2eOwnerKeyId) {
           // The owner of the scratchpad isn't the viewer (or the viewer's UIK
           // rotated past the one the scratchpad was created with). Phase-1
           // MVP encrypts owner-to-self only; a rotation/sharing flow is a
@@ -575,7 +587,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           streamId,
           messageId: clientId,
           senderId: currentUserId,
-          recipientKeyId: idbStream.e2eOwnerKeyId,
+          recipientKeyId: e2eOwnerKeyId,
           recipientPublicKey: session.publicKey,
         })
       }
@@ -611,7 +623,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       return {}
     },
-    [streamId, workspaceId, queryClient, markPending, notifyQueue, currentUserId]
+    [streamId, workspaceId, queryClient, markPending, notifyQueue, currentUserId, baseStream]
   )
 
   return {
