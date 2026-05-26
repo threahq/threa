@@ -117,11 +117,15 @@ interface UseVoiceDictationResult {
   /** Flip the session-wide toggle. Walks every unlocked chunk and swaps its text in the editor. */
   setShowOriginal: (target: boolean) => void
   /**
-   * Non-fatal warning that the selected input device is producing silence —
-   * surfaced after a brief grace window when the analyser sees no signal at
-   * all. Null otherwise. Most common cause: a Bluetooth headset that didn't
-   * switch to its HFP/HSP profile, or a wired headphone selected as default
-   * input but with no working mic. Clears immediately when signal appears.
+   * Non-fatal warning that the selected input device is producing silence.
+   * Fires in two cases:
+   *   - Initial silence: the analyser has been at zero since the take began
+   *     (Bluetooth headset stuck on A2DP, wired headphones with no working
+   *     mic, OS-muted input) — surfaces fast (~2.5s).
+   *   - Lost signal: the take was capturing audio and then went dead (HFP
+   *     dropped, USB glitch) — surfaces slower (~5s) so legitimate pauses
+   *     don't nag.
+   * Null otherwise. Clears automatically once signal returns.
    */
   noAudioWarning: string | null
   start: () => void
