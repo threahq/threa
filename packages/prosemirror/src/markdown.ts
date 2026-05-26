@@ -222,17 +222,16 @@ function serializeTable(node: JSONContent): string {
 function serializeTableCell(cell: JSONContent): string {
   const blocks = cell.content ?? []
   if (blocks.length === 0) return ""
-  const lines = blocks
-    .map((block) => {
-      if (block.type === "paragraph") return serializeInline(block.content)
-      // Fall back to a best-effort render for non-paragraph block content
-      // (rare — tiptap's table cells default to `block+`). We don't recurse
-      // through `serializeNode` because nested lists / code blocks would emit
-      // newlines that break the GFM table grammar.
-      return serializeInline(block.content)
-    })
-    .filter((line) => line.length > 0)
-  const joined = lines.join("<br>")
+  // Cells default to `block+` but the GFM grammar only supports inline content,
+  // so flatten any block-level child to its inline serialization. Lists and
+  // code blocks would emit newlines that break the row grammar, so we never
+  // recurse through `serializeNode`.
+  const lines = blocks.map((block) => serializeInline(block.content)).filter((line) => line.length > 0)
+  // Escape user-typed `<br>` so it doesn't collide with the literal `<br>` tag
+  // we use as a paragraph / hard-break separator. `buildTableCell` reverses
+  // this when parsing back.
+  const escaped = lines.map((line) => line.replace(/<br\s*\/?>/gi, "&lt;br&gt;"))
+  const joined = escaped.join("<br>")
   // Escape pipes so they don't terminate the cell, and collapse hard-break
   // newlines into `<br>` for the same reason. Leading/trailing whitespace
   // inside a cell is meaningless in GFM, so trim.
@@ -483,7 +482,7 @@ export function parseMarkdown(
     return { type: "doc", content: [{ type: "paragraph" }] }
   }
 
-  const lines = markdown.split("\n")
+  const lines = normalizeMarkdownTables(markdown).split("\n")
   const content: JSONContent[] = []
   let i = 0
 
@@ -677,10 +676,69 @@ function parseSharedMessageLine(line: string): { authorName: string; streamId: s
   return { authorName, streamId: match[2], messageId: match[3] }
 }
 
+/**
+ * Collapse blank lines that sit between two pipe-bearing rows so that GFM
+ * tables emitted with extra spacing for readability still parse as tables.
+ * LLMs and some hand-written markdown produce:
+ *
+ *   | a | b |
+ *
+ *   | --- | --- |
+ *
+ *   | c | d |
+ *
+ * which remark-gfm and our own parser both reject. The collapse is restricted
+ * to blank lines flanked by lines our table grammar recognises as rows or
+ * separators (with or without outer pipes) so that ordinary paragraphs
+ * containing a stray pipe aren't merged. Fenced code blocks are passed through
+ * unchanged so example markdown inside a snippet isn't rewritten.
+ */
+export function normalizeMarkdownTables(markdown: string): string {
+  const lines = markdown.split("\n")
+  const out: string[] = []
+  let inFence = false
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (line.startsWith("```")) {
+      inFence = !inFence
+      out.push(line)
+      continue
+    }
+    if (inFence) {
+      out.push(line)
+      continue
+    }
+    if (
+      line.trim() === "" &&
+      out.length > 0 &&
+      isCollapsibleTableLine(out[out.length - 1]) &&
+      i + 1 < lines.length &&
+      isCollapsibleTableLine(lines[i + 1])
+    ) {
+      continue
+    }
+    out.push(line)
+  }
+  return out.join("\n")
+}
+
+function isCollapsibleTableLine(line: string): boolean {
+  return isTableRowLine(line) || isTableSeparatorLine(line)
+}
+
 function isTableRowLine(line: string | undefined): boolean {
   if (!line) return false
   const trimmed = line.trim()
-  return trimmed.startsWith("|") && trimmed.includes("|", 1)
+  if (!trimmed.includes("|")) return false
+  if (isTableSeparatorLine(trimmed)) return false
+  // Single-column tables ride on the outer pipes (`| col |`) since there
+  // are no internal separators. Multi-column rows can drop the outer pipes
+  // (`Name | Role`), but in that case we need at least one internal pipe to
+  // avoid misclassifying a sentence that happens to contain one.
+  const hasOuterPipes = trimmed.startsWith("|") && trimmed.endsWith("|")
+  const cells = splitTableRow(trimmed)
+  const minCells = hasOuterPipes ? 1 : 2
+  return cells.length >= minCells && cells.some((cell) => cell.length > 0)
 }
 
 function isTableSeparatorLine(line: string | undefined): boolean {
@@ -741,6 +799,11 @@ function parseTableBlock(
   const headerCells = splitTableRow(headerLine)
   const columnCount = headerCells.length
   if (columnCount === 0) return null
+  // Reject tables whose separator column count doesn't match the header.
+  // GFM treats those as plain paragraphs, and accepting them anyway would
+  // bind ragged-shape pasted markdown into broken tables.
+  const separatorCells = splitTableRow(separatorLine)
+  if (separatorCells.length !== columnCount) return null
 
   const bodyRows: string[][] = []
   let i = startIndex + 2
@@ -777,10 +840,12 @@ function buildTableCell(type: "tableHeader" | "tableCell", text: string, options
   // break — the only way GFM tables can express multi-line cell content.
   // Split on these and emit one paragraph per segment so the resulting
   // ProseMirror tree matches what tiptap's table cell schema expects
-  // (paragraph block*).
+  // (paragraph block*). User-typed `<br>` is escaped by `serializeTableCell`
+  // to `&lt;br&gt;`; restore it after splitting so round-trip is lossless.
   const segments = text.split(/<br\s*\/?>/i)
   const paragraphs: JSONContent[] = segments.map((segment) => {
-    const inline = parseInlineMarkdown(segment, options)
+    const restored = segment.replace(/&lt;br\s*\/?&gt;/gi, "<br>")
+    const inline = parseInlineMarkdown(restored, options)
     return inline.length > 0 ? { type: "paragraph", content: inline } : { type: "paragraph" }
   })
   return {

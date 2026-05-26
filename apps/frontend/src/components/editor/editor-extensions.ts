@@ -22,6 +22,7 @@ import { Table } from "@tiptap/extension-table/table"
 import { TableRow } from "@tiptap/extension-table/row"
 import { TableHeader } from "@tiptap/extension-table/header"
 import { TableCell } from "@tiptap/extension-table/cell"
+import { MarkdownTableInputRule } from "./markdown-table-input-rule"
 
 import { MentionExtension, type MentionOptions } from "./triggers/mention-extension"
 import { ChannelExtension, type ChannelOptions } from "./triggers/channel-extension"
@@ -107,6 +108,10 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     TableRow,
     TableHeader,
     TableCell,
+
+    // Type-to-create: pressing Enter after `| h |\n| --- |` converts the
+    // pipe-row paragraphs to a real table node.
+    MarkdownTableInputRule,
 
     // Auto-link URLs (makes them clickable)
     BoundaryAwareLink.configure({

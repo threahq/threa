@@ -24,6 +24,14 @@ function createEditorStub() {
     toggleCodeBlock: vi.fn(() => chain),
     toggleHeading: vi.fn(() => chain),
     setParagraph: vi.fn(() => chain),
+    addRowBefore: vi.fn(() => chain),
+    addRowAfter: vi.fn(() => chain),
+    addColumnBefore: vi.fn(() => chain),
+    addColumnAfter: vi.fn(() => chain),
+    deleteRow: vi.fn(() => chain),
+    deleteColumn: vi.fn(() => chain),
+    deleteTable: vi.fn(() => chain),
+    insertTable: vi.fn(() => chain),
     run: vi.fn(() => true),
   }
 
@@ -280,5 +288,29 @@ describe("EditorToolbar", () => {
     const boldButton = screen.getByRole("button", { name: "Bold" })
     expect(boldButton.className).toContain("bg-muted-foreground/20")
     expect(boldButton.className).toContain("hover:bg-muted-foreground/20")
+  })
+
+  it("waits for click before running mobile table menu actions so the popover absorbs the touchend", async () => {
+    const editor = createEditorStub()
+    vi.mocked(editor.isActive).mockImplementation((type) => type === "table")
+    const user = userEvent.setup()
+    render(<EditorToolbar editor={editor} isVisible inline inlinePosition="below" />)
+
+    await user.click(screen.getByRole("button", { name: "Edit table" }))
+
+    const deleteTable = await screen
+      .findByRole("menuitem", { name: /Delete table/ })
+      .catch(() => screen.getByRole("button", { name: /Delete table/ }))
+
+    // Mobile path: pointerdown on a menu item must NOT fire the action.
+    // Acting on pointerdown closes the popover before the synthesized
+    // touchend/click lands, which leaks the click through to whichever
+    // toolbar button now sits under the user's finger.
+    fireEvent.pointerDown(deleteTable)
+    const chainStub = (editor as unknown as { __chainState: { deleteTable: ReturnType<typeof vi.fn> } }).__chainState
+    expect(chainStub.deleteTable).not.toHaveBeenCalled()
+
+    fireEvent.click(deleteTable)
+    expect(chainStub.deleteTable).toHaveBeenCalled()
   })
 })

@@ -1213,3 +1213,92 @@ describe("handleBeforeInputGraphemeDelete (mobile emoji text deletion)", () => {
     editor.destroy()
   })
 })
+
+describe("markdown table input rule", () => {
+  function pressEnter(editor: Editor) {
+    const event = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
+    let handled = false
+    editor.view.someProp("handleKeyDown", (handleKeyDown) => {
+      if (handleKeyDown(editor.view, event)) {
+        handled = true
+        return true
+      }
+      return false
+    })
+    return handled
+  }
+
+  it("converts header + separator paragraphs into a table when Enter is pressed", () => {
+    // Build the doc as raw paragraphs so the input rule (not the markdown
+    // parser at editor-construction time) is what produces the table.
+    const editor = createTestEditor({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "| name | age |" }] },
+        { type: "paragraph", content: [{ type: "text", text: "| --- | --- |" }] },
+      ],
+    })
+    editor.commands.focus("end")
+
+    expect(pressEnter(editor)).toBe(true)
+
+    const tableNode = (editor.getJSON().content ?? []).find((b) => b.type === "table")
+    expect(tableNode).toBeDefined()
+    expect(tableNode?.content).toHaveLength(1)
+    editor.destroy()
+  })
+
+  it("converts a header + separator + data row chain into a table on Enter", () => {
+    const editor = createTestEditor({
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "| name | age |" }] },
+        { type: "paragraph", content: [{ type: "text", text: "| --- | --- |" }] },
+        { type: "paragraph", content: [{ type: "text", text: "| Kris | 31 |" }] },
+      ],
+    })
+    editor.commands.focus("end")
+
+    expect(pressEnter(editor)).toBe(true)
+
+    const tableNode = (editor.getJSON().content ?? []).find((b) => b.type === "table")
+    expect(tableNode).toBeDefined()
+    expect(tableNode?.content).toHaveLength(2)
+    expect(serializeToMarkdown(editor.getJSON())).toContain("| Kris | 31 |")
+    editor.destroy()
+  })
+
+  it("promotes a header-only pipe row into a table with one empty body row", () => {
+    // Single header row + Enter: the user shouldn't have to hand-type the
+    // separator. Promote to a real table and drop the caret in the first body
+    // cell so they can keep typing values.
+    const editor = createTestEditor({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "| name | age |" }] }],
+    })
+    editor.commands.focus("end")
+
+    expect(pressEnter(editor)).toBe(true)
+
+    const tableNode = (editor.getJSON().content ?? []).find((b) => b.type === "table")
+    expect(tableNode).toBeDefined()
+    expect(tableNode?.content).toHaveLength(2) // header row + one empty body row
+    editor.destroy()
+  })
+
+  it("does not convert a paragraph that just happens to contain a pipe", () => {
+    // Without outer pipes and with only a single internal `|`, we can't
+    // confidently say this is a table header — leave the paragraph alone.
+    const editor = createTestEditor({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "pipe | only" }] }],
+    })
+    editor.commands.focus("end")
+
+    pressEnter(editor)
+
+    const json = editor.getJSON()
+    expect((json.content ?? []).some((b) => b.type === "table")).toBe(false)
+    editor.destroy()
+  })
+})

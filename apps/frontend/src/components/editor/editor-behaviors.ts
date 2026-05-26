@@ -862,10 +862,20 @@ export const EditorBehaviors = Extension.create<EditorBehaviorsOptions>({
         )
       },
 
-      // Tab: VS Code-style indent (always trapped to prevent focus escape)
+      // Tab: VS Code-style indent (always trapped to prevent focus escape).
+      // Inside a table cell we delegate to prosemirror-tables' Tab command so
+      // the keyboard moves between cells (and adds a row at the last cell)
+      // instead of inserting an indent character.
       Tab: () => {
         if (isSuggestionActive(this.editor)) {
           return false
+        }
+
+        if (this.editor.isActive("table")) {
+          if (this.editor.commands.goToNextCell()) return true
+          if (!this.editor.can().addRowAfter()) return true
+          this.editor.chain().addRowAfter().goToNextCell().run()
+          return true
         }
 
         indentSelection(this.editor)
@@ -874,6 +884,10 @@ export const EditorBehaviors = Extension.create<EditorBehaviorsOptions>({
 
       // Shift+Tab: VS Code-style dedent (always trapped to prevent focus escape)
       "Shift-Tab": () => {
+        if (this.editor.isActive("table")) {
+          this.editor.commands.goToPreviousCell()
+          return true
+        }
         dedentSelection(this.editor)
         return true
       },

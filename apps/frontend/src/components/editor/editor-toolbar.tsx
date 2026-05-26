@@ -619,14 +619,15 @@ function TableControls({
             if (roomy) e.preventDefault()
           }}
           className={cn(
-            "p-0 shrink-0 bg-muted-foreground/20 text-foreground",
+            "px-1.5 shrink-0 gap-0.5 bg-muted-foreground/20 text-foreground",
             roomy
-              ? "h-9 w-9 min-w-9 active:bg-muted hover:bg-muted-foreground/20 hover:text-current"
-              : "h-8 w-8 hover:bg-muted-foreground/20"
+              ? "h-9 active:bg-muted hover:bg-muted-foreground/20 hover:text-current"
+              : "h-8 hover:bg-muted-foreground/20"
           )}
           tabIndex={keyboardAccessible ? undefined : -1}
         >
           <TableIcon className="h-4 w-4 stroke-[2.5px]" />
+          <ChevronDown className="h-3 w-3 opacity-60" />
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -640,38 +641,52 @@ function TableControls({
           icon={Rows3}
           label="Add row above"
           onAction={run(() => editor.chain().focus().addRowBefore().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
         <TableMenuItem
           icon={Rows3}
           label="Add row below"
           onAction={run(() => editor.chain().focus().addRowAfter().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
         <TableMenuItem
           icon={Columns3}
           label="Add column left"
           onAction={run(() => editor.chain().focus().addColumnBefore().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
         <TableMenuItem
           icon={Columns3}
           label="Add column right"
           onAction={run(() => editor.chain().focus().addColumnAfter().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
         <Separator className="my-1" />
         <TableMenuItem
           icon={Trash2}
           label="Delete row"
           onAction={run(() => editor.chain().focus().deleteRow().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
         <TableMenuItem
           icon={Trash2}
           label="Delete column"
           onAction={run(() => editor.chain().focus().deleteColumn().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
         <TableMenuItem
           icon={Trash2}
           label="Delete table"
           danger
           onAction={run(() => editor.chain().focus().deleteTable().run())}
+          keyboardAccessible={keyboardAccessible}
+          roomy={roomy}
         />
       </PopoverContent>
     </Popover>
@@ -683,30 +698,42 @@ function TableMenuItem({
   label,
   onAction,
   danger,
+  keyboardAccessible,
+  roomy,
 }: {
   icon: React.ComponentType<{ className?: string }>
   label: string
   onAction: () => void
   danger?: boolean
+  keyboardAccessible?: boolean
+  roomy?: boolean
 }) {
   return (
     <Button
       type="button"
       variant="ghost"
       size="sm"
-      // Mirror StylePicker's pointerdown handling so the editor selection is
-      // preserved while the table command runs.
-      onPointerDown={(e) => {
-        e.preventDefault()
-        onAction()
-      }}
+      // Desktop: act on pointerdown so the editor selection survives the menu
+      // click (Tiptap commands rely on the current selection).
+      // Mobile (roomy): defer to click. Acting on pointerdown closes the
+      // popover before touchend lands, which lets the trailing click pass
+      // through to whichever toolbar button now sits under the finger.
+      onPointerDown={
+        roomy
+          ? undefined
+          : (e) => {
+              e.preventDefault()
+              onAction()
+            }
+      }
       onClick={(e) => {
-        if (e.detail === 0) onAction()
+        if (roomy || e.detail === 0) onAction()
       }}
       className={cn(
         "h-8 w-full justify-start gap-2 px-2 text-sm font-normal",
         danger && "text-destructive hover:text-destructive"
       )}
+      tabIndex={keyboardAccessible ? undefined : -1}
     >
       <Icon className="h-4 w-4 shrink-0" />
       {label}
