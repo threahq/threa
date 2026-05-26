@@ -178,7 +178,7 @@ if (isBotScopedEvent(event)) {
 | `bot_invocation:available` (no `targetInstanceId`)   | `bot:{ws}:{botId}`                                                  |
 | `bot_invocation:claimed`                             | `bot:{ws}:{botId}`                                                  |
 | `bot_invocation:cancelled`                           | `bot:{ws}:{botId}`                                                  |
-| `bot_session_link:invalidated`                       | `bot:{ws}:{botId}:instance:{instanceId}`                            |
+| `bot_session_link:invalidated`                       | `bot:{ws}:{botId}:session:{runtimeSessionId}`                       |
 | `bot:active_actor_changed`                           | `bot:{ws}:{botId}` for each id in `affectedBotIds`                  |
 | `bot:resync` (`instanceId` set)                      | `bot:{ws}:{botId}:instance:{instanceId}`                            |
 | `bot:resync` (`botId` set, no `instanceId`)          | `bot:{ws}:{botId}`                                                  |
@@ -485,7 +485,7 @@ Add `BotRuntimeInstanceRepository.markOffline` (new method): a single UPDATE tha
 
 **Files:** `apps/backend/src/features/bot-runtimes/service.ts`, `apps/backend/src/features/bot-runtimes/repository.ts`.
 
-`bot:active_actor:changed` outbox events are emitted exclusively from a new `BotRuntimeService.setActiveActorInTransaction(db, params)` wrapper around `StreamActiveActorRepository.upsert`. Both current callers route through it:
+`bot:active_actor_changed` outbox events are emitted exclusively from a new `BotRuntimeService.setActiveActorInTransaction(db, params)` wrapper around `StreamActiveActorRepository.upsert`. Both current callers route through it:
 
 - `BotRuntimeService.setActiveActor` (the public single-shot path) calls it inside `withTransaction`.
 - `BotRuntimeService.createOrLinkPiRemoteSessionInTransaction` already inside a `withTransaction`; switches its direct `StreamActiveActorRepository.upsert` call to `setActiveActorInTransaction`.
@@ -494,7 +494,7 @@ The wrapper:
 
 1. Reads the existing row inside the same tx (`StreamActiveActorRepository.findByRootStream`) to compute `previousActorType` / `previousActorId`.
 2. Upserts the new actor.
-3. If the actor identity actually changed (not a no-op update), emits `bot:active_actor:changed` with `affectedBotIds = [previous, new].filter(isBotActor).map(id => id)`.
+3. If the actor identity actually changed (not a no-op update), emits `bot:active_actor_changed` with `affectedBotIds = [previous, new].filter(isBotActor).map(id => id)`.
 
 Add a comment to `StreamActiveActorRepository.upsert` pointing at the service wrapper: "Do not call this directly from outside this feature. Go through `BotRuntimeService.setActiveActorInTransaction` so the outbox event fires."
 
