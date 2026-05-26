@@ -448,6 +448,28 @@ export interface CachedScheduledMessage {
   _cachedAt: number
 }
 
+/**
+ * Cached snapshot of the user's active E2E identity key (UIK). Holds the
+ * passphrase-wrapped private bundle that the backend mirrors back to the
+ * device — the unwrapped private key never lands here, it lives in the
+ * in-memory `e2e-session-store` for the session only.
+ *
+ * Key: deterministic per workspace+user so the bootstrap hydrator can upsert
+ * without needing to fetch first.
+ */
+export interface CachedE2eKey {
+  id: string // `${workspaceId}:${userId}` — deterministic so bootstrap upserts cleanly
+  workspaceId: string
+  userId: string
+  keyId: string
+  publicKey: string // base64
+  encryptedPrivateBundle: string // base64
+  kdfSalt: string // base64
+  kdfParams: { algorithm: "argon2id"; m: number; t: number; p: number; version: number }
+  createdAt: string
+  _cachedAt: number
+}
+
 export interface CachedWorkspaceMetadata {
   id: string // workspaceId
   workspaceId: string
@@ -490,6 +512,7 @@ export class ThreaDatabase extends Dexie {
   linkPreviewCollapse!: EntityTable<CachedLinkPreviewCollapse, "id">
   savedMessages!: EntityTable<CachedSavedMessage, "id">
   scheduledMessages!: EntityTable<CachedScheduledMessage, "id">
+  e2eKeys!: EntityTable<CachedE2eKey, "id">
 
   constructor(name: string) {
     super(name)
@@ -742,6 +765,13 @@ export class ThreaDatabase extends Dexie {
     this.version(28)
       .stores({})
       .upgrade((tx) => tx.table("bots").clear())
+
+    // v29: E2E identity key cache. Holds the passphrase-wrapped private bundle
+    // so unlock works offline / on refresh without a roundtrip — the unwrapped
+    // private key is never persisted here, only in the in-memory session store.
+    this.version(29).stores({
+      e2eKeys: "id, [workspaceId+userId], workspaceId, _cachedAt",
+    })
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }

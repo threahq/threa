@@ -7,6 +7,7 @@ import { AISettings } from "./ai-settings"
 import type { JSONContent, VoicePolishLevel } from "@threa/types"
 import * as contextsModule from "@/contexts"
 import * as editorModule from "@/components/editor"
+import * as encryptionModule from "@/components/encryption"
 
 const updatePreferenceMock = vi.fn().mockResolvedValue(undefined)
 
@@ -99,6 +100,15 @@ describe("AISettings", () => {
     )) as unknown as typeof editorModule.EditorActionBar
 
     spyOnExport(editorModule, "EditorActionBar").mockReturnValue(MockEditorActionBar)
+
+    // The encryption section reaches for AuthProvider + workspace cache + router
+    // params, none of which this AI-focused test sets up. Stub the export with
+    // a no-op component — the section has its own coverage in
+    // `encrypted-scratchpads-section.test.tsx`.
+    const EncryptedScratchpadsSectionStub = () => null
+    spyOnExport(encryptionModule, "EncryptedScratchpadsSection").mockReturnValue(
+      EncryptedScratchpadsSectionStub as typeof encryptionModule.EncryptedScratchpadsSection
+    )
   })
 
   it("saves updated scratchpad instructions", async () => {

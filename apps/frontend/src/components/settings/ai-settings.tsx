@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { serializeToMarkdown, parseMarkdown } from "@/components/editor/editor-markdown"
 import { EditorActionBar, RichEditor, type RichEditorHandle } from "@/components/editor"
+import { EncryptedScratchpadsSection } from "@/components/encryption"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -244,6 +245,10 @@ export function AISettings() {
           ))}
         </RadioGroup>
       </section>
+
+      <Separator />
+
+      <EncryptedScratchpadsSection />
     </div>
   )
 }
