@@ -236,6 +236,38 @@ describe("Stream-scoped Pi session-control commands", () => {
     const modelSuggestions = modelCommand?.args?.find((a) => a.name === "model")?.suggestions
     expect(modelSuggestions?.map((s) => s.value)).toEqual(["anthropic/claude-sonnet-4-6", "openai/gpt-5-high"])
 
+    // Claim polling doubles as a lightweight heartbeat with only runtimeSessionId.
+    // It must not erase the richer session-control capability advertisement from
+    // the explicit presence heartbeat, or slash commands disappear between polls.
+    const claim = await botApiPost(client, workspace.id, "/bot-invocations/claim", linked.apiKey, {
+      runtimeKind: "pi-local",
+      instanceId: linked.instanceId,
+      runtimeSessionId: linked.runtimeSessionId,
+      supportedCapabilities: [BotInvocationCapabilities.ACTIVE_SCRATCHPAD, BotInvocationCapabilities.SESSION_CONTROL],
+      claimTtlSeconds: 120,
+    })
+    expect(claim.status).toBe(200)
+    const afterClaimBootstrap = await getBootstrap(client, workspace.id, linked.streamId)
+    const afterClaimNames = afterClaimBootstrap.commands?.map((c) => c.name) ?? []
+    expect(afterClaimNames).toContain("model")
+
+    const downgradedPresence = await botApiPost(client, workspace.id, "/bot-runtime/presence", linked.apiKey, {
+      runtimeKind: "pi-local",
+      instanceId: linked.instanceId,
+      runtimeSessionId: linked.runtimeSessionId,
+      displayName: `Pi list-${testRunId}`,
+      status: "available",
+      acceptingInvocations: true,
+      capabilities: {
+        runtimeSessionId: linked.runtimeSessionId,
+        supportsActiveScratchpad: true,
+      },
+    })
+    expect(downgradedPresence.status).toBe(200)
+    const afterDowngradeBootstrap = await getBootstrap(client, workspace.id, linked.streamId)
+    const afterDowngradeNames = afterDowngradeBootstrap.commands?.map((c) => c.name) ?? []
+    expect(afterDowngradeNames).not.toContain("model")
+
     // A separate scratchpad with no active Pi runtime should not expose
     // session-control commands.
     const scratchpad = await createScratchpad(client, workspace.id, "off")
