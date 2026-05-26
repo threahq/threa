@@ -192,6 +192,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const isInternalUpdate = useRef(false)
   const [isFocused, setIsFocused] = useState(false)
   const [hasSelection, setHasSelection] = useState(false)
+  const [isInTable, setIsInTable] = useState(false)
   const [linkPopoverOpen, setLinkPopoverOpen] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [toolbarVisible, setToolbarVisible] = useState(false)
@@ -335,7 +336,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // selection-driven toolbar is disabled (e.g. mobile, where OS selection
   // popup conflicts with the floating bubble).
   const shouldBeVisible =
-    !staticToolbarOpen && !disableSelectionToolbar && ((isFocused && hasSelection) || linkPopoverOpen || dropdownOpen)
+    !staticToolbarOpen &&
+    !disableSelectionToolbar &&
+    ((isFocused && hasSelection) || (isFocused && isInTable) || linkPopoverOpen || dropdownOpen)
   useEffect(() => {
     if (shouldBeVisible) {
       if (hideTimeoutRef.current) {
@@ -600,9 +603,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   editorRef.current = editor
 
   // Track whether the editor has a non-empty selection (drives toolbar visibility)
+  // and whether the cursor is inside a table (keeps the table controls reachable
+  // even with a collapsed caret, since you can't "select" a table to reveal them).
   useEffect(() => {
     if (!editor) return
-    const updateSelection = () => setHasSelection(!editor.state.selection.empty)
+    const updateSelection = () => {
+      setHasSelection(!editor.state.selection.empty)
+      setIsInTable(editor.isActive("table"))
+    }
     editor.on("selectionUpdate", updateSelection)
     editor.on("update", updateSelection)
     return () => {

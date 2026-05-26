@@ -1268,12 +1268,30 @@ describe("markdown table input rule", () => {
     editor.destroy()
   })
 
-  it("leaves a lone paragraph alone when there's no separator above", () => {
-    // No separator row means there's nothing to convert — Enter should fall
-    // through to the default new-paragraph behavior, not eat the keystroke.
+  it("promotes a header-only pipe row into a table with one empty body row", () => {
+    // Single header row + Enter: the user shouldn't have to hand-type the
+    // separator. Promote to a real table and drop the caret in the first body
+    // cell so they can keep typing values.
     const editor = createTestEditor({
       type: "doc",
       content: [{ type: "paragraph", content: [{ type: "text", text: "| name | age |" }] }],
+    })
+    editor.commands.focus("end")
+
+    expect(pressEnter(editor)).toBe(true)
+
+    const tableNode = (editor.getJSON().content ?? []).find((b) => b.type === "table")
+    expect(tableNode).toBeDefined()
+    expect(tableNode?.content).toHaveLength(2) // header row + one empty body row
+    editor.destroy()
+  })
+
+  it("does not convert a paragraph that just happens to contain a pipe", () => {
+    // Without outer pipes and with only a single internal `|`, we can't
+    // confidently say this is a table header — leave the paragraph alone.
+    const editor = createTestEditor({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "pipe | only" }] }],
     })
     editor.commands.focus("end")
 
