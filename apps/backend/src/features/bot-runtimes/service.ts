@@ -125,15 +125,16 @@ export class BotRuntimeService {
       createdBy: string
     }
   ): Promise<StreamActiveActor> {
-    // FOR UPDATE serializes concurrent active-actor swaps on the same root
-    // stream so the read of `previousActorId` and the subsequent UPSERT
-    // observe a consistent before/after pair — otherwise the outbox event
-    // could carry a stale displaced actor (INV-20).
-    const existing = await StreamActiveActorRepository.findByRootStreamForUpdate(
-      db,
-      params.workspaceId,
-      params.rootStreamId
-    )
+    // Advisory lock keyed by (workspaceId, rootStreamId) serializes the whole
+    // read→upsert pair. `SELECT ... FOR UPDATE` alone doesn't help when the
+    // row doesn't exist yet: two concurrent inserts both see `existing=null`
+    // and the loser's ON CONFLICT UPDATE then emits `bot:active_actor_changed`
+    // with `previousActorId=null`, silently dropping the displaced bot from
+    // `affectedBotIds`. The advisory lock holds for the transaction (INV-20).
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `stream_active_actors:${params.workspaceId}:${params.rootStreamId}`,
+    ])
+    const existing = await StreamActiveActorRepository.findByRootStream(db, params.workspaceId, params.rootStreamId)
     const upserted = await StreamActiveActorRepository.upsert(db, {
       id: streamActiveActorId(),
       ...params,

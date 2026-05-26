@@ -492,17 +492,30 @@ function serializeTraceStep(step: AgentSessionStep) {
  * is unsafe to leave on in any environment that is internet-exposed
  * without a Host-normalising proxy in front of it.
  */
-function buildRuntimeWsHint(
+export function buildRuntimeWsHint(
   req: Request,
   configuredUrl: string | null
 ): { url: string; path: string; namespace: string } {
   if (configuredUrl) {
     return { url: configuredUrl, path: "/socket.io/", namespace: "/bot" }
   }
+  // The Host / X-Forwarded-Proto fallback is dev-only. An attacker-supplied
+  // Host header would otherwise hand the runtime a spoofed WS origin which it
+  // would then dial with its API key. Refuse to advertise a WS endpoint unless
+  // the request host is a loopback address — production must set
+  // BOT_RUNTIME_WS_URL.
+  const host = req.get("host") ?? ""
+  const hostname = host.split(":")[0]
+  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1"
+  if (!isLoopback) {
+    throw new HttpError("BOT_RUNTIME_WS_URL must be configured outside local development", {
+      status: 503,
+      code: "BOT_RUNTIME_WS_URL_NOT_CONFIGURED",
+    })
+  }
   const forwardedProto = req.get("x-forwarded-proto")
   const proto = forwardedProto ? forwardedProto.split(",")[0]!.trim() : req.protocol
   const wsScheme = proto === "https" ? "wss" : "ws"
-  const host = req.get("host") ?? "localhost"
   return { url: `${wsScheme}://${host}`, path: "/socket.io/", namespace: "/bot" }
 }
 

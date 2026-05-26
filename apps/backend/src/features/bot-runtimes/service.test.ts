@@ -188,7 +188,7 @@ describe("BotRuntimeService outbox emission", () => {
     }
 
     it("emits bot:active_actor_changed with both displaced + new bot ids", async () => {
-      spyOn(StreamActiveActorRepository, "findByRootStreamForUpdate").mockResolvedValue(
+      spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue(
         makeActor({ actorType: "bot", actorId: "bot_old" })
       )
       spyOn(StreamActiveActorRepository, "upsert").mockResolvedValue(
@@ -220,7 +220,7 @@ describe("BotRuntimeService outbox emission", () => {
     })
 
     it("does not emit when identity is unchanged", async () => {
-      spyOn(StreamActiveActorRepository, "findByRootStreamForUpdate").mockResolvedValue(
+      spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue(
         makeActor({ actorType: "bot", actorId: "bot_alice" })
       )
       spyOn(StreamActiveActorRepository, "upsert").mockResolvedValue(
@@ -241,7 +241,7 @@ describe("BotRuntimeService outbox emission", () => {
     })
 
     it("populates affectedBotIds with only the new actor when displacing a persona", async () => {
-      spyOn(StreamActiveActorRepository, "findByRootStreamForUpdate").mockResolvedValue(
+      spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue(
         makeActor({ actorType: "persona", actorId: "persona_x" })
       )
       spyOn(StreamActiveActorRepository, "upsert").mockResolvedValue(
@@ -260,6 +260,48 @@ describe("BotRuntimeService outbox emission", () => {
 
       const payload = insertSpy.mock.calls[0]?.[2] as unknown as Record<string, unknown>
       expect(payload.affectedBotIds).toEqual(["bot_new"])
+    })
+
+    it("acquires a pg_advisory_xact_lock before reading the row so insert-vs-insert races serialize", async () => {
+      // SELECT ... FOR UPDATE alone doesn't help when the row doesn't exist
+      // yet: two concurrent inserts both see existing=null and the loser
+      // emits `bot:active_actor_changed` with `previousActorId=null`. The
+      // advisory lock keyed by (workspaceId, rootStreamId) closes that gap.
+      const callOrder: string[] = []
+      const querier = {
+        query: mock(async (text: string) => {
+          if (text.includes("pg_advisory_xact_lock")) callOrder.push("advisory_lock")
+          return { rows: [], rowCount: 0 }
+        }),
+      }
+      spyOn(StreamActiveActorRepository, "findByRootStream").mockImplementation(async () => {
+        callOrder.push("find")
+        return null
+      })
+      spyOn(StreamActiveActorRepository, "upsert").mockImplementation(async (_db, params) => {
+        callOrder.push("upsert")
+        return {
+          ...params,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as StreamActiveActor
+      })
+      spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      await service.setActiveActorInTransaction(querier as never, {
+        workspaceId: "ws_1",
+        rootStreamId: "stream_root",
+        actorType: "bot",
+        actorId: "bot_new",
+        createdBy: "usr_owner",
+      })
+
+      expect(callOrder).toEqual(["advisory_lock", "find", "upsert"])
+      const lockCall = (querier.query as ReturnType<typeof mock>).mock.calls.find((c) =>
+        (c[0] as string).includes("pg_advisory_xact_lock")
+      )
+      expect(lockCall?.[1]).toEqual(["stream_active_actors:ws_1:stream_root"])
     })
   })
 

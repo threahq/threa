@@ -136,16 +136,19 @@ Bootstrap payload:
 
 ```ts
 {
-  serverGeneratedAt: string,     // ISO; cursor the bot persists for the next reconnect (Q1)
-  pendingInvocations: Array<{    // capability-filtered, instance-targeted-or-untargeted
+  serverGeneratedAt: string,         // ISO; cursor the bot persists for the next reconnect (Q1)
+  availableInvocations: Array<{      // capability-filtered, instance-targeted-or-untargeted
     invocationId, requiredCapability, createdAt,
     targetInstanceId, targetRuntimeSessionId,
   }>,
-  activeActorByStream: Array<{   // for streams this bot is the active actor of
-    rootStreamId, activeActorId,
+  ownedClaims: Array<{               // claims this instance already owns and must drive to completion
+    invocationId, requiredCapability, claimToken, claimExpiresAt,
   }>,
-  activeSessionLinks: Array<{    // for this instanceId
-    runtimeSessionId, rootStreamId, activeStreamId,
+  activeActorByStream: Array<{       // for streams this bot is the active actor of
+    rootStreamId, actorType, actorId, updatedAt,
+  }>,
+  activeSessionLinks: Array<{        // for this instanceId
+    runtimeSessionId, rootStreamId, activeStreamId, status, lastSeenAt,
   }>,
 }
 ```
@@ -153,7 +156,7 @@ Bootstrap payload:
 **Cursor (`serverGeneratedAt`).** The bot persists this across restarts (local sqlite / file / whatever — bot SDK's choice) and includes it on the next `bot:hello` as `sinceCursor?: string`. Server semantics:
 
 - If `sinceCursor` is provided **and not older than `maxLookback` (e.g. 24 h)**, filter pending-invocations to `created_at > sinceCursor`.
-- Otherwise (no cursor, or stale cursor), return the full pending set (still capped at 100). Stale cursor → log + treat as cold start; the bot's local state was already gone or out of date.
+- Otherwise (no cursor, or stale cursor), return the full pending set (still capped at 200). Stale cursor → log + treat as cold start; the bot's local state was already gone or out of date.
 - Invocations claimed by **this** instance are always returned regardless of cursor — they are in-progress work the bot must still drive to completion.
 
 The cursor is advisory. A bot that loses its local state simply omits `sinceCursor` and gets a full snapshot. Server always echoes back the new `serverGeneratedAt` so the bot can advance the cursor without coordinating client clock.

@@ -296,26 +296,6 @@ export const StreamActiveActorRepository = {
     return result.rows[0] ? mapActiveActor(result.rows[0]) : null
   },
 
-  // `FOR UPDATE` variant for the read-then-upsert flow in
-  // `BotRuntimeService.setActiveActorInTransaction`. Two concurrent active-
-  // actor changes on the same root stream must serialize on this lock or
-  // they emit `bot:active_actor_changed` with stale `previousActorId` values
-  // (INV-20). Returns `null` when the row doesn't exist yet — that's fine
-  // because no concurrent writer can `INSERT` here either: the UPSERT's
-  // `ON CONFLICT (workspace_id, root_stream_id)` predicate locks the would-be
-  // row via the unique index, so the second arrival waits for the first to
-  // commit and then observes the inserted row.
-  async findByRootStreamForUpdate(
-    db: Querier,
-    workspaceId: string,
-    rootStreamId: string
-  ): Promise<StreamActiveActor | null> {
-    const result = await db.query<StreamActiveActorRow>(
-      sql`SELECT * FROM stream_active_actors WHERE workspace_id = ${workspaceId} AND root_stream_id = ${rootStreamId} FOR UPDATE`
-    )
-    return result.rows[0] ? mapActiveActor(result.rows[0]) : null
-  },
-
   // Bootstrap helper for the `/bot` WS namespace: every stream where this bot
   // is the active actor. The runtime needs this on reconnect so it knows which
   // streams it is on the hook for without re-running its scratchpad scan.
