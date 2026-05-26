@@ -347,6 +347,18 @@ export async function applyStreamBootstrap(
   })
 }
 
+/**
+ * Same as `applyStreamBootstrap` but written for callers that have already
+ * opened a `db.transaction` — it just delegates to `writeBootstrapEventsAndStream`
+ * without wrapping or running E2E decryption.
+ *
+ * The caller MUST pass a `bootstrap` whose events have already been routed
+ * through `decryptBootstrapEventsIfNeeded`. Awaiting the decrypt promise
+ * inside a Dexie transaction tears the transaction down on browsers where
+ * the microtask queue drains before the awaited promise resolves, so the
+ * decrypt step is deliberately hoisted to the caller (see
+ * `applyReconnectBootstrapBatch` in `workspace-sync.ts`).
+ */
 export async function applyStreamBootstrapInCurrentTransaction(
   workspaceId: string,
   streamId: string,

@@ -345,18 +345,25 @@ export class SyncEngine {
           }
         }
 
-        bootstrap = await applyReconnectBootstrapBatch(
-          workspaceId,
-          workspaceBootstrap,
-          successfulStreamBootstraps,
-          staleStreamIds,
-          terminalStreamIds,
-          fetchStartedAt,
-          this.currentWorkspaceUserId
-        )
+        const { workspaceBootstrap: appliedWorkspaceBootstrap, decryptedStreamBootstraps } =
+          await applyReconnectBootstrapBatch(
+            workspaceId,
+            workspaceBootstrap,
+            successfulStreamBootstraps,
+            staleStreamIds,
+            terminalStreamIds,
+            fetchStartedAt,
+            this.currentWorkspaceUserId
+          )
+        bootstrap = appliedWorkspaceBootstrap
 
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
-        for (const [streamId, streamBootstrap] of successfulStreamBootstraps) {
+        // Seed the per-stream TanStack cache from the *decrypted* bootstraps —
+        // `successfulStreamBootstraps` still carries the placeholder text for
+        // E2E messages, and IDB already holds the decrypted rows from
+        // `applyReconnectBootstrapBatch`. Using the encrypted map here would
+        // leave visible E2E streams stuck on the placeholder until refresh.
+        for (const [streamId, streamBootstrap] of decryptedStreamBootstraps) {
           queryClient.setQueryData(
             streamKeys.bootstrap(workspaceId, streamId),
             toCachedStreamBootstrap(

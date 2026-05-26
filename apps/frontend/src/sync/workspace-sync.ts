@@ -1654,7 +1654,16 @@ export async function applyReconnectBootstrapBatch(
    * silently skipped when omitted.
    */
   userId: string | null = null
-): Promise<WorkspaceBootstrap> {
+): Promise<{
+  workspaceBootstrap: WorkspaceBootstrap
+  /**
+   * Per-stream bootstraps with E2E payloads already decrypted. The caller
+   * uses this to seed the TanStack `streamKeys.bootstrap(...)` cache —
+   * writing the pre-decryption map there would leave visible E2E streams
+   * stuck on the placeholder until the next refresh.
+   */
+  decryptedStreamBootstraps: Map<string, StreamBootstrap>
+}> {
   const now = Date.now()
 
   const [localStreams, localMemberships, localUnreadState] = await Promise.all([
@@ -1845,7 +1854,7 @@ export async function applyReconnectBootstrapBatch(
     },
   })
 
-  return finalBootstrap
+  return { workspaceBootstrap: finalBootstrap, decryptedStreamBootstraps }
 }
 
 async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBootstrap, now: number): Promise<void> {

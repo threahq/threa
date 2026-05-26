@@ -15,7 +15,6 @@ import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@threa/types"
 import { messageMetadataSchema } from "./metadata-schema"
-import type { E2eScratchpadsService } from "../e2e-scratchpads"
 
 // Fields shared by every create/update variant. Defining once keeps the
 // six schemas from drifting when a per-message option is added.
@@ -227,16 +226,9 @@ interface Dependencies {
   eventService: EventService
   streamService: StreamService
   commandRegistry: CommandRegistry
-  e2eScratchpadsService: E2eScratchpadsService
 }
 
-export function createMessageHandlers({
-  pool,
-  eventService,
-  streamService,
-  commandRegistry,
-  e2eScratchpadsService,
-}: Dependencies) {
+export function createMessageHandlers({ pool, eventService, streamService, commandRegistry }: Dependencies) {
   return {
     async create(req: Request, res: Response) {
       const userId = req.user!.id

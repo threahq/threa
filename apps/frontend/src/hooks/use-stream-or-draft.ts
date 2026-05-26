@@ -623,7 +623,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       return {}
     },
-    [streamId, workspaceId, queryClient, markPending, notifyQueue, currentUserId, baseStream]
+    [streamId, workspaceId, markPending, notifyQueue, currentUserId, baseStream]
   )
 
   return {

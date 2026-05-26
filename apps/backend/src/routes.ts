@@ -199,7 +199,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     streamService,
     commandRegistry,
-    e2eScratchpadsService,
   })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
   const search = createSearchHandlers({ pool, searchService })
