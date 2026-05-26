@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { withTransaction } from "../../db"
+import { sql, withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { userEncryptionKeyId } from "../../lib/id"
 import { UserE2eKeysRepository, type KdfParams, type UserE2eKey } from "./repository"
@@ -30,11 +30,23 @@ export class UserE2eKeysService {
    * same transaction so the unique-active index never sees two live rows
    * (INV-20: race-safe write paths).
    *
+   * Two concurrent setUserKey calls (e.g. user clicks Setup twice quickly, or
+   * two devices race a passphrase rotation) would otherwise both pass the
+   * `getActiveByUser` check, both try to insert, and one would fail on the
+   * partial unique index. A per-(workspace,user) transaction-scoped advisory
+   * lock serializes them so the loser waits instead of erroring.
+   *
    * The server never sees the user's passphrase or the unwrapped private key.
    * It stores only the public half plus the passphrase-wrapped private bundle.
    */
   async setUserKey(input: SetUserKeyInput): Promise<SetUserKeyResult> {
     return withTransaction(this.pool, async (client) => {
+      await client.query(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(${input.workspaceId} || ':' || ${input.userId}, 0)
+        )
+      `)
+
       const existing = await UserE2eKeysRepository.getActiveByUser(client, input.workspaceId, input.userId)
       if (existing) {
         await UserE2eKeysRepository.revokeActive(client, input.workspaceId, input.userId)

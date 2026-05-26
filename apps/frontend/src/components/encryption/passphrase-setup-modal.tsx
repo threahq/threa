@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -133,17 +134,17 @@ export function PassphraseSetupModal({
               {mismatched && <p className="text-xs text-destructive">Passphrases don't match.</p>}
             </div>
 
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input
-                type="checkbox"
+            <div className="flex items-start gap-2 text-sm">
+              <Checkbox
+                id="e2e-acknowledged"
                 checked={acknowledged}
-                onChange={(e) => setAcknowledged(e.target.checked)}
+                onCheckedChange={(checked) => setAcknowledged(checked === true)}
                 className="mt-0.5"
               />
-              <span>
+              <Label htmlFor="e2e-acknowledged" className="cursor-pointer font-normal leading-snug">
                 I understand that losing this passphrase means losing access to my encrypted scratchpads permanently.
-              </span>
-            </label>
+              </Label>
+            </div>
           </ResponsiveDialogBody>
           <ResponsiveDialogFooter className="gap-2 px-6 pb-6">
             <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)} disabled={submitting}>

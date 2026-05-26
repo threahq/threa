@@ -10,11 +10,7 @@ import type { UserE2eKeysService } from "./service"
 // is ~3 KiB raw — far more than any legitimate field needs and small enough
 // that a malicious payload is bounded.
 const BASE64_MAX = 4096
-const base64String = z
-  .string()
-  .min(1)
-  .max(BASE64_MAX)
-  .regex(/^[A-Za-z0-9+/]+={0,2}$/, "must be base64")
+const base64String = z.base64().min(1).max(BASE64_MAX)
 
 const kdfParamsSchema = z.object({
   algorithm: z.literal("argon2id"),

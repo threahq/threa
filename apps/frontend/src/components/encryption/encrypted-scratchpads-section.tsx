@@ -14,9 +14,8 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
-import { e2eKeysApi } from "@/api/e2e-keys"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { lock, loadE2eKeyForUser, useE2eSession } from "@/stores/e2e-session-store"
+import { lock, loadE2eKeyForUser, revokeKeyForUser, useE2eSession } from "@/stores/e2e-session-store"
 import { PassphraseSetupModal } from "./passphrase-setup-modal"
 import { PassphraseUnlockModal } from "./passphrase-unlock-modal"
 
@@ -39,10 +38,7 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
   const handleRevoke = async () => {
     setRevoking(true)
     try {
-      await e2eKeysApi.revoke(workspaceId)
-      lock(workspaceId, userId)
-      // Re-load so the local cache row gets cleared and status flips to no-key.
-      await loadE2eKeyForUser(workspaceId, userId)
+      await revokeKeyForUser(workspaceId, userId)
       toast.success("Encryption key revoked")
       setRevokeOpen(false)
     } catch (err) {

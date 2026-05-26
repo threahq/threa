@@ -55,6 +55,13 @@ const INITIAL_STATE: E2eSessionState = {
 interface ScopeState {
   state: E2eSessionState
   cachedKey: CachedKeyView | null
+  /**
+   * Monotonic counter bumped at the start of every `loadE2eKeyForUser` call.
+   * A stale server response (e.g. one whose request started before a
+   * `setupNewKey` or `unlock` landed) must not overwrite the newer state —
+   * compare against the snapshot taken at the start of the call.
+   */
+  loadGeneration: number
 }
 
 const scopes = new Map<string, ScopeState>()
@@ -68,7 +75,7 @@ function getOrCreateScope(workspaceId: string, userId: string): ScopeState {
   const key = scopeKey(workspaceId, userId)
   let scope = scopes.get(key)
   if (!scope) {
-    scope = { state: INITIAL_STATE, cachedKey: null }
+    scope = { state: INITIAL_STATE, cachedKey: null, loadGeneration: 0 }
     scopes.set(key, scope)
   }
   return scope
@@ -125,11 +132,13 @@ async function writeCacheRow(
  */
 export async function loadE2eKeyForUser(workspaceId: string, userId: string): Promise<void> {
   const scope = getOrCreateScope(workspaceId, userId)
+  const generation = ++scope.loadGeneration
 
   // Already unlocked — bootstrap is a no-op once we're holding the key.
   if (scope.state.status === "unlocked") return
 
   const cachedRow = await db.e2eKeys.get(`${workspaceId}:${userId}`)
+  if (scope.loadGeneration !== generation) return
   if (cachedRow) {
     scope.cachedKey = toCachedKeyView(cachedRow)
     setState(workspaceId, userId, {
@@ -149,7 +158,15 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
     return
   }
 
+  // A newer `setupNewKey`, `unlock`, `rotatePassphrase`, or `revokeKey` may
+  // have landed while the GET was in flight. Drop the now-stale response so
+  // it can't clobber the fresher state.
+  if (scope.loadGeneration !== generation) return
+
   if (!server) {
+    // Server says no key, but if a concurrent local setupNewKey just produced
+    // one we'd be lying. The generation check above already covers that — by
+    // the time we get here, this response is the freshest signal.
     scope.cachedKey = null
     await db.e2eKeys.delete(`${workspaceId}:${userId}`)
     setState(workspaceId, userId, { status: "no-key", keyId: null, publicKey: null, privateKey: null, error: null })
@@ -189,6 +206,10 @@ export async function setupNewKey(
   passphrase: string,
   params: KdfParams = DEFAULT_KDF_PARAMS
 ): Promise<void> {
+  const scope = getOrCreateScope(workspaceId, userId)
+  // Invalidate any in-flight loadE2eKeyForUser so its eventual response
+  // can't overwrite the unlocked state we're about to set below.
+  scope.loadGeneration++
   setState(workspaceId, userId, { error: null })
 
   const salt = generateSalt()
@@ -210,7 +231,6 @@ export async function setupNewKey(
     kdfSalt: base64ToBytes(serverKey.kdfSalt),
     kdfParams: serverKey.kdfParams,
   }
-  const scope = getOrCreateScope(workspaceId, userId)
   scope.cachedKey = view
   await writeCacheRow(workspaceId, userId, view, serverKey.createdAt)
   setState(workspaceId, userId, {
@@ -233,6 +253,7 @@ export async function unlock(workspaceId: string, userId: string, passphrase: st
   if (!cached) {
     throw new Error("No wrapped key available to unlock")
   }
+  scope.loadGeneration++
   setState(workspaceId, userId, { status: "unlocking", error: null })
   try {
     const kek = await deriveKEK(passphrase, cached.kdfSalt, cached.kdfParams)
@@ -269,6 +290,7 @@ export async function rotatePassphrase(
   const scope = getOrCreateScope(workspaceId, userId)
   const cached = scope.cachedKey
   if (!cached) throw new Error("No wrapped key available to rotate")
+  scope.loadGeneration++
 
   const oldKek = await deriveKEK(oldPassphrase, cached.kdfSalt, cached.kdfParams)
   const privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, oldKek)
@@ -300,6 +322,21 @@ export async function rotatePassphrase(
     privateKey,
     error: null,
   })
+}
+
+/**
+ * Revoke the active key on the server and reset local state to `no-key`.
+ * Lives in the store (not the component) so the component layer stays
+ * UI-focused (INV-15) and the lock + cache-clear ordering is consistent
+ * across callers.
+ */
+export async function revokeKeyForUser(workspaceId: string, userId: string): Promise<void> {
+  const scope = getOrCreateScope(workspaceId, userId)
+  scope.loadGeneration++
+  await e2eKeysApi.revoke(workspaceId)
+  scope.cachedKey = null
+  await db.e2eKeys.delete(`${workspaceId}:${userId}`)
+  setState(workspaceId, userId, { status: "no-key", keyId: null, publicKey: null, privateKey: null, error: null })
 }
 
 /**
