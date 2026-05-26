@@ -399,8 +399,8 @@ export function StreamContent({
   }, [events, isThread])
 
   const timelineItems = useMemo(
-    () => annotateAuthorGroups(groupTimelineItems(displayEvents, user?.id)),
-    [displayEvents, user?.id]
+    () => annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined)),
+    [displayEvents, currentWorkspaceUserId]
   )
 
   // `order` is the position in the rendered timeline. Non-thread streams
