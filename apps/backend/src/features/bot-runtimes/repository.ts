@@ -571,9 +571,10 @@ export const BotInvocationRepository = {
    *    Returned regardless of `since` so a reconnect cannot drop work that
    *    is in flight.
    *
-   * `since` filters `available` only (24h lookback default at the service
-   * layer). Pass `null` to disable filtering — the first bootstrap after
-   * cold start has nothing to compare against.
+   * `since` filters `available` only. The 24h floor is enforced one layer
+   * up in `BotRuntimeService.getBootstrapForRuntime` — direct callers can
+   * pass `null` to skip filtering entirely, but the production path
+   * always passes a concrete `Date`.
    */
   async findBootstrapInvocations(
     db: Querier,

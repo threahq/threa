@@ -90,10 +90,12 @@ Fail closed on any thrown error (matches the precedent in `socket-auth.ts:21-30`
 
 ### 4.4 Room Model
 
-Two room patterns, both keyed by bot identity:
+Four room patterns, picked narrowest-wins by `BroadcastHandler.dispatchBotEvent`:
 
-- `bot:{workspaceId}:{botId}` — auto-joined on connect. Receives untargeted events for this bot: `bot_invocation:available` for invocations with `target_instance_id = NULL`, `bot:active_actor:changed`, `bot:archived`.
-- `bot:{workspaceId}:{botId}:instance:{instanceId}` — auto-joined when the bot identifies its instance in `bot:hello`. Receives instance-targeted events: `bot_invocation:available` for invocations with `target_instance_id = instanceId`, `bot_session_link:invalidated`.
+- `bot:{workspaceId}` — auto-joined on socket connect (before `bot:hello`). Receives workspace-wide events: `bot:resync` with no `botId`.
+- `bot:{workspaceId}:bot:{botId}` — auto-joined on `bot:hello`. Receives untargeted events for this bot: `bot_invocation:available` for invocations with `target_instance_id = NULL`, `bot:active_actor_changed`, `bot:archived`.
+- `bot:{workspaceId}:bot:{botId}:instance:{instanceId}` — auto-joined on `bot:hello`. Receives instance-targeted events: `bot_invocation:available` for invocations with `target_instance_id = instanceId`, `bot_session_link:invalidated`.
+- `bot:{workspaceId}:bot:{botId}:session:{runtimeSessionId}` — auto-joined on `bot:hello` when the runtime provides a `runtimeSessionId` (Pi-local). Receives session-pinned events: `bot_invocation:available` for invocations with `target_runtime_session_id = runtimeSessionId`.
 
 A bot **cannot** subscribe to another bot's rooms. Both auto-joins are server-enforced from `socket.data.bot`; there is no client-driven `join` event in v1. (Symmetric to the existing default-namespace `join` validation but with no surface for the client to expand its access.)
 
@@ -166,7 +168,7 @@ Payload: `{ workspaceId, botId?: string, instanceId?: string, reason: string }`.
 
 The bot then issues `POST /claim` for each pending invocation it wants to take, exactly the same as if it had received a live `bot_invocation:available` push. Bootstrap closes the gap between "what I missed while disconnected" and "what's pending now," matching INV-53 (subscription pairs with bootstrap, bootstrap invalidated on resubscribe).
 
-The bootstrap is computed from a single DB read per scope (cap row count, e.g. limit 100 pending). It is **not** the place to put unbounded history — that's still `GET /streams/:id/messages`.
+The bootstrap is computed from two parallel DB reads per scope (`available` + `ownedClaims`), each capped at 200 rows. It is **not** the place to put unbounded history — that's still `GET /streams/:id/messages`.
 
 ### 4.8 Presence on WS
 

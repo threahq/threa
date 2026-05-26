@@ -59,6 +59,12 @@ export class BotSocketRegistry {
    * were kicked. The caller usually emits a terminal event (e.g.
    * `bot:resync`) before calling this so the runtime knows why it lost
    * its connection.
+   *
+   * Note: `socket.disconnect(true)` schedules the disconnect event
+   * asynchronously, so `getSockets(key)` keeps returning the kicked
+   * sockets until the engine fires `disconnect` and the namespace handler
+   * runs `unregister`. Don't read the registry to confirm a kick — read
+   * the return value of this call.
    */
   disconnectInstance(key: BotSocketKey): number {
     const sockets = this.getSockets(key)

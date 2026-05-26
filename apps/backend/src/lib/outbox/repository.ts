@@ -557,10 +557,15 @@ export interface BotSessionLinkInvalidatedOutboxPayload extends WorkspaceScopedP
 
 export interface BotActiveActorChangedOutboxPayload extends WorkspaceScopedPayload {
   rootStreamId: string
+  // `previous*` is nullable because a brand-new root stream has no prior actor
+  // — the upsert in `setActiveActorInTransaction` runs the first time without
+  // an existing row. `new*` always reflects the post-upsert row, which always
+  // has a concrete actor, so the dispatcher and consumers never have to
+  // null-check the right-hand side.
   previousActorType: "bot" | "persona" | null
   previousActorId: string | null
-  newActorType: "bot" | "persona" | null
-  newActorId: string | null
+  newActorType: "bot" | "persona"
+  newActorId: string
   // Routing fan-out: computed at insert time from previous + new actor IDs so
   // the dispatcher can stay pure routing without re-reading actor identity.
   affectedBotIds: string[]

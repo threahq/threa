@@ -297,12 +297,19 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     if (isOutboxEventType(event, "bot_invocation:cancelled")) {
+      // No emitter wired yet — landing the routing path so the cancel
+      // service method (source-message delete, bot archive, manual) can
+      // light up without a parallel broadcaster change. Tracked alongside
+      // the cancellation feature work.
       const payload = event.payload as BotInvocationCancelledOutboxPayload
       botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
       return
     }
 
     if (isOutboxEventType(event, "bot_session_link:invalidated")) {
+      // No emitter wired yet — pairs with the session-unlink service path
+      // (admin "kick" + offline-grace). Routing lives here so when the
+      // emitter lands it just inserts the outbox row.
       const payload = event.payload as BotSessionLinkInvalidatedOutboxPayload
       botNs.to(`bot:${workspaceId}:bot:${payload.botId}:instance:${payload.instanceId}`).emit(event.eventType, payload)
       return
@@ -331,5 +338,11 @@ export class BroadcastHandler implements OutboxHandler {
       }
       return
     }
+
+    // Should be unreachable — every BotScopedEventType must have a routing
+    // branch above. If we hit this it means someone added an event type to
+    // BOT_SCOPED_EVENTS without wiring the dispatcher, and the event would
+    // silently disappear instead of reaching connected runtimes.
+    logger.warn({ eventType: event.eventType }, "dispatchBotEvent: unhandled bot-scoped event type")
   }
 }

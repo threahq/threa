@@ -108,6 +108,11 @@ interface Dependencies {
   voiceTranscriptionService: VoiceTranscriptionService
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
+  /**
+   * Public WS URL advertised in `POST /bot-runtime/presence`. Null = derive
+   * from the inbound request (dev only). See `Config.botRuntimeWsUrl`.
+   */
+  botRuntimeWsUrl: string | null
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
@@ -148,6 +153,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     voiceTranscriptionService,
     botApiKeyService,
     botRuntimeService,
+    botRuntimeWsUrl,
     storage,
     ai,
     controlPlaneClient,
@@ -577,6 +583,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     attachmentService,
     botChannelService,
     botRuntimeService,
+    botRuntimeWsUrl,
     streamService,
     eventService,
     pool,

@@ -554,6 +554,7 @@ export async function startServer(): Promise<ServerInstance> {
     voiceTranscriptionService,
     botApiKeyService,
     botRuntimeService,
+    botRuntimeWsUrl: config.botRuntimeWsUrl,
     storage,
     ai,
     controlPlaneClient,
