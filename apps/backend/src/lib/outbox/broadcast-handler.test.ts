@@ -23,15 +23,24 @@ interface MockEmitChain {
 }
 
 function createMockIo() {
-  const emitChains: Array<{ room: string; eventType: string; payload: unknown }> = []
+  const emitChains: Array<{ room: string; eventType: string; payload: unknown; namespace?: string }> = []
 
+  const makeRoomChain = (room: string, namespace?: string): MockEmitChain => ({
+    emit: mock((eventType: string, payload: unknown) => {
+      emitChains.push({ room, eventType, payload, namespace })
+    }),
+  })
+
+  const namespaceCache = new Map<string, { to: (room: string) => MockEmitChain }>()
   const io = {
-    to: mock((room: string): MockEmitChain => {
-      return {
-        emit: mock((eventType: string, payload: unknown) => {
-          emitChains.push({ room, eventType, payload })
-        }),
+    to: mock((room: string): MockEmitChain => makeRoomChain(room)),
+    of: mock((namespace: string) => {
+      let ns = namespaceCache.get(namespace)
+      if (!ns) {
+        ns = { to: (room: string) => makeRoomChain(room, namespace) }
+        namespaceCache.set(namespace, ns)
       }
+      return ns
     }),
   }
 
@@ -449,8 +458,153 @@ describe("BroadcastHandler", () => {
       room: "ws:ws_1:stream:stream_a",
       eventType: "conversation:message_reassigned",
       payload: event.payload,
+      namespace: undefined,
     })
     // No parentStreamId on this payload → no parent-room emit
     expect(emitChains.filter((e) => e.eventType === "conversation:message_reassigned")).toHaveLength(1)
+  })
+
+  // ===========================================================================
+  // Bot-scoped events route into the `/bot` namespace using the narrowest room
+  // a payload supports — see `BroadcastHandler.dispatchBotEvent`.
+  // ===========================================================================
+  it("routes bot_invocation:available with no steering to the per-bot room", async () => {
+    const event = makeEvent(1n, "bot_invocation:available", {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      invocationId: "inv_1",
+      requiredCapability: "active-scratchpad",
+      targetInstanceId: null,
+      targetRuntimeSessionId: null,
+      createdAt: new Date().toISOString(),
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1:bot:bot_alice",
+      eventType: "bot_invocation:available",
+      payload: event.payload,
+      namespace: "/bot",
+    })
+  })
+
+  it("routes bot_invocation:available with targetInstanceId to the per-instance room", async () => {
+    const event = makeEvent(2n, "bot_invocation:available", {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      invocationId: "inv_2",
+      requiredCapability: "active-scratchpad",
+      targetInstanceId: "inst_42",
+      targetRuntimeSessionId: null,
+      createdAt: new Date().toISOString(),
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1:bot:bot_alice:instance:inst_42",
+      eventType: "bot_invocation:available",
+      payload: event.payload,
+      namespace: "/bot",
+    })
+  })
+
+  it("routes bot_invocation:available with targetRuntimeSessionId to the per-session room", async () => {
+    const event = makeEvent(3n, "bot_invocation:available", {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      invocationId: "inv_3",
+      requiredCapability: "active-scratchpad",
+      targetInstanceId: "inst_42",
+      targetRuntimeSessionId: "sess_99",
+      createdAt: new Date().toISOString(),
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    // Session room wins — the instance room is intentionally skipped because
+    // the per-session subscriber is a strict subset of the per-instance set
+    // and re-emitting would deliver duplicates to the session socket.
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1:bot:bot_alice:session:sess_99",
+      eventType: "bot_invocation:available",
+      payload: event.payload,
+      namespace: "/bot",
+    })
+    expect(emitChains.filter((e) => e.eventType === "bot_invocation:available")).toHaveLength(1)
+  })
+
+  it("fans bot:active_actor_changed to every affected bot room", async () => {
+    const event = makeEvent(4n, "bot:active_actor_changed", {
+      workspaceId: "ws_1",
+      rootStreamId: "stream_pad",
+      previousActorType: "bot",
+      previousActorId: "bot_old",
+      newActorType: "bot",
+      newActorId: "bot_new",
+      affectedBotIds: ["bot_old", "bot_new"],
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const rooms = emitChains
+      .filter((e) => e.eventType === "bot:active_actor_changed")
+      .map((e) => e.room)
+      .sort()
+    expect(rooms).toEqual(["bot:ws_1:bot:bot_new", "bot:ws_1:bot:bot_old"])
+  })
+
+  it("narrows bot:resync routing by the most-specific target", async () => {
+    const events = [
+      makeEvent(5n, "bot:resync", {
+        workspaceId: "ws_1",
+        botId: null,
+        instanceId: null,
+        reason: "admin",
+      }),
+      makeEvent(6n, "bot:resync", {
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: null,
+        reason: "key_rotated",
+      }),
+      makeEvent(7n, "bot:resync", {
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        reason: "instance_kicked",
+      }),
+    ]
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue(events)
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const resyncEmits = emitChains.filter((e) => e.eventType === "bot:resync")
+    expect(resyncEmits.map((e) => e.room)).toEqual([
+      "bot:ws_1",
+      "bot:ws_1:bot:bot_alice",
+      "bot:ws_1:bot:bot_alice:instance:inst_42",
+    ])
+    expect(resyncEmits.every((e) => e.namespace === "/bot")).toBe(true)
   })
 })

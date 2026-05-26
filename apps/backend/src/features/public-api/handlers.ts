@@ -475,6 +475,25 @@ function serializeTraceStep(step: AgentSessionStep) {
   }
 }
 
+/**
+ * Hands the runtime a self-describing pointer to the `/bot` Socket.IO
+ * namespace. We derive the host from the request the runtime just sent
+ * so a) there is no separate public-URL config to keep in sync, and b)
+ * a runtime hitting a regional alias gets back the same regional alias
+ * for its WebSocket connection — no risk of routing it to the wrong shard.
+ *
+ * `wss://` is forced when the request was forwarded over TLS (X-Forwarded-Proto
+ * from the workspace router), falling back to whatever the local listener
+ * speaks for dev.
+ */
+function buildRuntimeWsHint(req: Request): { url: string; path: string; namespace: string } {
+  const forwardedProto = req.get("x-forwarded-proto")
+  const proto = forwardedProto ? forwardedProto.split(",")[0]!.trim() : req.protocol
+  const wsScheme = proto === "https" ? "wss" : "ws"
+  const host = req.get("host") ?? ""
+  return { url: `${wsScheme}://${host}`, path: "/socket.io/", namespace: "/bot" }
+}
+
 export function createPublicApiHandlers({
   searchService,
   memoExplorerService,
@@ -715,6 +734,11 @@ export function createPublicApiHandlers({
           lastSeenAt: presence.lastSeenAt.toISOString(),
           createdAt: presence.createdAt.toISOString(),
           updatedAt: presence.updatedAt.toISOString(),
+          // Tells the runtime where to upgrade onto WebSocket. Existing HTTP
+          // clients can ignore this; new builds connect once and drop the
+          // poll loop. The host comes from the same request the runtime just
+          // sent, so we don't need a separate config for the public URL.
+          ws: buildRuntimeWsHint(req),
         },
       })
     },
