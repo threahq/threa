@@ -295,6 +295,16 @@ export const StreamActiveActorRepository = {
     )
     return result.rows[0] ? mapActiveActor(result.rows[0]) : null
   },
+
+  // Bootstrap helper for the `/bot` WS namespace: every stream where this bot
+  // is the active actor. The runtime needs this on reconnect so it knows which
+  // streams it is on the hook for without re-running its scratchpad scan.
+  async findActiveForBot(db: Querier, params: { workspaceId: string; botId: string }): Promise<StreamActiveActor[]> {
+    const result = await db.query<StreamActiveActorRow>(
+      sql`SELECT * FROM stream_active_actors WHERE workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId}`
+    )
+    return result.rows.map(mapActiveActor)
+  },
 }
 
 export const BotRuntimeInstanceRepository = {
@@ -421,6 +431,19 @@ export const BotRuntimeSessionLinkRepository = {
       sql`SELECT DISTINCT ON (bot_id) * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ANY(${params.botIds}) AND active_stream_id = ${params.activeStreamId} AND status = 'active' ORDER BY bot_id, updated_at DESC`
     )
     return new Map(result.rows.map((row) => [row.bot_id, mapSessionLink(row)]))
+  },
+
+  // Bootstrap helper for the `/bot` WS namespace: every active session link
+  // for this bot/instance, so the runtime can rebuild its (rootStream ->
+  // activeStream) map on reconnect without re-querying per stream.
+  async findActiveByBotInstance(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string }
+  ): Promise<BotRuntimeSessionLink[]> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId} AND status = 'active'`
+    )
+    return result.rows.map(mapSessionLink)
   },
 }
 

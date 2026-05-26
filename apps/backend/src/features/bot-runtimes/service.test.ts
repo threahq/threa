@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { BotRuntimeService } from "./service"
 import {
   BotInvocationRepository,
+  BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
   type BotInvocation,
+  type BotRuntimeSessionLink,
   type StreamActiveActor,
 } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -254,6 +256,55 @@ describe("BotRuntimeService outbox emission", () => {
 
       const payload = insertSpy.mock.calls[0]?.[2] as unknown as Record<string, unknown>
       expect(payload.affectedBotIds).toEqual(["bot_new"])
+    })
+  })
+
+  describe("getBootstrapForRuntime", () => {
+    it("returns activeActorByStream and activeSessionLinks alongside invocations", async () => {
+      const actor: StreamActiveActor = {
+        id: "saa_1",
+        workspaceId: "ws_1",
+        rootStreamId: "stream_root",
+        actorType: "bot",
+        actorId: "bot_alice",
+        createdBy: "usr_owner",
+        createdAt: new Date("2026-05-26T11:00:00Z"),
+        updatedAt: new Date("2026-05-26T11:30:00Z"),
+      }
+      const link: BotRuntimeSessionLink = {
+        id: "brsl_1",
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        runtimeKind: "pi-local",
+        instanceId: "inst_42",
+        runtimeSessionId: "sess_1",
+        rootStreamId: "stream_root",
+        activeStreamId: "stream_active",
+        status: "active",
+        linkedBy: "usr_owner",
+        metadata: {},
+        lastSeenAt: new Date("2026-05-26T11:45:00Z"),
+        createdAt: new Date("2026-05-26T11:00:00Z"),
+        updatedAt: new Date("2026-05-26T11:45:00Z"),
+      }
+      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
+        available: [makeInvocation()],
+        ownedClaims: [],
+      })
+      spyOn(StreamActiveActorRepository, "findActiveForBot").mockResolvedValue([actor])
+      spyOn(BotRuntimeSessionLinkRepository, "findActiveByBotInstance").mockResolvedValue([link])
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const result = await service.getBootstrapForRuntime({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        supportedCapabilities: ["active-scratchpad"],
+      })
+
+      expect(result.available).toHaveLength(1)
+      expect(result.activeActorByStream).toEqual([actor])
+      expect(result.activeSessionLinks).toEqual([link])
     })
   })
 

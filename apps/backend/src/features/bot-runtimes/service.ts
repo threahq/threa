@@ -356,18 +356,37 @@ export class BotRuntimeService {
     serverGeneratedAt: Date
     available: BotInvocation[]
     ownedClaims: BotInvocation[]
+    activeActorByStream: StreamActiveActor[]
+    activeSessionLinks: BotRuntimeSessionLink[]
   }> {
     const lookbackFloor = new Date(Date.now() - 24 * 60 * 60 * 1000)
     const since = params.sinceCursor && params.sinceCursor > lookbackFloor ? params.sinceCursor : lookbackFloor
-    const { available, ownedClaims } = await BotInvocationRepository.findBootstrapInvocations(this.pool, {
-      workspaceId: params.workspaceId,
-      botId: params.botId,
-      instanceId: params.instanceId,
-      runtimeSessionId: params.runtimeSessionId ?? null,
-      supportedCapabilities: params.supportedCapabilities,
-      since,
-    })
-    return { serverGeneratedAt: new Date(), available, ownedClaims }
+    const [bootstrap, activeActorByStream, activeSessionLinks] = await Promise.all([
+      BotInvocationRepository.findBootstrapInvocations(this.pool, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        instanceId: params.instanceId,
+        runtimeSessionId: params.runtimeSessionId ?? null,
+        supportedCapabilities: params.supportedCapabilities,
+        since,
+      }),
+      StreamActiveActorRepository.findActiveForBot(this.pool, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+      }),
+      BotRuntimeSessionLinkRepository.findActiveByBotInstance(this.pool, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        instanceId: params.instanceId,
+      }),
+    ])
+    return {
+      serverGeneratedAt: new Date(),
+      available: bootstrap.available,
+      ownedClaims: bootstrap.ownedClaims,
+      activeActorByStream,
+      activeSessionLinks,
+    }
   }
 
   async claimNextInvocation(params: {

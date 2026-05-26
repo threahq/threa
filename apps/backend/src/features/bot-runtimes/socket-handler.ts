@@ -1,17 +1,31 @@
-import type { Server, Socket } from "socket.io"
+import type { Server } from "socket.io"
 import { z } from "zod"
 import { BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } from "@threa/types"
 import type { BotRuntimeService } from "./service"
-import type { BotInvocation } from "./repository"
+import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
 import type { BotApiKeyService } from "../public-api"
 import { createBotSocketAuthMiddleware, readSocketToken, type BotSocketData } from "./socket-auth"
 import { BotSocketRegistry } from "./bot-socket-registry"
 import { logger } from "../../lib/logger"
 
+// Identifier chars only — these become Socket.IO room name segments
+// (`bot:{ws}:bot:{botId}:instance:{instanceId}`), so anything outside the
+// safe set risks ambiguous room matching or trips other parsers.
+const instanceIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, "instanceId must be 1-64 chars of [A-Za-z0-9_-]")
+const runtimeSessionIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, "runtimeSessionId must be 1-64 chars of [A-Za-z0-9_-]")
+
 const helloSchema = z.object({
-  instanceId: z.string().min(1).max(128),
+  instanceId: instanceIdSchema,
   runtimeKind: z.enum(BOT_RUNTIME_KINDS),
-  runtimeSessionId: z.string().min(1).max(128).optional(),
+  runtimeSessionId: runtimeSessionIdSchema.optional(),
   displayName: z.string().max(256).optional().nullable(),
   capabilities: z.record(z.string(), z.unknown()).optional(),
   supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
@@ -121,13 +135,19 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
 
       const data = parsed.data
       const runtimeSessionId = data.runtimeSessionId ?? null
+      const botRoom = `bot:${workspaceId}:bot:${botId}`
+      const instanceRoom = `bot:${workspaceId}:bot:${botId}:instance:${data.instanceId}`
+      const sessionRoom = runtimeSessionId ? `bot:${workspaceId}:bot:${botId}:session:${runtimeSessionId}` : null
 
       try {
-        // Presence upsert + bootstrap read run FIRST so an error leaves no
-        // socket-side state to roll back: the rooms are still empty, the
-        // registry has no entry, and `joined` is still null so a retried
-        // hello on the same connection works. Only after both succeed do
-        // we wire the socket up to receive future pushes.
+        // Order matters: presence upsert → join rooms → bootstrap SELECT → register.
+        // Joining BEFORE the bootstrap read closes the event-loss window. Anything
+        // that lands between bootstrap-read and rooms-joined would otherwise be
+        // dispatched into a room the socket isn't in yet. With join-first, the
+        // socket sees overlap events twice (once via room push, once via the read)
+        // and the runtime dedupes by invocation id — but never loses an event.
+        // On error we leave the rooms so a retried hello on the same connection
+        // re-enters with a clean state.
         await botRuntimeService.upsertPresenceFromBotKey({
           workspaceId,
           botId,
@@ -142,6 +162,10 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           },
         })
 
+        socket.join(botRoom)
+        socket.join(instanceRoom)
+        if (sessionRoom) socket.join(sessionRoom)
+
         const bootstrap = await botRuntimeService.getBootstrapForRuntime({
           workspaceId,
           botId,
@@ -151,11 +175,6 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           sinceCursor: data.sinceCursor ? new Date(data.sinceCursor) : null,
         })
 
-        socket.join(`bot:${workspaceId}:bot:${botId}`)
-        socket.join(`bot:${workspaceId}:bot:${botId}:instance:${data.instanceId}`)
-        if (runtimeSessionId) {
-          socket.join(`bot:${workspaceId}:bot:${botId}:session:${runtimeSessionId}`)
-        }
         botSocketRegistry.register({ workspaceId, botId, instanceId: data.instanceId }, socket)
         joined = {
           instanceId: data.instanceId,
@@ -168,9 +187,14 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
           serverGeneratedAt: bootstrap.serverGeneratedAt.toISOString(),
           availableInvocations: bootstrap.available.map(serializeInvocation),
           ownedClaims: bootstrap.ownedClaims.map(serializeInvocation),
+          activeActorByStream: bootstrap.activeActorByStream.map(serializeActiveActor),
+          activeSessionLinks: bootstrap.activeSessionLinks.map(serializeSessionLink),
         }
         ack?.(response)
       } catch (err) {
+        socket.leave(botRoom)
+        socket.leave(instanceRoom)
+        if (sessionRoom) socket.leave(sessionRoom)
         logger.error({ err, workspaceId, botId, instanceId: data.instanceId }, "bot:hello bootstrap failed")
         ack?.({ ok: false, error: "Internal error during bootstrap" })
       }
@@ -213,18 +237,54 @@ export interface SerializedBotInvocation {
   completedAt: string | null
 }
 
+export interface SerializedStreamActiveActor {
+  rootStreamId: string
+  actorType: "persona" | "bot"
+  actorId: string
+  updatedAt: string
+}
+
+export interface SerializedBotSessionLink {
+  rootStreamId: string
+  activeStreamId: string
+  runtimeSessionId: string
+  status: string
+  lastSeenAt: string | null
+}
+
 export type BotHelloResponse =
   | {
       ok: true
       serverGeneratedAt: string
       availableInvocations: SerializedBotInvocation[]
       ownedClaims: SerializedBotInvocation[]
+      activeActorByStream: SerializedStreamActiveActor[]
+      activeSessionLinks: SerializedBotSessionLink[]
     }
   | {
       ok: false
       error: string
       details?: Record<string, unknown>
     }
+
+function serializeActiveActor(a: StreamActiveActor): SerializedStreamActiveActor {
+  return {
+    rootStreamId: a.rootStreamId,
+    actorType: a.actorType,
+    actorId: a.actorId,
+    updatedAt: a.updatedAt.toISOString(),
+  }
+}
+
+function serializeSessionLink(link: BotRuntimeSessionLink): SerializedBotSessionLink {
+  return {
+    rootStreamId: link.rootStreamId,
+    activeStreamId: link.activeStreamId,
+    runtimeSessionId: link.runtimeSessionId,
+    status: link.status,
+    lastSeenAt: link.lastSeenAt?.toISOString() ?? null,
+  }
+}
 
 function serializeInvocation(inv: BotInvocation): SerializedBotInvocation {
   return {
