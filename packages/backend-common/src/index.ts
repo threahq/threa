@@ -1,5 +1,5 @@
 // Auth
-export { WorkosAuthService } from "./auth/auth-service"
+export { WorkosAuthService, pickSealed } from "./auth/auth-service"
 export type { AuthResult, AuthService } from "./auth/auth-service"
 export { StubAuthService } from "./auth/auth-service.stub"
 export type { DevLoginResult } from "./auth/auth-service.stub"

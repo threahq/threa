@@ -31,6 +31,10 @@ const magicVerifySchema = z.object({
   intent: z.literal("add"),
 })
 
+const logoutQuerySchema = z.object({
+  scope: z.enum(["current"]).optional(),
+})
+
 /**
  * Validate that a forwarded host is an allowed staging subdomain.
  * Prevents open redirect via X-Forwarded-Host spoofing.
@@ -189,6 +193,33 @@ export function createControlPlaneAuthHandlers({
 
     async logout(req: Request, res: Response) {
       const session = req.cookies[SESSION_COOKIE_NAME]
+      const forwardedHost = req.headers["x-forwarded-host"] as string | undefined
+      const queryParse = logoutQuerySchema.safeParse(req.query)
+      const scope = queryParse.success ? queryParse.data.scope : undefined
+
+      // Where we land on a same-app redirect (no WorkOS round-trip). Falls
+      // back to the configured frontend origin, then "/" — same precedence the
+      // full-logout path uses below.
+      const sameAppOrigin =
+        forwardedHost && isTrustedHost(forwardedHost, allowedRedirectDomain, dedicatedRedirectHosts)
+          ? `https://${forwardedHost}`
+          : frontendUrl || "/"
+
+      // scope=current: revoke just the active session and promote a parked
+      // alt, keeping the user signed in as the next account. The service
+      // owns the auth → alt-check → revoke + promote sequence; here we just
+      // act on the outcome. A `false` return (no session, no parked alt, or
+      // auth failed) falls through to the full-logout path below.
+      if (scope === "current") {
+        try {
+          if (await accountsService.removeCurrentAndPromote(res, req.cookies, session)) {
+            return res.redirect(sameAppOrigin)
+          }
+        } catch {
+          // Promote raised — full logout still gets the user out, just
+          // everywhere at once. Fall through.
+        }
+      }
 
       clearSessionCookie(res)
 
@@ -198,8 +229,6 @@ export function createControlPlaneAuthHandlers({
       for (const { slot } of readAltSessionCookies(req.cookies)) {
         clearAltSessionCookie(res, slot)
       }
-
-      const forwardedHost = req.headers["x-forwarded-host"] as string | undefined
 
       if (session) {
         // For dedicated-redirect-host sessions, tell WorkOS to single-logout
@@ -216,10 +245,7 @@ export function createControlPlaneAuthHandlers({
       }
 
       // Fallback when there's no session or getLogoutUrl returned null.
-      if (forwardedHost && isTrustedHost(forwardedHost, allowedRedirectDomain, dedicatedRedirectHosts)) {
-        return res.redirect(`https://${forwardedHost}`)
-      }
-      res.redirect(frontendUrl || "/")
+      res.redirect(sameAppOrigin)
     },
 
     async me(req: Request, res: Response) {

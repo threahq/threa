@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen, userEvent, spyOnExport } from "@/test"
 import { SidebarFooter } from "./sidebar-footer"
 import * as authModule from "@/auth"
@@ -14,7 +15,12 @@ const collapseOnMobile = vi.fn()
 const isMobile = { value: true }
 
 function renderWithRouter(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>)
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>
+  )
 }
 
 describe("SidebarFooter", () => {

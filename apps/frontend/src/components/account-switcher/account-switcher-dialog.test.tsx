@@ -76,7 +76,7 @@ describe("AccountSwitcherDialog", () => {
     expect(screen.getByText("Ben Parked")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Remove Ben Parked" })).toBeInTheDocument()
     expect(screen.getByText("Signed-out account")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Sign in again" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Add an account" })).toBeInTheDocument()
   })
 
   it("flips a parked account in place via switchAccount (no navigation)", async () => {

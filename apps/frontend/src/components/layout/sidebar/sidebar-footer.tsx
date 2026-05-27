@@ -1,7 +1,10 @@
 import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutRef } from "react"
-import { ChevronUp, DollarSign, LogOut, Settings, User as UserIcon, Users } from "lucide-react"
+import { ArrowLeftRight, ChevronUp, DollarSign, LogOut, Settings, User as UserIcon } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
+import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
+import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
 import { useSettings, useSidebar } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -72,6 +75,7 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
   const { collapseOnMobile } = useSidebar()
   const isMobile = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const queryClient = useQueryClient()
 
   const handleOpenSettings = useCallback(
     (tab: "profile" | "appearance") => {
@@ -105,6 +109,37 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
     )
   }, [collapseOnMobile, setSearchParams])
 
+  // Single-account: full logout is unambiguous. Multi-account: defer to the
+  // confirm dialog so the user picks current-only vs all. The accounts query
+  // is the same one the switcher uses, so a cached value usually answers
+  // instantly; a cold call still costs one request before the menu reacts.
+  // Network failure falls back to the all-accounts path — refusing to log out
+  // because we couldn't count accounts is the worse failure mode.
+  const handleLogout = useCallback(async () => {
+    try {
+      const data = await queryClient.fetchQuery({
+        queryKey: ACCOUNTS_LIST_KEY,
+        queryFn: () => accountsApi.list(),
+        staleTime: 10_000,
+      })
+      const liveCount = data.accounts.filter((a) => a.state !== "stale").length
+      if (liveCount > 1) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev)
+            next.set(LOGOUT_CONFIRM_PARAM, "")
+            return next
+          },
+          { replace: true }
+        )
+        return
+      }
+    } catch {
+      // Fall through to all-accounts logout.
+    }
+    logout()
+  }, [queryClient, setSearchParams, logout])
+
   const avatarSrc = currentUser ? getAvatarUrl(workspaceId, currentUser.avatarUrl, 64) : null
   const menuActions = useMemo<SidebarActionItem[]>(
     () => [
@@ -137,7 +172,7 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
       {
         id: "switch-account",
         label: "Switch account",
-        icon: Users,
+        icon: ArrowLeftRight,
         onSelect: openAccountSwitcher,
         separatorBefore: true,
       },
@@ -145,10 +180,10 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
         id: "logout",
         label: "Log out",
         icon: LogOut,
-        onSelect: () => logout(),
+        onSelect: handleLogout,
       },
     ],
-    [handleOpenSettings, openWorkspaceSettings, openAccountSwitcher, collapseOnMobile, logout, workspaceId]
+    [handleOpenSettings, openWorkspaceSettings, openAccountSwitcher, collapseOnMobile, handleLogout, workspaceId]
   )
 
   if (!currentUser) return null

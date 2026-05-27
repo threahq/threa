@@ -27,6 +27,21 @@ export interface AuthResult {
   reason?: string
 }
 
+/**
+ * Pick the sealed session value to commit/use after `authenticateSession`.
+ *
+ * WorkOS rotates the refresh token transparently when the access token has
+ * expired and returns the rotated sealed in `result.sealedSession` together
+ * with `refreshed: true`. The pre-refresh `original` value is revoked at
+ * WorkOS the moment rotation runs, so any caller that wants to keep the
+ * session alive (write the cookie, re-park, revoke) MUST use the rotated
+ * value when one was issued. Centralized here so middleware, the accounts
+ * service, and any future caller share one source of truth.
+ */
+export function pickSealed(result: AuthResult, original: string): string {
+  return result.refreshed && result.sealedSession ? result.sealedSession : original
+}
+
 export interface AuthService {
   authenticateSession(sealedSession: string): Promise<AuthResult>
   authenticateWithCode(code: string): Promise<AuthResult>
