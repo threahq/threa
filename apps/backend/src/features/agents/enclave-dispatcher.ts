@@ -187,7 +187,7 @@ export class EnclaveDispatcher {
     await aiCostService.recordUsage({
       workspaceId: job.workspaceId,
       sessionId: sessionIdForRun,
-      functionId: "enclave_persona_agent",
+      functionId: "enclave-persona-agent",
       model: response.sidecar.modelName,
       provider: response.sidecar.providerName,
       origin: "system",

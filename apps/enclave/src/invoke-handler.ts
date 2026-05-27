@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express"
+import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import type { Orchestrator, InvokeRequest } from "./orchestrator"
 
@@ -51,10 +52,10 @@ const invokeBodySchema = z.object({
 })
 
 export function createBearerAuth(secret: string) {
+  const expected = Buffer.from(`Bearer ${secret}`)
   return (req: Request, res: Response, next: NextFunction) => {
-    const header = req.headers.authorization ?? ""
-    const expected = `Bearer ${secret}`
-    if (header !== expected) {
+    const header = Buffer.from(req.headers.authorization ?? "")
+    if (header.length !== expected.length || !timingSafeEqual(header, expected)) {
       res.status(401).json({ error: "Unauthorized" })
       return
     }

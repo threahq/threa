@@ -213,7 +213,7 @@ describe("EnclaveDispatcher", () => {
     expect(aiCostService.recordUsage).toHaveBeenCalledTimes(1)
     const recordArgs = aiCostService.recordUsage.mock.calls[0]![0]
     expect(recordArgs.workspaceId).toBe(WORKSPACE_ID)
-    expect(recordArgs.functionId).toBe("enclave_persona_agent")
+    expect(recordArgs.functionId).toBe("enclave-persona-agent")
     expect(recordArgs.provider).toBe("anthropic")
     expect(recordArgs.usage.totalTokens).toBe(46)
     expect(recordArgs.usage.cost).toBeCloseTo(0.0067)

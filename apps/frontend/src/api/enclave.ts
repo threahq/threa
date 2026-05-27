@@ -1,4 +1,4 @@
-import type { StreamWithPreview } from "@threa/types"
+import type { Stream } from "@threa/types"
 import { api } from "./client"
 
 /**
@@ -30,8 +30,8 @@ export const enclaveApi = {
    * second recipient on subsequent messages. The stream stores no pinned
    * `keyId` — recipients are recomputed per-message from `getActiveKeys`.
    */
-  async invite(workspaceId: string, streamId: string): Promise<StreamWithPreview> {
-    const res = await api.post<{ stream: StreamWithPreview }>(
+  async invite(workspaceId: string, streamId: string): Promise<Stream> {
+    const res = await api.post<{ stream: Stream }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/invite-enclave`,
       {}
     )
