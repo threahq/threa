@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, test } from "bun:test"
 import { __testing } from "./threa-remote"
 
 describe("Pi remote trace safety", () => {
@@ -294,5 +294,92 @@ describe("Pi remote trace safety", () => {
 
   test("WS_BACKSTOP_POLL_MS is the 30s safety cadence described in the plan", () => {
     expect(__testing.WS_BACKSTOP_POLL_MS).toBe(30_000)
+  })
+})
+
+describe("buildBotSocketUrl", () => {
+  test("appends the namespace to a bare wsUrl", () => {
+    expect(__testing.buildBotSocketUrl({ url: "https://eu.threa.io", path: "/socket.io/", namespace: "/bot" })).toBe(
+      "https://eu.threa.io/bot"
+    )
+  })
+
+  test("does not double the slash when wsUrl already has a trailing slash", () => {
+    expect(__testing.buildBotSocketUrl({ url: "https://eu.threa.io/", path: "/socket.io/", namespace: "/bot" })).toBe(
+      "https://eu.threa.io/bot"
+    )
+  })
+
+  test("preserves a query string on the wsUrl (staging routes region via ?region=…)", () => {
+    // Regression: prior `${url}${namespace}` concat produced
+    // `https://ws-staging.threa.io?region=staging/bot`, which Socket.IO rejects.
+    expect(
+      __testing.buildBotSocketUrl({
+        url: "https://ws-staging.threa.io?region=staging",
+        path: "/socket.io/",
+        namespace: "/bot",
+      })
+    ).toBe("https://ws-staging.threa.io/bot?region=staging")
+  })
+
+  test("nests under an existing pathname when the wsUrl already has one", () => {
+    expect(
+      __testing.buildBotSocketUrl({ url: "https://gateway.threa.io/api/", path: "/socket.io/", namespace: "/bot" })
+    ).toBe("https://gateway.threa.io/api/bot")
+  })
+})
+
+describe("fetchWsHintFromConfig", () => {
+  const originalFetch = globalThis.fetch
+  let calls: Array<{ url: string; init?: RequestInit }>
+
+  beforeEach(() => {
+    calls = []
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  function mockFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>): void {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      calls.push({ url, init })
+      return handler(url, init)
+    }) as typeof fetch
+  }
+
+  test("returns the parsed hint when the workspace router responds with a wsUrl", async () => {
+    mockFetch(() => new Response(JSON.stringify({ region: "eu-north-1", wsUrl: "wss://eu.threa.io" })))
+    const result = await __testing.fetchWsHintFromConfig("https://app.threa.io/", "ws_123", "threa_bk_test")
+    expect(result).toEqual({ hint: { url: "wss://eu.threa.io", path: "/socket.io/", namespace: "/bot" } })
+    expect(calls[0]?.url).toBe("https://app.threa.io/api/workspaces/ws_123/config")
+    expect((calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe("Bearer threa_bk_test")
+  })
+
+  test("surfaces HTTP failures so callers can log and fall back to polling", async () => {
+    mockFetch(() => new Response("not found", { status: 404 }))
+    expect(await __testing.fetchWsHintFromConfig("https://app.threa.io", "ws_123", "threa_bk_test")).toEqual({
+      error: "HTTP 404",
+    })
+  })
+
+  test("reports missing-wsUrl when the body omits the field (e.g. wrong endpoint hit)", async () => {
+    mockFetch(() => new Response(JSON.stringify({ region: "eu-north-1" })))
+    expect(await __testing.fetchWsHintFromConfig("https://app.threa.io", "ws_123", "threa_bk_test")).toEqual({
+      error: "missing wsUrl",
+    })
+  })
+
+  test("surfaces network errors so the resolver doesn't throw out of the polling loop", async () => {
+    mockFetch(() => {
+      throw new Error("ECONNREFUSED")
+    })
+    const result = await __testing.fetchWsHintFromConfig("https://app.threa.io", "ws_123", "threa_bk_test")
+    expect("error" in result && result.error).toContain("ECONNREFUSED")
+  })
+
+  test("WS_RESOLVE_RETRY_MS gates retries to once a minute", () => {
+    expect(__testing.WS_RESOLVE_RETRY_MS).toBe(60_000)
   })
 })

@@ -23,6 +23,12 @@ const BUSY_HEARTBEAT_MS = 15_000
 // catch the rare missed-emit / mid-flight-disconnect case (plan §5).
 const WS_BACKSTOP_POLL_MS = 30_000
 const WS_RECONNECTION_DELAY_MAX_MS = 30_000
+// How long to wait after a failed `/api/workspaces/:id/config` lookup before
+// re-trying. Without this, a transient network blip on the very first resolve
+// would permanently downgrade us to HTTP polling for the process lifetime —
+// the resolver short-circuits whenever `botWsHint` is unset and never retried
+// on its own.
+const WS_RESOLVE_RETRY_MS = 60_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
@@ -161,6 +167,7 @@ let botSocket: Socket | undefined
 let botWsConnected = false
 let botWsHint: WsHint | undefined
 let lastBotWsSummary: string | undefined
+let lastWsResolveAttemptAt = 0
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -393,27 +400,47 @@ async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionCo
   return true
 }
 
-async function resolveBotWsHint(ctx: ExtensionContext): Promise<void> {
-  if (!config || botWsHint) return
+type FetchWsHintResult = { hint: WsHint } | { error: string }
+
+async function fetchWsHintFromConfig(baseUrl: string, workspaceId: string, apiKey: string): Promise<FetchWsHintResult> {
   try {
-    const response = await fetchWithTimeout(`${config.baseUrl.replace(/\/$/, "")}/api/workspaces/${config.workspaceId}/config`, {
-      headers: { Authorization: `Bearer ${config.apiKey}` },
+    const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/api/workspaces/${workspaceId}/config`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
     })
-    if (!response.ok) {
-      noteWsDebug(ctx, `workspace config failed: HTTP ${response.status}`)
-      return
-    }
+    if (!response.ok) return { error: `HTTP ${response.status}` }
     const workspaceConfig = (await response.json()) as WorkspaceConfigResponse
     const parsed = parseWsHint({ url: workspaceConfig.wsUrl })
-    if (!parsed) {
-      noteWsDebug(ctx, "workspace config missing wsUrl")
-      return
-    }
-    botWsHint = parsed
-    noteWsDebug(ctx, `resolved ${parsed.url}`)
+    if (!parsed) return { error: "missing wsUrl" }
+    return { hint: parsed }
   } catch (error) {
-    noteWsDebug(ctx, `workspace config failed: ${summarizeError(error)}`)
+    return { error: summarizeError(error) }
   }
+}
+
+async function resolveBotWsHint(ctx: ExtensionContext, opts?: { force?: boolean }): Promise<void> {
+  if (!config || botWsHint) return
+  const now = Date.now()
+  if (!opts?.force && lastWsResolveAttemptAt > 0 && now - lastWsResolveAttemptAt < WS_RESOLVE_RETRY_MS) return
+  lastWsResolveAttemptAt = now
+  const result = await fetchWsHintFromConfig(config.baseUrl, config.workspaceId, config.apiKey)
+  if ("hint" in result) {
+    botWsHint = result.hint
+    noteWsDebug(ctx, `resolved ${result.hint.url}`)
+    return
+  }
+  noteWsDebug(ctx, `workspace config failed: ${result.error}`)
+}
+
+function buildBotSocketUrl(hint: WsHint): string {
+  // `hint.url` is the workspace's wsUrl as-is from the workspace-router. In
+  // staging it carries a query string (`https://ws-staging.threa.io?region=staging`)
+  // and naive string concat (`${url}${namespace}`) produces a malformed
+  // `…?region=staging/bot` that Socket.IO will reject. Parse the URL and
+  // append the namespace to the pathname so query/hash survive untouched.
+  const parsed = new URL(hint.url)
+  const trimmedPath = parsed.pathname.replace(/\/$/, "")
+  parsed.pathname = `${trimmedPath}${hint.namespace}`
+  return parsed.toString()
 }
 
 function parseWsHint(value: unknown): WsHint | undefined {
@@ -450,7 +477,7 @@ function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
   const token = config.apiKey
   let socket: Socket
   try {
-    socket = openSocket(`${hint.url.replace(/\/$/, "")}${hint.namespace}`, {
+    socket = openSocket(buildBotSocketUrl(hint), {
       path: hint.path,
       auth: { token },
       transports: ["websocket"],
@@ -539,15 +566,21 @@ function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
 }
 
 function tearDownBotWebSocket(): void {
-  if (!botSocket) return
-  try {
-    botSocket.removeAllListeners()
-    botSocket.disconnect()
-  } catch {
-    // ignore — socket may already be closed
+  if (botSocket) {
+    try {
+      botSocket.removeAllListeners()
+      botSocket.disconnect()
+    } catch {
+      // ignore — socket may already be closed
+    }
   }
   botSocket = undefined
   botWsConnected = false
+  // Clear the cached hint and resolve-throttle so a subsequent
+  // `/remote-control configure` to a different workspace doesn't reuse the
+  // previous workspace's wsUrl when we attach again.
+  botWsHint = undefined
+  lastWsResolveAttemptAt = 0
 }
 
 function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
@@ -943,8 +976,17 @@ async function configureRemote(ctx: ExtensionCommandContext, args: string): Prom
   const patch = parseConfigPatch(input)
   const next = validateConfig({ ...existing, ...patch })
   if (!next) throw new Error(`Invalid ${CONFIG_PATH}`)
+  const changedAuthOrTarget =
+    !config ||
+    config.baseUrl !== next.baseUrl ||
+    config.workspaceId !== next.workspaceId ||
+    config.apiKey !== next.apiKey
   config = next
   saveConfig()
+  // If the workspace, base URL, or API key changed, the cached WS hint and any
+  // open socket belong to the previous workspace. Tear them down so the next
+  // /remote-control on resolves fresh against the new target.
+  if (changedAuthOrTarget) tearDownBotWebSocket()
   ctx.ui.notify(`Saved Threa remote config to ${CONFIG_PATH}`, "info")
 }
 
@@ -983,7 +1025,7 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
     return
   }
   lastBusyHeartbeatAt = 0
-  await resolveBotWsHint(ctx)
+  await resolveBotWsHint(ctx, { force: true })
   await heartbeat("available", undefined, ctx)
   attachBotWebSocket(pi, ctx)
   startPolling(pi, ctx)
@@ -1719,6 +1761,15 @@ function startPolling(pi: ExtensionAPI, ctx: ExtensionContext): void {
     pollInFlightRunId = runId
     let delayMs = basePollMs()
     try {
+      // Self-heal the /bot socket: if the initial /config resolve failed
+      // (transient blip on enable / session_start), retry in the background.
+      // The resolver throttles itself to WS_RESOLVE_RETRY_MS so a persistent
+      // failure (e.g. baseUrl bypassing the workspace-router → 404) doesn't
+      // hammer the endpoint at the poll cadence.
+      if (isEnabled(ctx) && !botSocket && !botWsHint) {
+        await resolveBotWsHint(ctx)
+        if (botWsHint) attachBotWebSocket(pi, ctx)
+      }
       const contactedServer = await claimIfIdle(pi, ctx)
       if (contactedServer) notePollSuccess(ctx)
     } catch (error) {
@@ -1932,9 +1983,12 @@ export const __testing = {
   formatDuration,
   formatLocalTime,
   parseWsHint,
+  buildBotSocketUrl,
+  fetchWsHintFromConfig,
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
   WS_BACKSTOP_POLL_MS,
+  WS_RESOLVE_RETRY_MS,
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -2019,7 +2073,7 @@ export default function (pi: ExtensionAPI): void {
         return
       }
       await createRemoteSession(ctx, trimmedArgs)
-      await resolveBotWsHint(ctx)
+      await resolveBotWsHint(ctx, { force: true })
       attachBotWebSocket(pi, ctx)
       startPolling(pi, ctx)
     },
@@ -2033,7 +2087,7 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     lastBusyHeartbeatAt = 0
-    await resolveBotWsHint(ctx)
+    await resolveBotWsHint(ctx, { force: true })
     await heartbeat("available", undefined, ctx)
     attachBotWebSocket(pi, ctx)
     startPolling(pi, ctx)
