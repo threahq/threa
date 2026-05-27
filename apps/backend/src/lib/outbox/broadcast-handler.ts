@@ -21,6 +21,9 @@ import {
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
+  type LabelUpsertedOutboxPayload,
+  type LabelDeletedOutboxPayload,
+  type LabelMembershipChangedOutboxPayload,
 } from "./repository"
 import { logger } from "../logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
@@ -249,6 +252,36 @@ export class BroadcastHandler implements OutboxHandler {
       } else {
         this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
       }
+      return
+    }
+
+    // Labels: `targetUserId` is the routing discriminator. Private-label
+    // events ship to the creator's user room only; public-label events go
+    // workspace-wide. Member join/leave is always workspace-scoped (no
+    // private-label memberships).
+    if (isOneOfOutboxEventType(event, ["label:created", "label:updated"])) {
+      const payload = event.payload as LabelUpsertedOutboxPayload
+      if (payload.targetUserId) {
+        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+      } else {
+        this.io.to(`ws:${workspaceId}`).emit(event.eventType, payload)
+      }
+      return
+    }
+
+    if (isOutboxEventType(event, "label:deleted")) {
+      const payload = event.payload as LabelDeletedOutboxPayload
+      if (payload.targetUserId) {
+        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+      } else {
+        this.io.to(`ws:${workspaceId}`).emit(event.eventType, payload)
+      }
+      return
+    }
+
+    if (isOneOfOutboxEventType(event, ["label:member_joined", "label:member_left"])) {
+      const payload = event.payload as LabelMembershipChangedOutboxPayload
+      this.io.to(`ws:${workspaceId}`).emit(event.eventType, payload)
       return
     }
 

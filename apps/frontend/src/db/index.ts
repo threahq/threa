@@ -22,6 +22,8 @@ export type {
   CachedSavedMessage,
   CachedScheduledMessage,
   CachedE2eKey,
+  CachedLabel,
+  CachedLabelMembership,
 } from "./database"
 // Re-export EventType from the shared types package
 export type { EventType } from "@threa/types"

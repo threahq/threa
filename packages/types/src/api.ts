@@ -22,6 +22,8 @@ import type {
   StreamWithPreview,
   StreamEvent,
   StreamMember,
+  Label,
+  LabelMember,
   Workspace,
   User,
   WorkspaceInvitation,
@@ -525,6 +527,18 @@ export interface WorkspaceBootstrap {
   unreadActivityCount: number
   mutedStreamIds: string[]
   userPreferences: UserPreferences
+  /**
+   * Labels visible to the viewer: all of the viewer's own private labels +
+   * every public label in the workspace (joined or not — the Discover tab
+   * needs un-joined public labels too).
+   */
+  labels: Label[]
+  /**
+   * Viewer's `label_members` rows. Private labels are implicitly "joined" by
+   * their creator and are NOT represented here — the viewer derives ownership
+   * from `Label.creatorUserId` instead.
+   */
+  labelMemberships: LabelMember[]
   invitations?: WorkspaceInvitation[]
   /**
    * Effective workspace permissions for the viewer. Sourced from the WorkOS
@@ -987,4 +1001,54 @@ export interface ScheduledMessageCancelledPayload {
   workspaceId: string
   targetUserId: string
   scheduledId: string
+}
+
+// ============================================================================
+// Labels API
+// ============================================================================
+
+/**
+ * Wire body for `POST /labels`. Slug is server-derived from `name` (validated
+ * for uniqueness via partial unique indexes scoped to visibility); `color` is
+ * required so frontend doesn't have to invent defaults for new public labels
+ * other workspace users will see.
+ */
+export interface CreateLabelInput {
+  name: string
+  visibility: Visibility
+  color: string
+  emoji?: string | null
+  description?: string | null
+}
+
+/** Wire body for `PATCH /labels/:labelId`. All fields optional. */
+export interface UpdateLabelInput {
+  name?: string
+  color?: string
+  emoji?: string | null
+  description?: string | null
+}
+
+/**
+ * Wire payload for `label:created` / `label:updated`. Visibility tells the
+ * dispatcher how to scope routing (private → creator only, public → workspace).
+ */
+export interface LabelUpsertedPayload {
+  workspaceId: string
+  /** Set when private — the creator who should receive this event. */
+  targetUserId: string | null
+  label: Label
+}
+
+/** Wire payload for `label:deleted` (soft-archive). */
+export interface LabelDeletedPayload {
+  workspaceId: string
+  targetUserId: string | null
+  labelId: string
+}
+
+/** Wire payload for `label:member_joined` / `label:member_left`. Always public. */
+export interface LabelMembershipChangedPayload {
+  workspaceId: string
+  member: LabelMember
 }

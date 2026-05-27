@@ -100,6 +100,11 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import("@/pages/memory")).MemoryPage }),
       },
       {
+        path: "labels/:tab?",
+        HydrateFallback: FallbackLoader,
+        lazy: async () => ({ Component: (await import("@/pages/labels")).LabelsPage }),
+      },
+      {
         path: "files",
         HydrateFallback: FallbackLoader,
         lazy: async () => ({ Component: (await import("@/pages/files")).FilesPage }),

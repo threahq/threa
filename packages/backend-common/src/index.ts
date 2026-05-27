@@ -105,7 +105,7 @@ export {
   botRuntimeSessionLinkId,
   botInvocationId,
   botRuntimePairingCodeId,
-  streamLabelId,
+  labelId,
   voiceSessionId,
   userEncryptionKeyId,
 } from "./id"

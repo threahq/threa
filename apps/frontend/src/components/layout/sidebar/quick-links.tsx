@@ -1,4 +1,4 @@
-import { Bell, Bookmark, Brain, CalendarClock, FileEdit, MessageSquareText, Paperclip } from "lucide-react"
+import { Bell, Bookmark, Brain, CalendarClock, FileEdit, MessageSquareText, Paperclip, Tag } from "lucide-react"
 import type { ComponentType, ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { UnreadBadge } from "@/components/unread-badge"
@@ -17,6 +17,7 @@ interface SidebarQuickLinksProps {
   isActivityPage: boolean
   isMemoryPage: boolean
   isFilesPage: boolean
+  isLabelsPage: boolean
   unreadActivityCount: number
 }
 
@@ -44,6 +45,7 @@ export function SidebarQuickLinks({
   isActivityPage,
   isMemoryPage,
   isFilesPage,
+  isLabelsPage,
   unreadActivityCount,
 }: SidebarQuickLinksProps) {
   const { collapseOnMobile, getSectionState, toggleSectionState } = useSidebar()
@@ -102,6 +104,15 @@ export function SidebarQuickLinks({
       icon: Brain,
       label: "Memory",
       isActive: isMemoryPage,
+      unreadCount: 0,
+      signalSlot: null,
+    },
+    {
+      key: "labels",
+      to: `/w/${workspaceId}/labels`,
+      icon: Tag,
+      label: "Labels",
+      isActive: isLabelsPage,
       unreadCount: 0,
       signalSlot: null,
     },

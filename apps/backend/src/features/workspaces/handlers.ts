@@ -7,6 +7,7 @@ import type { InvitationService } from "../invitations"
 import type { ActivityService } from "../activity"
 import type { CommandAvailabilityService } from "../commands"
 import type { AvatarService } from "./avatar-service"
+import type { LabelService } from "../labels"
 import { getEmojiList } from "../emoji"
 import { getEffectiveLevel } from "../streams"
 import { BotRepository, serializeBot } from "../public-api"
@@ -52,6 +53,7 @@ interface Dependencies {
   activityService?: ActivityService
   commandAvailabilityService: CommandAvailabilityService
   avatarService: AvatarService
+  labelService: LabelService
   workosOrgService: WorkosOrgService
   pool: import("pg").Pool
 }
@@ -64,6 +66,7 @@ export function createWorkspaceHandlers({
   activityService,
   commandAvailabilityService,
   avatarService,
+  labelService,
   workosOrgService,
   pool,
 }: Dependencies) {
@@ -124,7 +127,18 @@ export function createWorkspaceHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const [workspace, users, streams, personas, bots, emojiWeights, userPreferences, dmPeers] = await Promise.all([
+      const [
+        workspace,
+        users,
+        streams,
+        personas,
+        bots,
+        emojiWeights,
+        userPreferences,
+        dmPeers,
+        labels,
+        labelMemberships,
+      ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
         streamService.listWithPreviews(workspaceId, userId),
@@ -133,6 +147,8 @@ export function createWorkspaceHandlers({
         workspaceService.getEmojiWeights(workspaceId, userId),
         userPreferencesService.getPreferences(workspaceId, userId),
         streamService.listDmPeers(workspaceId, userId),
+        labelService.listVisibleTo(workspaceId, userId),
+        labelService.listMembershipsForUser(workspaceId, userId),
       ])
 
       if (!workspace) {
@@ -215,6 +231,8 @@ export function createWorkspaceHandlers({
           mutedStreamIds,
           dmPeers,
           userPreferences,
+          labels,
+          labelMemberships,
           invitations,
           viewerPermissions,
         },

@@ -276,6 +276,43 @@ export interface StreamMember {
 }
 
 /**
+ * User-defined organizational label. Private labels (`visibility: "private"`)
+ * are only visible to the creator. Public labels (`visibility: "public"`) are
+ * discoverable workspace-wide; workspace users join via `LabelMember` rows to
+ * subscribe (in the future: to receive auto-applied resource assignments).
+ *
+ * Slugs collide on `(workspaceId, slug)` for public and on
+ * `(workspaceId, creatorUserId, slug)` for private (DB enforces via partial
+ * unique indexes, ignoring archived rows).
+ */
+export interface Label {
+  id: string
+  workspaceId: string
+  visibility: Visibility
+  creatorUserId: string
+  name: string
+  slug: string
+  color: string
+  emoji: string | null
+  description: string | null
+  createdAt: string
+  updatedAt: string
+  /** When non-null, the label is soft-archived and excluded from list/discover. */
+  archivedAt: string | null
+}
+
+/**
+ * Per-user membership in a public label. Private-label creators are not
+ * tracked here — they always see their own labels via `creatorUserId`.
+ */
+export interface LabelMember {
+  labelId: string
+  userId: string
+  workspaceId: string
+  joinedAt: string
+}
+
+/**
  * Aggregate of the thread rooted at a parent message, attached to message
  * read payloads so the timeline's thread card can render latest-reply preview
  * + participant avatars without another round-trip. Null when the message has

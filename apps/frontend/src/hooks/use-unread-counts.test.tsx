@@ -62,6 +62,8 @@ function makeBootstrap(): WorkspaceBootstrap {
     activityCounts: { stream_1: 0 },
     unreadActivityCount: 0,
     mutedStreamIds: [],
+    labels: [],
+    labelMemberships: [],
     viewerPermissions: [],
     userPreferences: {
       workspaceId: "ws_1",

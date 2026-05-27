@@ -107,6 +107,7 @@ import {
 } from "./features/bot-runtimes"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
+import { LabelService } from "./features/labels"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
 import { AICostService, AIBudgetService } from "./features/ai-usage"
@@ -438,6 +439,7 @@ export async function startServer(): Promise<ServerInstance> {
   const activityService = new ActivityService({ pool })
   const savedMessagesService = new SavedMessagesService({ pool })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
+  const labelService = new LabelService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
   // reserved DB capacity isolated from background workers. Subscription CRUD
   // endpoints also use this pool — low volume, plenty of headroom.
@@ -544,6 +546,7 @@ export async function startServer(): Promise<ServerInstance> {
     activityService,
     savedMessagesService,
     scheduledMessagesService,
+    labelService,
     pushService,
     s3Config: config.s3,
     commandRegistry,
