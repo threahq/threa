@@ -382,11 +382,18 @@ export class AccountsService {
     if (!activeSealed) return false
     const auth = await this.authService.authenticateSession(activeSealed)
     if (!auth.success || !auth.user) return false
-    if (readAltSessionCookies(cookies).length === 0) return false
+    const activeUser = auth.user
+    // Stale or duplicate-of-active alts can't be promoted. If we proceeded
+    // anyway, `remove` would revoke the active session and clear cookies
+    // without ever hitting the SSO logout round-trip — the live WorkOS
+    // session would survive. Bail so the caller takes the full-logout path.
+    const alts = await this.resolveAlts(res, cookies)
+    const promotable = alts.some((a) => a.ok && a.user && a.user.id !== activeUser.id)
+    if (!promotable) return false
     // WorkOS may have rotated the refresh token during authenticate; pass the
     // post-refresh sealed into `remove` so `revokeSession` kills the live
     // session, not the already-dead pre-refresh value the browser sent.
-    await this.remove(res, cookies, pickSealed(auth, activeSealed), auth.user, auth.user.id)
+    await this.remove(res, cookies, pickSealed(auth, activeSealed), activeUser, activeUser.id)
     return true
   }
 }

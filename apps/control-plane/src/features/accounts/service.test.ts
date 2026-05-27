@@ -218,6 +218,45 @@ describe("AccountsService — refreshed sealed propagation", () => {
     expect(auth.revoked).toEqual([])
   })
 
+  test("removeCurrentAndPromote returns false when the only parked alt is stale", async () => {
+    // Stale-alt-only: the alt cookie exists but its sealed session fails
+    // validation. Treating "any alt cookie" as "promotable account" would
+    // make `remove` revoke the active session and clear cookies without
+    // hitting SSO logout — the live WorkOS session would survive. The
+    // caller must take the full-logout path instead.
+    const auth = new ProgrammableAuthService()
+    auth.on("sealed_a_active", { success: true, refreshed: false, user: makeUser("user_a") })
+    // "stale_alt" deliberately unset — authenticateSession returns not_found.
+
+    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const res = makeRes()
+    const cookies = { [altCookieName(0)]: "stale_alt" }
+
+    const promoted = await service.removeCurrentAndPromote(res, cookies, "sealed_a_active")
+
+    expect(promoted).toBe(false)
+    expect(res.__cookies.size).toBe(0)
+    expect(auth.revoked).toEqual([])
+  })
+
+  test("removeCurrentAndPromote returns false when the only parked alt is a duplicate of the active account", async () => {
+    // A duplicate-of-active alt isn't a *different* signed-in account to
+    // promote to, so the same "no promotable" rule applies.
+    const auth = new ProgrammableAuthService()
+    auth.on("sealed_a_active", { success: true, refreshed: false, user: makeUser("user_a") })
+    auth.on("sealed_a_dup", { success: true, refreshed: false, user: makeUser("user_a") })
+
+    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const res = makeRes()
+    const cookies = { [altCookieName(0)]: "sealed_a_dup" }
+
+    const promoted = await service.removeCurrentAndPromote(res, cookies, "sealed_a_active")
+
+    expect(promoted).toBe(false)
+    expect(res.__cookies.size).toBe(0)
+    expect(auth.revoked).toEqual([])
+  })
+
   test("removeCurrentAndPromote returns false when there is no active sealed", async () => {
     const auth = new ProgrammableAuthService()
     const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
