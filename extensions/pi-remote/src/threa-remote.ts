@@ -283,7 +283,8 @@ function ensureInstanceId(): string {
 function presenceDisplayNameFromCwd(cwd: string | undefined): string | undefined {
   if (!cwd) return undefined
   const home = homedir()
-  const labeled = cwd === home ? "~" : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd
+  const isUnderHome = cwd === home || cwd.startsWith(`${home}/`)
+  const labeled = isUnderHome ? `~${cwd.slice(home.length)}` : cwd
   // `upsertPresenceSchema` caps `displayName` at 100 chars; the strip CSS-truncates
   // anything longer, but keep the wire payload inside the validator's limit.
   return labeled.length > 100 ? labeled.slice(-100) : labeled
