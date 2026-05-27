@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
@@ -34,7 +34,16 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
-const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload"] as const
+const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload", "shell"] as const
+const SHELL_TIMEOUT_MS = 60_000
+// 32K chars per stream — large enough for typical output, small enough to avoid
+// dumping a CI log into the scratchpad if a curious user pipes `find /` in.
+const SHELL_MAX_OUTPUT_CHARS = 32 * 1024
+const SHELL_USAGE = [
+  "Usage: `/shell <command>`",
+  "Runs in the linked Pi session's working directory via `$SHELL -c`.",
+  "60s timeout; output capped at 32K chars per stream.",
+].join("\n")
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const
 type ThinkingLevel = (typeof THINKING_LEVELS)[number]
 const execFileAsync = promisify(execFile)
@@ -1526,6 +1535,140 @@ async function runReloadCommand(invocation: ClaimedInvocation, ctx: ExtensionCon
   await ctx.reload()
 }
 
+type ShellExecResult = {
+  stdout: string
+  stderr: string
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  timedOut: boolean
+  elapsedMs: number
+  spawnError: string | null
+}
+
+function appendCapped(existing: string, chunk: string, max: number): { text: string; truncated: boolean } {
+  if (existing.length >= max) return { text: existing, truncated: true }
+  const remaining = max - existing.length
+  if (chunk.length <= remaining) return { text: existing + chunk, truncated: false }
+  return { text: existing + chunk.slice(0, remaining), truncated: true }
+}
+
+function formatShellResult(command: string, result: ShellExecResult): string {
+  // Single fenced block for stdout, separate block for stderr only when present
+  // — keeps the common "ran cleanly with stdout" case readable. Footer is one
+  // line of "exit N · 142ms · output truncated" so the human can scan it.
+  const lines: string[] = ["```", `$ ${command}`]
+  if (result.stdout.length > 0) lines.push(result.stdout.replace(/\n+$/, ""))
+  lines.push("```")
+  if (result.stderr.length > 0) {
+    lines.push("**stderr**", "```", result.stderr.replace(/\n+$/, ""), "```")
+  }
+  const footer: string[] = []
+  if (result.spawnError) {
+    footer.push(`spawn failed: ${result.spawnError}`)
+  } else if (result.timedOut) {
+    footer.push(`timed out after ${formatShortDuration(result.elapsedMs)}`)
+  } else if (result.signal) {
+    footer.push(`signal ${result.signal}`)
+    footer.push(formatShortDuration(result.elapsedMs))
+  } else {
+    footer.push(`exit ${result.exitCode ?? "?"}`)
+    footer.push(formatShortDuration(result.elapsedMs))
+  }
+  if (result.stdoutTruncated || result.stderrTruncated) footer.push("output truncated")
+  lines.push(footer.join(" · "))
+  return lines.join("\n")
+}
+
+async function execShellCommand(
+  command: string,
+  cwd: string,
+  options?: { timeoutMs?: number; sigkillGraceMs?: number }
+): Promise<ShellExecResult> {
+  // `$SHELL -c "<command>"` so pipes / redirects / globs / env-expansion all
+  // work the way Pi's `!` does. `/bin/sh` is the portable fallback when SHELL
+  // is unset (rare, but happens in stripped Docker images).
+  const shell = process.env.SHELL ?? "/bin/sh"
+  const timeoutMs = options?.timeoutMs ?? SHELL_TIMEOUT_MS
+  const sigkillGraceMs = options?.sigkillGraceMs ?? 1_000
+  const startedAt = Date.now()
+  return new Promise<ShellExecResult>((resolvePromise) => {
+    const child = spawn(shell, ["-c", command], { cwd, env: process.env })
+    let stdout = ""
+    let stderr = ""
+    let stdoutTruncated = false
+    let stderrTruncated = false
+    let timedOut = false
+    let settled = false
+    const settle = (result: Omit<ShellExecResult, "elapsedMs">) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolvePromise({ ...result, elapsedMs: Date.now() - startedAt })
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill("SIGTERM")
+      // Escalate to SIGKILL if the child ignores SIGTERM. `child.killed` is
+      // set the instant `kill()` is *called* — not when the process actually
+      // exits — so it would be `true` here regardless and SIGKILL would never
+      // fire. The `settled` flag, by contrast, only flips in the `exit`/
+      // `error` handlers, so it tells us whether the child has actually
+      // gone away. 1s is enough for a well-behaved process to flush; longer
+      // waits keep the scratchpad in a busy state for no benefit.
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL")
+      }, sigkillGraceMs).unref()
+    }, timeoutMs)
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const { text, truncated } = appendCapped(stdout, chunk.toString("utf8"), SHELL_MAX_OUTPUT_CHARS)
+      stdout = text
+      if (truncated) stdoutTruncated = true
+    })
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const { text, truncated } = appendCapped(stderr, chunk.toString("utf8"), SHELL_MAX_OUTPUT_CHARS)
+      stderr = text
+      if (truncated) stderrTruncated = true
+    })
+    child.on("error", (err) => {
+      settle({
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+        exitCode: null,
+        signal: null,
+        timedOut,
+        spawnError: err instanceof Error ? err.message : String(err),
+      })
+    })
+    child.on("close", (exitCode, signal) => {
+      settle({
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+        exitCode,
+        signal,
+        timedOut,
+        spawnError: null,
+      })
+    })
+  })
+}
+
+async function runShellCommand(invocation: ClaimedInvocation, args: string, ctx: ExtensionContext): Promise<void> {
+  const command = args.trim()
+  if (command.length === 0) {
+    await completeInvocationWithMarkdown(invocation, SHELL_USAGE, ctx)
+    return
+  }
+  await recordInvocationTraceStep(invocation, "tool_call", `$ ${command}`, `Running shell…`)
+  const result = await execShellCommand(command, ctx.cwd)
+  await completeInvocationWithMarkdown(invocation, formatShellResult(command, result), ctx)
+}
+
 async function runSkillCommand(
   pi: ExtensionAPI,
   invocation: ClaimedInvocation,
@@ -1590,6 +1733,9 @@ async function handleSessionControlInvocation(
         return
       case "reload":
         await runReloadCommand(invocation, ctx)
+        return
+      case "shell":
+        await runShellCommand(invocation, command.args, ctx)
         return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
@@ -1754,6 +1900,21 @@ function formatDuration(ms: number): string {
   const hours = Math.floor(totalMin / 60)
   const minutes = totalMin % 60
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`
+}
+
+function formatShortDuration(ms: number): string {
+  // Used in surfaces where typical durations are sub-minute (shell footers,
+  // mostly). `formatDuration` rounds to whole minutes and collapses anything
+  // shorter into "<1 min", which is useless for commands that finish in tens
+  // of milliseconds. Fall through to `formatDuration` once we're past a
+  // minute so longer-format strings stay consistent across the file.
+  if (ms < 0) return formatDuration(ms)
+  if (ms < 1_000) return `${ms}ms`
+  if (ms < 60_000) {
+    const seconds = ms / 1_000
+    return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)}s`
+  }
+  return formatDuration(ms)
 }
 
 function describeProviderError(status: number, headers: unknown, now: number = Date.now()): string {
@@ -2040,6 +2201,7 @@ export const __testing = {
   describeProviderError,
   formatRetryNotice,
   formatDuration,
+  formatShortDuration,
   formatLocalTime,
   parseWsHint,
   buildBotSocketUrl,
@@ -2047,6 +2209,11 @@ export const __testing = {
   sanitizeInstanceIdSegment,
   migrateInstanceId,
   formatHelloAckDetails,
+  appendCapped,
+  formatShellResult,
+  execShellCommand,
+  SHELL_MAX_OUTPUT_CHARS,
+  SHELL_TIMEOUT_MS,
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
   WS_BACKSTOP_POLL_MS,
