@@ -1097,6 +1097,102 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/rename": {
+      "post": {
+        "operationId": "renameBotRuntimeSession",
+        "summary": "Rename the scratchpad linked to a bot runtime session",
+        "tags": ["Bot runtimes"],
+        "security": [{ "apiKey": ["bot-runtime:write"] }],
+        "parameters": [
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                  "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
+                  "displayName": { "type": "string", "minLength": 1, "maxLength": 100 }
+                },
+                "required": ["instanceId", "runtimeSessionId", "displayName"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "linkId": { "type": "string" },
+                        "rootStreamId": { "type": "string" },
+                        "activeStreamId": { "type": "string" },
+                        "runtimeSessionId": { "type": "string" },
+                        "streamUrlPath": { "type": "string" },
+                        "displayName": { "type": "string" }
+                      },
+                      "required": [
+                        "linkId",
+                        "rootStreamId",
+                        "activeStreamId",
+                        "runtimeSessionId",
+                        "streamUrlPath",
+                        "displayName"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["data"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" },
+          "404": { "description": "Resource not found" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/bot-invocations/claim": {
       "post": {
         "operationId": "claimBotInvocation",

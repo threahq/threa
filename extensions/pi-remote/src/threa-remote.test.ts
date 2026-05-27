@@ -623,3 +623,27 @@ describe("formatShortDuration", () => {
     expect(__testing.formatShortDuration(125_000)).toBe("2 min")
   })
 })
+
+describe("defaultDisplayNameFor", () => {
+  test("derives `Pi remote: <dirname>` from the working directory tail", () => {
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa")).toBe("Pi remote: threa")
+  })
+
+  test("ignores a trailing slash on the working directory", () => {
+    // `cwd` is conventionally unsuffixed, but defensively we should not produce
+    // `Pi remote: ` with an empty dirname when the path ends in `/`.
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa/")).toBe("Pi remote: threa")
+  })
+
+  test("falls back to `session` when the working directory is the filesystem root", () => {
+    expect(__testing.defaultDisplayNameFor("/")).toBe("Pi remote: session")
+  })
+
+  test("respects an explicit configured override", () => {
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "Local Pi")).toBe("Local Pi")
+  })
+
+  test("treats an empty configured override as unset (avoids `Pi remote: ` shape collapse)", () => {
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "")).toBe("Pi remote: threa")
+  })
+})

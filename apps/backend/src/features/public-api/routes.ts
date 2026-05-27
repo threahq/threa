@@ -35,6 +35,7 @@ import {
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
   createRuntimeSessionSchema,
+  renameRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -324,6 +325,8 @@ const runtimeSessionLinkSchema = z.object({
   streamUrlPath: z.string(),
 })
 
+const renamedRuntimeSessionLinkSchema = runtimeSessionLinkSchema.extend({ displayName: z.string() })
+
 const invocationStatusSchema = z.object({ invocationId: z.string(), status: z.string() })
 const invocationStepSchema = z.object({ invocationId: z.string(), sessionId: z.string(), stepId: z.string() })
 const renewedInvocationSchema = invocationStatusSchema.extend({ claimExpiresAt: z.string().datetime().nullable() })
@@ -541,6 +544,19 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: createRuntimeSessionSchema,
     requestIn: "body",
     responseSchema: dataEnvelope(runtimeSessionLinkSchema),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/bot-runtime/sessions/rename",
+    operationId: "renameBotRuntimeSession",
+    summary: "Rename the scratchpad linked to a bot runtime session",
+    tags: ["Bot runtimes"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.BOT_RUNTIME_WRITE],
+    parameters: [workspaceIdParam],
+    requestSchema: renameRuntimeSessionSchema,
+    requestIn: "body",
+    responseSchema: dataEnvelope(renamedRuntimeSessionLinkSchema),
+    canReturn404: true,
   },
   {
     method: "post",
