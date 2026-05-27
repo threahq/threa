@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, LogIn, Trash2, UserPlus } from "lucide-react"
+import { Check, Trash2, UserPlus } from "lucide-react"
 import { toast } from "sonner"
 import { ACCOUNTS_LIST_KEY, accountsApi, type AccountSummary } from "@/api"
 import { useAccountScope, useAuth } from "@/auth"
@@ -40,8 +40,8 @@ function AccountRow({ account, onSwitch, onRemove, onReauth }: AccountRowProps) 
           <p className="truncate text-xs text-muted-foreground">Session expired — sign in again</p>
         </div>
         <Button variant="ghost" size="sm" onClick={onReauth}>
-          <LogIn className="mr-1.5 h-4 w-4" />
-          Sign in again
+          <UserPlus className="mr-1.5 h-4 w-4" />
+          Add an account
         </Button>
         <Button
           variant="ghost"
@@ -77,7 +77,7 @@ function AccountRow({ account, onSwitch, onRemove, onReauth }: AccountRowProps) 
       <button
         type="button"
         onClick={() => onSwitch(account.id)}
-        className="flex flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors hover:bg-muted/60"
+        className="flex flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left ring-offset-background transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       >
         <Avatar className="h-9 w-9">
           <AvatarFallback>{initials}</AvatarFallback>

@@ -58,7 +58,10 @@ export function LogoutScopeDialog() {
 
   const liveAccounts = data?.accounts.filter((a) => a.state !== "stale") ?? []
   const otherCount = Math.max(0, liveAccounts.length - 1)
-  const activeLabel = user?.email || user?.name || "this account"
+  // Name first then email mirrors AccountRow (name as title, email as
+  // subtitle). Showing an email as the primary label is identifying but
+  // less friendly, and long emails overflow narrow drawers.
+  const activeLabel = user?.name || user?.email || "this account"
 
   return (
     <ResponsiveDialog open={isOpen} onOpenChange={(open) => !open && close()}>
@@ -81,11 +84,11 @@ export function LogoutScopeDialog() {
               <button
                 type="button"
                 onClick={() => logout({ scope: "current" })}
-                className="flex w-full items-start gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60"
+                className="flex w-full items-start gap-3 rounded-lg border bg-card px-4 py-3 text-left ring-offset-background transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <LogOut className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">Sign out of {activeLabel}</p>
+                  <p className="truncate text-sm font-medium text-foreground">Sign out of {activeLabel}</p>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {otherCount > 0
                       ? `You'll stay signed in to the other ${otherCount === 1 ? "account" : `${otherCount} accounts`} on this browser.`
@@ -97,14 +100,12 @@ export function LogoutScopeDialog() {
               <button
                 type="button"
                 onClick={() => logout({ scope: "all" })}
-                className="flex w-full items-start gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-muted/60"
+                className="flex w-full items-start gap-3 rounded-lg border bg-card px-4 py-3 text-left ring-offset-background transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <Users className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">Sign out of all accounts</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Empties the cookie jar for every signed-in account on this browser.
-                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Signs out of every account on this browser.</p>
                 </div>
               </button>
 

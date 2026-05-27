@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutRef } from "react"
-import { ChevronUp, DollarSign, LogOut, Settings, User as UserIcon, Users } from "lucide-react"
+import { ArrowLeftRight, ChevronUp, DollarSign, LogOut, Settings, User as UserIcon } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
@@ -172,7 +172,7 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
       {
         id: "switch-account",
         label: "Switch account",
-        icon: Users,
+        icon: ArrowLeftRight,
         onSelect: openAccountSwitcher,
         separatorBefore: true,
       },
