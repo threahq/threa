@@ -7,6 +7,7 @@ import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 export interface BoundaryExtractionHandlerConfig {
   batchSize?: number
@@ -101,6 +102,13 @@ export class BoundaryExtractionHandler implements OutboxHandler {
           }
 
           const { streamId, workspaceId, event: messageEvent } = payload
+
+          // E2E streams: boundary extraction inspects message content, which
+          // is ciphertext on E2E streams and useless to the LLM.
+          if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+            seen.push(event.id)
+            continue
+          }
 
           if (messageEvent.actorType !== AuthorTypes.USER) {
             seen.push(event.id)

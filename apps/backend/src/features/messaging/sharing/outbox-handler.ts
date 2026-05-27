@@ -2,6 +2,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { isOutboxEventType, type OutboxEvent } from "../../../lib/outbox"
 import { SharedMessageRepository } from "./repository"
+import { E2eStreamsRepository } from "../../e2e-streams"
 
 /**
  * Event name emitted to target streams when a pointer-referenced source
@@ -60,7 +61,12 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
   const sourceMessageIds = extractMessageIdsForInvalidation(event)
   if (sourceMessageIds.length === 0) return
 
-  const { workspaceId } = event.payload as { workspaceId: string }
+  const { workspaceId, streamId } = event.payload as { workspaceId: string; streamId: string }
+
+  // E2E streams: sharing from an E2E source is blocked at the handler layer,
+  // so no pointer rows exist. Short-circuit before the share lookup.
+  if (await E2eStreamsRepository.isE2eStream(db, workspaceId, streamId)) return
+
   const shares = await SharedMessageRepository.listBySourceMessageIds(db, workspaceId, sourceMessageIds)
   if (shares.length === 0) return
 

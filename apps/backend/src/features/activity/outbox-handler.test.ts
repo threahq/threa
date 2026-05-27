@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { OutboxRepository } from "../../lib/outbox"
 import * as cursorLockModule from "@threa/backend-common"
 import * as dbModule from "../../db"
@@ -6,6 +6,7 @@ import { ActivityFeedHandler } from "./outbox-handler"
 import type { ActivityService } from "./service"
 import type { ProcessResult } from "@threa/backend-common"
 import { AuthorTypes } from "@threa/types"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 function makeFakeCursorLock(onRun?: (result: ProcessResult) => void) {
   return () => ({
@@ -75,6 +76,10 @@ function makeMessageCreatedEvent(
 }
 
 describe("ActivityFeedHandler", () => {
+  beforeEach(() => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  })
+
   afterEach(() => {
     mock.restore()
   })
@@ -346,6 +351,72 @@ describe("ActivityFeedHandler", () => {
       },
     }
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", want)
+  })
+
+  it("skips message:created events on end-to-end encrypted streams", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const event = makeMessageCreatedEvent(1n, { streamId: "stream_e2e" })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+
+    const { handler, activityService } = createHandler()
+    handler.handle()
+
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(activityService.processMessageMentions).not.toHaveBeenCalled()
+    expect(activityService.processMessageNotifications).not.toHaveBeenCalled()
+    expect(activityService.processSelfMessageActivity).not.toHaveBeenCalled()
+  })
+
+  it("skips reaction:added events on end-to-end encrypted streams", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "reaction:added",
+        payload: {
+          workspaceId: "ws_test",
+          streamId: "stream_e2e",
+          messageId: "msg_test",
+          emoji: ":eyes:",
+          userId: "usr_reactor",
+        },
+        createdAt: new Date(),
+      },
+    ] as any)
+
+    const { handler, activityService } = createHandler()
+    handler.handle()
+
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(activityService.processReactionAdded).not.toHaveBeenCalled()
+  })
+
+  it("skips reaction:removed events on end-to-end encrypted streams", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "reaction:removed",
+        payload: {
+          workspaceId: "ws_test",
+          streamId: "stream_e2e",
+          messageId: "msg_test",
+          emoji: ":eyes:",
+          userId: "usr_reactor",
+        },
+        createdAt: new Date(),
+      },
+    ] as any)
+
+    const { handler, activityService } = createHandler()
+    handler.handle()
+
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(activityService.processReactionRemoved).not.toHaveBeenCalled()
   })
 
   it("should advance cursor past all events including skipped ones", async () => {

@@ -16,6 +16,7 @@ import { JobQueues, type QueueManager } from "../../lib/queue"
 import type { EventService } from "../messaging"
 import { MessageVersionRepository } from "../messaging"
 import { StreamEventRepository } from "../streams"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 
 export interface AgentMessageMutationHandlerConfig {
@@ -189,11 +190,21 @@ export class AgentMessageMutationHandler implements OutboxHandler {
           if (event.eventType === "message:edited") {
             const payload = parseMessageEditedPayload(event.payload)
             if (payload) {
+              // E2E streams: Phase 1 doesn't allow agent recipients, so there
+              // are no sessions to rerun. Ciphertext edits are also invisible
+              // to the backend, so skip without inspecting the message.
+              if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+                seen.push(event.id)
+                continue
+              }
               await this.handleInvokingMessageEdited(payload, event.createdAt)
             }
           } else if (event.eventType === "message:deleted") {
             const payload = parseMessageDeletedPayload(event.payload)
             if (payload) {
+              // E2E streams: no agent sessions exist for E2E streams in Phase 1
+              // (agents not allowed), so the session lookup is a natural no-op.
+              // We still call through; the repository returns no rows.
               await this.handleInvokingMessageDeleted(payload)
             }
           }

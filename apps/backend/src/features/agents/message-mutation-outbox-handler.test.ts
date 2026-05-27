@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AuthorTypes } from "@threa/types"
 import * as dbModule from "../../db"
 import type { ProcessResult } from "@threa/backend-common"
@@ -6,6 +6,7 @@ import * as cursorLockModule from "@threa/backend-common"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageVersionRepository } from "../messaging"
 import { StreamEventRepository } from "../streams"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentMessageMutationHandler } from "./message-mutation-outbox-handler"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 
@@ -44,6 +45,10 @@ async function waitForDebounce(): Promise<void> {
 }
 
 describe("AgentMessageMutationHandler", () => {
+  beforeEach(() => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  })
+
   afterEach(() => {
     mock.restore()
   })
@@ -774,6 +779,42 @@ describe("AgentMessageMutationHandler", () => {
           },
         },
         createdAt: new Date("2026-02-19T12:10:00.000Z"),
+      } as any,
+    ])
+
+    const findByTriggerSpy = spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
+    const findLatestByStreamSpy = spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+    const updateStatusSpy = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
+
+    const { handler, eventService, jobQueue } = createHandler()
+    handler.handle()
+
+    await waitForDebounce()
+
+    expect(findByTriggerSpy).not.toHaveBeenCalled()
+    expect(findLatestByStreamSpy).not.toHaveBeenCalled()
+    expect(updateStatusSpy).not.toHaveBeenCalled()
+    expect(eventService.deleteMessage).not.toHaveBeenCalled()
+    expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
+  it("short-circuits message:edited on end-to-end encrypted streams without inspecting sessions", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      {
+        id: 1n,
+        eventType: "message:edited",
+        payload: {
+          workspaceId: "ws_1",
+          streamId: "stream_e2e",
+          event: {
+            actorId: "usr_editor",
+            payload: {
+              messageId: "msg_invoke_1",
+            },
+          },
+        },
+        createdAt: new Date("2026-02-19T12:00:00.000Z"),
       } as any,
     ])
 

@@ -9,6 +9,7 @@ import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 export interface NamingHandlerConfig {
   batchSize?: number
@@ -113,8 +114,15 @@ export class NamingHandler implements OutboxHandler {
             continue
           }
 
-          const { streamId, event: messageEvent } = payload
+          const { streamId, workspaceId, event: messageEvent } = payload
           const isAgentMessage = messageEvent.actorType !== AuthorTypes.USER
+
+          // E2E streams: auto-naming reads message content which is ciphertext
+          // on E2E streams. The client picks a name locally instead.
+          if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+            seen.push(event.id)
+            continue
+          }
 
           const stream = await StreamRepository.findById(this.db, streamId)
           if (!stream) {
