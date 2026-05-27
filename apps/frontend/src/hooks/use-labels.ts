@@ -3,10 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuth } from "@/auth"
 import { useLabelService } from "@/contexts"
 import { db, type CachedLabel, type CachedLabelMembership } from "@/db"
-
-export type { CachedLabel, CachedLabelMembership }
 import { useWorkspaceLabels, useWorkspaceLabelMemberships, useWorkspaceUsers } from "@/stores/workspace-store"
 import type { CreateLabelInput, Label, LabelMember, UpdateLabelInput } from "@threa/types"
+
+export type { CachedLabel, CachedLabelMembership }
 
 export const labelKeys = {
   all: ["labels"] as const,
