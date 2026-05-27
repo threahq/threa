@@ -60,7 +60,8 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "prettier": "^3.7.4",
-    "shadcn": "^3.6.3"
+    "shadcn": "^3.6.3",
+    "socket.io-client": "^4.8.1"
   },
   "lint-staged": {
     "!(.agents|.claude)/**/*.{js,jsx,ts,tsx,json,css,md,html}": "prettier --write"

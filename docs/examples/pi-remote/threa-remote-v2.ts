@@ -3,6 +3,7 @@ import { promisify } from "node:util"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
+import { io as openSocket, type Socket } from "socket.io-client"
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -17,6 +18,11 @@ const NO_RESPONSE_MARKER = "THREA_NO_RESPONSE"
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_FAILURE_POLL_MS = 60_000
 const BUSY_HEARTBEAT_MS = 15_000
+// Cadence the safety-backstop poll runs at while a `/bot` WebSocket is up.
+// Pushes deliver new invocations within a frame; the poll is only there to
+// catch the rare missed-emit / mid-flight-disconnect case (plan §5).
+const WS_BACKSTOP_POLL_MS = 30_000
+const WS_RECONNECTION_DELAY_MAX_MS = 30_000
 const TRACE_CONTENT_MAX_CHARS = 9_500
 const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
@@ -62,6 +68,18 @@ type RuntimeSessionLink = {
   enabled?: boolean
   debugPolling?: boolean
   streamCursors?: Record<string, string>
+  /**
+   * Server-stamped ISO timestamp from the last `bot:hello` bootstrap.
+   * Sent back as `sinceCursor` on reconnect so the server can scope the
+   * pending-invocation replay to rows we haven't already seen.
+   */
+  wsCursor?: string
+}
+
+type WsHint = {
+  url: string
+  path: string
+  namespace: string
 }
 
 type ConfigPatch = Pick<
@@ -135,6 +153,10 @@ let lastBusyHeartbeatAt = 0
 let lastPollDebugSummary: string | undefined
 let pollingRunId = 0
 let fallbackRuntimeSessionId: string | undefined
+let botSocket: Socket | undefined
+let botWsConnected = false
+let botWsHint: WsHint | undefined
+let lastBotWsSummary: string | undefined
 
 function validateConfig(value: unknown): Config | undefined {
   if (!value || typeof value !== "object") {
@@ -344,19 +366,23 @@ async function heartbeat(
 ): Promise<void> {
   if (!config) return
   const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
-  await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`, {
-    method: "POST",
-    body: JSON.stringify({
-      runtimeKind: "pi-local",
-      instanceId: ensureInstanceId(),
-      runtimeSessionId,
-      displayName: config.defaultDisplayName,
-      status,
-      acceptingInvocations: status === "available",
-      capabilities: buildRuntimeCapabilities(ctx),
-      statusText,
-    }),
-  })
+  const body = await request<{ data?: { ws?: unknown } }>(
+    `/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        runtimeKind: "pi-local",
+        instanceId: ensureInstanceId(),
+        runtimeSessionId,
+        displayName: config.defaultDisplayName,
+        status,
+        acceptingInvocations: status === "available",
+        capabilities: buildRuntimeCapabilities(ctx),
+        statusText,
+      }),
+    }
+  )
+  captureWsHint(body?.data?.ws)
 }
 
 async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionContext): Promise<boolean> {
@@ -365,6 +391,145 @@ async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionCo
   lastBusyHeartbeatAt = now
   await heartbeat("busy", statusText, ctx)
   return true
+}
+
+function captureWsHint(value: unknown): void {
+  const parsed = parseWsHint(value)
+  if (parsed) botWsHint = parsed
+}
+
+function parseWsHint(value: unknown): WsHint | undefined {
+  if (!isObject(value)) return undefined
+  const url = typeof value.url === "string" ? value.url.trim() : ""
+  if (!url) return undefined
+  const path = typeof value.path === "string" && value.path.trim() ? value.path : "/socket.io/"
+  const namespace = typeof value.namespace === "string" && value.namespace.trim() ? value.namespace : "/bot"
+  return { url, path, namespace }
+}
+
+function buildBotHelloPayload(ctx: ExtensionContext, sinceCursor: string | undefined): Record<string, unknown> {
+  return {
+    instanceId: ensureInstanceId(),
+    runtimeKind: "pi-local",
+    runtimeSessionId: getRuntimeSessionId(ctx),
+    displayName: config?.defaultDisplayName,
+    supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
+    capabilities: buildRuntimeCapabilities(ctx),
+    ...(sinceCursor ? { sinceCursor } : {}),
+  }
+}
+
+function noteWsDebug(ctx: ExtensionContext, summary: string): void {
+  lastBotWsSummary = `${new Date().toISOString()} ${summary}`
+  emitPollDebug(ctx, `ws ${summary}`)
+}
+
+function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  if (!config || !botWsHint || botSocket) return
+  if (!isEnabled(ctx)) return
+
+  const hint = botWsHint
+  const token = config.apiKey
+  let socket: Socket
+  try {
+    socket = openSocket(`${hint.url.replace(/\/$/, "")}${hint.namespace}`, {
+      path: hint.path,
+      auth: { token },
+      transports: ["websocket"],
+      reconnection: true,
+      reconnectionDelayMax: WS_RECONNECTION_DELAY_MAX_MS,
+    })
+  } catch (error) {
+    // Connection construction itself failed (malformed URL etc.). Fall back to
+    // polling silently; the next heartbeat refreshes the hint.
+    noteWsDebug(ctx, `attach failed: ${summarizeError(error)}`)
+    return
+  }
+  botSocket = socket
+
+  socket.on("connect", () => {
+    botWsConnected = true
+    noteWsDebug(ctx, `connect ${socket.id ?? ""}`)
+    sendBotHello(pi, ctx)
+  })
+
+  socket.on("disconnect", (reason) => {
+    botWsConnected = false
+    noteWsDebug(ctx, `disconnect ${String(reason)}`)
+  })
+
+  socket.on("connect_error", (error) => {
+    botWsConnected = false
+    noteWsDebug(ctx, `connect_error ${summarizeError(error)}`)
+  })
+
+  socket.on("bot_invocation:available", (payload: unknown) => {
+    const invocationId = isObject(payload) && typeof payload.invocationId === "string" ? payload.invocationId : ""
+    noteWsDebug(ctx, `available ${invocationId}`)
+    void claimIfIdle(pi, ctx).catch(() => undefined)
+  })
+
+  socket.on("bot_invocation:claimed", (payload: unknown) => {
+    const invocationId = isObject(payload) && typeof payload.invocationId === "string" ? payload.invocationId : ""
+    noteWsDebug(ctx, `claimed ${invocationId}`)
+  })
+
+  socket.on("bot:active_actor_changed", () => {
+    noteWsDebug(ctx, "active_actor_changed")
+  })
+
+  socket.on("bot:resync", (payload: unknown) => {
+    const reason = isObject(payload) && typeof payload.reason === "string" ? payload.reason : ""
+    noteWsDebug(ctx, `resync ${reason}`)
+    sendBotHello(pi, ctx)
+  })
+}
+
+function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  if (!botSocket || !config) return
+  const sessionLink = getCurrentSessionLink(ctx)
+  const payload = buildBotHelloPayload(ctx, sessionLink?.wsCursor)
+  botSocket.emit("bot:hello", payload, (ack: unknown) => {
+    if (!isObject(ack)) {
+      noteWsDebug(ctx, "bot:hello ack missing")
+      return
+    }
+    if (ack.ok !== true) {
+      const message = typeof ack.error === "string" ? ack.error : "unknown error"
+      noteWsDebug(ctx, `bot:hello rejected: ${message}`)
+      return
+    }
+    if (typeof ack.serverGeneratedAt === "string") {
+      const link = getCurrentSessionLink(ctx)
+      if (link) {
+        link.wsCursor = ack.serverGeneratedAt
+        saveConfig()
+      }
+    }
+    const hasAvailable = Array.isArray(ack.availableInvocations) && ack.availableInvocations.length > 0
+    const hasOwned = Array.isArray(ack.ownedClaims) && ack.ownedClaims.length > 0
+    noteWsDebug(
+      ctx,
+      `bot:hello ack pending=${hasAvailable ? (ack.availableInvocations as unknown[]).length : 0} owned=${
+        hasOwned ? (ack.ownedClaims as unknown[]).length : 0
+      }`
+    )
+    if (hasAvailable || hasOwned) {
+      void claimIfIdle(pi, ctx).catch(() => undefined)
+    }
+  })
+}
+
+function tearDownBotWebSocket(): void {
+  if (!botSocket) return
+  try {
+    botSocket.removeAllListeners()
+    botSocket.disconnect()
+  } catch {
+    // ignore — socket may already be closed
+  }
+  botSocket = undefined
+  botWsConnected = false
 }
 
 function truncateForTrace(text: string, max = TRACE_CONTENT_MAX_CHARS): string {
@@ -674,6 +839,10 @@ function stopPolling(): void {
 }
 
 function basePollMs(): number {
+  // When the `/bot` socket is up the server pushes new work within a frame,
+  // so the poll is just a safety net for the rare missed-emit case (plan §5).
+  // Drop to a 30s backstop instead of the 3s spin we run without WS.
+  if (botWsConnected) return Math.max(WS_BACKSTOP_POLL_MS, config?.pollMs ?? WS_BACKSTOP_POLL_MS)
   return Math.max(1000, config?.pollMs ?? 3000)
 }
 
@@ -781,6 +950,7 @@ async function disableRemote(ctx: ExtensionContext): Promise<void> {
   if (!config) return
   const link = setCurrentSessionEnabled(ctx, false)
   stopPolling()
+  tearDownBotWebSocket()
   await failPending("Threa remote disabled", ctx)
   await heartbeat("offline", undefined, ctx).catch(() => undefined)
   setRemoteStatus(ctx, "Threa remote: off")
@@ -796,6 +966,7 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
   }
   lastBusyHeartbeatAt = 0
   await heartbeat("available", undefined, ctx)
+  attachBotWebSocket(pi, ctx)
   startPolling(pi, ctx)
   ctx.ui.notify("Threa remote enabled for this Pi session", "info")
 }
@@ -1741,8 +1912,10 @@ export const __testing = {
   formatRetryNotice,
   formatDuration,
   formatLocalTime,
+  parseWsHint,
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
+  WS_BACKSTOP_POLL_MS,
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -1813,6 +1986,9 @@ export default function (pi: ExtensionAPI): void {
                 `steered=${steeredInvocations.length}`,
                 `lastPoll=${lastPollDebugSummary ?? "<none>"}`,
                 `lastFailure=${lastPollFailureSummary ?? "<none>"}`,
+                `ws=${botWsConnected ? "connected" : botWsHint ? "disconnected" : "<no hint>"}`,
+                `wsCursor=${link?.wsCursor ?? "<none>"}`,
+                `lastWs=${lastBotWsSummary ?? "<none>"}`,
               ].join("\n")
             : ""
         ctx.ui.notify(
@@ -1824,6 +2000,7 @@ export default function (pi: ExtensionAPI): void {
         return
       }
       await createRemoteSession(ctx, trimmedArgs)
+      attachBotWebSocket(pi, ctx)
       startPolling(pi, ctx)
     },
   })
@@ -1837,6 +2014,7 @@ export default function (pi: ExtensionAPI): void {
     }
     lastBusyHeartbeatAt = 0
     await heartbeat("available", undefined, ctx)
+    attachBotWebSocket(pi, ctx)
     startPolling(pi, ctx)
     if (event.reason === "reload") ctx.ui.notify("Threa remote reconnected after reload.", "info")
   })
@@ -1927,6 +2105,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (event, ctx) => {
     stopPolling()
+    tearDownBotWebSocket()
     if (event.reason === "reload" && config && isEnabled(ctx)) {
       setRemoteStatus(ctx, "Threa remote: reloading…")
       return
