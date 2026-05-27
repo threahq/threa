@@ -248,4 +248,51 @@ describe("Pi remote trace safety", () => {
       defaultDisplayName: "Local Pi",
     })
   })
+
+  test("parseWsHint accepts the shape returned by POST /bot-runtime/presence", () => {
+    expect(__testing.parseWsHint({ url: "wss://eu.threa.io", path: "/socket.io/", namespace: "/bot" })).toEqual({
+      url: "wss://eu.threa.io",
+      path: "/socket.io/",
+      namespace: "/bot",
+    })
+  })
+
+  test("parseWsHint defaults the Socket.IO path and namespace when the server omits them", () => {
+    expect(__testing.parseWsHint({ url: "wss://eu.threa.io" })).toEqual({
+      url: "wss://eu.threa.io",
+      path: "/socket.io/",
+      namespace: "/bot",
+    })
+  })
+
+  test("parseWsHint rejects payloads without a url so we do not dial blank origins", () => {
+    expect(__testing.parseWsHint({ path: "/socket.io/", namespace: "/bot" })).toBeUndefined()
+    expect(__testing.parseWsHint(null)).toBeUndefined()
+    expect(__testing.parseWsHint("wss://eu.threa.io")).toBeUndefined()
+    expect(__testing.parseWsHint({ url: "   " })).toBeUndefined()
+  })
+
+  test("preserves an existing wsCursor when migrating session state", () => {
+    const migrated = __testing.migrateSessionState({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: {
+        session_1: {
+          linkId: "brsl_123",
+          rootStreamId: "stream_a",
+          activeStreamId: "stream_a",
+          runtimeSessionId: "session_1",
+          streamUrlPath: "/streams/stream_a",
+          wsCursor: "2026-05-27T12:34:56.000Z",
+        },
+      },
+    })
+
+    expect(migrated.linkedSessions?.session_1.wsCursor).toBe("2026-05-27T12:34:56.000Z")
+  })
+
+  test("WS_BACKSTOP_POLL_MS is the 30s safety cadence described in the plan", () => {
+    expect(__testing.WS_BACKSTOP_POLL_MS).toBe(30_000)
+  })
 })
