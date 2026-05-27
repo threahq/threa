@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react"
+import { useEffect, useMemo, useSyncExternalStore } from "react"
 import type { JSONContent, StreamEvent } from "@threa/types"
 import {
   getCachedDecryption,
@@ -67,7 +67,9 @@ export function useDecryptedMessageContent(
     () => undefined
   )
 
-  const envelopePayload = readEnvelopePayload(event)
+  // Memoize so useEffect deps don't churn on every render — a fresh wrapper
+  // object every render would re-fire the effect even though nothing changed.
+  const envelopePayload = useMemo(() => readEnvelopePayload(event), [event])
   const canDecrypt = !!envelopePayload && session.status === "unlocked" && !!session.privateKey && !!session.keyId
   const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
 

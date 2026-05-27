@@ -77,6 +77,28 @@ describe("decrypt-cache", () => {
     expect(listenerB).toHaveBeenCalledTimes(1)
   })
 
+  it("drops in-flight decrypt results that resolve after clearDecryptCache (no plaintext leak past lock)", async () => {
+    // Hold the decrypt open so we can simulate clear() landing while it's in flight.
+    let resolveDecrypt: (value: messageEnvelope.DecryptedMessageContent | null) => void = () => {}
+    vi.spyOn(messageEnvelope, "tryDecryptMessagePayload").mockImplementation(
+      () =>
+        new Promise<messageEnvelope.DecryptedMessageContent | null>((r) => {
+          resolveDecrypt = r
+        })
+    )
+    const pending = requestDecryption("evt_race", { contentMarkdown: "ph", envelope: {} }, STUB_OPTS)
+    expect(getCachedDecryption("evt_race")?.status).toBe("pending")
+
+    // Session locks (or account switches) while decrypt is still in flight.
+    clearDecryptCache()
+    expect(getCachedDecryption("evt_race")).toBeUndefined()
+
+    // Decrypt now resolves — its plaintext must NOT be written back to the cache.
+    resolveDecrypt({ contentMarkdown: "secret", contentJson: { type: "doc", content: [] } })
+    await pending
+    expect(getCachedDecryption("evt_race")).toBeUndefined()
+  })
+
   it("evicts the least recently used entry when the cache exceeds its cap", async () => {
     // Sanity-check eviction without filling the production cap (500); we
     // ensure ordering is least-recently-touched by re-touching an early entry

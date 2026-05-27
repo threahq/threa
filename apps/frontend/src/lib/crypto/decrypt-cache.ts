@@ -28,6 +28,10 @@ const entries = new Map<string, DecryptCacheEntry>()
 const inflight = new Map<string, Promise<DecryptCacheEntry>>()
 const listeners = new Map<string, Set<() => void>>()
 
+// Bumped by clearDecryptCache so in-flight decrypts that resolve after a lock
+// can detect they're stale and refuse to write plaintext back into the cache.
+let generation = 0
+
 function emit(eventId: string): void {
   const set = listeners.get(eventId)
   if (!set) return
@@ -81,11 +85,16 @@ export function requestDecryption(
 
   touch(eventId, { status: "pending", content: null })
 
+  const startGeneration = generation
   const promise = (async (): Promise<DecryptCacheEntry> => {
     const decrypted = await tryDecryptMessagePayload(payload, opts)
     const entry: DecryptCacheEntry = decrypted
       ? { status: "decrypted", content: decrypted }
       : { status: "failed", content: null }
+    // If the cache was cleared (lock / account switch) while this decrypt was
+    // in flight, drop the result — writing it back would leak plaintext past
+    // the lock boundary.
+    if (startGeneration !== generation) return entry
     touch(eventId, entry)
     inflight.delete(eventId)
     emit(eventId)
@@ -97,6 +106,7 @@ export function requestDecryption(
 }
 
 export function clearDecryptCache(): void {
+  generation++
   const ids = Array.from(entries.keys())
   entries.clear()
   inflight.clear()
