@@ -139,7 +139,6 @@ export function StreamPage() {
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
-  const isUnnamedScratchpad = isScratchpad && !stream?.displayName
 
   const handleStartRename = () => {
     setEditValue(stream?.displayName ?? "")
@@ -237,9 +236,11 @@ export function StreamPage() {
   // Drafts get an inert variant because the settings dialog reads from caches
   // that don't have draft entries yet; the pill becomes interactive once the
   // scratchpad is persisted. (E2E scratchpads are never drafts — they're
-  // server-persisted on creation.)
+  // server-persisted on creation, with no displayName until the user names
+  // them, which is exactly why we render the pill on unnamed scratchpads too:
+  // for encrypted ones the lock IS the only signal of their nature.)
   let companionModeIndicator: React.ReactNode = null
-  if (stream && isScratchpad && (isDraft || !isUnnamedScratchpad)) {
+  if (stream && isScratchpad) {
     const isEncrypted = !!stream.e2eEnabled
     const isOn = !isEncrypted && stream.companionMode === CompanionModes.ON
 

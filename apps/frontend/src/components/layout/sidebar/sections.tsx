@@ -64,7 +64,11 @@ export function SectionHeader({
         e.stopPropagation()
         if (!hasMenu) onAdd?.()
       }}
-      className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded opacity-0 group-hover/section:opacity-100 max-sm:opacity-100 hover:bg-muted transition-all"
+      // Mobile is the implicit base case (no opacity rule → always visible);
+      // desktop hides until the section is hovered. Inverting the cascade
+      // this way avoids the previous `opacity-0 max-sm:opacity-100` ordering
+      // which left mobile users without a "+" on collapsed sections.
+      className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded sm:opacity-0 sm:group-hover/section:opacity-100 hover:bg-muted transition-all"
       title={addTooltip}
       aria-label={addTooltip}
     >
