@@ -99,6 +99,13 @@ interface StreamItemPreviewProps {
   compact: boolean
   showPreviewOnHover: boolean
   isMobile: boolean
+  /**
+   * E2E streams: sidebar previews are public surfaces, so we never decrypt
+   * here. Phase 3.5 keeps ciphertext at rest and routes decryption through
+   * the per-message render hook — show a sentinel in the sidebar so the
+   * placeholder zero-width-space wire content never leaks.
+   */
+  e2eEnabled?: boolean
 }
 
 export function StreamItemPreview({
@@ -108,6 +115,7 @@ export function StreamItemPreview({
   compact,
   showPreviewOnHover,
   isMobile,
+  e2eEnabled,
 }: StreamItemPreviewProps) {
   if (!preview?.content) return null
 
@@ -123,7 +131,9 @@ export function StreamItemPreview({
       aria-hidden={hoverPreview ? "true" : undefined}
     >
       <span className="truncate flex-1">
-        {getActorName(preview.authorId, preview.authorType)}: {truncateContent(preview.content, 50, toEmoji)}
+        {e2eEnabled
+          ? `${getActorName(preview.authorId, preview.authorType)}: 🔒 Encrypted message`
+          : `${getActorName(preview.authorId, preview.authorType)}: ${truncateContent(preview.content, 50, toEmoji)}`}
       </span>
       <RelativeTime date={preview.createdAt} className="flex-shrink-0" />
     </div>
@@ -330,6 +340,7 @@ export function StreamItem({
                 compact={compact}
                 showPreviewOnHover={showPreviewOnHover}
                 isMobile={isMobile}
+                e2eEnabled={stream.e2eEnabled}
               />
             </div>
           </div>

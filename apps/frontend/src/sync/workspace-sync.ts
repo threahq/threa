@@ -26,7 +26,7 @@ import type {
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { NOTIFICATION_CONFIG, NotificationLevels, StreamTypes, Visibilities } from "@threa/types"
-import { applyStreamBootstrapInCurrentTransaction, decryptBootstrapEventsIfNeeded } from "./stream-sync"
+import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 
 // ============================================================================
 // Workspace socket handler payload types
@@ -1646,23 +1646,10 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>,
   staleStreamIds: Set<string>,
   terminalStreamIds: Set<string>,
-  fetchStartedAt?: number,
-  /**
-   * Workspace-scoped viewer id used by the per-stream bootstrap apply to
-   * decrypt E2E message payloads. Optional so callers without that context
-   * (tests, older paths) keep compiling — decryption is best-effort and
-   * silently skipped when omitted.
-   */
-  userId: string | null = null
+  fetchStartedAt?: number
 ): Promise<{
   workspaceBootstrap: WorkspaceBootstrap
-  /**
-   * Per-stream bootstraps with E2E payloads already decrypted. The caller
-   * uses this to seed the TanStack `streamKeys.bootstrap(...)` cache —
-   * writing the pre-decryption map there would leave visible E2E streams
-   * stuck on the placeholder until the next refresh.
-   */
-  decryptedStreamBootstraps: Map<string, StreamBootstrap>
+  streamBootstraps: Map<string, StreamBootstrap>
 }> {
   const now = Date.now()
 
@@ -1682,22 +1669,6 @@ export async function applyReconnectBootstrapBatch(
     localUnreadState: localUnreadState ?? undefined,
     fetchStartedAt,
   })
-
-  // Decrypt E2E payloads BEFORE opening the IDB transaction so HPKE/AES-GCM
-  // work doesn't keep `db.transaction` alive across an unrelated await (Dexie
-  // tears the transaction down on browsers where the microtask queue drains
-  // before the awaited promise resolves).
-  const decryptedStreamBootstraps = new Map(
-    await Promise.all(
-      Array.from(
-        streamBootstraps,
-        async ([streamId, bootstrap]): Promise<[string, StreamBootstrap]> => [
-          streamId,
-          await decryptBootstrapEventsIfNeeded(bootstrap, workspaceId, userId),
-        ]
-      )
-    )
-  )
 
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
 
@@ -1786,7 +1757,7 @@ export async function applyReconnectBootstrapBatch(
         })
       }
 
-      for (const [streamId, bootstrap] of decryptedStreamBootstraps) {
+      for (const [streamId, bootstrap] of streamBootstraps) {
         await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now)
       }
 
@@ -1854,7 +1825,7 @@ export async function applyReconnectBootstrapBatch(
     },
   })
 
-  return { workspaceBootstrap: finalBootstrap, decryptedStreamBootstraps }
+  return { workspaceBootstrap: finalBootstrap, streamBootstraps }
 }
 
 async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBootstrap, now: number): Promise<void> {

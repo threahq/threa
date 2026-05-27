@@ -608,6 +608,37 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(append.events.map((event) => event.id)).toEqual(["evt_B", "evt_C"])
   })
 
+  it("keeps E2E ciphertext + envelope at rest in IDB (no sync-time decrypt)", async () => {
+    // Phase 3.5: bootstrap no longer decrypts E2E payloads at write time. The
+    // wire shape (placeholder + ciphertext + envelope) must round-trip into
+    // db.events unchanged so the render-time cache is the only surface that
+    // ever holds plaintext.
+    const streamId = "stream_e2e_atrest"
+    const e2eEvent = makeEvent({
+      id: "evt_e2e",
+      streamId,
+      sequence: "100",
+      payload: {
+        messageId: "msg_e2e",
+        contentMarkdown: "​",
+        ciphertext: "base64-ciphertext",
+        envelope: { kdfParams: { alg: "argon2id" } },
+      },
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([e2eEvent], streamId))
+
+    const persisted = await db.events.get(e2eEvent.id)
+    const payload = persisted?.payload as {
+      contentMarkdown: string
+      ciphertext?: string
+      envelope?: unknown
+    }
+    expect(payload.contentMarkdown).toBe("​")
+    expect(payload.ciphertext).toBe("base64-ciphertext")
+    expect(payload.envelope).toEqual({ kdfParams: { alg: "argon2id" } })
+  })
+
   it("derives the reconnect cursor from the latest persisted non-optimistic event", async () => {
     const streamId = "stream_cursor"
     await db.events.bulkPut([

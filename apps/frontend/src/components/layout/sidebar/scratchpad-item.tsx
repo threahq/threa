@@ -158,6 +158,7 @@ export function ScratchpadItem({
                 compact={compact}
                 showPreviewOnHover={showPreviewOnHover}
                 isMobile={isMobile}
+                e2eEnabled={streamWithPreview.e2eEnabled}
               />
             </div>
           </div>

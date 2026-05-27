@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react"
 import { e2eKeysApi } from "@/api/e2e-keys"
+import { clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import { base64ToBytes, bytesToBase64 } from "@/lib/crypto/encoding"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
@@ -359,6 +360,10 @@ export async function revokeKeyForUser(workspaceId: string, userId: string): Pro
  */
 export function lock(workspaceId: string, userId: string): void {
   const scope = getOrCreateScope(workspaceId, userId)
+  // Drop every decrypted payload from memory — Phase 3.5 keeps ciphertext at
+  // rest in IDB and decrypts at render time, so the in-memory cache is the
+  // only surface holding plaintext for this session.
+  clearDecryptCache()
   if (!scope.cachedKey) {
     setState(workspaceId, userId, INITIAL_STATE)
     return
@@ -430,4 +435,5 @@ export function useE2eSession(workspaceId: string, userId: string): E2eSessionSt
 export function resetE2eSessionStoreCache(): void {
   scopes.clear()
   listeners.clear()
+  clearDecryptCache()
 }
