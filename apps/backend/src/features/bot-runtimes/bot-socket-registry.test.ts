@@ -63,4 +63,56 @@ describe("BotSocketRegistry", () => {
     const reg = new BotSocketRegistry()
     expect(reg.disconnectInstance(key)).toBe(0)
   })
+
+  it("fires onInstanceOffline after the grace window when the last socket leaves", async () => {
+    const onInstanceOffline = mock(async () => {})
+    const reg = new BotSocketRegistry({ graceMs: 20, onInstanceOffline })
+    const a = fakeSocket()
+    reg.register(key, a.socket)
+    reg.unregister(key, a.socket)
+
+    expect(onInstanceOffline).not.toHaveBeenCalled()
+    await new Promise((r) => setTimeout(r, 60))
+    expect(onInstanceOffline).toHaveBeenCalledTimes(1)
+    expect(onInstanceOffline).toHaveBeenCalledWith(key)
+    reg.dispose()
+  })
+
+  it("cancels the offline timer when a socket reconnects within the grace window", async () => {
+    const onInstanceOffline = mock(async () => {})
+    const reg = new BotSocketRegistry({ graceMs: 30, onInstanceOffline })
+    const a = fakeSocket()
+    const b = fakeSocket()
+    reg.register(key, a.socket)
+    reg.unregister(key, a.socket)
+    // Reconnect before the timer fires.
+    reg.register(key, b.socket)
+    await new Promise((r) => setTimeout(r, 60))
+    expect(onInstanceOffline).not.toHaveBeenCalled()
+    reg.dispose()
+  })
+
+  it("does not fire onInstanceOffline when one of multiple sockets disconnects", async () => {
+    const onInstanceOffline = mock(async () => {})
+    const reg = new BotSocketRegistry({ graceMs: 20, onInstanceOffline })
+    const a = fakeSocket()
+    const b = fakeSocket()
+    reg.register(key, a.socket)
+    reg.register(key, b.socket)
+    reg.unregister(key, a.socket)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(onInstanceOffline).not.toHaveBeenCalled()
+    reg.dispose()
+  })
+
+  it("dispose cancels pending grace timers", async () => {
+    const onInstanceOffline = mock(async () => {})
+    const reg = new BotSocketRegistry({ graceMs: 20, onInstanceOffline })
+    const a = fakeSocket()
+    reg.register(key, a.socket)
+    reg.unregister(key, a.socket)
+    reg.dispose()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(onInstanceOffline).not.toHaveBeenCalled()
+  })
 })

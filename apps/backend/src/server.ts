@@ -98,7 +98,12 @@ import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
-import { BotRuntimeService, BotSocketRegistry, attachBotNamespace } from "./features/bot-runtimes"
+import {
+  BotRuntimeInstanceRepository,
+  BotRuntimeService,
+  BotSocketRegistry,
+  attachBotNamespace,
+} from "./features/bot-runtimes"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
@@ -564,7 +569,20 @@ export async function startServer(): Promise<ServerInstance> {
 
   const userSocketRegistry = new UserSocketRegistry()
   const sessionAbortRegistry = new SessionAbortRegistry()
-  const botSocketRegistry = new BotSocketRegistry()
+  const botSocketRegistry = new BotSocketRegistry({
+    // When the last socket for an instance disconnects, wait 30 s for a
+    // reconnect (Wi-Fi blip, laptop lid). If nothing comes back, mark the
+    // row offline so `target_instance_id`-pinned invocations stop being
+    // routed to a dead runtime.
+    graceMs: 30_000,
+    onInstanceOffline: async (key) => {
+      try {
+        await BotRuntimeInstanceRepository.markOffline(pools.main, key)
+      } catch (err) {
+        logger.error({ err, ...key }, "markOffline failed after grace window")
+      }
+    },
+  })
 
   // Bot runtime namespace — runtimes authenticate with a `threa_bk_*` key and
   // get invocation pushes over WebSocket so they no longer poll the HTTP
@@ -921,7 +939,11 @@ export async function startServer(): Promise<ServerInstance> {
   // so a saturated main pool (AI workers, file processing, embeddings) can never
   // starve socket.io broadcasts or push notifications. All other outbox handlers
   // use the main pool — they enqueue jobs and can tolerate back-pressure.
-  const broadcastHandler = new BroadcastHandler(pools.realtime, io)
+  // `io.of("/bot")` is idempotent — `attachBotNamespace` already created
+  // this namespace above; we resolve it once and hand it to the broadcaster
+  // so bot-event dispatch doesn't repeat the lookup per event.
+  const botNamespace = io.of("/bot")
+  const broadcastHandler = new BroadcastHandler(pools.realtime, io, botNamespace)
   const companionHandler = new CompanionHandler(pool, jobQueue)
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const namingHandler = new NamingHandler(pool, jobQueue)

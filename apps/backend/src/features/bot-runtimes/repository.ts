@@ -359,6 +359,21 @@ export const BotRuntimeInstanceRepository = {
       RETURNING *`)
     return mapRuntimeInstance(result.rows[0]!)
   },
+
+  /**
+   * Mark an instance offline after its grace window expires with no
+   * reconnect. Does NOT delete the row — `BotInvocationRepository.claimOne`
+   * has an `EXISTS … FROM bot_runtime_instances` check for
+   * `target_instance_id`-pinned invocations and would refuse to hand them
+   * back when the instance reconnects later if we deleted the row.
+   */
+  async markOffline(db: Querier, params: { workspaceId: string; botId: string; instanceId: string }): Promise<void> {
+    await db.query(
+      sql`UPDATE bot_runtime_instances
+        SET status = 'offline', accepting_invocations = FALSE, last_seen_at = NOW(), updated_at = NOW()
+        WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId}`
+    )
+  },
 }
 
 export const BotRuntimeSessionLinkRepository = {

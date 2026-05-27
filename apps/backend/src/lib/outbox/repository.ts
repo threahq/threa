@@ -78,8 +78,6 @@ export type OutboxEventType =
   | "attachment:thumbnailed"
   | "bot_invocation:available"
   | "bot_invocation:claimed"
-  | "bot_invocation:cancelled"
-  | "bot_session_link:invalidated"
   | "bot:active_actor_changed"
   | "bot:resync"
 
@@ -541,20 +539,6 @@ export interface BotInvocationClaimedOutboxPayload extends WorkspaceScopedPayloa
   // this one", not the winning instance's identity.
 }
 
-export interface BotInvocationCancelledOutboxPayload extends WorkspaceScopedPayload {
-  botId: string
-  invocationId: string
-  reason: "source_message_deleted" | "bot_archived" | "manual"
-}
-
-export interface BotSessionLinkInvalidatedOutboxPayload extends WorkspaceScopedPayload {
-  botId: string
-  instanceId: string
-  runtimeSessionId: string
-  rootStreamId: string
-  reason: "user_unlinked" | "instance_offline" | "manual"
-}
-
 export interface BotActiveActorChangedOutboxPayload extends WorkspaceScopedPayload {
   rootStreamId: string
   // `previous*` is nullable because a brand-new root stream has no prior actor
@@ -662,8 +646,6 @@ export interface OutboxEventPayloadMap {
   "attachment:extraction_completed": AttachmentExtractionCompletedOutboxPayload
   "bot_invocation:available": BotInvocationAvailableOutboxPayload
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload
-  "bot_invocation:cancelled": BotInvocationCancelledOutboxPayload
-  "bot_session_link:invalidated": BotSessionLinkInvalidatedOutboxPayload
   "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
   "bot:resync": BotResyncOutboxPayload
 }
@@ -784,16 +766,12 @@ export function isUserScopedEvent(event: OutboxEvent): event is OutboxEvent<User
 export type BotScopedEventType =
   | "bot_invocation:available"
   | "bot_invocation:claimed"
-  | "bot_invocation:cancelled"
-  | "bot_session_link:invalidated"
   | "bot:active_actor_changed"
   | "bot:resync"
 
 const BOT_SCOPED_EVENTS: BotScopedEventType[] = [
   "bot_invocation:available",
   "bot_invocation:claimed",
-  "bot_invocation:cancelled",
-  "bot_session_link:invalidated",
   "bot:active_actor_changed",
   "bot:resync",
 ]

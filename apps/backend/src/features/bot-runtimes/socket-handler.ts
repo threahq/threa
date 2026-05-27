@@ -240,8 +240,13 @@ export interface SerializedBotInvocation {
   targetRuntimeSessionId: string | null
   metadata: Record<string, unknown>
   status: string
-  claimedByInstanceId: string | null
-  claimToken: string | null
+  // `claimToken` and `claimedByInstanceId` are intentionally omitted:
+  // `claimToken` is the credential the complete/renew/fail endpoints
+  // authorize on, and the bootstrap filters `ownedClaims` only by the
+  // attacker-supplied `instanceId`. Echoing them back would let any holder
+  // of the bot's API key impersonate a sibling instance via `bot:hello`
+  // and sabotage that instance's in-flight claims. The runtime already
+  // owns the token it was handed at claim time.
   claimExpiresAt: string | null
   attempts: number
   errorMessage: string | null
@@ -318,8 +323,6 @@ function serializeInvocation(inv: BotInvocation): SerializedBotInvocation {
     targetRuntimeSessionId: inv.targetRuntimeSessionId,
     metadata: inv.metadata,
     status: inv.status,
-    claimedByInstanceId: inv.claimedByInstanceId,
-    claimToken: inv.claimToken,
     claimExpiresAt: inv.claimExpiresAt?.toISOString() ?? null,
     attempts: inv.attempts,
     errorMessage: inv.errorMessage,

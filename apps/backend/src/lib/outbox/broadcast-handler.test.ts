@@ -50,7 +50,8 @@ function createMockIo() {
 function createHandler() {
   mockCursorLock()
   const { io, emitChains } = createMockIo()
-  const handler = new BroadcastHandler({} as any, io as any)
+  const botNamespace = io.of("/bot")
+  const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
   return { handler, io, emitChains }
 }
 
@@ -376,7 +377,8 @@ describe("BroadcastHandler", () => {
     })
 
     const { io } = createMockIo()
-    const handler = new BroadcastHandler({} as any, io as any)
+    const botNamespace = io.of("/bot")
+    const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
@@ -551,41 +553,6 @@ describe("BroadcastHandler", () => {
       emitChains.some(
         (e) =>
           e.eventType === "bot_invocation:available" &&
-          e.room === "bot:ws_1:bot:bot_alice:instance:inst_42" &&
-          e.namespace === "/bot"
-      )
-    ).toBe(false)
-  })
-
-  it("routes bot_session_link:invalidated to the per-session room only", async () => {
-    // The payload carries runtimeSessionId so the dispatcher must target the
-    // session room. Emitting to the instance room would over-fan-out to
-    // sibling sessions sharing the same instance.
-    const event = makeEvent(8n, "bot_session_link:invalidated", {
-      workspaceId: "ws_1",
-      botId: "bot_alice",
-      instanceId: "inst_42",
-      runtimeSessionId: "sess_99",
-      rootStreamId: "stream_pad",
-      reason: "user_unlinked",
-    })
-
-    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
-
-    const { handler, emitChains } = createHandler()
-    handler.handle()
-    await new Promise((r) => setTimeout(r, 300))
-
-    expect(emitChains).toContainEqual({
-      room: "bot:ws_1:bot:bot_alice:session:sess_99",
-      eventType: "bot_session_link:invalidated",
-      payload: event.payload,
-      namespace: "/bot",
-    })
-    expect(
-      emitChains.some(
-        (e) =>
-          e.eventType === "bot_session_link:invalidated" &&
           e.room === "bot:ws_1:bot:bot_alice:instance:inst_42" &&
           e.namespace === "/bot"
       )

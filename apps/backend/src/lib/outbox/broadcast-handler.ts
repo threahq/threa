@@ -1,4 +1,4 @@
-import { Server } from "socket.io"
+import { Server, type Namespace } from "socket.io"
 import type { Pool } from "pg"
 import { StreamTypes, Visibilities } from "@threa/types"
 import {
@@ -19,8 +19,6 @@ import {
   type MessagesMovedOutboxPayload,
   type BotInvocationAvailableOutboxPayload,
   type BotInvocationClaimedOutboxPayload,
-  type BotInvocationCancelledOutboxPayload,
-  type BotSessionLinkInvalidatedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
 } from "./repository"
@@ -68,13 +66,18 @@ export class BroadcastHandler implements OutboxHandler {
 
   private readonly db: Pool
   private readonly io: Server
+  // Resolved once at construction so `dispatchBotEvent` stays a pure
+  // emit-to-room call and `BroadcastHandler` doesn't reach into the
+  // server for a feature-specific namespace name on every event.
+  private readonly botNamespace: Namespace
   private readonly cursorLock: CursorLock
   private readonly debouncer: DebounceWithMaxWait
   private readonly batchSize: number
 
-  constructor(db: Pool, io: Server, config?: BroadcastHandlerConfig) {
+  constructor(db: Pool, io: Server, botNamespace: Namespace, config?: BroadcastHandlerConfig) {
     this.db = db
     this.io = io
+    this.botNamespace = botNamespace
     this.batchSize = config?.batchSize ?? DEFAULT_CONFIG.batchSize
 
     this.cursorLock = new CursorLock({
@@ -270,7 +273,7 @@ export class BroadcastHandler implements OutboxHandler {
    */
   private dispatchBotEvent(event: OutboxEvent): void {
     const { workspaceId } = event.payload
-    const botNs = this.io.of("/bot")
+    const botNs = this.botNamespace
 
     if (isOutboxEventType(event, "bot_invocation:available")) {
       const payload = event.payload as BotInvocationAvailableOutboxPayload
@@ -293,31 +296,6 @@ export class BroadcastHandler implements OutboxHandler {
       // Tell every sibling on this bot to stop racing — the winner already
       // owns the row in Postgres, so an extra emit to the winner is harmless.
       botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
-      return
-    }
-
-    if (isOutboxEventType(event, "bot_invocation:cancelled")) {
-      // No emitter wired yet — landing the routing path so the cancel
-      // service method (source-message delete, bot archive, manual) can
-      // light up without a parallel broadcaster change. Tracked alongside
-      // the cancellation feature work.
-      const payload = event.payload as BotInvocationCancelledOutboxPayload
-      botNs.to(`bot:${workspaceId}:bot:${payload.botId}`).emit(event.eventType, payload)
-      return
-    }
-
-    if (isOutboxEventType(event, "bot_session_link:invalidated")) {
-      // No emitter wired yet — pairs with the session-unlink service path
-      // (admin "kick" + offline-grace). Routing lives here so when the
-      // emitter lands it just inserts the outbox row.
-      //
-      // Session room (not instance): the link is keyed to one runtime
-      // session, so siblings on the same instance running other sessions
-      // should keep their work. Narrowest-wins.
-      const payload = event.payload as BotSessionLinkInvalidatedOutboxPayload
-      botNs
-        .to(`bot:${workspaceId}:bot:${payload.botId}:session:${payload.runtimeSessionId}`)
-        .emit(event.eventType, payload)
       return
     }
 
