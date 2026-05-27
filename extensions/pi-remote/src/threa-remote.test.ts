@@ -249,7 +249,7 @@ describe("Pi remote trace safety", () => {
     })
   })
 
-  test("parseWsHint accepts the shape returned by POST /bot-runtime/presence", () => {
+  test("parseWsHint accepts the workspace config wsUrl shape", () => {
     expect(__testing.parseWsHint({ url: "wss://eu.threa.io", path: "/socket.io/", namespace: "/bot" })).toEqual({
       url: "wss://eu.threa.io",
       path: "/socket.io/",

@@ -352,12 +352,6 @@ export interface PublicApiDeps {
   attachmentService: AttachmentService
   botChannelService: BotChannelService
   botRuntimeService: BotRuntimeService
-  /**
-   * Public WebSocket URL advertised to bot runtimes. When set (production),
-   * we hand back exactly this URL. When null we derive from the inbound
-   * request's `Host:` header — dev-only fallback, see `buildRuntimeWsHint`.
-   */
-  botRuntimeWsUrl: string | null
   streamService: StreamService
   eventService: EventService
   pool: Pool
@@ -481,61 +475,12 @@ function serializeTraceStep(step: AgentSessionStep) {
   }
 }
 
-/**
- * Hands the runtime a self-describing pointer to the `/bot` Socket.IO
- * namespace. Production sets `BOT_RUNTIME_WS_URL` to the regional alias
- * (e.g. `wss://eu.threa.io`) and we hand that back verbatim — the host
- * never comes from the inbound `Host:` header.
- *
- * When no override is configured we derive from the request as a dev-only
- * convenience. The `Host:` header is attacker-controllable, so this branch
- * is unsafe to leave on in any environment that is internet-exposed
- * without a Host-normalising proxy in front of it.
- */
-export function buildRuntimeWsHint(
-  req: Request,
-  configuredUrl: string | null
-): { url: string; path: string; namespace: string } {
-  if (configuredUrl) {
-    return { url: configuredUrl, path: "/socket.io/", namespace: "/bot" }
-  }
-  // The Host / X-Forwarded-Proto fallback is dev-only. An attacker-supplied
-  // Host header would otherwise hand the runtime a spoofed WS origin which it
-  // would then dial with its API key. Refuse to advertise a WS endpoint unless
-  // the request host is a loopback address — production must set
-  // BOT_RUNTIME_WS_URL.
-  const host = req.get("host") ?? ""
-  // Strip the port. IPv6 hosts arrive bracketed (e.g. `[::1]:4000`), so
-  // splitting on `:` would yield `[`. Pull the address out of the brackets
-  // first; otherwise take the part before the last colon.
-  let hostname: string
-  if (host.startsWith("[")) {
-    const close = host.indexOf("]")
-    hostname = close === -1 ? host : host.slice(1, close)
-  } else {
-    const lastColon = host.lastIndexOf(":")
-    hostname = lastColon === -1 ? host : host.slice(0, lastColon)
-  }
-  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1"
-  if (!isLoopback) {
-    throw new HttpError("BOT_RUNTIME_WS_URL must be configured outside local development", {
-      status: 503,
-      code: "BOT_RUNTIME_WS_URL_NOT_CONFIGURED",
-    })
-  }
-  const forwardedProto = req.get("x-forwarded-proto")
-  const proto = forwardedProto ? forwardedProto.split(",")[0]!.trim() : req.protocol
-  const wsScheme = proto === "https" ? "wss" : "ws"
-  return { url: `${wsScheme}://${host}`, path: "/socket.io/", namespace: "/bot" }
-}
-
 export function createPublicApiHandlers({
   searchService,
   memoExplorerService,
   attachmentService,
   botChannelService,
   botRuntimeService,
-  botRuntimeWsUrl,
   streamService,
   eventService,
   pool,
@@ -771,11 +716,6 @@ export function createPublicApiHandlers({
           lastSeenAt: presence.lastSeenAt.toISOString(),
           createdAt: presence.createdAt.toISOString(),
           updatedAt: presence.updatedAt.toISOString(),
-          // Tells the runtime where to upgrade onto WebSocket. Existing HTTP
-          // clients can ignore this; new builds connect once and drop the
-          // poll loop. The host comes from the same request the runtime just
-          // sent, so we don't need a separate config for the public URL.
-          ws: buildRuntimeWsHint(req, botRuntimeWsUrl),
         },
       })
     },

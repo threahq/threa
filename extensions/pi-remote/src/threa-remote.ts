@@ -82,6 +82,10 @@ type WsHint = {
   namespace: string
 }
 
+type WorkspaceConfigResponse = {
+  wsUrl?: string
+}
+
 type ConfigPatch = Pick<
   Config,
   "baseUrl" | "workspaceId" | "apiKey" | "pollMs" | "defaultDisplayName" | "preferredModels"
@@ -366,23 +370,19 @@ async function heartbeat(
 ): Promise<void> {
   if (!config) return
   const runtimeSessionId = ctx ? getRuntimeSessionId(ctx) : undefined
-  const body = await request<{ data?: { ws?: unknown } }>(
-    `/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`,
-    {
-      method: "POST",
-      body: JSON.stringify({
-        runtimeKind: "pi-local",
-        instanceId: ensureInstanceId(),
-        runtimeSessionId,
-        displayName: config.defaultDisplayName,
-        status,
-        acceptingInvocations: status === "available",
-        capabilities: buildRuntimeCapabilities(ctx),
-        statusText,
-      }),
-    }
-  )
-  captureWsHint(body?.data?.ws)
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/presence`, {
+    method: "POST",
+    body: JSON.stringify({
+      runtimeKind: "pi-local",
+      instanceId: ensureInstanceId(),
+      runtimeSessionId,
+      displayName: config.defaultDisplayName,
+      status,
+      acceptingInvocations: status === "available",
+      capabilities: buildRuntimeCapabilities(ctx),
+      statusText,
+    }),
+  })
 }
 
 async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionContext): Promise<boolean> {
@@ -393,9 +393,27 @@ async function heartbeatBusyIfStale(statusText = "Working…", ctx?: ExtensionCo
   return true
 }
 
-function captureWsHint(value: unknown): void {
-  const parsed = parseWsHint(value)
-  if (parsed) botWsHint = parsed
+async function resolveBotWsHint(ctx: ExtensionContext): Promise<void> {
+  if (!config || botWsHint) return
+  try {
+    const response = await fetchWithTimeout(`${config.baseUrl.replace(/\/$/, "")}/api/workspaces/${config.workspaceId}/config`, {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+    })
+    if (!response.ok) {
+      noteWsDebug(ctx, `workspace config failed: HTTP ${response.status}`)
+      return
+    }
+    const workspaceConfig = (await response.json()) as WorkspaceConfigResponse
+    const parsed = parseWsHint({ url: workspaceConfig.wsUrl })
+    if (!parsed) {
+      noteWsDebug(ctx, "workspace config missing wsUrl")
+      return
+    }
+    botWsHint = parsed
+    noteWsDebug(ctx, `resolved ${parsed.url}`)
+  } catch (error) {
+    noteWsDebug(ctx, `workspace config failed: ${summarizeError(error)}`)
+  }
 }
 
 function parseWsHint(value: unknown): WsHint | undefined {
@@ -965,6 +983,7 @@ async function enableRemote(pi: ExtensionAPI, ctx: ExtensionContext): Promise<vo
     return
   }
   lastBusyHeartbeatAt = 0
+  await resolveBotWsHint(ctx)
   await heartbeat("available", undefined, ctx)
   attachBotWebSocket(pi, ctx)
   startPolling(pi, ctx)
@@ -2000,6 +2019,7 @@ export default function (pi: ExtensionAPI): void {
         return
       }
       await createRemoteSession(ctx, trimmedArgs)
+      await resolveBotWsHint(ctx)
       attachBotWebSocket(pi, ctx)
       startPolling(pi, ctx)
     },
@@ -2013,6 +2033,7 @@ export default function (pi: ExtensionAPI): void {
       return
     }
     lastBusyHeartbeatAt = 0
+    await resolveBotWsHint(ctx)
     await heartbeat("available", undefined, ctx)
     attachBotWebSocket(pi, ctx)
     startPolling(pi, ctx)
