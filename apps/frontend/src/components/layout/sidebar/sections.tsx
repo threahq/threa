@@ -3,6 +3,7 @@ import type { ReactNode, RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { UnreadBadge } from "@/components/unread-badge"
+import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { SMART_SECTIONS } from "./config"
 import { StreamItem } from "./stream-item"
 import type { SectionKey, StreamItemData } from "./types"
@@ -19,10 +20,16 @@ interface SectionHeaderProps {
   unreadAggregate?: number
   /** Aggregate mention count across items in the section (colors the badge on collapsed header). */
   mentionAggregate?: number
-  /** Add button callback - shows plus icon on hover */
+  /** Add button callback - shows plus icon on hover. Ignored if `addMenuActions` is set. */
   onAdd?: () => void
   /** Tooltip for add button */
   addTooltip?: string
+  /**
+   * When provided, the "+" button opens a dropdown menu of these actions instead
+   * of invoking `onAdd` directly. Used by Scratchpads to expose Quick Note /
+   * Encrypted Scratchpad alongside the default Scratchpad creator.
+   */
+  addMenuActions?: SidebarActionItem[] | null
   /** Smaller header style used for nested subsections (e.g. "With activity" / "Rest"). */
   nested?: boolean
 }
@@ -37,6 +44,7 @@ export function SectionHeader({
   mentionAggregate = 0,
   onAdd,
   addTooltip,
+  addMenuActions,
   nested = false,
 }: SectionHeaderProps) {
   const isInteractive = !!onToggle && !!state
@@ -45,8 +53,24 @@ export function SectionHeader({
   if (state) headerTitle = isCollapsed ? "Expand section" : "Collapse section"
   const hasAggregate = isCollapsed && unreadAggregate > 0
   const hasMentions = mentionAggregate > 0
+  const hasMenu = !!addMenuActions && addMenuActions.length > 0
 
   const Chevron = isCollapsed ? ChevronRight : ChevronDown
+
+  const addButton = (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation()
+        if (!hasMenu) onAdd?.()
+      }}
+      className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded opacity-0 group-hover/section:opacity-100 max-sm:opacity-100 hover:bg-muted transition-all"
+      title={addTooltip}
+      aria-label={addTooltip}
+    >
+      <Plus className="h-3.5 w-3.5" />
+    </button>
+  )
 
   const headingContent = (
     <div className="flex items-center gap-1.5 min-w-0">
@@ -75,18 +99,18 @@ export function SectionHeader({
           )}
         />
       )}
-      {onAdd && !isCollapsed && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onAdd()
-          }}
-          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded opacity-0 group-hover/section:opacity-100 max-sm:opacity-100 hover:bg-muted transition-all"
-          title={addTooltip}
-        >
-          <Plus className="h-3.5 w-3.5" />
-        </button>
-      )}
+      {!isCollapsed &&
+        (addMenuActions && addMenuActions.length > 0 ? (
+          <SidebarActionMenu
+            actions={addMenuActions}
+            trigger={addButton}
+            ariaLabel={addTooltip ?? "Create"}
+            align="end"
+            contentClassName="w-56"
+          />
+        ) : (
+          onAdd && addButton
+        ))}
     </div>
   )
 
@@ -179,6 +203,8 @@ interface StreamSectionProps {
   onAdd?: () => void
   /** Tooltip for add button */
   addTooltip?: string
+  /** Dropdown actions for the "+" button. Overrides `onAdd` when provided. */
+  addMenuActions?: SidebarActionItem[] | null
 }
 
 /** Simple binary collapsible section used for Important / Recent / Pinned. */
@@ -199,6 +225,7 @@ export function StreamSection({
   scrollContainerRef,
   onAdd,
   addTooltip,
+  addMenuActions,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -215,6 +242,7 @@ export function StreamSection({
         mentionAggregate={mentionAggregate}
         onAdd={onAdd}
         addTooltip={addTooltip}
+        addMenuActions={addMenuActions}
       />
 
       {!isCollapsed && items.length > 0 && (
@@ -291,6 +319,7 @@ export function TieredStreamSection({
   scrollContainerRef,
   onAdd,
   addTooltip,
+  addMenuActions,
 }: TieredStreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -335,6 +364,7 @@ export function TieredStreamSection({
         mentionAggregate={mentionAggregate}
         onAdd={onAdd}
         addTooltip={addTooltip}
+        addMenuActions={addMenuActions}
       />
 
       {!isCollapsed && visibleItems.length > 0 && (

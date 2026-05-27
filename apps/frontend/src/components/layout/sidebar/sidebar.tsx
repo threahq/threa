@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef } from "react"
 import { toast } from "sonner"
-import { RefreshCw } from "lucide-react"
+import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { useAuth } from "@/auth"
+import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
 import {
   useActivityCounts,
   useAllDrafts,
@@ -32,6 +33,7 @@ import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
 import { ALL_SECTIONS, SMART_SECTIONS } from "./config"
+import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream, sortStreams } from "./utils"
 import type { StreamItemData } from "./types"
 import { resolveDmDisplayName } from "@/lib/streams"
@@ -72,6 +74,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { user } = useAuth()
   const navigate = useNavigate()
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
+  const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
 
   const draftCount = allDrafts.length
   const savedCount = useLiveSavedCount(workspaceId)
@@ -346,6 +349,43 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     }
   }
 
+  const handleCreateQuickNote = async () => {
+    const draftId = await createDraft("off")
+    collapseOnMobile()
+    navigate(`/w/${workspaceId}/s/${draftId}`)
+  }
+
+  // `runSidebarAction` toasts on throw, so let the encrypted creator's session
+  // checks propagate ("Unlock encrypted scratchpads first…") rather than
+  // swallowing them here.
+  const handleCreateEncryptedScratchpad = async () => {
+    const streamId = await createEncryptedScratchpad()
+    collapseOnMobile()
+    navigate(`/w/${workspaceId}/s/${streamId}`)
+  }
+
+  const scratchpadAddMenuActions: SidebarActionItem[] = [
+    {
+      id: "new-scratchpad",
+      label: "New Scratchpad",
+      icon: FileText,
+      onSelect: handleCreateScratchpad,
+    },
+    {
+      id: "new-quick-note",
+      label: "New Quick Note",
+      icon: StickyNote,
+      onSelect: handleCreateQuickNote,
+    },
+    {
+      id: "new-encrypted-scratchpad",
+      label: "New Encrypted Scratchpad",
+      icon: Lock,
+      onSelect: handleCreateEncryptedScratchpad,
+      separatorBefore: true,
+    },
+  ]
+
   const handleCreateChannel = () => {
     collapseOnMobile()
     openCreateChannel()
@@ -396,6 +436,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             toggleSectionState={toggleSectionState}
             onCreateScratchpad={handleCreateScratchpad}
             onCreateChannel={handleCreateChannel}
+            scratchpadAddMenuActions={scratchpadAddMenuActions}
             scrollContainerRef={scrollContainerRef}
           />
         </>
