@@ -890,10 +890,20 @@ function formatInvocationTrace(invocation: ClaimedInvocation, context: string): 
   )
 }
 
+function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string {
+  // `configuredOverride` (set during /configure) wins over the dirname shape so
+  // power users can pin a name across workspaces. The dirname suffix is what
+  // most users actually want — it makes the scratchpad searchable in Threa as
+  // "Pi remote: <project>" without needing to type a label every time.
+  if (configuredOverride) return configuredOverride
+  const dir = cwd.split("/").filter(Boolean).pop() ?? "session"
+  return `Pi remote: ${dir}`
+}
+
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
   if (!config) throw new Error("Threa remote config not loaded")
   const runtimeSessionId = getRuntimeSessionId(ctx)
-  const displayName = args.trim() || config.defaultDisplayName || ctx.cwd.split("/").pop() || "Pi"
+  const displayName = args.trim() || defaultDisplayNameFor(ctx.cwd, config.defaultDisplayName)
 
   const body = await request<{ data: RuntimeSessionLink }>(
     `/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions`,
@@ -923,6 +933,25 @@ async function createRemoteSession(ctx: ExtensionCommandContext, args: string): 
   ctx.ui.notify(`Threa remote linked: ${body.data.streamUrlPath}`, "info")
   setRemoteStatus(ctx, `Threa remote: ${displayName}`)
   await heartbeat("available", undefined, ctx)
+}
+
+async function renameRemoteSession(ctx: ExtensionCommandContext, displayName: string): Promise<void> {
+  if (!config) throw new Error("Threa remote config not loaded")
+  const link = getCurrentSessionLink(ctx)
+  if (!link) {
+    ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
+    return
+  }
+  await request(`/api/v1/workspaces/${config.workspaceId}/bot-runtime/sessions/rename`, {
+    method: "POST",
+    body: JSON.stringify({
+      instanceId: ensureInstanceId(),
+      runtimeSessionId: getRuntimeSessionId(ctx),
+      displayName,
+    }),
+  })
+  ctx.ui.notify(`Threa remote renamed to "${displayName}"`, "info")
+  setRemoteStatus(ctx, `Threa remote: ${displayName}`)
 }
 
 async function renewInvocationClaim(invocation: ClaimedInvocation): Promise<void> {
@@ -2202,6 +2231,7 @@ export const __testing = {
   formatRetryNotice,
   formatDuration,
   formatShortDuration,
+  defaultDisplayNameFor,
   formatLocalTime,
   parseWsHint,
   buildBotSocketUrl,
@@ -2223,7 +2253,7 @@ export const __testing = {
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("remote-control", {
     description:
-      "Link this Pi session to a Threa scratchpad: configure | status | open | on | off | debug | debug-polls [on|off]",
+      "Link this Pi session to a Threa scratchpad: configure | status | open | rename <name> | on | off | debug | debug-polls [on|off]",
     handler: async (args, ctx) => {
       const trimmedArgs = args.trim()
       const commandMatch = trimmedArgs.match(/^(\S+)(?:\s+([\s\S]*))?$/)
@@ -2302,22 +2332,39 @@ export default function (pi: ExtensionAPI): void {
         )
         return
       }
-      // Bare `/remote-control` with no args is idempotent: if this Pi session
-      // is already linked, report status instead of POSTing to /sessions, which
-      // would clobber the local link with a fresh scratchpad. An instanceId
-      // migration (or any change that makes the server's existing-link lookup
-      // miss) used to silently mint a new scratchpad here. Re-linking is a
-      // destructive action — the user has to ask for it explicitly by passing
-      // a display name (`/remote-control "Some name"`).
-      if (trimmedArgs === "") {
-        const link = getCurrentSessionLink(ctx)
-        if (link) {
+      if (command === "rename") {
+        const newName = commandArgs.trim()
+        if (!newName) {
+          ctx.ui.notify("Usage: `/remote-control rename <new name>`", "warning")
+          return
+        }
+        await renameRemoteSession(ctx, newName)
+        return
+      }
+      // Once a session is linked, a bare display-name argument is ambiguous —
+      // it could mean "re-link to a fresh scratchpad" or "rename the existing
+      // one". Force the user to be explicit: `rename` mutates the current
+      // scratchpad, `off` first then `/remote-control "Name"` creates a new one.
+      const existingLink = getCurrentSessionLink(ctx)
+      if (existingLink) {
+        if (trimmedArgs === "") {
+          // Bare `/remote-control` with no args is idempotent: if this Pi
+          // session is already linked, report status instead of POSTing to
+          // /sessions, which would clobber the local link with a fresh
+          // scratchpad. An instanceId migration (or any change that makes the
+          // server's existing-link lookup miss) used to silently mint a new
+          // scratchpad here.
           ctx.ui.notify(
-            `Threa remote already linked for this Pi session (${link.enabled ? "on" : "off"}). Run \`/remote-control status\` for details or \`/remote-control open\` to open the scratchpad.`,
+            `Threa remote already linked for this Pi session (${existingLink.enabled ? "on" : "off"}). Run \`/remote-control status\` for details or \`/remote-control open\` to open the scratchpad.`,
             "info"
           )
           return
         }
+        ctx.ui.notify(
+          "Threa remote is already linked for this Pi session. Use `/remote-control rename <name>` to rename the scratchpad, or `/remote-control off` first to relink.",
+          "warning"
+        )
+        return
       }
       await createRemoteSession(ctx, trimmedArgs)
       await resolveBotWsHint(ctx, { force: true })

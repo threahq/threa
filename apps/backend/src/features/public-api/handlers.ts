@@ -87,6 +87,7 @@ import {
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
   createRuntimeSessionSchema,
+  renameRuntimeSessionSchema,
   claimInvocationSchema,
   renewInvocationClaimSchema,
   completeInvocationSchema,
@@ -793,6 +794,37 @@ export function createPublicApiHandlers({
           activeStreamId: link.activeStreamId,
           runtimeSessionId: link.runtimeSessionId,
           streamUrlPath: `/w/${req.workspaceId!}/s/${stream.id}`,
+        },
+      })
+    },
+
+    async renameBotRuntimeSession(req: Request, res: Response) {
+      if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
+      const result = renameRuntimeSessionSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
+      }
+      const link = await botRuntimeService.findActivePiRemoteSession({
+        workspaceId: req.workspaceId!,
+        botId: req.botApiKey.botId,
+        instanceId: result.data.instanceId,
+        runtimeSessionId: result.data.runtimeSessionId,
+      })
+      if (!link) {
+        throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
+      }
+      const updated = await streamService.updateStream(link.activeStreamId, { displayName: result.data.displayName })
+      if (!updated) {
+        throw new HttpError("Linked stream not found", { status: 404, code: "NOT_FOUND" })
+      }
+      res.json({
+        data: {
+          linkId: link.id,
+          rootStreamId: link.rootStreamId,
+          activeStreamId: link.activeStreamId,
+          runtimeSessionId: link.runtimeSessionId,
+          streamUrlPath: `/w/${req.workspaceId!}/s/${link.activeStreamId}`,
+          displayName: updated.displayName ?? result.data.displayName,
         },
       })
     },
