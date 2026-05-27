@@ -221,8 +221,11 @@ describe("bot-runtime /bot WebSocket transport (e2e)", () => {
       first.disconnect()
     }
 
-    // Socket is closed. Dispatch a command — push has nowhere to land,
-    // so the only way the next connection learns about it is the hello replay.
+    // Dispatch after the captured cursor. `first.disconnect()` is best-effort
+    // (the server-side close may not have landed yet), but the assertion below
+    // depends only on cursor monotonicity: the dispatched invocation's
+    // created_at > cursor, so the replay on `second` must surface it
+    // regardless of whether `first` was fully torn down before dispatch.
     const dispatched = await dispatchCommand(client, workspace.id, linked.streamId, "/thinking high")
     expect(dispatched.success).toBe(true)
 
