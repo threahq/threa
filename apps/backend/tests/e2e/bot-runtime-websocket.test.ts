@@ -104,7 +104,7 @@ interface HelloAck {
   error?: string
   serverGeneratedAt?: string
   availableInvocations?: Array<{ id: string; requiredCapability?: string }>
-  ownedClaims?: Array<{ id: string }>
+  ownedClaims?: Array<{ id: string; requiredCapability?: string }>
 }
 
 function sendHello(
@@ -125,6 +125,20 @@ function sendHello(
           BotInvocationCapabilities.MENTIONABLE,
           BotInvocationCapabilities.SESSION_CONTROL,
         ],
+        // Mirror what the real Pi runtime (`buildBotHelloPayload`) sends. The
+        // hello handler unconditionally re-upserts presence, so without these
+        // fields the prior `/bot-runtime/presence` capability advertisement
+        // (sessionControlCommands etc.) gets wiped and `/thinking` disappears
+        // from the command surface — making `dispatchCommand` fail with
+        // "Unknown command: thinking".
+        capabilities: {
+          runtimeSessionId: params.runtimeSessionId,
+          supportsActiveScratchpad: true,
+          supportsPersistentSessions: true,
+          supportsSessionControlCommands: true,
+          sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+          thinkingLevels: ["off", "minimal", "low", "medium", "high"],
+        },
         ...(params.sinceCursor ? { sinceCursor: params.sinceCursor } : {}),
       },
       (ack: HelloAck) => {
@@ -212,8 +226,9 @@ describe("bot-runtime /bot WebSocket transport (e2e)", () => {
     const dispatched = await dispatchCommand(client, workspace.id, linked.streamId, "/thinking high")
     expect(dispatched.success).toBe(true)
 
-    // Reconnect with the captured cursor. Replay must surface the invocation
-    // in availableInvocations (or ownedClaims if it got claimed in between).
+    // Reconnect with the captured cursor. The dispatched invocation must
+    // surface in availableInvocations (nothing else holds a claim, so
+    // ownedClaims is the wrong bucket — assert on the specific one).
     const second = openBotSocket(linked.apiKey)
     try {
       await connect(second)
@@ -223,8 +238,13 @@ describe("bot-runtime /bot WebSocket transport (e2e)", () => {
         sinceCursor: cursor,
       })
       expect(ack.ok).toBe(true)
-      const surfaced = (ack.availableInvocations?.length ?? 0) > 0 || (ack.ownedClaims?.length ?? 0) > 0
-      expect(surfaced).toBe(true)
+      const replayed = ack.availableInvocations ?? []
+      const sessionControl = replayed.filter(
+        (inv) => inv.requiredCapability === BotInvocationCapabilities.SESSION_CONTROL
+      )
+      expect(sessionControl.length).toBe(1)
+      expect(typeof sessionControl[0].id).toBe("string")
+      expect(sessionControl[0].id.length).toBeGreaterThan(0)
     } finally {
       second.removeAllListeners()
       second.disconnect()
