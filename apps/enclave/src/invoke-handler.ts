@@ -1,7 +1,10 @@
 import type { Request, Response, NextFunction } from "express"
 import { timingSafeEqual } from "node:crypto"
+import { ENCLAVE_HISTORY_LIMIT } from "@threa/types"
 import { z } from "zod"
 import type { Orchestrator, InvokeRequest } from "./orchestrator"
+
+const MAX_RECIPIENTS = 32
 
 const envelopeRecipientSchema = z.object({
   recipientKeyId: z.string(),
@@ -46,8 +49,8 @@ const invokeBodySchema = z.object({
   streamId: z.string(),
   replyMessageId: z.string(),
   persona: personaSchema,
-  history: z.array(historyEntrySchema),
-  recipients: z.array(z.object({ recipientKeyId: z.string(), publicKey: z.string() })),
+  history: z.array(historyEntrySchema).max(ENCLAVE_HISTORY_LIMIT),
+  recipients: z.array(z.object({ recipientKeyId: z.string(), publicKey: z.string() })).max(MAX_RECIPIENTS),
   aadParts: z.object({ streamId: z.string(), senderId: z.string() }),
 })
 

@@ -48,7 +48,7 @@ async function main() {
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, "Enclave request failed")
-    res.status(500).json({ error: err instanceof Error ? err.message : "Internal Server Error" })
+    res.status(500).json({ error: "Internal Server Error" })
   })
 
   const heartbeat = startHeartbeat(config, keyPair, async () => {
