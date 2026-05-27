@@ -228,6 +228,55 @@ export function StreamPage() {
     }
   }
 
+  // Scratchpad companion-mode indicator. Drafts get an inert badge because
+  // the settings dialog reads from caches that don't have draft entries yet —
+  // the pill becomes interactive once the scratchpad is persisted.
+  let companionModeIndicator: React.ReactNode = null
+  if (stream && isScratchpad && (isDraft || !isUnnamedScratchpad)) {
+    const isOn = stream.companionMode === CompanionModes.ON
+    const Icon = isOn ? Sparkles : Moon
+    const modeLabel = isOn ? "Companion" : "Quiet"
+    const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+    const pillVariant = isOn
+      ? "border-primary/30 bg-primary/5 text-foreground"
+      : "border-border bg-secondary text-muted-foreground"
+
+    if (isDraft) {
+      companionModeIndicator = (
+        <span className={cn(pillBase, pillVariant)} aria-label={isOn ? "Companion on" : "Quiet mode"}>
+          <Icon className={cn("h-3 w-3", isOn && "text-primary")} aria-hidden="true" />
+          <span>{modeLabel}</span>
+        </span>
+      )
+    } else {
+      companionModeIndicator = (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => openStreamSettings(streamId, "companion")}
+              aria-label={isOn ? "Companion is on. Click to change." : "Quiet mode. Click to change."}
+              className={cn(
+                pillBase,
+                pillVariant,
+                "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                isOn ? "hover:bg-primary/10" : "hover:bg-accent hover:text-foreground"
+              )}
+            >
+              <Icon className={cn("h-3 w-3", isOn && "text-primary")} aria-hidden="true" />
+              <span>{modeLabel}</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isOn
+              ? "Ariadne replies to new messages. Click to change."
+              : "Silent capture — no AI replies. Click to change."}
+          </TooltipContent>
+        </Tooltip>
+      )
+    }
+  }
+
   let headerTitle: React.ReactNode
   if (isEditing) {
     headerTitle = (
@@ -277,45 +326,10 @@ export function StreamPage() {
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <SidebarToggle location="page" />
           {headerTitle}
-          {stream &&
-            !isThread &&
-            !isDraft &&
-            !isUnnamedScratchpad &&
-            (isScratchpad ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => openStreamSettings(streamId, "companion")}
-                    aria-label={
-                      stream.companionMode === CompanionModes.ON
-                        ? "Companion is on. Click to change."
-                        : "Quiet mode. Click to change."
-                    }
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                      stream.companionMode === CompanionModes.ON
-                        ? "border-primary/30 bg-primary/5 text-foreground hover:bg-primary/10"
-                        : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
-                    )}
-                  >
-                    {stream.companionMode === CompanionModes.ON ? (
-                      <Sparkles className="h-3 w-3 text-primary" aria-hidden="true" />
-                    ) : (
-                      <Moon className="h-3 w-3" aria-hidden="true" />
-                    )}
-                    <span>{stream.companionMode === CompanionModes.ON ? "Companion" : "Quiet"}</span>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {stream.companionMode === CompanionModes.ON
-                    ? "Ariadne replies to new messages. Click to change."
-                    : "Silent capture — no AI replies. Click to change."}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              !isChannel && <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
-            ))}
+          {companionModeIndicator}
+          {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
+            <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
+          )}
           {isArchived && (
             <Badge variant="secondary" className="gap-1">
               <ArchiveX className="h-3 w-3" />
