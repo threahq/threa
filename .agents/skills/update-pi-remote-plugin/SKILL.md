@@ -1,20 +1,21 @@
 ---
 name: update-pi-remote-plugin
-description: Keep the Threa Pi remote-control extension in `docs/examples/pi-remote/` aligned with the current Pi extension API and Threa bot-runtime public API. Use when asked to update, verify, sync, or troubleshoot the Pi remote plugin, `/remote-control`, or `threa-remote-v2.ts`.
+description: Keep the Threa Pi remote-control extension in `extensions/pi-remote/` aligned with the current Pi extension API and Threa bot-runtime public API. Use when asked to update, verify, sync, or troubleshoot the Pi remote plugin, `/remote-control`, or `threa-remote.ts`.
 ---
 
 # Update Pi remote plugin
 
 The canonical Threa Pi remote adapter currently lives at:
 
-- `docs/examples/pi-remote/threa-remote-v2.ts`
-- tests: `docs/examples/pi-remote/threa-remote-v2.test.ts`
+- `extensions/pi-remote/src/threa-remote.ts`
+- tests: `extensions/pi-remote/src/threa-remote.test.ts`
+- package manifest: `extensions/pi-remote/package.json`
 
-The local install target for real use is typically:
+The local install target for real use is typically a package directory:
 
-- `~/.pi/agent/extensions/threa-remote.ts`
+- `~/.pi/agent/extensions/threa-remote/`
 
-Do not edit the installed copy first. Update the repo copy, verify it, then tell Kris how to copy/reload it.
+Do not edit the installed copy first. Update the repo copy, verify it, then copy the package directory/install dependencies/reload locally if requested.
 
 ## Required context
 
@@ -23,7 +24,8 @@ Do not edit the installed copy first. Update the repo copy, verify it, then tell
    - `~/.claude/CLAUDE.md` if present
 2. Read current Pi extension docs/API because Pi changes independently of Threa:
    - `/Users/kristofferremback/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/docs/extensions.md`
-   - Focus on extension locations, `pi.registerCommand(name, options)`, lifecycle events, `ctx.isIdle()`, `ctx.sessionManager`, and `pi.sendUserMessage()`.
+   - `/Users/kristofferremback/.bun/install/global/node_modules/@earendil-works/pi-coding-agent/docs/packages.md` when changing packaging/dependencies
+   - Focus on extension locations, package manifests, `pi.registerCommand(name, options)`, lifecycle events, `ctx.isIdle()`, `ctx.sessionManager`, and `pi.sendUserMessage()`.
 3. Check the Threa protocol/API surfaces the plugin depends on:
    - `apps/backend/src/features/public-api/schemas.ts`
    - `apps/backend/src/features/public-api/handlers.ts`
@@ -44,6 +46,7 @@ Verify the adapter still:
 - Uses a bot API key only; do not add user-key fallback behavior.
 - Creates/links sessions through `POST /api/v1/workspaces/:workspaceId/bot-runtime/sessions`.
 - Heartbeats through `POST /api/v1/workspaces/:workspaceId/bot-runtime/presence`.
+- Uses the `/bot` WebSocket transport via `socket.io-client`, with HTTP polling as the safety backstop.
 - Claims through `POST /api/v1/workspaces/:workspaceId/bot-invocations/claim` with current `supportedCapabilities`.
 - Renews long-running claims before expiry.
 - Advertises `busy` presence while Pi is working locally or on a Threa invocation, not just while claims are being processed.
@@ -52,7 +55,7 @@ Verify the adapter still:
 - Completes/fails through `/complete` and `/fail` with `instanceId` + `claimToken`.
 - Stores enabled/disabled state per Pi session link, not as a global config flag.
 - Stores stream cursors per Pi session link, not as a global cursor map.
-- Stops polling and marks presence offline on `session_shutdown`.
+- Stops polling and marks presence offline on final `session_shutdown`; reload shutdown should reconnect automatically.
 - Does not poll arbitrary stream messages as the work trigger. Threa-owned invocation rows are the trigger.
 
 ## Verification
@@ -60,7 +63,7 @@ Verify the adapter still:
 Run the focused test:
 
 ```bash
-bun test ./docs/examples/pi-remote/threa-remote-v2.test.ts
+bun test ./extensions/pi-remote/src/threa-remote.test.ts
 ```
 
 If you changed backend API contracts, also run the relevant backend tests and/or typecheck. At minimum, inspect the route schemas and explain why the plugin request/response shapes still match.
@@ -68,10 +71,10 @@ If you changed backend API contracts, also run the relevant backend tests and/or
 Optional local smoke check when Pi is available:
 
 ```bash
-cp docs/examples/pi-remote/threa-remote-v2.ts ~/.pi/agent/extensions/threa-remote.ts
+rm -f ~/.pi/agent/extensions/threa-remote.ts
+rm -rf ~/.pi/agent/extensions/threa-remote
+mkdir -p ~/.pi/agent/extensions/threa-remote
+cp -R extensions/pi-remote/. ~/.pi/agent/extensions/threa-remote/
+cd ~/.pi/agent/extensions/threa-remote && npm install
 # In Pi: /reload, then /remote-control status or /remote-control
 ```
-
-## Placement note
-
-`docs/examples/pi-remote/` is acceptable while the adapter is example/distribution material rather than shipped app code. If it gains packaging, dependencies, or release automation, move it to a dedicated package or scripts directory and keep this skill updated with the new canonical path.
