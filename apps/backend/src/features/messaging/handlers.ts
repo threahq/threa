@@ -8,7 +8,7 @@ import type { Message } from "./repository"
 import { StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
-import type { CommandDispatchedPayload } from "@threa/types"
+import { type CommandDispatchedPayload, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 import { serializeBigInt } from "@threa/backend-common"
 import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
@@ -63,12 +63,59 @@ const createMessageMarkdownToDmSchema = z.object({
   ...commonMessageOptionsSchema,
 })
 
-// Union schema - accepts either format
+// Schema for E2E ciphertext input to an existing E2E-enabled stream. The
+// handler verifies the target stream is in `e2e_streams` (INV-E1) so a
+// plaintext writer cannot impersonate an encrypted message and vice versa.
+// `contentJson` / `contentMarkdown` are intentionally absent: the handler
+// substitutes opaque placeholders for the projection so plaintext consumers
+// short-circuit on `e2eStreams.isE2eStream`.
+//
+// Size caps bound the per-message storage footprint — without them a
+// workspace member could post multi-MB envelopes that never decrypt for
+// anyone but bloat `messages.envelope` (JSONB) and `messages.ciphertext`
+// (BYTEA). 1 MB of base64 ciphertext leaves ~750 KB of plaintext, plenty
+// for messages; the 100-recipient cap covers Phase 4 per-device wraps.
+const MAX_E2E_CIPHERTEXT_BASE64_BYTES = 1_000_000
+const MAX_E2E_RECIPIENTS = 100
+const MAX_E2E_RECIPIENT_FIELD_BYTES = 4096
+const e2eRecipientSchema = z.object({
+  recipientKeyId: z.string().min(1).max(256),
+  enc: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
+  ct: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
+})
+const e2eEnvelopeSchema = z.object({
+  v: z.number().int().positive(),
+  ciphertext: z.string().min(1).max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
+  iv: z.string().min(1).max(64),
+  aad: z.string().max(4096),
+  recipients: z.array(e2eRecipientSchema).min(1).max(MAX_E2E_RECIPIENTS),
+})
+const createMessageE2eToStreamSchema = z.object({
+  streamId: z.string().min(1, "streamId is required"),
+  ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
+  envelope: e2eEnvelopeSchema,
+  e2eVersion: z.number().int().positive(),
+  clientMessageId: z.string().min(1).optional(),
+})
+
+// Plaintext-only union (used by `normalizeContent` and the post-E2E-gate
+// branch in the create handler). Splitting this out keeps the narrowing
+// surface small: E2E messages never flow through markdown normalization or
+// attachment parsing.
+const createPlaintextMessageSchema = z.union([
+  createMessageJsonToStreamSchema,
+  createMessageMarkdownToStreamSchema,
+  createMessageJsonToDmSchema,
+  createMessageMarkdownToDmSchema,
+])
+
+// Union schema - accepts plaintext or E2E variants
 const createMessageSchema = z.union([
   createMessageJsonToStreamSchema,
   createMessageMarkdownToStreamSchema,
   createMessageJsonToDmSchema,
   createMessageMarkdownToDmSchema,
+  createMessageE2eToStreamSchema,
 ])
 
 // Update can also be either format
@@ -112,7 +159,7 @@ export {
  * - If markdown provided: normalize emoji, parse to JSON
  * Emoji normalization converts raw emoji (👍) to shortcodes (:+1:).
  */
-function normalizeContent(input: z.infer<typeof createMessageSchema> | z.infer<typeof updateMessageSchema>): {
+function normalizeContent(input: z.infer<typeof createPlaintextMessageSchema> | z.infer<typeof updateMessageSchema>): {
   contentJson: JSONContent
   contentMarkdown: string
 } {
@@ -131,7 +178,22 @@ function normalizeContent(input: z.infer<typeof createMessageSchema> | z.infer<t
 }
 
 function serializeMessage(msg: Message) {
-  return serializeBigInt(msg)
+  // `msg.ciphertext` is a Node `Buffer` (BYTEA → driver), which `serializeBigInt`
+  // would walk with `Object.entries` and emit as a byte-indexed object on the
+  // wire. Base64-encode to match the `Message.ciphertext: string | null`
+  // contract clients expect.
+  const ciphertext = msg.ciphertext ? msg.ciphertext.toString("base64") : null
+  return serializeBigInt({ ...msg, ciphertext })
+}
+
+// Plaintext consumers (search index, message-formatter, outbox handlers) gate
+// on `isE2eStream` before reading these fields, so the value never reaches a
+// user. `E2E_PLACEHOLDER_CONTENT_MARKDOWN` is shared from `@threa/types` so
+// the frontend decrypt path can detect it byte-identically; we derive the
+// JSON doc shape locally because ProseMirror types aren't worth shipping.
+const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
+  type: "doc",
+  content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],
 }
 
 interface DetectedCommand {
@@ -181,13 +243,6 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       }
 
       const data = result.data
-      // Explicit `data.attachmentIds` is the fresh-upload list (each row's
-      // `messageId === null`, claimed by `attachToMessage` on send).
-      // The contentJson-derived list catches inline `attachment:` references
-      // — fresh uploads aren't represented there, references are.
-      // Merging both into the deduped union covers all flavors with one
-      // gate run + one projection write (mirrors the edit path).
-      const explicitAttachmentIds = data.attachmentIds ?? []
 
       const stream = await streamService.resolveWritableMessageStream({
         workspaceId,
@@ -195,6 +250,51 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         target: "dmUserId" in data ? { dmUserId: data.dmUserId } : { streamId: data.streamId },
       })
       const streamId = stream.id
+
+      // INV-E1: a plaintext request must not land in an E2E stream and an E2E
+      // request must not land in a plaintext stream. Either direction would
+      // produce a row that violates the encryption guarantee, so we mismatch
+      // here before any insert occurs. `resolveWritableMessageStream` already
+      // populates `e2eEnabled` off the `e2e_streams` LEFT JOIN, so we read
+      // it off the resolved stream instead of issuing a second SELECT.
+      const isE2eStream = stream.e2eEnabled === true
+      const isE2eRequest = "ciphertext" in data
+      if (isE2eStream !== isE2eRequest) {
+        return res.status(400).json({
+          error: isE2eStream
+            ? "Stream is end-to-end encrypted; send ciphertext, envelope, and e2eVersion"
+            : "Stream is not end-to-end encrypted; send plaintext content",
+          code: isE2eStream ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
+        })
+      }
+
+      if ("ciphertext" in data) {
+        // E2E messages are opaque: no slash-command parsing, no attachment
+        // gating, no markdown normalization. The projection stores a fixed
+        // placeholder so plaintext consumers (search, summary, outbox) can
+        // short-circuit on `isE2eStream` without crashing on null content.
+        const message = await eventService.createMessage({
+          workspaceId,
+          streamId,
+          authorId: userId,
+          authorType: "user",
+          contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+          contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+          ciphertext: Buffer.from(data.ciphertext, "base64"),
+          envelope: data.envelope,
+          e2eVersion: data.e2eVersion,
+          clientMessageId: data.clientMessageId,
+        })
+        return res.status(201).json({ message: serializeMessage(message) })
+      }
+
+      // Explicit `data.attachmentIds` is the fresh-upload list (each row's
+      // `messageId === null`, claimed by `attachToMessage` on send).
+      // The contentJson-derived list catches inline `attachment:` references
+      // — fresh uploads aren't represented there, references are.
+      // Merging both into the deduped union covers all flavors with one
+      // gate run + one projection write (mirrors the edit path).
+      const explicitAttachmentIds = data.attachmentIds ?? []
 
       // Check for slash command in first node BEFORE normalization (normalization loses command nodes)
       const originalContentJson = "contentJson" in data ? data.contentJson : undefined

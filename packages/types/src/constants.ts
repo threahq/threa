@@ -588,6 +588,7 @@ export const ShareErrorCodes = {
   SOURCE_STREAM_NOT_FOUND: "SHARE_SOURCE_STREAM_NOT_FOUND",
   CROSS_WORKSPACE_FORBIDDEN: "SHARE_CROSS_WORKSPACE_FORBIDDEN",
   SOURCE_FORBIDDEN: "SHARE_SOURCE_FORBIDDEN",
+  E2E_SHARING_NOT_ALLOWED: "SHARE_E2E_NOT_ALLOWED",
 } as const
 
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
@@ -709,3 +710,12 @@ export type SocialProvider = (typeof SOCIAL_PROVIDERS)[number]
 // Length of the WorkOS Magic Auth code. Shared between the backend Zod schema
 // and the frontend OTP input so both sides accept the same shape.
 export const MAGIC_CODE_LENGTH = 6
+
+// Placeholder stored in `messages.content_markdown` / `content_json` for
+// messages in an E2E scratchpad. The canonical payload lives in
+// `messages.ciphertext` + `messages.envelope`; this value keeps the NOT NULL
+// projection columns satisfied and gives accidental plaintext rendering a
+// visible sentinel (zero-width space). Must stay byte-identical across
+// backend insert, frontend encrypt, and frontend decrypt paths — the explicit
+// \u200B escape keeps the source readable instead of a literal invisible byte.
+export const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "\u200B"

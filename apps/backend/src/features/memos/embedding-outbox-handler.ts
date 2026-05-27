@@ -6,6 +6,7 @@ import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 export interface EmbeddingHandlerConfig {
   batchSize?: number
@@ -93,6 +94,13 @@ export class EmbeddingHandler implements OutboxHandler {
           const payload = parseMessagePayload(event.payload)
           if (!payload) {
             logger.debug({ eventId: event.id.toString() }, "EmbeddingHandler: malformed event, skipping")
+            seen.push(event.id)
+            continue
+          }
+
+          // E2E streams: contentMarkdown is ciphertext, so an embedding of it
+          // is meaningless. Skip without inspecting the message.
+          if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
             seen.push(event.id)
             continue
           }

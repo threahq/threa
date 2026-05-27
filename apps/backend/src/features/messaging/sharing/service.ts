@@ -12,6 +12,7 @@ import {
   type ResolveEffectiveStream,
 } from "./access-check"
 import { SharedMessageRepository } from "./repository"
+import { E2eStreamsRepository } from "../../e2e-streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -214,6 +215,16 @@ export const ShareService = {
         throw new HttpError("Cannot share across workspaces", {
           status: 400,
           code: ShareErrorCodes.CROSS_WORKSPACE_FORBIDDEN,
+        })
+      }
+
+      // E2E source streams: never let ciphertext-bearing messages cross the
+      // E2E boundary via a share. The frontend renders the "Copy as
+      // plaintext" alternative when it sees this code.
+      if (await E2eStreamsRepository.isE2eStream(params.client, params.workspaceId, ref.sourceStreamId)) {
+        throw new HttpError("Cannot share messages from end-to-end encrypted streams", {
+          status: 400,
+          code: ShareErrorCodes.E2E_SHARING_NOT_ALLOWED,
         })
       }
 

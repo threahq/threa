@@ -77,6 +77,15 @@ export interface CachedStream {
    * optional on the type so older cached records still parse.
    */
   contextBag?: StreamContextBagPayload
+  /**
+   * End-to-end encryption markers. Present iff this stream is in
+   * `e2e_streams`. Drives the send-path encrypt branch and the inbound
+   * decrypt branch. Both fields stay optional so existing cached rows from
+   * older versions still parse — plaintext streams simply leave them
+   * undefined.
+   */
+  e2eEnabled?: boolean
+  e2eOwnerKeyId?: string | null
   _cachedAt: number
 }
 
@@ -223,6 +232,17 @@ export interface PendingMessage {
   draftId?: string
   /** Set by the queue after stream creation succeeds — prevents duplicate creation on retry */
   promotedStreamId?: string
+  /**
+   * End-to-end-encrypted send payload. Populated at queue time (with the
+   * sender's UIK held in memory) so the drain loop stays stateless about
+   * user identity / private keys — it just forwards the precomputed
+   * ciphertext + envelope on the E2E API variant. `contentMarkdown` /
+   * `contentJson` still carry the original plaintext for the local
+   * optimistic event so the user sees what they typed.
+   */
+  ciphertext?: string
+  envelope?: unknown
+  e2eVersion?: number
 }
 
 /**
@@ -840,6 +860,9 @@ export async function clearAllCachedData(): Promise<void> {
       db.savedMessages.clear(),
       db.scheduledMessages.clear(),
       db.stashedDrafts.clear(),
+      // Wrapped private bundles are tied to the logging-out identity — drop
+      // them so the next account starts without inherited key material.
+      db.e2eKeys.clear(),
       // Note: we keep pendingMessages to retry sending after re-login
     ])
   } finally {

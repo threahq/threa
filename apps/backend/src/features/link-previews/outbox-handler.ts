@@ -5,6 +5,7 @@ import type { QueueManager } from "../../lib/queue"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import { logger } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 const LINK_PREVIEW_EVENT_TYPES = new Set(["message:created", "message:edited"])
 
@@ -98,6 +99,13 @@ export class LinkPreviewOutboxHandler implements OutboxHandler {
           const isEdit = event.eventType === "message:edited"
           const { workspaceId, streamId, event: messageEvent } = payload
           const { messageId, contentMarkdown } = messageEvent.payload
+
+          // E2E streams: contentMarkdown is ciphertext, so the URL scanner
+          // would find nothing useful. Skip without inspecting the message.
+          if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+            seen.push(event.id)
+            continue
+          }
 
           // For creates, skip if no content. For edits, always enqueue
           // so stale previews are cleared even when all URLs are removed.

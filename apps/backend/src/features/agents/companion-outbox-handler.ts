@@ -1,6 +1,7 @@
 import type { Pool } from "pg"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository } from "../streams"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { parseMessagePayload } from "../../lib/outbox"
@@ -108,7 +109,14 @@ export class CompanionHandler implements OutboxHandler {
             continue
           }
 
-          const { streamId, event: messageEvent } = payload
+          const { streamId, workspaceId, event: messageEvent } = payload
+
+          // E2E streams: Ariadne can't see ciphertext, so the companion can
+          // never have anything to say. Skip without inspecting the message.
+          if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+            seen.push(event.id)
+            continue
+          }
 
           // Ignore persona messages (avoid infinite loops)
           if (messageEvent.actorType !== AuthorTypes.USER) {

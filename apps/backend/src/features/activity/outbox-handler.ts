@@ -13,6 +13,7 @@ import type { OutboxHandler } from "../../lib/outbox"
 import type { ActivityService } from "./service"
 import type { Activity } from "./repository"
 import { withTransaction } from "../../db"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -136,6 +137,10 @@ export class ActivityFeedHandler implements OutboxHandler {
 
     const { streamId, workspaceId, event: messageEvent } = payload
 
+    // E2E streams: mention detection runs against ciphertext (useless) and
+    // the activity feed isn't the unread surface for E2E DMs. Short-circuit.
+    if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) return []
+
     // Skip system-authored messages (join/leave notices etc.) — no meaningful
     // content for mention detection or notification-level activity. Member and
     // persona messages both get processed: agents can @mention people and their
@@ -187,6 +192,12 @@ export class ActivityFeedHandler implements OutboxHandler {
       return []
     }
 
+    // E2E streams: reactions on E2E messages don't surface in the activity
+    // feed in Phase 1.
+    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+      return []
+    }
+
     return this.activityService.processReactionAdded({
       workspaceId: payload.workspaceId,
       streamId: payload.streamId,
@@ -212,6 +223,11 @@ export class ActivityFeedHandler implements OutboxHandler {
       )
       return []
     }
+    // E2E streams: never surface ciphertext previews in the activity feed.
+    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+      return []
+    }
+
     const contentPreview = payload.saved?.message?.contentMarkdown?.slice(0, 200) ?? null
     const streamName = payload.saved?.message?.streamName ?? null
     return this.activityService.processSavedReminderFired({
@@ -241,6 +257,12 @@ export class ActivityFeedHandler implements OutboxHandler {
       return []
     }
 
+    // E2E streams: member-added activity is delivered through the stream
+    // bootstrap path, not the activity feed, for E2E participants.
+    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+      return []
+    }
+
     return this.activityService.processMemberAdded({
       workspaceId: payload.workspaceId,
       streamId: payload.streamId,
@@ -259,6 +281,12 @@ export class ActivityFeedHandler implements OutboxHandler {
       typeof payload.emoji !== "string"
     ) {
       logger.debug({ eventId: event.id.toString() }, "ActivityFeedHandler: malformed reaction:removed event, skipping")
+      return
+    }
+
+    // E2E streams: nothing to remove because we never inserted activity
+    // rows for E2E reactions in the first place.
+    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
       return
     }
 

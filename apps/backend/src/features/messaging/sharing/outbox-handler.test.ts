@@ -1,6 +1,11 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { invalidatePointersForEvent, POINTER_INVALIDATED_EVENT } from "./outbox-handler"
 import { SharedMessageRepository } from "./repository"
+import { E2eStreamsRepository } from "../../e2e-streams"
+
+beforeEach(() => {
+  spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+})
 
 afterEach(() => {
   mock.restore()
@@ -116,6 +121,22 @@ describe("invalidatePointersForEvent", () => {
       "ws:ws_1:stream:stream_t2|msg_a",
     ])
     expect(emits.every((e) => e.event === POINTER_INVALIDATED_EVENT)).toBe(true)
+  })
+
+  it("short-circuits before the share lookup when the source stream is end-to-end encrypted", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const list = spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue([])
+    const { io, emits } = fakeIo()
+    await invalidatePointersForEvent(
+      {
+        eventType: "message:deleted",
+        payload: { workspaceId: "ws_1", streamId: "stream_src", messageId: "msg_a" },
+      } as any,
+      {} as any,
+      io
+    )
+    expect(list).not.toHaveBeenCalled()
+    expect(emits).toEqual([])
   })
 
   it("passes every moved message id to the share lookup when a messages:moved event lands", async () => {

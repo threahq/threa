@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AuthorTypes, CompanionModes, StreamTypes } from "@threa/types"
 import type { ProcessResult } from "@threa/backend-common"
 import * as cursorLockModule from "@threa/backend-common"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository } from "../streams"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { CompanionHandler } from "./companion-outbox-handler"
 import { PersonaRepository } from "./persona-repository"
 import { AgentSessionRepository } from "./session-repository"
@@ -87,6 +88,10 @@ async function waitForDebounce(): Promise<void> {
 }
 
 describe("CompanionHandler", () => {
+  beforeEach(() => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+  })
+
   afterEach(() => {
     mock.restore()
   })
@@ -204,6 +209,22 @@ describe("CompanionHandler", () => {
 
     expect(jobQueue.send).not.toHaveBeenCalled()
     expect(personaSpy).not.toHaveBeenCalled()
+  })
+
+  it("does not dispatch for messages on end-to-end encrypted streams", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    mockUserMessageEvent("stream_e2e")
+
+    const streamSpy = spyOn(StreamRepository, "findById").mockResolvedValue(
+      makeStream({ id: "stream_e2e", companionMode: CompanionModes.ON, companionPersonaId: "persona_scratchpad" })
+    )
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(streamSpy).not.toHaveBeenCalled()
+    expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
   it("does not dispatch for threads under a scratchpad whose companion mode is off", async () => {

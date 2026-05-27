@@ -31,6 +31,7 @@ import {
   type ContextBag,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 
@@ -48,6 +49,13 @@ const createScratchpadParamsSchema = z.object({
 export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema> & {
   /** Optional context-bag to attach to the new scratchpad. */
   contextBag?: ContextBag
+  /**
+   * Optional E2E activation. When present, the scratchpad row is inserted
+   * into `e2e_streams` in the same transaction so plaintext consumers
+   * cannot race a window where the stream exists but its E2E flag does not.
+   * Phase 1: `invitedAgentKind` is always "none" — only the owner can decrypt.
+   */
+  e2e?: { ownerKeyId: string }
 }
 
 const createChannelParamsSchema = z.object({
@@ -310,7 +318,9 @@ export class StreamService {
     })
   }
 
-  async create(params: CreateStreamParams & { contextBag?: ContextBag }): Promise<Stream> {
+  async create(
+    params: CreateStreamParams & { contextBag?: ContextBag; e2e?: { ownerKeyId: string } }
+  ): Promise<Stream> {
     switch (params.type) {
       case StreamTypes.SCRATCHPAD:
         return this.createScratchpad({
@@ -321,6 +331,7 @@ export class StreamService {
           companionPersonaId: params.companionPersonaId,
           createdBy: params.createdBy,
           contextBag: params.contextBag,
+          e2e: params.e2e,
         })
       case StreamTypes.CHANNEL:
         if (!params.slug) {
@@ -379,6 +390,25 @@ export class StreamService {
           refs: params.contextBag.refs,
           createdBy: params.createdBy,
         })
+      }
+
+      // INV-E1: the E2E flag must be visible the instant the stream is, or
+      // a plaintext writer could squeeze a message in between the stream
+      // insert and the flag insert. Same transaction guarantees there is no
+      // such window. We annotate the returned stream so the create handler
+      // can hand the encryption metadata back to the client without a
+      // second round-trip.
+      if (params.e2e) {
+        await E2eStreamsRepository.markStreamE2e(client, {
+          streamId: stream.id,
+          workspaceId: params.workspaceId,
+          ownerUserId: params.createdBy,
+          ownerUserKeyId: params.e2e.ownerKeyId,
+          invitedAgentKind: "none",
+          invitedAgentKeyId: null,
+        })
+        stream.e2eEnabled = true
+        stream.e2eOwnerKeyId = params.e2e.ownerKeyId
       }
 
       // Publish to outbox for real-time delivery

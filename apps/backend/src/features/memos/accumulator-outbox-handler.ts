@@ -8,6 +8,7 @@ import { logger } from "../../lib/logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
 import { withClient } from "../../db"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 export interface MemoAccumulatorHandlerConfig {
   batchSize?: number
@@ -133,6 +134,13 @@ export class MemoAccumulatorHandler implements OutboxHandler {
       streamId: string
       workspaceId: string
       conversationId: string
+    }
+
+    // E2E streams: boundary extraction never creates conversations for E2E
+    // streams, so this is defense-in-depth — a conversation event whose
+    // stream became E2E should still not trigger memo processing.
+    if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+      return
     }
 
     await withClient(this.db, async (client) => {

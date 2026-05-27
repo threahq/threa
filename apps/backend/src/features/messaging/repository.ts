@@ -19,6 +19,9 @@ interface MessageRow {
   edited_at: Date | null
   deleted_at: Date | null
   created_at: Date
+  ciphertext: Buffer | null
+  envelope: unknown | null
+  e2e_version: number | null
 }
 
 interface ReactionRow {
@@ -45,6 +48,15 @@ export interface Message {
   editedAt: Date | null
   deletedAt: Date | null
   createdAt: Date
+  /**
+   * E2E ciphertext + envelope are populated for messages in `e2e_streams`
+   * streams; `contentJson` / `contentMarkdown` carry an empty-doc placeholder
+   * in that case (the canonical payload is the ciphertext). Non-E2E rows have
+   * all three null.
+   */
+  ciphertext: Buffer | null
+  envelope: unknown | null
+  e2eVersion: number | null
 }
 
 export interface InsertMessageParams {
@@ -58,6 +70,10 @@ export interface InsertMessageParams {
   clientMessageId?: string
   sentVia?: string
   metadata?: Record<string, string>
+  /** When set, this row is an E2E ciphertext payload; `contentJson` / `contentMarkdown` should be the empty-doc placeholder. */
+  ciphertext?: Buffer
+  envelope?: unknown
+  e2eVersion?: number
 }
 
 // Alias for the canonical move-by-messageId+sequence shape defined alongside
@@ -84,6 +100,9 @@ function mapRowToMessage(row: MessageRow, reactions: Record<string, string[]> = 
     editedAt: row.edited_at,
     deletedAt: row.deleted_at,
     createdAt: row.created_at,
+    ciphertext: row.ciphertext,
+    envelope: row.envelope,
+    e2eVersion: row.e2e_version,
   }
 }
 
@@ -123,14 +142,16 @@ const SELECT_FIELDS = `
   id, stream_id, sequence, author_id, author_type,
   content_json, content_markdown, reply_count, client_message_id, sent_via,
   metadata,
-  edited_at, deleted_at, created_at
+  edited_at, deleted_at, created_at,
+  ciphertext, envelope, e2e_version
 `
 
 const QUALIFIED_SELECT_FIELDS = `
   m.id, m.stream_id, m.sequence, m.author_id, m.author_type,
   m.content_json, m.content_markdown, m.reply_count, m.client_message_id, m.sent_via,
   m.metadata,
-  m.edited_at, m.deleted_at, m.created_at
+  m.edited_at, m.deleted_at, m.created_at,
+  m.ciphertext, m.envelope, m.e2e_version
 `
 
 export const MessageRepository = {
@@ -365,8 +386,16 @@ export const MessageRepository = {
       ? "ON CONFLICT (stream_id, client_message_id) WHERE client_message_id IS NOT NULL DO NOTHING"
       : ""
 
+    const ciphertext = params.ciphertext ?? null
+    const envelope = params.envelope !== undefined ? JSON.stringify(params.envelope) : null
+    const e2eVersion = params.e2eVersion ?? null
+
     const result = await db.query<MessageRow>(sql`
-      INSERT INTO messages (id, stream_id, sequence, author_id, author_type, content_json, content_markdown, client_message_id, sent_via, metadata)
+      INSERT INTO messages (
+        id, stream_id, sequence, author_id, author_type,
+        content_json, content_markdown, client_message_id, sent_via, metadata,
+        ciphertext, envelope, e2e_version
+      )
       VALUES (
         ${params.id},
         ${params.streamId},
@@ -377,7 +406,10 @@ export const MessageRepository = {
         ${params.contentMarkdown},
         ${clientMessageId},
         ${sentVia},
-        ${JSON.stringify(metadata)}
+        ${JSON.stringify(metadata)},
+        ${ciphertext},
+        ${envelope},
+        ${e2eVersion}
       )
       ${sql.raw(onConflict)}
       RETURNING ${sql.raw(SELECT_FIELDS)}
@@ -741,10 +773,7 @@ export const MessageRepository = {
     // Find thread streams for these parent messages and get their messages
     const result = await db.query<MessageRow & { parent_message_id: string }>(sql`
       SELECT
-        m.id, m.stream_id, m.sequence, m.author_id, m.author_type,
-        m.content_json, m.content_markdown, m.reply_count,
-        m.client_message_id, m.sent_via, m.metadata,
-        m.edited_at, m.deleted_at, m.created_at,
+        ${sql.raw(QUALIFIED_SELECT_FIELDS)},
         s.parent_message_id
       FROM messages m
       JOIN streams s ON m.stream_id = s.id

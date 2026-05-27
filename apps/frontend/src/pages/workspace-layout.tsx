@@ -54,7 +54,7 @@ import {
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useAuth } from "@/auth"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
 import { messagesApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
@@ -150,6 +150,8 @@ function WorkspaceSyncHandler({
   const isOnline = useOnlineStatus()
   const { streamId: currentStreamId } = useParams<{ streamId: string }>()
   const wasOfflineRef = useRef(!navigator.onLine)
+  const workspaceUsers = useWorkspaceUsers(workspaceId)
+  const currentWorkspaceUserId = user ? (workspaceUsers.find((u) => u.workosUserId === user.id)?.id ?? null) : null
 
   // Construct SyncEngine once per workspace. Use ref to survive StrictMode
   // double-render — useMemo + destroy effect breaks because the cleanup
@@ -193,6 +195,10 @@ function WorkspaceSyncHandler({
   useEffect(() => {
     syncEngine.setCurrentUser(user)
   }, [syncEngine, user])
+
+  useEffect(() => {
+    syncEngine.setCurrentWorkspaceUserId(currentWorkspaceUserId)
+  }, [syncEngine, currentWorkspaceUserId])
 
   // Wire SyncEngine to socket connect/disconnect/reconnect based on actual socket status.
   useEffect(() => {

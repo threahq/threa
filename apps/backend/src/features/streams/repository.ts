@@ -24,6 +24,12 @@ interface StreamRow {
   updated_at: Date
   archived_at: Date | null
   display_name_generated_at: Date | null
+  /**
+   * Optional columns from a LEFT JOIN against `e2e_streams`. Only the
+   * `findById` family pulls them; bare `streams`-only queries leave the
+   * fields undefined and `mapRowToStream` omits them on the result.
+   */
+  e2e_owner_user_key_id?: string | null
 }
 
 /**
@@ -89,6 +95,14 @@ export interface Stream {
   updatedAt: Date
   archivedAt: Date | null
   displayNameGeneratedAt: Date | null
+  /**
+   * End-to-end encryption metadata, populated by callers that LEFT JOIN
+   * `e2e_streams`. Optional so existing read paths and test fixtures
+   * stay untouched; the create handler and stream bootstrap explicitly
+   * populate them.
+   */
+  e2eEnabled?: boolean
+  e2eOwnerKeyId?: string | null
 }
 
 export interface InsertStreamParams {
@@ -138,6 +152,7 @@ export interface DmPeer {
 }
 
 function mapRowToStream(row: StreamRow): Stream {
+  const e2eOwnerKeyId = row.e2e_owner_user_key_id ?? undefined
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -156,6 +171,10 @@ function mapRowToStream(row: StreamRow): Stream {
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
     displayNameGeneratedAt: row.display_name_generated_at,
+    // Only expose the E2E fields when the query opted into the JOIN —
+    // a bare `streams` SELECT leaves them as `undefined` so plaintext
+    // callers don't have to special-case the placeholder.
+    ...(e2eOwnerKeyId !== undefined && { e2eEnabled: true, e2eOwnerKeyId }),
   }
 }
 
@@ -192,15 +211,30 @@ const SELECT_FIELDS = `
   created_by, created_at, updated_at, archived_at, display_name_generated_at
 `
 
+// SELECT list for queries that need the E2E flag inline. The LEFT JOIN keeps
+// plaintext rows visible (the `e2e_owner_user_key_id` projection is just
+// NULL for them) so callers don't have to branch on stream type.
+const SELECT_FIELDS_WITH_E2E = `
+  s.id, s.workspace_id, s.type, s.display_name, s.slug, s.description, s.visibility,
+  s.parent_stream_id, s.parent_message_id, s.root_stream_id,
+  s.companion_mode, s.companion_persona_id,
+  s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
+  e.owner_user_key_id AS e2e_owner_user_key_id
+`
+
+const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
+
 export const StreamRepository = {
   async findById(db: Querier, id: string): Promise<Stream | null> {
-    const result = await db.query<StreamRow>(sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ${id}`)
+    const result = await db.query<StreamRow>(
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ${id}`
+    )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
   async findByIdForWorkspace(db: Querier, id: string, workspaceId: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM streams WHERE id = ${id} AND workspace_id = ${workspaceId}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ${id} AND s.workspace_id = ${workspaceId}`
     )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
@@ -457,7 +491,13 @@ export const StreamRepository = {
 
     const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
 
-    // CTE to get last message per stream
+    // CTE to get last message per stream. LEFT JOIN against
+    // `e2e_streams` so the workspace bootstrap surfaces the E2E flag
+    // inline — without it, cold-loaded sidebar rows have undefined
+    // `e2eEnabled` until the per-stream bootstrap fires, which would let
+    // the composer briefly treat an existing E2E scratchpad as plaintext
+    // (the backend INV-E1 gate would still reject, but the UX shows an
+    // unexplained 400).
     const SELECT_WITH_PREVIEW = `
       WITH last_messages AS (
         SELECT DISTINCT ON (stream_id)
@@ -477,9 +517,11 @@ export const StreamRepository = {
         lm.author_id as last_message_author_id,
         lm.author_type as last_message_author_type,
         lm.content_json as last_message_content,
-        lm.created_at as last_message_at
+        lm.created_at as last_message_at,
+        e.owner_user_key_id AS e2e_owner_user_key_id
       FROM streams s
       LEFT JOIN last_messages lm ON lm.stream_id = s.id
+      LEFT JOIN e2e_streams e ON e.stream_id = s.id
     `
 
     // Build query with visibility filter if user's membership stream IDs provided

@@ -1214,7 +1214,7 @@ export function createPublicApiHandlers({
         return res.json({ data: [] })
       }
 
-      const results = await searchService.search({
+      const { results } = await searchService.search({
         workspaceId,
         permissions: { accessibleStreamIds },
         query,

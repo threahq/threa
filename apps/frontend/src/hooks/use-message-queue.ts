@@ -215,16 +215,36 @@ export function useMessageQueue(): void {
           next.streamCreation = undefined
         }
 
-        const contentJson = next.contentJson ?? parseMarkdown(next.content)
-
-        await messageService.create(next.workspaceId, next.streamId, {
-          streamId: next.streamId,
-          contentJson,
-          contentMarkdown: next.content,
-          attachmentIds: next.attachmentIds,
-          clientMessageId: next.clientId,
-          confirmedPrivacyWarning: next.confirmedPrivacyWarning,
-        })
+        if (next.ciphertext && next.envelope && next.e2eVersion) {
+          // E2E branch — encryption already happened at queue time so the
+          // drain stays identity-agnostic. The backend's INV-E1 gate
+          // rejects this variant on plaintext streams loudly.
+          if (next.attachmentIds && next.attachmentIds.length > 0) {
+            // The enqueue path (`useStreamOrDraft.sendMessage`) refuses E2E
+            // sends carrying attachments; a row that reaches the drain with
+            // both is a contract bug, not a recoverable state. Fail loud so
+            // the failed-message UI surfaces it instead of silently dropping
+            // the chip the optimistic event already rendered.
+            throw new Error("Attachments aren't supported in encrypted scratchpads yet")
+          }
+          await messageService.create(next.workspaceId, next.streamId, {
+            streamId: next.streamId,
+            ciphertext: next.ciphertext,
+            envelope: next.envelope,
+            e2eVersion: next.e2eVersion,
+            clientMessageId: next.clientId,
+          })
+        } else {
+          const contentJson = next.contentJson ?? parseMarkdown(next.content)
+          await messageService.create(next.workspaceId, next.streamId, {
+            streamId: next.streamId,
+            contentJson,
+            contentMarkdown: next.content,
+            attachmentIds: next.attachmentIds,
+            clientMessageId: next.clientId,
+            confirmedPrivacyWarning: next.confirmedPrivacyWarning,
+          })
+        }
 
         await db.pendingMessages.delete(next.clientId)
 

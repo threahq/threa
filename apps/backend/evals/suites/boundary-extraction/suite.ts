@@ -73,6 +73,9 @@ function toMessage(evalMsg: EvalMessage, streamId: string, sequence: number = 1)
     editedAt: null,
     deletedAt: null,
     createdAt: new Date(),
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
   }
 }
 

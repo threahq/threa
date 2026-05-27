@@ -8,6 +8,7 @@ import { emojiUsageId } from "../../lib/id"
 import { isValidShortcode } from "./emoji"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 export interface EmojiUsageHandlerConfig {
   batchSize?: number
@@ -146,6 +147,12 @@ export class EmojiUsageHandler implements OutboxHandler {
       return
     }
 
+    // E2E streams: contentMarkdown is ciphertext, so emoji extraction would
+    // produce garbage. Skip without inspecting the message.
+    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+      return
+    }
+
     // Only track user messages (not persona/system messages)
     if (payload.event.actorType !== AuthorTypes.USER) {
       return
@@ -192,6 +199,13 @@ export class EmojiUsageHandler implements OutboxHandler {
 
     if (!payload.workspaceId || !payload.userId || !payload.emoji || !payload.messageId) {
       logger.debug({ eventId: outboxEvent.id.toString() }, "EmojiUsageHandler: malformed reaction event, skipping")
+      return
+    }
+
+    // E2E streams: don't record reaction usage. A reaction on a private
+    // message is itself sensitive metadata, and Phase 1 keeps these streams
+    // opaque to backend personalization.
+    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
       return
     }
 

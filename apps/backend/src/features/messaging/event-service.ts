@@ -75,6 +75,17 @@ export interface MessageCreatedPayload {
    * outbox path carries no replies yet).
    */
   threadSummary?: ThreadSummary
+  /**
+   * Set on messages originating in an E2E stream. When present,
+   * `contentJson` / `contentMarkdown` are placeholder values and consumers
+   * must decrypt the ciphertext via the matching recipient envelope entry to
+   * recover the real payload. Plaintext consumers (outbox handlers, search
+   * indexer) gate on `e2eStreams.isE2eStream` and short-circuit; the
+   * frontend branches on the presence of `ciphertext` to drive the decrypt.
+   */
+  ciphertext?: string
+  envelope?: unknown
+  e2eVersion?: number
 }
 
 export interface MessageEditedPayload {
@@ -139,6 +150,16 @@ export interface CreateMessageParams {
    * the user never could have surfaced from this scope.
    */
   accessibleStreamIds?: string[]
+  /**
+   * Set on messages bound for an E2E stream. Caller must have
+   * already verified that the target stream is E2E (the messaging handler
+   * does this via `E2eStreamsRepository.isE2eStream`); when present,
+   * `contentJson` / `contentMarkdown` are placeholder values and the
+   * canonical payload is the ciphertext + envelope blob below.
+   */
+  ciphertext?: Buffer
+  envelope?: unknown
+  e2eVersion?: number
 }
 
 export interface EditMessageParams {
@@ -458,6 +479,9 @@ export class EventService {
         ...(params.clientMessageId && { clientMessageId: params.clientMessageId }),
         ...(params.sentVia && { sentVia: params.sentVia }),
         ...(metadata && { metadata }),
+        ...(params.ciphertext && { ciphertext: params.ciphertext.toString("base64") }),
+        ...(params.envelope !== undefined && { envelope: params.envelope }),
+        ...(params.e2eVersion !== undefined && { e2eVersion: params.e2eVersion }),
       } satisfies MessageCreatedPayload,
       actorId: params.authorId,
       actorType: params.authorType,
@@ -475,6 +499,9 @@ export class EventService {
       clientMessageId: params.clientMessageId,
       sentVia: params.sentVia,
       metadata,
+      ciphertext: params.ciphertext,
+      envelope: params.envelope,
+      e2eVersion: params.e2eVersion,
     })
 
     // Concurrent duplicate detected: ON CONFLICT DO NOTHING suppressed our INSERT,

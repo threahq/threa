@@ -198,7 +198,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     botRuntimeService,
     commandAvailabilityService,
   })
-  const message = createMessageHandlers({ pool, eventService, streamService, commandRegistry })
+  const message = createMessageHandlers({
+    pool,
+    eventService,
+    streamService,
+    commandRegistry,
+  })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
   const search = createSearchHandlers({ pool, searchService })
   const memo = createMemoHandlers({ pool, memoExplorerService })

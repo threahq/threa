@@ -80,6 +80,14 @@ export class SyncEngine {
   private currentStreamId: string | undefined = undefined
   private visibleStreamIds: string[] = []
   private currentUser: { id: string } | null = null
+  /**
+   * Workspace-scoped user id (`UserId`) for the active session — distinct
+   * from `currentUser.id`, which is the WorkOS auth id. The E2E session
+   * store keys by workspace user id (the same id stored in `e2e_keys` and
+   * on `e2e_streams`), so the message decrypt path needs this one.
+   * Resolved by the React layer once `useWorkspaceUsers` has the row.
+   */
+  private currentWorkspaceUserId: string | null = null
   /** Last workspace bootstrap error, if any. Consumers can check this for 404/403 handling. */
   lastWorkspaceError: unknown = null
 
@@ -105,6 +113,23 @@ export class SyncEngine {
   /** Update the current auth user (called from React when auth state settles). */
   setCurrentUser(user: { id: string } | null): void {
     this.currentUser = user
+  }
+
+  /** Update the workspace-scoped user id (called from React once `useWorkspaceUsers` resolves it). */
+  setCurrentWorkspaceUserId(id: string | null): void {
+    if (this.currentWorkspaceUserId === id) return
+    const justBecameAvailable = this.currentWorkspaceUserId === null && id !== null
+    this.currentWorkspaceUserId = id
+    if (justBecameAvailable) {
+      // The decrypt-on-arrival path keys off this id; any stream bootstrap
+      // that landed before it resolved cached placeholders into IDB. Replay
+      // the visible-stream refreshes so those rows pick up plaintext now
+      // that the viewer is identified — the current stream + the sidebar's
+      // visible window covers what the user can actually see.
+      for (const streamId of this.getVisibleServerStreamIds()) {
+        void this.refreshStreamAfterNavigation(streamId)
+      }
+    }
   }
 
   /**
@@ -320,17 +345,25 @@ export class SyncEngine {
           }
         }
 
-        bootstrap = await applyReconnectBootstrapBatch(
-          workspaceId,
-          workspaceBootstrap,
-          successfulStreamBootstraps,
-          staleStreamIds,
-          terminalStreamIds,
-          fetchStartedAt
-        )
+        const { workspaceBootstrap: appliedWorkspaceBootstrap, decryptedStreamBootstraps } =
+          await applyReconnectBootstrapBatch(
+            workspaceId,
+            workspaceBootstrap,
+            successfulStreamBootstraps,
+            staleStreamIds,
+            terminalStreamIds,
+            fetchStartedAt,
+            this.currentWorkspaceUserId
+          )
+        bootstrap = appliedWorkspaceBootstrap
 
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), bootstrap)
-        for (const [streamId, streamBootstrap] of successfulStreamBootstraps) {
+        // Seed the per-stream TanStack cache from the *decrypted* bootstraps —
+        // `successfulStreamBootstraps` still carries the placeholder text for
+        // E2E messages, and IDB already holds the decrypted rows from
+        // `applyReconnectBootstrapBatch`. Using the encrypted map here would
+        // leave visible E2E streams stuck on the placeholder until refresh.
+        for (const [streamId, streamBootstrap] of decryptedStreamBootstraps) {
           queryClient.setQueryData(
             streamKeys.bootstrap(workspaceId, streamId),
             toCachedStreamBootstrap(
@@ -431,7 +464,15 @@ export class SyncEngine {
 
     if (!this.subscribedStreams.has(streamId)) {
       this.subscribedStreams.add(streamId)
-      const cleanup = registerStreamSocketHandlers(this.socket, this.deps.workspaceId, streamId, this.deps.queryClient)
+      const cleanup = registerStreamSocketHandlers(
+        this.socket,
+        this.deps.workspaceId,
+        streamId,
+        this.deps.queryClient,
+        {
+          getCurrentUserId: () => this.currentWorkspaceUserId,
+        }
+      )
       this.streamHandlerCleanups.set(streamId, cleanup)
     }
 
@@ -482,7 +523,7 @@ export class SyncEngine {
       const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
       const after = previousBootstrap ? await getLatestPersistedSequence(streamId) : null
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
-      await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+      await applyStreamBootstrap(workspaceId, streamId, bootstrap, this.currentWorkspaceUserId)
 
       queryClient.setQueryData<CachedStreamBootstrap>(queryKey, (currentBootstrap) =>
         toCachedStreamBootstrap(bootstrap, currentBootstrap ?? previousBootstrap, {

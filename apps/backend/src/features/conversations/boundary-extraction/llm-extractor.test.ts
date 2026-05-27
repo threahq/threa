@@ -59,6 +59,9 @@ function createMockMessage(overrides: Partial<Message> = {}): Message {
     editedAt: null,
     deletedAt: null,
     createdAt: new Date(),
+    ciphertext: null,
+    envelope: null,
+    e2eVersion: null,
     ...overrides,
   }
 }
