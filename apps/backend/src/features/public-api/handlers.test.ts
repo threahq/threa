@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test"
+import type { Request } from "express"
 import { PI_TOOL_TRACE_FORMAT, PiToolTraceSectionLabels } from "@threa/types"
-import { sanitizeInvocationStepContent } from "./handlers"
+import { HttpError } from "@threa/backend-common"
+import { buildRuntimeWsHint, sanitizeInvocationStepContent } from "./handlers"
+
+function makeRequest(headers: Record<string, string>, protocol = "http"): Request {
+  return {
+    protocol,
+    get(name: string) {
+      return headers[name.toLowerCase()]
+    },
+  } as unknown as Request
+}
 
 function parse(content: string) {
   return JSON.parse(content) as Record<string, unknown>
@@ -141,5 +152,41 @@ describe("sanitizeInvocationStepContent", () => {
     const result = sanitizeInvocationStepContent("not json AKIAABCDEFGHIJKLMNOP")
     expect(result).not.toContain("AKIA")
     expect(result).toContain("[REDACTED]")
+  })
+})
+
+describe("buildRuntimeWsHint", () => {
+  test("returns the configured URL verbatim when BOT_RUNTIME_WS_URL is set", () => {
+    const result = buildRuntimeWsHint(makeRequest({ host: "evil.example.com" }), "wss://prod.threa.io")
+    expect(result).toEqual({ url: "wss://prod.threa.io", path: "/socket.io/", namespace: "/bot" })
+  })
+
+  test("derives ws:// from loopback Host header in dev when no override is configured", () => {
+    const result = buildRuntimeWsHint(makeRequest({ host: "localhost:4000" }), null)
+    expect(result).toEqual({ url: "ws://localhost:4000", path: "/socket.io/", namespace: "/bot" })
+  })
+
+  test("honors x-forwarded-proto for the scheme on loopback hosts", () => {
+    const result = buildRuntimeWsHint(makeRequest({ host: "127.0.0.1:4000", "x-forwarded-proto": "https" }), null)
+    expect(result.url).toBe("wss://127.0.0.1:4000")
+  })
+
+  test("accepts a bracketed IPv6 loopback Host header", () => {
+    // `[::1]:4000`.split(":")[0] is `[`, which would otherwise fail the
+    // loopback check and 503 legitimate IPv6 dev requests.
+    const result = buildRuntimeWsHint(makeRequest({ host: "[::1]:4000" }), null)
+    expect(result).toEqual({ url: "ws://[::1]:4000", path: "/socket.io/", namespace: "/bot" })
+  })
+
+  test("refuses to advertise a WS endpoint built from a non-loopback Host header", () => {
+    // The Host header is attacker-controllable, so the dev fallback must not
+    // hand a runtime a spoofed origin to dial with its API key.
+    expect(() => buildRuntimeWsHint(makeRequest({ host: "evil.example.com" }), null)).toThrow(HttpError)
+  })
+
+  test("refuses when the Host header is a public-looking hostname even if x-forwarded-proto says https", () => {
+    expect(() => buildRuntimeWsHint(makeRequest({ host: "api.threa.io", "x-forwarded-proto": "https" }), null)).toThrow(
+      HttpError
+    )
   })
 })

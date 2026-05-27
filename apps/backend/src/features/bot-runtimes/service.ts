@@ -7,7 +7,7 @@ import type {
   BotRuntimeStatus,
   BotTrait,
 } from "@threa/types"
-import { withTransaction } from "../../db"
+import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
 import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
@@ -104,10 +104,62 @@ export class BotRuntimeService {
     actorId: string
     createdBy: string
   }): Promise<StreamActiveActor> {
-    return StreamActiveActorRepository.upsert(this.pool, {
+    return withTransaction(this.pool, (db) => this.setActiveActorInTransaction(db, params))
+  }
+
+  /**
+   * Single mutation path for `stream_active_actors`. Reads the existing row in
+   * the same tx, upserts, and emits `bot:active_actor_changed` only when the
+   * actor identity actually changed. `affectedBotIds` lists both the displaced
+   * and the new bot (if either is a bot) so the dispatcher can fan out to both.
+   *
+   * Direct calls to `StreamActiveActorRepository.upsert` skip the outbox emit
+   * and leave bots without the "you've been displaced" hint — go through this
+   * wrapper instead.
+   */
+  async setActiveActorInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      rootStreamId: string
+      actorType: "persona" | "bot"
+      actorId: string
+      createdBy: string
+    }
+  ): Promise<StreamActiveActor> {
+    // Advisory lock keyed by (workspaceId, rootStreamId) serializes the whole
+    // read→upsert pair. `SELECT ... FOR UPDATE` alone doesn't help when the
+    // row doesn't exist yet: two concurrent inserts both see `existing=null`
+    // and the loser's ON CONFLICT UPDATE then emits `bot:active_actor_changed`
+    // with `previousActorId=null`, silently dropping the displaced bot from
+    // `affectedBotIds`. The advisory lock holds for the transaction (INV-20).
+    await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+      `stream_active_actors:${params.workspaceId}:${params.rootStreamId}`,
+    ])
+    const existing = await StreamActiveActorRepository.findByRootStream(db, params.workspaceId, params.rootStreamId)
+    const upserted = await StreamActiveActorRepository.upsert(db, {
       id: streamActiveActorId(),
       ...params,
     })
+    const previousActorType = existing?.actorType ?? null
+    const previousActorId = existing?.actorId ?? null
+    const identityChanged = previousActorId !== upserted.actorId || previousActorType !== upserted.actorType
+    if (!identityChanged) return upserted
+
+    const affectedBotIds: string[] = []
+    if (previousActorType === "bot" && previousActorId) affectedBotIds.push(previousActorId)
+    if (upserted.actorType === "bot" && upserted.actorId !== previousActorId) affectedBotIds.push(upserted.actorId)
+
+    await OutboxRepository.insert(db, "bot:active_actor_changed", {
+      workspaceId: params.workspaceId,
+      rootStreamId: params.rootStreamId,
+      previousActorType,
+      previousActorId,
+      newActorType: upserted.actorType,
+      newActorId: upserted.actorId,
+      affectedBotIds,
+    })
+    return upserted
   }
 
   async findActivePiRemoteSession(params: {
@@ -199,8 +251,7 @@ export class BotRuntimeService {
         sessionControlCommands: ["compact", "model", "thinking", "skill"],
       },
     })
-    await StreamActiveActorRepository.upsert(db, {
-      id: streamActiveActorId(),
+    await this.setActiveActorInTransaction(db, {
       workspaceId: params.workspaceId,
       rootStreamId: params.rootStreamId,
       actorType: "bot",
@@ -237,9 +288,15 @@ export class BotRuntimeService {
     targetRuntimeSessionId?: string | null
     metadata?: Record<string, unknown>
   }): Promise<BotInvocation> {
-    return this.createInvocationInTransaction(this.pool, params)
+    return withTransaction(this.pool, (db) => this.createInvocationInTransaction(db, params))
   }
 
+  /**
+   * Inserts a `bot_invocations` row and emits `bot_invocation:available` in the
+   * same tx — but only when the insert actually created a new row. The idempotent
+   * conflict path returns the existing invocation untouched so we do not re-push
+   * duplicates to listeners after a retried HTTP call.
+   */
   async createInvocationInTransaction(
     db: Querier,
     params: {
@@ -259,7 +316,7 @@ export class BotRuntimeService {
       metadata?: Record<string, unknown>
     }
   ): Promise<BotInvocation> {
-    return BotInvocationRepository.insertIdempotent(db, {
+    const { invocation, wasNewlyInserted } = await BotInvocationRepository.insertIdempotent(db, {
       id: botInvocationId(),
       workspaceId: params.workspaceId,
       rootStreamId: params.rootStreamId,
@@ -277,6 +334,87 @@ export class BotRuntimeService {
       targetRuntimeSessionId: params.targetRuntimeSessionId ?? null,
       metadata: params.metadata ?? {},
     })
+    if (wasNewlyInserted) {
+      await OutboxRepository.insert(db, "bot_invocation:available", {
+        workspaceId: invocation.workspaceId,
+        botId: invocation.actorId,
+        invocationId: invocation.id,
+        requiredCapability: invocation.requiredCapability,
+        targetInstanceId: invocation.targetInstanceId,
+        targetRuntimeSessionId: invocation.targetRuntimeSessionId,
+        createdAt: invocation.createdAt.toISOString(),
+      })
+    }
+    return invocation
+  }
+
+  /**
+   * Snapshot the runtime needs on socket connect or resync. Runs all reads on
+   * one connection inside a `REPEATABLE READ READ ONLY` tx so all four sub-
+   * selects (available, ownedClaims, active actors, session links) see the
+   * same MVCC point-in-time — otherwise an invocation claimed mid-bootstrap
+   * could appear in neither list.
+   *
+   * Cursor floor is the smaller of `sinceCursor` and `now - 24h`. A future
+   * cursor (clock-skewed bot) falls back to the 24h floor rather than
+   * silently emptying the result set.
+   *
+   * The `serverGeneratedAt` echo lets the runtime reuse this exact timestamp
+   * as `sinceCursor` on the next bootstrap without trusting its local clock.
+   */
+  async getBootstrapForRuntime(params: {
+    workspaceId: string
+    botId: string
+    instanceId: string
+    runtimeSessionId?: string | null
+    supportedCapabilities: BotInvocationCapability[]
+    sinceCursor?: Date | null
+  }): Promise<{
+    serverGeneratedAt: Date
+    available: BotInvocation[]
+    ownedClaims: BotInvocation[]
+    activeActorByStream: StreamActiveActor[]
+    activeSessionLinks: BotRuntimeSessionLink[]
+  }> {
+    const now = new Date()
+    const lookbackFloor = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const cursor = params.sinceCursor ?? null
+    const since = cursor && cursor > lookbackFloor && cursor <= now ? cursor : lookbackFloor
+    return withClient(this.pool, async (db) => {
+      await db.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+      try {
+        const [bootstrap, activeActorByStream, activeSessionLinks] = await Promise.all([
+          BotInvocationRepository.findBootstrapInvocations(db, {
+            workspaceId: params.workspaceId,
+            botId: params.botId,
+            instanceId: params.instanceId,
+            runtimeSessionId: params.runtimeSessionId ?? null,
+            supportedCapabilities: params.supportedCapabilities,
+            since,
+          }),
+          StreamActiveActorRepository.findActiveForBot(db, {
+            workspaceId: params.workspaceId,
+            botId: params.botId,
+          }),
+          BotRuntimeSessionLinkRepository.findActiveByBotInstance(db, {
+            workspaceId: params.workspaceId,
+            botId: params.botId,
+            instanceId: params.instanceId,
+          }),
+        ])
+        await db.query("COMMIT")
+        return {
+          serverGeneratedAt: now,
+          available: bootstrap.available,
+          ownedClaims: bootstrap.ownedClaims,
+          activeActorByStream,
+          activeSessionLinks,
+        }
+      } catch (err) {
+        await db.query("ROLLBACK").catch(() => {})
+        throw err
+      }
+    })
   }
 
   async claimNextInvocation(params: {
@@ -289,7 +427,19 @@ export class BotRuntimeService {
     supportedCapabilities: BotInvocationCapability[]
     claimTtlSeconds: number
   }): Promise<BotInvocation | null> {
-    return BotInvocationRepository.claimOne(this.pool, params)
+    return withTransaction(this.pool, async (db) => {
+      const claimed = await BotInvocationRepository.claimOne(db, params)
+      if (!claimed) return null
+      // Siblings on the same bot need to stop racing this invocation. The
+      // narrow payload deliberately omits the winning instance — see
+      // `BotInvocationClaimedOutboxPayload`.
+      await OutboxRepository.insert(db, "bot_invocation:claimed", {
+        workspaceId: claimed.workspaceId,
+        botId: claimed.actorId,
+        invocationId: claimed.id,
+      })
+      return claimed
+    })
   }
 
   async findActiveClaim(params: {
@@ -372,5 +522,41 @@ export class BotRuntimeService {
     }
   ): Promise<BotInvocation | null> {
     return BotInvocationRepository.failClaim(db, params)
+  }
+
+  /**
+   * Tells one bot, one instance, or all bots in a workspace to drop their
+   * in-memory state and re-bootstrap over WebSocket. Routing narrows to the
+   * most-specific target available — `instanceId` requires `botId`.
+   */
+  async requestResync(params: {
+    workspaceId: string
+    botId?: string | null
+    instanceId?: string | null
+    reason: string
+  }): Promise<void> {
+    return withTransaction(this.pool, (db) => this.requestResyncInTransaction(db, params))
+  }
+
+  async requestResyncInTransaction(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId?: string | null
+      instanceId?: string | null
+      reason: string
+    }
+  ): Promise<void> {
+    const botId = params.botId ?? null
+    const instanceId = params.instanceId ?? null
+    if (instanceId && !botId) {
+      throw new Error("requestResync: instanceId requires botId")
+    }
+    await OutboxRepository.insert(db, "bot:resync", {
+      workspaceId: params.workspaceId,
+      botId,
+      instanceId,
+      reason: params.reason,
+    })
   }
 }

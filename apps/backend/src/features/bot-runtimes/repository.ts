@@ -160,6 +160,10 @@ interface BotInvocationRow {
   completed_at: Date | null
 }
 
+interface BotInvocationRowWithInsertMarker extends BotInvocationRow {
+  was_newly_inserted: boolean
+}
+
 const knownRuntimeKinds = new Set<string>(BOT_RUNTIME_KINDS)
 const knownRuntimeStatuses = new Set<string>(BOT_RUNTIME_STATUSES)
 const knownInvocationStatuses = new Set<string>(BOT_INVOCATION_STATUSES)
@@ -262,6 +266,10 @@ function mapInvocation(row: BotInvocationRow): BotInvocation {
 }
 
 export const StreamActiveActorRepository = {
+  // Do not call this directly from outside this feature. Mutate active actors
+  // through `BotRuntimeService.setActiveActorInTransaction` so the
+  // `bot:active_actor_changed` outbox event is emitted in the same tx — bots
+  // (especially Pi remote) rely on that push to learn they've been displaced.
   async upsert(
     db: Querier,
     params: {
@@ -286,6 +294,16 @@ export const StreamActiveActorRepository = {
       sql`SELECT * FROM stream_active_actors WHERE workspace_id = ${workspaceId} AND root_stream_id = ${rootStreamId}`
     )
     return result.rows[0] ? mapActiveActor(result.rows[0]) : null
+  },
+
+  // Bootstrap helper for the `/bot` WS namespace: every stream where this bot
+  // is the active actor. The runtime needs this on reconnect so it knows which
+  // streams it is on the hook for without re-running its scratchpad scan.
+  async findActiveForBot(db: Querier, params: { workspaceId: string; botId: string }): Promise<StreamActiveActor[]> {
+    const result = await db.query<StreamActiveActorRow>(
+      sql`SELECT * FROM stream_active_actors WHERE workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId}`
+    )
+    return result.rows.map(mapActiveActor)
   },
 }
 
@@ -345,6 +363,21 @@ export const BotRuntimeInstanceRepository = {
       ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, capabilities = EXCLUDED.capabilities, status_text = EXCLUDED.status_text, last_seen_at = NOW(), updated_at = NOW()
       RETURNING *`)
     return mapRuntimeInstance(result.rows[0]!)
+  },
+
+  /**
+   * Mark an instance offline after its grace window expires with no
+   * reconnect. Does NOT delete the row — `BotInvocationRepository.claimOne`
+   * has an `EXISTS … FROM bot_runtime_instances` check for
+   * `target_instance_id`-pinned invocations and would refuse to hand them
+   * back when the instance reconnects later if we deleted the row.
+   */
+  async markOffline(db: Querier, params: { workspaceId: string; botId: string; instanceId: string }): Promise<void> {
+    await db.query(
+      sql`UPDATE bot_runtime_instances
+        SET status = 'offline', accepting_invocations = FALSE, last_seen_at = NOW(), updated_at = NOW()
+        WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId}`
+    )
   },
 }
 
@@ -419,6 +452,19 @@ export const BotRuntimeSessionLinkRepository = {
     )
     return new Map(result.rows.map((row) => [row.bot_id, mapSessionLink(row)]))
   },
+
+  // Bootstrap helper for the `/bot` WS namespace: every active session link
+  // for this bot/instance, so the runtime can rebuild its (rootStream ->
+  // activeStream) map on reconnect without re-querying per stream.
+  async findActiveByBotInstance(
+    db: Querier,
+    params: { workspaceId: string; botId: string; instanceId: string }
+  ): Promise<BotRuntimeSessionLink[]> {
+    const result = await db.query<BotRuntimeSessionLinkRow>(
+      sql`SELECT * FROM bot_runtime_session_links WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId} AND status = 'active'`
+    )
+    return result.rows.map(mapSessionLink)
+  },
 }
 
 export const BotInvocationRepository = {
@@ -436,13 +482,19 @@ export const BotInvocationRepository = {
       | "updatedAt"
       | "completedAt"
     >
-  ): Promise<BotInvocation> {
+  ): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
+    // `xmax = 0` is the Postgres idiom for "this row was inserted, not updated"
+    // — it stays zero on a fresh INSERT and becomes non-zero on ON CONFLICT DO
+    // UPDATE, even when the UPDATE writes the same value. Lets callers (the
+    // bot-runtime service) decide whether to emit `bot_invocation:available`
+    // without paying for a pre-check round-trip.
     const result =
-      await db.query<BotInvocationRow>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata)
+      await db.query<BotInvocationRowWithInsertMarker>(sql`INSERT INTO bot_invocations (id, workspace_id, root_stream_id, active_stream_id, source_message_id, response_stream_id, actor_type, actor_id, trigger, required_capability, prompt_markdown, author_user_id, mentioned_actor_slugs, target_instance_id, target_runtime_session_id, metadata)
       VALUES (${params.id}, ${params.workspaceId}, ${params.rootStreamId}, ${params.activeStreamId}, ${params.sourceMessageId}, ${params.responseStreamId}, ${params.actorType}, ${params.actorId}, ${params.trigger}, ${params.requiredCapability}, ${params.promptMarkdown}, ${params.authorUserId}, ${params.mentionedActorSlugs}, ${params.targetInstanceId}, ${params.targetRuntimeSessionId}, ${params.metadata})
       ON CONFLICT (workspace_id, source_message_id, actor_type, actor_id, trigger) DO UPDATE SET updated_at = bot_invocations.updated_at
-      RETURNING *`)
-    return mapInvocation(result.rows[0]!)
+      RETURNING *, (xmax = 0) AS was_newly_inserted`)
+    const row = result.rows[0]!
+    return { invocation: mapInvocation(row), wasNewlyInserted: row.was_newly_inserted }
   },
 
   async claimOne(
@@ -550,5 +602,59 @@ export const BotInvocationRepository = {
       WHERE id = ${params.invocationId} AND workspace_id = ${params.workspaceId} AND actor_type = 'bot' AND actor_id = ${params.botId} AND status = 'claimed' AND claimed_by_instance_id = ${params.instanceId} AND claim_token = ${params.claimToken} AND claim_expires_at > NOW()
       RETURNING *`)
     return result.rows[0] ? mapInvocation(result.rows[0]) : null
+  },
+
+  /**
+   * Snapshot for `/bot` namespace bootstrap. Returns two disjoint lists:
+   *  - `available`: rows this runtime could claim right now (pending, or
+   *    `claimed` with an expired claim) filtered to its capabilities and the
+   *    steering target. Used to replay anything that piled up while the
+   *    socket was offline.
+   *  - `ownedClaims`: live `claimed` rows already owned by this instance.
+   *    Returned regardless of `since` so a reconnect cannot drop work that
+   *    is in flight.
+   *
+   * `since` filters `available` only. The 24h floor is enforced one layer
+   * up in `BotRuntimeService.getBootstrapForRuntime` — direct callers can
+   * pass `null` to skip filtering entirely, but the production path
+   * always passes a concrete `Date`.
+   */
+  async findBootstrapInvocations(
+    db: Querier,
+    params: {
+      workspaceId: string
+      botId: string
+      instanceId: string
+      runtimeSessionId: string | null
+      supportedCapabilities: BotInvocationCapability[]
+      since: Date | null
+    }
+  ): Promise<{ available: BotInvocation[]; ownedClaims: BotInvocation[] }> {
+    const [availableResult, ownedClaimsResult] = await Promise.all([
+      db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND required_capability = ANY(${params.supportedCapabilities})
+          AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
+          AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
+          AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
+          AND (${params.since}::timestamptz IS NULL OR created_at >= ${params.since})
+        ORDER BY created_at ASC, id ASC
+        LIMIT 200`),
+      db.query<BotInvocationRow>(sql`SELECT * FROM bot_invocations
+        WHERE workspace_id = ${params.workspaceId}
+          AND actor_type = 'bot'
+          AND actor_id = ${params.botId}
+          AND status = 'claimed'
+          AND claimed_by_instance_id = ${params.instanceId}
+          AND claim_expires_at > NOW()
+        ORDER BY created_at ASC, id ASC
+        LIMIT 200`),
+    ])
+    return {
+      available: availableResult.rows.map(mapInvocation),
+      ownedClaims: ownedClaimsResult.rows.map(mapInvocation),
+    }
   },
 }

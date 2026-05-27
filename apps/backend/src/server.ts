@@ -99,6 +99,12 @@ import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
+import {
+  BotRuntimeInstanceRepository,
+  BotRuntimeService,
+  BotSocketRegistry,
+  attachBotNamespace,
+} from "./features/bot-runtimes"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
@@ -490,6 +496,11 @@ export async function startServer(): Promise<ServerInstance> {
   // Bot API key service — self-managed keys for bot integrations
   const botApiKeyService = new BotApiKeyService(pool)
 
+  // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
+  // namespace. One instance shared between HTTP routes (claim/complete/fail)
+  // and the WebSocket namespace handler (presence + bootstrap).
+  const botRuntimeService = new BotRuntimeService({ pool })
+
   // Workspace authz mirror service — shared by routes (middleware + handlers,
   // public API auth) and feature services that need to gate on workspace
   // permissions outside the request middleware chain.
@@ -550,6 +561,8 @@ export async function startServer(): Promise<ServerInstance> {
     userApiKeyService,
     voiceTranscriptionService,
     botApiKeyService,
+    botRuntimeService,
+    botRuntimeWsUrl: config.botRuntimeWsUrl,
     storage,
     ai,
     controlPlaneClient,
@@ -559,6 +572,26 @@ export async function startServer(): Promise<ServerInstance> {
 
   const userSocketRegistry = new UserSocketRegistry()
   const sessionAbortRegistry = new SessionAbortRegistry()
+  const botSocketRegistry = new BotSocketRegistry({
+    // When the last socket for an instance disconnects, wait 30 s for a
+    // reconnect (Wi-Fi blip, laptop lid). If nothing comes back, mark the
+    // row offline so `target_instance_id`-pinned invocations stop being
+    // routed to a dead runtime.
+    graceMs: 30_000,
+    onInstanceOffline: async (key) => {
+      try {
+        await BotRuntimeInstanceRepository.markOffline(pools.main, key)
+      } catch (err) {
+        logger.error({ err, ...key }, "markOffline failed after grace window")
+      }
+    },
+  })
+
+  // Bot runtime namespace — runtimes authenticate with a `threa_bk_*` key and
+  // get invocation pushes over WebSocket so they no longer poll the HTTP
+  // claim endpoint every second.
+  attachBotNamespace({ io, botRuntimeService, botApiKeyService, botSocketRegistry })
+
   registerSocketHandlers(io, {
     pool,
     authService,
@@ -909,7 +942,11 @@ export async function startServer(): Promise<ServerInstance> {
   // so a saturated main pool (AI workers, file processing, embeddings) can never
   // starve socket.io broadcasts or push notifications. All other outbox handlers
   // use the main pool — they enqueue jobs and can tolerate back-pressure.
-  const broadcastHandler = new BroadcastHandler(pools.realtime, io)
+  // `io.of("/bot")` is idempotent — `attachBotNamespace` already created
+  // this namespace above; we resolve it once and hand it to the broadcaster
+  // so bot-event dispatch doesn't repeat the lookup per event.
+  const botNamespace = io.of("/bot")
+  const broadcastHandler = new BroadcastHandler(pools.realtime, io, botNamespace)
   const companionHandler = new CompanionHandler(pool, jobQueue)
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const namingHandler = new NamingHandler(pool, jobQueue)

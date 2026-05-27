@@ -97,6 +97,14 @@ export interface Config {
   internalApiKey: string | null
   /** This instance's region name (e.g., "eu-north-1") */
   region: string | null
+  /**
+   * Public WebSocket URL the `/bot-runtime/presence` response advertises to
+   * bot runtimes (e.g. `wss://eu.threa.io`). Set in production so the URL
+   * isn't derived from the inbound `Host:` header. When unset we fall back
+   * to `<scheme>://<host>` from the request — fine for dev, risky if the
+   * backend is internet-exposed without a Host-normalising proxy.
+   */
+  botRuntimeWsUrl: string | null
 }
 
 export function loadConfig(): Config {
@@ -208,6 +216,7 @@ export function loadConfig(): Config {
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     region: process.env.REGION || null,
+    botRuntimeWsUrl: process.env.BOT_RUNTIME_WS_URL || null,
   }
 
   // Validate co-presence: VAPID vars must all be set or all be absent (INV-11)
