@@ -1568,24 +1568,30 @@ function formatShellResult(command: string, result: ShellExecResult): string {
   if (result.spawnError) {
     footer.push(`spawn failed: ${result.spawnError}`)
   } else if (result.timedOut) {
-    footer.push(`timed out after ${formatDuration(result.elapsedMs)}`)
+    footer.push(`timed out after ${formatShortDuration(result.elapsedMs)}`)
   } else if (result.signal) {
     footer.push(`signal ${result.signal}`)
-    footer.push(formatDuration(result.elapsedMs))
+    footer.push(formatShortDuration(result.elapsedMs))
   } else {
     footer.push(`exit ${result.exitCode ?? "?"}`)
-    footer.push(formatDuration(result.elapsedMs))
+    footer.push(formatShortDuration(result.elapsedMs))
   }
   if (result.stdoutTruncated || result.stderrTruncated) footer.push("output truncated")
   lines.push(footer.join(" · "))
   return lines.join("\n")
 }
 
-async function execShellCommand(command: string, cwd: string): Promise<ShellExecResult> {
+async function execShellCommand(
+  command: string,
+  cwd: string,
+  options?: { timeoutMs?: number; sigkillGraceMs?: number }
+): Promise<ShellExecResult> {
   // `$SHELL -c "<command>"` so pipes / redirects / globs / env-expansion all
   // work the way Pi's `!` does. `/bin/sh` is the portable fallback when SHELL
   // is unset (rare, but happens in stripped Docker images).
   const shell = process.env.SHELL ?? "/bin/sh"
+  const timeoutMs = options?.timeoutMs ?? SHELL_TIMEOUT_MS
+  const sigkillGraceMs = options?.sigkillGraceMs ?? 1_000
   const startedAt = Date.now()
   return new Promise<ShellExecResult>((resolvePromise) => {
     const child = spawn(shell, ["-c", command], { cwd, env: process.env })
@@ -1604,13 +1610,17 @@ async function execShellCommand(command: string, cwd: string): Promise<ShellExec
     const timer = setTimeout(() => {
       timedOut = true
       child.kill("SIGTERM")
-      // Escalate to SIGKILL if the child ignores SIGTERM. 1s is enough for a
-      // well-behaved process to flush; longer waits keep the scratchpad in a
-      // busy state for no benefit.
+      // Escalate to SIGKILL if the child ignores SIGTERM. `child.killed` is
+      // set the instant `kill()` is *called* — not when the process actually
+      // exits — so it would be `true` here regardless and SIGKILL would never
+      // fire. The `settled` flag, by contrast, only flips in the `exit`/
+      // `error` handlers, so it tells us whether the child has actually
+      // gone away. 1s is enough for a well-behaved process to flush; longer
+      // waits keep the scratchpad in a busy state for no benefit.
       setTimeout(() => {
-        if (!child.killed) child.kill("SIGKILL")
-      }, 1_000).unref()
-    }, SHELL_TIMEOUT_MS)
+        if (!settled) child.kill("SIGKILL")
+      }, sigkillGraceMs).unref()
+    }, timeoutMs)
     child.stdout?.on("data", (chunk: Buffer) => {
       const { text, truncated } = appendCapped(stdout, chunk.toString("utf8"), SHELL_MAX_OUTPUT_CHARS)
       stdout = text
@@ -1890,6 +1900,21 @@ function formatDuration(ms: number): string {
   const hours = Math.floor(totalMin / 60)
   const minutes = totalMin % 60
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`
+}
+
+function formatShortDuration(ms: number): string {
+  // Used in surfaces where typical durations are sub-minute (shell footers,
+  // mostly). `formatDuration` rounds to whole minutes and collapses anything
+  // shorter into "<1 min", which is useless for commands that finish in tens
+  // of milliseconds. Fall through to `formatDuration` once we're past a
+  // minute so longer-format strings stay consistent across the file.
+  if (ms < 0) return formatDuration(ms)
+  if (ms < 1_000) return `${ms}ms`
+  if (ms < 60_000) {
+    const seconds = ms / 1_000
+    return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)}s`
+  }
+  return formatDuration(ms)
 }
 
 function describeProviderError(status: number, headers: unknown, now: number = Date.now()): string {
@@ -2176,6 +2201,7 @@ export const __testing = {
   describeProviderError,
   formatRetryNotice,
   formatDuration,
+  formatShortDuration,
   formatLocalTime,
   parseWsHint,
   buildBotSocketUrl,

@@ -581,4 +581,45 @@ describe("execShellCommand", () => {
     expect(result.stdout.length).toBe(__testing.SHELL_MAX_OUTPUT_CHARS)
     expect(result.stdoutTruncated).toBe(true)
   })
+
+  test("escalates SIGTERM to SIGKILL when the child traps and ignores SIGTERM", async () => {
+    // A bare `trap '' TERM` sh-builtin ignores SIGTERM. Without escalation
+    // the watchdog would sit forever. We've previously regressed this by
+    // gating the SIGKILL on `child.killed`, which flips to `true` the moment
+    // `kill()` is called and so blocked the escalation — pinned via the
+    // `settled` flag now. 150ms timeout + 250ms grace keeps the test fast.
+    const result = await __testing.execShellCommand("trap '' TERM; sleep 5", process.cwd(), {
+      timeoutMs: 150,
+      sigkillGraceMs: 250,
+    })
+    expect(result.timedOut).toBe(true)
+    expect(result.signal).toBe("SIGKILL")
+    expect(result.elapsedMs).toBeLessThan(2_000)
+  })
+})
+
+describe("formatShortDuration", () => {
+  test("renders sub-second durations as integer milliseconds", () => {
+    expect(__testing.formatShortDuration(0)).toBe("0ms")
+    expect(__testing.formatShortDuration(142)).toBe("142ms")
+    expect(__testing.formatShortDuration(999)).toBe("999ms")
+  })
+
+  test("renders sub-10s durations with two decimals", () => {
+    expect(__testing.formatShortDuration(1_000)).toBe("1.00s")
+    expect(__testing.formatShortDuration(2_345)).toBe("2.35s")
+    expect(__testing.formatShortDuration(9_999)).toBe("10.00s")
+  })
+
+  test("renders 10s–59s durations with one decimal", () => {
+    expect(__testing.formatShortDuration(10_000)).toBe("10.0s")
+    expect(__testing.formatShortDuration(59_949)).toBe("59.9s")
+  })
+
+  test("falls through to formatDuration at the minute boundary", () => {
+    // The shell timeout is 60_000ms exactly; the boundary lands on
+    // `formatDuration` so the longer-format wording stays consistent.
+    expect(__testing.formatShortDuration(60_000)).toBe("1 min")
+    expect(__testing.formatShortDuration(125_000)).toBe("2 min")
+  })
 })
