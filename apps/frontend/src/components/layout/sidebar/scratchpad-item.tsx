@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, type RefObject } from "react"
-import { Archive, FileEdit, Settings } from "lucide-react"
+import { Archive, FileEdit, Settings, Sparkles } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
@@ -8,6 +8,7 @@ import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
+import { CompanionModes } from "@threa/types"
 import { useUrgencyTracking } from "./use-urgency-tracking"
 import {
   SidebarActionDrawer,
@@ -114,6 +115,11 @@ export function ScratchpadItem({
 
   const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
 
+  const companionDecoration =
+    streamWithPreview.companionMode === CompanionModes.ON
+      ? { icon: Sparkles, color: "text-primary", ariaLabel: "AI companion attached" }
+      : null
+
   return (
     <>
       <div className="group relative">
@@ -136,7 +142,11 @@ export function ScratchpadItem({
           {showUrgencyStrip && <UrgencyStrip urgency={streamWithPreview.urgency} />}
 
           <div className="flex items-center gap-2.5 flex-1 min-w-0 px-2 py-2">
-            <StreamItemAvatar icon={<FileEdit className="h-3.5 w-3.5" />} className="bg-primary/10 text-primary" />
+            <StreamItemAvatar
+              icon={<FileEdit className="h-3.5 w-3.5" />}
+              className="bg-primary/10 text-primary"
+              decoration={companionDecoration}
+            />
 
             <div
               className={cn(

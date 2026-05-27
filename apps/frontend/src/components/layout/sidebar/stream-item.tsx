@@ -40,9 +40,15 @@ interface StreamItemAvatarProps {
   avatarUrl?: string
   avatarAlt?: string
   badge?: { icon: typeof Hash; color: string } | null
+  /**
+   * Optional top-right overlay used to surface stream metadata that isn't tied
+   * to the thread-root signal — e.g. the AI companion indicator on scratchpads.
+   * Renders as a small bordered circle, independent of `badge` (top-left).
+   */
+  decoration?: { icon: typeof Hash; color: string; ariaLabel?: string } | null
 }
 
-export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge }: StreamItemAvatarProps) {
+export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge, decoration }: StreamItemAvatarProps) {
   // Thread-of-DM: thread icon as main content, avatar as small badge overlay
   if (badge && avatarUrl) {
     return (
@@ -54,6 +60,7 @@ export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge 
             <badge.icon className="h-2 w-2" />
           </AvatarFallback>
         </Avatar>
+        {decoration && <AvatarDecoration {...decoration} />}
       </div>
     )
   }
@@ -88,6 +95,22 @@ export function StreamItemAvatar({ icon, className, avatarUrl, avatarAlt, badge 
           <badge.icon className="h-2 w-2" />
         </div>
       )}
+      {decoration && <AvatarDecoration {...decoration} />}
+    </div>
+  )
+}
+
+function AvatarDecoration({ icon: Icon, color, ariaLabel }: { icon: typeof Hash; color: string; ariaLabel?: string }) {
+  return (
+    <div
+      aria-label={ariaLabel}
+      role={ariaLabel ? "img" : undefined}
+      className={cn(
+        "absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-background border border-border flex items-center justify-center",
+        color
+      )}
+    >
+      <Icon className="h-2 w-2" />
     </div>
   )
 }

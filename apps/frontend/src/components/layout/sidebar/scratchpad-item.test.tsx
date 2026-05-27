@@ -162,6 +162,34 @@ describe("ScratchpadItem", () => {
     expect(screen.getByTestId("location").textContent).toBe(initialPath)
   })
 
+  it("shows the AI companion badge on companion-on scratchpads", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "on" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.getByLabelText("AI companion attached")).toBeInTheDocument()
+  })
+
+  it("hides the AI companion badge on companion-off scratchpads", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.queryByLabelText("AI companion attached")).not.toBeInTheDocument()
+  })
+
   it("deletes draft scratchpads directly and navigates away when the active draft is removed", async () => {
     renderWithRouter(
       <ScratchpadItem
