@@ -5,7 +5,8 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { parseMessagePayload } from "../../lib/outbox"
-import { AuthorTypes, CompanionModes, StreamTypes } from "@threa/types"
+import { ARIADNE_AGENT_ID } from "./built-in-agents"
+import { AuthorTypes, CompanionModes, E2eInvitedAgentKinds, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
@@ -111,9 +112,36 @@ export class CompanionHandler implements OutboxHandler {
 
           const { streamId, workspaceId, event: messageEvent } = payload
 
-          // E2E streams: Ariadne can't see ciphertext, so the companion can
-          // never have anything to say. Skip without inspecting the message.
-          if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+          // E2E streams: the plaintext companion path can't see ciphertext,
+          // so fall through to the enclave dispatch when the owner has
+          // invited the enclave persona; otherwise skip without inspecting
+          // the message (no plaintext Ariadne reply possible).
+          const e2eRow = await E2eStreamsRepository.getByStreamId(this.db, workspaceId, streamId)
+          if (e2eRow) {
+            if (e2eRow.invitedAgentKind !== E2eInvitedAgentKinds.ENCLAVE) {
+              seen.push(event.id)
+              continue
+            }
+            if (messageEvent.actorType !== AuthorTypes.USER) {
+              seen.push(event.id)
+              continue
+            }
+            if (!messageEvent.actorId) {
+              logger.warn({ streamId }, "CompanionHandler: E2E enclave message has no actorId, skipping")
+              seen.push(event.id)
+              continue
+            }
+            logger.info(
+              { streamId, messageId: messageEvent.payload.messageId, personaId: ARIADNE_AGENT_ID },
+              "Enclave persona agent job dispatched (always-on companion in E2E)"
+            )
+            await this.jobQueue.send(JobQueues.ENCLAVE_PERSONA_AGENT, {
+              workspaceId,
+              streamId,
+              messageId: messageEvent.payload.messageId,
+              personaId: ARIADNE_AGENT_ID,
+              triggeredBy: messageEvent.actorId,
+            })
             seen.push(event.id)
             continue
           }

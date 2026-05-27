@@ -21,6 +21,24 @@ export const builtInAgentConfigSchema = z.object({
   temperature: z.number().nullable(),
   maxTokens: z.number().int().positive().nullable(),
   enabledTools: z.array(agentToolNameSchema),
+  /**
+   * Whether this persona can be invited into an E2E (enclave-backed)
+   * scratchpad. When true, the frontend exposes "Invite <persona>" in the
+   * scratchpad header and the companion-outbox-handler dispatches enclave
+   * jobs for messages in such streams. When false, the invite handler
+   * refuses the request.
+   */
+  e2eCapable: z.boolean().default(false),
+  /**
+   * Tool allowlist for E2E invocations of this persona. When the enclave
+   * dispatcher loads the persona it substitutes this list for `enabledTools`,
+   * so workspace-coupled tools that require a backend callback channel are
+   * never exposed inside the enclave (no path to leak ciphertext-adjacent
+   * context). Null means "fall back to enabledTools" — only valid when
+   * `e2eCapable` is false, since enclave-invitable personas need an explicit
+   * E2E-safe tool list.
+   */
+  e2eEnabledTools: z.array(agentToolNameSchema).nullable().default(null),
   managedBy: z.literal("system"),
   status: agentStatusSchema,
   visibility: agentVisibilitySchema,
@@ -84,6 +102,8 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.LINEAR_LIST_PROJECTS,
       AgentToolNames.LINEAR_GET_PROJECT,
     ],
+    e2eCapable: true,
+    e2eEnabledTools: [AgentToolNames.SEND_MESSAGE, AgentToolNames.WEB_SEARCH, AgentToolNames.READ_URL],
     managedBy: "system",
     status: "active",
     visibility: "visible",
@@ -100,6 +120,8 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     temperature: 0,
     maxTokens: null,
     enabledTools: [],
+    e2eCapable: false,
+    e2eEnabledTools: null,
     managedBy: "system",
     status: "active",
     visibility: "internal",

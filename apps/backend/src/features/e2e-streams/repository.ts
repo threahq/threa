@@ -1,7 +1,6 @@
+import type { E2eInvitedAgentKind } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-
-export type InvitedAgentKind = "bot" | "enclave" | "none"
 
 interface E2eStreamRow {
   stream_id: string
@@ -9,7 +8,7 @@ interface E2eStreamRow {
   enabled_at: Date
   owner_user_id: string
   owner_user_key_id: string
-  invited_agent_kind: InvitedAgentKind
+  invited_agent_kind: E2eInvitedAgentKind
   invited_agent_key_id: string | null
 }
 
@@ -19,7 +18,7 @@ export interface E2eStream {
   enabledAt: Date
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: InvitedAgentKind
+  invitedAgentKind: E2eInvitedAgentKind
   invitedAgentKeyId: string | null
 }
 
@@ -28,7 +27,7 @@ export interface MarkStreamE2eParams {
   workspaceId: string
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: InvitedAgentKind
+  invitedAgentKind: E2eInvitedAgentKind
   invitedAgentKeyId: string | null
 }
 
@@ -101,5 +100,27 @@ export const E2eStreamsRepository = {
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return mapRow(result.rows[0]!)
+  },
+
+  /**
+   * Update which agent kind (if any) is invited into an existing E2E stream.
+   * For the enclave kind, `invitedAgentKeyId` stays NULL — the recipient list
+   * is recomputed per-message from the current live enclave EIK set rather
+   * than pinned to one instance (HA from day one).
+   */
+  async setInvitedAgent(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    kind: E2eInvitedAgentKind,
+    invitedAgentKeyId: string | null
+  ): Promise<E2eStream | null> {
+    const result = await db.query<E2eStreamRow>(sql`
+      UPDATE e2e_streams
+      SET invited_agent_kind = ${kind}, invited_agent_key_id = ${invitedAgentKeyId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 }

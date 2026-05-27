@@ -89,7 +89,7 @@ async function waitForDebounce(): Promise<void> {
 
 describe("CompanionHandler", () => {
   beforeEach(() => {
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue(null)
   })
 
   afterEach(() => {
@@ -211,8 +211,16 @@ describe("CompanionHandler", () => {
     expect(personaSpy).not.toHaveBeenCalled()
   })
 
-  it("does not dispatch for messages on end-to-end encrypted streams", async () => {
-    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+  it("does not dispatch for messages on end-to-end encrypted streams without enclave invited", async () => {
+    spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({
+      streamId: "stream_e2e",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_1",
+      ownerUserKeyId: "uik_1",
+      invitedAgentKind: "none",
+      invitedAgentKeyId: null,
+      createdAt: new Date(),
+    } as any)
     mockUserMessageEvent("stream_e2e")
 
     const streamSpy = spyOn(StreamRepository, "findById").mockResolvedValue(
@@ -225,6 +233,32 @@ describe("CompanionHandler", () => {
 
     expect(streamSpy).not.toHaveBeenCalled()
     expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
+  it("dispatches enclave persona agent for E2E streams with enclave invited", async () => {
+    spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({
+      streamId: "stream_e2e_enclave",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_owner",
+      ownerUserKeyId: "uik_1",
+      invitedAgentKind: "enclave",
+      invitedAgentKeyId: null,
+      createdAt: new Date(),
+    } as any)
+    mockUserMessageEvent("stream_e2e_enclave")
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(jobQueue.send).toHaveBeenCalledWith(
+      "persona.enclave_agent",
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        streamId: "stream_e2e_enclave",
+        messageId: "msg_1",
+      })
+    )
   })
 
   it("does not dispatch for threads under a scratchpad whose companion mode is off", async () => {

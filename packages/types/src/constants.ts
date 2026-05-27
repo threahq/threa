@@ -594,6 +594,22 @@ export const ShareErrorCodes = {
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
 export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 
+// Which kind of agent, if any, was invited into an E2E scratchpad. Drives whose
+// public key is added as an additional envelope recipient and which dispatcher
+// the backend uses for replies.
+//   - "none"    — no agent; only the owner's UIK is a recipient.
+//   - "bot"     — Pi-style remote runtime (Phase 2).
+//   - "enclave" — first-party Ariadne running in the side-project enclave
+//                 service (Phase 5a). Recipients = [UIK, ...liveEnclaveEIKs].
+export const E2E_INVITED_AGENT_KINDS = ["none", "bot", "enclave"] as const
+export type E2eInvitedAgentKind = (typeof E2E_INVITED_AGENT_KINDS)[number]
+
+export const E2eInvitedAgentKinds = {
+  NONE: "none",
+  BOT: "bot",
+  ENCLAVE: "enclave",
+} as const satisfies Record<string, E2eInvitedAgentKind>
+
 /**
  * Floor for interaction-driven socket heartbeats. The frontend throttles
  * interaction-flagged heartbeats to this interval; the backend ignores

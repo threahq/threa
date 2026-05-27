@@ -18,6 +18,7 @@ export interface Job<T = unknown> {
 // Job type definitions
 export const JobQueues = {
   PERSONA_AGENT: "persona.agent",
+  ENCLAVE_PERSONA_AGENT: "persona.enclave_agent",
   NAMING_GENERATE: "naming.generate",
   EMBEDDING_GENERATE: "embedding.generate",
   BOUNDARY_EXTRACT: "boundary.extract",
@@ -54,6 +55,23 @@ export interface PersonaAgentJobData {
   trigger?: typeof AgentTriggers.MENTION // undefined = companion mode
   supersedesSessionId?: string
   rerunContext?: AgentSessionRerunContext
+}
+
+/**
+ * Enclave persona agent job — dispatches a persona invocation in an E2E
+ * scratchpad to the side-project enclave service. The worker for this queue
+ * does NOT run AgentRuntime itself; it loads ciphertext history + recipients,
+ * POSTs to a live enclave instance's /invoke, and writes the sealed reply.
+ *
+ * The shape mirrors PersonaAgentJobData minus the rerun/supersede fields
+ * (5a is always-on companion mode; @-mention and rerun aren't wired yet).
+ */
+export interface EnclavePersonaAgentJobData {
+  workspaceId: string
+  streamId: string
+  messageId: string
+  personaId: string
+  triggeredBy: string
 }
 
 export interface NamingJobData {
@@ -244,6 +262,7 @@ export interface ContextBagPrecomputeJobData {
 // Map queue names to their data types
 export interface JobDataMap {
   [JobQueues.PERSONA_AGENT]: PersonaAgentJobData
+  [JobQueues.ENCLAVE_PERSONA_AGENT]: EnclavePersonaAgentJobData
   [JobQueues.NAMING_GENERATE]: NamingJobData
   [JobQueues.EMBEDDING_GENERATE]: EmbeddingJobData
   [JobQueues.BOUNDARY_EXTRACT]: BoundaryExtractionJobData

@@ -95,6 +95,10 @@ import {
   COMPANION_SUMMARY_TEMPERATURE,
   stripInaccessibleAgentRefs,
 } from "./features/agents"
+import { EnclaveClient } from "./features/agents/enclave-client"
+import { EnclaveDispatcher } from "./features/agents/enclave-dispatcher"
+import { createEnclaveDispatcherWorker } from "./features/agents/enclave-dispatcher-worker"
+import { EnclaveRuntimesService } from "./features/enclave-runtimes"
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
@@ -514,6 +518,14 @@ export async function startServer(): Promise<ServerInstance> {
   })
   const linkPreviewService = new LinkPreviewService({ pool, streamService })
 
+  // Enclave (5a): the runtimes registry serves both the dispatcher (pick a
+  // live target) and the frontend `/enclave/active-keys` route (build the
+  // multi-recipient HPKE envelope per message). The bearer secret reuses the
+  // backend's internal shared secret — enclave instances live in the same
+  // trust boundary as the control-plane→regional internal channel and
+  // authenticate back over the same key.
+  const enclaveRuntimesService = new EnclaveRuntimesService(pool)
+
   const isProduction = process.env.NODE_ENV === "production"
   const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
   const server = createServer(app)
@@ -565,6 +577,7 @@ export async function startServer(): Promise<ServerInstance> {
     storage,
     ai,
     controlPlaneClient,
+    enclaveRuntimesService,
   })
 
   app.use(errorHandler)
@@ -660,6 +673,33 @@ export async function startServer(): Promise<ServerInstance> {
     tier: QueueTiers.INTERACTIVE,
     fairness: QueueFairness.NONE,
   })
+
+  // Enclave persona agent dispatcher worker (5a). Only registered when the
+  // shared internal secret is configured — without it the backend cannot
+  // bearer-authenticate to the enclave's `/invoke`. The dispatcher itself
+  // does NOT run AgentRuntime: it loads ciphertext history + the live EIK
+  // set, POSTs to a picked enclave instance, and writes the sealed reply
+  // back via the standard E2E message path. INV-30/INV-41: the pool is
+  // released before the slow LLM round-trip and re-acquired for the write.
+  if (config.internalApiKey) {
+    const enclaveClient = new EnclaveClient(config.internalApiKey)
+    const enclaveDispatcher = new EnclaveDispatcher({
+      pool,
+      enclaveClient,
+      enclaveRuntimesService,
+      messageEventService: eventService,
+      aiCostService: costService,
+    })
+    const enclaveDispatcherWorker = createEnclaveDispatcherWorker(enclaveDispatcher)
+    jobQueue.registerHandler(JobQueues.ENCLAVE_PERSONA_AGENT, enclaveDispatcherWorker, {
+      tier: QueueTiers.INTERACTIVE,
+      fairness: QueueFairness.NONE,
+    })
+  } else {
+    logger.warn(
+      "INTERNAL_API_KEY not configured — enclave persona agent worker not registered; E2E enclave-invited scratchpads will queue but not dispatch"
+    )
+  }
 
   // Context-bag pre-compute worker — warms the shared summary cache and
   // persists the initial render snapshot for newly-created bag-attached

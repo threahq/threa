@@ -5,7 +5,9 @@ import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { encryptMessage } from "@/lib/crypto/message-envelope"
+import { encryptMessage, type EncryptMessageRecipient } from "@/lib/crypto/message-envelope"
+import { base64ToBytes } from "@threa/crypto"
+import { enclaveApi } from "@/api/enclave"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -97,6 +99,8 @@ export interface VirtualStream {
   parentMessageId: string | null
   rootStreamId: string | null
   archivedAt: string | null
+  e2eEnabled?: boolean
+  e2eInvitedAgentKind?: string | null
 }
 
 export interface SendMessageInput {
@@ -449,6 +453,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         parentMessageId: baseStream.parentMessageId,
         rootStreamId: baseStream.rootStreamId,
         archivedAt: baseStream.archivedAt,
+        e2eEnabled: baseStream.e2eEnabled,
+        e2eInvitedAgentKind: baseStream.e2eInvitedAgentKind,
       }
     : undefined
 
@@ -560,6 +566,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // row still encrypts instead of writing plaintext that INV-E1 rejects.
       const e2eEnabled = baseStream?.e2eEnabled === true
       const e2eOwnerKeyId = baseStream?.e2eOwnerKeyId
+      const e2eInvitedAgentKind = baseStream?.e2eInvitedAgentKind
       let e2eFields:
         | Pick<NonNullable<Awaited<ReturnType<typeof encryptMessage>>>, "ciphertext" | "envelope" | "e2eVersion">
         | undefined
@@ -582,13 +589,30 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           // decrypt.
           throw new Error("Encrypted scratchpad is addressed to a key you no longer hold")
         }
+        const recipients: EncryptMessageRecipient[] = [{ recipientKeyId: e2eOwnerKeyId, publicKey: session.publicKey }]
+        // When the enclave is invited, fan the envelope out to every live
+        // EIK alongside the UIK so whichever enclave instance the dispatcher
+        // picks can decrypt. Fetch on each send — the live set changes as
+        // enclave instances heartbeat in and out, and pinning the list on
+        // the stream would break HA.
+        if (e2eInvitedAgentKind === "enclave") {
+          const liveKeys = await enclaveApi.getActiveKeys(workspaceId)
+          if (liveKeys.length === 0) {
+            throw new Error("Ariadne (enclave) isn't reachable right now — no live instances")
+          }
+          for (const live of liveKeys) {
+            recipients.push({
+              recipientKeyId: live.keyId,
+              publicKey: base64ToBytes(live.publicKey),
+            })
+          }
+        }
         e2eFields = await encryptMessage({
           contentMarkdown,
           streamId,
           messageId: clientId,
           senderId: currentUserId,
-          recipientKeyId: e2eOwnerKeyId,
-          recipientPublicKey: session.publicKey,
+          recipients,
         })
       }
 

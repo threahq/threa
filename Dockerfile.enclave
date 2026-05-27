@@ -1,7 +1,9 @@
 FROM oven/bun:1 AS base
 WORKDIR /app
 
-# Copy lockfile + all workspace package.json for frozen-lockfile compatibility
+# Copy lockfile + all workspace package.json for frozen-lockfile compatibility.
+# The enclave only needs three of the shared packages (crypto, agent-runtime,
+# types), but every workspace package.json must be present for the resolver.
 COPY package.json bun.lock ./
 COPY packages/types/package.json packages/types/
 COPY packages/prosemirror/package.json packages/prosemirror/
@@ -19,11 +21,12 @@ COPY apps/enclave/package.json apps/enclave/
 COPY patches/ patches/
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production
 
-# Copy source
+# Copy source (only the packages the enclave needs at runtime)
 COPY packages/types/ packages/types/
-COPY packages/backend-common/ packages/backend-common/
-COPY apps/control-plane/ apps/control-plane/
+COPY packages/crypto/ packages/crypto/
+COPY packages/agent-runtime/ packages/agent-runtime/
+COPY apps/enclave/ apps/enclave/
 
 ENV NODE_ENV=production
-EXPOSE 3003
-CMD ["bun", "apps/control-plane/src/index.ts"]
+EXPOSE 3011
+CMD ["bun", "apps/enclave/src/index.ts"]

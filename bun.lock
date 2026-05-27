@@ -186,6 +186,26 @@
         "typescript": "^5",
       },
     },
+    "apps/enclave": {
+      "name": "@threa/enclave",
+      "dependencies": {
+        "@hpke/core": "^1.9.0",
+        "@threa/agent-runtime": "workspace:*",
+        "@threa/crypto": "workspace:*",
+        "@threa/types": "workspace:*",
+        "ai": "^5.0.113",
+        "express": "^5",
+        "pino": "^9",
+        "pino-http": "^10",
+        "ulid": "^2",
+        "zod": "^4.2.0",
+      },
+      "devDependencies": {
+        "@types/express": "^5",
+        "bun-types": "latest",
+        "typescript": "^5",
+      },
+    },
     "apps/frontend": {
       "name": "@threa/frontend",
       "dependencies": {
@@ -368,6 +388,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@hpke/core": "^1.9.0",
+        "@hpke/dhkem-x25519": "^1.8.0",
       },
       "devDependencies": {
         "bun-types": "latest",
@@ -839,6 +860,8 @@
     "@hpke/common": ["@hpke/common@1.10.1", "", {}, "sha512-moJwhmtLtuxiUzzNp1jpfBfx8yefKoO9D/RCR9dmwrnc7qjJqId1rEtQz+lSlU5cabX8daToMSx/7HayXOiaFw=="],
 
     "@hpke/core": ["@hpke/core@1.9.0", "", { "dependencies": { "@hpke/common": "^1.10.0" } }, "sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q=="],
+
+    "@hpke/dhkem-x25519": ["@hpke/dhkem-x25519@1.8.0", "", { "dependencies": { "@hpke/common": "^1.10.0" } }, "sha512-S1MWWkAfu+TFxySgv5+2P3O4Mx/jk7BsoplzQaA1s3sfUJVJ2UsZsSzSsMc+FXJumLXncoJFlO6mK6mDGspfmA=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.1", "", {}, "sha512-5DyQ4+1JEUzejeK1JGICcideyfUbGixgS9jNgex5nqkW+cY7WZhxBigmieN5Qnw9ZosSNVC9KQKyb+GUaGyKUA=="],
 
@@ -1493,6 +1516,8 @@
     "@threa/crypto": ["@threa/crypto@workspace:packages/crypto"],
 
     "@threa/db-read-proxy": ["@threa/db-read-proxy@workspace:apps/db-read-proxy"],
+
+    "@threa/enclave": ["@threa/enclave@workspace:apps/enclave"],
 
     "@threa/frontend": ["@threa/frontend@workspace:apps/frontend"],
 

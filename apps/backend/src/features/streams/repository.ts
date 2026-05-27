@@ -1,6 +1,13 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { AuthorType, StreamType, Visibility, CompanionMode, ThreadSummary } from "@threa/types"
+import type {
+  AuthorType,
+  StreamType,
+  Visibility,
+  CompanionMode,
+  ThreadSummary,
+  E2eInvitedAgentKind,
+} from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, ArchiveStatus }
@@ -30,6 +37,7 @@ interface StreamRow {
    * fields undefined and `mapRowToStream` omits them on the result.
    */
   e2e_owner_user_key_id?: string | null
+  e2e_invited_agent_kind?: E2eInvitedAgentKind | null
 }
 
 /**
@@ -103,6 +111,13 @@ export interface Stream {
    */
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
+  /**
+   * Which agent (if any) the owner invited into this E2E stream. Drives the
+   * frontend recipient list: when the kind is `"enclave"` the composer fans
+   * out per-message to every live enclave EIK alongside the UIK. Stays
+   * undefined on plaintext streams.
+   */
+  e2eInvitedAgentKind?: E2eInvitedAgentKind
 }
 
 export interface InsertStreamParams {
@@ -153,6 +168,7 @@ export interface DmPeer {
 
 function mapRowToStream(row: StreamRow): Stream {
   const e2eOwnerKeyId = row.e2e_owner_user_key_id ?? undefined
+  const e2eInvitedAgentKind = row.e2e_invited_agent_kind ?? undefined
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -175,6 +191,7 @@ function mapRowToStream(row: StreamRow): Stream {
     // a bare `streams` SELECT leaves them as `undefined` so plaintext
     // callers don't have to special-case the placeholder.
     ...(e2eOwnerKeyId !== undefined && { e2eEnabled: true, e2eOwnerKeyId }),
+    ...(e2eInvitedAgentKind !== undefined && { e2eInvitedAgentKind }),
   }
 }
 
@@ -219,7 +236,8 @@ const SELECT_FIELDS_WITH_E2E = `
   s.parent_stream_id, s.parent_message_id, s.root_stream_id,
   s.companion_mode, s.companion_persona_id,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
-  e.owner_user_key_id AS e2e_owner_user_key_id
+  e.owner_user_key_id AS e2e_owner_user_key_id,
+  e.invited_agent_kind AS e2e_invited_agent_kind
 `
 
 const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
@@ -518,7 +536,8 @@ export const StreamRepository = {
         lm.author_type as last_message_author_type,
         lm.content_json as last_message_content,
         lm.created_at as last_message_at,
-        e.owner_user_key_id AS e2e_owner_user_key_id
+        e.owner_user_key_id AS e2e_owner_user_key_id,
+        e.invited_agent_kind AS e2e_invited_agent_kind
       FROM streams s
       LEFT JOIN last_messages lm ON lm.stream_id = s.id
       LEFT JOIN e2e_streams e ON e.stream_id = s.id

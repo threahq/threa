@@ -1,11 +1,15 @@
-import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke/core"
+import { Aes256Gcm, CipherSuite, HkdfSha256 } from "@hpke/core"
+import { DhkemX25519HkdfSha256 } from "@hpke/dhkem-x25519"
 
 /**
  * RFC 9180 HPKE wrappers around `@hpke/core`.
  *
- * Suite: `DHKEM(X25519, HKDF-SHA256)` + `HKDF-SHA256` + `AES-256-GCM`. Picked
- * for browser/Bun parity and audited library coverage. The suite is held in a
- * module-level singleton — it is stateless and cheap to reuse.
+ * Suite: `DHKEM(X25519, HKDF-SHA256)` + `HKDF-SHA256` + `AES-256-GCM`. The KEM
+ * comes from `@hpke/dhkem-x25519` (noble-curves backed) instead of
+ * `@hpke/core` because Bun 1.3's WebCrypto does not yet implement X25519
+ * seal/open — the noble-backed KEM works in both the browser and the
+ * enclave's Bun runtime. The suite is held in a module-level singleton —
+ * it is stateless and cheap to reuse.
  *
  * The "private key never leaves the browser" rule is enforced by callers:
  * this module only ever returns CryptoKey objects; the lifecycle (Dexie

@@ -108,6 +108,7 @@ export {
   streamLabelId,
   voiceSessionId,
   userEncryptionKeyId,
+  enclaveRuntimeId,
 } from "./id"
 export {
   parseCookies,

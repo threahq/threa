@@ -14,6 +14,7 @@ export {
   type HandlerHooks,
   type HandlerOptions,
   type PersonaAgentJobData,
+  type EnclavePersonaAgentJobData,
   type NamingJobData,
   type EmbeddingJobData,
   type BoundaryExtractionJobData,

@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@hpke/core": "^1.9.0"
+    "@hpke/core": "^1.9.0",
+    "@hpke/dhkem-x25519": "^1.8.0"
   },
   "devDependencies": {
     "bun-types": "latest",

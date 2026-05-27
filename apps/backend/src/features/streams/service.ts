@@ -23,6 +23,7 @@ import {
   StreamTypes,
   Visibilities,
   CompanionModes,
+  E2eInvitedAgentKinds,
   type StreamType,
   type Visibility,
   type CompanionMode,
@@ -30,7 +31,7 @@ import {
   type ThreadSummary,
   type ContextBag,
 } from "@threa/types"
-import { ContextBagRepository } from "../agents"
+import { ContextBagRepository, ARIADNE_AGENT_ID, getBuiltInAgentConfig } from "../agents"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
@@ -598,6 +599,51 @@ export class StreamService {
         streamId: stream.id,
         stream,
       })
+      return stream
+    })
+  }
+
+  /**
+   * Mark an E2E scratchpad as enclave-invited. Only the stream's e2e owner
+   * may invite; the persona is hardcoded to Ariadne in 5a (the only built-in
+   * with `e2eCapable: true`). Per-instance EIK pinning is intentionally not
+   * recorded on the stream — recipients are recomputed per message from the
+   * live EIK set so the fleet can scale and churn without re-inviting.
+   */
+  async inviteEnclave(workspaceId: string, streamId: string, userId: string): Promise<Stream> {
+    const persona = getBuiltInAgentConfig(ARIADNE_AGENT_ID)
+    if (!persona?.e2eCapable) {
+      throw new HttpError("Built-in persona is not enclave-capable", {
+        status: 500,
+        code: "PERSONA_NOT_E2E_CAPABLE",
+      })
+    }
+
+    return withTransaction(this.pool, async (client) => {
+      const e2eRow = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2eRow) {
+        throw new HttpError("Stream is not E2E", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2eRow.ownerUserId !== userId) {
+        throw new HttpError("Only the stream owner can invite the enclave", {
+          status: 403,
+          code: "NOT_STREAM_OWNER",
+        })
+      }
+
+      await E2eStreamsRepository.setInvitedAgent(client, workspaceId, streamId, E2eInvitedAgentKinds.ENCLAVE, null)
+
+      const stream = await StreamRepository.findByIdForWorkspace(client, streamId, workspaceId)
+      if (!stream) {
+        throw new StreamNotFoundError()
+      }
+
+      await OutboxRepository.insert(client, "stream:updated", {
+        workspaceId: stream.workspaceId,
+        streamId: stream.id,
+        stream,
+      })
+
       return stream
     })
   }

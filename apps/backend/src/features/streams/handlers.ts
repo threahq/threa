@@ -605,6 +605,24 @@ export function createStreamHandlers({
       res.json({ stream: updated })
     },
 
+    /**
+     * POST /api/workspaces/:workspaceId/streams/:streamId/invite-enclave
+     * Owner-only: marks an E2E scratchpad as enclave-invited so the companion
+     * outbox dispatches Ariadne replies through the enclave service. The
+     * frontend must re-encrypt subsequent messages to [UIK, ...liveEnclaveEIKs]
+     * by fetching `/enclave/active-keys` first.
+     */
+    async inviteEnclave(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+
+      const stream = await streamService.inviteEnclave(workspaceId, streamId, userId)
+      res.json({ stream })
+    },
+
     async pin(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!

@@ -9,13 +9,22 @@ import { buildMessageAad, decryptPayloadAsString, encryptPayload, ENVELOPE_VERSI
 // for both the envelope helpers and the placeholder constant.
 export { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 
+export interface EncryptMessageRecipient {
+  recipientKeyId: string
+  publicKey: Uint8Array
+}
+
 export interface EncryptMessageInput {
   contentMarkdown: string
   streamId: string
   messageId: string
   senderId: string
-  recipientKeyId: string
-  recipientPublicKey: Uint8Array
+  /**
+   * Per-message recipient list. Always includes the owner's UIK; enclave-
+   * invited streams additionally include one entry per live enclave EIK so
+   * any of the running enclave instances can decrypt the same envelope.
+   */
+  recipients: EncryptMessageRecipient[]
 }
 
 export interface EncryptMessageResult {
@@ -26,12 +35,15 @@ export interface EncryptMessageResult {
 }
 
 /**
- * Encrypt a message's markdown body to a single recipient. Phase-1 MVP only
- * supports the owner-as-sole-recipient case (the scratchpad creator encrypts
- * to their own UIK pubkey), so this stays a one-recipient call — multi-party
- * sharing is a follow-up that will accept an array here.
+ * Encrypt a message's markdown body to one or more recipients. Owner-only
+ * E2E streams pass a single-recipient list (the owner's UIK); enclave-invited
+ * streams pass `[UIK, ...liveEnclaveEIKs]` so any live instance can decrypt.
+ * The HPKE envelope itself is multi-recipient-capable from the start.
  */
 export async function encryptMessage(input: EncryptMessageInput): Promise<EncryptMessageResult> {
+  if (input.recipients.length === 0) {
+    throw new Error("encryptMessage requires at least one recipient")
+  }
   const aad = buildMessageAad({
     streamId: input.streamId,
     messageId: input.messageId,
@@ -39,7 +51,7 @@ export async function encryptMessage(input: EncryptMessageInput): Promise<Encryp
   })
   const { envelope } = await encryptPayload({
     payload: input.contentMarkdown,
-    recipients: [{ recipientKeyId: input.recipientKeyId, publicKey: input.recipientPublicKey }],
+    recipients: input.recipients.map((r) => ({ recipientKeyId: r.recipientKeyId, publicKey: r.publicKey })),
     aad,
   })
   return { ciphertext: envelope.ciphertext, envelope, e2eVersion: ENVELOPE_VERSION }

@@ -48,6 +48,7 @@ import type {
   BotInvocationStatus,
   BotInvocationTrigger,
   BotInvocationCapability,
+  E2eInvitedAgentKind,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
 
@@ -177,6 +178,13 @@ export interface Stream {
    */
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
+  /**
+   * Which agent (if any) the owner invited into this E2E stream. Drives the
+   * frontend recipient list: when the kind is `"enclave"` the composer
+   * fans out per-message to every live enclave EIK alongside the UIK. Stays
+   * undefined on plaintext streams.
+   */
+  e2eInvitedAgentKind?: E2eInvitedAgentKind
 }
 
 /** Preview of the last message in a stream for sidebar display */

@@ -201,6 +201,10 @@ export {
   MAGIC_CODE_LENGTH,
   // E2E placeholder shared between backend insert and frontend encrypt/decrypt
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  // E2E invited agent kinds (none / bot / enclave)
+  E2E_INVITED_AGENT_KINDS,
+  type E2eInvitedAgentKind,
+  E2eInvitedAgentKinds,
 } from "./constants"
 
 // Domain entities (wire format)

@@ -28,6 +28,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { TimelineView } from "@/components/timeline"
+import { InviteEnclaveButton } from "@/components/encryption/invite-enclave-button"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
@@ -282,6 +283,9 @@ export function StreamPage() {
               <ArchiveX className="h-3 w-3" />
               Archived
             </Badge>
+          )}
+          {isScratchpad && !isDraft && stream && (
+            <InviteEnclaveButton workspaceId={workspaceId} streamId={streamId} stream={stream} />
           )}
         </div>
         <div className="flex items-center gap-1 ml-1">

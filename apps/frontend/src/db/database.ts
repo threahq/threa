@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from "dexie"
 import type {
   AuthorType,
   CompanionMode,
+  E2eInvitedAgentKind,
   EventType,
   JSONContent,
   NotificationLevel,
@@ -86,6 +87,13 @@ export interface CachedStream {
    */
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
+  /**
+   * Which agent (if any) the owner invited into this E2E stream. Mirrored
+   * from `StreamWithPreview.e2eInvitedAgentKind` so the send path knows
+   * whether to fan envelopes out to the live enclave EIK set. Stays
+   * undefined on plaintext streams and on rows cached before 5a.2.
+   */
+  e2eInvitedAgentKind?: E2eInvitedAgentKind
   _cachedAt: number
 }
 

@@ -34,6 +34,7 @@ import { createDebugHandlers } from "./handlers/debug-handlers"
 import { createInternalHandlers } from "./handlers/internal-handlers"
 import { createAuthStubHandlers } from "./auth/auth-stub-handlers"
 import { createAgentSessionHandlers, createContextBagHandlers } from "./features/agents"
+import { createEnclaveRuntimesHandlers, type EnclaveRuntimesService } from "./features/enclave-runtimes"
 import { createLinkPreviewHandlers } from "./features/link-previews"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
 import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
@@ -114,6 +115,7 @@ interface Dependencies {
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
+  enclaveRuntimesService: EnclaveRuntimesService
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -155,6 +157,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     storage,
     ai,
     controlPlaneClient,
+    enclaveRuntimesService,
   } = deps
 
   const auth = createAuthMiddleware({ authService })
@@ -215,6 +218,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const agentSession = createAgentSessionHandlers({ pool })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
+  const enclaveRuntimes = createEnclaveRuntimesHandlers({ enclaveRuntimesService })
   const workspaceIntegration = createWorkspaceIntegrationHandlers({
     workspaceIntegrationService,
     allowedFrontendOrigins: corsAllowedOrigins,
@@ -234,6 +238,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/invitations/:id/accept", internalAuth, internal.acceptInvitation)
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
+
+    // Enclave runtimes — enclave instance boot/lifecycle. Shared-secret only;
+    // the enclave instances live on a separate deploy target and authenticate
+    // back to the regional backend with the same internal token.
+    app.post("/internal/enclave-runtimes/register-key", internalAuth, enclaveRuntimes.registerKey)
+    app.post("/internal/enclave-runtimes/heartbeat", internalAuth, enclaveRuntimes.heartbeat)
+    app.post("/internal/enclave-runtimes/revoke", internalAuth, enclaveRuntimes.revoke)
   }
 
   // Global baseline rate limit
@@ -284,6 +295,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/users/me/e2e-key", ...authed, userE2eKeys.set)
   app.delete("/api/workspaces/:workspaceId/users/me/e2e-key", ...authed, userE2eKeys.revoke)
 
+  // Enclave active-key set. Workspace member auth only — the data is global
+  // but workspace membership gates access so anonymous callers can't enumerate
+  // the EIK fleet. Frontend reads this to build per-message recipient lists
+  // when sending into enclave-invited E2E scratchpads.
+  app.get("/api/workspaces/:workspaceId/enclave/active-keys", ...authed, enclaveRuntimes.listActiveKeys)
+
   app.get("/api/workspaces/:workspaceId/streams", ...authed, stream.list)
   app.post("/api/workspaces/:workspaceId/streams", ...authed, stream.create)
   app.post("/api/workspaces/:workspaceId/streams/read-all", ...authed, workspace.markAllAsRead)
@@ -298,6 +315,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/streams/:streamId/read", ...authed, stream.markAsRead)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/archive", ...authed, stream.archive)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/unarchive", ...authed, stream.unarchive)
+  app.post("/api/workspaces/:workspaceId/streams/:streamId/invite-enclave", ...authed, stream.inviteEnclave)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/members", ...authed, stream.addMember)
   app.delete(
     "/api/workspaces/:workspaceId/streams/:streamId/members/:memberId",
