@@ -12,7 +12,7 @@ import {
   Paperclip,
   Settings,
   Sparkles,
-  StickyNote,
+  Moon,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
@@ -277,30 +277,45 @@ export function StreamPage() {
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <SidebarToggle location="page" />
           {headerTitle}
-          {stream && !isThread && !isDraft && !isChannel && !isUnnamedScratchpad && (
-            <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
-          )}
-          {stream && isScratchpad && !isDraft && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span
-                  className="inline-flex items-center text-muted-foreground"
-                  aria-label={stream.companionMode === CompanionModes.ON ? "Companion is on" : "Companion is off"}
-                >
-                  {stream.companionMode === CompanionModes.ON ? (
-                    <Sparkles className="h-3.5 w-3.5" />
-                  ) : (
-                    <StickyNote className="h-3.5 w-3.5" />
-                  )}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {stream.companionMode === CompanionModes.ON
-                  ? "Companion is on — Ariadne replies to new messages"
-                  : "Companion is off — messages are stored silently"}
-              </TooltipContent>
-            </Tooltip>
-          )}
+          {stream &&
+            !isThread &&
+            !isDraft &&
+            !isUnnamedScratchpad &&
+            (isScratchpad ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => openStreamSettings(streamId, "companion")}
+                    aria-label={
+                      stream.companionMode === CompanionModes.ON
+                        ? "Companion is on. Click to change."
+                        : "Quiet mode. Click to change."
+                    }
+                    className={cn(
+                      "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                      stream.companionMode === CompanionModes.ON
+                        ? "border-primary/30 bg-primary/5 text-foreground hover:bg-primary/10"
+                        : "border-border bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground"
+                    )}
+                  >
+                    {stream.companionMode === CompanionModes.ON ? (
+                      <Sparkles className="h-3 w-3 text-primary" aria-hidden="true" />
+                    ) : (
+                      <Moon className="h-3 w-3" aria-hidden="true" />
+                    )}
+                    <span>{stream.companionMode === CompanionModes.ON ? "Companion" : "Quiet"}</span>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {stream.companionMode === CompanionModes.ON
+                    ? "Ariadne replies to new messages. Click to change."
+                    : "Silent capture — no AI replies. Click to change."}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              !isChannel && <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
+            ))}
           {isArchived && (
             <Badge variant="secondary" className="gap-1">
               <ArchiveX className="h-3 w-3" />

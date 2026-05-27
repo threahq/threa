@@ -38,6 +38,7 @@ export interface CommandContext {
 export interface Command {
   id: string
   label: string
+  description?: string
   icon: React.ComponentType<{ className?: string }>
   keywords?: string[]
   action: (context: CommandContext) => void | Promise<void>
@@ -63,8 +64,23 @@ export const commands: Command[] = [
   {
     id: "new-quick-note",
     label: "New Quick Note",
+    description: "Scratchpad without the AI companion — links, ideas, quick captures",
     icon: StickyNote,
-    keywords: ["scratchpad", "plain", "dump", "link", "links", "no companion", "no ai", "silent", "note"],
+    keywords: [
+      "scratchpad",
+      "plain",
+      "pure",
+      "dump",
+      "link",
+      "links",
+      "bookmark",
+      "no companion",
+      "no ai",
+      "silent",
+      "quiet",
+      "note",
+      "capture",
+    ],
     action: async ({ workspaceId, navigate, closeDialog, createDraftScratchpad }) => {
       try {
         const draftId = await createDraftScratchpad("off")
