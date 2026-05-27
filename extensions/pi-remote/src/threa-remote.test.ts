@@ -625,25 +625,37 @@ describe("formatShortDuration", () => {
 })
 
 describe("defaultDisplayNameFor", () => {
-  test("derives `Pi remote: <dirname>` from the working directory tail", () => {
-    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa")).toBe("Pi remote: threa")
+  test("derives `Pi remote - <dirname>` from the working directory tail", () => {
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa")).toBe("Pi remote - threa")
   })
 
   test("ignores a trailing slash on the working directory", () => {
-    // `cwd` is conventionally unsuffixed, but defensively we should not produce
-    // `Pi remote: ` with an empty dirname when the path ends in `/`.
-    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa/")).toBe("Pi remote: threa")
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa/")).toBe("Pi remote - threa")
   })
 
   test("falls back to `session` when the working directory is the filesystem root", () => {
-    expect(__testing.defaultDisplayNameFor("/")).toBe("Pi remote: session")
+    expect(__testing.defaultDisplayNameFor("/")).toBe("Pi remote - session")
   })
 
-  test("respects an explicit configured override", () => {
-    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "Local Pi")).toBe("Local Pi")
+  test("uses a configured override as a prefix and still appends the dirname", () => {
+    // The override no longer wins outright — every scratchpad needs the dirname
+    // to be distinguishable in the sidebar.
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "Work Pi")).toBe("Work Pi - threa")
   })
 
-  test("treats an empty configured override as unset (avoids `Pi remote: ` shape collapse)", () => {
-    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "")).toBe("Pi remote: threa")
+  test("treats an empty configured override as unset", () => {
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "")).toBe("Pi remote - threa")
+  })
+
+  test("treats the legacy `Local Pi` default as unset so old configs stop colliding", () => {
+    // `configTemplate` used to bake `"Local Pi"` into the JSON the user pasted
+    // during /configure, and that override beat the dirname — every scratchpad
+    // across every repo ended up named "Local Pi". Stop honoring it.
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "Local Pi")).toBe("Pi remote - threa")
+  })
+
+  test("ignores surrounding whitespace on the override", () => {
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "   ")).toBe("Pi remote - threa")
+    expect(__testing.defaultDisplayNameFor("/Users/kris/dev/personal/threa", "  Work Pi  ")).toBe("Work Pi - threa")
   })
 })

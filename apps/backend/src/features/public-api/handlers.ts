@@ -709,6 +709,14 @@ export function createPublicApiHandlers({
           ...(result.data.runtimeSessionId && { runtimeSessionId: result.data.runtimeSessionId }),
         },
         statusText: sanitizeStatusText(result.data.statusText),
+        // Merge instead of replace: any heartbeat that arrives without a
+        // `runtimeSessionId` (e.g. an older client, or a code path that
+        // forgets to thread the runtime ctx through) would otherwise wipe the
+        // id from the row, and `broadcastBotPresence` would then emit
+        // `presence: null` to the linked scratchpad stream — flickering the
+        // status strip to "Not connected" mid-turn. The trace-step path
+        // (`recordBotInvocationStep`) already merges for the same reason.
+        mergeCapabilities: true,
       })
       await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({
