@@ -1493,7 +1493,6 @@ export function StreamContent({
                   botName={activeBotPresence.bot.name}
                   runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
                   status={activeBotPresence.presence?.status ?? "unknown"}
-                  statusText={activeBotPresence.presence?.statusText ?? null}
                   className="pointer-events-auto"
                 />
               </div>
