@@ -288,8 +288,14 @@ function setCurrentSessionEnabled(ctx: ExtensionContext, enabled: boolean): Runt
   return link
 }
 
-function buildScratchpadUrl(baseUrl: string, streamUrlPath: string): string {
-  return new URL(streamUrlPath, baseUrl).toString()
+function buildScratchpadUrl(baseUrl: string, workspaceId: string, streamId: string): string {
+  // The frontend route is `/w/:workspaceId/s/:streamId`. Older server versions
+  // returned `streamUrlPath: /streams/<id>` (no workspace prefix) and that
+  // value is persisted in `config.linkedSessions` for upgraded installs, so we
+  // can't trust the stored path. Compose locally from data the client owns —
+  // it's stable across server format changes and migrates existing links for
+  // free without touching disk.
+  return new URL(`/w/${workspaceId}/s/${streamId}`, baseUrl).toString()
 }
 
 async function openExternalUrl(url: string): Promise<void> {
@@ -2049,7 +2055,8 @@ export const __testing = {
 
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("remote-control", {
-    description: "Create or link a Threa scratchpad to this Pi session",
+    description:
+      "Link this Pi session to a Threa scratchpad: configure | status | open | on | off | debug | debug-polls [on|off]",
     handler: async (args, ctx) => {
       const trimmedArgs = args.trim()
       const commandMatch = trimmedArgs.match(/^(\S+)(?:\s+([\s\S]*))?$/)
@@ -2079,7 +2086,7 @@ export default function (pi: ExtensionAPI): void {
           ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
           return
         }
-        const url = buildScratchpadUrl(config.baseUrl, link.streamUrlPath)
+        const url = buildScratchpadUrl(config.baseUrl, config.workspaceId, link.activeStreamId)
         try {
           await openExternalUrl(url)
           ctx.ui.notify(`Opening Threa scratchpad: ${url}`, "info")
@@ -2127,6 +2134,23 @@ export default function (pi: ExtensionAPI): void {
           "info"
         )
         return
+      }
+      // Bare `/remote-control` with no args is idempotent: if this Pi session
+      // is already linked, report status instead of POSTing to /sessions, which
+      // would clobber the local link with a fresh scratchpad. An instanceId
+      // migration (or any change that makes the server's existing-link lookup
+      // miss) used to silently mint a new scratchpad here. Re-linking is a
+      // destructive action — the user has to ask for it explicitly by passing
+      // a display name (`/remote-control "Some name"`).
+      if (trimmedArgs === "") {
+        const link = getCurrentSessionLink(ctx)
+        if (link) {
+          ctx.ui.notify(
+            `Threa remote already linked for this Pi session (${link.enabled ? "on" : "off"}). Run \`/remote-control status\` for details or \`/remote-control open\` to open the scratchpad.`,
+            "info"
+          )
+          return
+        }
       }
       await createRemoteSession(ctx, trimmedArgs)
       await resolveBotWsHint(ctx, { force: true })

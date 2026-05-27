@@ -222,12 +222,15 @@ describe("Pi remote trace safety", () => {
     expect(__testing.formatDuration(139 * 60_000)).toBe("2h 19m")
   })
 
-  test("builds scratchpad URLs from configured base URL and stream path", () => {
-    expect(__testing.buildScratchpadUrl("https://app.threa.io", "/workspaces/ws_123/streams/stream_123")).toBe(
-      "https://app.threa.io/workspaces/ws_123/streams/stream_123"
+  test("builds scratchpad URLs from workspace and stream ids the client already owns", () => {
+    // The frontend route is `/w/:workspaceId/s/:streamId`. Composing locally
+    // means the URL is right even when `link.streamUrlPath` was persisted by a
+    // server version that returned the legacy `/streams/<id>` shape.
+    expect(__testing.buildScratchpadUrl("https://app.threa.io", "ws_123", "stream_123")).toBe(
+      "https://app.threa.io/w/ws_123/s/stream_123"
     )
-    expect(__testing.buildScratchpadUrl("https://app.threa.io/app/", "streams/stream_123")).toBe(
-      "https://app.threa.io/app/streams/stream_123"
+    expect(__testing.buildScratchpadUrl("https://app.threa.io/app/", "ws_123", "stream_123")).toBe(
+      "https://app.threa.io/w/ws_123/s/stream_123"
     )
   })
 
