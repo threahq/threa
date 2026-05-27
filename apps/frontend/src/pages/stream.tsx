@@ -11,7 +11,10 @@ import {
   CornerDownRight,
   Paperclip,
   Settings,
+  Sparkles,
+  StickyNote,
 } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -32,7 +35,7 @@ import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { CompanionModes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -276,6 +279,27 @@ export function StreamPage() {
           {headerTitle}
           {stream && !isThread && !isDraft && !isChannel && !isUnnamedScratchpad && (
             <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
+          )}
+          {stream && isScratchpad && !isDraft && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className="inline-flex items-center text-muted-foreground"
+                  aria-label={stream.companionMode === CompanionModes.ON ? "Companion is on" : "Companion is off"}
+                >
+                  {stream.companionMode === CompanionModes.ON ? (
+                    <Sparkles className="h-3.5 w-3.5" />
+                  ) : (
+                    <StickyNote className="h-3.5 w-3.5" />
+                  )}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {stream.companionMode === CompanionModes.ON
+                  ? "Companion is on — Ariadne replies to new messages"
+                  : "Companion is off — messages are stored silently"}
+              </TooltipContent>
+            </Tooltip>
           )}
           {isArchived && (
             <Badge variant="secondary" className="gap-1">

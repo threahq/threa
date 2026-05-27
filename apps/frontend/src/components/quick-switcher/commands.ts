@@ -1,5 +1,5 @@
 import type { NavigateFunction } from "react-router-dom"
-import { Brain, FileText, Hash, Paperclip, Search, FileEdit, Lock, Settings } from "lucide-react"
+import { Brain, FileText, Hash, Paperclip, Search, FileEdit, Lock, Settings, StickyNote } from "lucide-react"
 import { toast } from "sonner"
 import type { SettingsTab } from "@threa/types"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
@@ -57,6 +57,22 @@ export const commands: Command[] = [
       } catch (error) {
         console.error("Failed to create scratchpad:", error)
         toast.error("Failed to create scratchpad")
+      }
+    },
+  },
+  {
+    id: "new-quick-note",
+    label: "New Quick Note",
+    icon: StickyNote,
+    keywords: ["scratchpad", "plain", "dump", "link", "links", "no companion", "no ai", "silent", "note"],
+    action: async ({ workspaceId, navigate, closeDialog, createDraftScratchpad }) => {
+      try {
+        const draftId = await createDraftScratchpad("off")
+        closeDialog()
+        navigate(`/w/${workspaceId}/s/${draftId}`)
+      } catch (error) {
+        console.error("Failed to create quick note:", error)
+        toast.error("Failed to create quick note")
       }
     },
   },
