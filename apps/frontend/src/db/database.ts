@@ -78,8 +78,8 @@ export interface CachedStream {
    */
   contextBag?: StreamContextBagPayload
   /**
-   * End-to-end encrypted scratchpad markers. Present iff this stream is in
-   * `e2e_scratchpads`. Drives the send-path encrypt branch and the inbound
+   * End-to-end encryption markers. Present iff this stream is in
+   * `e2e_streams`. Drives the send-path encrypt branch and the inbound
    * decrypt branch. Both fields stay optional so existing cached rows from
    * older versions still parse — plaintext streams simply leave them
    * undefined.

@@ -76,11 +76,11 @@ export interface MessageCreatedPayload {
    */
   threadSummary?: ThreadSummary
   /**
-   * Set on messages originating in an E2E scratchpad stream. When present,
+   * Set on messages originating in an E2E stream. When present,
    * `contentJson` / `contentMarkdown` are placeholder values and consumers
    * must decrypt the ciphertext via the matching recipient envelope entry to
    * recover the real payload. Plaintext consumers (outbox handlers, search
-   * indexer) gate on `e2eScratchpads.isE2eStream` and short-circuit; the
+   * indexer) gate on `e2eStreams.isE2eStream` and short-circuit; the
    * frontend branches on the presence of `ciphertext` to drive the decrypt.
    */
   ciphertext?: string
@@ -151,9 +151,9 @@ export interface CreateMessageParams {
    */
   accessibleStreamIds?: string[]
   /**
-   * Set on messages bound for an E2E scratchpad stream. Caller must have
+   * Set on messages bound for an E2E stream. Caller must have
    * already verified that the target stream is E2E (the messaging handler
-   * does this via `E2eScratchpadsRepository.isE2eStream`); when present,
+   * does this via `E2eStreamsRepository.isE2eStream`); when present,
    * `contentJson` / `contentMarkdown` are placeholder values and the
    * canonical payload is the ciphertext + envelope blob below.
    */

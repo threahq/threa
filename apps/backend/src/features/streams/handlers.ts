@@ -50,7 +50,7 @@ const createStreamSchema = z
      * E2E activation at stream-creation time. When `e2eEnabled` is true,
      * `ownerKeyId` must reference the caller's active key in
      * `user_e2e_keys`; the handler verifies ownership and the service marks
-     * the stream in `e2e_scratchpads` inside the same transaction as the
+     * the stream in `e2e_streams` inside the same transaction as the
      * stream insert. Only scratchpads can be E2E in Phase 1.
      */
     e2eEnabled: z.literal(true).optional(),

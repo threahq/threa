@@ -278,8 +278,8 @@ export interface CreateDmMessageInputMarkdown {
 }
 
 /**
- * E2E input format - used by clients sending ciphertext into a scratchpad
- * marked in `e2e_scratchpads`. Backend verifies the stream is E2E (INV-E1)
+ * E2E input format - used by clients sending ciphertext into a stream
+ * marked in `e2e_streams`. Backend verifies the stream is E2E (INV-E1)
  * and stores `ciphertext` / `envelope` on the projection while substituting
  * a placeholder for `contentJson` / `contentMarkdown`.
  */

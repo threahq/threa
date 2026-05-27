@@ -63,12 +63,12 @@ const createMessageMarkdownToDmSchema = z.object({
   ...commonMessageOptionsSchema,
 })
 
-// Schema for E2E ciphertext input to an existing scratchpad stream. The
-// handler verifies the target stream is in `e2e_scratchpads` (INV-E1) so a
+// Schema for E2E ciphertext input to an existing E2E-enabled stream. The
+// handler verifies the target stream is in `e2e_streams` (INV-E1) so a
 // plaintext writer cannot impersonate an encrypted message and vice versa.
 // `contentJson` / `contentMarkdown` are intentionally absent: the handler
 // substitutes opaque placeholders for the projection so plaintext consumers
-// short-circuit on `e2eScratchpads.isE2eStream`.
+// short-circuit on `e2eStreams.isE2eStream`.
 //
 // Size caps bound the per-message storage footprint — without them a
 // workspace member could post multi-MB envelopes that never decrypt for
@@ -255,7 +255,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       // request must not land in a plaintext stream. Either direction would
       // produce a row that violates the encryption guarantee, so we mismatch
       // here before any insert occurs. `resolveWritableMessageStream` already
-      // populates `e2eEnabled` off the `e2e_scratchpads` LEFT JOIN, so we read
+      // populates `e2eEnabled` off the `e2e_streams` LEFT JOIN, so we read
       // it off the resolved stream instead of issuing a second SELECT.
       const isE2eStream = stream.e2eEnabled === true
       const isE2eRequest = "ciphertext" in data

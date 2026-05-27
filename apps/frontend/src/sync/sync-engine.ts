@@ -84,7 +84,7 @@ export class SyncEngine {
    * Workspace-scoped user id (`UserId`) for the active session — distinct
    * from `currentUser.id`, which is the WorkOS auth id. The E2E session
    * store keys by workspace user id (the same id stored in `e2e_keys` and
-   * on `e2e_scratchpads`), so the message decrypt path needs this one.
+   * on `e2e_streams`), so the message decrypt path needs this one.
    * Resolved by the React layer once `useWorkspaceUsers` has the row.
    */
   private currentWorkspaceUserId: string | null = null

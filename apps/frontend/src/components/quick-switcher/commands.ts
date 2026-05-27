@@ -23,7 +23,7 @@ export interface CommandContext {
   /**
    * Create a real (server-persisted) encrypted scratchpad and return its id.
    * Drafts don't apply here — the stream must exist on the server so the
-   * `e2e_scratchpads` row can be written atomically with the stream insert
+   * `e2e_streams` row can be written atomically with the stream insert
    * (INV-7). Returns the new stream id; throws/toasts if the user's E2E
    * session isn't unlocked.
    */

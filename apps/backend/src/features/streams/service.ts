@@ -31,7 +31,7 @@ import {
   type ContextBag,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
-import { E2eScratchpadsRepository } from "../e2e-scratchpads"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 
@@ -51,7 +51,7 @@ export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema
   contextBag?: ContextBag
   /**
    * Optional E2E activation. When present, the scratchpad row is inserted
-   * into `e2e_scratchpads` in the same transaction so plaintext consumers
+   * into `e2e_streams` in the same transaction so plaintext consumers
    * cannot race a window where the stream exists but its E2E flag does not.
    * Phase 1: `invitedAgentKind` is always "none" — only the owner can decrypt.
    */
@@ -399,7 +399,7 @@ export class StreamService {
       // can hand the encryption metadata back to the client without a
       // second round-trip.
       if (params.e2e) {
-        await E2eScratchpadsRepository.markStreamE2e(client, {
+        await E2eStreamsRepository.markStreamE2e(client, {
           streamId: stream.id,
           workspaceId: params.workspaceId,
           ownerUserId: params.createdBy,

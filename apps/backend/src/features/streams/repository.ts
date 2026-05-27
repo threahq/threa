@@ -25,7 +25,7 @@ interface StreamRow {
   archived_at: Date | null
   display_name_generated_at: Date | null
   /**
-   * Optional columns from a LEFT JOIN against `e2e_scratchpads`. Only the
+   * Optional columns from a LEFT JOIN against `e2e_streams`. Only the
    * `findById` family pulls them; bare `streams`-only queries leave the
    * fields undefined and `mapRowToStream` omits them on the result.
    */
@@ -97,7 +97,7 @@ export interface Stream {
   displayNameGeneratedAt: Date | null
   /**
    * End-to-end encryption metadata, populated by callers that LEFT JOIN
-   * `e2e_scratchpads`. Optional so existing read paths and test fixtures
+   * `e2e_streams`. Optional so existing read paths and test fixtures
    * stay untouched; the create handler and stream bootstrap explicitly
    * populate them.
    */
@@ -222,7 +222,7 @@ const SELECT_FIELDS_WITH_E2E = `
   e.owner_user_key_id AS e2e_owner_user_key_id
 `
 
-const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_scratchpads e ON e.stream_id = s.id`
+const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
 
 export const StreamRepository = {
   async findById(db: Querier, id: string): Promise<Stream | null> {
@@ -492,7 +492,7 @@ export const StreamRepository = {
     const { includeActive, includeArchived, filterAll } = parseArchiveStatusFilter(archiveStatus)
 
     // CTE to get last message per stream. LEFT JOIN against
-    // `e2e_scratchpads` so the workspace bootstrap surfaces the E2E flag
+    // `e2e_streams` so the workspace bootstrap surfaces the E2E flag
     // inline — without it, cold-loaded sidebar rows have undefined
     // `e2eEnabled` until the per-stream bootstrap fires, which would let
     // the composer briefly treat an existing E2E scratchpad as plaintext
@@ -521,7 +521,7 @@ export const StreamRepository = {
         e.owner_user_key_id AS e2e_owner_user_key_id
       FROM streams s
       LEFT JOIN last_messages lm ON lm.stream_id = s.id
-      LEFT JOIN e2e_scratchpads e ON e.stream_id = s.id
+      LEFT JOIN e2e_streams e ON e.stream_id = s.id
     `
 
     // Build query with visibility filter if user's membership stream IDs provided

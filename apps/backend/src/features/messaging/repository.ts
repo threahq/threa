@@ -49,7 +49,7 @@ export interface Message {
   deletedAt: Date | null
   createdAt: Date
   /**
-   * E2E ciphertext + envelope are populated for messages in `e2e_scratchpads`
+   * E2E ciphertext + envelope are populated for messages in `e2e_streams`
    * streams; `contentJson` / `contentMarkdown` carry an empty-doc placeholder
    * in that case (the canonical payload is the ciphertext). Non-E2E rows have
    * all three null.

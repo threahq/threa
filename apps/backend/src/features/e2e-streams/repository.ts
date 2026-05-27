@@ -3,7 +3,7 @@ import { sql } from "../../db"
 
 export type InvitedAgentKind = "bot" | "enclave" | "none"
 
-interface E2eScratchpadRow {
+interface E2eStreamRow {
   stream_id: string
   workspace_id: string
   enabled_at: Date
@@ -13,7 +13,7 @@ interface E2eScratchpadRow {
   invited_agent_key_id: string | null
 }
 
-export interface E2eScratchpad {
+export interface E2eStream {
   streamId: string
   workspaceId: string
   enabledAt: Date
@@ -35,7 +35,7 @@ export interface MarkStreamE2eParams {
 const COLUMNS =
   "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, invited_agent_kind, invited_agent_key_id"
 
-function mapRow(row: E2eScratchpadRow): E2eScratchpad {
+function mapRow(row: E2eStreamRow): E2eStream {
   return {
     streamId: row.stream_id,
     workspaceId: row.workspace_id,
@@ -47,30 +47,30 @@ function mapRow(row: E2eScratchpadRow): E2eScratchpad {
   }
 }
 
-export const E2eScratchpadsRepository = {
+export const E2eStreamsRepository = {
   async isE2eStream(db: Querier, workspaceId: string, streamId: string): Promise<boolean> {
     const result = await db.query<{ exists: boolean }>(sql`
       SELECT EXISTS (
-        SELECT 1 FROM e2e_scratchpads
+        SELECT 1 FROM e2e_streams
         WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
       ) AS exists
     `)
     return result.rows[0]?.exists ?? false
   },
 
-  async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eScratchpad | null> {
-    const result = await db.query<E2eScratchpadRow>(sql`
+  async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
+    const result = await db.query<E2eStreamRow>(sql`
       SELECT ${sql.raw(COLUMNS)}
-      FROM e2e_scratchpads
+      FROM e2e_streams
       WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
       LIMIT 1
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  async markStreamE2e(db: Querier, params: MarkStreamE2eParams): Promise<E2eScratchpad> {
-    const result = await db.query<E2eScratchpadRow>(sql`
-      INSERT INTO e2e_scratchpads (
+  async markStreamE2e(db: Querier, params: MarkStreamE2eParams): Promise<E2eStream> {
+    const result = await db.query<E2eStreamRow>(sql`
+      INSERT INTO e2e_streams (
         stream_id, workspace_id, owner_user_id, owner_user_key_id,
         invited_agent_kind, invited_agent_key_id
       )

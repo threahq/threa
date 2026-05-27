@@ -171,7 +171,7 @@ export interface Stream {
   archivedAt: string | null
   /**
    * End-to-end encryption metadata. Absent on plaintext streams; populated
-   * when the backend has joined against `e2e_scratchpads`. The composer
+   * when the backend has joined against `e2e_streams`. The composer
    * keys off `e2eEnabled === true` to decide whether to encrypt; the render
    * path keys off `Message.ciphertext` per-row.
    */
@@ -329,7 +329,7 @@ export interface Message {
   deletedAt: string | null
   createdAt: string
   /**
-   * E2E payload — populated only on messages from an `e2e_scratchpads` stream.
+   * E2E payload — populated only on messages from an `e2e_streams` stream.
    * `contentJson` / `contentMarkdown` carry a placeholder; consumers branch
    * on `ciphertext != null` to drive decrypt before render. `ciphertext` is
    * base64-encoded so it can travel over JSON.
