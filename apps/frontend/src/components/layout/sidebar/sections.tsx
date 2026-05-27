@@ -88,8 +88,17 @@ export function SectionHeader({
     </div>
   )
 
+  // Stop event propagation on the rightContent: the DropdownMenuContent
+  // renders in a React portal, but React still propagates synthetic events
+  // through the React tree — without this guard, clicking (or pressing
+  // Enter/Space on) a menu item bubbles up to the header's `onToggle` and
+  // collapses the section as a side effect.
   const rightContent = (
-    <div className="flex items-center gap-1">
+    <div
+      className="flex items-center gap-1"
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
       {hasAggregate && (
         <UnreadBadge
           count={unreadAggregate}
@@ -99,18 +108,17 @@ export function SectionHeader({
           )}
         />
       )}
-      {!isCollapsed &&
-        (addMenuActions && addMenuActions.length > 0 ? (
-          <SidebarActionMenu
-            actions={addMenuActions}
-            trigger={addButton}
-            ariaLabel={addTooltip ?? "Create"}
-            align="end"
-            contentClassName="w-56"
-          />
-        ) : (
-          onAdd && addButton
-        ))}
+      {addMenuActions && addMenuActions.length > 0 ? (
+        <SidebarActionMenu
+          actions={addMenuActions}
+          trigger={addButton}
+          ariaLabel={addTooltip ?? "Create"}
+          align="end"
+          contentClassName="w-56"
+        />
+      ) : (
+        onAdd && addButton
+      )}
     </div>
   )
 

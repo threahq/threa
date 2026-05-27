@@ -97,6 +97,13 @@ export interface VirtualStream {
   parentMessageId: string | null
   rootStreamId: string | null
   archivedAt: string | null
+  /**
+   * Server-persisted streams may be end-to-end encrypted. Drafts can't be
+   * encrypted (encrypted scratchpads bypass the draft system and are
+   * created server-side immediately), so this is always undefined/false on
+   * draft virtual streams.
+   */
+  e2eEnabled?: boolean
 }
 
 export interface SendMessageInput {
@@ -449,6 +456,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         parentMessageId: baseStream.parentMessageId,
         rootStreamId: baseStream.rootStreamId,
         archivedAt: baseStream.archivedAt,
+        e2eEnabled: baseStream.e2eEnabled,
       }
     : undefined
 

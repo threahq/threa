@@ -13,6 +13,7 @@ import {
   Settings,
   Sparkles,
   Moon,
+  Lock,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
@@ -228,23 +229,64 @@ export function StreamPage() {
     }
   }
 
-  // Scratchpad companion-mode indicator. Drafts get an inert badge because
-  // the settings dialog reads from caches that don't have draft entries yet —
-  // the pill becomes interactive once the scratchpad is persisted.
+  // Scratchpad mode indicator. Three shapes share one pill slot:
+  //   - Encrypted (E2E): Lock + "Encrypted" — companion mode is locked off
+  //     server-side (INV-E1), so the lock is the more meaningful signal.
+  //   - Companion: Sparkles + "Companion" — Ariadne replies to new messages.
+  //   - Quiet: Moon + "Quiet" — silent capture, no AI replies.
+  // Drafts get an inert variant because the settings dialog reads from caches
+  // that don't have draft entries yet; the pill becomes interactive once the
+  // scratchpad is persisted. (E2E scratchpads are never drafts — they're
+  // server-persisted on creation.)
   let companionModeIndicator: React.ReactNode = null
   if (stream && isScratchpad && (isDraft || !isUnnamedScratchpad)) {
-    const isOn = stream.companionMode === CompanionModes.ON
-    const Icon = isOn ? Sparkles : Moon
-    const modeLabel = isOn ? "Companion" : "Quiet"
+    const isEncrypted = !!stream.e2eEnabled
+    const isOn = !isEncrypted && stream.companionMode === CompanionModes.ON
+
+    let Icon: typeof Sparkles
+    let modeLabel: string
+    let pillVariant: string
+    let hoverVariant: string
+    let iconTint: string
+    let interactiveAria: string
+    let inertAria: string
+    let tooltipBody: string
+
+    if (isEncrypted) {
+      Icon = Lock
+      modeLabel = "Encrypted"
+      pillVariant = "border-border bg-secondary text-foreground"
+      hoverVariant = "hover:bg-accent"
+      iconTint = "text-muted-foreground"
+      interactiveAria = "End-to-end encrypted. Open companion settings."
+      inertAria = "End-to-end encrypted"
+      tooltipBody = "End-to-end encrypted — Companion is disabled. Click for details."
+    } else if (isOn) {
+      Icon = Sparkles
+      modeLabel = "Companion"
+      pillVariant = "border-primary/30 bg-primary/5 text-foreground"
+      hoverVariant = "hover:bg-primary/10"
+      iconTint = "text-primary"
+      interactiveAria = "Companion is on. Click to change."
+      inertAria = "Companion on"
+      tooltipBody = "Ariadne replies to new messages. Click to change."
+    } else {
+      Icon = Moon
+      modeLabel = "Quiet"
+      pillVariant = "border-border bg-secondary text-muted-foreground"
+      hoverVariant = "hover:bg-accent hover:text-foreground"
+      iconTint = ""
+      interactiveAria = "Quiet mode. Click to change."
+      inertAria = "Quiet mode"
+      tooltipBody = "Silent capture — no AI replies. Click to change."
+    }
+
     const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
-    const pillVariant = isOn
-      ? "border-primary/30 bg-primary/5 text-foreground"
-      : "border-border bg-secondary text-muted-foreground"
 
     if (isDraft) {
       companionModeIndicator = (
-        <span className={cn(pillBase, pillVariant)} aria-label={isOn ? "Companion on" : "Quiet mode"}>
-          <Icon className={cn("h-3 w-3", isOn && "text-primary")} aria-hidden="true" />
+        <span className={cn(pillBase, pillVariant)} aria-label={inertAria}>
+          <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
           <span>{modeLabel}</span>
         </span>
       )
@@ -255,23 +297,19 @@ export function StreamPage() {
             <button
               type="button"
               onClick={() => openStreamSettings(streamId, "companion")}
-              aria-label={isOn ? "Companion is on. Click to change." : "Quiet mode. Click to change."}
+              aria-label={interactiveAria}
               className={cn(
                 pillBase,
                 pillVariant,
                 "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                isOn ? "hover:bg-primary/10" : "hover:bg-accent hover:text-foreground"
+                hoverVariant
               )}
             >
-              <Icon className={cn("h-3 w-3", isOn && "text-primary")} aria-hidden="true" />
+              <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
               <span>{modeLabel}</span>
             </button>
           </TooltipTrigger>
-          <TooltipContent>
-            {isOn
-              ? "Ariadne replies to new messages. Click to change."
-              : "Silent capture — no AI replies. Click to change."}
-          </TooltipContent>
+          <TooltipContent>{tooltipBody}</TooltipContent>
         </Tooltip>
       )
     }

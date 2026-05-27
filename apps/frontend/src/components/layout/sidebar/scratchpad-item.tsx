@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, type RefObject } from "react"
-import { Archive, FileEdit, Settings, Sparkles } from "lucide-react"
+import { Archive, FileEdit, Lock, Settings, Sparkles } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
@@ -115,10 +115,15 @@ export function ScratchpadItem({
 
   const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
 
-  const companionDecoration =
-    streamWithPreview.companionMode === CompanionModes.ON
-      ? { icon: Sparkles, color: "text-primary", ariaLabel: "AI companion attached" }
-      : null
+  // E2E and companion-on are mutually exclusive (INV-E1 forces companion off
+  // server-side for encrypted streams), so a single decoration slot is enough
+  // — lock takes priority when both shapes could theoretically apply.
+  let decoration: { icon: typeof Lock; color: string; ariaLabel: string } | null = null
+  if (streamWithPreview.e2eEnabled) {
+    decoration = { icon: Lock, color: "text-muted-foreground", ariaLabel: "Encrypted scratchpad" }
+  } else if (streamWithPreview.companionMode === CompanionModes.ON) {
+    decoration = { icon: Sparkles, color: "text-primary", ariaLabel: "AI companion attached" }
+  }
 
   return (
     <>
@@ -145,7 +150,7 @@ export function ScratchpadItem({
             <StreamItemAvatar
               icon={<FileEdit className="h-3.5 w-3.5" />}
               className="bg-primary/10 text-primary"
-              decoration={companionDecoration}
+              decoration={decoration}
             />
 
             <div
