@@ -8,6 +8,8 @@ allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bas
 
 3 parallel Sonnet reviewers with inline self-scoring (threshold ≥80/100) → filtered comment.
 
+> **Remote / web sessions:** `gh` is not installed and the GitHub MCP server cannot reliably update existing issue comments (the supersede step in Step 6 silently no-ops). If `gh` fails with "command not found", use the **`github-api-web` skill** for every GitHub interaction in this skill — list/read/post/**PATCH** comments via `curl $GH_TOKEN`. Do NOT fall back to `mcp__github__*` for the supersede flow; it cannot edit prior comment bodies.
+
 ## Step 1: Eligibility
 
 ```bash
@@ -133,7 +135,9 @@ No issues found. Checked for bugs, CLAUDE.md compliance, plan adherence, design 
 <sub>If this review was useful, react with 👍. Otherwise, react with 👎.</sub>
 ```
 
-**Supersede old comments** (for each active ID from Step 1): Fetch old body via `gh api`, replace `<!-- unified-review -->` with `<!-- unified-review:old -->`, update with `<!-- unified-review:superseded -->`, link to new comment, preserve full old content in `<details>`.
+**Supersede old comments** (for each active ID from Step 1): Fetch old body, replace `<!-- unified-review -->` with `<!-- unified-review:old -->`, update with `<!-- unified-review:superseded -->`, link to new comment, preserve full old content in `<details>`.
+
+Use `gh api -X PATCH repos/OWNER/REPO/issues/comments/ID -f body=...` locally, or `curl -X PATCH` per the **`github-api-web`** skill in remote/web sessions. **Do not attempt this via `mcp__github__*`** — the MCP server does not expose a working issue-comment edit, and skipping supersede leaves stale reviews stacked on the PR (this is the most common remote-session failure mode for this skill).
 
 ## Step 7: Report to User
 
