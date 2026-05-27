@@ -383,3 +383,66 @@ describe("fetchWsHintFromConfig", () => {
     expect(__testing.WS_RESOLVE_RETRY_MS).toBe(60_000)
   })
 })
+
+describe("sanitizeInstanceIdSegment", () => {
+  test("replaces dots (macOS hostname `.lan` regression)", () => {
+    expect(__testing.sanitizeInstanceIdSegment("kristoffers-mbp.lan")).toBe("kristoffers-mbp-lan")
+  })
+
+  test("collapses runs of unsafe chars into a single dash", () => {
+    expect(__testing.sanitizeInstanceIdSegment("host..name....with.dots")).toBe("host-name-with-dots")
+  })
+
+  test("strips leading and trailing separators", () => {
+    expect(__testing.sanitizeInstanceIdSegment(".lan.")).toBe("lan")
+    expect(__testing.sanitizeInstanceIdSegment("---abc---")).toBe("abc")
+  })
+
+  test("passes through already-safe identifiers unchanged", () => {
+    expect(__testing.sanitizeInstanceIdSegment("pi-host-abc123")).toBe("pi-host-abc123")
+    expect(__testing.sanitizeInstanceIdSegment("UPPER_lower-09")).toBe("UPPER_lower-09")
+  })
+
+  test("collapses to empty when the input contains no safe characters at all", () => {
+    expect(__testing.sanitizeInstanceIdSegment("...")).toBe("")
+    expect(__testing.sanitizeInstanceIdSegment("")).toBe("")
+  })
+})
+
+describe("migrateInstanceId", () => {
+  test("rewrites a dotted macOS-hostname id without losing the random suffix", () => {
+    // Realistic shape of a macOS-derived id (`hostname()` returns `*.lan`).
+    // The server `bot:hello` schema (`^[A-Za-z0-9_-]+$`) rejects the dot, so
+    // the migration must preserve the suffix while normalising the host.
+    expect(__testing.migrateInstanceId("pi-kristoffers-mbp.lan-249fae79")).toBe("pi-kristoffers-mbp-lan-249fae79")
+  })
+
+  test("leaves an already-valid id untouched (no churn for healthy installs)", () => {
+    expect(__testing.migrateInstanceId("pi-host-abc12345")).toBe("pi-host-abc12345")
+  })
+
+  test("falls back to a fresh `pi-<random>` id when sanitization collapses to empty", () => {
+    const result = __testing.migrateInstanceId("...")
+    expect(result).toMatch(/^pi-[0-9a-f]{8}$/)
+  })
+})
+
+describe("formatHelloAckDetails", () => {
+  test("renders Zod fieldErrors as a parenthesized summary", () => {
+    expect(
+      __testing.formatHelloAckDetails({
+        instanceId: ["instanceId must be 1-64 chars of [A-Za-z0-9_-]"],
+      })
+    ).toBe(' (instanceId: ["instanceId must be 1-64 chars of [A-Za-z0-9_-]"])')
+  })
+
+  test("returns empty when details are missing or not an object", () => {
+    expect(__testing.formatHelloAckDetails(undefined)).toBe("")
+    expect(__testing.formatHelloAckDetails(null)).toBe("")
+    expect(__testing.formatHelloAckDetails("nope")).toBe("")
+  })
+
+  test("returns empty when details are an empty object (server sent the field but no entries)", () => {
+    expect(__testing.formatHelloAckDetails({})).toBe("")
+  })
+})

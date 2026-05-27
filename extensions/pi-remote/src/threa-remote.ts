@@ -227,10 +227,37 @@ function saveConfig(): void {
   writeFileSync(CONFIG_PATH, `${JSON.stringify(persisted, null, 2)}\n`)
 }
 
+// Server `bot:hello` schema constrains `instanceId` to `^[A-Za-z0-9_-]+$`
+// (see backend `socket-handler.ts`). macOS `hostname()` returns values like
+// `kristoffers-mbp.lan` — the literal dot breaks the regex and the handshake
+// rejects every connect, silently degrading the plugin to a 30s WS backstop
+// poll. Sanitize at the boundary and migrate previously-persisted bad ids.
+const INSTANCE_ID_REGEX = /^[A-Za-z0-9_-]+$/
+const INSTANCE_ID_UNSAFE_CHARS = /[^A-Za-z0-9_-]+/g
+
+function sanitizeInstanceIdSegment(raw: string): string {
+  return raw.replace(INSTANCE_ID_UNSAFE_CHARS, "-").replace(/^-+|-+$/g, "")
+}
+
+function migrateInstanceId(stored: string): string {
+  if (INSTANCE_ID_REGEX.test(stored)) return stored
+  const cleaned = sanitizeInstanceIdSegment(stored)
+  return cleaned.length > 0 ? cleaned : `pi-${crypto.randomUUID().slice(0, 8)}`
+}
+
 function ensureInstanceId(): string {
   if (!config) throw new Error("Threa remote config not loaded")
-  if (config.instanceId) return config.instanceId
-  config.instanceId = `pi-${hostname()}-${crypto.randomUUID().slice(0, 8)}`
+  if (config.instanceId) {
+    const migrated = migrateInstanceId(config.instanceId)
+    if (migrated !== config.instanceId) {
+      config.instanceId = migrated
+      saveConfig()
+    }
+    return config.instanceId
+  }
+  const host = sanitizeInstanceIdSegment(hostname())
+  const prefix = host.length > 0 ? `pi-${host}` : "pi"
+  config.instanceId = `${prefix}-${crypto.randomUUID().slice(0, 8)}`
   saveConfig()
   return config.instanceId
 }
@@ -530,6 +557,12 @@ function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
   })
 }
 
+function formatHelloAckDetails(details: unknown): string {
+  if (!isObject(details)) return ""
+  const parts = Object.entries(details).map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+  return parts.length > 0 ? ` (${parts.join("; ")})` : ""
+}
+
 function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!botSocket || !config) return
   const sessionLink = getCurrentSessionLink(ctx)
@@ -540,8 +573,22 @@ function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
       return
     }
     if (ack.ok !== true) {
+      // Fail loud: leaving the socket up with `botWsConnected = true` would
+      // keep us on the 30s WS backstop poll while no event will ever reach
+      // us (no room join happened). Drop the socket so polling resumes at
+      // the fast (3s) floor.
       const message = typeof ack.error === "string" ? ack.error : "unknown error"
-      noteWsDebug(ctx, `bot:hello rejected: ${message}`)
+      const details = formatHelloAckDetails((ack as { details?: unknown }).details)
+      noteWsDebug(ctx, `bot:hello rejected: ${message}${details}`)
+      setRemoteStatus(ctx, `Threa remote: WS handshake rejected — ${message}`, "error")
+      tearDownBotWebSocket()
+      // Gate re-resolve so a persistently-rejecting server doesn't get
+      // hammered every poll tick (~3s when WS is down). `tearDownBotWebSocket`
+      // resets the throttle so a `/configure` retries immediately; we set it
+      // here AFTER teardown to apply the 60s backoff specifically to the
+      // handshake-failure path. The next user-initiated path (`enableRemote`,
+      // `createRemoteSession`) passes `{ force: true }` and bypasses this.
+      lastWsResolveAttemptAt = Date.now()
       return
     }
     if (typeof ack.serverGeneratedAt === "string") {
@@ -1985,6 +2032,9 @@ export const __testing = {
   parseWsHint,
   buildBotSocketUrl,
   fetchWsHintFromConfig,
+  sanitizeInstanceIdSegment,
+  migrateInstanceId,
+  formatHelloAckDetails,
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
   WS_BACKSTOP_POLL_MS,
