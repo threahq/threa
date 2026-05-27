@@ -58,6 +58,22 @@ export const E2eStreamsRepository = {
     return result.rows[0]?.exists ?? false
   },
 
+  /**
+   * Return the subset of `streamIds` that are E2E in this workspace.
+   * Used by the search service to partition a user's accessible streams
+   * into plaintext (server-searchable) vs E2E (skip + count for the
+   * "X encrypted streams excluded" indicator).
+   */
+  async filterE2eStreamIds(db: Querier, workspaceId: string, streamIds: string[]): Promise<string[]> {
+    if (streamIds.length === 0) return []
+    const result = await db.query<{ stream_id: string }>(sql`
+      SELECT stream_id
+      FROM e2e_streams
+      WHERE workspace_id = ${workspaceId} AND stream_id = ANY(${streamIds})
+    `)
+    return result.rows.map((row) => row.stream_id)
+  },
+
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
     const result = await db.query<E2eStreamRow>(sql`
       SELECT ${sql.raw(COLUMNS)}

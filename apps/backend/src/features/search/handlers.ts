@@ -99,7 +99,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
       // Resolve access before calling the auth-agnostic search service
       const accessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, filters)
 
-      const results = await searchService.search({
+      const { results, excludedE2eStreamCount } = await searchService.search({
         workspaceId,
         permissions: { accessibleStreamIds },
         query,
@@ -110,6 +110,7 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
 
       res.json({
         results: results.map(serializeSearchResult),
+        excludedE2eStreamCount,
       })
     },
   }

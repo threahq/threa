@@ -129,7 +129,7 @@ Optionally filter by stream using ID (stream_xxx), slug (general), or prefixed s
           filterStreamIds = [resolved.id]
         }
 
-        const searchResults = await searchService.search({
+        const { results: searchResults } = await searchService.search({
           workspaceId,
           permissions: { accessibleStreamIds },
           query: input.query,

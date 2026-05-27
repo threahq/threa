@@ -4,6 +4,7 @@ import type { EmbeddingServiceLike } from "../memos"
 import { logger } from "../../lib/logger"
 import type { StreamType } from "@threa/types"
 import { SEMANTIC_DISTANCE_THRESHOLD } from "./config"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 export type ArchiveStatus = "active" | "archived"
 
@@ -42,6 +43,18 @@ export interface SearchParams {
   skipEmbedding?: boolean
 }
 
+export interface SearchResponse {
+  results: SearchResult[]
+  /**
+   * Number of streams in the requester's accessible set that were skipped
+   * because they are E2E-encrypted. The server can't search their content;
+   * the frontend uses this count to surface a "X encrypted streams not
+   * searched here" indicator and run a parallel client-side search against
+   * its local index.
+   */
+  excludedE2eStreamCount: number
+}
+
 export interface SearchServiceDependencies {
   pool: Pool
   embeddingService: EmbeddingServiceLike
@@ -68,7 +81,7 @@ export class SearchService {
    * The caller resolves access boundaries and passes them via `permissions`.
    * This keeps SearchService auth-agnostic — it works for session auth, API keys, and agents.
    */
-  async search(params: SearchParams): Promise<SearchResult[]> {
+  async search(params: SearchParams): Promise<SearchResponse> {
     const {
       workspaceId,
       permissions,
@@ -82,11 +95,24 @@ export class SearchService {
     logger.debug({ query, filters, workspaceId, exact }, "Search request")
 
     // Intersect caller-provided accessible streams with any filter-requested streams
-    const streamIds = this.resolveStreamIds(permissions.accessibleStreamIds, filters)
+    const candidateStreamIds = this.resolveStreamIds(permissions.accessibleStreamIds, filters)
+
+    // Partition out E2E streams: the server can't read their ciphertext, so
+    // we exclude them from the SQL search and report the count so the
+    // frontend can surface the gap and run its own client-side search.
+    const e2eStreamIds = await E2eStreamsRepository.filterE2eStreamIds(this.pool, workspaceId, candidateStreamIds)
+    const excludedE2eStreamCount = e2eStreamIds.length
+    const streamIds =
+      excludedE2eStreamCount === 0
+        ? candidateStreamIds
+        : (() => {
+            const e2eSet = new Set(e2eStreamIds)
+            return candidateStreamIds.filter((id) => !e2eSet.has(id))
+          })()
 
     if (streamIds.length === 0) {
-      logger.debug({ workspaceId }, "No accessible streams")
-      return []
+      logger.debug({ workspaceId, excludedE2eStreamCount }, "No accessible plaintext streams")
+      return { results: [], excludedE2eStreamCount }
     }
 
     const repoFilters: ResolvedFilters = {
@@ -98,12 +124,13 @@ export class SearchService {
 
     // For exact matching, skip embedding generation - use ILIKE directly (INV-30: single query, pass pool)
     if (exact) {
-      return SearchRepository.exactSearch(this.pool, {
+      const results = await SearchRepository.exactSearch(this.pool, {
         query,
         streamIds,
         filters: repoFilters,
         limit,
       })
+      return { results, excludedE2eStreamCount }
     }
 
     // Generate embedding for search query (do this before DB connection - INV-41)
@@ -122,15 +149,16 @@ export class SearchService {
     const hasEmbedding = embedding.length > 0
 
     if (!hasQuery || !hasEmbedding) {
-      return SearchRepository.fullTextSearch(this.pool, {
+      const results = await SearchRepository.fullTextSearch(this.pool, {
         query: normalizedQuery,
         streamIds,
         filters: repoFilters,
         limit,
       })
+      return { results, excludedE2eStreamCount }
     }
 
-    return SearchRepository.hybridSearch(this.pool, {
+    const results = await SearchRepository.hybridSearch(this.pool, {
       query: normalizedQuery,
       embedding,
       streamIds,
@@ -138,6 +166,7 @@ export class SearchService {
       limit,
       semanticDistanceThreshold: SEMANTIC_DISTANCE_THRESHOLD,
     })
+    return { results, excludedE2eStreamCount }
   }
 
   /**
