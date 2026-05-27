@@ -757,7 +757,7 @@ export function createPublicApiHandlers({
             rootStreamId: existingLink.rootStreamId,
             activeStreamId: existingLink.activeStreamId,
             runtimeSessionId: existingLink.runtimeSessionId,
-            streamUrlPath: `/streams/${existingLink.activeStreamId}`,
+            streamUrlPath: `/w/${req.workspaceId!}/s/${existingLink.activeStreamId}`,
           },
         })
       }
@@ -792,7 +792,7 @@ export function createPublicApiHandlers({
           rootStreamId: link.rootStreamId,
           activeStreamId: link.activeStreamId,
           runtimeSessionId: link.runtimeSessionId,
-          streamUrlPath: `/streams/${stream.id}`,
+          streamUrlPath: `/w/${req.workspaceId!}/s/${stream.id}`,
         },
       })
     },

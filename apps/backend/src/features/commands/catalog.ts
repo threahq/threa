@@ -1,7 +1,7 @@
 import { CommandKinds, CommandScopes, DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandRegistry } from "./registry"
 
-export const PI_SESSION_CONTROL_COMMAND_NAMES = ["compact", "model", "thinking", "skill", "reload"] as const
+export const PI_SESSION_CONTROL_COMMAND_NAMES = ["compact", "model", "thinking", "skill", "reload", "shell"] as const
 export type PiSessionControlCommandName = (typeof PI_SESSION_CONTROL_COMMAND_NAMES)[number]
 
 export function listServerCommandInfos(commandRegistry: CommandRegistry): CommandInfo[] {
@@ -69,6 +69,13 @@ export function listPiSessionControlCommandInfos(): CommandInfo[] {
       description: "Reload Pi extensions, skills, prompts, and themes",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
+    },
+    {
+      name: "shell",
+      description: "Run a shell command in the linked Pi session's working directory",
+      kind: CommandKinds.BOT_RUNTIME,
+      scope: CommandScopes.STREAM,
+      args: [{ name: "command", required: true, description: "Shell command to run (passed to `$SHELL -c`)" }],
     },
   ]
 }
