@@ -442,7 +442,7 @@ function sanitizeTraceSection(section: unknown): SafeTraceSection | null {
 // of the API key holder; the allowlist + regex here is defense-in-depth,
 // not a guarantee. Do not loosen this (relax the allowlist, drop the
 // length caps, or pass arbitrary fields through) without revisiting the
-// threat model — see docs/examples/pi-remote/ for the trusted-runtime
+// threat model — see extensions/pi-remote/ for the trusted-runtime
 // contract.
 export function sanitizeInvocationStepContent(content: string): string {
   const redacted = redactSensitiveText(content)

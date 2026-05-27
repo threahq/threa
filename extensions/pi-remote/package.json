@@ -1,0 +1,16 @@
+{
+  "name": "@threa/pi-remote-extension",
+  "private": true,
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "dependencies": {
+    "socket.io-client": "^4.8.1"
+  },
+  "pi": {
+    "extensions": [
+      "./src/threa-remote.ts"
+    ]
+  }
+}

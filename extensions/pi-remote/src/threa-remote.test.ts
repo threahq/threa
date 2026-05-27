@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { __testing } from "./threa-remote-v2"
+import { __testing } from "./threa-remote"
 
 describe("Pi remote trace safety", () => {
   test("omits sensitive bash command arguments from tool_call traces", () => {
