@@ -5,35 +5,21 @@ interface ActiveBotStatusStripProps {
   botName: string
   runtimeDisplayName: string | null
   status: BotRuntimeStatus | "unknown"
-  statusText?: string | null
   className?: string
 }
 
 const STATUS_COPY: Record<BotRuntimeStatus | "unknown", string> = {
   available: "Available",
   busy: "Working",
-  offline: "Offline",
-  error: "Error",
-  unknown: "Not linked",
+  offline: "Not connected",
+  error: "Not connected",
+  unknown: "Not connected",
 }
 
-const STATUS_DOT_CLASS: Record<BotRuntimeStatus | "unknown", string> = {
-  available: "bg-emerald-500",
-  busy: "animate-pulse bg-amber-500",
-  offline: "bg-muted-foreground/40",
-  error: "animate-pulse bg-destructive",
-  unknown: "bg-muted-foreground/40",
-}
-
-export function ActiveBotStatusStrip({
-  botName,
-  runtimeDisplayName,
-  status,
-  statusText,
-  className,
-}: ActiveBotStatusStripProps) {
-  const statusCopy = statusText?.trim() || STATUS_COPY[status]
-  const detail = runtimeDisplayName ? runtimeDisplayName : "run /remote-control in Pi to connect"
+export function ActiveBotStatusStrip({ botName, runtimeDisplayName, status, className }: ActiveBotStatusStripProps) {
+  const isConnected = status === "available" || status === "busy"
+  const statusCopy = STATUS_COPY[status]
+  const detail = isConnected ? runtimeDisplayName?.trim() || null : null
 
   return (
     <div
@@ -43,12 +29,33 @@ export function ActiveBotStatusStrip({
       )}
       aria-live="polite"
     >
-      <span className={cn("inline-block size-2 rounded-full", STATUS_DOT_CLASS[status])} aria-hidden="true" />
-      <span className="text-foreground">{botName}</span>
-      <span aria-hidden="true"> · </span>
-      <span className="max-w-48 truncate">{statusCopy}</span>
-      <span aria-hidden="true"> · </span>
-      <span>{detail}</span>
+      <span
+        className={cn(
+          "inline-block size-2 shrink-0 rounded-full",
+          isConnected ? "bg-emerald-500" : "bg-muted-foreground/40"
+        )}
+        aria-hidden="true"
+      />
+      <span className="shrink-0 text-foreground">{botName}</span>
+      <span className="shrink-0" aria-hidden="true">
+        {" "}
+        ·{" "}
+      </span>
+      <span className="shrink-0">{statusCopy}</span>
+      {detail && (
+        <>
+          <span className="shrink-0" aria-hidden="true">
+            {" "}
+            ·{" "}
+          </span>
+          {/* RTL truncation so the tail of the path (e.g. the project folder)
+              stays visible while a long prefix is replaced by an ellipsis. The
+              leading LRM keeps neutral characters like `/` rendering LTR. */}
+          <span className="min-w-0 truncate" style={{ direction: "rtl", textAlign: "left" }}>
+            {`‎${detail}`}
+          </span>
+        </>
+      )}
     </div>
   )
 }

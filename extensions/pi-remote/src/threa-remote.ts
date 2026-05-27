@@ -277,6 +277,19 @@ function ensureInstanceId(): string {
   return config.instanceId
 }
 
+// Tildified cwd for the bot presence pill. The scratchpad UI shows this as
+// the "where Pi is running" hint, so a shell-style `~/dev/foo` reads better
+// than the static "Local Pi" we used to send.
+function presenceDisplayNameFromCwd(cwd: string | undefined): string | undefined {
+  if (!cwd) return undefined
+  const home = homedir()
+  const isUnderHome = cwd === home || cwd.startsWith(`${home}/`)
+  const labeled = isUnderHome ? `~${cwd.slice(home.length)}` : cwd
+  // `upsertPresenceSchema` caps `displayName` at 100 chars; the strip CSS-truncates
+  // anything longer, but keep the wire payload inside the validator's limit.
+  return labeled.length > 100 ? labeled.slice(-100) : labeled
+}
+
 function getRuntimeSessionId(ctx: ExtensionContext): string {
   const sessionId = ctx.sessionManager.getSessionId()
   if (sessionId) return sessionId
@@ -431,7 +444,7 @@ async function heartbeat(
       runtimeKind: "pi-local",
       instanceId: ensureInstanceId(),
       runtimeSessionId,
-      displayName: config.defaultDisplayName,
+      displayName: presenceDisplayNameFromCwd(ctx?.cwd) ?? config.defaultDisplayName,
       status,
       acceptingInvocations: status === "available",
       capabilities: buildRuntimeCapabilities(ctx),
@@ -505,7 +518,7 @@ function buildBotHelloPayload(ctx: ExtensionContext, sinceCursor: string | undef
     instanceId: ensureInstanceId(),
     runtimeKind: "pi-local",
     runtimeSessionId: getRuntimeSessionId(ctx),
-    displayName: config?.defaultDisplayName,
+    displayName: presenceDisplayNameFromCwd(ctx.cwd) ?? config?.defaultDisplayName,
     supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
     capabilities: buildRuntimeCapabilities(ctx),
     ...(sinceCursor ? { sinceCursor } : {}),
