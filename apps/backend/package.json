@@ -31,6 +31,7 @@
     "@opentelemetry/sdk-node": "^0.208.0",
     "@opentelemetry/sdk-trace-base": "^2.0.1",
     "@socket.io/postgres-adapter": "^0.4",
+    "@threa/agent-runtime": "workspace:*",
     "@threa/backend-common": "workspace:*",
     "@threa/prosemirror": "workspace:*",
     "@threa/types": "workspace:*",

@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { clearDecryptCache } from "@/lib/crypto/decrypt-cache"
-import { base64ToBytes, bytesToBase64 } from "@/lib/crypto/encoding"
+import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
 import { db, type CachedE2eKey } from "@/db"

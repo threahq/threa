@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import { fingerprintPublicKey, generateUIK, unwrapPrivate, wrapPrivate } from "../keys"
 import { deriveKEK, generateSalt, DEFAULT_KDF_PARAMS } from "../passphrase"
-import { encryptPayload, decryptPayloadAsString } from "../envelope"
+import { encryptPayload, decryptPayloadAsString } from "@threa/crypto"
 
 // Argon2id on the desktop CI runs in ~50ms with the defaults below; tighten
 // further if test runtime becomes an issue.

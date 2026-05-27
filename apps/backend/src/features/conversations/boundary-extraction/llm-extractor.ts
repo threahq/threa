@@ -1,5 +1,5 @@
 import { NoObjectGeneratedError } from "ai"
-import type { AI } from "../../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import type {

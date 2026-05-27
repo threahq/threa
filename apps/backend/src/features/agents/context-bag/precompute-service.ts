@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import { withClient } from "../../../db"
-import type { AI, CostContext } from "../../../lib/ai/ai"
+import type { AI, CostContext } from "@threa/agent-runtime"
 import type { ContextIntent, ContextRef, ContextRefKind } from "@threa/types"
 import { HttpError } from "../../../lib/errors"
 import { logger } from "../../../lib/logger"

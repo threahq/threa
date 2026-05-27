@@ -7,7 +7,7 @@ import { StreamRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
 import * as displayNameModule from "./display-name"
-import type { AI } from "../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ComponentConfig } from "../../lib/ai/config-resolver"
 
 // Mock message formatter

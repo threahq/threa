@@ -61,7 +61,7 @@ import {
   AttachmentService,
   createMalwareScanner,
 } from "../../../src/features/attachments"
-import { createModelRegistry, type ModelRegistry } from "../../../src/lib/ai/model-registry"
+import { createModelRegistry, type ModelRegistry } from "@threa/agent-runtime"
 import type { StorageProvider } from "../../../src/lib/storage/s3-client"
 import type { Server } from "socket.io"
 import { parseMarkdown } from "@threa/prosemirror"

@@ -162,8 +162,8 @@ import type { AuthorType } from "@threa/types"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
-import { createAI } from "./lib/ai/ai"
-import { createModelRegistry } from "./lib/ai/model-registry"
+import { createAI } from "@threa/agent-runtime"
+import { createModelRegistry } from "@threa/agent-runtime"
 import { createStaticConfigResolver } from "./lib/ai/static-config-resolver"
 import {
   QueueManager,

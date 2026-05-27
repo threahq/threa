@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import { z } from "zod"
 import { withClient } from "../../../db"
-import { isAbortError, type AI } from "../../../lib/ai/ai"
+import { isAbortError, type AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import type { TraceSource } from "@threa/types"

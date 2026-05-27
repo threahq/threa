@@ -3,7 +3,7 @@
  * Pricing is NOT here — it lives in models.yaml and is read via ModelRegistry (INV-33).
  */
 
-import { parseModelId } from "../../lib/ai/ai"
+import { parseModelId } from "@threa/agent-runtime"
 
 export const VOICE_DEFAULT_MODEL = "elevenlabs:scribe-v2-realtime"
 

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
-import type { AI } from "../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import type { Message } from "../messaging"
 import { MessageRepository } from "../messaging"
 import { ConversationSummaryRepository } from "./conversation-summary-repository"

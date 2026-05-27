@@ -1,7 +1,7 @@
 import { describe, expect, it, mock } from "bun:test"
 import { createPolishTranscript, scrubDashes } from "./polish"
 import { POLISH_MODEL } from "./config"
-import type { AI } from "../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 
 type GenerateTextArgs = Parameters<AI["generateText"]>[0]
 

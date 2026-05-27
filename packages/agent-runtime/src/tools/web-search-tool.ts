@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { AgentStepTypes } from "@threa/types"
-import { logger } from "../../../lib/logger"
+import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 
 const WebSearchSchema = z.object({

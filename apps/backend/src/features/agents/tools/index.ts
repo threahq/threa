@@ -1,12 +1,18 @@
 export { type WorkspaceToolDeps } from "./tool-deps"
+// Web + send tools moved to @threa/agent-runtime (shared with the enclave).
+// Re-exported here so backend imports (`../tools`) keep working.
 export {
   createSendMessageTool,
   type SendMessageInput,
   type SendMessageInputWithSources,
   type SendMessageResult,
-} from "./send-message-tool"
-export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "./web-search-tool"
-export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "./read-url-tool"
+  createWebSearchTool,
+  type WebSearchInput,
+  type WebSearchResult,
+  createReadUrlTool,
+  type ReadUrlInput,
+  type ReadUrlResult,
+} from "@threa/agent-runtime"
 export {
   createSearchMessagesTool,
   createSearchStreamsTool,

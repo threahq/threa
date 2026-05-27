@@ -1,7 +1,7 @@
 import { describe, expect, test, mock } from "bun:test"
 import { WorkspaceAgent, type WorkspaceAgentDeps, type WorkspaceAgentInput } from "./researcher"
 import type { Pool } from "pg"
-import type { AI } from "../../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import type { EmbeddingServiceLike } from "../../memos"
 

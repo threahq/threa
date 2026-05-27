@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { trace } from "@opentelemetry/api"
 import { AgentStepTypes } from "@threa/types"
-import { inMemoryExporter as exporter } from "../test-otel-setup"
+import { inMemoryExporter as exporter } from "./test-otel-setup"
 import { OtelObserver } from "./otel-observer"
 
 /**
