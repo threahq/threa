@@ -96,7 +96,7 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell"],
     })
   })
 
@@ -461,5 +461,124 @@ describe("formatHelloAckDetails", () => {
 
   test("returns empty when details are an empty object (server sent the field but no entries)", () => {
     expect(__testing.formatHelloAckDetails({})).toBe("")
+  })
+})
+
+describe("appendCapped", () => {
+  test("appends below the cap and reports no truncation", () => {
+    expect(__testing.appendCapped("abc", "def", 10)).toEqual({ text: "abcdef", truncated: false })
+  })
+
+  test("truncates at the cap and reports the overflow", () => {
+    expect(__testing.appendCapped("abcdef", "ghijklm", 8)).toEqual({ text: "abcdefgh", truncated: true })
+  })
+
+  test("returns the existing buffer untouched once the cap is already reached", () => {
+    expect(__testing.appendCapped("abcdefgh", "more", 8)).toEqual({ text: "abcdefgh", truncated: true })
+  })
+})
+
+describe("formatShellResult", () => {
+  const baseResult = {
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    elapsedMs: 142,
+    spawnError: null,
+  }
+
+  test("formats a successful run with stdout and exit 0", () => {
+    const body = __testing.formatShellResult("ls -la", { ...baseResult, stdout: "drwx 1\ndrwx 2\n" })
+    expect(body).toContain("```\n$ ls -la\ndrwx 1\ndrwx 2\n```")
+    expect(body).toContain("exit 0")
+    // Don't pin the duration formatter's wording — just verify the elapsed segment is there.
+    expect(body).toContain("·")
+  })
+
+  test("renders stderr in its own block only when present", () => {
+    const without = __testing.formatShellResult("true", baseResult)
+    expect(without).not.toContain("stderr")
+
+    const withErr = __testing.formatShellResult("missing-bin", {
+      ...baseResult,
+      stdout: "",
+      stderr: "command not found\n",
+      exitCode: 127,
+    })
+    expect(withErr).toContain("**stderr**")
+    expect(withErr).toContain("command not found")
+    expect(withErr).toContain("exit 127")
+  })
+
+  test("reports timeout instead of exit code when the command was killed by the watchdog", () => {
+    const body = __testing.formatShellResult("sleep 999", {
+      ...baseResult,
+      stdout: "",
+      exitCode: null,
+      signal: "SIGTERM",
+      timedOut: true,
+      elapsedMs: __testing.SHELL_TIMEOUT_MS,
+    })
+    expect(body).toContain("timed out after")
+    expect(body).not.toContain("exit 0")
+  })
+
+  test("appends 'output truncated' when either stream hit the cap", () => {
+    const body = __testing.formatShellResult("yes | head", {
+      ...baseResult,
+      stdout: "y\n".repeat(10),
+      stdoutTruncated: true,
+    })
+    expect(body).toContain("output truncated")
+  })
+
+  test("surfaces spawn errors instead of swallowing them as exit code", () => {
+    // INV-11: a spawn failure (e.g. cwd doesn't exist) must be visible to the
+    // user, not silently presented as `exit ?`.
+    const body = __testing.formatShellResult("anything", {
+      ...baseResult,
+      stdout: "",
+      exitCode: null,
+      spawnError: "ENOENT: cwd missing",
+    })
+    expect(body).toContain("spawn failed: ENOENT: cwd missing")
+  })
+})
+
+describe("execShellCommand", () => {
+  test("runs a successful command and captures stdout with exit 0", async () => {
+    const result = await __testing.execShellCommand("printf 'hello\\nworld\\n'", process.cwd())
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe("hello\nworld\n")
+    expect(result.stderr).toBe("")
+    expect(result.timedOut).toBe(false)
+    expect(result.spawnError).toBeNull()
+  })
+
+  test("captures non-zero exit codes without throwing", async () => {
+    const result = await __testing.execShellCommand("exit 7", process.cwd())
+    expect(result.exitCode).toBe(7)
+    expect(result.spawnError).toBeNull()
+  })
+
+  test("reports a spawn error when the working directory does not exist", async () => {
+    const result = await __testing.execShellCommand("echo ok", "/definitely/does/not/exist-xyz-12345")
+    expect(result.spawnError).not.toBeNull()
+    expect(result.exitCode).toBeNull()
+  })
+
+  test("caps stdout at SHELL_MAX_OUTPUT_CHARS and flags truncation", async () => {
+    // Generate well over the cap to make sure we actually hit it.
+    const result = await __testing.execShellCommand(
+      `node -e 'process.stdout.write("a".repeat(${__testing.SHELL_MAX_OUTPUT_CHARS + 1000}))'`,
+      process.cwd()
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.length).toBe(__testing.SHELL_MAX_OUTPUT_CHARS)
+    expect(result.stdoutTruncated).toBe(true)
   })
 })
