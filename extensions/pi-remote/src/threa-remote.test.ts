@@ -96,7 +96,7 @@ describe("Pi remote trace safety", () => {
   test("advertises session-control command capabilities", () => {
     expect(__testing.buildRuntimeCapabilities()).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell"],
     })
   })
 
@@ -222,12 +222,15 @@ describe("Pi remote trace safety", () => {
     expect(__testing.formatDuration(139 * 60_000)).toBe("2h 19m")
   })
 
-  test("builds scratchpad URLs from configured base URL and stream path", () => {
-    expect(__testing.buildScratchpadUrl("https://app.threa.io", "/workspaces/ws_123/streams/stream_123")).toBe(
-      "https://app.threa.io/workspaces/ws_123/streams/stream_123"
+  test("builds scratchpad URLs from workspace and stream ids the client already owns", () => {
+    // The frontend route is `/w/:workspaceId/s/:streamId`. Composing locally
+    // means the URL is right even when `link.streamUrlPath` was persisted by a
+    // server version that returned the legacy `/streams/<id>` shape.
+    expect(__testing.buildScratchpadUrl("https://app.threa.io", "ws_123", "stream_123")).toBe(
+      "https://app.threa.io/w/ws_123/s/stream_123"
     )
-    expect(__testing.buildScratchpadUrl("https://app.threa.io/app/", "streams/stream_123")).toBe(
-      "https://app.threa.io/app/streams/stream_123"
+    expect(__testing.buildScratchpadUrl("https://app.threa.io/app/", "ws_123", "stream_123")).toBe(
+      "https://app.threa.io/w/ws_123/s/stream_123"
     )
   })
 
@@ -381,5 +384,242 @@ describe("fetchWsHintFromConfig", () => {
 
   test("WS_RESOLVE_RETRY_MS gates retries to once a minute", () => {
     expect(__testing.WS_RESOLVE_RETRY_MS).toBe(60_000)
+  })
+})
+
+describe("sanitizeInstanceIdSegment", () => {
+  test("replaces dots (macOS hostname `.lan` regression)", () => {
+    expect(__testing.sanitizeInstanceIdSegment("kristoffers-mbp.lan")).toBe("kristoffers-mbp-lan")
+  })
+
+  test("collapses runs of unsafe chars into a single dash", () => {
+    expect(__testing.sanitizeInstanceIdSegment("host..name....with.dots")).toBe("host-name-with-dots")
+  })
+
+  test("strips leading and trailing separators", () => {
+    expect(__testing.sanitizeInstanceIdSegment(".lan.")).toBe("lan")
+    expect(__testing.sanitizeInstanceIdSegment("---abc---")).toBe("abc")
+  })
+
+  test("passes through already-safe identifiers unchanged", () => {
+    expect(__testing.sanitizeInstanceIdSegment("pi-host-abc123")).toBe("pi-host-abc123")
+    expect(__testing.sanitizeInstanceIdSegment("UPPER_lower-09")).toBe("UPPER_lower-09")
+  })
+
+  test("collapses to empty when the input contains no safe characters at all", () => {
+    expect(__testing.sanitizeInstanceIdSegment("...")).toBe("")
+    expect(__testing.sanitizeInstanceIdSegment("")).toBe("")
+  })
+})
+
+describe("migrateInstanceId", () => {
+  test("rewrites a dotted macOS-hostname id without losing the random suffix", () => {
+    // Realistic shape of a macOS-derived id (`hostname()` returns `*.lan`).
+    // The server `bot:hello` schema (`^[A-Za-z0-9_-]+$`) rejects the dot, so
+    // the migration must preserve the suffix while normalising the host.
+    expect(__testing.migrateInstanceId("pi-kristoffers-mbp.lan-249fae79")).toBe("pi-kristoffers-mbp-lan-249fae79")
+  })
+
+  test("leaves an already-valid id untouched (no churn for healthy installs)", () => {
+    expect(__testing.migrateInstanceId("pi-host-abc12345")).toBe("pi-host-abc12345")
+  })
+
+  test("falls back to a fresh `pi-<random>` id when sanitization collapses to empty", () => {
+    const result = __testing.migrateInstanceId("...")
+    expect(result).toMatch(/^pi-[0-9a-f]{8}$/)
+  })
+
+  test("returns a fresh id when the stored value is not a string", () => {
+    // `config.instanceId` is loaded via `JSON.parse` from disk and only the
+    // three required string fields are validated. A hand-edited config could
+    // park anything here, so we must tolerate non-strings without crashing.
+    expect(__testing.migrateInstanceId(undefined)).toMatch(/^pi-[0-9a-f]{8}$/)
+    expect(__testing.migrateInstanceId(null)).toMatch(/^pi-[0-9a-f]{8}$/)
+    expect(__testing.migrateInstanceId(42)).toMatch(/^pi-[0-9a-f]{8}$/)
+    expect(__testing.migrateInstanceId({})).toMatch(/^pi-[0-9a-f]{8}$/)
+  })
+
+  test("returns a fresh id when the stored value is an empty string", () => {
+    expect(__testing.migrateInstanceId("")).toMatch(/^pi-[0-9a-f]{8}$/)
+  })
+})
+
+describe("formatHelloAckDetails", () => {
+  test("renders Zod fieldErrors as a parenthesized summary", () => {
+    expect(
+      __testing.formatHelloAckDetails({
+        instanceId: ["instanceId must be 1-64 chars of [A-Za-z0-9_-]"],
+      })
+    ).toBe(' (instanceId: ["instanceId must be 1-64 chars of [A-Za-z0-9_-]"])')
+  })
+
+  test("returns empty when details are missing or not an object", () => {
+    expect(__testing.formatHelloAckDetails(undefined)).toBe("")
+    expect(__testing.formatHelloAckDetails(null)).toBe("")
+    expect(__testing.formatHelloAckDetails("nope")).toBe("")
+  })
+
+  test("returns empty when details are an empty object (server sent the field but no entries)", () => {
+    expect(__testing.formatHelloAckDetails({})).toBe("")
+  })
+})
+
+describe("appendCapped", () => {
+  test("appends below the cap and reports no truncation", () => {
+    expect(__testing.appendCapped("abc", "def", 10)).toEqual({ text: "abcdef", truncated: false })
+  })
+
+  test("truncates at the cap and reports the overflow", () => {
+    expect(__testing.appendCapped("abcdef", "ghijklm", 8)).toEqual({ text: "abcdefgh", truncated: true })
+  })
+
+  test("returns the existing buffer untouched once the cap is already reached", () => {
+    expect(__testing.appendCapped("abcdefgh", "more", 8)).toEqual({ text: "abcdefgh", truncated: true })
+  })
+})
+
+describe("formatShellResult", () => {
+  const baseResult = {
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    exitCode: 0,
+    signal: null,
+    timedOut: false,
+    elapsedMs: 142,
+    spawnError: null,
+  }
+
+  test("formats a successful run with stdout and exit 0", () => {
+    const body = __testing.formatShellResult("ls -la", { ...baseResult, stdout: "drwx 1\ndrwx 2\n" })
+    expect(body).toContain("```\n$ ls -la\ndrwx 1\ndrwx 2\n```")
+    expect(body).toContain("exit 0")
+    // Don't pin the duration formatter's wording — just verify the elapsed segment is there.
+    expect(body).toContain("·")
+  })
+
+  test("renders stderr in its own block only when present", () => {
+    const without = __testing.formatShellResult("true", baseResult)
+    expect(without).not.toContain("stderr")
+
+    const withErr = __testing.formatShellResult("missing-bin", {
+      ...baseResult,
+      stdout: "",
+      stderr: "command not found\n",
+      exitCode: 127,
+    })
+    expect(withErr).toContain("**stderr**")
+    expect(withErr).toContain("command not found")
+    expect(withErr).toContain("exit 127")
+  })
+
+  test("reports timeout instead of exit code when the command was killed by the watchdog", () => {
+    const body = __testing.formatShellResult("sleep 999", {
+      ...baseResult,
+      stdout: "",
+      exitCode: null,
+      signal: "SIGTERM",
+      timedOut: true,
+      elapsedMs: __testing.SHELL_TIMEOUT_MS,
+    })
+    expect(body).toContain("timed out after")
+    expect(body).not.toContain("exit 0")
+  })
+
+  test("appends 'output truncated' when either stream hit the cap", () => {
+    const body = __testing.formatShellResult("yes | head", {
+      ...baseResult,
+      stdout: "y\n".repeat(10),
+      stdoutTruncated: true,
+    })
+    expect(body).toContain("output truncated")
+  })
+
+  test("surfaces spawn errors instead of swallowing them as exit code", () => {
+    // INV-11: a spawn failure (e.g. cwd doesn't exist) must be visible to the
+    // user, not silently presented as `exit ?`.
+    const body = __testing.formatShellResult("anything", {
+      ...baseResult,
+      stdout: "",
+      exitCode: null,
+      spawnError: "ENOENT: cwd missing",
+    })
+    expect(body).toContain("spawn failed: ENOENT: cwd missing")
+  })
+})
+
+describe("execShellCommand", () => {
+  test("runs a successful command and captures stdout with exit 0", async () => {
+    const result = await __testing.execShellCommand("printf 'hello\\nworld\\n'", process.cwd())
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe("hello\nworld\n")
+    expect(result.stderr).toBe("")
+    expect(result.timedOut).toBe(false)
+    expect(result.spawnError).toBeNull()
+  })
+
+  test("captures non-zero exit codes without throwing", async () => {
+    const result = await __testing.execShellCommand("exit 7", process.cwd())
+    expect(result.exitCode).toBe(7)
+    expect(result.spawnError).toBeNull()
+  })
+
+  test("reports a spawn error when the working directory does not exist", async () => {
+    const result = await __testing.execShellCommand("echo ok", "/definitely/does/not/exist-xyz-12345")
+    expect(result.spawnError).not.toBeNull()
+    expect(result.exitCode).toBeNull()
+  })
+
+  test("caps stdout at SHELL_MAX_OUTPUT_CHARS and flags truncation", async () => {
+    // Generate well over the cap to make sure we actually hit it.
+    const result = await __testing.execShellCommand(
+      `node -e 'process.stdout.write("a".repeat(${__testing.SHELL_MAX_OUTPUT_CHARS + 1000}))'`,
+      process.cwd()
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.length).toBe(__testing.SHELL_MAX_OUTPUT_CHARS)
+    expect(result.stdoutTruncated).toBe(true)
+  })
+
+  test("escalates SIGTERM to SIGKILL when the child traps and ignores SIGTERM", async () => {
+    // A bare `trap '' TERM` sh-builtin ignores SIGTERM. Without escalation
+    // the watchdog would sit forever. We've previously regressed this by
+    // gating the SIGKILL on `child.killed`, which flips to `true` the moment
+    // `kill()` is called and so blocked the escalation — pinned via the
+    // `settled` flag now. 150ms timeout + 250ms grace keeps the test fast.
+    const result = await __testing.execShellCommand("trap '' TERM; sleep 5", process.cwd(), {
+      timeoutMs: 150,
+      sigkillGraceMs: 250,
+    })
+    expect(result.timedOut).toBe(true)
+    expect(result.signal).toBe("SIGKILL")
+    expect(result.elapsedMs).toBeLessThan(2_000)
+  })
+})
+
+describe("formatShortDuration", () => {
+  test("renders sub-second durations as integer milliseconds", () => {
+    expect(__testing.formatShortDuration(0)).toBe("0ms")
+    expect(__testing.formatShortDuration(142)).toBe("142ms")
+    expect(__testing.formatShortDuration(999)).toBe("999ms")
+  })
+
+  test("renders sub-10s durations with two decimals", () => {
+    expect(__testing.formatShortDuration(1_000)).toBe("1.00s")
+    expect(__testing.formatShortDuration(2_345)).toBe("2.35s")
+    expect(__testing.formatShortDuration(9_999)).toBe("10.00s")
+  })
+
+  test("renders 10s–59s durations with one decimal", () => {
+    expect(__testing.formatShortDuration(10_000)).toBe("10.0s")
+    expect(__testing.formatShortDuration(59_949)).toBe("59.9s")
+  })
+
+  test("falls through to formatDuration at the minute boundary", () => {
+    // The shell timeout is 60_000ms exactly; the boundary lands on
+    // `formatDuration` so the longer-format wording stays consistent.
+    expect(__testing.formatShortDuration(60_000)).toBe("1 min")
+    expect(__testing.formatShortDuration(125_000)).toBe("2 min")
   })
 })

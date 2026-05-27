@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process"
+import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir, hostname, platform } from "node:os"
@@ -34,7 +34,16 @@ const MAX_AUTO_RETRY_MS = 4 * 60 * 60 * 1000
 const MAX_RETRY_ATTEMPTS = 3
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
-const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload"] as const
+const SESSION_CONTROL_COMMANDS = ["compact", "model", "thinking", "skill", "reload", "shell"] as const
+const SHELL_TIMEOUT_MS = 60_000
+// 32K chars per stream — large enough for typical output, small enough to avoid
+// dumping a CI log into the scratchpad if a curious user pipes `find /` in.
+const SHELL_MAX_OUTPUT_CHARS = 32 * 1024
+const SHELL_USAGE = [
+  "Usage: `/shell <command>`",
+  "Runs in the linked Pi session's working directory via `$SHELL -c`.",
+  "60s timeout; output capped at 32K chars per stream.",
+].join("\n")
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const
 type ThinkingLevel = (typeof THINKING_LEVELS)[number]
 const execFileAsync = promisify(execFile)
@@ -227,10 +236,43 @@ function saveConfig(): void {
   writeFileSync(CONFIG_PATH, `${JSON.stringify(persisted, null, 2)}\n`)
 }
 
+// Server `bot:hello` schema constrains `instanceId` to `^[A-Za-z0-9_-]+$`
+// (see backend `socket-handler.ts`). macOS `hostname()` returns values like
+// `kristoffers-mbp.lan` — the literal dot breaks the regex and the handshake
+// rejects every connect, silently degrading the plugin to a 30s WS backstop
+// poll. Sanitize at the boundary and migrate previously-persisted bad ids.
+const INSTANCE_ID_REGEX = /^[A-Za-z0-9_-]+$/
+const INSTANCE_ID_UNSAFE_CHARS = /[^A-Za-z0-9_-]+/g
+
+function sanitizeInstanceIdSegment(raw: string): string {
+  return raw.replace(INSTANCE_ID_UNSAFE_CHARS, "-").replace(/^-+|-+$/g, "")
+}
+
+function migrateInstanceId(stored: unknown): string {
+  // `config.instanceId` is loaded via `JSON.parse` and `readConfig` only
+  // type-checks the three required fields. A hand-edited config could put
+  // anything here, so accept `unknown` and treat non-strings as missing.
+  if (typeof stored !== "string" || stored.length === 0) {
+    return `pi-${crypto.randomUUID().slice(0, 8)}`
+  }
+  if (INSTANCE_ID_REGEX.test(stored)) return stored
+  const cleaned = sanitizeInstanceIdSegment(stored)
+  return cleaned.length > 0 ? cleaned : `pi-${crypto.randomUUID().slice(0, 8)}`
+}
+
 function ensureInstanceId(): string {
   if (!config) throw new Error("Threa remote config not loaded")
-  if (config.instanceId) return config.instanceId
-  config.instanceId = `pi-${hostname()}-${crypto.randomUUID().slice(0, 8)}`
+  if (typeof config.instanceId === "string" && config.instanceId.length > 0) {
+    const migrated = migrateInstanceId(config.instanceId)
+    if (migrated !== config.instanceId) {
+      config.instanceId = migrated
+      saveConfig()
+    }
+    return config.instanceId
+  }
+  const host = sanitizeInstanceIdSegment(hostname())
+  const prefix = host.length > 0 ? `pi-${host}` : "pi"
+  config.instanceId = `${prefix}-${crypto.randomUUID().slice(0, 8)}`
   saveConfig()
   return config.instanceId
 }
@@ -255,8 +297,14 @@ function setCurrentSessionEnabled(ctx: ExtensionContext, enabled: boolean): Runt
   return link
 }
 
-function buildScratchpadUrl(baseUrl: string, streamUrlPath: string): string {
-  return new URL(streamUrlPath, baseUrl).toString()
+function buildScratchpadUrl(baseUrl: string, workspaceId: string, streamId: string): string {
+  // The frontend route is `/w/:workspaceId/s/:streamId`. Older server versions
+  // returned `streamUrlPath: /streams/<id>` (no workspace prefix) and that
+  // value is persisted in `config.linkedSessions` for upgraded installs, so we
+  // can't trust the stored path. Compose locally from data the client owns —
+  // it's stable across server format changes and migrates existing links for
+  // free without touching disk.
+  return new URL(`/w/${workspaceId}/s/${streamId}`, baseUrl).toString()
 }
 
 async function openExternalUrl(url: string): Promise<void> {
@@ -530,6 +578,12 @@ function attachBotWebSocket(pi: ExtensionAPI, ctx: ExtensionContext): void {
   })
 }
 
+function formatHelloAckDetails(details: unknown): string {
+  if (!isObject(details)) return ""
+  const parts = Object.entries(details).map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+  return parts.length > 0 ? ` (${parts.join("; ")})` : ""
+}
+
 function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
   if (!botSocket || !config) return
   const sessionLink = getCurrentSessionLink(ctx)
@@ -540,8 +594,22 @@ function sendBotHello(pi: ExtensionAPI, ctx: ExtensionContext): void {
       return
     }
     if (ack.ok !== true) {
+      // Fail loud: leaving the socket up with `botWsConnected = true` would
+      // keep us on the 30s WS backstop poll while no event will ever reach
+      // us (no room join happened). Drop the socket so polling resumes at
+      // the fast (3s) floor.
       const message = typeof ack.error === "string" ? ack.error : "unknown error"
-      noteWsDebug(ctx, `bot:hello rejected: ${message}`)
+      const details = formatHelloAckDetails((ack as { details?: unknown }).details)
+      noteWsDebug(ctx, `bot:hello rejected: ${message}${details}`)
+      setRemoteStatus(ctx, `Threa remote: WS handshake rejected — ${message}`, "error")
+      tearDownBotWebSocket()
+      // Gate re-resolve so a persistently-rejecting server doesn't get
+      // hammered every poll tick (~3s when WS is down). `tearDownBotWebSocket`
+      // resets the throttle so a `/configure` retries immediately; we set it
+      // here AFTER teardown to apply the 60s backoff specifically to the
+      // handshake-failure path. The next user-initiated path (`enableRemote`,
+      // `createRemoteSession`) passes `{ force: true }` and bypasses this.
+      lastWsResolveAttemptAt = Date.now()
       return
     }
     if (typeof ack.serverGeneratedAt === "string") {
@@ -1467,6 +1535,140 @@ async function runReloadCommand(invocation: ClaimedInvocation, ctx: ExtensionCon
   await ctx.reload()
 }
 
+type ShellExecResult = {
+  stdout: string
+  stderr: string
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
+  exitCode: number | null
+  signal: NodeJS.Signals | null
+  timedOut: boolean
+  elapsedMs: number
+  spawnError: string | null
+}
+
+function appendCapped(existing: string, chunk: string, max: number): { text: string; truncated: boolean } {
+  if (existing.length >= max) return { text: existing, truncated: true }
+  const remaining = max - existing.length
+  if (chunk.length <= remaining) return { text: existing + chunk, truncated: false }
+  return { text: existing + chunk.slice(0, remaining), truncated: true }
+}
+
+function formatShellResult(command: string, result: ShellExecResult): string {
+  // Single fenced block for stdout, separate block for stderr only when present
+  // — keeps the common "ran cleanly with stdout" case readable. Footer is one
+  // line of "exit N · 142ms · output truncated" so the human can scan it.
+  const lines: string[] = ["```", `$ ${command}`]
+  if (result.stdout.length > 0) lines.push(result.stdout.replace(/\n+$/, ""))
+  lines.push("```")
+  if (result.stderr.length > 0) {
+    lines.push("**stderr**", "```", result.stderr.replace(/\n+$/, ""), "```")
+  }
+  const footer: string[] = []
+  if (result.spawnError) {
+    footer.push(`spawn failed: ${result.spawnError}`)
+  } else if (result.timedOut) {
+    footer.push(`timed out after ${formatShortDuration(result.elapsedMs)}`)
+  } else if (result.signal) {
+    footer.push(`signal ${result.signal}`)
+    footer.push(formatShortDuration(result.elapsedMs))
+  } else {
+    footer.push(`exit ${result.exitCode ?? "?"}`)
+    footer.push(formatShortDuration(result.elapsedMs))
+  }
+  if (result.stdoutTruncated || result.stderrTruncated) footer.push("output truncated")
+  lines.push(footer.join(" · "))
+  return lines.join("\n")
+}
+
+async function execShellCommand(
+  command: string,
+  cwd: string,
+  options?: { timeoutMs?: number; sigkillGraceMs?: number }
+): Promise<ShellExecResult> {
+  // `$SHELL -c "<command>"` so pipes / redirects / globs / env-expansion all
+  // work the way Pi's `!` does. `/bin/sh` is the portable fallback when SHELL
+  // is unset (rare, but happens in stripped Docker images).
+  const shell = process.env.SHELL ?? "/bin/sh"
+  const timeoutMs = options?.timeoutMs ?? SHELL_TIMEOUT_MS
+  const sigkillGraceMs = options?.sigkillGraceMs ?? 1_000
+  const startedAt = Date.now()
+  return new Promise<ShellExecResult>((resolvePromise) => {
+    const child = spawn(shell, ["-c", command], { cwd, env: process.env })
+    let stdout = ""
+    let stderr = ""
+    let stdoutTruncated = false
+    let stderrTruncated = false
+    let timedOut = false
+    let settled = false
+    const settle = (result: Omit<ShellExecResult, "elapsedMs">) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolvePromise({ ...result, elapsedMs: Date.now() - startedAt })
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill("SIGTERM")
+      // Escalate to SIGKILL if the child ignores SIGTERM. `child.killed` is
+      // set the instant `kill()` is *called* — not when the process actually
+      // exits — so it would be `true` here regardless and SIGKILL would never
+      // fire. The `settled` flag, by contrast, only flips in the `exit`/
+      // `error` handlers, so it tells us whether the child has actually
+      // gone away. 1s is enough for a well-behaved process to flush; longer
+      // waits keep the scratchpad in a busy state for no benefit.
+      setTimeout(() => {
+        if (!settled) child.kill("SIGKILL")
+      }, sigkillGraceMs).unref()
+    }, timeoutMs)
+    child.stdout?.on("data", (chunk: Buffer) => {
+      const { text, truncated } = appendCapped(stdout, chunk.toString("utf8"), SHELL_MAX_OUTPUT_CHARS)
+      stdout = text
+      if (truncated) stdoutTruncated = true
+    })
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const { text, truncated } = appendCapped(stderr, chunk.toString("utf8"), SHELL_MAX_OUTPUT_CHARS)
+      stderr = text
+      if (truncated) stderrTruncated = true
+    })
+    child.on("error", (err) => {
+      settle({
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+        exitCode: null,
+        signal: null,
+        timedOut,
+        spawnError: err instanceof Error ? err.message : String(err),
+      })
+    })
+    child.on("close", (exitCode, signal) => {
+      settle({
+        stdout,
+        stderr,
+        stdoutTruncated,
+        stderrTruncated,
+        exitCode,
+        signal,
+        timedOut,
+        spawnError: null,
+      })
+    })
+  })
+}
+
+async function runShellCommand(invocation: ClaimedInvocation, args: string, ctx: ExtensionContext): Promise<void> {
+  const command = args.trim()
+  if (command.length === 0) {
+    await completeInvocationWithMarkdown(invocation, SHELL_USAGE, ctx)
+    return
+  }
+  await recordInvocationTraceStep(invocation, "tool_call", `$ ${command}`, `Running shell…`)
+  const result = await execShellCommand(command, ctx.cwd)
+  await completeInvocationWithMarkdown(invocation, formatShellResult(command, result), ctx)
+}
+
 async function runSkillCommand(
   pi: ExtensionAPI,
   invocation: ClaimedInvocation,
@@ -1531,6 +1733,9 @@ async function handleSessionControlInvocation(
         return
       case "reload":
         await runReloadCommand(invocation, ctx)
+        return
+      case "shell":
+        await runShellCommand(invocation, command.args, ctx)
         return
       default:
         await failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
@@ -1695,6 +1900,21 @@ function formatDuration(ms: number): string {
   const hours = Math.floor(totalMin / 60)
   const minutes = totalMin % 60
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`
+}
+
+function formatShortDuration(ms: number): string {
+  // Used in surfaces where typical durations are sub-minute (shell footers,
+  // mostly). `formatDuration` rounds to whole minutes and collapses anything
+  // shorter into "<1 min", which is useless for commands that finish in tens
+  // of milliseconds. Fall through to `formatDuration` once we're past a
+  // minute so longer-format strings stay consistent across the file.
+  if (ms < 0) return formatDuration(ms)
+  if (ms < 1_000) return `${ms}ms`
+  if (ms < 60_000) {
+    const seconds = ms / 1_000
+    return `${seconds < 10 ? seconds.toFixed(2) : seconds.toFixed(1)}s`
+  }
+  return formatDuration(ms)
 }
 
 function describeProviderError(status: number, headers: unknown, now: number = Date.now()): string {
@@ -1981,10 +2201,19 @@ export const __testing = {
   describeProviderError,
   formatRetryNotice,
   formatDuration,
+  formatShortDuration,
   formatLocalTime,
   parseWsHint,
   buildBotSocketUrl,
   fetchWsHintFromConfig,
+  sanitizeInstanceIdSegment,
+  migrateInstanceId,
+  formatHelloAckDetails,
+  appendCapped,
+  formatShellResult,
+  execShellCommand,
+  SHELL_MAX_OUTPUT_CHARS,
+  SHELL_TIMEOUT_MS,
   MAX_AUTO_RETRY_MS,
   MAX_RETRY_ATTEMPTS,
   WS_BACKSTOP_POLL_MS,
@@ -1993,7 +2222,8 @@ export const __testing = {
 
 export default function (pi: ExtensionAPI): void {
   pi.registerCommand("remote-control", {
-    description: "Create or link a Threa scratchpad to this Pi session",
+    description:
+      "Link this Pi session to a Threa scratchpad: configure | status | open | on | off | debug | debug-polls [on|off]",
     handler: async (args, ctx) => {
       const trimmedArgs = args.trim()
       const commandMatch = trimmedArgs.match(/^(\S+)(?:\s+([\s\S]*))?$/)
@@ -2023,7 +2253,7 @@ export default function (pi: ExtensionAPI): void {
           ctx.ui.notify("No Threa remote session is linked here. Run /remote-control first.", "warning")
           return
         }
-        const url = buildScratchpadUrl(config.baseUrl, link.streamUrlPath)
+        const url = buildScratchpadUrl(config.baseUrl, config.workspaceId, link.activeStreamId)
         try {
           await openExternalUrl(url)
           ctx.ui.notify(`Opening Threa scratchpad: ${url}`, "info")
@@ -2071,6 +2301,23 @@ export default function (pi: ExtensionAPI): void {
           "info"
         )
         return
+      }
+      // Bare `/remote-control` with no args is idempotent: if this Pi session
+      // is already linked, report status instead of POSTing to /sessions, which
+      // would clobber the local link with a fresh scratchpad. An instanceId
+      // migration (or any change that makes the server's existing-link lookup
+      // miss) used to silently mint a new scratchpad here. Re-linking is a
+      // destructive action — the user has to ask for it explicitly by passing
+      // a display name (`/remote-control "Some name"`).
+      if (trimmedArgs === "") {
+        const link = getCurrentSessionLink(ctx)
+        if (link) {
+          ctx.ui.notify(
+            `Threa remote already linked for this Pi session (${link.enabled ? "on" : "off"}). Run \`/remote-control status\` for details or \`/remote-control open\` to open the scratchpad.`,
+            "info"
+          )
+          return
+        }
       }
       await createRemoteSession(ctx, trimmedArgs)
       await resolveBotWsHint(ctx, { force: true })
