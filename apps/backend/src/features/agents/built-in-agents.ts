@@ -1,9 +1,10 @@
 import { z } from "zod"
-import { AGENT_TOOL_NAMES, AgentToolNames } from "@threa/types"
+import { AGENT_TOOL_NAMES, AgentToolNames, ARIADNE_AGENT_ID } from "@threa/types"
+
+export { ARIADNE_AGENT_ID }
 
 const agentToolNameSchema = z.enum(AGENT_TOOL_NAMES)
 
-export const ARIADNE_AGENT_ID = "persona_system_ariadne"
 export const EMPTY_AGENT_ID = "persona_system_empty"
 
 const agentVisibilitySchema = z.enum(["visible", "internal"])

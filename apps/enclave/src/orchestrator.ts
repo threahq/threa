@@ -16,17 +16,11 @@ import {
   type Envelope,
   type EnvelopeRecipientPublic,
 } from "@threa/crypto"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes, ENCLAVE_HISTORY_LIMIT } from "@threa/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
 
 const logger = pino({ name: "enclave-orchestrator" })
-
-/**
- * Maximum context window we hand the model. Mirrors the backend's HISTORY_LIMIT
- * for parity with the dispatcher's `MessageRepository.list({ limit })` call.
- */
-const MAX_HISTORY_MESSAGES = 50
 
 export interface InvokeHistoryEntry {
   id: string
@@ -230,7 +224,7 @@ export class Orchestrator {
    * the model gets the partial conversation it can read.
    */
   private async decryptHistory(request: InvokeRequest): Promise<ModelMessage[]> {
-    const limited = request.history.slice(-MAX_HISTORY_MESSAGES)
+    const limited = request.history.slice(-ENCLAVE_HISTORY_LIMIT)
     const messages: ModelMessage[] = []
     for (const entry of limited) {
       if (entry.e2eVersion !== ENVELOPE_VERSION) {

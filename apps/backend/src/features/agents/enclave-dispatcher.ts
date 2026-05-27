@@ -1,5 +1,11 @@
 import type { Pool } from "pg"
-import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
+import {
+  AuthorTypes,
+  E2eInvitedAgentKinds,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  ENCLAVE_HISTORY_LIMIT,
+  type JSONContent,
+} from "@threa/types"
 import { messageId, sessionId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { EnclaveRuntimesService, type EnclaveRuntime } from "../enclave-runtimes"
@@ -8,11 +14,9 @@ import { StreamRepository } from "../streams"
 import { MessageRepository, EventService } from "../messaging"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { AICostService } from "../ai-usage"
-import { ARIADNE_AGENT_ID, getBuiltInAgentConfig } from "./built-in-agents"
+import { getBuiltInAgentConfig } from "./built-in-agents"
 import { EnclaveClient, type EnclaveHistoryEntry, type EnclaveRecipient } from "./enclave-client"
 import type { EnclavePersonaAgentJobData } from "../../lib/queue"
-
-const HISTORY_LIMIT = 50
 
 /**
  * Empty-document placeholder for the persona reply's projection columns. The
@@ -77,7 +81,7 @@ export class EnclaveDispatcher {
     if (!e2eRow) {
       throw new Error(`Enclave dispatch: e2e_streams row missing for ${job.streamId}`)
     }
-    if (e2eRow.invitedAgentKind !== "enclave") {
+    if (e2eRow.invitedAgentKind !== E2eInvitedAgentKinds.ENCLAVE) {
       logger.warn(
         { streamId: job.streamId, invitedAgentKind: e2eRow.invitedAgentKind },
         "Enclave dispatch invoked on stream where enclave is no longer invited; skipping"
@@ -106,7 +110,7 @@ export class EnclaveDispatcher {
       })),
     ]
 
-    const historyRows = await MessageRepository.list(pool, job.streamId, { limit: HISTORY_LIMIT })
+    const historyRows = await MessageRepository.list(pool, job.streamId, { limit: ENCLAVE_HISTORY_LIMIT })
     const history: EnclaveHistoryEntry[] = historyRows
       .filter((m) => m.ciphertext != null && m.envelope != null && m.e2eVersion != null)
       .map((m) => ({
@@ -175,7 +179,7 @@ export class EnclaveDispatcher {
       workspaceId: job.workspaceId,
       streamId: job.streamId,
       authorId: persona.id,
-      authorType: "persona",
+      authorType: AuthorTypes.PERSONA,
       contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
       contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
       ciphertext: Buffer.from(response.reply.ciphertext, "base64"),

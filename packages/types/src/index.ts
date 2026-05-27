@@ -423,6 +423,20 @@ export const DISCUSS_WITH_ARIADNE_COMMAND = "discuss-with-ariadne" as const
  */
 export const ARIADNE_PERSONA_SLUG = "ariadne" as const
 
+/**
+ * Prefixed agent id for the Ariadne built-in persona. Single source of truth
+ * (INV-33) so backend lookups, the enclave's persona allowlist, and any
+ * future seeding/migration code reference the same literal.
+ */
+export const ARIADNE_AGENT_ID = "persona_system_ariadne" as const
+
+/**
+ * Maximum ciphertext history rows the enclave dispatcher hands off per
+ * invocation and the enclave orchestrator consumes. Both apps must agree on
+ * this number — a drift would silently change the model's context window.
+ */
+export const ENCLAVE_HISTORY_LIMIT = 50 as const
+
 // ProseMirror / TipTap JSON types
 export type {
   // Loose input type (compatible with TipTap)

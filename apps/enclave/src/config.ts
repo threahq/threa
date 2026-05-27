@@ -1,3 +1,5 @@
+import { ARIADNE_AGENT_ID } from "@threa/types"
+
 export interface EnclaveConfig {
   port: number
   /** URL that other services use to reach this instance's /invoke endpoint. */
@@ -28,6 +30,6 @@ export function loadEnclaveConfig(): EnclaveConfig {
     internalApiKey: process.env.INTERNAL_API_KEY!,
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,
     heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
-    allowedPersonaIds: ["persona_system_ariadne"],
+    allowedPersonaIds: [ARIADNE_AGENT_ID],
   }
 }
