@@ -588,6 +588,7 @@ export const ShareErrorCodes = {
   SOURCE_STREAM_NOT_FOUND: "SHARE_SOURCE_STREAM_NOT_FOUND",
   CROSS_WORKSPACE_FORBIDDEN: "SHARE_CROSS_WORKSPACE_FORBIDDEN",
   SOURCE_FORBIDDEN: "SHARE_SOURCE_FORBIDDEN",
+  E2E_SHARING_NOT_ALLOWED: "SHARE_E2E_NOT_ALLOWED",
 } as const
 
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)

@@ -4,6 +4,7 @@ import { collectShareReferences, ShareService } from "./service"
 import { SharedMessageRepository } from "./repository"
 import * as accessCheck from "./access-check"
 import { MessageRepository } from "../repository"
+import { E2eStreamsRepository } from "../../e2e-streams"
 
 describe("collectShareReferences", () => {
   it("returns an empty list when no share nodes are present", () => {
@@ -130,6 +131,7 @@ describe("ShareService.validateAndRecordShares", () => {
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map([[sourceMessage.id, sourceMessage]]))
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
   })
 
   afterEach(() => {
@@ -239,6 +241,15 @@ describe("ShareService.validateAndRecordShares", () => {
     expect(canReadStream).toHaveBeenCalledTimes(1)
     expect(MessageRepository.findByIdsInWorkspace).toHaveBeenCalledTimes(1)
     expect(SharedMessageRepository.insert).toHaveBeenCalledTimes(2)
+  })
+
+  it("rejects shares whose source stream is end-to-end encrypted", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    await expect(ShareService.validateAndRecordShares(baseParams())).rejects.toMatchObject({
+      status: 400,
+      code: "SHARE_E2E_NOT_ALLOWED",
+    })
+    expect(SharedMessageRepository.insert).not.toHaveBeenCalled()
   })
 
   it("rejects shares when the sharer cannot read the source stream", async () => {
