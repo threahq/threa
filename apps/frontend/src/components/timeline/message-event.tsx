@@ -20,6 +20,7 @@ import { usePendingMessages, usePanel, createDraftPanelId, useTrace, useMessageS
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { useMessageMarkdownCopy } from "@/hooks/use-message-markdown-copy"
+import { useDecryptedMessageContent, type DecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
 import { useEditLastMessage } from "./edit-last-message-context"
 import {
   useActors,
@@ -1535,6 +1536,31 @@ function EditingMessageEvent({
   )
 }
 
+function makePlaceholderJson(text: string): JSONContent {
+  return { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }
+}
+
+function applyDecryptedContent(payload: MessagePayload, decrypted: DecryptedMessageContent): MessagePayload {
+  switch (decrypted.status) {
+    case "plaintext":
+      return payload
+    case "decrypted":
+      return { ...payload, contentMarkdown: decrypted.contentMarkdown, contentJson: decrypted.contentJson }
+    case "locked": {
+      const text = "🔒 Locked — unlock to view"
+      return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
+    }
+    case "pending": {
+      const text = "🔒 Decrypting…"
+      return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
+    }
+    case "failed": {
+      const text = "🔒 Decryption failed"
+      return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
+    }
+  }
+}
+
 export function MessageEvent({
   event,
   workspaceId,
@@ -1548,7 +1574,10 @@ export function MessageEvent({
   isFirstMessage = false,
   batch,
 }: MessageEventProps) {
-  const payload = event.payload as MessagePayload
+  const rawPayload = event.payload as MessagePayload
+  const currentUserId = useWorkspaceUserId(workspaceId)
+  const decrypted = useDecryptedMessageContent(event, workspaceId, currentUserId)
+  const payload = useMemo(() => applyDecryptedContent(rawPayload, decrypted), [rawPayload, decrypted])
   const { getStatus } = usePendingMessages()
   const { getActorName } = useActors(workspaceId)
   const status = getStatus(event.id)

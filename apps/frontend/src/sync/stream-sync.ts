@@ -14,50 +14,6 @@ import type { Socket } from "socket.io-client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import type { QueryClient } from "@tanstack/react-query"
-import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
-
-/**
- * Decrypt the wire payload of a `message_created` event in-place when:
- *   - the payload carries an envelope
- *   - the active workspace user has an unlocked UIK
- *
- * Failure modes (locked session, wrong recipient, malformed envelope) are
- * swallowed: the placeholder `contentMarkdown` already stored on the wire
- * survives so the UI still has something to render. The placeholder will
- * be replaced on the next decrypt attempt (e.g. after the user unlocks).
- */
-async function decryptEventPayloadIfNeeded(
-  event: StreamEvent,
-  workspaceId: string,
-  userId: string | null
-): Promise<StreamEvent> {
-  if (event.eventType !== "message_created") return event
-  const payload = event.payload as Record<string, unknown> | undefined
-  if (!payload || typeof payload.ciphertext !== "string" || !payload.envelope) return event
-  if (!userId) return event
-
-  const session = getE2eSessionState(workspaceId, userId)
-  if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return event
-
-  const decrypted = await tryDecryptMessagePayload(
-    {
-      contentMarkdown: typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : "",
-      envelope: payload.envelope,
-    },
-    { privateKey: session.privateKey, recipientKeyId: session.keyId }
-  )
-  if (!decrypted) return event
-
-  return {
-    ...event,
-    payload: {
-      ...payload,
-      contentMarkdown: decrypted.contentMarkdown,
-      contentJson: decrypted.contentJson,
-    },
-  }
-}
 
 // ============================================================================
 // Bootstrap application — writes stream bootstrap data to IndexedDB
@@ -190,27 +146,6 @@ async function pruneBootstrapReplaceWindow(streamId: string, bootstrap: StreamBo
   }
 }
 
-/**
- * Decrypt any E2E `message_created` events the backend stamped with placeholder
- * content. Plaintext events pass through untouched. If the user is locked, the
- * placeholder survives — a later subscribe/bootstrap pass after unlock will
- * refill the plaintext. Called BEFORE opening the IDB transaction in the apply
- * paths so the (asynchronous, non-Dexie) decrypt work doesn't hold the
- * transaction open — awaiting non-Dexie promises inside `db.transaction` can
- * tear the transaction down on some browsers.
- */
-export async function decryptBootstrapEventsIfNeeded(
-  bootstrap: StreamBootstrap,
-  workspaceId: string,
-  userId: string | null
-): Promise<StreamBootstrap> {
-  if (!bootstrap.stream.e2eEnabled || bootstrap.events.length === 0) return bootstrap
-  return {
-    ...bootstrap,
-    events: await Promise.all(bootstrap.events.map((event) => decryptEventPayloadIfNeeded(event, workspaceId, userId))),
-  }
-}
-
 async function writeBootstrapEventsAndStream(
   workspaceId: string,
   streamId: string,
@@ -333,30 +268,17 @@ async function writeBootstrapEventsAndStream(
 export async function applyStreamBootstrap(
   workspaceId: string,
   streamId: string,
-  bootstrap: StreamBootstrap,
-  userId: string | null = null
+  bootstrap: StreamBootstrap
 ): Promise<void> {
-  // Decrypt outside the Dexie transaction so HPKE/AES-GCM work doesn't hold
-  // the IDB transaction open (Dexie tears down transactions that await
-  // unrelated promises).
-  const decrypted = await decryptBootstrapEventsIfNeeded(bootstrap, workspaceId, userId)
   const now = Date.now()
   await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations], async () => {
-    await writeBootstrapEventsAndStream(workspaceId, streamId, decrypted, now)
+    await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
   })
 }
 
 /**
  * Same as `applyStreamBootstrap` but written for callers that have already
- * opened a `db.transaction` — it just delegates to `writeBootstrapEventsAndStream`
- * without wrapping or running E2E decryption.
- *
- * The caller MUST pass a `bootstrap` whose events have already been routed
- * through `decryptBootstrapEventsIfNeeded`. Awaiting the decrypt promise
- * inside a Dexie transaction tears the transaction down on browsers where
- * the microtask queue drains before the awaited promise resolves, so the
- * decrypt step is deliberately hoisted to the caller (see
- * `applyReconnectBootstrapBatch` in `workspace-sync.ts`).
+ * opened a `db.transaction` — it just delegates to `writeBootstrapEventsAndStream`.
  */
 export async function applyStreamBootstrapInCurrentTransaction(
   workspaceId: string,
@@ -559,21 +481,17 @@ export function registerStreamSocketHandlers(
   socket: Socket,
   workspaceId: string,
   streamId: string,
-  queryClient: QueryClient,
-  opts: { getCurrentUserId?: () => string | null } = {}
+  queryClient: QueryClient
 ): () => void {
   const handleMessageCreated = async (payload: MessageEventPayload) => {
     if (payload.streamId !== streamId) return
 
-    // Decrypt before any of the downstream branches touch the payload —
-    // optimistic-swap dedup, sidebar preview and sharedMessage detection
-    // all assume `contentMarkdown` / `contentJson` are plaintext.
-    const decryptedEvent = await decryptEventPayloadIfNeeded(
-      payload.event,
-      workspaceId,
-      opts.getCurrentUserId?.() ?? null
-    )
-    const newEvent = decryptedEvent
+    // E2E payloads stay as ciphertext + envelope at rest; decryption runs on
+    // demand in the render path. The wire `contentMarkdown` / `contentJson`
+    // for E2E messages is the backend placeholder, so the sidebar preview
+    // write below is a placeholder-by-placeholder substitution — the sidebar
+    // surfaces it as the sentinel via `stream.e2eEnabled`.
+    const newEvent = payload.event
     const newPayload = newEvent.payload as {
       contentJson: unknown
       contentMarkdown: string
