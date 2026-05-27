@@ -1,8 +1,7 @@
 import { AgentReconsiderationDecisions, AgentStepTypes } from "@threa/types"
 import type { ActiveStep, SessionTrace } from "../trace-emitter"
 import { logger } from "../../../lib/logger"
-import type { AgentEvent } from "./agent-events"
-import type { AgentObserver } from "./agent-observer"
+import type { AgentEvent, AgentObserver } from "@threa/agent-runtime"
 
 /**
  * Maps agent runtime events to SessionTrace calls (DB + socket).

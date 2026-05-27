@@ -1,0 +1,9 @@
+// Internal package barrel so tool files can keep their existing
+// `import { defineAgentTool, type AgentToolResult } from "../runtime"` shape.
+export { defineAgentTool, toVercelToolDefs } from "./agent-tool"
+export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./agent-tool"
+export type { AgentEvent, NewMessageInfo } from "./agent-events"
+export type { AgentObserver } from "./agent-observer"
+export { OtelObserver } from "./otel-observer"
+export { AgentRuntime } from "./agent-runtime"
+export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./agent-runtime"

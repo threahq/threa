@@ -1,4 +1,4 @@
-import type { AI, CostContext } from "../../../lib/ai/ai"
+import type { AI, CostContext } from "@threa/agent-runtime"
 import type { RenderableMessage } from "./types"
 import { SUMMARIZER_MAX_TOKENS, SUMMARIZER_MODEL_ID, SUMMARIZER_TEMPERATURE } from "./config"
 

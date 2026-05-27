@@ -2,9 +2,9 @@ import { z } from "zod"
 import type { Querier } from "../../db"
 import { MessageRepository, type Message } from "../messaging"
 import { agentConversationSummaryId } from "../../lib/id"
-import type { AI } from "../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import { ConversationSummaryRepository } from "./conversation-summary-repository"
-import { stripMarkdownFences } from "../../lib/ai/text-utils"
+import { stripMarkdownFences } from "@threa/agent-runtime"
 import { logger } from "../../lib/logger"
 
 const SUMMARY_BATCH_SIZE = 40

@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { z } from "zod"
-import type { AI } from "../../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import type { ContextIntent } from "@threa/types"
 import { withClient } from "../../../db"
 import {

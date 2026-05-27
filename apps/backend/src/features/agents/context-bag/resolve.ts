@@ -1,7 +1,7 @@
 import type { Querier } from "../../../db"
 import type { Pool } from "pg"
 import { withClient } from "../../../db"
-import type { AI, CostContext } from "../../../lib/ai/ai"
+import type { AI, CostContext } from "@threa/agent-runtime"
 import { logger } from "../../../lib/logger"
 import { ContextIntents, type ContextRefKind } from "@threa/types"
 import { MessageRepository } from "../../messaging"

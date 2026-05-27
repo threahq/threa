@@ -5,6 +5,8 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY packages/types/package.json packages/types/
 COPY packages/prosemirror/package.json packages/prosemirror/
+COPY packages/crypto/package.json packages/crypto/
+COPY packages/agent-runtime/package.json packages/agent-runtime/
 COPY packages/backend-common/package.json packages/backend-common/
 COPY apps/backend/package.json apps/backend/
 COPY apps/frontend/package.json apps/frontend/
@@ -20,6 +22,8 @@ RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --produc
 # Copy source
 COPY packages/types/ packages/types/
 COPY packages/prosemirror/ packages/prosemirror/
+COPY packages/crypto/ packages/crypto/
+COPY packages/agent-runtime/ packages/agent-runtime/
 COPY packages/backend-common/ packages/backend-common/
 COPY apps/backend/ apps/backend/
 

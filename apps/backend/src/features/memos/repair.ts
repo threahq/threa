@@ -1,4 +1,4 @@
-import { createJsonRepair, type SemanticFieldMapping } from "../../lib/ai/text-utils"
+import { createJsonRepair, type SemanticFieldMapping } from "@threa/agent-runtime"
 
 const MEMO_SEMANTIC_FIELD_MAPPINGS: Record<string, SemanticFieldMapping> = {
   // "classification: not_knowledge_worthy" → "isKnowledgeWorthy: false"

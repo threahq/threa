@@ -24,7 +24,7 @@ import type {
 import { createUsageAccumulator } from "./types"
 import { setupEvalDatabase, setupEvalTemplate, type EvalDatabaseResult, type EvalTemplateResult } from "./database"
 import { recordEvalRun, createLangfuseClient } from "./langfuse"
-import { createAI, type AI, type GenerateObjectOptions, type GenerateTextOptions } from "../../src/lib/ai/ai"
+import { createAI, type AI, type GenerateObjectOptions, type GenerateTextOptions } from "@threa/agent-runtime"
 import type { UsageAccumulator } from "./types"
 import { createWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
 import { loadConfigFile } from "./config-loader"

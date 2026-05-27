@@ -1,12 +1,10 @@
 import { AgentToolNames } from "@threa/types"
-import type { AgentTool } from "../runtime"
+import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threa/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunWorkspaceAgentOptions } from "../tools"
 import type { WorkspaceToolDeps } from "../tools/tool-deps"
 import { logger } from "../../../lib/logger"
 import {
-  createWebSearchTool,
-  createReadUrlTool,
   createSearchMessagesTool,
   createSearchStreamsTool,
   createSearchUsersTool,

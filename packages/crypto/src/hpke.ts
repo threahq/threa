@@ -10,7 +10,7 @@ import { Aes256Gcm, CipherSuite, DhkemX25519HkdfSha256, HkdfSha256 } from "@hpke
  * The "private key never leaves the browser" rule is enforced by callers:
  * this module only ever returns CryptoKey objects; the lifecycle (Dexie
  * persistence of the *wrapped* private key, in-memory unwrapped key) lives
- * in `keys.ts` and the e2e session store.
+ * in the frontend's `keys.ts` and the e2e session store.
  */
 
 let suite: CipherSuite | null = null

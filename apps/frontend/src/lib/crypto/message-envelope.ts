@@ -1,6 +1,6 @@
 import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@tiptap/react"
-import { buildMessageAad, decryptPayloadAsString, encryptPayload, ENVELOPE_VERSION, type Envelope } from "./envelope"
+import { buildMessageAad, decryptPayloadAsString, encryptPayload, ENVELOPE_VERSION, type Envelope } from "@threa/crypto"
 
 // The placeholder text the backend stores in `contentMarkdown` / `contentJson`
 // for E2E messages is the single source of truth in @threa/types so the

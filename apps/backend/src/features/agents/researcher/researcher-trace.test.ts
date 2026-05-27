@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { trace, context, SpanStatusCode } from "@opentelemetry/api"
-import { inMemoryExporter as exporter } from "../test-otel-setup"
+import { inMemoryExporter as exporter } from "@threa/agent-runtime/test-otel-setup"
 import { withResearcherSpan } from "./researcher-trace"
 
 describe("withResearcherSpan", () => {

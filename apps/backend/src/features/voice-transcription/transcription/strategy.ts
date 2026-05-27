@@ -1,4 +1,4 @@
-import type { ModelRegistry } from "../../../lib/ai/model-registry"
+import type { ModelRegistry } from "@threa/agent-runtime"
 import { logger } from "../../../lib/logger"
 import { parseModelProvider } from "../config"
 import { RealtimeDeepgramStrategy } from "./realtime-deepgram"

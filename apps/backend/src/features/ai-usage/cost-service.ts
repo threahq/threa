@@ -5,7 +5,7 @@ import { AIBudgetRepository } from "./budget-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { aiUsageId, aiAlertId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import type { UsageWithCost, ParsedModel } from "../../lib/ai/ai"
+import type { UsageWithCost, ParsedModel } from "@threa/agent-runtime"
 
 /** Alert thresholds to check */
 const ALERT_THRESHOLDS = [

@@ -1,5 +1,5 @@
 import type { ModelMessage } from "ai"
-import { logger } from "../../../lib/logger"
+import { logger } from "../logger"
 
 /**
  * Maximum context size in characters for messages sent to the model.

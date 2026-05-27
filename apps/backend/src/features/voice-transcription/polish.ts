@@ -1,5 +1,5 @@
 import type { VoicePolishLevel } from "@threa/types"
-import type { AI } from "../../lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import { logger } from "../../lib/logger"
 import {
   POLISH_MAX_TOKENS,

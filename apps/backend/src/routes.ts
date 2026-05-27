@@ -24,7 +24,7 @@ import { CommandAvailabilityService, createCommandHandlers } from "./features/co
 import { createUserPreferencesHandlers } from "./features/user-preferences"
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
 import { createAIUsageHandlers } from "./features/ai-usage"
-import type { AI } from "./lib/ai/ai"
+import type { AI } from "@threa/agent-runtime"
 import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
 import { createSavedMessagesHandlers } from "./features/saved-messages"
