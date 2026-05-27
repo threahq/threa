@@ -45,6 +45,7 @@ type AuthReply = AuthResult | ((sealed: string) => AuthResult)
 
 class ProgrammableAuthService implements AuthService {
   private replies = new Map<string, AuthReply>()
+  readonly revoked: string[] = []
 
   on(sealed: string, reply: AuthReply): void {
     this.replies.set(sealed, reply)
@@ -71,8 +72,9 @@ class ProgrammableAuthService implements AuthService {
   async getLogoutUrl(): Promise<string | null> {
     return null
   }
-  async revokeSession(): Promise<boolean> {
-    return false
+  async revokeSession(sealed: string): Promise<boolean> {
+    this.revoked.push(sealed)
+    return true
   }
 }
 
@@ -165,5 +167,65 @@ describe("AccountsService — refreshed sealed propagation", () => {
     expect(result).toEqual({ ok: true })
     expect(res.__cookies.get(SESSION_COOKIE_NAME)).toBe("sealed_b_new")
     expect(res.__cookies.get(altCookieName(0))).toBe("sealed_a_rotated")
+  })
+
+  test("removeCurrentAndPromote revokes the rotated sealed and promotes the alt", async () => {
+    // The "sign out of just this account" path: WorkOS may rotate the active
+    // session's refresh token during the authenticate() pre-check. If we then
+    // pass the pre-refresh sealed to revokeSession, WorkOS's session.refresh
+    // fails on a stale token and revoke silently returns false — the live
+    // WorkOS session stays alive. The rotated value must reach revoke.
+    const auth = new ProgrammableAuthService()
+    auth.on("sealed_a_active", {
+      success: true,
+      refreshed: true,
+      sealedSession: "sealed_a_rotated",
+      user: makeUser("user_a"),
+    })
+    auth.on("sealed_b_parked", { success: true, refreshed: false, user: makeUser("user_b") })
+
+    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const res = makeRes()
+    const cookies = { [altCookieName(0)]: "sealed_b_parked" }
+
+    const promoted = await service.removeCurrentAndPromote(res, cookies, "sealed_a_active")
+
+    expect(promoted).toBe(true)
+    // Active cookie now holds the promoted parked sealed; the parked slot was
+    // cleared on promotion.
+    expect(res.__cookies.get(SESSION_COOKIE_NAME)).toBe("sealed_b_parked")
+    expect(res.__cookies.get(altCookieName(0))).toBeNull()
+    // The rotated sealed is what reached revokeSession — without the fix this
+    // would be "sealed_a_active" and the active WorkOS session would survive.
+    expect(auth.revoked).toEqual(["sealed_a_rotated"])
+  })
+
+  test("removeCurrentAndPromote returns false when there is no parked alt to promote", async () => {
+    // No alts means a "sign out current" would empty the cookie jar — that's
+    // indistinguishable from a full logout, so the caller falls through to
+    // the WorkOS SSO logout flow instead of going through revoke + promote.
+    const auth = new ProgrammableAuthService()
+    auth.on("sealed_a_active", { success: true, refreshed: false, user: makeUser("user_a") })
+
+    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const res = makeRes()
+
+    const promoted = await service.removeCurrentAndPromote(res, {}, "sealed_a_active")
+
+    expect(promoted).toBe(false)
+    // No cookie writes, no revoke calls — caller is responsible for full logout.
+    expect(res.__cookies.size).toBe(0)
+    expect(auth.revoked).toEqual([])
+  })
+
+  test("removeCurrentAndPromote returns false when there is no active sealed", async () => {
+    const auth = new ProgrammableAuthService()
+    const service = new AccountsService({ authService: auth, membership: NEVER_MEMBER })
+    const res = makeRes()
+
+    const promoted = await service.removeCurrentAndPromote(res, {}, undefined)
+
+    expect(promoted).toBe(false)
+    expect(res.__cookies.size).toBe(0)
   })
 })

@@ -206,27 +206,18 @@ export function createControlPlaneAuthHandlers({
           : frontendUrl || "/"
 
       // scope=current: revoke just the active session and promote a parked
-      // alt, keeping the user signed in as the next account. Reuses the
-      // existing remove(active) path so revoke + promote stay in one place.
-      // Falls through to full logout when there's no parked alt to promote
-      // (or the active session is no longer authenticatable).
-      if (scope === "current" && session) {
-        const auth = await authService.authenticateSession(session)
-        if (auth.success && auth.user) {
-          const alts = readAltSessionCookies(req.cookies)
-          if (alts.length > 0) {
-            // WorkOS may have rotated the refresh token during authenticate;
-            // the pre-refresh `session` is dead at WorkOS, so revoke must use
-            // the post-refresh sealed (parallels addAndParkActive).
-            const sealedToRevoke = auth.refreshed && auth.sealedSession ? auth.sealedSession : session
-            try {
-              await accountsService.remove(res, req.cookies, sealedToRevoke, auth.user, auth.user.id)
-              return res.redirect(sameAppOrigin)
-            } catch {
-              // Fall through to full logout if the promote path fails — the
-              // user still gets logged out, just everywhere at once.
-            }
+      // alt, keeping the user signed in as the next account. The service
+      // owns the auth → alt-check → revoke + promote sequence; here we just
+      // act on the outcome. A `false` return (no session, no parked alt, or
+      // auth failed) falls through to the full-logout path below.
+      if (scope === "current") {
+        try {
+          if (await accountsService.removeCurrentAndPromote(res, req.cookies, session)) {
+            return res.redirect(sameAppOrigin)
           }
+        } catch {
+          // Promote raised — full logout still gets the user out, just
+          // everywhere at once. Fall through.
         }
       }
 

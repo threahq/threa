@@ -6,6 +6,7 @@ import {
   clearAltSessionCookie,
   clearSessionCookie,
   displayNameFromWorkos,
+  pickSealed,
   readAltSessionCookies,
   setAltSessionCookie,
   setSessionCookie,
@@ -87,7 +88,7 @@ export class AccountsService {
       if (!r.success || !r.user) {
         return { slot: a.slot, sealed: a.sealed, ok: false }
       }
-      const sealed = r.refreshed && r.sealedSession ? r.sealedSession : a.sealed
+      const sealed = pickSealed(r, a.sealed)
       if (sealed !== a.sealed) {
         setAltSessionCookie(res, a.slot, sealed)
       }
@@ -128,7 +129,7 @@ export class AccountsService {
     // If WorkOS rotated the prev session while we were validating it, the
     // pre-refresh sealed is now revoked. Park the rotated value so the slot
     // doesn't hold a dead token.
-    const prevSealedToPark = prevAuth.refreshed && prevAuth.sealedSession ? prevAuth.sealedSession : prevActiveSealed
+    const prevSealedToPark = pickSealed(prevAuth, prevActiveSealed)
 
     const alts = await this.resolveAlts(res, cookies)
     const validAlts = alts.filter((a) => a.ok && a.user)
@@ -360,5 +361,32 @@ export class AccountsService {
     for (const m of matches) clearAltSessionCookie(res, m.slot)
 
     return { removedId: targetUserId }
+  }
+
+  /**
+   * "Sign out of just the current account, stay signed in to others" — revokes
+   * the active WorkOS session and promotes the lowest parked alt to active.
+   * Reuses the existing `remove(active)` orchestration (revoke + cookie writes)
+   * and adds the rotation-aware sealed pick the handler can't do alone.
+   *
+   * Returns `false` without touching cookies when the call is a no-op (no
+   * session, no parked alt to promote, or the session can't be authenticated)
+   * so the caller can fall through to a normal full-logout flow that hits
+   * `getLogoutUrl` for the SSO round-trip.
+   */
+  async removeCurrentAndPromote(
+    res: Response,
+    cookies: Record<string, string>,
+    activeSealed: string | undefined
+  ): Promise<boolean> {
+    if (!activeSealed) return false
+    const auth = await this.authService.authenticateSession(activeSealed)
+    if (!auth.success || !auth.user) return false
+    if (readAltSessionCookies(cookies).length === 0) return false
+    // WorkOS may have rotated the refresh token during authenticate; pass the
+    // post-refresh sealed into `remove` so `revokeSession` kills the live
+    // session, not the already-dead pre-refresh value the browser sent.
+    await this.remove(res, cookies, pickSealed(auth, activeSealed), auth.user, auth.user.id)
+    return true
   }
 }

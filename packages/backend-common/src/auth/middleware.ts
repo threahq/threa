@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express"
 import type { AuthService } from "./auth-service"
+import { pickSealed } from "./auth-service"
 import { SESSION_COOKIE_NAME, clearSessionCookie, setSessionCookie } from "../cookies"
 
 interface AuthenticatedUser {
@@ -59,7 +60,7 @@ export function createAuthMiddleware({ authService }: Dependencies) {
 
     req.workosUserId = result.user.id
     req.authUser = result.user
-    req.sealedSession = result.refreshed && result.sealedSession ? result.sealedSession : session
+    req.sealedSession = pickSealed(result, session)
     next()
   }
 }
