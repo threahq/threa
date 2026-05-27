@@ -136,7 +136,7 @@ function LabelsPageInner({ workspaceId, tab }: InnerProps) {
       </header>
 
       <ScrollArea className="flex-1">
-        <main className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-8 sm:py-12">
+        <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
           {tab === "mine" && <MineTab workspaceId={workspaceId} view={view} />}
           {tab === "discover" && <DiscoverTab workspaceId={workspaceId} view={view} />}
           {tab === "new" && <NewTab workspaceId={workspaceId} />}
@@ -160,11 +160,9 @@ function MineTab({ workspaceId, view }: TabContentProps) {
 
   return (
     <section>
-      <PageHero
-        eyebrow="Your collection"
-        title="Labels"
-        accent="catalog"
-        subtitle="Organize scratchpads, threads, and people with color and emoji."
+      <SectionIntro
+        title="Your labels"
+        subtitle="Organize scratchpads, threads, and people with color and emoji. Private labels are yours alone; public ones are workspace-wide."
         action={
           <Link to={`/w/${workspaceId}/labels/new`} className={cn(buttonVariants({ size: "sm" }), "gap-1.5")}>
             <Plus className="h-4 w-4" />
@@ -177,7 +175,7 @@ function MineTab({ workspaceId, view }: TabContentProps) {
         <EmptyState
           icon={Tag}
           title="No labels yet"
-          body="Create your first label to start grouping the things you save. Private labels are yours alone; public labels are workspace-wide."
+          body="Create your first label to start grouping the things you save."
           action={
             <Link to={`/w/${workspaceId}/labels/new`} className={cn(buttonVariants(), "gap-1.5")}>
               <Plus className="h-4 w-4" />
@@ -186,17 +184,17 @@ function MineTab({ workspaceId, view }: TabContentProps) {
           }
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {mine.map((label) => (
             <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />
           ))}
           <Link
             to={`/w/${workspaceId}/labels/new`}
-            className="group relative flex min-h-[180px] items-center justify-center rounded-2xl border-2 border-dashed border-border bg-card text-muted-foreground transition-all hover:border-foreground hover:text-foreground"
+            className="group flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-border bg-card/40 text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
           >
-            <div className="flex flex-col items-center gap-1.5">
-              <Plus className="h-6 w-6 transition-transform group-hover:rotate-90" />
-              <span className="text-sm font-medium">Add a label</span>
+            <div className="flex items-center gap-1.5 text-sm">
+              <Plus className="h-4 w-4" />
+              <span>Add a label</span>
             </div>
           </Link>
         </div>
@@ -353,10 +351,10 @@ function LabelEditCard({
   return (
     <form
       onSubmit={handleSubmit}
-      className="relative flex flex-col overflow-hidden rounded-2xl border bg-card shadow-sm"
+      className="relative flex flex-col overflow-hidden rounded-xl border bg-card"
+      style={{ borderLeft: `3px solid ${color}` }}
     >
-      <div className="h-2 w-full" style={{ backgroundColor: color }} />
-      <div className="flex flex-col gap-3 p-4">
+      <div className="flex flex-col gap-3 p-3.5">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" autoFocus />
         <ColorRow value={color} onChange={setColor} />
         <EmojiRow value={emoji} onChange={setEmoji} />
@@ -393,18 +391,16 @@ function DiscoverTab({ workspaceId, view }: TabContentProps) {
 
   return (
     <section>
-      <PageHero
-        eyebrow="Workspace-wide"
+      <SectionIntro
         title="Discover"
-        accent="public"
-        subtitle="Public labels anyone in the workspace can join. Joining means you'll see them surface in your own catalog."
+        subtitle="Public labels anyone in the workspace can join. Joining surfaces them in your own catalog."
       />
 
       {discoverable.length === 0 && joined.length === 0 ? (
         <EmptyState
           icon={Sparkles}
           title="Nothing public yet"
-          body="When someone in the workspace creates a public label, or promotes a private one, it lands here. Be the first."
+          body="When someone creates a public label, or promotes a private one, it lands here."
           action={
             <Link to={`/w/${workspaceId}/labels/new`} className={cn(buttonVariants(), "gap-1.5")}>
               <Plus className="h-4 w-4" />
@@ -413,11 +409,11 @@ function DiscoverTab({ workspaceId, view }: TabContentProps) {
           }
         />
       ) : (
-        <div className="space-y-10">
+        <div className="space-y-8">
           {discoverable.length > 0 && (
             <div>
-              <SectionHeading kicker="Available" title="Join a label" count={discoverable.length} />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <SubsectionHeading title="Available to join" count={discoverable.length} />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {discoverable.map((label) => (
                   <DiscoverableLabelCard key={label.id} workspaceId={workspaceId} label={label} />
                 ))}
@@ -426,8 +422,8 @@ function DiscoverTab({ workspaceId, view }: TabContentProps) {
           )}
           {joined.length > 0 && (
             <div>
-              <SectionHeading kicker="Joined" title="You're a member" count={joined.length} />
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <SubsectionHeading title="You're a member" count={joined.length} />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {joined.map((label) => (
                   <JoinedLabelCard
                     key={label.id}
@@ -537,22 +533,19 @@ function NewTab({ workspaceId }: { workspaceId: string }) {
 
   return (
     <section>
-      <PageHero
-        eyebrow="Make something new"
-        title="Compose"
-        accent="label"
-        subtitle="Give it a name, pick a color, add an emoji if you like. You can edit anything but the visibility later."
+      <SectionIntro
+        title="New label"
+        subtitle="Give it a name, pick a color, add an emoji. You can edit anything but the visibility later."
       />
 
       {!isOnline && (
-        <div className="mb-6 rounded-xl border border-dashed border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
-          You're offline. Labels need a live connection to create — the workspace bootstrap claims a unique slug on the
-          server.
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+          You're offline. Labels need a live connection to create.
         </div>
       )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[1.1fr_1fr]">
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-5">
           <Field label="Name" htmlFor="label-name">
             <Input
               id="label-name"
@@ -567,14 +560,9 @@ function NewTab({ workspaceId }: { workspaceId: string }) {
           <Field label="Visibility" htmlFor="label-visibility">
             <VisibilityPicker value={visibility} onChange={setVisibility} />
             <p className="mt-1.5 text-xs text-muted-foreground">
-              {visibility === "public" ? (
-                <>
-                  Visible to everyone in the workspace. Members join to subscribe.{" "}
-                  <span className="italic">You can't undo this.</span>
-                </>
-              ) : (
-                <>Only you can see this label. You can promote it to public later.</>
-              )}
+              {visibility === "public"
+                ? "Visible to everyone in the workspace. Members join to subscribe. You can't undo this."
+                : "Only you can see this label. You can promote it to public later."}
             </p>
           </Field>
 
@@ -608,7 +596,7 @@ function NewTab({ workspaceId }: { workspaceId: string }) {
         </form>
 
         <aside className="lg:sticky lg:top-4 lg:self-start">
-          <SectionHeading kicker="Preview" title="How it looks" />
+          <SubsectionHeading title="Preview" />
           <LabelPreview
             name={name || "Untitled label"}
             color={color}
@@ -628,30 +616,32 @@ function NewTab({ workspaceId }: { workspaceId: string }) {
 
 function LabelSwatchCard({ label, children }: { label: CachedLabel; children?: React.ReactNode }) {
   return (
-    <article className="relative flex min-h-[180px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md">
-      <div className="h-2 w-full" style={{ backgroundColor: label.color }} />
-      <div className="flex flex-1 flex-col p-4">
-        <div className="flex items-start gap-3">
+    <article
+      className="relative flex min-h-[160px] flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-foreground/20"
+      style={{ borderLeft: `3px solid ${label.color}` }}
+    >
+      <div className="flex flex-1 flex-col p-3.5">
+        <div className="flex items-start gap-2.5">
           <div
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xl"
             style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
             aria-hidden
           >
-            {label.emoji ?? <Tag className="h-5 w-5" />}
+            {label.emoji ?? <Tag className="h-4 w-4" />}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <h3 className="truncate text-sm font-semibold leading-tight">{label.name}</h3>
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
               {label.visibility === "public" ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              {label.visibility}
+              <span>{label.visibility === "public" ? "Public" : "Private"}</span>
             </div>
-            <h3 className="mt-0.5 truncate text-lg font-semibold leading-tight">{label.name}</h3>
-            {label.description && (
-              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-                {stripMarkdownToInline(label.description)}
-              </p>
-            )}
           </div>
         </div>
+        {label.description && (
+          <p className="mt-2.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+            {stripMarkdownToInline(label.description)}
+          </p>
+        )}
         {children}
       </div>
     </article>
@@ -672,32 +662,35 @@ function LabelPreview({
   visibility: Visibility
 }) {
   return (
-    <article className="relative flex min-h-[200px] flex-col overflow-hidden rounded-2xl border bg-card shadow-sm">
-      <div className="h-2 w-full" style={{ backgroundColor: color }} />
-      <div className="flex flex-1 flex-col p-5">
+    <article
+      className="relative flex min-h-[180px] flex-col overflow-hidden rounded-xl border bg-card"
+      style={{ borderLeft: `3px solid ${color}` }}
+    >
+      <div className="flex flex-1 flex-col p-4">
         <div className="flex items-start gap-3">
           <div
-            className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl text-3xl"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-2xl"
             style={{ backgroundColor: hexToRgba(color, 0.14), color }}
             aria-hidden
           >
-            {emoji || <Tag className="h-6 w-6" />}
+            {emoji || <Tag className="h-5 w-5" />}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+            <h3 className="text-sm font-semibold leading-tight">{name}</h3>
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
               {visibility === "public" ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              {visibility}
+              <span>{visibility === "public" ? "Public" : "Private"}</span>
             </div>
-            <h3 className="mt-0.5 text-xl font-semibold leading-tight">{name}</h3>
-            {description ? (
-              <p className="mt-1.5 text-sm text-muted-foreground">{stripMarkdownToInline(description)}</p>
-            ) : (
-              <p className="mt-1.5 text-sm italic text-muted-foreground/60">No description yet.</p>
-            )}
           </div>
         </div>
 
-        <div className="mt-auto pt-6">
+        {description ? (
+          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{stripMarkdownToInline(description)}</p>
+        ) : (
+          <p className="mt-3 text-xs text-muted-foreground/60">No description yet.</p>
+        )}
+
+        <div className="mt-auto pt-5">
           <div
             className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
             style={{ backgroundColor: hexToRgba(color, 0.16), color }}
@@ -714,46 +707,22 @@ function LabelPreview({
   )
 }
 
-function PageHero({
-  eyebrow,
-  title,
-  accent,
-  subtitle,
-  action,
-}: {
-  eyebrow: string
-  title: string
-  accent?: string
-  subtitle: string
-  action?: React.ReactNode
-}) {
+function SectionIntro({ title, subtitle, action }: { title: string; subtitle: string; action?: React.ReactNode }) {
   return (
-    <div className="mb-10 flex flex-col gap-4 border-b pb-8 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="max-w-2xl">
-        <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">{eyebrow}</p>
-        <h2 className="mt-2 text-4xl font-semibold leading-[0.95] tracking-tight sm:text-5xl">
-          {title}
-          {accent && (
-            <>
-              {" "}
-              <span className="font-serif italic text-muted-foreground/70">{accent}.</span>
-            </>
-          )}
-        </h2>
-        <p className="mt-3 max-w-prose text-sm text-muted-foreground sm:text-base">{subtitle}</p>
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
   )
 }
 
-function SectionHeading({ kicker, title, count }: { kicker: string; title: string; count?: number }) {
+function SubsectionHeading({ title, count }: { title: string; count?: number }) {
   return (
-    <div className="mb-4 flex items-baseline justify-between">
-      <div className="flex items-baseline gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">{kicker}</span>
-        <h3 className="text-xl font-semibold leading-tight tracking-tight">{title}</h3>
-      </div>
+    <div className="mb-3 flex items-baseline gap-2">
+      <h3 className="text-sm font-semibold">{title}</h3>
       {typeof count === "number" && <span className="text-xs tabular-nums text-muted-foreground">{count}</span>}
     </div>
   )
@@ -771,13 +740,13 @@ function EmptyState({
   action?: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-3xl border-2 border-dashed bg-card/40 px-6 py-16 text-center">
-      <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-        <Icon className="h-6 w-6" />
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed bg-card/40 px-6 py-12 text-center">
+      <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+        <Icon className="h-5 w-5" />
       </div>
-      <h3 className="text-lg font-semibold tracking-tight">{title}</h3>
-      <p className="mt-1.5 max-w-md text-sm text-muted-foreground">{body}</p>
-      {action && <div className="mt-5">{action}</div>}
+      <h3 className="text-sm font-semibold">{title}</h3>
+      <p className="mt-1 max-w-md text-sm text-muted-foreground">{body}</p>
+      {action && <div className="mt-4">{action}</div>}
     </div>
   )
 }
@@ -785,13 +754,10 @@ function EmptyState({
 function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
   return (
     <div>
-      <UiLabel
-        htmlFor={htmlFor}
-        className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground"
-      >
+      <UiLabel htmlFor={htmlFor} className="text-sm font-medium">
         {label}
       </UiLabel>
-      <div className="mt-2">{children}</div>
+      <div className="mt-1.5">{children}</div>
     </div>
   )
 }
