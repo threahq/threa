@@ -239,7 +239,13 @@ function sanitizeInstanceIdSegment(raw: string): string {
   return raw.replace(INSTANCE_ID_UNSAFE_CHARS, "-").replace(/^-+|-+$/g, "")
 }
 
-function migrateInstanceId(stored: string): string {
+function migrateInstanceId(stored: unknown): string {
+  // `config.instanceId` is loaded via `JSON.parse` and `readConfig` only
+  // type-checks the three required fields. A hand-edited config could put
+  // anything here, so accept `unknown` and treat non-strings as missing.
+  if (typeof stored !== "string" || stored.length === 0) {
+    return `pi-${crypto.randomUUID().slice(0, 8)}`
+  }
   if (INSTANCE_ID_REGEX.test(stored)) return stored
   const cleaned = sanitizeInstanceIdSegment(stored)
   return cleaned.length > 0 ? cleaned : `pi-${crypto.randomUUID().slice(0, 8)}`
@@ -247,7 +253,7 @@ function migrateInstanceId(stored: string): string {
 
 function ensureInstanceId(): string {
   if (!config) throw new Error("Threa remote config not loaded")
-  if (config.instanceId) {
+  if (typeof config.instanceId === "string" && config.instanceId.length > 0) {
     const migrated = migrateInstanceId(config.instanceId)
     if (migrated !== config.instanceId) {
       config.instanceId = migrated

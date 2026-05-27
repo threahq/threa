@@ -425,6 +425,20 @@ describe("migrateInstanceId", () => {
     const result = __testing.migrateInstanceId("...")
     expect(result).toMatch(/^pi-[0-9a-f]{8}$/)
   })
+
+  test("returns a fresh id when the stored value is not a string", () => {
+    // `config.instanceId` is loaded via `JSON.parse` from disk and only the
+    // three required string fields are validated. A hand-edited config could
+    // park anything here, so we must tolerate non-strings without crashing.
+    expect(__testing.migrateInstanceId(undefined)).toMatch(/^pi-[0-9a-f]{8}$/)
+    expect(__testing.migrateInstanceId(null)).toMatch(/^pi-[0-9a-f]{8}$/)
+    expect(__testing.migrateInstanceId(42)).toMatch(/^pi-[0-9a-f]{8}$/)
+    expect(__testing.migrateInstanceId({})).toMatch(/^pi-[0-9a-f]{8}$/)
+  })
+
+  test("returns a fresh id when the stored value is an empty string", () => {
+    expect(__testing.migrateInstanceId("")).toMatch(/^pi-[0-9a-f]{8}$/)
+  })
 })
 
 describe("formatHelloAckDetails", () => {
