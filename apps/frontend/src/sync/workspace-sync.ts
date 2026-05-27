@@ -1787,7 +1787,7 @@ export async function applyReconnectBootstrapBatch(
       }
 
       for (const [streamId, bootstrap] of decryptedStreamBootstraps) {
-        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now, userId)
+        await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now)
       }
 
       if (terminalStreamIds.size > 0) {

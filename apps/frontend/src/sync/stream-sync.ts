@@ -215,8 +215,7 @@ async function writeBootstrapEventsAndStream(
   workspaceId: string,
   streamId: string,
   bootstrap: StreamBootstrap,
-  now: number,
-  _userId: string | null
+  now: number
 ): Promise<void> {
   await cleanupStaleOptimisticEvents(streamId)
 
@@ -343,7 +342,7 @@ export async function applyStreamBootstrap(
   const decrypted = await decryptBootstrapEventsIfNeeded(bootstrap, workspaceId, userId)
   const now = Date.now()
   await db.transaction("rw", [db.events, db.streams, db.pendingMessages, db.pendingOperations], async () => {
-    await writeBootstrapEventsAndStream(workspaceId, streamId, decrypted, now, userId)
+    await writeBootstrapEventsAndStream(workspaceId, streamId, decrypted, now)
   })
 }
 
@@ -363,10 +362,9 @@ export async function applyStreamBootstrapInCurrentTransaction(
   workspaceId: string,
   streamId: string,
   bootstrap: StreamBootstrap,
-  now = Date.now(),
-  userId: string | null = null
+  now = Date.now()
 ): Promise<void> {
-  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now, userId)
+  await writeBootstrapEventsAndStream(workspaceId, streamId, bootstrap, now)
 }
 
 // ============================================================================

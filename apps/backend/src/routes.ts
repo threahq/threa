@@ -66,7 +66,6 @@ import type { StorageProvider } from "./lib/storage/s3-client"
 import type { CommandRegistry } from "./features/commands"
 import type { UserPreferencesService } from "./features/user-preferences"
 import type { UserE2eKeysService } from "./features/user-e2e-keys"
-import type { E2eStreamsService } from "./features/e2e-streams"
 import type { AvatarService } from "./features/workspaces"
 import type { BotChannelService } from "./features/api-keys"
 import type { LinkPreviewService } from "./features/link-previews"
@@ -90,7 +89,6 @@ interface Dependencies {
   conversationService: ConversationService
   userPreferencesService: UserPreferencesService
   userE2eKeysService: UserE2eKeysService
-  e2eStreamsService: E2eStreamsService
   invitationService: InvitationService
   activityService: ActivityService
   savedMessagesService: SavedMessagesService
@@ -131,7 +129,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     conversationService,
     userPreferencesService,
     userE2eKeysService,
-    e2eStreamsService,
     invitationService,
     activityService,
     savedMessagesService,
