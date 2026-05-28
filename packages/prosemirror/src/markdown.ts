@@ -13,7 +13,7 @@ import {
   serializeAttachmentMetadata,
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
-import { buildQuoteHref, buildSharedMessageHref } from "./pointer-urls"
+import { buildMemoHref, buildQuoteHref, buildSharedMessageHref } from "./pointer-urls"
 
 // ============================================================================
 // Shared Inline Pattern
@@ -134,6 +134,16 @@ function serializeNode(node: JSONContent, listDepth = 0, listIndex?: number): st
       const rawName = authorName && authorName.length > 0 ? authorName : "another stream"
       const escapedName = rawName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
       return `Shared a message from [${escapedName}](${buildSharedMessageHref({ streamId, messageId })})`
+    }
+
+    case "memoEmbed": {
+      const { memoId, title } = node.attrs as { memoId: string; title?: string }
+      // Wire-format only — the frontend hydrates the live memo card on render.
+      // Markdown link syntax keeps INV-60 strip helpers reducing the line to a
+      // clean title; the cached title is the fallback external consumers see.
+      const rawTitle = title && title.length > 0 ? title : "Memo"
+      const escapedTitle = rawTitle.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
+      return `[${escapedTitle}](${buildMemoHref({ memoId })})`
     }
 
     case "bulletList":
@@ -651,6 +661,19 @@ export function parseMarkdown(
       continue
     }
 
+    // Memo embed pointer line — inverse of the `memoEmbed` serializer. A line
+    // that is exactly a `memo:` link roundtrips into a `memoEmbed` node so
+    // Ariadne's emitted embeds and pasted memo links both render as live cards.
+    const memoMatch = parseMemoLine(line)
+    if (memoMatch) {
+      content.push({
+        type: "memoEmbed",
+        attrs: { memoId: memoMatch.memoId, title: memoMatch.title },
+      })
+      i++
+      continue
+    }
+
     // Regular paragraph
     content.push({
       type: "paragraph",
@@ -674,6 +697,21 @@ function parseSharedMessageLine(line: string): { authorName: string; streamId: s
   if (!match) return null
   const authorName = match[1].replace(/\\([\]\\])/g, "$1")
   return { authorName, streamId: match[2], messageId: match[3] }
+}
+
+/**
+ * Match a standalone memo-embed pointer line:
+ *   `[Title](memo:memo_xxx)`
+ *
+ * The whole line must be the single link (an inline `memo:` link mid-sentence
+ * stays a regular link). Titles containing `]` are escaped as `\]` per the
+ * serializer.
+ */
+function parseMemoLine(line: string): { title: string; memoId: string } | null {
+  const match = line.match(/^\[((?:\\.|[^\]])+)\]\(memo:([\w-]+)\)\s*$/)
+  if (!match) return null
+  const title = match[1].replace(/\\([\]\\])/g, "$1")
+  return { title, memoId: match[2] }
 }
 
 /**

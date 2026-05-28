@@ -65,7 +65,8 @@ export function isSuggestionActive(editor: Editor): boolean {
     s.mention?.popupVisible ||
     s.channelLink?.popupVisible ||
     s.slashCommand?.popupVisible ||
-    s.emoji?.popupVisible
+    s.emoji?.popupVisible ||
+    s.memoSearch?.popupVisible
   )
 }
 

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AttachmentSafetyStatuses, type JSONContent } from "@threa/types"
 import { MessageRepository } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
+import { MemoRepository } from "../../memos"
 import { stripInaccessibleAgentRefs } from "./strip-inaccessible-refs"
 
 const pool = {} as any
@@ -32,6 +33,10 @@ function attachmentRefNode(id: string, filename = "diagram.png", mimeType = "ima
     type: "attachmentReference",
     attrs: { id, filename, mimeType, sizeBytes: 100, status: "uploaded", imageIndex: 1, error: null },
   }
+}
+
+function memoEmbedNode(memoId: string, title = "Auth rewrite"): JSONContent {
+  return { type: "memoEmbed", attrs: { memoId, title } }
 }
 
 function paragraph(...children: JSONContent[]): JSONContent {
@@ -276,6 +281,75 @@ describe("stripInaccessibleAgentRefs", () => {
       type: "attachmentReference",
       reason: "attachment-not-clean",
       ids: { id: "att_quarantined" },
+    })
+  })
+
+  it("keeps memoEmbed when the memo resolves to an active memo in the workspace", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["memo_a", { id: "memo_a", status: "active" } as any]])
+    )
+
+    const result = await stripInaccessibleAgentRefs({
+      pool,
+      workspaceId: "ws_1",
+      targetStreamId: "stream_target",
+      // Deliberately no stream reach for the memo's source — memoEmbed visibility
+      // is enforced per-recipient at render time, so scope is not re-checked here.
+      accessibleStreamIds: ["stream_target"],
+      contentJson: doc(memoEmbedNode("memo_a")),
+    })
+
+    expect(result.dropped).toEqual([])
+    expect(JSON.stringify(result.contentJson)).toContain("memo_a")
+  })
+
+  it("drops memoEmbed when the memo id resolves to nothing in the workspace", async () => {
+    // INV-8: hallucinated ids and cross-workspace memos both collapse into an
+    // empty map and surface as "not found".
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+
+    const result = await stripInaccessibleAgentRefs({
+      pool,
+      workspaceId: "ws_1",
+      targetStreamId: "stream_target",
+      accessibleStreamIds: ["stream_target"],
+      contentJson: doc(memoEmbedNode("memo_phantom")),
+    })
+
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]).toMatchObject({
+      type: "memoEmbed",
+      reason: "memo-not-found",
+      ids: { memoId: "memo_phantom" },
+    })
+    expect(JSON.stringify(result.contentJson)).not.toContain("memo_phantom")
+    expect(JSON.stringify(result.contentJson)).not.toContain("memoEmbed")
+  })
+
+  it("drops memoEmbed when the memo exists but is no longer active", async () => {
+    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
+    spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["memo_archived", { id: "memo_archived", status: "archived" } as any]])
+    )
+
+    const result = await stripInaccessibleAgentRefs({
+      pool,
+      workspaceId: "ws_1",
+      targetStreamId: "stream_target",
+      accessibleStreamIds: ["stream_target"],
+      contentJson: doc(memoEmbedNode("memo_archived")),
+    })
+
+    expect(result.dropped).toHaveLength(1)
+    expect(result.dropped[0]).toMatchObject({
+      type: "memoEmbed",
+      reason: "memo-not-active",
+      ids: { memoId: "memo_archived" },
     })
   })
 

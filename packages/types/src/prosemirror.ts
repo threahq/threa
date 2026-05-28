@@ -58,6 +58,7 @@ export type ThreaBlockNode =
   | ThreaBlockquote
   | ThreaQuoteReply
   | ThreaSharedMessage
+  | ThreaMemoEmbed
   | ThreaBulletList
   | ThreaOrderedList
   | ThreaHorizontalRule
@@ -141,6 +142,22 @@ export interface ThreaSharedMessage {
     authorId?: string
     /** The actor type of the source author, cached for the same reason */
     actorType?: string
+  }
+}
+
+/**
+ * Memo embed (pointer) - a live reference to a memo in the workspace memory.
+ * Like a shared message, the card body is hydrated at read time from the memo
+ * store. Carries only the memo id + a cached title hint so the node can render
+ * before hydration completes.
+ */
+export interface ThreaMemoEmbed {
+  type: "memoEmbed"
+  attrs: {
+    /** The ID of the referenced memo */
+    memoId: string
+    /** Memo title cached at insert time so the node can render before hydration */
+    title?: string
   }
 }
 
@@ -437,6 +454,7 @@ const blockNodeSchema = z.lazy(() =>
     blockquoteNodeSchema,
     quoteReplyNodeSchema,
     sharedMessageNodeSchema,
+    memoEmbedNodeSchema,
     bulletListNodeSchema,
     orderedListNodeSchema,
     horizontalRuleNodeSchema,
@@ -473,6 +491,14 @@ const sharedMessageNodeSchema = z.object({
     authorName: z.string().optional(),
     authorId: z.string().optional(),
     actorType: z.string().optional(),
+  }),
+})
+
+const memoEmbedNodeSchema = z.object({
+  type: z.literal("memoEmbed"),
+  attrs: z.object({
+    memoId: z.string(),
+    title: z.string().optional(),
   }),
 })
 
