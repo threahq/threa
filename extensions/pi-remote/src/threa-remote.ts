@@ -696,7 +696,7 @@ async function recordTraceStep(stepType: string, content: string, statusText?: s
   await recordInvocationTraceStep(pending, stepType, content, statusText)
 }
 
-async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
+async function traceHeartbeat(text: string, ctx?: ExtensionContext, stepType?: string): Promise<void> {
   if (!pending) return
   const trimmed = safeStatusText(text)
   if (!trimmed) return
@@ -707,7 +707,12 @@ async function traceHeartbeat(text: string, stepType?: string): Promise<void> {
     await recordTraceStep(stepType, trimmed, trimmed)
     return
   }
-  await heartbeat("busy", trimmed).catch(() => undefined)
+  // `ctx` carries the cwd-derived displayName and runtimeSessionId into the
+  // heartbeat body. Dropping it makes the server's upsert wipe runtimeSessionId
+  // out of `capabilities`, and `broadcastBotPresence` then emits `presence:
+  // null` for the linked scratchpad — the strip flickers to "Not connected"
+  // mid-turn.
+  await heartbeat("busy", trimmed, ctx).catch(() => undefined)
 }
 
 function safeStatusText(text: string): string {
@@ -903,14 +908,25 @@ function formatInvocationTrace(invocation: ClaimedInvocation, context: string): 
   )
 }
 
+// Legacy default that older configTemplate versions baked into the JSON the
+// user pasted during /configure. Treated as "unset" so it no longer collapses
+// every scratchpad onto a single name across repos.
+const LEGACY_DEFAULT_DISPLAY_NAME = "Local Pi"
+
 function defaultDisplayNameFor(cwd: string, configuredOverride?: string): string {
-  // `configuredOverride` (set during /configure) wins over the dirname shape so
-  // power users can pin a name across workspaces. The dirname suffix is what
-  // most users actually want — it makes the scratchpad searchable in Threa as
-  // "Pi remote: <project>" without needing to type a label every time.
-  if (configuredOverride) return configuredOverride
+  // The dirname tail is what makes the scratchpad distinguishable across
+  // repos — without it, every Pi runtime on the same workspace produces a
+  // scratchpad named "Pi remote" (or, worse, "Local Pi") and they're
+  // impossible to tell apart in the sidebar. So always append it.
+  //
+  // `configuredOverride` (set during /configure) is treated as a *prefix*
+  // when present, not a full replacement. Empty/whitespace and the legacy
+  // "Local Pi" default fall back to "Pi remote" so existing configs do not
+  // keep producing the bad name.
+  const trimmed = configuredOverride?.trim() ?? ""
+  const prefix = trimmed.length === 0 || trimmed === LEGACY_DEFAULT_DISPLAY_NAME ? "Pi remote" : trimmed
   const dir = cwd.split("/").filter(Boolean).pop() ?? "session"
-  return `Pi remote: ${dir}`
+  return `${prefix} - ${dir}`
 }
 
 async function createRemoteSession(ctx: ExtensionCommandContext, args: string): Promise<void> {
@@ -1037,7 +1053,11 @@ function configTemplate(existing: Partial<Config> | undefined): string {
       workspaceId: existing?.workspaceId ?? "",
       apiKey: existing?.apiKey ?? "",
       pollMs: existing?.pollMs ?? 3000,
-      defaultDisplayName: existing?.defaultDisplayName ?? "Local Pi",
+      // Empty default: `defaultDisplayNameFor` now always appends the dirname,
+      // so leaving this blank produces "Pi remote - <project>". Users who want
+      // a custom prefix (e.g. "Work Pi") can set it here and the dirname will
+      // still be appended.
+      defaultDisplayName: existing?.defaultDisplayName ?? "",
       preferredModels: existing?.preferredModels ?? [],
     },
     null,
@@ -2403,7 +2423,7 @@ export default function (pi: ExtensionAPI): void {
 
   pi.on("agent_start", async (_event, ctx) => {
     if (config && isEnabled(ctx)) await heartbeatBusyIfStale("Thinking…", ctx).catch(() => undefined)
-    await traceHeartbeat("Thinking…", "thinking")
+    await traceHeartbeat("Thinking…", ctx, "thinking")
   })
 
   pi.on("tool_call", async (event) => {
@@ -2423,15 +2443,15 @@ export default function (pi: ExtensionAPI): void {
     pendingToolCalls.delete(event.toolCallId)
   })
 
-  pi.on("tool_execution_end", async (event) => {
+  pi.on("tool_execution_end", async (event, ctx) => {
     if (!event.isError || !pendingToolCalls.has(event.toolCallId)) return
-    await traceHeartbeat(`${event.toolName} failed`, "tool_error")
+    await traceHeartbeat(`${event.toolName} failed`, ctx, "tool_error")
     pendingToolCalls.delete(event.toolCallId)
   })
 
-  pi.on("message_start", async (event) => {
+  pi.on("message_start", async (event, ctx) => {
     if (!pending || event.message.role !== "assistant") return
-    await traceHeartbeat("Composing response…")
+    await traceHeartbeat("Composing response…", ctx)
   })
 
   pi.on("message_end", async (event) => {
