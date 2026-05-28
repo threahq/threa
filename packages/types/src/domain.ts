@@ -180,8 +180,9 @@ export interface Stream {
   e2eOwnerKeyId?: string | null
   /**
    * Which agent (if any) the owner invited into this E2E stream. `"enclave"`
-   * routes Ariadne replies through the enclave service. Undefined on plaintext
-   * streams and on streams with no invited agent.
+   * routes Ariadne replies through the enclave service; `"none"` on an E2E
+   * stream with no invited agent. Undefined only on plaintext (non-E2E)
+   * streams, where the E2E JOIN is omitted entirely.
    */
   e2eInvitedAgentKind?: E2eInvitedAgentKind
 }

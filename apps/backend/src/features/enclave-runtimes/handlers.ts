@@ -50,12 +50,17 @@ const revokeSchema = z.object({
   keyId: z.string().min(1),
 })
 
+// EIKs are raw X25519 public keys (32 bytes). Validate at registration so a
+// malformed key fails loudly here rather than surfacing later as an opaque
+// HPKE-wrap error on the client.
+const EIK_PUBLIC_KEY_BYTES = 32
+
 function decodePublicKey(base64: string): Uint8Array {
-  try {
-    return new Uint8Array(Buffer.from(base64, "base64"))
-  } catch {
+  const bytes = new Uint8Array(Buffer.from(base64, "base64"))
+  if (bytes.length !== EIK_PUBLIC_KEY_BYTES) {
     throw new HttpError("Invalid public key encoding", { status: 400, code: "INVALID_PUBLIC_KEY" })
   }
+  return bytes
 }
 
 function serializeRuntime(runtime: EnclaveRuntime) {
