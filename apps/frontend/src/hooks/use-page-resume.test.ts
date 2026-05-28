@@ -10,6 +10,14 @@ function setVisibility(state: DocumentVisibilityState) {
   document.dispatchEvent(new Event("visibilitychange"))
 }
 
+function blurWindow() {
+  window.dispatchEvent(new Event("blur"))
+}
+
+function focusWindow() {
+  window.dispatchEvent(new Event("focus"))
+}
+
 describe("usePageResume", () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -123,6 +131,92 @@ describe("usePageResume", () => {
       setVisibility("hidden")
       vi.advanceTimersByTime(12_000)
       setVisibility("visible")
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it("fires when the window regains focus after a long blur (desktop app-switch)", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      blurWindow()
+      vi.advanceTimersByTime(12_000)
+      focusWindow()
+    })
+
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not fire for a brief focus loss under the threshold", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      blurWindow()
+      vi.advanceTimersByTime(2_000)
+      focusWindow()
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it("does not fire on focus without a prior blur", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      focusWindow()
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it("resumes exactly once when a tab switch fires both visibility and focus events", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      setVisibility("hidden")
+      blurWindow()
+      vi.advanceTimersByTime(12_000)
+      setVisibility("visible")
+      focusWindow()
+    })
+
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not resume on focus while the tab is still hidden", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      setVisibility("hidden")
+      vi.advanceTimersByTime(12_000)
+      focusWindow()
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+
+    act(() => {
+      setVisibility("visible")
+    })
+
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it("removes the focus and blur listeners on unmount", () => {
+    const onResume = vi.fn()
+    const { unmount } = renderHook(() => usePageResume(onResume, 10_000))
+
+    unmount()
+
+    act(() => {
+      blurWindow()
+      vi.advanceTimersByTime(12_000)
+      focusWindow()
     })
 
     expect(onResume).not.toHaveBeenCalled()
