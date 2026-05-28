@@ -27,30 +27,36 @@ interface DialogContentProps extends React.ComponentPropsWithoutRef<typeof Dialo
 const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.Content>, DialogContentProps>(
   ({ className, children, hideCloseButton, ...props }, ref) => (
     <DialogPortal>
-      <DialogOverlay />
-      <DialogPrimitive.Content
-        ref={ref}
-        className={cn(
-          "fixed z-50 w-full max-w-lg gap-4 border bg-background p-6 shadow-lg",
-          // Mobile: full-screen, flex layout for proper overflow/scroll
-          // NOTE: twMerge does not merge across breakpoint prefixes. Callers that
-          // pass `p-0` or `gap-0` must also pass `max-sm:p-0` / `max-sm:gap-0`
-          // to cancel these mobile defaults.
-          "max-sm:inset-0 max-sm:flex max-sm:flex-col max-sm:gap-4 max-sm:max-w-none max-sm:max-h-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:overflow-y-auto max-sm:p-4",
-          // Desktop: centered grid modal
-          "sm:grid sm:left-[50%] sm:top-[50%] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-modal",
-          className
-        )}
-        {...props}
-      >
-        {children}
-        {!hideCloseButton && (
-          <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-            <X className="h-4 w-4" />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
-        )}
-      </DialogPrimitive.Content>
+      {/* Content is nested inside Overlay so react-remove-scroll (used by Radix
+          Dialog to prevent body scroll) tracks the full React tree including
+          portalled children like Popover. Without this nesting, scrollable
+          content inside a Popover within a Dialog would not work.
+          See: https://github.com/radix-ui/primitives/issues/1159 */}
+      <DialogOverlay>
+        <DialogPrimitive.Content
+          ref={ref}
+          className={cn(
+            "fixed z-50 w-full max-w-lg gap-4 border bg-background p-6 shadow-lg",
+            // Mobile: full-screen, flex layout for proper overflow/scroll
+            // NOTE: twMerge does not merge across breakpoint prefixes. Callers that
+            // pass `p-0` or `gap-0` must also pass `max-sm:p-0` / `max-sm:gap-0`
+            // to cancel these mobile defaults.
+            "max-sm:inset-0 max-sm:flex max-sm:flex-col max-sm:gap-4 max-sm:max-w-none max-sm:max-h-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:border-0 max-sm:overflow-y-auto max-sm:p-4",
+            // Desktop: centered grid modal
+            "sm:grid sm:left-[50%] sm:top-[50%] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-modal",
+            className
+          )}
+          {...props}
+        >
+          {children}
+          {!hideCloseButton && (
+            <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+              <X className="h-4 w-4" />
+              <span className="sr-only">Close</span>
+            </DialogPrimitive.Close>
+          )}
+        </DialogPrimitive.Content>
+      </DialogOverlay>
     </DialogPortal>
   )
 )
