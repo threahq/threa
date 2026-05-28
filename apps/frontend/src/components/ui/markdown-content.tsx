@@ -42,6 +42,11 @@ function urlTransform(url: string): string {
   if (url.startsWith("shared-message:")) {
     return url
   }
+  // Allow memo: protocol so the paragraph renderer can detect the anchor and
+  // swap it for the memo-embed card. Same reasoning as shared-message: above.
+  if (url.startsWith("memo:")) {
+    return url
+  }
   // For other URLs, use default behavior (returns url as-is for http/https/mailto)
   const protocols = ["http:", "https:", "mailto:", "tel:"]
   const parsed = url.includes(":") ? url.split(":")[0] + ":" : ""
