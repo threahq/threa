@@ -190,3 +190,19 @@ export {
 } from "./use-scheduled"
 
 export { useStreamName } from "./use-stream-name"
+
+export {
+  useLabelsSync,
+  useLabelsView,
+  useCreateLabel,
+  useUpdateLabel,
+  useDeleteLabel,
+  useJoinLabel,
+  useLeaveLabel,
+  usePromoteLabel,
+  reconcileLabels,
+  labelKeys,
+  type LabelViewerContext,
+  type CachedLabel,
+  type CachedLabelMembership,
+} from "./use-labels"

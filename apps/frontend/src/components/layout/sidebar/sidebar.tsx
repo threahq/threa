@@ -85,6 +85,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const isActivityPage = splat === "activity" || window.location.pathname.endsWith("/activity")
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
+  const isLabelsPage = splat === "labels" || location.pathname.includes("/labels")
 
   // Build set of streams the user is a member of (for filtering public channels)
   const memberStreamIds = useMemo(() => {
@@ -417,6 +418,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
               isActivityPage={isActivityPage}
               isMemoryPage={isMemoryPage}
               isFilesPage={isFilesPage}
+              isLabelsPage={isLabelsPage}
               unreadActivityCount={unreadActivityCount}
             />
           </div>

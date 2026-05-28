@@ -492,6 +492,47 @@ export interface CachedE2eKey {
   _cachedAt: number
 }
 
+/**
+ * Cached label row. Mirrors `Label` on the wire — both private (creator-only)
+ * and public (workspace-visible, opt-in via join) labels live in the same store
+ * for offline-first reads via `useLiveQuery`. The viewer sees:
+ *   • all public labels in the workspace (joined or not)
+ *   • their own private labels
+ * Filter by `visibility` + `creatorUserId` in queries; the discovery tab uses
+ * `[workspaceId+visibility]`.
+ */
+export interface CachedLabel {
+  id: string
+  workspaceId: string
+  visibility: "public" | "private"
+  creatorUserId: string
+  name: string
+  slug: string
+  color: string
+  emoji: string | null
+  description: string | null
+  createdAt: string
+  updatedAt: string
+  archivedAt: string | null
+  _cachedAt: number
+}
+
+/**
+ * Per-user membership in a public label. Private-label creators are NOT
+ * tracked here — they always see their own labels via `creatorUserId` on
+ * `CachedLabel`. Composite key `${workspaceId}:${labelId}:${userId}` so a
+ * label can have many members.
+ */
+export interface CachedLabelMembership {
+  /** Composite key: `${workspaceId}:${labelId}:${userId}` */
+  id: string
+  workspaceId: string
+  labelId: string
+  userId: string
+  joinedAt: string
+  _cachedAt: number
+}
+
 export interface CachedWorkspaceMetadata {
   id: string // workspaceId
   workspaceId: string
@@ -542,6 +583,8 @@ export class ThreaDatabase extends Dexie {
   savedMessages!: EntityTable<CachedSavedMessage, "id">
   scheduledMessages!: EntityTable<CachedScheduledMessage, "id">
   e2eKeys!: EntityTable<CachedE2eKey, "id">
+  labels!: EntityTable<CachedLabel, "id">
+  labelMemberships!: EntityTable<CachedLabelMembership, "id">
 
   constructor(name: string) {
     super(name)
@@ -802,6 +845,16 @@ export class ThreaDatabase extends Dexie {
       e2eKeys: "id, [workspaceId+userId], workspaceId, _cachedAt",
     })
 
+    // v30: Labels + per-user label memberships for offline-first reads.
+    // [workspaceId+visibility] lets the discovery tab pull all public labels
+    // without scanning the workspace's private rows. labelMemberships' compound
+    // [workspaceId+userId] surfaces the viewer's joined-public labels for the
+    // "My labels" tab.
+    this.version(30).stores({
+      labels: "id, workspaceId, visibility, [workspaceId+visibility], creatorUserId, _cachedAt",
+      labelMemberships: "id, workspaceId, labelId, userId, [workspaceId+userId], [workspaceId+labelId], _cachedAt",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -863,6 +916,8 @@ export async function clearAllCachedData(): Promise<void> {
       // Wrapped private bundles are tied to the logging-out identity — drop
       // them so the next account starts without inherited key material.
       db.e2eKeys.clear(),
+      db.labels.clear(),
+      db.labelMemberships.clear(),
       // Note: we keep pendingMessages to retry sending after re-login
     ])
   } finally {

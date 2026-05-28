@@ -22,6 +22,10 @@ import type {
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
+  LabelUpsertedPayload,
+  LabelDeletedPayload,
+  LabelMemberJoinedPayload,
+  LabelMemberLeftPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
@@ -1404,6 +1408,83 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
   }
 
+  // Labels — created/updated arrive in the creator's user room for private
+  // labels, workspace-wide for public ones. The receiving client just writes
+  // the row; visibility-based filtering happens at the UI layer.
+  const handleLabelUpserted = (payload: LabelUpsertedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { label } = payload
+    const now = Date.now()
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
+      const labels = old.labels ?? []
+      const exists = labels.some((l) => l.id === label.id)
+      return {
+        ...old,
+        labels: exists ? labels.map((l) => (l.id === label.id ? label : l)) : [...labels, label],
+      }
+    })
+
+    void db.labels.put({ ...label, _cachedAt: now })
+  }
+
+  const handleLabelDeleted = (payload: LabelDeletedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { labelId } = payload
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      labels: (old.labels ?? []).filter((l) => l.id !== labelId),
+      labelMemberships: (old.labelMemberships ?? []).filter((m) => m.labelId !== labelId),
+    }))
+
+    void db.transaction("rw", [db.labels, db.labelMemberships], async () => {
+      await db.labels.delete(labelId)
+      const memberships = await db.labelMemberships.where("labelId").equals(labelId).toArray()
+      if (memberships.length > 0) {
+        await db.labelMemberships.bulkDelete(memberships.map((m) => m.id))
+      }
+    })
+  }
+
+  const handleLabelMemberJoined = (payload: LabelMemberJoinedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { member } = payload
+    const now = Date.now()
+    const id = `${workspaceId}:${member.labelId}:${member.userId}`
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
+      const memberships = old.labelMemberships ?? []
+      const exists = memberships.some((m) => m.labelId === member.labelId && m.userId === member.userId)
+      return {
+        ...old,
+        labelMemberships: exists ? memberships : [...memberships, member],
+      }
+    })
+
+    void db.labelMemberships.put({
+      id,
+      workspaceId,
+      labelId: member.labelId,
+      userId: member.userId,
+      joinedAt: member.joinedAt,
+      _cachedAt: now,
+    })
+  }
+
+  const handleLabelMemberLeft = (payload: LabelMemberLeftPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { labelId, userId } = payload
+    const id = `${workspaceId}:${labelId}:${userId}`
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      labelMemberships: (old.labelMemberships ?? []).filter((m) => !(m.labelId === labelId && m.userId === userId)),
+    }))
+
+    void db.labelMemberships.delete(id)
+  }
+
   // Register all handlers
   socket.on("stream:created", handleStreamCreated)
   socket.on("stream:updated", handleStreamUpdated)
@@ -1430,6 +1511,11 @@ export function registerWorkspaceSocketHandlers(
   socket.on("scheduled_message:cancelled", handleScheduledCancelled)
   socket.on("attachment:transcoded", handleAttachmentTranscoded)
   socket.on("attachment:thumbnailed", handleAttachmentThumbnailed)
+  socket.on("label:created", handleLabelUpserted)
+  socket.on("label:updated", handleLabelUpserted)
+  socket.on("label:deleted", handleLabelDeleted)
+  socket.on("label:member_joined", handleLabelMemberJoined)
+  socket.on("label:member_left", handleLabelMemberLeft)
 
   return () => {
     abortController.abort()
@@ -1460,6 +1546,11 @@ export function registerWorkspaceSocketHandlers(
     socket.off("scheduled_message:cancelled", handleScheduledCancelled)
     socket.off("attachment:transcoded", handleAttachmentTranscoded)
     socket.off("attachment:thumbnailed", handleAttachmentThumbnailed)
+    socket.off("label:created", handleLabelUpserted)
+    socket.off("label:updated", handleLabelUpserted)
+    socket.off("label:deleted", handleLabelDeleted)
+    socket.off("label:member_joined", handleLabelMemberJoined)
+    socket.off("label:member_left", handleLabelMemberLeft)
   }
 }
 
@@ -1533,6 +1624,17 @@ export async function applyWorkspaceBootstrap(
     ),
     db.personas.bulkPut(bootstrap.personas.map((p) => ({ ...p, workspaceId: workspaceId, _cachedAt: now }))),
     db.bots.bulkPut(bootstrap.bots.map((b) => ({ ...b, workspaceId: workspaceId, _cachedAt: now }))),
+    db.labels.bulkPut(bootstrap.labels.map((l) => ({ ...l, _cachedAt: now }))),
+    db.labelMemberships.bulkPut(
+      bootstrap.labelMemberships.map((m) => ({
+        id: `${workspaceId}:${m.labelId}:${m.userId}`,
+        workspaceId,
+        labelId: m.labelId,
+        userId: m.userId,
+        joinedAt: m.joinedAt,
+        _cachedAt: now,
+      }))
+    ),
     // Only write unreadState if no concurrent socket handler has updated it
     // since the fetch started. Socket handlers (stream:activity, activity:created)
     // may have incremented counts during the fetch window.
@@ -1612,6 +1714,15 @@ export async function applyWorkspaceBootstrap(
     })),
     personas: bootstrap.personas.map((p) => ({ ...p, workspaceId, _cachedAt: now })),
     bots: bootstrap.bots.map((b) => ({ ...b, workspaceId, _cachedAt: now })),
+    labels: bootstrap.labels.map((l) => ({ ...l, _cachedAt: now })),
+    labelMemberships: bootstrap.labelMemberships.map((m) => ({
+      id: `${workspaceId}:${m.labelId}:${m.userId}`,
+      workspaceId,
+      labelId: m.labelId,
+      userId: m.userId,
+      joinedAt: m.joinedAt,
+      _cachedAt: now,
+    })),
     unreadState: {
       id: workspaceId,
       workspaceId,
@@ -1682,6 +1793,8 @@ export async function applyReconnectBootstrapBatch(
       db.dmPeers,
       db.personas,
       db.bots,
+      db.labels,
+      db.labelMemberships,
       db.unreadState,
       db.userPreferences,
       db.workspaceMetadata,
@@ -1727,6 +1840,17 @@ export async function applyReconnectBootstrapBatch(
         ),
         db.personas.bulkPut(finalBootstrap.personas.map((persona) => ({ ...persona, workspaceId, _cachedAt: now }))),
         db.bots.bulkPut(finalBootstrap.bots.map((bot) => ({ ...bot, workspaceId, _cachedAt: now }))),
+        db.labels.bulkPut(finalBootstrap.labels.map((label) => ({ ...label, _cachedAt: now }))),
+        db.labelMemberships.bulkPut(
+          finalBootstrap.labelMemberships.map((membership) => ({
+            id: `${workspaceId}:${membership.labelId}:${membership.userId}`,
+            workspaceId,
+            labelId: membership.labelId,
+            userId: membership.userId,
+            joinedAt: membership.joinedAt,
+            _cachedAt: now,
+          }))
+        ),
         db.unreadState.put({
           id: workspaceId,
           workspaceId,
@@ -1798,6 +1922,15 @@ export async function applyReconnectBootstrapBatch(
     })),
     personas: finalBootstrap.personas.map((persona) => ({ ...persona, workspaceId, _cachedAt: now })),
     bots: finalBootstrap.bots.map((bot) => ({ ...bot, workspaceId, _cachedAt: now })),
+    labels: finalBootstrap.labels.map((label) => ({ ...label, _cachedAt: now })),
+    labelMemberships: finalBootstrap.labelMemberships.map((membership) => ({
+      id: `${workspaceId}:${membership.labelId}:${membership.userId}`,
+      workspaceId,
+      labelId: membership.labelId,
+      userId: membership.userId,
+      joinedAt: membership.joinedAt,
+      _cachedAt: now,
+    })),
     unreadState: {
       id: workspaceId,
       workspaceId,
@@ -1835,6 +1968,10 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
   const bootstrapDmPeerIds = new Set(bootstrap.dmPeers.map((dp) => `${workspaceId}:${dp.streamId}`))
   const bootstrapPersonaIds = new Set(bootstrap.personas.map((p) => p.id))
   const bootstrapBotIds = new Set(bootstrap.bots.map((b) => b.id))
+  const bootstrapLabelIds = new Set(bootstrap.labels.map((l) => l.id))
+  const bootstrapLabelMembershipIds = new Set(
+    bootstrap.labelMemberships.map((m) => `${workspaceId}:${m.labelId}:${m.userId}`)
+  )
 
   await Promise.all([
     deleteStale(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now),
@@ -1843,6 +1980,8 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
     deleteStale(db.dmPeers, "workspaceId", workspaceId, bootstrapDmPeerIds, now),
     deleteStale(db.personas, "workspaceId", workspaceId, bootstrapPersonaIds, now),
     deleteStale(db.bots, "workspaceId", workspaceId, bootstrapBotIds, now),
+    deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
+    deleteStale(db.labelMemberships, "workspaceId", workspaceId, bootstrapLabelMembershipIds, now),
   ])
 }
 

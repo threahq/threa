@@ -9,6 +9,7 @@ export {
   useActivityService,
   useSavedService,
   useScheduledService,
+  useLabelService,
   type Services,
   type WorkspaceService,
   type StreamService,
@@ -17,6 +18,7 @@ export {
   type ActivityService,
   type SavedService,
   type ScheduledService,
+  type LabelService,
 } from "./services-context"
 export {
   SocketProvider,

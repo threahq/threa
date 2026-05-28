@@ -10,6 +10,8 @@ import type {
   LastMessagePreview,
   Bot as WireBot,
   BotInvocationCapability,
+  Label,
+  LabelMember,
   SavedMessageView,
   ScheduledMessageView,
   WorkspaceInvitableRole,
@@ -80,6 +82,11 @@ export type OutboxEventType =
   | "bot_invocation:claimed"
   | "bot:active_actor_changed"
   | "bot:resync"
+  | "label:created"
+  | "label:updated"
+  | "label:deleted"
+  | "label:member_joined"
+  | "label:member_left"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -563,6 +570,34 @@ export interface BotResyncOutboxPayload extends WorkspaceScopedPayload {
   reason: string
 }
 
+// Label event payloads.
+// `targetUserId` is non-null for private-label events (delivered to creator
+// only) and null for public-label events (workspace-wide). The broadcast
+// handler routes on this discriminator.
+export interface LabelUpsertedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string | null
+  label: Label
+}
+
+export interface LabelDeletedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string | null
+  labelId: string
+}
+
+// Membership events are delivered to the affected member only (`targetUserId`),
+// mirroring the viewer-scoped membership data shipped in bootstrap/list. `joined`
+// carries the full row; `left` carries only identity since the row is gone.
+export interface LabelMemberJoinedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  member: LabelMember
+}
+
+export interface LabelMemberLeftOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  labelId: string
+  userId: string
+}
+
 // Link preview event payloads
 export interface LinkPreviewReadyOutboxPayload extends StreamScopedPayload {
   messageId: string
@@ -648,6 +683,11 @@ export interface OutboxEventPayloadMap {
   "bot_invocation:claimed": BotInvocationClaimedOutboxPayload
   "bot:active_actor_changed": BotActiveActorChangedOutboxPayload
   "bot:resync": BotResyncOutboxPayload
+  "label:created": LabelUpsertedOutboxPayload
+  "label:updated": LabelUpsertedOutboxPayload
+  "label:deleted": LabelDeletedOutboxPayload
+  "label:member_joined": LabelMemberJoinedOutboxPayload
+  "label:member_left": LabelMemberLeftOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]

@@ -1,5 +1,14 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react"
-import { workspacesApi, streamsApi, messagesApi, conversationsApi, activityApi, savedApi, scheduledApi } from "@/api"
+import {
+  workspacesApi,
+  streamsApi,
+  messagesApi,
+  conversationsApi,
+  activityApi,
+  savedApi,
+  scheduledApi,
+  labelsApi,
+} from "@/api"
 
 // Service interfaces - components depend on these, not implementations
 export interface WorkspaceService {
@@ -75,6 +84,16 @@ export interface ScheduledService {
   sendNow: typeof scheduledApi.sendNow
 }
 
+export interface LabelService {
+  list: typeof labelsApi.list
+  create: typeof labelsApi.create
+  update: typeof labelsApi.update
+  delete: typeof labelsApi.delete
+  join: typeof labelsApi.join
+  leave: typeof labelsApi.leave
+  promote: typeof labelsApi.promote
+}
+
 export interface Services {
   workspaces: WorkspaceService
   streams: StreamService
@@ -83,6 +102,7 @@ export interface Services {
   activity: ActivityService
   saved: SavedService
   scheduled: ScheduledService
+  labels: LabelService
 }
 
 const ServicesContext = createContext<Services | null>(null)
@@ -103,6 +123,7 @@ export function ServicesProvider({ children, services: overrides }: ServicesProv
       activity: overrides?.activity ?? activityApi,
       saved: overrides?.saved ?? savedApi,
       scheduled: overrides?.scheduled ?? scheduledApi,
+      labels: overrides?.labels ?? labelsApi,
     }),
     [overrides]
   )
@@ -145,4 +166,8 @@ export function useSavedService(): SavedService {
 
 export function useScheduledService(): ScheduledService {
   return useServices().scheduled
+}
+
+export function useLabelService(): LabelService {
+  return useServices().labels
 }

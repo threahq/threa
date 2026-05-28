@@ -218,6 +218,8 @@ export type {
   BotRuntimeSessionLink,
   BotInvocation,
   StreamMember,
+  Label,
+  LabelMember,
   Message,
   ThreadSummary,
   MessageVersion,
@@ -375,6 +377,13 @@ export type {
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
+  // Labels
+  CreateLabelInput,
+  UpdateLabelInput,
+  LabelUpsertedPayload,
+  LabelDeletedPayload,
+  LabelMemberJoinedPayload,
+  LabelMemberLeftPayload,
   // Emojis
   EmojiEntry,
   // Commands

@@ -9,6 +9,8 @@ import {
   type CachedDmPeer,
   type CachedPersona,
   type CachedBot,
+  type CachedLabel,
+  type CachedLabelMembership,
   type CachedUnreadState,
   type CachedUserPreferences,
   type CachedWorkspaceMetadata,
@@ -33,6 +35,8 @@ const cache = {
   dmPeers: new Map<string, CachedDmPeer[]>(),
   personas: new Map<string, CachedPersona[]>(),
   bots: new Map<string, CachedBot[]>(),
+  labels: new Map<string, CachedLabel[]>(),
+  labelMemberships: new Map<string, CachedLabelMembership[]>(),
   unreadState: new Map<string, CachedUnreadState>(),
   userPreferences: new Map<string, CachedUserPreferences>(),
   metadata: new Map<string, CachedWorkspaceMetadata>(),
@@ -104,6 +108,8 @@ export function resetWorkspaceStoreCache(): void {
   cache.dmPeers.clear()
   cache.personas.clear()
   cache.bots.clear()
+  cache.labels.clear()
+  cache.labelMemberships.clear()
   cache.unreadState.clear()
   cache.userPreferences.clear()
   cache.metadata.clear()
@@ -126,19 +132,33 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
   // we skip the write to avoid overwriting fresh data with stale IDB reads.
   const versionBefore = cacheVersion.get(workspaceId) ?? 0
 
-  const [workspace, users, streams, memberships, dmPeers, personas, bots, unreadState, prefs, metadata] =
-    await Promise.all([
-      db.workspaces.get(workspaceId),
-      db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
-      db.streams.where("workspaceId").equals(workspaceId).toArray(),
-      db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
-      db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
-      db.personas.where("workspaceId").equals(workspaceId).toArray(),
-      db.bots.where("workspaceId").equals(workspaceId).toArray(),
-      db.unreadState.get(workspaceId),
-      db.userPreferences.get(workspaceId),
-      db.workspaceMetadata.get(workspaceId),
-    ])
+  const [
+    workspace,
+    users,
+    streams,
+    memberships,
+    dmPeers,
+    personas,
+    bots,
+    labels,
+    labelMemberships,
+    unreadState,
+    prefs,
+    metadata,
+  ] = await Promise.all([
+    db.workspaces.get(workspaceId),
+    db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray(),
+    db.streams.where("workspaceId").equals(workspaceId).toArray(),
+    db.streamMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
+    db.personas.where("workspaceId").equals(workspaceId).toArray(),
+    db.bots.where("workspaceId").equals(workspaceId).toArray(),
+    db.labels.where("workspaceId").equals(workspaceId).toArray(),
+    db.labelMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    db.unreadState.get(workspaceId),
+    db.userPreferences.get(workspaceId),
+    db.workspaceMetadata.get(workspaceId),
+  ])
 
   if (!workspace) return false
 
@@ -154,6 +174,8 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     dmPeers,
     personas,
     bots,
+    labels,
+    labelMemberships,
     unreadState,
     userPreferences: prefs,
     metadata,
@@ -176,6 +198,8 @@ export function seedWorkspaceCache(
     dmPeers: CachedDmPeer[]
     personas: CachedPersona[]
     bots: CachedBot[]
+    labels?: CachedLabel[]
+    labelMemberships?: CachedLabelMembership[]
     unreadState?: CachedUnreadState
     userPreferences?: CachedUserPreferences
     metadata?: CachedWorkspaceMetadata
@@ -190,6 +214,8 @@ export function seedWorkspaceCache(
   cache.dmPeers.set(workspaceId, data.dmPeers)
   cache.personas.set(workspaceId, data.personas)
   cache.bots.set(workspaceId, data.bots)
+  if (data.labels) cache.labels.set(workspaceId, data.labels)
+  if (data.labelMemberships) cache.labelMemberships.set(workspaceId, data.labelMemberships)
   if (data.unreadState) cache.unreadState.set(workspaceId, data.unreadState)
   if (data.userPreferences) cache.userPreferences.set(workspaceId, data.userPreferences)
   if (data.metadata) cache.metadata.set(workspaceId, data.metadata)
@@ -291,6 +317,26 @@ export function useWorkspaceBots(workspaceId: string | undefined): CachedBot[] {
   const cached = workspaceId ? (cache.bots.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
     () => (workspaceId ? db.bots.where("workspaceId").equals(workspaceId).toArray() : []),
+    [workspaceId],
+    cached
+  )
+}
+
+export function useWorkspaceLabels(workspaceId: string | undefined): CachedLabel[] {
+  useWorkspaceCacheSignal(workspaceId)
+  const cached = workspaceId ? (cache.labels.get(workspaceId) ?? []) : []
+  return useArrayStoreHook(
+    () => (workspaceId ? db.labels.where("workspaceId").equals(workspaceId).toArray() : []),
+    [workspaceId],
+    cached
+  )
+}
+
+export function useWorkspaceLabelMemberships(workspaceId: string | undefined): CachedLabelMembership[] {
+  useWorkspaceCacheSignal(workspaceId)
+  const cached = workspaceId ? (cache.labelMemberships.get(workspaceId) ?? []) : []
+  return useArrayStoreHook(
+    () => (workspaceId ? db.labelMemberships.where("workspaceId").equals(workspaceId).toArray() : []),
     [workspaceId],
     cached
   )

@@ -29,6 +29,7 @@ import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
 import { createSavedMessagesHandlers } from "./features/saved-messages"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
+import { createLabelHandlers } from "./features/labels"
 import { createPushHandlers } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
 import { createInternalHandlers } from "./handlers/internal-handlers"
@@ -60,6 +61,7 @@ import type { InvitationService } from "./features/invitations"
 import type { ActivityService } from "./features/activity"
 import type { SavedMessagesService } from "./features/saved-messages"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
+import type { LabelService } from "./features/labels"
 import type { PushService } from "./features/push"
 import type { S3Config } from "./lib/env"
 import type { StorageProvider } from "./lib/storage/s3-client"
@@ -93,6 +95,7 @@ interface Dependencies {
   activityService: ActivityService
   savedMessagesService: SavedMessagesService
   scheduledMessagesService: ScheduledMessagesService
+  labelService: LabelService
   pushService: PushService
   s3Config: S3Config
   commandRegistry: CommandRegistry
@@ -134,6 +137,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     activityService,
     savedMessagesService,
     scheduledMessagesService,
+    labelService,
     pushService,
     s3Config,
     commandRegistry,
@@ -180,6 +184,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     activityService,
     commandAvailabilityService,
     avatarService,
+    labelService,
     workosOrgService,
     pool,
   })
@@ -212,6 +217,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const activity = createActivityHandlers({ activityService })
   const savedMessages = createSavedMessagesHandlers({ savedMessagesService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
+  const label = createLabelHandlers({ labelService })
   const agentSession = createAgentSessionHandlers({ pool })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
@@ -415,6 +421,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/saved", ...authed, savedMessages.create)
   app.patch("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.update)
   app.delete("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.delete)
+
+  // Labels
+  app.get("/api/workspaces/:workspaceId/labels", ...authed, label.list)
+  app.post("/api/workspaces/:workspaceId/labels", ...authed, label.create)
+  app.patch("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.update)
+  app.delete("/api/workspaces/:workspaceId/labels/:labelId", ...authed, label.delete)
+  app.post("/api/workspaces/:workspaceId/labels/:labelId/join", ...authed, label.join)
+  app.post("/api/workspaces/:workspaceId/labels/:labelId/leave", ...authed, label.leave)
+  app.post("/api/workspaces/:workspaceId/labels/:labelId/promote", ...authed, label.promote)
 
   // Scheduled messages
   app.get("/api/workspaces/:workspaceId/scheduled", ...authed, scheduledMessages.list)
