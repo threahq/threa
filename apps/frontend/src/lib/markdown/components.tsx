@@ -1,7 +1,7 @@
 import type { Components } from "react-markdown"
 import { Children, isValidElement, type ReactNode, type MouseEvent } from "react"
-import { useNavigate } from "react-router-dom"
-import { parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
+import { useNavigate, useParams } from "react-router-dom"
+import { parseMemoHref, parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -11,6 +11,7 @@ import { useLinkPreviewContext } from "./link-preview-context"
 import { QuoteReplyBlock } from "./quote-reply-block"
 import { BlockquoteBlock } from "./blockquote-block"
 import { SharedMessagePointerBlock } from "./shared-message-block"
+import { MemoEmbedBlock } from "./memo-embed-block"
 import CodeBlock from "./code-block"
 
 /**
@@ -73,6 +74,24 @@ function findSharedMessageInChildren(
 }
 
 /**
+ * Detects whether a paragraph's children are *exactly* the serializer-produced
+ * memo-embed pointer line: a single `memo:` anchor and nothing else. The memo
+ * serializer emits no prefix text (unlike shared messages), so this matches a
+ * lone anchor. A `memo:` link mixed into a sentence stays an inline link.
+ */
+function findMemoEmbedInChildren(children: ReactNode): { memoId: string; title: string } | null {
+  const arr = Children.toArray(children)
+  if (arr.length !== 1) return null
+  const [anchor] = arr
+  if (!isValidElement(anchor)) return null
+  const props = anchor.props as Record<string, unknown>
+  if (typeof props.href !== "string") return null
+  const parsed = parseMemoHref(props.href)
+  if (!parsed) return null
+  return { memoId: parsed.memoId, title: extractTextFromChildren(props.children as ReactNode) }
+}
+
+/**
  * Walk a blockquote's children for the serializer's quote-reply attribution
  * paragraph: a `<p>` whose children are exactly "— " followed by a single
  * `quote:` anchor. Returns the parsed metadata plus the children that come
@@ -132,6 +151,29 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   const attachmentContext = useAttachmentContext()
   const linkPreviewContext = useLinkPreviewContext()
   const navigate = useNavigate()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+
+  // Inline `memo:` link (a memo reference mid-sentence rather than a standalone
+  // embed paragraph). Navigate to the memo in the memory explorer.
+  const memoHref = href ? parseMemoHref(href) : null
+  if (memoHref) {
+    const target = workspaceId ? `/w/${workspaceId}/memory?memo=${memoHref.memoId}` : null
+    const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+      if (!target) return
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      e.preventDefault()
+      navigate(target)
+    }
+    return (
+      <a
+        href={target ?? "#"}
+        onClick={handleClick}
+        className="text-primary underline underline-offset-4 hover:text-primary/80 [&_span]:[text-decoration:inherit]"
+      >
+        <ProcessedChildren>{children}</ProcessedChildren>
+      </a>
+    )
+  }
 
   // Check if this is an attachment link
   if (href?.startsWith("attachment:")) {
@@ -262,6 +304,10 @@ export const markdownComponents: Components = {
           authorName={share.authorName}
         />
       )
+    }
+    const memo = findMemoEmbedInChildren(children)
+    if (memo) {
+      return <MemoEmbedBlock memoId={memo.memoId} title={memo.title} />
     }
     return (
       <p className="mb-2 last:mb-0">

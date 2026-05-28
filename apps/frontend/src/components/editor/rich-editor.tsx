@@ -9,7 +9,14 @@ import { getDictationChunkPositions } from "./dictation-chunk-extension"
 import { EditorBehaviors, isSuggestionActive } from "./editor-behaviors"
 import { EditorToolbar } from "./editor-toolbar"
 import { serializeToMarkdown, parseMarkdown, type MentionTypeLookup } from "./editor-markdown"
-import { useMentionSuggestion, useChannelSuggestion, useCommandSuggestion, useEmojiSuggestion } from "./triggers"
+import {
+  useMentionSuggestion,
+  useChannelSuggestion,
+  useCommandSuggestion,
+  useEmojiSuggestion,
+  useMemoSuggestion,
+} from "./triggers"
+import { parseMemoUrl } from "@/lib/memo-url"
 import { MentionPluginKey } from "./triggers/mention-extension"
 import { CommandPluginKey } from "./triggers/command-extension"
 import { EmojiPluginKey } from "./triggers/emoji-extension"
@@ -121,6 +128,8 @@ interface RichEditorProps {
   enableCommands?: boolean
   /** Whether emoji shortcodes should be parsed and autocompleted. */
   enableEmoji?: boolean
+  /** Whether `/memo` inline search and pasted memo links embed memo cards. */
+  enableMemoEmbed?: boolean
 }
 
 function isEditorCompletelyEmpty(editor: import("@tiptap/react").Editor | null | undefined): boolean {
@@ -185,6 +194,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     enableChannels = true,
     enableCommands = true,
     enableEmoji = true,
+    enableMemoEmbed = true,
   },
   ref
 ) {
@@ -222,6 +232,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion(mentionStreamContext)
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
   const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion()
+  const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion()
 
   // Emoji autocomplete
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -308,6 +319,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         channelSuggestion: enableChannels ? channelConfig : undefined,
         commandSuggestion: enableCommands ? commandConfig : undefined,
         emojiSuggestion: enableEmoji ? emojiConfig : undefined,
+        memoSearchSuggestion: enableMemoEmbed ? memoConfig : undefined,
         toEmoji: enableEmoji ? toEmoji : undefined,
       }),
       EditorBehaviors.configure({
@@ -322,11 +334,13 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       channelConfig,
       commandConfig,
       emojiConfig,
+      memoConfig,
       toEmoji,
       enableMentions,
       enableChannels,
       enableCommands,
       enableEmoji,
+      enableMemoEmbed,
     ]
   )
 
@@ -477,6 +491,16 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         const text = event.clipboardData?.getData("text/plain")
         if (!text || !editorRef.current) {
           return false
+        }
+
+        // A bare memo link pastes as an embed card rather than a plain URL.
+        if (enableMemoEmbed) {
+          const memoId = parseMemoUrl(text.trim())
+          if (memoId) {
+            editorRef.current.commands.insertMemoEmbed({ memoId })
+            event.preventDefault()
+            return true
+          }
         }
 
         const handled = insertPastedText(
@@ -938,6 +962,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       {enableChannels ? renderChannelList() : null}
       {enableCommands ? renderCommandList() : null}
       {enableEmoji ? renderEmojiGrid() : null}
+      {enableMemoEmbed ? renderMemoList() : null}
     </div>
   )
 })

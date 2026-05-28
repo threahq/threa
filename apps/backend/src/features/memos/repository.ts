@@ -232,6 +232,20 @@ export const MemoRepository = {
     return mapRowToMemo(result.rows[0])
   },
 
+  /**
+   * Batch-fetch memos by id, scoped to a workspace (INV-8). Used by callers
+   * whose ids come from untrusted content (e.g. a `memoEmbed` pointer pulled
+   * from contentJson) where the implicit workspace boundary can't be trusted.
+   */
+  async findByIdsInWorkspace(db: Querier, workspaceId: string, ids: string[]): Promise<Map<string, Memo>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<MemoRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+      WHERE id = ANY(${ids}) AND workspace_id = ${workspaceId}
+    `)
+    return new Map(result.rows.map((row) => [row.id, mapRowToMemo(row)]))
+  },
+
   async findByWorkspace(
     db: Querier,
     workspaceId: string,
