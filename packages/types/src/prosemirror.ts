@@ -58,7 +58,6 @@ export type ThreaBlockNode =
   | ThreaBlockquote
   | ThreaQuoteReply
   | ThreaSharedMessage
-  | ThreaMemoEmbed
   | ThreaBulletList
   | ThreaOrderedList
   | ThreaHorizontalRule
@@ -146,22 +145,6 @@ export interface ThreaSharedMessage {
 }
 
 /**
- * Memo embed (pointer) - a live reference to a memo in the workspace memory.
- * Like a shared message, the card body is hydrated at read time from the memo
- * store. Carries only the memo id + a cached title hint so the node can render
- * before hydration completes.
- */
-export interface ThreaMemoEmbed {
-  type: "memoEmbed"
-  attrs: {
-    /** The ID of the referenced memo */
-    memoId: string
-    /** Memo title cached at insert time so the node can render before hydration */
-    title?: string
-  }
-}
-
-/**
  * Bullet (unordered) list.
  */
 export interface ThreaBulletList {
@@ -205,6 +188,7 @@ export type ThreaInlineNode =
   | ThreaCommand
   | ThreaEmoji
   | ThreaAttachmentReference
+  | ThreaMemoEmbed
   | ThreaHardBreak
 
 /**
@@ -273,6 +257,23 @@ export interface ThreaAttachmentReference {
     status: "uploading" | "uploaded" | "error"
     imageIndex?: number | null
     error?: string | null
+  }
+}
+
+/**
+ * Memo embed (pointer) - an inline reference to a memo in the workspace
+ * memory. Serializes to a `[Title](memo:id)` markdown link; rendered as an
+ * inline chip in the composer and timeline, with a hydrated preview card shown
+ * below the message. Carries the memo id + a cached title hint so the chip can
+ * render before hydration completes.
+ */
+export interface ThreaMemoEmbed {
+  type: "memoEmbed"
+  attrs: {
+    /** The ID of the referenced memo */
+    memoId: string
+    /** Memo title cached at insert time so the chip can render before hydration */
+    title?: string
   }
 }
 
@@ -404,6 +405,14 @@ const hardBreakNodeSchema = z.object({
   type: z.literal("hardBreak"),
 })
 
+const memoEmbedNodeSchema = z.object({
+  type: z.literal("memoEmbed"),
+  attrs: z.object({
+    memoId: z.string(),
+    title: z.string().optional(),
+  }),
+})
+
 // Inline node union
 const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   textNodeSchema,
@@ -412,6 +421,7 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   commandNodeSchema,
   emojiNodeSchema,
   attachmentReferenceNodeSchema,
+  memoEmbedNodeSchema,
   hardBreakNodeSchema,
 ])
 
@@ -454,7 +464,6 @@ const blockNodeSchema = z.lazy(() =>
     blockquoteNodeSchema,
     quoteReplyNodeSchema,
     sharedMessageNodeSchema,
-    memoEmbedNodeSchema,
     bulletListNodeSchema,
     orderedListNodeSchema,
     horizontalRuleNodeSchema,
@@ -491,14 +500,6 @@ const sharedMessageNodeSchema = z.object({
     authorName: z.string().optional(),
     authorId: z.string().optional(),
     actorType: z.string().optional(),
-  }),
-})
-
-const memoEmbedNodeSchema = z.object({
-  type: z.literal("memoEmbed"),
-  attrs: z.object({
-    memoId: z.string(),
-    title: z.string().optional(),
   }),
 })
 

@@ -7,18 +7,13 @@ import { cn } from "@/lib/utils"
 import type { MemoEmbedSource } from "@/hooks/use-memo-embed-source"
 
 /**
- * Body renderer shared between the two memo-embed surfaces:
+ * Body renderer for the memo-embed preview card (`MemoEmbedBlock`), rendered
+ * below a message for each referenced memo. Shows the gold-accent icon +
+ * eyebrow + title for each `MemoEmbedSource` status. `trailing` is the top-right
+ * slot, used for the memo's date.
  *
- *   - `MemoEmbedView` — TipTap NodeView mounted inside the composer.
- *   - `MemoEmbedBlock` — paragraph swap inside the markdown renderer, used in
- *     the timeline / thread panel / activity feed.
- *
- * Both want the same gold-accent icon + eyebrow + title for each
- * `MemoEmbedSource` status. `trailing` is the top-right slot: the display block
- * passes the memo's date, the composer NodeView passes its remove button.
- *
- * `fallbackTitle` is the pre-hydration label stamped on the node at insert
- * time so the card reads sensibly before the live memo resolves.
+ * `fallbackTitle` is the pre-hydration label parsed from the reference so the
+ * card reads sensibly before the live memo resolves.
  */
 export function MemoEmbedCardBody({
   source,

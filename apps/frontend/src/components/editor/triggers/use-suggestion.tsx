@@ -65,6 +65,13 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
   const [state, setState] = useState<SuggestionState<T> | null>(null)
   const listRef = useRef<SuggestionListRef>(null)
   const editorRef = useRef<Editor | null>(null)
+  // Tracks the most recently requested async query. TipTap's suggestion plugin
+  // awaits `items()` but does NOT serialize those awaits, so a slower earlier
+  // fetch can resolve after a newer one and overwrite fresh results with stale
+  // (often empty) ones — the empty-state flicker. We drop any `onUpdate` whose
+  // query isn't the latest. Only armed for async sources; sync filtering can't
+  // race so its behavior is unchanged.
+  const latestQueryRef = useRef<string | null>(null)
 
   // Use refs to avoid stale closures in the TipTap callback (captured once at
   // extension creation time).
@@ -89,7 +96,10 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
   // suggestion plugin can await it.
   const getSuggestionItems = useCallback(({ query }: { query: string }): T[] | Promise<T[]> => {
     const search = searchItemsRef.current
-    if (search) return search(query)
+    if (search) {
+      latestQueryRef.current = query
+      return search(query)
+    }
     const items = getItemsRef.current?.() ?? []
     const filter = filterItemsRef.current
     return filter ? filter(items, query) : items
@@ -111,6 +121,9 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
 
   const onUpdate = useCallback(
     (props: SuggestionProps<T>) => {
+      // Drop out-of-order async resolutions: only the latest requested query's
+      // results may update the popup (see latestQueryRef).
+      if (searchItemsRef.current && props.query !== latestQueryRef.current) return
       setPopupVisible(props.editor, props.items.length > 0)
       setState({
         items: props.items,
