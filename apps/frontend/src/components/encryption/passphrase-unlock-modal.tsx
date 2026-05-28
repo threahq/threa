@@ -85,8 +85,12 @@ export function PassphraseUnlockModal({
     setSubmitting(true)
     setError(null)
     try {
-      await unlock(workspaceId, userId, passphrase, { trustDevice })
-      toast.success("Encrypted scratchpads unlocked")
+      const result = await unlock(workspaceId, userId, passphrase, { trustDevice })
+      if (result?.trustRequested && !result.trustPersisted) {
+        toast.warning("Unlocked, but couldn't keep you unlocked on this device. You'll need your passphrase next time.")
+      } else {
+        toast.success("Encrypted scratchpads unlocked")
+      }
       reset()
       onUnlocked?.()
       onOpenChange(false)

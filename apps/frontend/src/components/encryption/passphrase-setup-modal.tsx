@@ -111,8 +111,14 @@ export function PassphraseSetupModal({
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      await setupNewKey(workspaceId, userId, passphrase, { trustDevice })
-      toast.success("Encrypted scratchpads enabled")
+      const result = await setupNewKey(workspaceId, userId, passphrase, { trustDevice })
+      if (result?.trustRequested && !result.trustPersisted) {
+        toast.warning(
+          "Encryption enabled, but couldn't keep you unlocked on this device. You'll need your passphrase next time."
+        )
+      } else {
+        toast.success("Encrypted scratchpads enabled")
+      }
       reset()
       onSetupComplete?.()
       onOpenChange(false)

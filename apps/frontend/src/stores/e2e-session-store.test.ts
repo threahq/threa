@@ -186,7 +186,8 @@ describe("e2e session store — keep me unlocked on this device", () => {
   it("unlock with trustDevice persists the key and a reload resumes unlocked", async () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
     await lock(WORKSPACE_ID, USER_ID)
-    await unlock(WORKSPACE_ID, USER_ID, "pp", { trustDevice: true })
+    const result = await unlock(WORKSPACE_ID, USER_ID, "pp", { trustDevice: true })
+    expect(result).toEqual({ trustRequested: true, trustPersisted: true })
 
     const unlocked = getE2eSessionState(WORKSPACE_ID, USER_ID)
     expect(unlocked.status).toBe("unlocked")
@@ -200,6 +201,28 @@ describe("e2e session store — keep me unlocked on this device", () => {
     expect(restored.deviceTrusted).toBe(true)
     // The restored key must actually work for decryption.
     expect(() => requireUnlockedPrivateKey(WORKSPACE_ID, USER_ID)).not.toThrow()
+  })
+
+  it("unlock survives a failed device-key persist: unlocked, untrusted, no error", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
+
+    // Simulate a browser that can't structured-clone a CryptoKey into IDB
+    // (Firefox/private mode, quota, blocked DB) — the device-key write rejects.
+    vi.spyOn(db.e2eDeviceKeys, "put").mockRejectedValueOnce(new Error("idb put failed"))
+
+    const result = await unlock(WORKSPACE_ID, USER_ID, "pp", { trustDevice: true })
+
+    // The passphrase was correct, so the session is unlocked for this run — a
+    // persist failure must NOT be reported as a wrong-passphrase error.
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state.status).toBe("unlocked")
+    expect(state.privateKey).not.toBeNull()
+    expect(state.error).toBeNull()
+    // ...but the device was not actually kept unlocked.
+    expect(state.deviceTrusted).toBe(false)
+    expect(result).toEqual({ trustRequested: true, trustPersisted: false })
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
   })
 
   it("setupNewKey with trustDevice persists a usable, non-extractable device key", async () => {
