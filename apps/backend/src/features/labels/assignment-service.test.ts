@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { LabelableResourceTypes, Visibilities, type Label, type LabelAssignment } from "@threa/types"
+import { LabelableResourceTypes, Visibilities, type Label, type LabelAssignment, type Visibility } from "@threa/types"
 import { LabelAssignmentService } from "./assignment-service"
-import { LabelRepository, LabelAssignmentRepository } from "./repository"
+import { LabelRepository, LabelAssignmentRepository, type VisibleAssignmentCandidate } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import * as streamsBarrel from "../streams"
 import * as dbModule from "../../db"
@@ -42,6 +42,18 @@ function fakeAssignment(overrides: Partial<LabelAssignment> = {}): LabelAssignme
     assignedAt: NOW,
     ...overrides,
   }
+}
+
+function fakeCandidate(
+  overrides: Partial<LabelAssignment> & { labelVisibility?: Visibility } = {}
+): VisibleAssignmentCandidate {
+  const { labelVisibility = Visibilities.PUBLIC, ...rest } = overrides
+  return { ...fakeAssignment(rest), labelVisibility }
+}
+
+function stripVisibility(candidate: VisibleAssignmentCandidate): LabelAssignment {
+  const { labelVisibility: _labelVisibility, ...assignment } = candidate
+  return assignment
 }
 
 function setupService() {
@@ -177,28 +189,46 @@ describe("LabelAssignmentService.unassign", () => {
 describe("LabelAssignmentService.listForViewer", () => {
   afterEach(() => mock.restore())
 
-  it("returns the viewer's own rows without an access query when there are no other-user public rows", async () => {
+  it("returns the viewer's own private rows without an access query", async () => {
     const service = setupService()
-    const own = fakeAssignment({ userId: USER_ID })
-    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([own])
+    const ownPrivate = fakeCandidate({ labelVisibility: Visibilities.PRIVATE, userId: USER_ID })
+    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([ownPrivate])
     const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds")
 
     const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
 
-    expect(result).toEqual([own])
+    expect(result).toEqual([stripVisibility(ownPrivate)])
     expect(accessSpy).not.toHaveBeenCalled()
   })
 
-  it("includes other users' public stream rows only for accessible streams", async () => {
+  it("access-filters every public stream row, including the viewer's own", async () => {
     const service = setupService()
-    const own = fakeAssignment({ userId: USER_ID, resourceId: "stream_own" })
-    const visiblePublic = fakeAssignment({ userId: OTHER_USER_ID, resourceId: "stream_visible" })
-    const hiddenPublic = fakeAssignment({ userId: OTHER_USER_ID, resourceId: "stream_hidden" })
-    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([own, visiblePublic, hiddenPublic])
-    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_visible"]))
+    // A public label the viewer applied to a channel they can no longer reach.
+    const ownPublicHidden = fakeCandidate({ userId: USER_ID, resourceId: "stream_own_hidden" })
+    const ownPrivate = fakeCandidate({
+      labelVisibility: Visibilities.PRIVATE,
+      userId: USER_ID,
+      resourceId: "stream_private",
+    })
+    const otherVisible = fakeCandidate({ userId: OTHER_USER_ID, resourceId: "stream_visible" })
+    const otherHidden = fakeCandidate({ userId: OTHER_USER_ID, resourceId: "stream_hidden" })
+    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([
+      ownPublicHidden,
+      ownPrivate,
+      otherVisible,
+      otherHidden,
+    ])
+    const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_visible"]))
 
     const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
 
-    expect(result).toEqual([own, visiblePublic])
+    // Own private row kept unconditionally; own public row on the unreachable
+    // stream is dropped just like another user's hidden row.
+    expect(result).toEqual([stripVisibility(ownPrivate), stripVisibility(otherVisible)])
+    expect(accessSpy).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, USER_ID, [
+      "stream_own_hidden",
+      "stream_visible",
+      "stream_hidden",
+    ])
   })
 })

@@ -304,8 +304,16 @@ export class BroadcastHandler implements OutboxHandler {
       if (resourceType === LabelableResourceTypes.STREAM) {
         this.io.to(`ws:${workspaceId}:stream:${resourceId}`).emit(event.eventType, payload)
       } else {
-        logger.warn(
-          { eventType: event.eventType, resourceType },
+        // Every labelable resource type must map to an access scope (room) here,
+        // or its public assignments would never broadcast and clients go stale.
+        // The `never` assignment enforces that at build time — adding a type
+        // without wiring a room is a compile error, the safe place to fail.
+        // We log rather than throw because this runs in the background outbox
+        // dispatcher: a throw never marks the event processed, so the cursor
+        // stalls and retries it forever, blocking every later event.
+        const unmapped: never = resourceType
+        logger.error(
+          { eventType: event.eventType, resourceType: unmapped, workspaceId, resourceId },
           "label assignment: no room mapping for public-label resource type"
         )
       }

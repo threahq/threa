@@ -282,6 +282,16 @@ function mapAssignmentRow(row: LabelAssignmentRow): LabelAssignment {
 
 const ASSIGNMENT_COLUMNS = "label_id, resource_type, resource_id, user_id, workspace_id, assigned_at"
 
+/**
+ * A {@link LabelAssignment} carrying its label's visibility. `listForViewer`
+ * needs this to pick the right access rule per row: private rows are the
+ * viewer's own and skip the resource gate, while every public row (any user's)
+ * must be filtered through `listAccessibleStreamIds`.
+ */
+export interface VisibleAssignmentCandidate extends LabelAssignment {
+  labelVisibility: Visibility
+}
+
 export interface AssignmentKey {
   workspaceId: string
   labelId: string
@@ -328,13 +338,13 @@ export const LabelAssignmentRepository = {
    * still gates the public stream rows through `listAccessibleStreamIds` so a
    * public label on a private channel only reaches its members.
    */
-  async listVisibleCandidates(db: Querier, workspaceId: string, userId: string): Promise<LabelAssignment[]> {
-    const result = await db.query<LabelAssignmentRow>(sql`
+  async listVisibleCandidates(db: Querier, workspaceId: string, userId: string): Promise<VisibleAssignmentCandidate[]> {
+    const result = await db.query<LabelAssignmentRow & { label_visibility: string }>(sql`
       SELECT ${sql.raw(
         ASSIGNMENT_COLUMNS.split(", ")
           .map((c) => `a.${c}`)
           .join(", ")
-      )}
+      )}, l.visibility AS label_visibility
       FROM label_assignments a
       JOIN labels l ON l.id = a.label_id AND l.workspace_id = a.workspace_id
       WHERE a.workspace_id = ${workspaceId}
@@ -344,7 +354,10 @@ export const LabelAssignmentRepository = {
           OR (l.visibility = ${Visibilities.PRIVATE} AND a.user_id = ${userId})
         )
     `)
-    return result.rows.map(mapAssignmentRow)
+    return result.rows.map((row) => ({
+      ...mapAssignmentRow(row),
+      labelVisibility: row.label_visibility as Visibility,
+    }))
   },
 
   /**

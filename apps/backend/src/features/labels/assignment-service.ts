@@ -40,21 +40,23 @@ export class LabelAssignmentService {
   /**
    * The viewer's full assignment set for bootstrap/list: the shared pool of
    * public-label assignments on resources they can access, plus their own
-   * private-label rows. Public stream rows are gated through the canonical
-   * stream-access helper so a public label on a private channel never leaks
-   * to non-members (resource types without an access rule are dropped).
+   * private-label rows. Every public stream row — including ones the viewer
+   * applied themselves — is gated through the canonical stream-access helper,
+   * so a public label on a channel the viewer can no longer reach never
+   * resurfaces (resource types without an access rule are dropped). Private
+   * rows are the viewer's own organizational layer and skip the resource gate.
    */
   async listForViewer(workspaceId: string, userId: string): Promise<LabelAssignment[]> {
     const candidates = await LabelAssignmentRepository.listVisibleCandidates(this.pool, workspaceId, userId)
 
-    const ownRows: LabelAssignment[] = []
+    const ownPrivateRows: LabelAssignment[] = []
     const publicStreamRows: LabelAssignment[] = []
-    for (const a of candidates) {
-      if (a.userId === userId) ownRows.push(a)
-      else if (a.resourceType === LabelableResourceTypes.STREAM) publicStreamRows.push(a)
+    for (const { labelVisibility, ...assignment } of candidates) {
+      if (labelVisibility === Visibilities.PRIVATE) ownPrivateRows.push(assignment)
+      else if (assignment.resourceType === LabelableResourceTypes.STREAM) publicStreamRows.push(assignment)
     }
 
-    if (publicStreamRows.length === 0) return ownRows
+    if (publicStreamRows.length === 0) return ownPrivateRows
 
     const accessible = await listAccessibleStreamIds(
       this.pool,
@@ -62,7 +64,7 @@ export class LabelAssignmentService {
       userId,
       publicStreamRows.map((a) => a.resourceId)
     )
-    return [...ownRows, ...publicStreamRows.filter((a) => accessible.has(a.resourceId))]
+    return [...ownPrivateRows, ...publicStreamRows.filter((a) => accessible.has(a.resourceId))]
   }
 
   async assign(params: AssignLabelParams): Promise<LabelAssignment> {
