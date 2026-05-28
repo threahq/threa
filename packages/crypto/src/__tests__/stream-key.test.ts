@@ -99,6 +99,13 @@ describe("sealMessage / openMessage rejection paths", () => {
 
     await expect(openMessage({ key: new Uint8Array(16), envelope, ciphertext })).rejects.toThrow(/must be 32 bytes/)
   })
+
+  it("rejects sealing with empty AAD", async () => {
+    const key = generateStreamKey()
+    await expect(sealMessage({ key, keyGeneration: 1, payload: "x", aad: new Uint8Array(0) })).rejects.toThrow(
+      /aad must be non-empty/
+    )
+  })
 })
 
 describe("wrapStreamKey / unwrapStreamKey", () => {
@@ -179,6 +186,23 @@ describe("wrapStreamKey / unwrapStreamKey", () => {
     await expect(
       wrapStreamKey({ key: new Uint8Array(16), recipientPublicKey: alice.publicKey, aad: WRAP_AAD })
     ).rejects.toThrow(/must be 32 bytes/)
+  })
+
+  it("rejects wrapping with empty AAD", async () => {
+    const key = generateStreamKey()
+    const alice = await makeRecipient()
+    await expect(wrapStreamKey({ key, recipientPublicKey: alice.publicKey, aad: new Uint8Array(0) })).rejects.toThrow(
+      /aad must be non-empty/
+    )
+  })
+
+  it("rejects unwrapping with empty AAD", async () => {
+    const key = generateStreamKey()
+    const alice = await makeRecipient()
+    const wrap = await wrapStreamKey({ key, recipientPublicKey: alice.publicKey, aad: WRAP_AAD })
+    await expect(
+      unwrapStreamKey({ enc: wrap.enc, ct: wrap.ct, recipientPrivateKey: alice.privateKey, aad: new Uint8Array(0) })
+    ).rejects.toThrow(/aad must be non-empty/)
   })
 })
 

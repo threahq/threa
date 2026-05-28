@@ -24,6 +24,18 @@ export const STREAM_ENVELOPE_VERSION = 2
 const SSK_LENGTH = 32 // AES-256
 const IV_LENGTH = 12
 
+/**
+ * Reject empty AAD at the boundary. Slot-binding is a security invariant of the
+ * SSK design, so an empty `aad` is always a caller bug (a missing/zero-length
+ * `buildMessageAad`/`buildWrapAad` result) rather than a valid "unbound" mode —
+ * fail loud instead of producing ciphertext that binds to nothing.
+ */
+function assertBoundAad(fn: string, aad: Uint8Array): void {
+  if (aad.length === 0) {
+    throw new Error(`${fn}: aad must be non-empty (see buildMessageAad/buildWrapAad)`)
+  }
+}
+
 /** Generate a fresh 32-byte SSK for a new stream or key generation. */
 export function generateStreamKey(): Uint8Array<ArrayBuffer> {
   const key = new Uint8Array(SSK_LENGTH)
@@ -74,6 +86,7 @@ export async function sealMessage(input: SealMessageInput): Promise<SealMessageR
   if (input.key.length !== SSK_LENGTH) {
     throw new Error(`sealMessage: SSK must be ${SSK_LENGTH} bytes, got ${input.key.length}`)
   }
+  assertBoundAad("sealMessage", input.aad)
 
   const iv = new Uint8Array(IV_LENGTH)
   crypto.getRandomValues(iv)
@@ -160,6 +173,7 @@ export async function wrapStreamKey(input: WrapStreamKeyInput): Promise<StreamKe
   if (input.key.length !== SSK_LENGTH) {
     throw new Error(`wrapStreamKey: SSK must be ${SSK_LENGTH} bytes, got ${input.key.length}`)
   }
+  assertBoundAad("wrapStreamKey", input.aad)
   const recipient = await importRecipientPublicKey(input.recipientPublicKey)
   const sealed = await hpkeSeal({ recipientPublicKey: recipient, plaintext: new Uint8Array(input.key), aad: input.aad })
   return { enc: sealed.enc, ct: sealed.ct }
@@ -176,6 +190,7 @@ export interface UnwrapStreamKeyInput {
 
 /** Recover the SSK from a wrap. Throws if the key doesn't match or AAD is forged. */
 export async function unwrapStreamKey(input: UnwrapStreamKeyInput): Promise<Uint8Array<ArrayBuffer>> {
+  assertBoundAad("unwrapStreamKey", input.aad)
   const key = await hpkeOpen({
     recipientPrivateKey: input.recipientPrivateKey,
     enc: input.enc,
