@@ -1,10 +1,27 @@
 # Threa Design System
 
+> ## ⚠ Status: aspirational reference — not the source of truth
+>
+> This document captures the **design intent** for Threa's visual language —
+> it was written ahead of (and alongside) implementation, and significant
+> sections have since drifted from what actually ships in `apps/frontend/`.
+> Treat it as a vocabulary, philosophy, and rough visual brief, **not** as a
+> contract.
+>
+> **For ground-truth UI facts — actual tokens, real component structure,
+> file pointers — read [`DESIGN.md`](../DESIGN.md) at the repo root.** That
+> doc walks the running code feature-by-feature and is updated when the
+> code changes.
+>
+> A drift catalog at the bottom of this file lists every known
+> discrepancy with the correct value and a pointer to the owning code.
+> When this doc and the code disagree, the code wins; fix the doc.
+
 A comprehensive reference for Threa's visual design language. Use this document when implementing UI components and patterns.
 
 **Design Philosophy:** Bold, modern, "AI-native" aesthetic for professionals at tech companies. The golden thread motif (inspired by Ariadne) provides warmth and distinction without being flashy.
 
-**Visual Reference:** See `docs/design-system-kitchen-sink.html` for a complete interactive demo of all components and patterns with working code examples. The kitchen sink should be updated whenever new components or patterns are added.
+**Visual Reference:** See `docs/design-system-kitchen-sink.html` for a complete interactive demo of all components and patterns with working code examples. The kitchen sink should be updated whenever new components or patterns are added. (Note: the kitchen sink is _also_ an aspirational artifact — many surfaces in there were never shipped, and some that shipped diverged. Cross-check against `DESIGN.md` and the real code.)
 
 ---
 
@@ -2533,3 +2550,162 @@ When implementing a component, verify:
 - [ ] Respects reduced motion preference
 - [ ] Dark mode tested
 - [ ] **Kitchen sink updated** - Add new component/pattern to `design-system-kitchen-sink.html` with working example
+
+---
+
+## Drift Catalog (this doc vs. shipped code)
+
+Every entry below is a place where the prose above does not match what
+`apps/frontend/` actually renders. The "Reality" column is the code-of-record
+as of this reconciliation pass; the "Source" column points at the file to
+verify against if you doubt the entry. New drift discovered later should be
+appended here, not silently fixed by rewriting the body.
+
+### 1. Color tokens
+
+| Claim above                                                           | Reality                                                                                                                                                                                            | Source                                                                                                                                               |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hsl(var(--success))` referenced throughout (trace, AI message theme) | **There is no `--success` token.** Real "success" greens are hard-coded: `hsl(142 76% 36%)` for the `message_sent` trace step, `text-emerald-600` / `hsl(152 69% 41%)` for the `bot` actor accent. | `apps/frontend/src/index.css`, `apps/frontend/src/lib/step-config.ts`, `apps/frontend/src/components/timeline/message-event.tsx` (`ACTOR_ROW_THEME`) |
+| "Scratchpad" color = `hsl(280 60% 70%)` (purple)                      | `BADGE_CONFIG.scratchpad.color = "text-primary"` — gold, not purple.                                                                                                                               | `apps/frontend/src/components/layout/sidebar/config.ts`                                                                                              |
+| Stalled = `hsl(45 70% 60%)` (yellow)                                  | Not used anywhere as a "stalled" signal. The closest live color is the gold urgency strip `hsl(45 100% 50%)` ("ai" activity).                                                                      | `apps/frontend/src/components/layout/sidebar/config.ts` (`URGENCY_COLORS`)                                                                           |
+| Light-mode `--input` listed without `--ring` color callout            | Both `:root` and `.dark` define a `--ring` (`38 65% 50%` / `40 55% 55%`) — DESIGN.md §2.1 has the full table.                                                                                      | `apps/frontend/src/index.css`                                                                                                                        |
+
+### 2. Mentions
+
+The doc lists four mention variants (user / ai / channel / me). The shipped
+renderer has **seven** trigger styles:
+
+| Type        | Class                                                          | Source                                                |
+| ----------- | -------------------------------------------------------------- | ----------------------------------------------------- |
+| `user`      | `bg-[hsl(200_70%_50%/0.1)] text-[hsl(200_70%_50%)]`            | `apps/frontend/src/lib/markdown/mention-renderer.tsx` |
+| `persona`   | `bg-primary/10 text-primary` (this is what the doc calls "ai") | same                                                  |
+| `bot`       | `bg-green-500/10 text-green-600 dark:text-green-400`           | same                                                  |
+| `broadcast` | `bg-orange-500/10 text-orange-600 dark:text-orange-400`        | same                                                  |
+| `channel`   | `bg-muted text-foreground`                                     | same                                                  |
+| `command`   | `bg-[hsl(280_60%_55%/0.15)] text-[hsl(280_60%_55%)] font-mono` | same                                                  |
+| `me`        | `bg-[hsl(200_70%_50%/0.15)] text-primary font-semibold`        | same                                                  |
+
+Base chip: `inline px-1 py-px rounded font-medium` (no `1px 4px` padding as the doc shows).
+
+### 3. Messages — actor theming
+
+The doc treats messages as **two kinds**: user and "AI". The shipped UI has
+**four actor types** with distinct theming (`ACTOR_ROW_THEME` in
+`apps/frontend/src/components/timeline/message-event.tsx`):
+
+| Actor     | Row accent                                                                                                                                              | Name color         | Badge             |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------- |
+| `user`    | none                                                                                                                                                    | inherit            | none              |
+| `persona` | gradient `from-primary/[0.06] to-transparent` + **inset shadow** `shadow-[inset_3px_0_0_hsl(var(--primary))]` (not `border-left`, not negative margins) | `text-primary`     | none              |
+| `bot`     | emerald gradient + emerald inset stripe                                                                                                                 | `text-emerald-600` | `BOT` pill (10px) |
+| `system`  | blue gradient + blue inset stripe `hsl(210 100% 55%)`                                                                                                   | `text-blue-500`    | none              |
+
+Other corrections to "Message Styling":
+
+- **Avatar size is 32px (comfortable) / 24px (compact)**, not 36px. Switched via `[data-message-display]` rules in `index.css`.
+- The "negative margin / padding" overflow technique (`margin-left: -24px`) is not used; the accent is purely an inset shadow plus a row-level gradient background.
+- The "context menu button" CSS in this doc (`position: absolute; top: 8px; right: 8px; …`) does not describe the shipped UI. The real per-message menu is a **Radix `DropdownMenu`** rendered by `MessageContextMenu` (desktop) or a vaul `MessageActionDrawer` (mobile). Auto-positioned; no hand-rolled `right: 40px` offsets.
+
+### 4. Trace — step taxonomy
+
+The doc lists **three** step types (Thinking / Tool / Response). The shipped
+config (`apps/frontend/src/lib/step-config.ts`, `STEP_DISPLAY_CONFIG`) has
+**twelve**:
+
+`context_received` (Inbox) · `thinking` (Lightbulb) · `reconsidering` (RotateCcw) · `web_search` (Search) · `visit_page` (FileText) · `workspace_search` (Building2) · `github_access` (Github) · `linear_access` (CircleDot) · `message_sent` (MessageSquare) · `message_edited` (MessageSquare) · `tool_call` (Wrench) · `tool_error` (AlertTriangle).
+
+Each has its own HSL triplet (hue/saturation/lightness) — there is no fixed
+gold/blue/green palette; the color is computed per step. Full table in
+[`DESIGN.md`](../DESIGN.md) §10.
+
+### 5. Trace — dialog shell
+
+The doc's `.modal-overlay` / `.modal-dialog` / focus-trap JS, "settings gear
+toggles streaming" pattern, and ARIA scaffolding are **not** how the trace
+dialog is implemented:
+
+- The trace dialog uses `<ResponsiveDialog>` (Radix Dialog on desktop, vaul Drawer on mobile). ARIA/focus management comes from the primitives — there is no hand-rolled `trapFocus` function.
+- The header includes a **lineage `<Select>`** (switch between superseded sessions) and a **`<StopResearchButton>`**, not a streaming-settings gear.
+- Status states: `pending`, `running`, `completed`, `failed`, `deleted`, `superseded` — six, not just complete/failed/running.
+- Source: `apps/frontend/src/components/trace/trace-dialog.tsx`.
+
+### 6. Sidebar — urgency strip
+
+The doc describes the urgency strip as a **6px column inside `.smart-sidebar-body`**
+that scrolls with the content. The shipped implementation is different:
+
+- The strip is **per-row**, not a separate column. Each `<StreamItem>` renders its own `<UrgencyStrip>` as a `w-1` left bar with `rounded-l-lg`.
+- Width is Tailwind `w-1` (4px), not 6px.
+- Quiet rows render `transparent`, not muted gray — the row owns the strip slot regardless.
+- Source: `apps/frontend/src/components/layout/sidebar/stream-item.tsx`; colors in `apps/frontend/src/components/layout/sidebar/config.ts` (`URGENCY_COLORS`).
+
+### 7. Sidebar — sections
+
+Section labels and emojis are correct. Item caps and rules drift:
+
+- Important: doc says "max 10 items". Shipped `TieredStreamSection` enforces `TIER_VISIBLE_LIMIT = 10` **across any tiered section**, with a `<MoreDivider>` (`"N more"` / `"less"`) toggle to reveal the rest — not a hard cap of 10.
+- Recent: doc says "max 15 items, auto-expires after 7 days". Recency policy lives in the sort/scoring code, not as a literal cap of 15. Verify against `use-urgency-tracking.ts` and the section composition in `sections.tsx` before quoting numbers.
+- Pinned: behavior described is broadly correct, but pin/unpin lives behind `SidebarActionMenu`/`SidebarActionDrawer`, not a "right-click to unpin" affordance.
+- "Smart" vs "All" toggle exists in spirit — the actual section sets are `SMART_SECTIONS` (`important`/`recent`/`pinned`/`other`) and `ALL_SECTIONS` (`scratchpads`/`channels`/`dms`). See `sidebar/config.ts`.
+
+### 8. Sidebar — collapse, width, hover margin
+
+- "30px hover margin" is the value in `app-shell.tsx`'s own comment ("30px hover margin for 'magnetic' feel"). The doc says **15px** — drift.
+- Three sidebar states: `collapsed` / `preview` / `pinned` — match the doc's intent, but the doc claims the collapsed state is a 6px strip. The collapsed state shows a column of urgency blocks driven by `urgencyBlocks` from `useSidebar()`; width matches `w-1` per row stacked, not a flat 6px bar.
+- LocalStorage keys (`sidebar.width.preview`, `sidebar.width.pinned`) and 200/600 width constraints are **unverified** against `apps/frontend/src/contexts/sidebar-context.tsx`; do not quote them as ground truth without checking that file.
+
+### 9. Composer / message input
+
+- "Premium Glow" matches the spirit of `.input-glow-wrapper` in `index.css`, but the wrapper styles are defined globally (`::before` pseudo, 17px radius, opacity 0→1 on `:focus-within`) rather than as `.input-wrapper` / `.input-glow` pair shown in the doc.
+- Height limits: shipped composer uses `min-h-[200px]` on the editor surface, and the container caps at `max-h-[380px]` on mobile when collapsed (`max-h-[75dvh]` when expanded). The "64px–380px total" range in the doc is roughly correct for mobile-collapsed; desktop has no hard cap of this form.
+- Custom node types in flight (not in this doc): `mention`, `emoji`, `hardBreak`, `quoteReply`, `sharedMessage`, plus the standard `paragraph`/`heading`/`codeBlock`/`bulletList`/`orderedList`. See `apps/frontend/src/components/composer/message-composer.tsx`.
+- "Floating selection toolbar" exists, but the actual desktop toolbar is `EditorToolbar` (always-visible row above the editor), not a hover-floating popover for bold/italic. Selection-quote behavior lives in `text-selection-quote.tsx`.
+
+### 10. Code blocks
+
+- Shipped code blocks render through **Shiki** with dual themes (`github-light` / `github-dark`) via `--shiki-light` / `--shiki-dark` CSS custom properties, switched by `.dark`. The `.code-block` / `.code-block-header` CSS in this doc describes a kitchen-sink mockup, not the shipped surface.
+- ProseMirror `pre` styling is in `index.css`: `@apply bg-muted rounded-md p-4 my-2 font-mono text-sm overflow-x-auto`.
+
+### 11. Quick switcher
+
+- Modes match: `stream` / `command` / `search`, with prefixes `""` / `"> "` / `"? "`.
+- Shortcuts: doc claims `Cmd+K`, `Cmd+Shift+K`, `Cmd+Shift+F`. Reality (`apps/frontend/src/lib/keyboard-shortcuts.ts`): the same three, **plus** `Cmd+F` in-stream search, `Cmd+.` settings, `Cmd+§` toggle sidebar, `Cmd+Shift+A` attachment explorer. (`mod+` is platform-agnostic in the source.)
+- Styling specifics ("16px radius", subtle gradient `::before`, "pill mode tabs") are kitchen-sink intent — the shipped switcher renders inside `<ResponsiveDialog>` and uses `ModeTabs` + `RichInput`; if you need exact styling, read `apps/frontend/src/components/quick-switcher/`.
+- Footer keyboard hints use the `.kbd-hint` utility class defined in `index.css`.
+
+### 12. Top bar
+
+- "44px height" is unverified — the topbar height in the shell is set by its content rather than a fixed `height: 44px` rule.
+- **"Activity glow" / `stream-label-glow` / multi-persona color stripes / `glow-pulse` animation: not implemented.** This is aspirational. The actual loading affordance is `TopbarLoadingIndicator` — a single shimmer strip pinned to the topbar's bottom border, animated via `animate-topbar-shimmer`.
+
+### 13. Thread panels
+
+- "Max 3 panels" and "20% minimum width": shipped layout uses `MAX_PANEL_RATIO = 0.7` in `apps/frontend/src/hooks/use-panel-layout.ts` — that's a **max width ratio**, not a min, and is per-panel rather than a global panel count cap. A hard "3-panel" cap is not enforced by that file; the panel list comes from `useSearchParams().getAll("panel")` in `WorkspaceLayout`. Verify before quoting numbers.
+
+### 14. Image gallery
+
+The CSS-only mockup in this doc described `.image-preview` / "+N more overlay". The shipped surface is `apps/frontend/src/components/image-gallery.tsx` + `gallery/`, mounted via `MediaGalleryProvider`. Component layout, swipe behavior, and thumb strip are owned by that React tree — read the components rather than the CSS in this doc.
+
+### 15. Inline AI message vs. trace navigation
+
+The "AI message hover hint", "click message to open trace at response step", and "right: 40px context menu" CSS describe an early mockup. The shipped affordances:
+
+- **Discuss-with-Ariadne / open-trace** is wired via `useDiscussWithAriadne()` and `useTrace()`, surfaced through `MessageContextMenu` / `MessageActionDrawer`. The interaction surface is the dropdown, not a hand-rolled CSS popover.
+- The `TraceProvider` + `<TraceDialog />` pair handles both "open at top" and "open scrolled to step" — bidirectional navigation as described in spirit, but implemented via React context, not the JS snippets in this doc.
+
+### 16. Accessibility / motion
+
+- Reduced-motion class (`.reduced-motion`) is real and works as described.
+- Font size / family overrides (`[data-font-size]`, `[data-font-family]`) match the doc.
+- High-contrast mode (`.high-contrast`) is **not** mentioned in the doc above but exists in `index.css` — worth folding in next time this doc is rewritten.
+
+---
+
+### How to use this catalog
+
+If you are about to implement or modify a surface mentioned in the prose
+above, **read both the prose entry and any corresponding drift-catalog
+entry**. If you are unsure, fall through to [`DESIGN.md`](../DESIGN.md) and
+the code. When you fix drift in code, either retire the matching catalog
+entry (and update the prose) or — if the doc is still useful as aspiration —
+leave the entry and update its "Reality" column.
