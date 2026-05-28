@@ -1,14 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type {
-  AuthorType,
-  StreamType,
-  Visibility,
-  CompanionMode,
-  ThreadSummary,
-  E2eInvitedAgentKind,
-} from "@threa/types"
-import { E2eInvitedAgentKinds } from "@threa/types"
+import type { AuthorType, StreamType, Visibility, CompanionMode, ThreadSummary, E2eActor } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, ArchiveStatus }
@@ -38,7 +30,7 @@ interface StreamRow {
    * fields undefined and `mapRowToStream` omits them on the result.
    */
   e2e_owner_user_key_id?: string | null
-  e2e_invited_agent_kind?: string | null
+  e2e_actors?: { kind: string; keyId: string | null }[] | null
 }
 
 /**
@@ -113,12 +105,12 @@ export interface Stream {
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
   /**
-   * Which agent class (if any) the owner has invited into the encrypted
-   * stream. Drives the frontend's SSK-wrap recipient set — "enclave" means
-   * wrap the SSK to every live EIK so Ariadne can decrypt. Populated by the
-   * same LEFT JOIN that sets `e2eOwnerKeyId`.
+   * Non-human actors the owner has invited into the encrypted stream. Drives
+   * the frontend's SSK-wrap recipient set — an "enclave" actor means wrap the
+   * SSK to every live EIK so Ariadne can decrypt. Populated by the same query
+   * that sets `e2eOwnerKeyId`; an empty array is an E2E stream with no agents.
    */
-  e2eInvitedAgentKind?: E2eInvitedAgentKind
+  e2eActors?: E2eActor[]
 }
 
 export interface InsertStreamParams {
@@ -193,7 +185,7 @@ function mapRowToStream(row: StreamRow): Stream {
     ...(e2eOwnerKeyId !== undefined && {
       e2eEnabled: true,
       e2eOwnerKeyId,
-      e2eInvitedAgentKind: (row.e2e_invited_agent_kind ?? E2eInvitedAgentKinds.NONE) as E2eInvitedAgentKind,
+      e2eActors: (row.e2e_actors ?? []) as E2eActor[],
     }),
   }
 }
@@ -240,7 +232,11 @@ const SELECT_FIELDS_WITH_E2E = `
   s.companion_mode, s.companion_persona_id,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
-  e.invited_agent_kind AS e2e_invited_agent_kind
+  (
+    SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
+    FROM e2e_stream_actors a
+    WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
+  ) AS e2e_actors
 `
 
 const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
@@ -540,7 +536,11 @@ export const StreamRepository = {
         lm.content_json as last_message_content,
         lm.created_at as last_message_at,
         e.owner_user_key_id AS e2e_owner_user_key_id,
-        e.invited_agent_kind AS e2e_invited_agent_kind
+        (
+          SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
+          FROM e2e_stream_actors a
+          WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
+        ) AS e2e_actors
       FROM streams s
       LEFT JOIN last_messages lm ON lm.stream_id = s.id
       LEFT JOIN e2e_streams e ON e.stream_id = s.id

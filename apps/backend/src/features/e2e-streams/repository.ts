@@ -1,6 +1,5 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import type { E2eInvitedAgentKind } from "@threa/types"
 
 interface E2eStreamRow {
   stream_id: string
@@ -8,8 +7,6 @@ interface E2eStreamRow {
   enabled_at: Date
   owner_user_id: string
   owner_user_key_id: string
-  invited_agent_kind: E2eInvitedAgentKind
-  invited_agent_key_id: string | null
 }
 
 export interface E2eStream {
@@ -18,8 +15,6 @@ export interface E2eStream {
   enabledAt: Date
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: E2eInvitedAgentKind
-  invitedAgentKeyId: string | null
 }
 
 export interface MarkStreamE2eParams {
@@ -27,12 +22,9 @@ export interface MarkStreamE2eParams {
   workspaceId: string
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: E2eInvitedAgentKind
-  invitedAgentKeyId: string | null
 }
 
-const COLUMNS =
-  "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, invited_agent_kind, invited_agent_key_id"
+const COLUMNS = "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id"
 
 function mapRow(row: E2eStreamRow): E2eStream {
   return {
@@ -41,8 +33,6 @@ function mapRow(row: E2eStreamRow): E2eStream {
     enabledAt: row.enabled_at,
     ownerUserId: row.owner_user_id,
     ownerUserKeyId: row.owner_user_key_id,
-    invitedAgentKind: row.invited_agent_kind,
-    invitedAgentKeyId: row.invited_agent_key_id,
   }
 }
 
@@ -86,43 +76,16 @@ export const E2eStreamsRepository = {
   async markStreamE2e(db: Querier, params: MarkStreamE2eParams): Promise<E2eStream> {
     const result = await db.query<E2eStreamRow>(sql`
       INSERT INTO e2e_streams (
-        stream_id, workspace_id, owner_user_id, owner_user_key_id,
-        invited_agent_kind, invited_agent_key_id
+        stream_id, workspace_id, owner_user_id, owner_user_key_id
       )
       VALUES (
         ${params.streamId},
         ${params.workspaceId},
         ${params.ownerUserId},
-        ${params.ownerUserKeyId},
-        ${params.invitedAgentKind},
-        ${params.invitedAgentKeyId}
+        ${params.ownerUserKeyId}
       )
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return mapRow(result.rows[0]!)
-  },
-
-  /**
-   * Set (or clear) the invited agent on an already-E2E stream. The owner
-   * invites an agent kind ("enclave"/"bot") so the frontend wraps the SSK to
-   * that recipient class; passing "none" with a null key id retracts the
-   * invite. Scoped to `workspace_id` (INV-8). Returns the updated row, or
-   * null when the stream is not E2E in this workspace.
-   */
-  async setInvitedAgent(
-    db: Querier,
-    workspaceId: string,
-    streamId: string,
-    invitedAgentKind: E2eInvitedAgentKind,
-    invitedAgentKeyId: string | null
-  ): Promise<E2eStream | null> {
-    const result = await db.query<E2eStreamRow>(sql`
-      UPDATE e2e_streams
-      SET invited_agent_kind = ${invitedAgentKind},
-          invited_agent_key_id = ${invitedAgentKeyId}
-      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
-      RETURNING ${sql.raw(COLUMNS)}
-    `)
-    return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 }
