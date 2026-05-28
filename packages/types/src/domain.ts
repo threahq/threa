@@ -13,6 +13,7 @@ import type {
   BotTrait,
   StreamType,
   Visibility,
+  LabelableResourceType,
   CompanionMode,
   AuthorType,
   EventType,
@@ -325,6 +326,22 @@ export interface LabelMember {
   userId: string
   workspaceId: string
   joinedAt: string
+}
+
+/**
+ * A label applied to a resource (a stream today; messages/users/attachments
+ * later — `resourceType` is the polymorphic discriminator). Viewer-scoped:
+ * `userId` is the person who applied it, and assignments are private to that
+ * user, mirroring private-label visibility. Resolve `labelId` against the
+ * workspace's labels to render; an assignment whose label is gone is ignored.
+ */
+export interface LabelAssignment {
+  labelId: string
+  resourceType: LabelableResourceType
+  resourceId: string
+  userId: string
+  workspaceId: string
+  assignedAt: string
 }
 
 /**

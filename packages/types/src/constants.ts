@@ -21,6 +21,18 @@ export const Visibilities = {
   PRIVATE: "private",
 } as const satisfies Record<string, Visibility>
 
+// Labelable resource types — the polymorphic target of a label assignment.
+// Labeling is resource-agnostic: the table, service, events, sync, and UI
+// primitives are identical for every type. This set only gates which targets
+// the API accepts today; adding "message" | "user" | "attachment" later is a
+// one-line change here plus a presentation adapter — no new mechanism.
+export const LABELABLE_RESOURCE_TYPES = ["stream"] as const
+export type LabelableResourceType = (typeof LABELABLE_RESOURCE_TYPES)[number]
+
+export const LabelableResourceTypes = {
+  STREAM: "stream",
+} as const satisfies Record<string, LabelableResourceType>
+
 // Companion modes
 export const COMPANION_MODES = ["off", "on"] as const
 export type CompanionMode = (typeof COMPANION_MODES)[number]

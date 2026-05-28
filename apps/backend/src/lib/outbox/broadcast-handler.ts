@@ -25,6 +25,8 @@ import {
   type LabelDeletedOutboxPayload,
   type LabelMemberJoinedOutboxPayload,
   type LabelMemberLeftOutboxPayload,
+  type LabelAssignedOutboxPayload,
+  type LabelUnassignedOutboxPayload,
 } from "./repository"
 import { logger } from "../logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
@@ -283,6 +285,14 @@ export class BroadcastHandler implements OutboxHandler {
 
     if (isOneOfOutboxEventType(event, ["label:member_joined", "label:member_left"])) {
       const payload = event.payload as LabelMemberJoinedOutboxPayload | LabelMemberLeftOutboxPayload
+      this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+      return
+    }
+
+    // Assignments are viewer-scoped: each row is private to the user who applied
+    // the label, so deliver to that user's room only.
+    if (isOneOfOutboxEventType(event, ["label:assigned", "label:unassigned"])) {
+      const payload = event.payload as LabelAssignedOutboxPayload | LabelUnassignedOutboxPayload
       this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
       return
     }

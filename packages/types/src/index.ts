@@ -12,6 +12,10 @@ export {
   VISIBILITY_OPTIONS,
   type Visibility,
   Visibilities,
+  // Labelable resources
+  LABELABLE_RESOURCE_TYPES,
+  type LabelableResourceType,
+  LabelableResourceTypes,
   // Companion modes
   COMPANION_MODES,
   type CompanionMode,
@@ -225,6 +229,7 @@ export type {
   StreamMember,
   Label,
   LabelMember,
+  LabelAssignment,
   Message,
   ThreadSummary,
   MessageVersion,
@@ -389,6 +394,8 @@ export type {
   LabelDeletedPayload,
   LabelMemberJoinedPayload,
   LabelMemberLeftPayload,
+  LabelAssignedPayload,
+  LabelUnassignedPayload,
   // Emojis
   EmojiEntry,
   // Commands

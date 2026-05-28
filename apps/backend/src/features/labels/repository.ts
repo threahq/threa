@@ -1,6 +1,13 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { Visibilities, type Label, type LabelMember, type Visibility } from "@threa/types"
+import {
+  Visibilities,
+  type Label,
+  type LabelMember,
+  type LabelAssignment,
+  type LabelableResourceType,
+  type Visibility,
+} from "@threa/types"
 
 interface LabelRow {
   id: string
@@ -250,5 +257,106 @@ export const LabelMemberRepository = {
    */
   async deleteAllForLabel(db: Querier, labelId: string): Promise<void> {
     await db.query(sql`DELETE FROM label_members WHERE label_id = ${labelId}`)
+  },
+}
+
+interface LabelAssignmentRow {
+  label_id: string
+  resource_type: string
+  resource_id: string
+  user_id: string
+  workspace_id: string
+  assigned_at: Date
+}
+
+function mapAssignmentRow(row: LabelAssignmentRow): LabelAssignment {
+  return {
+    labelId: row.label_id,
+    resourceType: row.resource_type as LabelableResourceType,
+    resourceId: row.resource_id,
+    userId: row.user_id,
+    workspaceId: row.workspace_id,
+    assignedAt: row.assigned_at.toISOString(),
+  }
+}
+
+const ASSIGNMENT_COLUMNS = "label_id, resource_type, resource_id, user_id, workspace_id, assigned_at"
+
+export interface AssignmentKey {
+  workspaceId: string
+  labelId: string
+  resourceType: LabelableResourceType
+  resourceId: string
+  userId: string
+}
+
+export const LabelAssignmentRepository = {
+  /**
+   * Idempotent assign (INV-20). ON CONFLICT keeps the original `assigned_at` so
+   * re-applying the same label doesn't churn the timestamp, and still returns
+   * the row.
+   */
+  async assign(db: Querier, params: AssignmentKey): Promise<LabelAssignment> {
+    const result = await db.query<LabelAssignmentRow>(sql`
+      INSERT INTO label_assignments (label_id, resource_type, resource_id, user_id, workspace_id)
+      VALUES (${params.labelId}, ${params.resourceType}, ${params.resourceId}, ${params.userId}, ${params.workspaceId})
+      ON CONFLICT (workspace_id, resource_type, resource_id, label_id, user_id) DO UPDATE
+        SET assigned_at = label_assignments.assigned_at
+      RETURNING ${sql.raw(ASSIGNMENT_COLUMNS)}
+    `)
+    return mapAssignmentRow(result.rows[0]!)
+  },
+
+  /** Remove one assignment. Returns true if a row was deleted. */
+  async unassign(db: Querier, params: AssignmentKey): Promise<boolean> {
+    const result = await db.query(sql`
+      DELETE FROM label_assignments
+      WHERE workspace_id = ${params.workspaceId}
+        AND resource_type = ${params.resourceType}
+        AND resource_id = ${params.resourceId}
+        AND label_id = ${params.labelId}
+        AND user_id = ${params.userId}
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
+  /** The viewer's assignments on one resource. */
+  async listForResource(
+    db: Querier,
+    workspaceId: string,
+    resourceType: LabelableResourceType,
+    resourceId: string,
+    userId: string
+  ): Promise<LabelAssignment[]> {
+    const result = await db.query<LabelAssignmentRow>(sql`
+      SELECT ${sql.raw(ASSIGNMENT_COLUMNS)}
+      FROM label_assignments
+      WHERE workspace_id = ${workspaceId}
+        AND resource_type = ${resourceType}
+        AND resource_id = ${resourceId}
+        AND user_id = ${userId}
+    `)
+    return result.rows.map(mapAssignmentRow)
+  },
+
+  /** The viewer's full assignment set for the workspace (bootstrap). */
+  async listForUser(db: Querier, workspaceId: string, userId: string): Promise<LabelAssignment[]> {
+    const result = await db.query<LabelAssignmentRow>(sql`
+      SELECT ${sql.raw(ASSIGNMENT_COLUMNS)}
+      FROM label_assignments
+      WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
+    `)
+    return result.rows.map(mapAssignmentRow)
+  },
+
+  /**
+   * Drop every assignment of a label across all users/resources. Callers run
+   * this inside the label-archive transaction so no chip outlives its label.
+   */
+  async deleteAllForLabel(db: Querier, workspaceId: string, labelId: string): Promise<void> {
+    await db.query(sql`
+      DELETE FROM label_assignments
+      WHERE workspace_id = ${workspaceId} AND label_id = ${labelId}
+    `)
   },
 }

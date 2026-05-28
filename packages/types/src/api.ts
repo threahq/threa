@@ -7,6 +7,7 @@
 import type {
   StreamType,
   Visibility,
+  LabelableResourceType,
   CompanionMode,
   SavedStatus,
   AuthorType,
@@ -24,6 +25,7 @@ import type {
   StreamMember,
   Label,
   LabelMember,
+  LabelAssignment,
   Workspace,
   User,
   WorkspaceInvitation,
@@ -539,6 +541,13 @@ export interface WorkspaceBootstrap {
    * from `Label.creatorUserId` instead.
    */
   labelMemberships: LabelMember[]
+  /**
+   * Viewer's label→resource assignments across the workspace (all resource
+   * types). Viewer-scoped: only the assignments this user created. Resolve
+   * each `labelId` against `labels` to render; orphans (label archived) are
+   * skipped.
+   */
+  labelAssignments: LabelAssignment[]
   invitations?: WorkspaceInvitation[]
   /**
    * Effective workspace permissions for the viewer. Sourced from the WorkOS
@@ -1065,5 +1074,28 @@ export interface LabelMemberLeftPayload {
   workspaceId: string
   targetUserId: string
   labelId: string
+  userId: string
+}
+
+/**
+ * Wire payload for `label:assigned` (a label applied to a resource). Delivered
+ * to the assigning user only (`targetUserId`) — assignments are viewer-scoped.
+ */
+export interface LabelAssignedPayload {
+  workspaceId: string
+  targetUserId: string
+  assignment: LabelAssignment
+}
+
+/**
+ * Wire payload for `label:unassigned`. The row is gone, so only identity is
+ * carried. Delivered to the assigning user only (`targetUserId`).
+ */
+export interface LabelUnassignedPayload {
+  workspaceId: string
+  targetUserId: string
+  labelId: string
+  resourceType: LabelableResourceType
+  resourceId: string
   userId: string
 }

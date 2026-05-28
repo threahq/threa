@@ -5,7 +5,7 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { labelId } from "../../lib/id"
-import { LabelRepository, LabelMemberRepository } from "./repository"
+import { LabelRepository, LabelMemberRepository, LabelAssignmentRepository } from "./repository"
 
 interface LabelServiceDeps {
   pool: Pool
@@ -185,6 +185,10 @@ export class LabelService {
       if (!archived) return
 
       await LabelMemberRepository.deleteAllForLabel(client, params.labelId)
+      // Drop assignments too so no resource keeps a chip for the dead label.
+      // No per-row unassign events: `label:deleted` already tells clients the
+      // label is gone, and they skip orphaned assignments on render.
+      await LabelAssignmentRepository.deleteAllForLabel(client, params.workspaceId, params.labelId)
 
       await OutboxRepository.insert(client, "label:deleted", {
         workspaceId: params.workspaceId,

@@ -104,6 +104,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
     mutedStreamIds: [],
     labels: [],
     labelMemberships: [],
+    labelAssignments: [],
     viewerPermissions: [],
     userPreferences: {
       ...DEFAULT_USER_PREFERENCES,
