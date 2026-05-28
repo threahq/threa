@@ -45,6 +45,10 @@ describe("canInviteEnclave", () => {
   it("rejects when the enclave is already invited", () => {
     expect(canInviteEnclave(makeStream({ e2eInvitedAgentKind: E2eInvitedAgentKinds.ENCLAVE }))).toBe(false)
   })
+
+  it("rejects when a different agent (bot) is already invited", () => {
+    expect(canInviteEnclave(makeStream({ e2eInvitedAgentKind: E2eInvitedAgentKinds.BOT }))).toBe(false)
+  })
 })
 
 describe("isEnclaveInvited", () => {

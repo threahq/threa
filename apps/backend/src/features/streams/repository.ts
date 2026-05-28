@@ -8,6 +8,7 @@ import type {
   ThreadSummary,
   E2eInvitedAgentKind,
 } from "@threa/types"
+import { E2eInvitedAgentKinds } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
 
 export type { StreamType, Visibility, CompanionMode, ArchiveStatus }
@@ -192,7 +193,7 @@ function mapRowToStream(row: StreamRow): Stream {
     ...(e2eOwnerKeyId !== undefined && {
       e2eEnabled: true,
       e2eOwnerKeyId,
-      e2eInvitedAgentKind: (row.e2e_invited_agent_kind ?? "none") as E2eInvitedAgentKind,
+      e2eInvitedAgentKind: (row.e2e_invited_agent_kind ?? E2eInvitedAgentKinds.NONE) as E2eInvitedAgentKind,
     }),
   }
 }

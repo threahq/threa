@@ -597,4 +597,22 @@ describe("StreamService.inviteEnclave", () => {
     expect(mockSetInvitedAgent).not.toHaveBeenCalled()
     expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
+
+  test("throws 409 when an agent is already invited", async () => {
+    mockGetByStreamId.mockResolvedValue({
+      streamId: "stream_e2e",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_owner",
+      invitedAgentKind: "bot",
+      invitedAgentKeyId: null,
+    } as never)
+
+    const error = await service.inviteEnclave("ws_1", "stream_e2e", "usr_owner").catch((e) => e)
+
+    expect(error).toBeInstanceOf(HttpError)
+    expect((error as HttpError).status).toBe(409)
+    expect((error as HttpError).code).toBe("AGENT_ALREADY_INVITED")
+    expect(mockSetInvitedAgent).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
 })

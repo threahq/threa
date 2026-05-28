@@ -17,7 +17,7 @@ export function canInviteEnclave(stream: EnclaveGate | undefined | null): boolea
     stream.type === StreamTypes.SCRATCHPAD &&
     !stream.isDraft &&
     stream.e2eEnabled === true &&
-    stream.e2eInvitedAgentKind !== E2eInvitedAgentKinds.ENCLAVE
+    (stream.e2eInvitedAgentKind === undefined || stream.e2eInvitedAgentKind === E2eInvitedAgentKinds.NONE)
   )
 }
 

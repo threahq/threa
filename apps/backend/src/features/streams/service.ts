@@ -711,6 +711,12 @@ export class StreamService {
       if (e2e.ownerUserId !== userId) {
         throw new HttpError("Only the stream owner can invite an agent", { status: 403, code: "NOT_STREAM_OWNER" })
       }
+      if (e2e.invitedAgentKind !== E2eInvitedAgentKinds.NONE) {
+        throw new HttpError("An agent is already invited to this stream", {
+          status: 409,
+          code: "AGENT_ALREADY_INVITED",
+        })
+      }
 
       await E2eStreamsRepository.setInvitedAgent(client, workspaceId, streamId, E2eInvitedAgentKinds.ENCLAVE, null)
 
