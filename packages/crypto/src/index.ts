@@ -25,3 +25,21 @@ export {
   type EncryptResult,
   type DecryptInput,
 } from "./envelope"
+
+export {
+  STREAM_ENVELOPE_VERSION,
+  generateStreamKey,
+  sealMessage,
+  openMessage,
+  openMessageAsString,
+  wrapStreamKey,
+  unwrapStreamKey,
+  buildWrapAad,
+  type StreamEnvelope,
+  type SealMessageInput,
+  type SealMessageResult,
+  type OpenMessageInput,
+  type StreamKeyWrap,
+  type WrapStreamKeyInput,
+  type UnwrapStreamKeyInput,
+} from "./stream-key"
