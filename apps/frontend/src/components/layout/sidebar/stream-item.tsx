@@ -379,13 +379,15 @@ export function StreamItem({
 
         <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
       </div>
-      <LabelPicker
-        workspaceId={workspaceId}
-        resourceType="stream"
-        resourceId={stream.id}
-        open={labelPickerOpen}
-        onOpenChange={setLabelPickerOpen}
-      />
+      {labelPickerOpen && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType="stream"
+          resourceId={stream.id}
+          open
+          onOpenChange={setLabelPickerOpen}
+        />
+      )}
       {isMobile && canOpenDrawer && (
         <SidebarActionDrawer
           open={drawerOpen}
