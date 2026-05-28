@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react"
-import { Mic, Loader2, AlertTriangle, Sparkles } from "lucide-react"
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react"
+import { Mic, Loader2, AlertTriangle, Sparkles, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
@@ -49,6 +49,15 @@ function tooltipFor(args: {
   return "Dictate a message"
 }
 
+export interface MicButtonHandle {
+  /**
+   * End any in-flight take and immediately drop the polished-chunk toggle and
+   * any transient warning/error chrome. The composer calls this when it sends
+   * or clears the draft so the dictation surfaces don't outlive the message.
+   */
+  endSession: () => void
+}
+
 interface MicButtonProps {
   workspaceId: string
   /** Insert a committed transcript span into the editor at the caret. */
@@ -80,19 +89,22 @@ interface MicButtonProps {
   language?: string
 }
 
-export function MicButton({
-  workspaceId,
-  onInsertText,
-  onInterimText,
-  onActiveChange,
-  onInsertPolishedChunk,
-  onChunkSwap,
-  onLockAllChunks,
-  onGetChunkText,
-  disabled,
-  className,
-  language,
-}: MicButtonProps) {
+export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function MicButton(
+  {
+    workspaceId,
+    onInsertText,
+    onInterimText,
+    onActiveChange,
+    onInsertPolishedChunk,
+    onChunkSwap,
+    onLockAllChunks,
+    onGetChunkText,
+    disabled,
+    className,
+    language,
+  },
+  ref
+) {
   const {
     state,
     supported,
@@ -107,8 +119,11 @@ export function MicButton({
     showOriginal,
     setShowOriginal,
     noAudioWarning,
+    dismissNoAudioWarning,
+    dismissError,
     start,
     stop,
+    endSession,
   } = useVoiceDictation({
     workspaceId,
     onCommittedText: onInsertText,
@@ -118,6 +133,8 @@ export function MicButton({
     onGetChunkText,
     language,
   })
+
+  useImperativeHandle(ref, () => ({ endSession }), [endSession])
 
   // Tell the host when a take is in flight. The mobile composer collapses its
   // action bar (and this button) on blur; without this signal a tap-outside
@@ -203,14 +220,25 @@ export function MicButton({
         // clears automatically when signal returns.
         <span
           role="status"
-          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[16rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-amber-600 px-2.5 py-1.5 text-[11px] font-medium leading-snug text-amber-50 shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[16rem] -translate-x-1/2 justify-center"
         >
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="text-left">{noAudioWarning}</span>
-          <span
-            aria-hidden
-            className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-amber-600"
-          />
+          <button
+            type="button"
+            aria-label="Dismiss audio warning"
+            onClick={(e) => {
+              e.stopPropagation()
+              dismissNoAudioWarning()
+            }}
+            className="pointer-events-auto relative flex select-none items-center gap-1.5 rounded-lg bg-amber-600 px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-amber-50 shadow-lg ring-1 ring-inset ring-white/15 transition-colors hover:bg-amber-500 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>{noAudioWarning}</span>
+            <X className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+            <span
+              aria-hidden
+              className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-amber-600"
+            />
+          </button>
         </span>
       )}
       {recording && !polishPillVisible && !noAudioWarning && (
@@ -271,19 +299,31 @@ export function MicButton({
       {state === "error" && error && (
         // The tooltip alone is invisible on touch (no hover), so a dropped
         // take would look like it just stopped. Surface the reason inline as
-        // a compact toast with a caret pointing at the mic, which stays the
-        // tap-to-retry target. Absolute positioning keeps it from shifting
-        // the composer layout (INV-21).
+        // a compact toast with a caret pointing at the mic (which stays the
+        // tap-to-retry target), and let the toast itself be tapped to dismiss
+        // so it doesn't sit over the composer once the user has read it.
+        // Absolute positioning keeps it from shifting the composer layout (INV-21).
         <span
           role="status"
-          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+          className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 flex max-w-[15rem] -translate-x-1/2 justify-center"
         >
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          <span className="text-left">{error}</span>
-          <span
-            aria-hidden
-            className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
-          />
+          <button
+            type="button"
+            aria-label="Dismiss dictation error"
+            onClick={(e) => {
+              e.stopPropagation()
+              dismissError()
+            }}
+            className="pointer-events-auto relative flex select-none items-center gap-1.5 rounded-lg bg-destructive px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-destructive-foreground shadow-lg ring-1 ring-inset ring-white/15 transition-opacity hover:opacity-90 animate-in fade-in-0 zoom-in-95 slide-in-from-bottom-1 duration-150"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <span>{error}</span>
+            <X className="h-3 w-3 shrink-0 opacity-70" aria-hidden />
+            <span
+              aria-hidden
+              className="absolute left-1/2 top-full size-2 -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[1px] bg-destructive"
+            />
+          </button>
         </span>
       )}
       <Tooltip>
@@ -319,4 +359,4 @@ export function MicButton({
       </Tooltip>
     </span>
   )
-}
+})

@@ -125,11 +125,30 @@ interface UseVoiceDictationResult {
    *   - Lost signal: the take was capturing audio and then went dead (HFP
    *     dropped, USB glitch) — surfaces slower (~5s) so legitimate pauses
    *     don't nag.
-   * Null otherwise. Clears automatically once signal returns.
+   * Null otherwise. Clears automatically once signal returns, or when the user
+   * dismisses it via `dismissNoAudioWarning`.
    */
   noAudioWarning: string | null
+  /**
+   * Dismiss the no-audio warning by hand. Stays dismissed for the rest of the
+   * take (so it doesn't immediately re-show while the input is still silent)
+   * and re-arms only once signal returns or a new take begins. The warning is
+   * non-fatal, so dismissing it doesn't touch the take.
+   */
+  dismissNoAudioWarning: () => void
+  /** Clear the error surface and return to idle (the mic itself is the retry target). */
+  dismissError: () => void
   start: () => void
   stop: () => void
+  /**
+   * End the take for good: stop an in-flight recording (flushing its tail into
+   * the editor), then immediately drop polished-chunk tracking, reset the
+   * toggle, and clear any transient warning/error chrome — without waiting out
+   * the post-session grace window. Called when the composer sends or clears the
+   * draft: the message is gone, so the toggle pill and warnings have nothing
+   * left to act on and shouldn't linger on a timer. Idempotent.
+   */
+  endSession: () => void
 }
 
 // Phrase structured upstream error codes as short, human copy. The raw provider
@@ -280,6 +299,11 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   const lastSignalAtRef = useRef(0)
   const deviceLabelRef = useRef<string | null>(null)
   const warningShownRef = useRef(false)
+  // Set when the user dismisses the no-audio warning by hand. While set, the
+  // meter loop and the track-mute handler suppress the warning so it doesn't
+  // pop right back up over silent audio; it re-arms once signal returns (meter
+  // sees level) or a new take begins.
+  const noAudioDismissedRef = useRef(false)
   const [noAudioWarning, setNoAudioWarning] = useState<string | null>(null)
   // Bumped on every start() and every teardown/stop so a `voice:start` ACK that
   // resolves after the user has already stopped (or torn down) can't flip the
@@ -302,6 +326,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   // mode the toggle currently shows (the toggle can be flipped mid-session).
   const showOriginalRef = useRef(showOriginal)
   showOriginalRef.current = showOriginal
+  // Mirror the chunks map so endSession can cheaply tell whether there's any
+  // tracking to drop without depending on render state.
+  const chunksRef = useRef(chunks)
+  chunksRef.current = chunks
   // Post-session lock window: a single timer expires the whole session at once,
   // dropping editor-side tracking and clearing chunks state so the toggle hides.
   const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -347,6 +375,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
       warningShownRef.current = false
       setNoAudioWarning(null)
     }
+    noAudioDismissedRef.current = false
     setLevel(0)
     setElapsedMs(0)
     workletRef.current?.port.close()
@@ -403,11 +432,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         // anyway and gates on elapsed alone.
         const silenceMs = everHadSignal ? now - lastSignalAtRef.current : elapsed
         const shouldWarn = shouldWarnNoAudio({ elapsedMs: elapsed, silenceMs, peakLevel: peak })
-        if (shouldWarn && !warningShownRef.current) {
+        if (shouldWarn && !warningShownRef.current && !noAudioDismissedRef.current) {
           warningShownRef.current = true
           setNoAudioWarning(noAudioWarningMessage({ deviceLabel: deviceLabelRef.current, everHadSignal }))
-        } else if (!shouldWarn && warningShownRef.current) {
+        } else if (!shouldWarn && (warningShownRef.current || noAudioDismissedRef.current)) {
+          // Signal came back: clear the banner and re-arm so a later drop can
+          // surface it again (a manual dismiss only silences the current spell
+          // of silence, not the rest of the take).
           warningShownRef.current = false
+          noAudioDismissedRef.current = false
           setNoAudioWarning(null)
         }
       }
@@ -460,6 +493,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     // Take the single active slot, flushing+stopping any other composer's take.
     coordinator.activate(coordinatedStop)
     setError(null)
+    noAudioDismissedRef.current = false
     updateInterim("")
     // Starting a new take supersedes any polished chunks from the previous
     // session — drop their tracking and reset the toggle so the new take begins
@@ -538,11 +572,15 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
         // leave stale chrome.
         if (track) {
           track.onmute = () => {
+            // Respect a manual dismiss — if the user waved the warning away,
+            // don't resurrect it on the next mute blip until audio recovers.
+            if (noAudioDismissedRef.current) return
             warningShownRef.current = true
             setNoAudioWarning(noAudioWarningMessage({ deviceLabel: deviceLabelRef.current, everHadSignal: true }))
           }
           track.onunmute = () => {
             warningShownRef.current = false
+            noAudioDismissedRef.current = false
             setNoAudioWarning(null)
           }
         }
@@ -800,6 +838,40 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     [chunks, showOriginal]
   )
 
+  const dismissNoAudioWarning = useCallback(() => {
+    noAudioDismissedRef.current = true
+    warningShownRef.current = false
+    setNoAudioWarning(null)
+  }, [])
+
+  const dismissError = useCallback(() => {
+    setError(null)
+    setState("idle")
+  }, [])
+
+  const endSession = useCallback(() => {
+    // Stop a live take first so its tail flushes into the editor before we drop
+    // tracking (the user's words on a manual send should still land).
+    if (state === "recording" || state === "connecting") stop()
+    // Drop polished-chunk tracking + reset the toggle right now instead of
+    // waiting out the post-session grace window. Guarded so a speculative call
+    // (e.g. on every composer clear) doesn't dispatch a no-op editor transaction
+    // when there was nothing tracked. stop() above sets the lock timer, so the
+    // timer-ref check also covers the just-stopped case.
+    if (chunksRef.current.size > 0 || sessionChunkIdRef.current !== null || lockTimerRef.current !== null) {
+      lockAllChunks()
+    }
+    if (state === "error") {
+      setError(null)
+      setState("idle")
+    }
+    if (warningShownRef.current) {
+      warningShownRef.current = false
+      setNoAudioWarning(null)
+    }
+    noAudioDismissedRef.current = false
+  }, [state, stop, lockAllChunks])
+
   // Backgrounding the tab throttles the rAF meter and (on mobile) suspends audio
   // capture, so a take left "recording" would silently record nothing while the
   // UI still says it's live. End it cleanly on hide instead: stop() flushes the
@@ -854,7 +926,10 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     showOriginal,
     setShowOriginal,
     noAudioWarning,
+    dismissNoAudioWarning,
+    dismissError,
     start,
     stop,
+    endSession,
   }
 }
