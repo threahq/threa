@@ -222,4 +222,27 @@ describe("buildWrapAad", () => {
     expect(diffGen).not.toEqual(base)
     expect(diffRecipient).not.toEqual(base)
   })
+
+  it("rejects ids containing the '|' delimiter", () => {
+    expect(() => buildWrapAad({ streamId: "s|1", keyGeneration: 1, recipientKeyId: "uik_1" })).toThrow(
+      /must not contain/
+    )
+    expect(() => buildWrapAad({ streamId: "s1", keyGeneration: 1, recipientKeyId: "uik|1" })).toThrow(
+      /must not contain/
+    )
+  })
+
+  it("rejects empty ids", () => {
+    expect(() => buildWrapAad({ streamId: "", keyGeneration: 1, recipientKeyId: "uik_1" })).toThrow(/non-empty/)
+    expect(() => buildWrapAad({ streamId: "s1", keyGeneration: 1, recipientKeyId: "" })).toThrow(/non-empty/)
+  })
+
+  it("rejects a non-integer or negative generation", () => {
+    expect(() => buildWrapAad({ streamId: "s1", keyGeneration: -1, recipientKeyId: "uik_1" })).toThrow(
+      /non-negative integer/
+    )
+    expect(() => buildWrapAad({ streamId: "s1", keyGeneration: 1.5, recipientKeyId: "uik_1" })).toThrow(
+      /non-negative integer/
+    )
+  })
 })

@@ -208,12 +208,26 @@ export async function unwrapStreamKey(input: UnwrapStreamKeyInput): Promise<Uint
  * recipientKeyId)` slot so a malicious server can't relocate a wrap row to a
  * different stream/generation/recipient. Keep stable — changing the layout
  * breaks unwrapping of every existing wrap.
+ *
+ * The `|` delimiter is only unambiguous if the ids can't themselves contain it
+ * (otherwise distinct slots could collide into identical AAD and defeat the
+ * binding), so reject ids carrying the delimiter or empty and require a
+ * non-negative integer generation rather than trusting the slot inputs.
  */
 export function buildWrapAad(parts: {
   streamId: string
   keyGeneration: number
   recipientKeyId: string
 }): Uint8Array<ArrayBuffer> {
+  if (parts.streamId.length === 0 || parts.recipientKeyId.length === 0) {
+    throw new Error("buildWrapAad: streamId and recipientKeyId must be non-empty")
+  }
+  if (parts.streamId.includes("|") || parts.recipientKeyId.includes("|")) {
+    throw new Error("buildWrapAad: streamId and recipientKeyId must not contain '|'")
+  }
+  if (!Number.isInteger(parts.keyGeneration) || parts.keyGeneration < 0) {
+    throw new Error("buildWrapAad: keyGeneration must be a non-negative integer")
+  }
   return concatBytes(
     utf8Encode(parts.streamId),
     utf8Encode("|"),
