@@ -56,8 +56,11 @@ export interface SealMessageInput {
   /**
    * Bytes bound into AEAD as additional-authenticated-data — use
    * `buildMessageAad` so the same bytes can be reconstructed at open time.
+   * Required: the SSK design treats slot-binding as a security invariant
+   * (cross-user isolation, no envelope relocation), so every seal must bind
+   * its message identity rather than silently producing unbound ciphertext.
    */
-  aad?: Uint8Array
+  aad: Uint8Array
 }
 
 export interface SealMessageResult {
@@ -77,7 +80,7 @@ export async function sealMessage(input: SealMessageInput): Promise<SealMessageR
 
   const plaintext: Uint8Array<ArrayBuffer> =
     typeof input.payload === "string" ? utf8Encode(input.payload) : new Uint8Array(input.payload)
-  const aad: Uint8Array<ArrayBuffer> = input.aad ? new Uint8Array(input.aad) : new Uint8Array(0)
+  const aad: Uint8Array<ArrayBuffer> = new Uint8Array(input.aad)
 
   const sskKey = await crypto.subtle.importKey("raw", new Uint8Array(input.key), { name: "AES-GCM" }, false, [
     "encrypt",
@@ -144,8 +147,12 @@ export interface WrapStreamKeyInput {
   key: Uint8Array
   /** Raw X25519 public key of the recipient (a member's UIK or a live EIK). */
   recipientPublicKey: Uint8Array
-  /** Binding bytes — use `buildWrapAad` so a wrap can't be relocated between rows. */
-  aad?: Uint8Array
+  /**
+   * Binding bytes — use `buildWrapAad` so a wrap can't be relocated between rows.
+   * Required for the same reason as `SealMessageInput.aad`: a wrap that isn't
+   * bound to its `(stream, generation, recipient)` slot could be replayed.
+   */
+  aad: Uint8Array
 }
 
 /** HPKE-wrap the SSK so only the holder of the recipient's private key recovers it. */
@@ -164,7 +171,7 @@ export interface UnwrapStreamKeyInput {
   /** The recipient's HPKE private key (UIK or EIK). */
   recipientPrivateKey: CryptoKey
   /** Must match the `aad` used at wrap time (see `buildWrapAad`). */
-  aad?: Uint8Array
+  aad: Uint8Array
 }
 
 /** Recover the SSK from a wrap. Throws if the key doesn't match or AAD is forged. */
