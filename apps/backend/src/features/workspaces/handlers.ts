@@ -152,7 +152,7 @@ export function createWorkspaceHandlers({
         streamService.listDmPeers(workspaceId, userId),
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
-        labelAssignmentService.listForUser(workspaceId, userId),
+        labelAssignmentService.listForViewer(workspaceId, userId),
       ])
 
       if (!workspace) {

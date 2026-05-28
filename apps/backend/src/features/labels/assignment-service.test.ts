@@ -4,6 +4,7 @@ import { LabelableResourceTypes, Visibilities, type Label, type LabelAssignment 
 import { LabelAssignmentService } from "./assignment-service"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import * as streamsBarrel from "../streams"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
@@ -82,7 +83,7 @@ describe("LabelAssignmentService.assign", () => {
     await expect(service.assign(assignParams)).rejects.toMatchObject({ status: 404 })
   })
 
-  it("assigns a public label and emits label:assigned to the assigning user", async () => {
+  it("assigns a public label and fans out to the shared pool (null targetUserId)", async () => {
     const service = setupService()
     spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
     spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(fakeAssignment())
@@ -96,13 +97,13 @@ describe("LabelAssignmentService.assign", () => {
       "label:assigned",
       expect.objectContaining({
         workspaceId: WORKSPACE_ID,
-        targetUserId: USER_ID,
+        targetUserId: null,
         assignment: expect.objectContaining({ labelId: LABEL_ID, resourceId: RESOURCE_ID }),
       })
     )
   })
 
-  it("assigns the user's own private label", async () => {
+  it("assigns the user's own private label and routes to the creator's user room", async () => {
     const service = setupService()
     spyOn(LabelRepository, "findById").mockResolvedValue(
       fakeLabel({ visibility: Visibilities.PRIVATE, creatorUserId: USER_ID })
@@ -112,16 +113,21 @@ describe("LabelAssignmentService.assign", () => {
 
     await service.assign(assignParams)
 
-    expect(outboxSpy).toHaveBeenCalledWith(expect.anything(), "label:assigned", expect.anything())
+    expect(outboxSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:assigned",
+      expect.objectContaining({ targetUserId: USER_ID })
+    )
   })
 })
 
 describe("LabelAssignmentService.unassign", () => {
   afterEach(() => mock.restore())
 
-  it("emits label:unassigned when a row was removed", async () => {
+  it("emits label:unassigned to the shared pool for a public label (null targetUserId)", async () => {
     const service = setupService()
     spyOn(LabelAssignmentRepository, "unassign").mockResolvedValue(true)
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
     await service.unassign(assignParams)
@@ -131,12 +137,29 @@ describe("LabelAssignmentService.unassign", () => {
       "label:unassigned",
       expect.objectContaining({
         workspaceId: WORKSPACE_ID,
-        targetUserId: USER_ID,
+        targetUserId: null,
         labelId: LABEL_ID,
         resourceType: LabelableResourceTypes.STREAM,
         resourceId: RESOURCE_ID,
         userId: USER_ID,
       })
+    )
+  })
+
+  it("emits label:unassigned to the user room for a private label", async () => {
+    const service = setupService()
+    spyOn(LabelAssignmentRepository, "unassign").mockResolvedValue(true)
+    spyOn(LabelRepository, "findById").mockResolvedValue(
+      fakeLabel({ visibility: Visibilities.PRIVATE, creatorUserId: USER_ID })
+    )
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.unassign(assignParams)
+
+    expect(outboxSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:unassigned",
+      expect.objectContaining({ targetUserId: USER_ID })
     )
   })
 
@@ -148,5 +171,34 @@ describe("LabelAssignmentService.unassign", () => {
     await service.unassign(assignParams)
 
     expect(outboxSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe("LabelAssignmentService.listForViewer", () => {
+  afterEach(() => mock.restore())
+
+  it("returns the viewer's own rows without an access query when there are no other-user public rows", async () => {
+    const service = setupService()
+    const own = fakeAssignment({ userId: USER_ID })
+    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([own])
+    const accessSpy = spyOn(streamsBarrel, "listAccessibleStreamIds")
+
+    const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
+
+    expect(result).toEqual([own])
+    expect(accessSpy).not.toHaveBeenCalled()
+  })
+
+  it("includes other users' public stream rows only for accessible streams", async () => {
+    const service = setupService()
+    const own = fakeAssignment({ userId: USER_ID, resourceId: "stream_own" })
+    const visiblePublic = fakeAssignment({ userId: OTHER_USER_ID, resourceId: "stream_visible" })
+    const hiddenPublic = fakeAssignment({ userId: OTHER_USER_ID, resourceId: "stream_hidden" })
+    spyOn(LabelAssignmentRepository, "listVisibleCandidates").mockResolvedValue([own, visiblePublic, hiddenPublic])
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set(["stream_visible"]))
+
+    const result = await service.listForViewer(WORKSPACE_ID, USER_ID)
+
+    expect(result).toEqual([own, visiblePublic])
   })
 })

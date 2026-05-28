@@ -45,7 +45,7 @@ export function createLabelHandlers({ labelService, labelAssignmentService }: De
       const [labels, memberships, assignments] = await Promise.all([
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
-        labelAssignmentService.listForUser(workspaceId, userId),
+        labelAssignmentService.listForViewer(workspaceId, userId),
       ])
       res.json({ labels, memberships, assignments })
     },

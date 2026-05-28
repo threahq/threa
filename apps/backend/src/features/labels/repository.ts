@@ -320,31 +320,29 @@ export const LabelAssignmentRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  /** The viewer's assignments on one resource. */
-  async listForResource(
-    db: Querier,
-    workspaceId: string,
-    resourceType: LabelableResourceType,
-    resourceId: string,
-    userId: string
-  ): Promise<LabelAssignment[]> {
+  /**
+   * Assignments the viewer is allowed to see, before resource-access filtering:
+   * every assignment on a public label (the shared pool — any user's row) plus
+   * the viewer's own rows on their private labels. Joined to `labels` so a
+   * single query enforces visibility; archived labels are excluded. The caller
+   * still gates the public stream rows through `listAccessibleStreamIds` so a
+   * public label on a private channel only reaches its members.
+   */
+  async listVisibleCandidates(db: Querier, workspaceId: string, userId: string): Promise<LabelAssignment[]> {
     const result = await db.query<LabelAssignmentRow>(sql`
-      SELECT ${sql.raw(ASSIGNMENT_COLUMNS)}
-      FROM label_assignments
-      WHERE workspace_id = ${workspaceId}
-        AND resource_type = ${resourceType}
-        AND resource_id = ${resourceId}
-        AND user_id = ${userId}
-    `)
-    return result.rows.map(mapAssignmentRow)
-  },
-
-  /** The viewer's full assignment set for the workspace (bootstrap). */
-  async listForUser(db: Querier, workspaceId: string, userId: string): Promise<LabelAssignment[]> {
-    const result = await db.query<LabelAssignmentRow>(sql`
-      SELECT ${sql.raw(ASSIGNMENT_COLUMNS)}
-      FROM label_assignments
-      WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
+      SELECT ${sql.raw(
+        ASSIGNMENT_COLUMNS.split(", ")
+          .map((c) => `a.${c}`)
+          .join(", ")
+      )}
+      FROM label_assignments a
+      JOIN labels l ON l.id = a.label_id AND l.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${workspaceId}
+        AND l.archived_at IS NULL
+        AND (
+          l.visibility = ${Visibilities.PUBLIC}
+          OR (l.visibility = ${Visibilities.PRIVATE} AND a.user_id = ${userId})
+        )
     `)
     return result.rows.map(mapAssignmentRow)
   },

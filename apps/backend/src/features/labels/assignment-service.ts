@@ -1,8 +1,9 @@
 import type { Pool } from "pg"
-import { Visibilities, type LabelAssignment, type LabelableResourceType } from "@threa/types"
+import { LabelableResourceTypes, Visibilities, type LabelAssignment, type LabelableResourceType } from "@threa/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
+import { listAccessibleStreamIds } from "../streams"
 import { LabelRepository, LabelAssignmentRepository } from "./repository"
 
 interface LabelAssignmentServiceDeps {
@@ -20,9 +21,14 @@ export interface AssignLabelParams {
 /**
  * Applies labels to arbitrary resources (streams today; messages/users/
  * attachments later). Resource-agnostic by design — it validates the label,
- * never the resource — so a new resource type needs no change here. Viewer-
- * scoped: assignments are private to the assigning user and fan out to their
- * user room via the outbox (INV-4).
+ * never the resource — so a new resource type needs no change to assign.
+ *
+ * Assignment visibility tracks the label's: a private label is the creator's
+ * own organizational layer, so its rows stay viewer-scoped (delivered to the
+ * creator's user room). A public label is a *shared pool* — every member's
+ * rows are visible to everyone who can reach the resource, so its assignment
+ * events fan out to the resource's access scope (the stream room, reused from
+ * stream notifications) and reads return the whole pool, access-filtered.
  */
 export class LabelAssignmentService {
   private readonly pool: Pool
@@ -31,17 +37,32 @@ export class LabelAssignmentService {
     this.pool = deps.pool
   }
 
-  listForUser(workspaceId: string, userId: string): Promise<LabelAssignment[]> {
-    return LabelAssignmentRepository.listForUser(this.pool, workspaceId, userId)
-  }
+  /**
+   * The viewer's full assignment set for bootstrap/list: the shared pool of
+   * public-label assignments on resources they can access, plus their own
+   * private-label rows. Public stream rows are gated through the canonical
+   * stream-access helper so a public label on a private channel never leaks
+   * to non-members (resource types without an access rule are dropped).
+   */
+  async listForViewer(workspaceId: string, userId: string): Promise<LabelAssignment[]> {
+    const candidates = await LabelAssignmentRepository.listVisibleCandidates(this.pool, workspaceId, userId)
 
-  listForResource(
-    workspaceId: string,
-    userId: string,
-    resourceType: LabelableResourceType,
-    resourceId: string
-  ): Promise<LabelAssignment[]> {
-    return LabelAssignmentRepository.listForResource(this.pool, workspaceId, resourceType, resourceId, userId)
+    const ownRows: LabelAssignment[] = []
+    const publicStreamRows: LabelAssignment[] = []
+    for (const a of candidates) {
+      if (a.userId === userId) ownRows.push(a)
+      else if (a.resourceType === LabelableResourceTypes.STREAM) publicStreamRows.push(a)
+    }
+
+    if (publicStreamRows.length === 0) return ownRows
+
+    const accessible = await listAccessibleStreamIds(
+      this.pool,
+      workspaceId,
+      userId,
+      publicStreamRows.map((a) => a.resourceId)
+    )
+    return [...ownRows, ...publicStreamRows.filter((a) => accessible.has(a.resourceId))]
   }
 
   async assign(params: AssignLabelParams): Promise<LabelAssignment> {
@@ -67,7 +88,7 @@ export class LabelAssignmentService {
 
       await OutboxRepository.insert(client, "label:assigned", {
         workspaceId: params.workspaceId,
-        targetUserId: params.userId,
+        targetUserId: label.visibility === Visibilities.PUBLIC ? null : params.userId,
         assignment,
       })
 
@@ -86,9 +107,14 @@ export class LabelAssignmentService {
       })
       if (!removed) return
 
+      // The label drives routing the same way it does on assign. A missing
+      // label can't happen here — archive deletes its assignments in the same
+      // transaction — but if it ever did, fall back to the user room.
+      const label = await LabelRepository.findById(client, params.workspaceId, params.labelId)
+
       await OutboxRepository.insert(client, "label:unassigned", {
         workspaceId: params.workspaceId,
-        targetUserId: params.userId,
+        targetUserId: label?.visibility === Visibilities.PUBLIC ? null : params.userId,
         labelId: params.labelId,
         resourceType: params.resourceType,
         resourceId: params.resourceId,

@@ -1,6 +1,6 @@
 import { Server, type Namespace } from "socket.io"
 import type { Pool } from "pg"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
 import {
   OutboxRepository,
   isStreamScopedEvent,
@@ -289,11 +289,26 @@ export class BroadcastHandler implements OutboxHandler {
       return
     }
 
-    // Assignments are viewer-scoped: each row is private to the user who applied
-    // the label, so deliver to that user's room only.
+    // Assignment routing follows the label's visibility (carried as
+    // `targetUserId`). Private-label rows are viewer-scoped — deliver to the
+    // creator's room. Public-label rows (`targetUserId === null`) are a shared
+    // pool scoped to the resource: reuse the stream room so a public label on a
+    // private channel reaches exactly its members, identical to a message.
     if (isOneOfOutboxEventType(event, ["label:assigned", "label:unassigned"])) {
       const payload = event.payload as LabelAssignedOutboxPayload | LabelUnassignedOutboxPayload
-      this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+      if (payload.targetUserId) {
+        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+        return
+      }
+      const { resourceType, resourceId } = "assignment" in payload ? payload.assignment : payload
+      if (resourceType === LabelableResourceTypes.STREAM) {
+        this.io.to(`ws:${workspaceId}:stream:${resourceId}`).emit(event.eventType, payload)
+      } else {
+        logger.warn(
+          { eventType: event.eventType, resourceType },
+          "label assignment: no room mapping for public-label resource type"
+        )
+      }
       return
     }
 

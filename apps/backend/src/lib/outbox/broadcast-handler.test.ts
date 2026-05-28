@@ -619,4 +619,67 @@ describe("BroadcastHandler", () => {
     ])
     expect(resyncEmits.every((e) => e.namespace === "/bot")).toBe(true)
   })
+
+  it("fans out a public label:assigned (null targetUserId) to the resource's stream room", async () => {
+    const event = makeEvent(1n, "label:assigned", {
+      workspaceId: "ws_1",
+      targetUserId: null,
+      assignment: { labelId: "label_1", resourceType: "stream", resourceId: "stream_1", userId: "usr_bob" },
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_1",
+      eventType: "label:assigned",
+      payload: event.payload,
+    })
+  })
+
+  it("routes a private label:assigned to the creator's user room", async () => {
+    const event = makeEvent(1n, "label:assigned", {
+      workspaceId: "ws_1",
+      targetUserId: "usr_alice",
+      assignment: { labelId: "label_1", resourceType: "stream", resourceId: "stream_1", userId: "usr_alice" },
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:user:usr_alice",
+      eventType: "label:assigned",
+      payload: event.payload,
+    })
+  })
+
+  it("fans out a public label:unassigned (null targetUserId) to the resource's stream room", async () => {
+    const event = makeEvent(1n, "label:unassigned", {
+      workspaceId: "ws_1",
+      targetUserId: null,
+      labelId: "label_1",
+      resourceType: "stream",
+      resourceId: "stream_1",
+      userId: "usr_bob",
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_1",
+      eventType: "label:unassigned",
+      payload: event.payload,
+    })
+  })
 })

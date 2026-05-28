@@ -602,16 +602,19 @@ export interface LabelMemberLeftOutboxPayload extends WorkspaceScopedPayload {
   userId: string
 }
 
-// Assignment events are viewer-scoped (`targetUserId` is the assigning user),
-// mirroring the per-user assignment data shipped in bootstrap/list. `assigned`
-// carries the full row; `unassigned` carries only the key since the row is gone.
+// Assignment routing mirrors the label's visibility (like the upsert events
+// above): `targetUserId` is the creator for a private-label row (delivered to
+// their user room only) and null for a public-label row, which fans out to the
+// resource's access scope — the stream room — so the shared pool reaches every
+// member who can see the resource. `assigned` carries the full row; `unassigned`
+// carries only the key since the row is gone.
 export interface LabelAssignedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string
+  targetUserId: string | null
   assignment: LabelAssignment
 }
 
 export interface LabelUnassignedOutboxPayload extends WorkspaceScopedPayload {
-  targetUserId: string
+  targetUserId: string | null
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string
