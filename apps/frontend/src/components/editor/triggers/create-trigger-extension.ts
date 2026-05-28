@@ -1,4 +1,4 @@
-import { Node, mergeAttributes } from "@tiptap/react"
+import { Node, mergeAttributes, type Editor } from "@tiptap/react"
 import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
@@ -32,6 +32,12 @@ export interface TriggerExtensionConfig<TItem, TAttrs extends object> {
   getText: (attrs: TAttrs) => string
   /** Maps the selected autocomplete item to node attributes */
   mapPropsToAttrs: (item: TItem) => TAttrs
+  /**
+   * Optional selection override. Return `true` to fully handle the pick and
+   * skip the default "insert node chip" behavior — e.g. a slash item that
+   * hands off to another trigger by inserting plain text instead of a node.
+   */
+  onSelectItem?: (ctx: { editor: Editor; range: { from: number; to: number }; item: TItem }) => boolean
 }
 
 /**
@@ -59,7 +65,17 @@ const baseClassName = "inline rounded px-1 py-0.5"
  * Reduces boilerplate for @mentions, #channels, /commands, and future triggers.
  */
 export function createTriggerExtension<TItem, TAttrs extends object>(config: TriggerExtensionConfig<TItem, TAttrs>) {
-  const { name, pluginKey, char, startOfLine = false, attributes, getClassName, getText, mapPropsToAttrs } = config
+  const {
+    name,
+    pluginKey,
+    char,
+    startOfLine = false,
+    attributes,
+    getClassName,
+    getText,
+    mapPropsToAttrs,
+    onSelectItem,
+  } = config
 
   return Node.create<TriggerExtensionOptions<TItem>>({
     name,
@@ -162,6 +178,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           ...this.options.suggestion,
           command: ({ editor, range, props }) => {
             const item = props as TItem
+            if (onSelectItem?.({ editor, range, item })) return
             const attrs = mapPropsToAttrs(item)
 
             // Get marks at the current position to preserve styling (bold, italic, etc.)

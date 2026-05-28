@@ -6,6 +6,7 @@ import type { SuggestionListRef } from "./suggestion-list"
 
 interface SuggestionState<T> {
   items: T[]
+  query: string
   clientRect: (() => DOMRect | null) | null
   command: ((item: T) => void) | null
 }
@@ -30,6 +31,7 @@ export interface UseSuggestionConfig<T> {
   renderList: (props: {
     ref: RefObject<SuggestionListRef | null>
     items: T[]
+    query: string
     clientRect: (() => DOMRect | null) | null
     command: (item: T) => void
   }) => ReactNode
@@ -99,6 +101,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
       setPopupVisible(props.editor, props.items.length > 0)
       setState({
         items: props.items,
+        query: props.query,
         clientRect: props.clientRect ?? null,
         command: props.command,
       })
@@ -111,6 +114,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
       setPopupVisible(props.editor, props.items.length > 0)
       setState({
         items: props.items,
+        query: props.query,
         clientRect: props.clientRect ?? null,
         command: props.command,
       })
@@ -165,6 +169,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
       renderList({
         ref: listRef,
         items: state.items,
+        query: state.query,
         clientRect: state.clientRect,
         command: state.command,
       }),

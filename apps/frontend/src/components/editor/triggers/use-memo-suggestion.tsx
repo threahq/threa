@@ -39,10 +39,19 @@ export function useMemoSuggestion() {
     (props: {
       ref: React.RefObject<{ onKeyDown: (event: KeyboardEvent) => boolean } | null>
       items: Memo[]
+      query: string
       clientRect: (() => DOMRect | null) | null
       command: (item: Memo) => void
     }) => (
-      <MemoSuggestionList ref={props.ref} items={props.items} clientRect={props.clientRect} command={props.command} />
+      <MemoSuggestionList
+        ref={props.ref}
+        items={props.items}
+        clientRect={props.clientRect}
+        command={props.command}
+        // Before the query is long enough to search, the empty list means
+        // "keep typing", not "nothing matched" — say so.
+        emptyState={props.query.trim().length < MIN_QUERY_LENGTH ? "Type to search memos" : "No memos found"}
+      />
     ),
     []
   )
