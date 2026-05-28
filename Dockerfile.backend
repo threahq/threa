@@ -15,6 +15,7 @@ COPY apps/control-plane/package.json apps/control-plane/
 COPY apps/backoffice/package.json apps/backoffice/
 COPY apps/backoffice-router/package.json apps/backoffice-router/
 COPY apps/db-read-proxy/package.json apps/db-read-proxy/
+COPY apps/enclave/package.json apps/enclave/
 COPY patches/ patches/
 # Remove prepare script (husky) so post-install scripts still run (sharp needs native binaries)
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production

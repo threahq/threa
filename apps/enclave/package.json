@@ -1,0 +1,26 @@
+{
+  "name": "@threa/enclave",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test src/"
+  },
+  "dependencies": {
+    "@threa/crypto": "workspace:*",
+    "express": "^5",
+    "pino": "^9",
+    "pino-http": "^10",
+    "ulid": "^2"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^8.54.0",
+    "@types/express": "^5",
+    "bun-types": "latest",
+    "eslint": "^9.39.2",
+    "typescript": "^5"
+  }
+}

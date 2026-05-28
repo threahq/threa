@@ -1,7 +1,6 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-
-export type InvitedAgentKind = "bot" | "enclave" | "none"
+import type { E2eInvitedAgentKind } from "@threa/types"
 
 interface E2eStreamRow {
   stream_id: string
@@ -9,7 +8,7 @@ interface E2eStreamRow {
   enabled_at: Date
   owner_user_id: string
   owner_user_key_id: string
-  invited_agent_kind: InvitedAgentKind
+  invited_agent_kind: E2eInvitedAgentKind
   invited_agent_key_id: string | null
 }
 
@@ -19,7 +18,7 @@ export interface E2eStream {
   enabledAt: Date
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: InvitedAgentKind
+  invitedAgentKind: E2eInvitedAgentKind
   invitedAgentKeyId: string | null
 }
 
@@ -28,7 +27,7 @@ export interface MarkStreamE2eParams {
   workspaceId: string
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: InvitedAgentKind
+  invitedAgentKind: E2eInvitedAgentKind
   invitedAgentKeyId: string | null
 }
 
@@ -101,5 +100,29 @@ export const E2eStreamsRepository = {
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return mapRow(result.rows[0]!)
+  },
+
+  /**
+   * Set (or clear) the invited agent on an already-E2E stream. The owner
+   * invites an agent kind ("enclave"/"bot") so the frontend wraps the SSK to
+   * that recipient class; passing "none" with a null key id retracts the
+   * invite. Scoped to `workspace_id` (INV-8). Returns the updated row, or
+   * null when the stream is not E2E in this workspace.
+   */
+  async setInvitedAgent(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    invitedAgentKind: E2eInvitedAgentKind,
+    invitedAgentKeyId: string | null
+  ): Promise<E2eStream | null> {
+    const result = await db.query<E2eStreamRow>(sql`
+      UPDATE e2e_streams
+      SET invited_agent_kind = ${invitedAgentKind},
+          invited_agent_key_id = ${invitedAgentKeyId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 }

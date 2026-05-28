@@ -7,6 +7,7 @@ import { StreamEventRepository } from "./event-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { MessageRepository } from "../messaging"
+import { E2eStreamsRepository } from "../e2e-streams"
 import * as idModule from "../../lib/id"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -521,5 +522,79 @@ describe("StreamService.createThread (via create)", () => {
         streamId: "stream_channel",
       })
     )
+  })
+})
+
+describe("StreamService.inviteEnclave", () => {
+  let service: StreamService
+
+  const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
+  const mockSetInvitedAgent = spyOn(E2eStreamsRepository, "setInvitedAgent")
+  const mockFindByIdForWorkspace = spyOn(StreamRepository, "findByIdForWorkspace")
+
+  const updatedStream = {
+    id: "stream_e2e",
+    workspaceId: "ws_1",
+    type: "scratchpad",
+    e2eEnabled: true,
+    e2eInvitedAgentKind: "enclave",
+  } as never
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockGetByStreamId.mockReset()
+    mockSetInvitedAgent.mockReset().mockResolvedValue(null as never)
+    mockFindByIdForWorkspace.mockReset().mockResolvedValue(updatedStream)
+    mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
+  })
+
+  test("sets the invited agent to enclave and emits stream:updated", async () => {
+    mockGetByStreamId.mockResolvedValue({
+      streamId: "stream_e2e",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_owner",
+      invitedAgentKind: "none",
+      invitedAgentKeyId: null,
+    } as never)
+
+    const result = await service.inviteEnclave("ws_1", "stream_e2e", "usr_owner")
+
+    expect(mockSetInvitedAgent).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "enclave", null)
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:updated", {
+      workspaceId: "ws_1",
+      streamId: "stream_e2e",
+      stream: updatedStream,
+    })
+    expect(result).toBe(updatedStream)
+  })
+
+  test("throws 400 when the stream is not end-to-end encrypted", async () => {
+    mockGetByStreamId.mockResolvedValue(null)
+
+    const error = await service.inviteEnclave("ws_1", "stream_plain", "usr_owner").catch((e) => e)
+
+    expect(error).toBeInstanceOf(HttpError)
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("STREAM_NOT_E2E")
+    expect(mockSetInvitedAgent).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+
+  test("throws 403 when the caller is not the stream owner", async () => {
+    mockGetByStreamId.mockResolvedValue({
+      streamId: "stream_e2e",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_owner",
+      invitedAgentKind: "none",
+      invitedAgentKeyId: null,
+    } as never)
+
+    const error = await service.inviteEnclave("ws_1", "stream_e2e", "usr_intruder").catch((e) => e)
+
+    expect(error).toBeInstanceOf(HttpError)
+    expect((error as HttpError).status).toBe(403)
+    expect((error as HttpError).code).toBe("NOT_STREAM_OWNER")
+    expect(mockSetInvitedAgent).not.toHaveBeenCalled()
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 })

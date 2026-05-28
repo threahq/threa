@@ -875,5 +875,16 @@ export function createStreamHandlers({
       await streamService.removeMember(streamId, memberId)
       res.status(204).send()
     },
+
+    async inviteEnclave(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+
+      const stream = await streamService.inviteEnclave(workspaceId, streamId, userId)
+      res.json({ stream })
+    },
   }
 }

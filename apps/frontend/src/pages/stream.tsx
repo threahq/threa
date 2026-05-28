@@ -37,6 +37,7 @@ import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
+import { InviteEnclaveButton } from "@/components/encryption"
 import { CompanionModes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
@@ -369,6 +370,7 @@ export function StreamPage() {
           {headerTitle}
           {companionModeIndicator}
           {isEncryptedScratchpad && !isDraft && <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted />}
+          {stream && isScratchpad && !isDraft && <InviteEnclaveButton workspaceId={workspaceId!} stream={stream} />}
           {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
             <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
           )}

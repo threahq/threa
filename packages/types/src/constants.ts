@@ -594,6 +594,21 @@ export const ShareErrorCodes = {
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
 export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 
+// Which kind of agent, if any, the owner invited into an E2E scratchpad. Drives
+// which dispatcher the backend uses for replies (and, once the SSK protocol
+// lands, who the stream key is wrapped to).
+//   - "none"    — no agent; the stream is owner-only.
+//   - "bot"     — Pi-style remote runtime (Phase 2).
+//   - "enclave" — first-party Ariadne running in the enclave service (Phase 5a).
+export const E2E_INVITED_AGENT_KINDS = ["none", "bot", "enclave"] as const
+export type E2eInvitedAgentKind = (typeof E2E_INVITED_AGENT_KINDS)[number]
+
+export const E2eInvitedAgentKinds = {
+  NONE: "none",
+  BOT: "bot",
+  ENCLAVE: "enclave",
+} as const satisfies Record<string, E2eInvitedAgentKind>
+
 /**
  * Floor for interaction-driven socket heartbeats. The frontend throttles
  * interaction-flagged heartbeats to this interval; the backend ignores

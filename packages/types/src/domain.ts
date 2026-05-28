@@ -48,6 +48,7 @@ import type {
   BotInvocationStatus,
   BotInvocationTrigger,
   BotInvocationCapability,
+  E2eInvitedAgentKind,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
 
@@ -177,6 +178,12 @@ export interface Stream {
    */
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
+  /**
+   * Which agent (if any) the owner invited into this E2E stream. `"enclave"`
+   * routes Ariadne replies through the enclave service. Undefined on plaintext
+   * streams and on streams with no invited agent.
+   */
+  e2eInvitedAgentKind?: E2eInvitedAgentKind
 }
 
 /** Preview of the last message in a stream for sidebar display */

@@ -23,6 +23,7 @@ import {
   StreamTypes,
   Visibilities,
   CompanionModes,
+  E2eInvitedAgentKinds,
   type StreamType,
   type Visibility,
   type CompanionMode,
@@ -690,6 +691,40 @@ export class StreamService {
       }
       throw error
     }
+  }
+
+  /**
+   * Invite the enclave agent class into an E2E stream. Flips
+   * `e2e_streams.invited_agent_kind` to "enclave" so the frontend starts
+   * wrapping the per-stream SSK to every live EIK (letting whichever enclave
+   * instance the dispatcher picks decrypt). Owner-only: only the stream's E2E
+   * owner can change who can read their encrypted stream. No `e2eCapable`
+   * gate here — Phase 5a PR3 ships the invite path before Ariadne can reply,
+   * so the invite is allowed even while the enclave runtime is non-capable.
+   */
+  async inviteEnclave(workspaceId: string, streamId: string, userId: string): Promise<Stream> {
+    return withTransaction(this.pool, async (client) => {
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2e.ownerUserId !== userId) {
+        throw new HttpError("Only the stream owner can invite an agent", { status: 403, code: "NOT_STREAM_OWNER" })
+      }
+
+      await E2eStreamsRepository.setInvitedAgent(client, workspaceId, streamId, E2eInvitedAgentKinds.ENCLAVE, null)
+
+      const stream = await StreamRepository.findByIdForWorkspace(client, streamId, workspaceId)
+      if (!stream) throw new StreamNotFoundError()
+
+      await OutboxRepository.insert(client, "stream:updated", {
+        workspaceId,
+        streamId,
+        stream,
+      })
+
+      return stream
+    })
   }
 
   async checkSlugAvailable(workspaceId: string, slug: string, excludeStreamId?: string): Promise<boolean> {

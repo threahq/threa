@@ -26,6 +26,7 @@ import type {
   JSONContent,
   WorkspaceBootstrap,
   StreamWithPreview,
+  E2eInvitedAgentKind,
 } from "@threa/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
 
@@ -104,6 +105,12 @@ export interface VirtualStream {
    * draft virtual streams.
    */
   e2eEnabled?: boolean
+  /**
+   * Which agent the owner invited into this E2E scratchpad, if any. Only
+   * meaningful on encrypted scratchpads; undefined on drafts and plaintext
+   * streams (treated as "none").
+   */
+  e2eInvitedAgentKind?: E2eInvitedAgentKind
 }
 
 export interface SendMessageInput {
@@ -457,6 +464,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         rootStreamId: baseStream.rootStreamId,
         archivedAt: baseStream.archivedAt,
         e2eEnabled: baseStream.e2eEnabled,
+        e2eInvitedAgentKind: baseStream.e2eInvitedAgentKind,
       }
     : undefined
 
