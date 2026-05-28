@@ -1,9 +1,10 @@
+import { createRef } from "react"
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import * as voiceDictation from "@/hooks/use-voice-dictation"
-import { MicButton, formatClock, recordingRingShadow } from "./mic-button"
+import { MicButton, formatClock, recordingRingShadow, type MicButtonHandle } from "./mic-button"
 
 describe("formatClock", () => {
   it("renders m:ss with zero-padded seconds", () => {
@@ -88,8 +89,11 @@ describe("MicButton state surfaces", () => {
       showOriginal: false,
       setShowOriginal: vi.fn(),
       noAudioWarning: null,
+      dismissNoAudioWarning: vi.fn(),
+      dismissError: vi.fn(),
       start: vi.fn(),
       stop: vi.fn(),
+      endSession: vi.fn(),
       ...overrides,
     })
   }
@@ -110,6 +114,31 @@ describe("MicButton state surfaces", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Dictation connection lost")
     // The button itself is the tap-to-resume target.
     expect(screen.getByRole("button", { name: "Retry dictation" })).toBeEnabled()
+  })
+
+  it("lets the user tap the inline error away instead of waiting it out", async () => {
+    const dismissError = vi.fn()
+    mockDictation({ state: "error", error: "Dictation connection lost", dismissError })
+    const user = userEvent.setup()
+    renderButton()
+
+    await user.click(screen.getByRole("button", { name: "Dismiss dictation error" }))
+    expect(dismissError).toHaveBeenCalledOnce()
+  })
+
+  it("lets the user tap the no-audio warning away instead of waiting it out", async () => {
+    const dismissNoAudioWarning = vi.fn()
+    mockDictation({
+      state: "recording",
+      noAudioWarning: "We're not hearing your mic — check your input device.",
+      dismissNoAudioWarning,
+    })
+    const user = userEvent.setup()
+    renderButton()
+
+    expect(screen.getByRole("status")).toHaveTextContent("We're not hearing your mic")
+    await user.click(screen.getByRole("button", { name: "Dismiss audio warning" }))
+    expect(dismissNoAudioWarning).toHaveBeenCalledOnce()
   })
 
   it("shows a live elapsed clock while recording", () => {
@@ -150,5 +179,46 @@ describe("MicButton state surfaces", () => {
     renderButton()
 
     expect(screen.getByRole("button", { name: "Switch to polished transcript" })).toHaveTextContent("Showing original")
+  })
+})
+
+// The composer drives this imperatively: it ends the take on send/clear so the
+// polish toggle and warning chrome don't outlive the message (rather than
+// waiting out the post-session grace timer).
+describe("MicButton imperative handle", () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it("exposes endSession through the forwarded ref so the composer can end a take on send", () => {
+    const endSession = vi.fn()
+    vi.spyOn(voiceDictation, "useVoiceDictation").mockReturnValue({
+      state: "recording",
+      supported: true,
+      unsupportedReason: null,
+      error: null,
+      interimText: "",
+      level: 0,
+      elapsedMs: 0,
+      maxDurationMs: null,
+      chunks: new Map(),
+      hasUnlockedChunks: false,
+      showOriginal: false,
+      setShowOriginal: vi.fn(),
+      noAudioWarning: null,
+      dismissNoAudioWarning: vi.fn(),
+      dismissError: vi.fn(),
+      start: vi.fn(),
+      stop: vi.fn(),
+      endSession,
+    })
+
+    const ref = createRef<MicButtonHandle>()
+    render(
+      <TooltipProvider>
+        <MicButton ref={ref} workspaceId="ws_1" onInsertText={vi.fn()} />
+      </TooltipProvider>
+    )
+
+    ref.current?.endSession()
+    expect(endSession).toHaveBeenCalledOnce()
   })
 })

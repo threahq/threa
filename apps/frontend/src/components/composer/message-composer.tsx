@@ -20,10 +20,11 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
-import { MicButton } from "./mic-button"
+import { MicButton, type MicButtonHandle } from "./mic-button"
 import { ContextRefStrip } from "./context-ref-strip"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
+import { isEmptyContent } from "@/lib/prosemirror-utils"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { MessageSendMode, JSONContent } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
@@ -273,6 +274,25 @@ export function MessageComposer({
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
 
+  // Imperative handle to the live mic button so the composer can end the
+  // dictation take when it sends or clears the draft (drops the polish toggle
+  // and any warning chrome rather than letting them ride out a timer).
+  const micRef = useRef<MicButtonHandle | null>(null)
+  // Mirror so the content-empty effect can read it without re-subscribing.
+  const voiceActiveRef = useRef(voiceActive)
+  voiceActiveRef.current = voiceActive
+  // Edge-detect the composer emptying (send-clear, manual delete, stash) so we
+  // tear down the dictation session exactly once on the non-empty → empty
+  // transition. Skipped while a take is live — clearing text mid-dictation
+  // shouldn't stop the recording.
+  const wasEmptyRef = useRef(isEmptyContent(content))
+  useEffect(() => {
+    const empty = isEmptyContent(content)
+    const wasEmpty = wasEmptyRef.current
+    wasEmptyRef.current = empty
+    if (empty && !wasEmpty && !voiceActiveRef.current) micRef.current?.endSession()
+  }, [content])
+
   // Close inline format toolbar and collapse expansion when navigating to a different stream/scope.
   // Clearing voiceActive collapses the mobile chrome; combined with the scopeId-keyed mic below,
   // an in-flight dictation take ends on navigation rather than carrying over into the next stream.
@@ -384,6 +404,10 @@ export function MessageComposer({
     setFormatOpen(false)
     setMobileExpanded(false)
     setMobileLinkPopoverOpen(false)
+    // End any in-flight take first: this flushes the live hypothesis into the
+    // editor (so the tail lands in the message) and drops the polish toggle +
+    // warnings before we snapshot the content below.
+    micRef.current?.endSession()
     onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined)
   }, [onSubmit])
 
@@ -538,6 +562,7 @@ export function MessageComposer({
   const micButton = workspaceId ? (
     <MicButton
       key={`mic-${scopeId ?? ""}`}
+      ref={micRef}
       workspaceId={workspaceId}
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
@@ -552,6 +577,7 @@ export function MessageComposer({
   const micButtonFab = workspaceId ? (
     <MicButton
       key={`mic-fab-${scopeId ?? ""}`}
+      ref={micRef}
       workspaceId={workspaceId}
       onInsertText={insertTranscribedText}
       onInterimText={setDictationInterim}
