@@ -100,6 +100,7 @@ describe("LabelAssignmentService.assign", () => {
     spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
     spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(fakeAssignment())
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set([RESOURCE_ID]))
 
     const result = await service.assign(assignParams)
 
@@ -122,6 +123,7 @@ describe("LabelAssignmentService.assign", () => {
     )
     spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(fakeAssignment())
     const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set([RESOURCE_ID]))
 
     await service.assign(assignParams)
 
@@ -130,6 +132,18 @@ describe("LabelAssignmentService.assign", () => {
       "label:assigned",
       expect.objectContaining({ targetUserId: USER_ID })
     )
+  })
+
+  it("throws 404 without writing or emitting when the caller cannot access the target stream", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findById").mockResolvedValue(fakeLabel())
+    const assignSpy = spyOn(LabelAssignmentRepository, "assign").mockResolvedValue(fakeAssignment())
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set())
+
+    await expect(service.assign(assignParams)).rejects.toMatchObject({ status: 404 })
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(outboxSpy).not.toHaveBeenCalled()
   })
 })
 

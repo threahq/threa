@@ -22,7 +22,13 @@ import {
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { useUrgencyTracking } from "./use-urgency-tracking"
 import { truncateContent } from "./utils"
-import { StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
+import {
+  LabelableResourceTypes,
+  StreamTypes,
+  Visibilities,
+  type AuthorType,
+  type StreamWithPreview,
+} from "@threa/types"
 import type { StreamItemData, UrgencyLevel } from "./types"
 import { ScratchpadItem } from "./scratchpad-item"
 
@@ -382,7 +388,7 @@ export function StreamItem({
       {labelPickerOpen && (
         <LabelPicker
           workspaceId={workspaceId}
-          resourceType="stream"
+          resourceType={LabelableResourceTypes.STREAM}
           resourceId={stream.id}
           open
           onOpenChange={setLabelPickerOpen}

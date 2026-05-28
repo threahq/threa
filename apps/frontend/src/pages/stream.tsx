@@ -40,7 +40,7 @@ import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
-import { CompanionModes, StreamTypes, type StreamType } from "@threa/types"
+import { CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -464,7 +464,7 @@ export function StreamPage() {
       {stream && !isDraft && (
         <LabelPicker
           workspaceId={workspaceId}
-          resourceType="stream"
+          resourceType={LabelableResourceTypes.STREAM}
           resourceId={streamId}
           open={labelPickerOpen}
           onOpenChange={setLabelPickerOpen}

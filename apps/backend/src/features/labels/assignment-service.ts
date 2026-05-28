@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { LabelableResourceTypes, Visibilities, type LabelAssignment, type LabelableResourceType } from "@threa/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -20,8 +20,10 @@ export interface AssignLabelParams {
 
 /**
  * Applies labels to arbitrary resources (streams today; messages/users/
- * attachments later). Resource-agnostic by design — it validates the label,
- * never the resource — so a new resource type needs no change to assign.
+ * attachments later). Assigning validates both the label and that the caller
+ * can reach the target resource — a member only labels resources they can
+ * access — so a new resource type must add its access rule (see
+ * assertResourceAccess), which denies by default until it does.
  *
  * Assignment visibility tracks the label's: a private label is the creator's
  * own organizational layer, so its rows stay viewer-scoped (delivered to the
@@ -80,6 +82,8 @@ export class LabelAssignmentService {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
 
+      await this.assertResourceAccess(client, params)
+
       const assignment = await LabelAssignmentRepository.assign(client, {
         workspaceId: params.workspaceId,
         labelId: params.labelId,
@@ -123,5 +127,21 @@ export class LabelAssignmentService {
         userId: params.userId,
       })
     })
+  }
+
+  /**
+   * A member may only label a resource they can reach. Mirrors listForViewer's
+   * read-side access gate on the write path, so a member can't seed the shared
+   * pool of a stream they can't access. Stream is the only labelable resource
+   * type today; an unreachable stream — or any resource type without an access
+   * rule yet — is reported as not-found rather than leaking whether it exists.
+   * Unassign is intentionally not gated: it only removes the caller's own row.
+   */
+  private async assertResourceAccess(client: PoolClient, params: AssignLabelParams): Promise<void> {
+    if (params.resourceType === LabelableResourceTypes.STREAM) {
+      const accessible = await listAccessibleStreamIds(client, params.workspaceId, params.userId, [params.resourceId])
+      if (accessible.has(params.resourceId)) return
+    }
+    throw new HttpError("Resource not found", { status: 404, code: "RESOURCE_NOT_FOUND" })
   }
 }

@@ -9,7 +9,7 @@ import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
-import { CompanionModes } from "@threa/types"
+import { CompanionModes, LabelableResourceTypes } from "@threa/types"
 import { useUrgencyTracking } from "./use-urgency-tracking"
 import {
   SidebarActionDrawer,
@@ -192,7 +192,7 @@ export function ScratchpadItem({
       {labelPickerOpen && (
         <LabelPicker
           workspaceId={workspaceId}
-          resourceType="stream"
+          resourceType={LabelableResourceTypes.STREAM}
           resourceId={streamWithPreview.id}
           open
           onOpenChange={setLabelPickerOpen}

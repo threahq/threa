@@ -235,23 +235,21 @@ export function seedWorkspaceCache(
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Helper: for array-valued hooks, if useLiveQuery resolved empty but the
-// in-memory cache has data, Dexie's async IDB notification hasn't arrived yet.
-// Return the cache so the first visible render after the coordinated-loading
-// gate opens shows real data instead of a flash of empty content.
+// Helper: array-valued hooks read live from IDB but fall back to the in-memory
+// cache while the first query is in flight, so the first visible render after
+// the coordinated-loading gate opens shows real data instead of a flash of
+// empty content (the cache is seeded from the same bootstrap that wrote IDB).
 //
-// This is safe because the cache is always populated from the same bootstrap
-// that wrote to IDB (seedWorkspaceCache runs synchronously after IDB writes).
-// Once liveQuery catches up it will return >= the cache data.
+// useLiveQuery is undefined only until its first resolution; once it resolves
+// it is the source of truth even when empty. We must NOT keep returning the
+// cache after an empty resolution — an incremental delete (e.g. the last
+// assignment removed via a socket event, which updates IDB but not the cache)
+// would otherwise be masked until the next bootstrap.
 // ---------------------------------------------------------------------------
 
 function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
-  const live = useLiveQuery(queryFn, deps, cached) ?? []
-  // Cache is populated synchronously by seedWorkspaceCache. useLiveQuery may
-  // lag behind due to async IDB change notifications. If live resolved empty
-  // but cache has data, return cache until liveQuery catches up.
-  if (live.length === 0 && cached.length > 0) return cached
-  return live
+  const live = useLiveQuery(queryFn, deps)
+  return live ?? cached
 }
 
 function useSingletonStoreHook<T>(
