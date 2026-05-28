@@ -794,13 +794,20 @@ export function StreamContent({
   // rather than fighting Virtuoso's reflow on every intermediate frame. The
   // plain-scroll (thread/draft) path needs none of this: its `padding-bottom`
   // reflows the content so the bottom row is never frozen behind the composer.
+  //
+  // Called through a ref so the handler identity stays stable: virtualScrollToBottom
+  // is rebuilt on every itemCount change, and a changing prop would re-render
+  // the memoized MessageInput on every new message (the exact churn that memo
+  // exists to prevent).
+  const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
+  virtualScrollToBottomRef.current = virtualScrollToBottom
   const composerResizeTimerRef = useRef<number | undefined>(undefined)
   const handleComposerHeightChange = useCallback(() => {
     window.clearTimeout(composerResizeTimerRef.current)
     composerResizeTimerRef.current = window.setTimeout(() => {
-      virtualScrollToBottom()
+      virtualScrollToBottomRef.current()
     }, 120)
-  }, [virtualScrollToBottom])
+  }, [])
   useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
 
   // Scroll to a specific message and keep re-scrolling until the target
