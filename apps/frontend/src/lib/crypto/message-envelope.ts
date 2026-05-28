@@ -1,6 +1,18 @@
 import { parseMarkdown } from "@threa/prosemirror"
 import type { JSONContent } from "@tiptap/react"
-import { buildMessageAad, decryptPayloadAsString, encryptPayload, ENVELOPE_VERSION, type Envelope } from "@threa/crypto"
+import {
+  base64ToBytes,
+  buildMessageAad,
+  bytesToBase64,
+  decryptPayloadAsString,
+  ENVELOPE_VERSION,
+  openMessageAsString,
+  sealMessage,
+  STREAM_ENVELOPE_VERSION,
+  type Envelope,
+  type StreamEnvelope,
+} from "@threa/crypto"
+import { resolveStreamKey } from "./stream-key-cache"
 
 // The placeholder text the backend stores in `contentMarkdown` / `contentJson`
 // for E2E messages is the single source of truth in @threa/types so the
@@ -9,40 +21,43 @@ import { buildMessageAad, decryptPayloadAsString, encryptPayload, ENVELOPE_VERSI
 // for both the envelope helpers and the placeholder constant.
 export { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 
-export interface EncryptMessageInput {
+export interface SealStreamMessageInput {
   contentMarkdown: string
   streamId: string
   messageId: string
   senderId: string
-  recipientKeyId: string
-  recipientPublicKey: Uint8Array
+  /** 32-byte SSK for `keyGeneration` — held in memory by the stream-key cache. */
+  ssk: Uint8Array
+  keyGeneration: number
 }
 
-export interface EncryptMessageResult {
-  /** Base64 ciphertext (mirrors `envelope.ciphertext` — duplicated so the wire payload can carry both fields explicitly). */
+export interface SealStreamMessageResult {
+  /** Base64 AES-256-GCM ciphertext (stored on the wire in `messages.ciphertext`). */
   ciphertext: string
-  envelope: Envelope
+  envelope: StreamEnvelope
   e2eVersion: number
 }
 
 /**
- * Encrypt a message's markdown body to a single recipient. Phase-1 MVP only
- * supports the owner-as-sole-recipient case (the scratchpad creator encrypts
- * to their own UIK pubkey), so this stays a one-recipient call — multi-party
- * sharing is a follow-up that will accept an array here.
+ * Seal a message's markdown body under the stream's symmetric key (SSK, v2).
+ * The SSK is shared by every recipient of the stream's current generation, so
+ * unlike the v1 fan-out this carries no recipient list — authorization lives
+ * out of band in the stream's key wraps. Recipients open it by resolving the
+ * SSK for `envelope.keyGeneration` (see `resolveStreamKey`).
  */
-export async function encryptMessage(input: EncryptMessageInput): Promise<EncryptMessageResult> {
+export async function sealStreamMessage(input: SealStreamMessageInput): Promise<SealStreamMessageResult> {
   const aad = buildMessageAad({
     streamId: input.streamId,
     messageId: input.messageId,
     senderId: input.senderId,
   })
-  const { envelope } = await encryptPayload({
+  const { envelope, ciphertext } = await sealMessage({
+    key: input.ssk,
+    keyGeneration: input.keyGeneration,
     payload: input.contentMarkdown,
-    recipients: [{ recipientKeyId: input.recipientKeyId, publicKey: input.recipientPublicKey }],
     aad,
   })
-  return { ciphertext: envelope.ciphertext, envelope, e2eVersion: ENVELOPE_VERSION }
+  return { ciphertext: bytesToBase64(ciphertext), envelope, e2eVersion: STREAM_ENVELOPE_VERSION }
 }
 
 export interface DecryptMessagePayload {
@@ -59,19 +74,70 @@ export interface DecryptedMessageContent {
   contentJson: JSONContent
 }
 
+export interface DecryptMessageOpts {
+  /** The viewer's unwrapped UIK private key. */
+  privateKey: CryptoKey
+  /** The viewer's UIK key id — selects the v1 recipient slot / v2 wrap row. */
+  recipientKeyId: string
+  workspaceId: string
+  streamId: string
+}
+
 /**
  * Read a wire envelope off an inbound message payload and decrypt it into
- * plaintext + parsed JSONContent. Returns `null` when:
- *  - the payload has no ciphertext (plaintext message)
- *  - the envelope can't be parsed
+ * plaintext + parsed JSONContent. Routes on the envelope version: v2 opens the
+ * SSK-sealed ciphertext (resolving the stream key via its wraps), v1 unwraps
+ * the legacy per-message recipient fan-out. Returns `null` when:
+ *  - the payload has no envelope (plaintext message)
+ *  - the envelope can't be parsed / has an unknown version
  *  - decryption throws (wrong recipient, tampered AAD, locked session)
+ *  - the SSK can't be resolved (not a recipient of that generation)
  *
  * Callers should fall back to the existing `contentMarkdown` placeholder when
  * this returns `null` so the UI still has something to render.
  */
 export async function tryDecryptMessagePayload(
   payload: DecryptMessagePayload,
-  opts: { privateKey: CryptoKey; recipientKeyId: string }
+  opts: DecryptMessageOpts
+): Promise<DecryptedMessageContent | null> {
+  const version = readEnvelopeVersion(payload.envelope)
+  if (version === STREAM_ENVELOPE_VERSION) {
+    return tryOpenStreamMessage(payload, opts)
+  }
+  return tryDecryptFanoutMessage(payload, opts)
+}
+
+/** v2: open an SSK-sealed message. */
+async function tryOpenStreamMessage(
+  payload: DecryptMessagePayload,
+  opts: DecryptMessageOpts
+): Promise<DecryptedMessageContent | null> {
+  const env = parseStreamEnvelope(payload.envelope)
+  if (!env || typeof payload.ciphertext !== "string") return null
+  try {
+    const ssk = await resolveStreamKey({
+      workspaceId: opts.workspaceId,
+      streamId: opts.streamId,
+      keyGeneration: env.keyGeneration,
+      recipientKeyId: opts.recipientKeyId,
+      privateKey: opts.privateKey,
+    })
+    if (!ssk) return null
+    const markdown = await openMessageAsString({
+      key: ssk,
+      envelope: env,
+      ciphertext: base64ToBytes(payload.ciphertext),
+    })
+    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown) }
+  } catch {
+    return null
+  }
+}
+
+/** v1: unwrap the legacy per-message recipient fan-out envelope (read-only). */
+async function tryDecryptFanoutMessage(
+  payload: DecryptMessagePayload,
+  opts: DecryptMessageOpts
 ): Promise<DecryptedMessageContent | null> {
   const env = parseEnvelope(payload.envelope)
   if (!env) return null
@@ -87,11 +153,31 @@ export async function tryDecryptMessagePayload(
   }
 }
 
+function readEnvelopeVersion(raw: unknown): number | null {
+  if (!raw || typeof raw !== "object") return null
+  const v = (raw as { v?: unknown }).v
+  return typeof v === "number" ? v : null
+}
+
+function parseStreamEnvelope(raw: unknown): StreamEnvelope | null {
+  if (!raw || typeof raw !== "object") return null
+  const candidate = raw as Partial<StreamEnvelope>
+  if (
+    candidate.v !== STREAM_ENVELOPE_VERSION ||
+    typeof candidate.keyGeneration !== "number" ||
+    typeof candidate.iv !== "string" ||
+    typeof candidate.aad !== "string"
+  ) {
+    return null
+  }
+  return candidate as StreamEnvelope
+}
+
 function parseEnvelope(raw: unknown): Envelope | null {
   if (!raw || typeof raw !== "object") return null
   const candidate = raw as Partial<Envelope>
   if (
-    typeof candidate.v !== "number" ||
+    candidate.v !== ENVELOPE_VERSION ||
     typeof candidate.ciphertext !== "string" ||
     typeof candidate.iv !== "string" ||
     typeof candidate.aad !== "string" ||

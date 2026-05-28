@@ -5,7 +5,8 @@ import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { encryptMessage } from "@/lib/crypto/message-envelope"
+import { sealStreamMessage } from "@/lib/crypto/message-envelope"
+import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -575,11 +576,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // arrives before the per-stream IDB row mirrors the workspace-bootstrap
       // row still encrypts instead of writing plaintext that INV-E1 rejects.
       const e2eEnabled = baseStream?.e2eEnabled === true
-      const e2eOwnerKeyId = baseStream?.e2eOwnerKeyId
-      let e2eFields:
-        | Pick<NonNullable<Awaited<ReturnType<typeof encryptMessage>>>, "ciphertext" | "envelope" | "e2eVersion">
-        | undefined
-      if (e2eEnabled && e2eOwnerKeyId) {
+      let e2eFields: Awaited<ReturnType<typeof sealStreamMessage>> | undefined
+      if (e2eEnabled) {
         if (input.attachmentIds && input.attachmentIds.length > 0) {
           // Phase-1 MVP doesn't support encrypted attachments. Fail loud at
           // enqueue rather than silently dropping the ids in the drain loop
@@ -587,24 +585,28 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           throw new Error("Attachments aren't supported in encrypted scratchpads yet")
         }
         const session = getE2eSessionState(workspaceId, currentUserId)
-        if (session.status !== "unlocked" || !session.publicKey) {
+        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) {
           throw new Error("Unlock encrypted scratchpads before sending")
         }
-        if (session.keyId !== e2eOwnerKeyId) {
-          // The owner of the scratchpad isn't the viewer (or the viewer's UIK
-          // rotated past the one the scratchpad was created with). Phase-1
-          // MVP encrypts owner-to-self only; a rotation/sharing flow is a
-          // follow-up — fail loud rather than write a ciphertext nobody can
-          // decrypt.
-          throw new Error("Encrypted scratchpad is addressed to a key you no longer hold")
+        // Seal under the stream's symmetric key (SSK, v2). The SSK is resolved
+        // from the stream's wraps and unwrapped with the viewer's UIK — a
+        // viewer who isn't a recipient of the current generation can't seal.
+        const streamKey = await resolveCurrentStreamKey({
+          workspaceId,
+          streamId,
+          recipientKeyId: session.keyId,
+          privateKey: session.privateKey,
+        })
+        if (!streamKey) {
+          throw new Error("You don't have access to this encrypted scratchpad's key")
         }
-        e2eFields = await encryptMessage({
+        e2eFields = await sealStreamMessage({
           contentMarkdown,
           streamId,
           messageId: clientId,
           senderId: currentUserId,
-          recipientKeyId: e2eOwnerKeyId,
-          recipientPublicKey: session.publicKey,
+          ssk: streamKey.key,
+          keyGeneration: streamKey.keyGeneration,
         })
       }
 

@@ -7,6 +7,7 @@ interface E2eStreamRow {
   enabled_at: Date
   owner_user_id: string
   owner_user_key_id: string
+  current_key_generation: number
 }
 
 export interface E2eStream {
@@ -15,6 +16,8 @@ export interface E2eStream {
   enabledAt: Date
   ownerUserId: string
   ownerUserKeyId: string
+  /** SSK generation new messages currently seal under (0 for owner-only). */
+  currentKeyGeneration: number
 }
 
 export interface MarkStreamE2eParams {
@@ -24,7 +27,7 @@ export interface MarkStreamE2eParams {
   ownerUserKeyId: string
 }
 
-const COLUMNS = "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id"
+const COLUMNS = "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, current_key_generation"
 
 function mapRow(row: E2eStreamRow): E2eStream {
   return {
@@ -33,6 +36,7 @@ function mapRow(row: E2eStreamRow): E2eStream {
     enabledAt: row.enabled_at,
     ownerUserId: row.owner_user_id,
     ownerUserKeyId: row.owner_user_key_id,
+    currentKeyGeneration: row.current_key_generation,
   }
 }
 
