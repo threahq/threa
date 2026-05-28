@@ -23,7 +23,7 @@ surface. Make them visible:
   section that shows streams even if shown above). A **`remainder`** section
   kind renders "everything not shown above" (today's "Everything Else").
 - **Presets → default seed configs:** `Smart = [important, recent, pinned,
-  remainder]`, `All = [type:scratchpads, type:channels, type:dms]`. New users
+remainder]`, `All = [type:scratchpads, type:channels, type:dms]`. New users
   seed from Smart; existing users seed from their current `viewMode`. "Reset to
   preset" restores a seed.
 - **Editor:** both — inline quick add/remove (label picker, section-header menu,
@@ -56,7 +56,7 @@ type SidebarSectionKind =
   | { kind: "label"; labelId: string }
 
 interface SidebarSection {
-  id: string            // stable ulid, e.g. sbsec_xxx
+  id: string // stable ulid, e.g. sbsec_xxx
   spec: SidebarSectionKind
   hideAboveShown: boolean
   // label-display name/emoji/color resolved from the labels cache at render
@@ -73,9 +73,11 @@ interface SidebarConfig {
 ## The PR stack
 
 ### PR1 — Config-driven sidebar rendering (no behavior change, no editor) ✅ implemented
+
 Frontend only. Introduce the config types + a pure resolver and route the
 existing sidebar through it, seeded from today's `viewMode` (no persistence yet
 — configs can't diverge from presets until the editor lands).
+
 - `sidebar/sidebar-config.ts` — `SidebarSectionSpec` (`smart` bucket | `type`),
   `SidebarConfig`, `SMART_PRESET` / `ALL_PRESET` seeds, `presetForViewMode`, and
   `sectionPresentation(spec)` (label/icon/tiered/compact/hideWhenEmpty/default
@@ -102,32 +104,40 @@ Recent vanish today, they do not fall through). `hideAboveShown` + `remainder`
 land in **PR4**, where additive label lenses are the first thing to exercise them.
 
 ### PR2 — Sidebar editor + config persistence
+
 Backend per-user config (table + types + bootstrap field + sync events + API),
 plus the editor: inline add/remove and a "Sidebar" settings panel
 (drag-reorder, add/remove kinds, reset-to-preset). Existing users' configs
 seeded server-side from their last preset on first read.
 
 ### PR3 — Label model: unified membership + lifecycle
+
 Backend + tests only, no UI. `create()` inserts creator membership for every
 label; backfill migration for existing private labels; `leave()` →
 last-member-archive (race-safe). `listVisibleTo`/membership reads simplified to
 the uniform set; `creator_user_id` retained for permissions.
 
 ### PR4 — Sidebar label sections + shared chip
+
 Shared tinted `LabelChip` (`components/labels/label-chip.tsx`). Add the `label`
 section kind end-to-end (resolver filter by assignment, tinted section header,
 add/remove entry points: label picker, labels page, section-header menu).
 
 ### PR5 — Stream top-bar label stack
+
 `components/labels/stream-label-stack.tsx` in the `stream.tsx` header. Reuses
 `LabelChip`. Hover fan-out (desktop) / vaul drawer (mobile), cap 3 + `+N`,
 display-only.
 
 ## Cross-cutting invariants
+
 INV-51/52 (colocate label backend, import via barrels), INV-20 (race-safe
 last-member-archive + idempotent membership upsert), INV-17 (append-only
 migrations), INV-21 (no layout shift on hover), INV-59 (URL-driven where
 relevant), INV-60 (strip markdown in any preview), INV-24 (object-compare in
 tests), INV-23 (assert event presence not counts). Tests run with
 `bun run test` / `bun run test:e2e`; never ship unexecuted.
+
+```
+
 ```
