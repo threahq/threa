@@ -38,7 +38,6 @@ export interface CommandContext {
 export interface Command {
   id: string
   label: string
-  description?: string
   icon: React.ComponentType<{ className?: string }>
   keywords?: string[]
   action: (context: CommandContext) => void | Promise<void>
@@ -64,7 +63,6 @@ export const commands: Command[] = [
   {
     id: "new-quick-note",
     label: "New Quick Note",
-    description: "Scratchpad without the AI companion — links, ideas, quick captures",
     icon: StickyNote,
     keywords: [
       "scratchpad",
