@@ -162,6 +162,52 @@ describe("ScratchpadItem", () => {
     expect(screen.getByTestId("location").textContent).toBe(initialPath)
   })
 
+  it("shows the AI companion badge on companion-on scratchpads", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "on" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.getByLabelText("AI companion attached")).toBeInTheDocument()
+  })
+
+  it("hides the AI companion badge on companion-off scratchpads", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off" })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.queryByLabelText("AI companion attached")).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("Encrypted scratchpad")).not.toBeInTheDocument()
+  })
+
+  it("shows the lock badge on encrypted scratchpads instead of the companion badge", () => {
+    // INV-E1 forces companion off for E2E streams server-side, so we only ever
+    // see this combination in the wild.
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad({ companionMode: "off", e2eEnabled: true })}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.getByLabelText("Encrypted scratchpad")).toBeInTheDocument()
+    expect(screen.queryByLabelText("AI companion attached")).not.toBeInTheDocument()
+  })
+
   it("deletes draft scratchpads directly and navigates away when the active draft is removed", async () => {
     renderWithRouter(
       <ScratchpadItem

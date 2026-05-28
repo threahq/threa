@@ -13,6 +13,7 @@ import type {
   StreamBootstrap,
   WorkspaceBootstrap,
   NotificationLevel,
+  CompanionMode,
 } from "@threa/types"
 import type { CreateStreamInput, UpdateStreamInput } from "@/api"
 import { workspaceKeys } from "./use-workspaces"
@@ -218,6 +219,36 @@ export function useUpdateStream(workspaceId: string, streamId: string) {
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
       // Cache to IndexedDB
+      db.streams.put({ ...updatedStream, _cachedAt: Date.now() })
+    },
+  })
+}
+
+export function useUpdateCompanionMode(workspaceId: string, streamId: string) {
+  const streamService = useStreamService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (companionMode: CompanionMode) =>
+      streamService.updateCompanionMode(workspaceId, streamId, { companionMode }),
+    onSuccess: (updatedStream) => {
+      queryClient.setQueryData<Stream>(streamKeys.detail(workspaceId, streamId), updatedStream)
+
+      queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
+        if (!old || typeof old !== "object") return old
+        return { ...old, stream: updatedStream }
+      })
+
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          streams: old.streams.map((s) =>
+            s.id === streamId ? { ...s, ...updatedStream, lastMessagePreview: s.lastMessagePreview } : s
+          ),
+        }
+      })
+
       db.streams.put({ ...updatedStream, _cachedAt: Date.now() })
     },
   })

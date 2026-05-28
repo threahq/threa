@@ -11,7 +11,11 @@ import {
   CornerDownRight,
   Paperclip,
   Settings,
+  Sparkles,
+  Moon,
+  Lock,
 } from "lucide-react"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -32,7 +36,7 @@ import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
-import { StreamTypes, type StreamType } from "@threa/types"
+import { CompanionModes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -135,7 +139,6 @@ export function StreamPage() {
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
-  const isUnnamedScratchpad = isScratchpad && !stream?.displayName
 
   const handleStartRename = () => {
     setEditValue(stream?.displayName ?? "")
@@ -225,6 +228,94 @@ export function StreamPage() {
     }
   }
 
+  // Scratchpad mode indicator. Three shapes share one pill slot:
+  //   - Encrypted (E2E): Lock + "Encrypted" — companion mode is locked off
+  //     server-side (INV-E1), so the lock is the more meaningful signal.
+  //   - Companion: Sparkles + "Companion" — Ariadne replies to new messages.
+  //   - Quiet: Moon + "Quiet" — silent capture, no AI replies.
+  // Drafts get an inert variant because the settings dialog reads from caches
+  // that don't have draft entries yet; the pill becomes interactive once the
+  // scratchpad is persisted. (E2E scratchpads are never drafts — they're
+  // server-persisted on creation, with no displayName until the user names
+  // them, which is exactly why we render the pill on unnamed scratchpads too:
+  // for encrypted ones the lock IS the only signal of their nature.)
+  let companionModeIndicator: React.ReactNode = null
+  if (stream && isScratchpad) {
+    const isEncrypted = !!stream.e2eEnabled
+    const isOn = !isEncrypted && stream.companionMode === CompanionModes.ON
+
+    let Icon: typeof Sparkles
+    let modeLabel: string
+    let pillVariant: string
+    let hoverVariant: string
+    let iconTint: string
+    let interactiveAria: string
+    let inertAria: string
+    let tooltipBody: string
+
+    if (isEncrypted) {
+      Icon = Lock
+      modeLabel = "Encrypted"
+      pillVariant = "border-border bg-secondary text-foreground"
+      hoverVariant = "hover:bg-accent"
+      iconTint = "text-muted-foreground"
+      interactiveAria = "End-to-end encrypted. Open companion settings."
+      inertAria = "End-to-end encrypted"
+      tooltipBody = "End-to-end encrypted — Companion is disabled. Click for details."
+    } else if (isOn) {
+      Icon = Sparkles
+      modeLabel = "Companion"
+      pillVariant = "border-primary/30 bg-primary/5 text-foreground"
+      hoverVariant = "hover:bg-primary/10"
+      iconTint = "text-primary"
+      interactiveAria = "Companion is on. Click to change."
+      inertAria = "Companion on"
+      tooltipBody = "Ariadne replies to new messages. Click to change."
+    } else {
+      Icon = Moon
+      modeLabel = "Quiet"
+      pillVariant = "border-border bg-secondary text-muted-foreground"
+      hoverVariant = "hover:bg-accent hover:text-foreground"
+      iconTint = ""
+      interactiveAria = "Quiet mode. Click to change."
+      inertAria = "Quiet mode"
+      tooltipBody = "Silent capture — no AI replies. Click to change."
+    }
+
+    const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
+
+    if (isDraft) {
+      companionModeIndicator = (
+        <span className={cn(pillBase, pillVariant)} aria-label={inertAria}>
+          <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
+          <span>{modeLabel}</span>
+        </span>
+      )
+    } else {
+      companionModeIndicator = (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => openStreamSettings(streamId, "companion")}
+              aria-label={interactiveAria}
+              className={cn(
+                pillBase,
+                pillVariant,
+                "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                hoverVariant
+              )}
+            >
+              <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
+              <span>{modeLabel}</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{tooltipBody}</TooltipContent>
+        </Tooltip>
+      )
+    }
+  }
+
   let headerTitle: React.ReactNode
   if (isEditing) {
     headerTitle = (
@@ -274,7 +365,8 @@ export function StreamPage() {
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <SidebarToggle location="page" />
           {headerTitle}
-          {stream && !isThread && !isDraft && !isChannel && !isUnnamedScratchpad && (
+          {companionModeIndicator}
+          {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
             <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
           )}
           {isArchived && (

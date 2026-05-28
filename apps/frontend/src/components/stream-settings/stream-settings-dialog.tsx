@@ -140,7 +140,7 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
                   />
                 </TabsContent>
                 <TabsContent value="companion" className="mt-0">
-                  <CompanionTab stream={resolvedStream} />
+                  <CompanionTab workspaceId={workspaceId} stream={resolvedStream} />
                 </TabsContent>
                 <TabsContent value="members" className="mt-0">
                   <MembersTab workspaceId={workspaceId} streamId={streamId} currentUserId={currentUserId} />

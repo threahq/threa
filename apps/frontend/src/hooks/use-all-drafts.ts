@@ -11,7 +11,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { isDraftId } from "./use-draft-scratchpads"
 import { deleteStashedDraftById } from "./use-stashed-drafts"
 import { serializeToMarkdown } from "@threa/prosemirror"
-import type { JSONContent } from "@threa/types"
+import type { CompanionMode, JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
@@ -68,6 +68,12 @@ export interface UnifiedDraft {
    * slightly differently (e.g. an "Editing" hint vs. a saved indicator).
    */
   isStashed: boolean
+  /**
+   * Scratchpad-only: the companion mode the draft was created with (locked at
+   * Quick Switcher choice). Lets the drafts explorer distinguish "Quick Note"
+   * (off) from "Scratchpad" (on) at a glance.
+   */
+  companionMode?: CompanionMode
 }
 
 /**
@@ -306,6 +312,7 @@ export function useAllDrafts(workspaceId: string) {
           href: `/w/${workspaceId}/s/${draft.id}`,
           groupLabel: displayName,
           isStashed: false,
+          companionMode: draft.companionMode,
         })
       }
     }

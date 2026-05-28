@@ -21,6 +21,7 @@ export interface StreamService {
   bootstrap: typeof streamsApi.bootstrap
   create: typeof streamsApi.create
   update: typeof streamsApi.update
+  updateCompanionMode: typeof streamsApi.updateCompanionMode
   archive: typeof streamsApi.archive
   unarchive: typeof streamsApi.unarchive
   getEvents: typeof streamsApi.getEvents

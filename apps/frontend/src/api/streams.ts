@@ -10,6 +10,7 @@ import type {
   UpdateStreamInput,
   NotificationLevel,
   SharedMessageHydration,
+  CompanionMode,
 } from "@threa/types"
 
 /**
@@ -62,6 +63,18 @@ export const streamsApi = {
 
   async update(workspaceId: string, streamId: string, data: UpdateStreamInput): Promise<Stream> {
     const res = await api.patch<{ stream: Stream }>(`/api/workspaces/${workspaceId}/streams/${streamId}`, data)
+    return res.stream
+  },
+
+  async updateCompanionMode(
+    workspaceId: string,
+    streamId: string,
+    data: { companionMode: CompanionMode; companionPersonaId?: string | null }
+  ): Promise<Stream> {
+    const res = await api.patch<{ stream: Stream }>(
+      `/api/workspaces/${workspaceId}/streams/${streamId}/companion`,
+      data
+    )
     return res.stream
   },
 

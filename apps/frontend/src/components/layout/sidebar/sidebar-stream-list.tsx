@@ -3,6 +3,7 @@ import type { CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { SMART_SECTIONS } from "./config"
 import { SmartSection, TieredStreamSection } from "./sections"
+import type { SidebarActionItem } from "./sidebar-actions"
 import type { StreamItemData } from "./types"
 
 /** Default state of the "more" expander: collapsed so quiet tails stay hidden. */
@@ -38,6 +39,12 @@ interface SidebarStreamListProps {
   toggleSectionState: (section: string, defaultState?: CollapseState) => void
   onCreateScratchpad: () => void | Promise<void>
   onCreateChannel: () => void | Promise<void>
+  /**
+   * Dropdown actions for the Scratchpads "+" button. When provided, the button
+   * opens this menu (Scratchpad / Quick Note / Encrypted Scratchpad) instead of
+   * invoking `onCreateScratchpad` directly.
+   */
+  scratchpadAddMenuActions?: SidebarActionItem[]
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -57,6 +64,7 @@ export function SidebarStreamList({
   toggleSectionState,
   onCreateScratchpad,
   onCreateChannel,
+  scratchpadAddMenuActions,
   scrollContainerRef,
 }: SidebarStreamListProps) {
   if (hasError) {
@@ -157,7 +165,8 @@ export function SidebarStreamList({
         onToggleMore={() => toggleSectionState(moreKey("scratchpads"), MORE_DEFAULT)}
         scrollContainerRef={scrollContainerRef}
         onAdd={() => void onCreateScratchpad()}
-        addTooltip="+ New Scratchpad"
+        addTooltip={scratchpadAddMenuActions ? "New scratchpad…" : "+ New Scratchpad"}
+        addMenuActions={scratchpadAddMenuActions}
         compact
         showPreviewOnHover
       />

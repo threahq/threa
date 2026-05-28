@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react"
 import { useParams, useNavigate, Link } from "react-router-dom"
-import { FileText, Hash, MessageSquare, Trash2, FileEdit, ArrowLeft, Bookmark } from "lucide-react"
+import { FileText, Hash, MessageSquare, Trash2, FileEdit, ArrowLeft, Bookmark, StickyNote } from "lucide-react"
+import { CompanionModes } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import {
   ResponsiveAlertDialog,
@@ -70,7 +71,14 @@ export function DraftsPage() {
       }
 
       const label = draft.isStashed ? draft.preview || "Empty draft" : draft.displayName
-      const icon = draft.isStashed ? Bookmark : TYPE_ICONS[draft.type]
+      let icon: React.ComponentType<{ className?: string }>
+      if (draft.isStashed) {
+        icon = Bookmark
+      } else if (draft.type === "scratchpad" && draft.companionMode === CompanionModes.OFF) {
+        icon = StickyNote
+      } else {
+        icon = TYPE_ICONS[draft.type]
+      }
 
       return {
         id: draft.id,
