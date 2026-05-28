@@ -39,6 +39,12 @@ interface MessageInputProps {
   disabled?: boolean
   disabledReason?: string
   autoFocus?: boolean
+  /**
+   * Notified when the composer's measured height changes (after the initial
+   * measure). The virtualized timeline uses this to re-anchor to the bottom so
+   * the last message isn't left covered by a composer that settled taller.
+   */
+  onComposerHeightChange?: (px: number) => void
 }
 
 function attachmentMatchKey(attachment: Pick<PendingAttachment, "filename" | "mimeType">): string {
@@ -193,7 +199,14 @@ export function materializePendingAttachmentReferences(
 // across `StreamContent` renders, so the default shallow comparison is enough.
 export const MessageInput = memo(MessageInputComponent)
 
-function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason, autoFocus }: MessageInputProps) {
+function MessageInputComponent({
+  workspaceId,
+  streamId,
+  disabled,
+  disabledReason,
+  autoFocus,
+  onComposerHeightChange,
+}: MessageInputProps) {
   const editLastCtx = useEditLastMessage()
   const triggerEditLast = editLastCtx?.triggerEditLast
   const scrollToMessage = editLastCtx?.scrollToMessage
@@ -409,8 +422,9 @@ function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason
   // Publish the floating composer's measured height so the scroll area can
   // reserve matching space (Virtuoso Footer, plain-scroll padding-bottom).
   // Disabled while the expanded overlay is open so the scroll area can use its
-  // full height behind the overlay.
-  useComposerHeightPublish(selfRef, { active: !expanded })
+  // full height behind the overlay. `onHeightChange` lets the virtualized
+  // timeline re-anchor to the bottom when the composer settles to a new height.
+  useComposerHeightPublish(selfRef, { active: !expanded, onHeightChange: onComposerHeightChange })
 
   // Escape to close — only when focus is inside this expanded editor
   useEffect(() => {
