@@ -22,7 +22,6 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
       (command): QuickSwitcherItem => ({
         id: command.id,
         label: command.label,
-        description: command.description,
         icon: command.icon,
         group: "Commands",
         onSelect: () => {
