@@ -4,9 +4,8 @@ import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { UnreadBadge } from "@/components/unread-badge"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
-import { SMART_SECTIONS } from "./config"
 import { StreamItem } from "./stream-item"
-import type { SectionKey, StreamItemData } from "./types"
+import type { StreamItemData } from "./types"
 import { getActivityTime } from "./utils"
 
 interface SectionHeaderProps {
@@ -420,55 +419,5 @@ function MoreDivider({ isOpen, hiddenCount, onToggle }: MoreDividerProps) {
       </span>
       <span className="h-px flex-1 bg-border/70" aria-hidden />
     </button>
-  )
-}
-
-interface SmartSectionProps {
-  section: SectionKey
-  items: StreamItemData[]
-  allStreams: StreamItemData[]
-  workspaceId: string
-  activeStreamId?: string
-  getUnreadCount: (streamId: string) => number
-  getMentionCount: (streamId: string) => number
-  state?: CollapseState
-  onToggle?: () => void
-  /** Reference to scroll container for position tracking */
-  scrollContainerRef?: RefObject<HTMLDivElement | null>
-}
-
-/** Smart view section wrapper - uses StreamSection with config-driven settings */
-export function SmartSection({
-  section,
-  items,
-  allStreams,
-  workspaceId,
-  activeStreamId,
-  getUnreadCount,
-  getMentionCount,
-  state = "open",
-  onToggle,
-  scrollContainerRef,
-}: SmartSectionProps) {
-  const config = SMART_SECTIONS[section]
-
-  if (items.length === 0) return null
-
-  return (
-    <StreamSection
-      label={config.label}
-      icon={config.icon}
-      items={items}
-      allStreams={allStreams}
-      workspaceId={workspaceId}
-      activeStreamId={activeStreamId}
-      getUnreadCount={getUnreadCount}
-      getMentionCount={getMentionCount}
-      state={state}
-      onToggle={onToggle}
-      compact={config.compact}
-      showPreviewOnHover={config.showPreviewOnHover}
-      scrollContainerRef={scrollContainerRef}
-    />
   )
 }

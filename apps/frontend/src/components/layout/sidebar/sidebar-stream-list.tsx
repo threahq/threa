@@ -1,8 +1,9 @@
 import type { RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
-import { SMART_SECTIONS } from "./config"
-import { SmartSection, TieredStreamSection } from "./sections"
+import { StreamSection, TieredStreamSection } from "./sections"
+import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
+import type { ResolvedSection } from "./resolve-sections"
 import type { SidebarActionItem } from "./sidebar-actions"
 import type { StreamItemData } from "./types"
 
@@ -14,25 +15,21 @@ function moreKey(parent: string): string {
   return `${parent}:more`
 }
 
+interface AddWiring {
+  onAdd: () => void
+  addTooltip: string
+  addMenuActions?: SidebarActionItem[]
+}
+
 interface SidebarStreamListProps {
   workspaceId: string
-  viewMode: "smart" | "all"
-  isLoading: boolean
   hasError: boolean
   hasUserStreams: boolean
   activeStreamId?: string
+  /** All real streams — passed to each item for thread/preview lookups. */
   processedStreams: StreamItemData[]
-  streamsBySection: {
-    important: StreamItemData[]
-    recent: StreamItemData[]
-    pinned: StreamItemData[]
-    other: StreamItemData[]
-  }
-  streamsByType: {
-    scratchpads: StreamItemData[]
-    channels: StreamItemData[]
-    dms: StreamItemData[]
-  }
+  /** Ordered sections with their resolved, sorted, capped stream lists. */
+  resolvedSections: ResolvedSection[]
   getUnreadCount: (streamId: string) => number
   getMentionCount: (streamId: string) => number
   getSectionState: (section: string, defaultState?: CollapseState) => CollapseState
@@ -50,14 +47,11 @@ interface SidebarStreamListProps {
 
 export function SidebarStreamList({
   workspaceId,
-  viewMode,
-  isLoading: _isLoading,
   hasError,
   hasUserStreams,
   activeStreamId,
   processedStreams,
-  streamsBySection,
-  streamsByType,
+  resolvedSections,
   getUnreadCount,
   getMentionCount,
   getSectionState,
@@ -85,131 +79,78 @@ export function SidebarStreamList({
     )
   }
 
-  if (viewMode === "smart") {
-    return (
-      <>
-        <SmartSection
-          section="important"
-          items={streamsBySection.important}
-          allStreams={processedStreams}
-          workspaceId={workspaceId}
-          activeStreamId={activeStreamId}
-          getUnreadCount={getUnreadCount}
-          getMentionCount={getMentionCount}
-          state={getSectionState("important")}
-          onToggle={() => toggleSectionState("important")}
-          scrollContainerRef={scrollContainerRef}
-        />
-        <SmartSection
-          section="recent"
-          items={streamsBySection.recent}
-          allStreams={processedStreams}
-          workspaceId={workspaceId}
-          activeStreamId={activeStreamId}
-          getUnreadCount={getUnreadCount}
-          getMentionCount={getMentionCount}
-          state={getSectionState("recent")}
-          onToggle={() => toggleSectionState("recent")}
-          scrollContainerRef={scrollContainerRef}
-        />
-        <SmartSection
-          section="pinned"
-          items={streamsBySection.pinned}
-          allStreams={processedStreams}
-          workspaceId={workspaceId}
-          activeStreamId={activeStreamId}
-          getUnreadCount={getUnreadCount}
-          getMentionCount={getMentionCount}
-          state={getSectionState("pinned")}
-          onToggle={() => toggleSectionState("pinned")}
-          scrollContainerRef={scrollContainerRef}
-        />
-        {streamsBySection.other.length > 0 && (
-          <TieredStreamSection
-            sectionKey="other"
-            label={SMART_SECTIONS.other.label}
-            icon={SMART_SECTIONS.other.icon}
-            items={streamsBySection.other}
+  // Add-button wiring is per stream type (Scratchpads / Channels expose creators).
+  const addWiringFor = (spec: SidebarSectionSpec): AddWiring | undefined => {
+    if (spec.kind !== "type") return undefined
+    if (spec.streamType === "scratchpad") {
+      return {
+        onAdd: () => void onCreateScratchpad(),
+        addTooltip: scratchpadAddMenuActions ? "New scratchpad…" : "+ New Scratchpad",
+        addMenuActions: scratchpadAddMenuActions,
+      }
+    }
+    if (spec.streamType === "channel") {
+      return { onAdd: () => void onCreateChannel(), addTooltip: "+ New Channel" }
+    }
+    return undefined
+  }
+
+  return (
+    <>
+      {resolvedSections.map(({ section, items }) => {
+        const presentation = sectionPresentation(section.spec)
+        if (presentation.hideWhenEmpty && items.length === 0) return null
+
+        const state = getSectionState(section.id, presentation.defaultCollapse)
+        const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
+        const add = addWiringFor(section.spec)
+
+        if (presentation.tiered) {
+          return (
+            <TieredStreamSection
+              key={section.id}
+              sectionKey={section.id}
+              label={presentation.label}
+              icon={presentation.icon}
+              items={items}
+              allStreams={processedStreams}
+              workspaceId={workspaceId}
+              activeStreamId={activeStreamId}
+              getUnreadCount={getUnreadCount}
+              getMentionCount={getMentionCount}
+              state={state}
+              onToggle={onToggle}
+              moreState={getSectionState(moreKey(section.id), MORE_DEFAULT)}
+              onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
+              compact={presentation.compact}
+              showPreviewOnHover={presentation.showPreviewOnHover}
+              scrollContainerRef={scrollContainerRef}
+              onAdd={add?.onAdd}
+              addTooltip={add?.addTooltip}
+              addMenuActions={add?.addMenuActions}
+            />
+          )
+        }
+
+        return (
+          <StreamSection
+            key={section.id}
+            label={presentation.label}
+            icon={presentation.icon}
+            items={items}
             allStreams={processedStreams}
             workspaceId={workspaceId}
             activeStreamId={activeStreamId}
             getUnreadCount={getUnreadCount}
             getMentionCount={getMentionCount}
-            state={getSectionState("other", "collapsed")}
-            onToggle={() => toggleSectionState("other", "collapsed")}
-            moreState={getSectionState(moreKey("other"), MORE_DEFAULT)}
-            onToggleMore={() => toggleSectionState(moreKey("other"), MORE_DEFAULT)}
-            compact={SMART_SECTIONS.other.compact}
-            showPreviewOnHover={SMART_SECTIONS.other.showPreviewOnHover}
+            state={state}
+            onToggle={onToggle}
+            compact={presentation.compact}
+            showPreviewOnHover={presentation.showPreviewOnHover}
             scrollContainerRef={scrollContainerRef}
           />
-        )}
-      </>
-    )
-  }
-
-  return (
-    <>
-      <TieredStreamSection
-        sectionKey="scratchpads"
-        label="Scratchpads"
-        items={streamsByType.scratchpads}
-        allStreams={processedStreams}
-        workspaceId={workspaceId}
-        activeStreamId={activeStreamId}
-        getUnreadCount={getUnreadCount}
-        getMentionCount={getMentionCount}
-        state={getSectionState("scratchpads")}
-        onToggle={() => toggleSectionState("scratchpads")}
-        moreState={getSectionState(moreKey("scratchpads"), MORE_DEFAULT)}
-        onToggleMore={() => toggleSectionState(moreKey("scratchpads"), MORE_DEFAULT)}
-        scrollContainerRef={scrollContainerRef}
-        onAdd={() => void onCreateScratchpad()}
-        addTooltip={scratchpadAddMenuActions ? "New scratchpad…" : "+ New Scratchpad"}
-        addMenuActions={scratchpadAddMenuActions}
-        compact
-        showPreviewOnHover
-      />
-
-      <TieredStreamSection
-        sectionKey="channels"
-        label="Channels"
-        items={streamsByType.channels}
-        allStreams={processedStreams}
-        workspaceId={workspaceId}
-        activeStreamId={activeStreamId}
-        getUnreadCount={getUnreadCount}
-        getMentionCount={getMentionCount}
-        state={getSectionState("channels")}
-        onToggle={() => toggleSectionState("channels")}
-        moreState={getSectionState(moreKey("channels"), MORE_DEFAULT)}
-        onToggleMore={() => toggleSectionState(moreKey("channels"), MORE_DEFAULT)}
-        scrollContainerRef={scrollContainerRef}
-        onAdd={() => void onCreateChannel()}
-        addTooltip="+ New Channel"
-        compact
-        showPreviewOnHover
-      />
-
-      {streamsByType.dms.length > 0 && (
-        <TieredStreamSection
-          sectionKey="dms"
-          label="Direct Messages"
-          items={streamsByType.dms}
-          allStreams={processedStreams}
-          workspaceId={workspaceId}
-          activeStreamId={activeStreamId}
-          getUnreadCount={getUnreadCount}
-          getMentionCount={getMentionCount}
-          state={getSectionState("dms")}
-          onToggle={() => toggleSectionState("dms")}
-          moreState={getSectionState(moreKey("dms"), MORE_DEFAULT)}
-          onToggleMore={() => toggleSectionState(moreKey("dms"), MORE_DEFAULT)}
-          scrollContainerRef={scrollContainerRef}
-          compact
-          showPreviewOnHover
-        />
-      )}
+        )
+      })}
     </>
   )
 }
