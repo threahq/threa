@@ -18,12 +18,19 @@ const DEFAULT_AWAY_THRESHOLD_MS = 10_000
  * all: messages that arrived while the socket sat idle (or had silently
  * zombied) only appeared after a hard reload.
  *
+ * A third "away" source is the back/forward cache: when a backgrounded page is
+ * frozen into bfcache and later restored, it resumes with a stale in-memory
+ * cache. On iOS standalone PWAs (the "I just reopened the app" case) neither
+ * `visibilitychange` nor `focus` reliably fires on that restore, so `pageshow`
+ * with `event.persisted` is the only dependable resume signal — without it the
+ * reopened app keeps showing pre-background state until a hard reload.
+ *
  * The threshold filters out quick app-switcher previews and momentary focus
  * loss (e.g. a file dialog), so the callback only runs when the page was away
  * long enough that socket events may have been missed. A single `awaySince`
- * timestamp is shared across both event sources, so a tab switch — which fires
- * both `visibilitychange` and a window `blur`/`focus` pair — still resumes
- * exactly once.
+ * timestamp is shared across all event sources, so a tab switch — which fires
+ * both `visibilitychange` and a window `blur`/`focus` pair (and, on a bfcache
+ * round-trip, `pagehide`/`pageshow` too) — still resumes exactly once.
  *
  * `onResume` is stored in a ref so consumers don't need to memoize.
  */
@@ -53,13 +60,23 @@ export function usePageResume(onResume: () => void, awayThresholdMs: number = DE
       else markBack()
     }
 
+    // Only a bfcache restore (`persisted`) is a resume; a normal `pageshow`
+    // fires on every fresh load, where `awaySince` is null and markBack no-ops.
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) markBack()
+    }
+
     document.addEventListener("visibilitychange", handleVisibilityChange)
     window.addEventListener("blur", markAway)
     window.addEventListener("focus", markBack)
+    window.addEventListener("pagehide", markAway)
+    window.addEventListener("pageshow", handlePageShow)
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange)
       window.removeEventListener("blur", markAway)
       window.removeEventListener("focus", markBack)
+      window.removeEventListener("pagehide", markAway)
+      window.removeEventListener("pageshow", handlePageShow)
     }
   }, [awayThresholdMs])
 }

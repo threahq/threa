@@ -18,6 +18,16 @@ function focusWindow() {
   window.dispatchEvent(new Event("focus"))
 }
 
+function pageHide() {
+  window.dispatchEvent(new Event("pagehide"))
+}
+
+function pageShow(persisted: boolean) {
+  const event = new Event("pageshow")
+  Object.defineProperty(event, "persisted", { value: persisted, configurable: true })
+  window.dispatchEvent(event)
+}
+
 describe("usePageResume", () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -217,6 +227,75 @@ describe("usePageResume", () => {
       blurWindow()
       vi.advanceTimersByTime(12_000)
       focusWindow()
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it("fires when the page is restored from bfcache after a long freeze (app reopen)", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      pageHide()
+      vi.advanceTimersByTime(12_000)
+      pageShow(true)
+    })
+
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not fire for a brief bfcache round-trip under the threshold", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      pageHide()
+      vi.advanceTimersByTime(2_000)
+      pageShow(true)
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it("does not fire on a non-persisted pageshow (fresh load, not a bfcache restore)", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      pageHide()
+      vi.advanceTimersByTime(12_000)
+      pageShow(false)
+    })
+
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it("resumes exactly once when a bfcache round-trip also fires visibility events", () => {
+    const onResume = vi.fn()
+    renderHook(() => usePageResume(onResume, 10_000))
+
+    act(() => {
+      setVisibility("hidden")
+      pageHide()
+      vi.advanceTimersByTime(12_000)
+      pageShow(true)
+      setVisibility("visible")
+    })
+
+    expect(onResume).toHaveBeenCalledTimes(1)
+  })
+
+  it("removes the pageshow and pagehide listeners on unmount", () => {
+    const onResume = vi.fn()
+    const { unmount } = renderHook(() => usePageResume(onResume, 10_000))
+
+    unmount()
+
+    act(() => {
+      pageHide()
+      vi.advanceTimersByTime(12_000)
+      pageShow(true)
     })
 
     expect(onResume).not.toHaveBeenCalled()
