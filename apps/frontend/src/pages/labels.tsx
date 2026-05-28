@@ -105,11 +105,6 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
             <h1 className="truncate font-semibold">Labels</h1>
           </div>
         </div>
-
-        <Button size="sm" className="shrink-0 gap-1.5" onClick={() => setAddOpen(true)}>
-          <Plus className="h-4 w-4" />
-          Add label
-        </Button>
       </header>
 
       <ScrollArea className="flex-1">
@@ -133,6 +128,7 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
             />
           ) : (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <AddLabelTile onClick={() => setAddOpen(true)} />
               {myLabels.map((label) =>
                 label.creatorUserId === currentUserId ? (
                   <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />
@@ -602,6 +598,21 @@ function LabelSwatchCard({ label, children }: { label: CachedLabel; children?: R
         {children}
       </div>
     </article>
+  )
+}
+
+function AddLabelTile({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-card/40 text-muted-foreground transition-colors hover:border-foreground/30 hover:bg-card hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+    >
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-muted">
+        <Plus className="h-4 w-4" />
+      </div>
+      <span className="text-sm font-medium">Add label</span>
+    </button>
   )
 }
 
