@@ -27,7 +27,7 @@ export function isEmptyContent(contentJson: JSONContent | undefined): boolean {
  * Inline atoms (e.g. `attachmentReference`, `mention`) live inside paragraphs
  * and don't have this problem.
  */
-const BLOCK_ATOM_TYPES = new Set(["quoteReply", "sharedMessage", "memoEmbed"])
+const BLOCK_ATOM_TYPES = new Set(["quoteReply", "sharedMessage"])
 
 /**
  * Ensure the doc ends with an empty paragraph when its last child is a

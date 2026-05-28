@@ -454,13 +454,13 @@ describe("@threa/prosemirror quote reply round-trip", () => {
 })
 
 describe("@threa/prosemirror memo embed round-trip", () => {
-  it("round-trips a memoEmbed node losslessly", () => {
+  it("round-trips an inline memoEmbed node losslessly", () => {
     const doc: JSONContent = {
       type: "doc",
       content: [
         {
-          type: "memoEmbed",
-          attrs: { memoId: "memo_01ABC", title: "Auth rewrite" },
+          type: "paragraph",
+          content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth rewrite" } }],
         },
         {
           type: "paragraph",
@@ -474,8 +474,8 @@ describe("@threa/prosemirror memo embed round-trip", () => {
 
     const parsed = parseMarkdown(markdown)
     expect(parsed.content?.[0]).toEqual({
-      type: "memoEmbed",
-      attrs: { memoId: "memo_01ABC", title: "Auth rewrite" },
+      type: "paragraph",
+      content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth rewrite" } }],
     })
     expect(parsed.content?.[1]?.type).toBe("paragraph")
   })
@@ -483,7 +483,7 @@ describe("@threa/prosemirror memo embed round-trip", () => {
   it("falls back to a 'Memo' title when none is cached", () => {
     const doc: JSONContent = {
       type: "doc",
-      content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC" } }],
+      content: [{ type: "paragraph", content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC" } }] }],
     }
 
     expect(serializeToMarkdown(doc)).toBe("[Memo](memo:memo_01ABC)")
@@ -492,7 +492,12 @@ describe("@threa/prosemirror memo embed round-trip", () => {
   it("round-trips titles containing brackets and backslashes", () => {
     const doc: JSONContent = {
       type: "doc",
-      content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth [v2]\\rewrite" } }],
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth [v2]\\rewrite" } }],
+        },
+      ],
     }
 
     const markdown = serializeToMarkdown(doc)
@@ -500,14 +505,21 @@ describe("@threa/prosemirror memo embed round-trip", () => {
 
     const parsed = parseMarkdown(markdown)
     expect(parsed.content?.[0]).toEqual({
-      type: "memoEmbed",
-      attrs: { memoId: "memo_01ABC", title: "Auth [v2]\\rewrite" },
+      type: "paragraph",
+      content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth [v2]\\rewrite" } }],
     })
   })
 
-  it("leaves an inline memo: link mid-sentence as a regular paragraph", () => {
+  it("parses an inline memo: link mid-sentence as a memoEmbed within the paragraph", () => {
     const parsed = parseMarkdown("See [Auth rewrite](memo:memo_01ABC) for details")
-    expect(parsed.content?.[0]?.type).toBe("paragraph")
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "See " },
+        { type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth rewrite" } },
+        { type: "text", text: " for details" },
+      ],
+    })
   })
 })
 

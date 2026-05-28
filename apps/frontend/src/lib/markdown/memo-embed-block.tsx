@@ -10,12 +10,11 @@ interface MemoEmbedBlockProps {
 }
 
 /**
- * Renders the inline memo-embed card when a message body passes through
- * markdown rendering (timeline, thread panel, activity feed, and any surface
- * that consumes `contentMarkdown`). The in-composer card lives in
- * `MemoEmbedView` (a TipTap NodeView); both route through the shared resolver
- * hook + `MemoEmbedCardBody` so cache + render behavior match. The card links
- * to the memo in the memory explorer.
+ * Renders a memo-embed preview card below a message (`MemoPreviewList`), one
+ * per memo referenced in the body — mirroring how link previews surface. The
+ * inline reference itself renders as a `MemoChip`. The card body routes through
+ * the shared resolver hook + `MemoEmbedCardBody` so cache + render behavior
+ * match the composer chip. The card links to the memo in the memory explorer.
  */
 export function MemoEmbedBlock({ memoId, title }: MemoEmbedBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()

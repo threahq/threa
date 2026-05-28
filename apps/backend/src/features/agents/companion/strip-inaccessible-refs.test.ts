@@ -298,7 +298,7 @@ describe("stripInaccessibleAgentRefs", () => {
       // Deliberately no stream reach for the memo's source — memoEmbed visibility
       // is enforced per-recipient at render time, so scope is not re-checked here.
       accessibleStreamIds: ["stream_target"],
-      contentJson: doc(memoEmbedNode("memo_a")),
+      contentJson: doc(paragraph(memoEmbedNode("memo_a"))),
     })
 
     expect(result.dropped).toEqual([])
@@ -317,7 +317,7 @@ describe("stripInaccessibleAgentRefs", () => {
       workspaceId: "ws_1",
       targetStreamId: "stream_target",
       accessibleStreamIds: ["stream_target"],
-      contentJson: doc(memoEmbedNode("memo_phantom")),
+      contentJson: doc(paragraph(memoEmbedNode("memo_phantom"))),
     })
 
     expect(result.dropped).toHaveLength(1)
@@ -342,7 +342,7 @@ describe("stripInaccessibleAgentRefs", () => {
       workspaceId: "ws_1",
       targetStreamId: "stream_target",
       accessibleStreamIds: ["stream_target"],
-      contentJson: doc(memoEmbedNode("memo_archived")),
+      contentJson: doc(paragraph(memoEmbedNode("memo_archived"))),
     })
 
     expect(result.dropped).toHaveLength(1)

@@ -17,25 +17,27 @@ function renderMarkdown(content: string) {
   )
 }
 
-describe("MarkdownContent — memoEmbed paragraph swap", () => {
-  it("replaces a lone memo: anchor paragraph with the embed card", () => {
+describe("MarkdownContent — inline memo chip", () => {
+  it("renders a lone memo: reference as an inline chip linking to the memo", () => {
     renderMarkdown("[Auth rewrite plan](memo:memo_abc123)")
 
-    const card = document.querySelector('[data-type="memo-embed"]')
-    expect(card).not.toBeNull()
-    // The card links into the memory explorer for that memo.
-    const link = card?.closest("a")
+    const chip = document.querySelector('[data-type="memo-chip"]')
+    expect(chip).not.toBeNull()
+    const link = chip?.closest("a")
     expect(link?.getAttribute("href")).toBe("/w/ws_1/memory?memo=memo_abc123")
-    // Pre-hydration the card shows the title parsed from the link text.
     expect(screen.getByText("Auth rewrite plan")).toBeInTheDocument()
+    // The body renders the chip only; the hydrated preview card is a separate
+    // surface (MemoPreviewList), not part of the markdown body.
+    expect(document.querySelector('[data-type="memo-embed"]')).toBeNull()
   })
 
-  it("keeps a memo: link mixed into a sentence as an inline link, not a card", () => {
+  it("renders a memo: reference mid-sentence as an inline chip with surrounding text", () => {
     renderMarkdown("see [Auth rewrite plan](memo:memo_abc123) for details")
 
-    expect(document.querySelector('[data-type="memo-embed"]')).toBeNull()
-    const inline = screen.getByText("Auth rewrite plan").closest("a")
-    expect(inline?.getAttribute("href")).toBe("/w/ws_1/memory?memo=memo_abc123")
+    const chip = document.querySelector('[data-type="memo-chip"]')
+    expect(chip).not.toBeNull()
+    expect(chip?.closest("a")?.getAttribute("href")).toBe("/w/ws_1/memory?memo=memo_abc123")
+    expect(screen.getByText(/see/)).toBeInTheDocument()
     expect(screen.getByText(/for details/)).toBeInTheDocument()
   })
 })

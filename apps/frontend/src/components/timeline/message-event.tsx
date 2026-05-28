@@ -39,6 +39,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
 import { AttachmentList } from "./attachment-list"
 import { LinkPreviewList } from "./link-preview-list"
+import { MemoPreviewList } from "./memo-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
@@ -467,6 +468,7 @@ function MessageLayout({
           previews={payload.linkPreviews}
           hydrateFromApi={!deferSecondaryHydration}
         />
+        <MemoPreviewList contentMarkdown={payload.contentMarkdown} />
       </AttachmentProvider>
     </LinkPreviewProvider>
   )
