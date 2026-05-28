@@ -197,6 +197,12 @@ export interface LabelViewerContext {
   currentUserId: string | null
   /** Labels the viewer authored (private or public). */
   mine: CachedLabel[]
+  /**
+   * The viewer's usable catalog: labels they authored plus public labels they
+   * explicitly joined, sorted by name. This is the set offered when applying a
+   * label to a resource, and the "Your labels" grid on the catalog page.
+   */
+  myLabels: CachedLabel[]
   /** Public labels in this workspace, sorted by name. Includes ones the viewer joined or created. */
   publicLabels: CachedLabel[]
   /** Public labels the viewer has not joined and did not create. */
@@ -239,10 +245,13 @@ export function useLabelsView(workspaceId: string): LabelViewerContext {
     const mine = active.filter((l) => l.creatorUserId === currentUserId).sort(byName)
     const publicLabels = active.filter((l) => l.visibility === Visibilities.PUBLIC).sort(byName)
     const discoverable = publicLabels.filter((l) => l.creatorUserId !== currentUserId && !joinedLabelIds.has(l.id))
+    const joinedPublic = publicLabels.filter((l) => l.creatorUserId !== currentUserId && joinedLabelIds.has(l.id))
+    const myLabels = [...mine, ...joinedPublic].sort(byName)
 
     return {
       currentUserId,
       mine,
+      myLabels,
       publicLabels,
       discoverable,
       joinedLabelIds,

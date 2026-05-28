@@ -1,6 +1,7 @@
-import { useMemo, useRef, type ReactNode, type RefObject } from "react"
-import { Bell, FileEdit, Hash, Lock, MessageSquareText, Settings, User } from "lucide-react"
+import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
+import { Bell, FileEdit, Hash, Lock, MessageSquareText, Settings, Tag, User } from "lucide-react"
 import { Link } from "react-router-dom"
+import { LabelPicker } from "@/components/labels/label-picker"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { RelativeTime } from "@/components/relative-time"
@@ -195,6 +196,7 @@ export function StreamItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { collapseOnMobile } = useSidebar()
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)
   const hasUnread = unreadCount > 0
   const preview = stream.lastMessagePreview
@@ -262,6 +264,12 @@ export function StreamItem({
               label: "Settings",
               icon: Settings,
               onSelect: () => openStreamSettings(stream.id),
+            },
+            {
+              id: "labels",
+              label: "Labels…",
+              icon: Tag,
+              onSelect: () => setLabelPickerOpen(true),
             },
           ],
     [isVirtualDraft, openStreamSettings, stream.id]
@@ -371,6 +379,13 @@ export function StreamItem({
 
         <SidebarActionMenu actions={actions} ariaLabel="Stream actions" />
       </div>
+      <LabelPicker
+        workspaceId={workspaceId}
+        resourceType="stream"
+        resourceId={stream.id}
+        open={labelPickerOpen}
+        onOpenChange={setLabelPickerOpen}
+      />
       {isMobile && canOpenDrawer && (
         <SidebarActionDrawer
           open={drawerOpen}
