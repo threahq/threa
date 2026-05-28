@@ -137,6 +137,20 @@ describe("LabelPicker", () => {
     expect(assign).not.toHaveBeenCalled()
   })
 
+  it("shows a spinner in the checkbox's place while a slow toggle is in flight", async () => {
+    // A toggle that never settles: past the 300ms threshold the row swaps its
+    // checkbox for a spinner so the wait reads as working, not dead.
+    assign.mockReturnValue(new Promise(() => {}))
+    mountPicker()
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Shared" }))
+
+    expect(await screen.findByRole("status", { name: "Saving" })).toBeInTheDocument()
+    expect(screen.queryByRole("checkbox", { name: "Shared" })).not.toBeInTheDocument()
+    // The untouched row keeps its checkbox — pending is tracked per label.
+    expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
+  })
+
   it("filters the list by the search query", () => {
     mountPicker()
 

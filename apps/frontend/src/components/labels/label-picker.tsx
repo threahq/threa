@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react"
-import { Search, Tag } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { Loader2, Search, Tag } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -28,6 +28,11 @@ interface LabelPickerProps {
   onOpenChange: (open: boolean) => void
 }
 
+// A toggle that resolves under this threshold flips the box without ever
+// flashing a spinner; past it the round-trip is slow enough that silent UI
+// reads as broken. Mirrors the app's other anti-flicker delays.
+const LOADING_DELAY_MS = 300
+
 function LabelGlyph({ label }: { label: CachedLabel }) {
   return (
     <span
@@ -55,20 +60,35 @@ function NoLabelsYet({ workspaceId }: { workspaceId: string }) {
  * One catalog row. A checked box means *I* applied this label; unchecking it
  * removes my attribution from the shared pool. The checkbox is the control and
  * the adjacent label (linked by `htmlFor`) extends the hit area across the
- * whole row, so the same markup feels right with a mouse or a thumb.
+ * whole row, so the same markup feels right with a mouse or a thumb. While a
+ * slow toggle is in flight a spinner takes the checkbox's slot (same 16px box,
+ * no layout shift) so the row reads as working rather than dead.
  */
 function LabelRow({
   label,
   checked,
   disabled,
+  pending,
   onToggle,
 }: {
   label: CachedLabel
   checked: boolean
   disabled: boolean
+  pending: boolean
   onToggle: (label: CachedLabel) => void
 }) {
   const id = `label-option-${label.id}`
+  const [showSpinner, setShowSpinner] = useState(false)
+
+  useEffect(() => {
+    if (!pending) {
+      setShowSpinner(false)
+      return
+    }
+    const timer = setTimeout(() => setShowSpinner(true), LOADING_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [pending])
+
   return (
     <div
       className={cn(
@@ -76,7 +96,11 @@ function LabelRow({
         disabled ? "opacity-50" : "hover:bg-muted/50 active:bg-muted"
       )}
     >
-      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={() => onToggle(label)} />
+      {showSpinner ? (
+        <Loader2 role="status" aria-label="Saving" className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+      ) : (
+        <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={() => onToggle(label)} />
+      )}
       <label
         htmlFor={id}
         className={cn(
@@ -108,13 +132,22 @@ export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpe
   const assign = useAssignLabel(workspaceId)
   const unassign = useUnassignLabel(workspaceId)
   const [query, setQuery] = useState("")
+  // labelIds with a toggle in flight. A single mutation hook can't track which
+  // row is settling, so the picker owns the per-row pending set and clears each
+  // id when its own mutation settles.
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set())
 
   const toggle = (label: CachedLabel) => {
-    if (myLabelIds.has(label.id)) {
-      unassign.mutate({ labelId: label.id, resourceType, resourceId })
-    } else {
-      assign.mutate({ labelId: label.id, resourceType, resourceId })
-    }
+    const labelId = label.id
+    setPendingIds((prev) => new Set(prev).add(labelId))
+    const onSettled = () =>
+      setPendingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(labelId)
+        return next
+      })
+    const mutation = myLabelIds.has(labelId) ? unassign : assign
+    mutation.mutate({ labelId, resourceType, resourceId }, { onSettled })
   }
 
   const filtered = useMemo(() => {
@@ -164,6 +197,7 @@ export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpe
                     label={label}
                     checked={myLabelIds.has(label.id)}
                     disabled={!isOnline}
+                    pending={pendingIds.has(label.id)}
                     onToggle={toggle}
                   />
                 ))
