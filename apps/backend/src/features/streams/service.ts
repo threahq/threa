@@ -408,6 +408,7 @@ export class StreamService {
         })
         stream.e2eEnabled = true
         stream.e2eOwnerKeyId = params.e2e.ownerKeyId
+        stream.e2eActors = []
       }
 
       // Publish to outbox for real-time delivery

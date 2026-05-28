@@ -20,6 +20,8 @@ const mockIsMemberForUpdate = spyOn(StreamMemberRepository, "isMemberForUpdate")
 const mockInsertEvent = spyOn(StreamEventRepository, "insert")
 const mockInsertOutbox = spyOn(OutboxRepository, "insert")
 const mockFindMembersByIds = spyOn(UserRepository, "findByIds")
+const mockInsertStream = spyOn(StreamRepository, "insert")
+const mockMarkStreamE2e = spyOn(E2eStreamsRepository, "markStreamE2e")
 
 spyOn(idModule, "eventId").mockReturnValue("evt_1")
 spyOn(idModule, "streamId").mockReturnValue("stream_new")
@@ -614,5 +616,44 @@ describe("StreamService.inviteActor", () => {
     expect((error as HttpError).status).toBe(409)
     expect((error as HttpError).code).toBe("ACTOR_ALREADY_INVITED")
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamService.createScratchpad (E2E)", () => {
+  let service: StreamService
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockInsertStream.mockReset().mockResolvedValue({
+      id: "stream_new",
+      workspaceId: "ws_1",
+      type: "scratchpad",
+    } as never)
+    mockInsertMember.mockReset().mockResolvedValue(undefined as never)
+    mockMarkStreamE2e.mockReset().mockResolvedValue({} as never)
+    mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
+  })
+
+  test("initializes e2eActors to [] so the stream:created payload matches the read contract", async () => {
+    await service.create({
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      createdBy: "usr_owner",
+      e2e: { ownerKeyId: "e2ek_01" },
+    } as never)
+
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:created",
+      expect.objectContaining({
+        workspaceId: "ws_1",
+        streamId: "stream_new",
+        stream: expect.objectContaining({
+          e2eEnabled: true,
+          e2eOwnerKeyId: "e2ek_01",
+          e2eActors: [],
+        }),
+      })
+    )
   })
 })
