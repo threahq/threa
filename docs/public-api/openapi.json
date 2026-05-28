@@ -1479,8 +1479,11 @@
                       "linear_access",
                       "message_sent",
                       "message_edited",
+                      "response",
                       "tool_call",
-                      "tool_error"
+                      "tool_error",
+                      "rate_limited",
+                      "rate_limit_retry"
                     ]
                   },
                   "content": { "type": "string", "minLength": 1, "maxLength": 10000 },

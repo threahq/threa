@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Wrench,
   AlertTriangle,
+  Hourglass,
   type LucideIcon,
 } from "lucide-react"
 
@@ -115,6 +116,14 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     saturation: 76,
     lightness: 36,
   },
+  response: {
+    label: "Response",
+    inlineLabel: "Composing response...",
+    icon: MessageSquare,
+    hue: 142,
+    saturation: 76,
+    lightness: 36,
+  },
   tool_call: {
     label: "Tool Call",
     inlineLabel: "Using tools...",
@@ -130,6 +139,22 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     hue: 0,
     saturation: 72,
     lightness: 51,
+  },
+  rate_limited: {
+    label: "Rate Limited",
+    inlineLabel: "Rate limited, waiting...",
+    icon: Hourglass,
+    hue: 38,
+    saturation: 92,
+    lightness: 50,
+  },
+  rate_limit_retry: {
+    label: "Retrying",
+    inlineLabel: "Retrying...",
+    icon: RotateCcw,
+    hue: 38,
+    saturation: 92,
+    lightness: 50,
   },
 }
 
