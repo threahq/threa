@@ -79,31 +79,77 @@ export function useVirtuosoScroll({
   // with the old firstItemIndex for one frame.
   const firstItemIndexRef = useRef(FIRST_ITEM_INDEX)
   const prevItemCountRef = useRef(0)
-  const prevFirstKeyRef = useRef<string | null>(null)
+  // Map of item key -> index from the previous render. Comparing the index of
+  // a surviving (anchor) row across renders is what lets us compensate
+  // firstItemIndex for any window shift — prepend, leading removal, or a window
+  // that slides forward (drops leading rows AND appends, count ~unchanged).
+  const prevKeyIndexMapRef = useRef<Map<string, number>>(new Map())
+  const lastResetKeyRef = useRef(resetKey)
 
   // Scroller element stored in state (not a ref) so the ResizeObserver effect
   // re-runs when Virtuoso mounts its scroller asynchronously (e.g. after an
   // isLoading skeleton is replaced).
   const [scrollerEl, setScrollerEl] = useState<HTMLElement | null>(null)
 
-  // Reset all state when stream changes. Honor skipInitialScroll so deep-link
-  // navigation to a cached stream does not briefly scroll to bottom before
-  // the scrollToMessage retry loop kicks in.
-  useLayoutEffect(() => {
+  // Reset the ref-backed virtual-index state synchronously when the stream
+  // changes, BEFORE the re-anchor block below runs. This must not live in a
+  // layout effect: that runs after the render that already recorded the new
+  // stream's baseline, so it would clobber that baseline (skipping the first
+  // window-slide compensation) and hand the freshly-keyed Virtuoso the previous
+  // stream's index base for one frame before correcting it — a visible jump.
+  // resetKey is unchanged on the initial mount (the ref is seeded with it), so
+  // this only fires on actual stream switches.
+  const resetKeyChanged = lastResetKeyRef.current !== resetKey
+  if (resetKeyChanged) {
+    lastResetKeyRef.current = resetKey
     firstItemIndexRef.current = FIRST_ITEM_INDEX
+    prevItemCountRef.current = 0
+    prevKeyIndexMapRef.current = new Map()
+    hasSettledRef.current = false
+    isAtBottomRef.current = !skipInitialScroll
+  }
+
+  // Reset React-visible state when the stream changes. The ref-backed state
+  // resets synchronously above so Virtuoso already gets the right
+  // firstItemIndex on the first render for the new stream; this effect only
+  // catches up the state that drives re-renders. Honor skipInitialScroll so
+  // deep-link navigation to a cached stream does not briefly scroll to bottom
+  // before the scrollToMessage retry loop kicks in.
+  useLayoutEffect(() => {
     setIsScrolledFarFromBottom(false)
     isAtBottomRef.current = !skipInitialScroll
     setShouldFollowOutput(!skipInitialScroll)
-    prevItemCountRef.current = 0
-    prevFirstKeyRef.current = null
-    hasSettledRef.current = false
   }, [resetKey, skipInitialScroll])
 
-  // Detect prepends synchronously during render. This runs in the same
-  // render pass where data changes, so Virtuoso receives the updated
+  // Re-anchor firstItemIndex synchronously during render. This runs in the
+  // same render pass where data changes, so Virtuoso receives the updated
   // firstItemIndex and data array together — no one-frame-late jump.
+  //
+  // We can't infer the shift from count alone: on a cold first visit the
+  // window mounts off stale IDB data, then the bootstrap response slides the
+  // window forward — leading rows drop while newer ones append, so the count
+  // barely moves even though every row shifted index. A count-growth heuristic
+  // misses that and leaves firstItemIndex stale, jumping the viewport.
+  //
+  // Instead, find the first row that survived from the previous render (the
+  // anchor) and compare its old vs new index. Virtuoso keeps a row visually
+  // fixed when `firstItemIndex + index` is constant, so to preserve position
+  // across a shift of `currentIndex - previousIndex` we move firstItemIndex by
+  // the negation of that delta. This handles prepend, leading removal, and a
+  // sliding window uniformly.
   if (itemCount > 0) {
-    const currentFirstKey = getItemKey(0)
+    const currentKeyIndexMap = new Map<string, number>()
+    let preservedAnchor: { previousIndex: number; currentIndex: number } | null = null
+    for (let index = 0; index < itemCount; index++) {
+      const key = getItemKey(index)
+      currentKeyIndexMap.set(key, index)
+      if (preservedAnchor === null) {
+        const previousIndex = prevKeyIndexMapRef.current.get(key)
+        if (previousIndex !== undefined) {
+          preservedAnchor = { previousIndex, currentIndex: index }
+        }
+      }
+    }
     // When the list goes from empty to populated (e.g. mid stream-switch
     // where the previous stream's empty result was stamped as settled),
     // Virtuoso needs to run its initial scroll again. Re-arm hasSettledRef
@@ -112,17 +158,21 @@ export function useVirtuosoScroll({
     if (prevItemCountRef.current === 0) {
       hasSettledRef.current = false
     }
-    if (
-      prevItemCountRef.current > 0 &&
-      itemCount > prevItemCountRef.current &&
-      currentFirstKey !== prevFirstKeyRef.current &&
-      prevFirstKeyRef.current !== null
-    ) {
-      const prependedCount = itemCount - prevItemCountRef.current
-      firstItemIndexRef.current -= prependedCount
+    if (prevItemCountRef.current > 0 && preservedAnchor !== null) {
+      const indexDelta = preservedAnchor.currentIndex - preservedAnchor.previousIndex
+      if (indexDelta !== 0) {
+        firstItemIndexRef.current -= indexDelta
+      }
     }
     prevItemCountRef.current = itemCount
-    prevFirstKeyRef.current = currentFirstKey
+    prevKeyIndexMapRef.current = currentKeyIndexMap
+  } else if (prevItemCountRef.current !== 0) {
+    // List emptied (e.g. mid stream-switch). Drop the stale baseline so the
+    // next populated render is treated as a fresh start and re-arms the
+    // settle gate rather than matching keys against the old window.
+    prevItemCountRef.current = 0
+    prevKeyIndexMapRef.current = new Map()
+    hasSettledRef.current = false
   }
 
   const scrollToBottom = useCallback(
@@ -254,7 +304,7 @@ export function useVirtuosoScroll({
 
   const resetPrependState = useCallback(() => {
     prevItemCountRef.current = 0
-    prevFirstKeyRef.current = null
+    prevKeyIndexMapRef.current = new Map()
   }, [])
 
   const initialTopMostItemIndex =
@@ -264,8 +314,11 @@ export function useVirtuosoScroll({
     virtuosoRef,
     firstItemIndex: firstItemIndexRef.current,
     initialTopMostItemIndex,
-    isScrolledFarFromBottom,
-    shouldFollowOutput,
+    // On the stream-switch render the state resets above are still queued in
+    // the layout effect, so surface the fresh values directly for that frame
+    // to avoid carrying the previous stream's scroll affordances over.
+    isScrolledFarFromBottom: resetKeyChanged ? false : isScrolledFarFromBottom,
+    shouldFollowOutput: resetKeyChanged ? !skipInitialScroll : shouldFollowOutput,
     scrollToBottom,
     disableAutoScroll,
     handleAtBottomChange,

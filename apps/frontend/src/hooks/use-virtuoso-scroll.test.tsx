@@ -51,6 +51,31 @@ function makeScrollableDiv(initial: { clientHeight: number; scrollTop?: number }
 
 type HookApi = ReturnType<typeof useVirtuosoScroll>
 
+type ScrollOptions = Parameters<typeof useVirtuosoScroll>[0]
+
+function renderScrollHook(initialOptions: ScrollOptions): {
+  current: HookApi
+  rerender: (options: ScrollOptions) => void
+} {
+  const ref: { current: HookApi | undefined } = { current: undefined }
+  function Probe({ options }: { options: ScrollOptions }) {
+    ref.current = useVirtuosoScroll(options)
+    return null
+  }
+  const utils = render(<Probe options={initialOptions} />)
+  return {
+    get current(): HookApi {
+      if (!ref.current) throw new Error("Probe did not capture the hook return value")
+      return ref.current
+    },
+    rerender: (options: ScrollOptions) => act(() => utils.rerender(<Probe options={options} />)),
+  }
+}
+
+function makeKeys(prefixes: number[]): string[] {
+  return prefixes.map((n) => `e${n}`)
+}
+
 function renderHookWithScroller(
   options: Parameters<typeof useVirtuosoScroll>[0],
   scrollerEl: HTMLDivElement,
@@ -73,6 +98,51 @@ function renderHookWithScroller(
 }
 
 describe("useVirtuosoScroll", () => {
+  it("re-anchors firstItemIndex when the window slides forward on cold first visit", () => {
+    // Cold first visit: the list mounts off stale IDB data, then the bootstrap
+    // response slides the window forward — the oldest rows drop as the floor
+    // moves up and newer rows append, so the item count is unchanged. A
+    // count-growth heuristic does nothing here, leaving firstItemIndex stale so
+    // the surviving rows shift virtual index and Virtuoso jumps the viewport.
+    // The anchor-based compensation must shift firstItemIndex by the same
+    // amount the surviving rows moved.
+    const stale: ScrollOptions = {
+      itemCount: 50,
+      getItemKey: (i) => makeKeys(Array.from({ length: 50 }, (_, n) => n))[i],
+      resetKey: "stream_1",
+    }
+    const harness = renderScrollHook({ itemCount: 0, getItemKey: () => "", resetKey: "stream_1" })
+
+    // IDB live query resolves with the stale window e0..e49.
+    harness.rerender(stale)
+    const base = harness.current.firstItemIndex
+
+    // Bootstrap resolves: drop the 10 oldest (e0..e9), append 10 newer
+    // (e50..e59). e10 was at index 10 and is now at index 0.
+    const slidKeys = makeKeys(Array.from({ length: 50 }, (_, n) => n + 10))
+    harness.rerender({ itemCount: 50, getItemKey: (i) => slidKeys[i], resetKey: "stream_1" })
+
+    // To keep the surviving anchor (e10) at the same virtual index
+    // (firstItemIndex + index) after it moved from index 10 to index 0,
+    // firstItemIndex must increase by 10.
+    expect(harness.current.firstItemIndex).toBe(base + 10)
+  })
+
+  it("decrements firstItemIndex when older messages are prepended", () => {
+    const initialKeys = makeKeys(Array.from({ length: 50 }, (_, n) => n + 10))
+    const harness = renderScrollHook({ itemCount: 0, getItemKey: () => "", resetKey: "stream_1" })
+
+    harness.rerender({ itemCount: 50, getItemKey: (i) => initialKeys[i], resetKey: "stream_1" })
+    const base = harness.current.firstItemIndex
+
+    // Prepend 10 older messages (e0..e9). The anchor e10 moves from index 0 to
+    // index 10, so firstItemIndex must decrease by 10 to hold its position.
+    const prependedKeys = makeKeys(Array.from({ length: 60 }, (_, n) => n))
+    harness.rerender({ itemCount: 60, getItemKey: (i) => prependedKeys[i], resetKey: "stream_1" })
+
+    expect(harness.current.firstItemIndex).toBe(base - 10)
+  })
+
   it("does NOT keep snapping to LAST on every measurement fire during a deep-link jump", async () => {
     // Regression: deep-link to an old message. skipInitialScroll=true keeps
     // the user away from the bottom on initial render, but Virtuoso emits a
