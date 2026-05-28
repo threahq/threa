@@ -915,13 +915,14 @@ export class ThreaDatabase extends Dexie {
     })
 
     // v32: Generic resource-label assignments. Viewer-scoped rows (only the
-    // current user's) so reads mirror private-label visibility.
-    // [workspaceId+resourceType+resourceId] drives "labels on this resource";
-    // [workspaceId+labelId] drives "resources carrying this label" (e.g. when a
-    // label is deleted we drop its assignments without scanning).
+    // current user's) so reads mirror private-label visibility. Per-resource
+    // reads ("labels on this resource") go through the in-memory workspace
+    // cache like every other workspace entity, not a Dexie query, so the only
+    // indexes that earn their keep are `workspaceId` (reconcile + stale-sweep
+    // scope) and `labelId` (drop a deleted label's assignments without a full
+    // scan).
     this.version(32).stores({
-      labelAssignments:
-        "id, workspaceId, labelId, resourceId, [workspaceId+resourceType+resourceId], [workspaceId+labelId], [workspaceId+userId], _cachedAt",
+      labelAssignments: "id, workspaceId, labelId, _cachedAt",
     })
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
