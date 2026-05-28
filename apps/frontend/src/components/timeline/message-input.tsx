@@ -31,6 +31,7 @@ import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent } from "@threa/types"
 import type { PendingAttachment } from "@/hooks/use-attachments"
+import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 
 interface MessageInputProps {
   workspaceId: string
@@ -689,6 +690,7 @@ function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason
           This replaces a previous ref-counted React state mechanism that was prone to
           leaks across hydration races and virtualization cycles. */}
       <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
+        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!stream?.e2eEnabled} />
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>

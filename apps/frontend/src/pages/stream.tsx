@@ -32,6 +32,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { TimelineView } from "@/components/timeline"
+import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
@@ -131,6 +132,7 @@ export function StreamPage() {
   }
 
   const isScratchpad = stream?.type === StreamTypes.SCRATCHPAD
+  const isEncryptedScratchpad = isScratchpad && !!stream?.e2eEnabled
   const isArchived = stream?.archivedAt != null
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
@@ -366,6 +368,7 @@ export function StreamPage() {
           <SidebarToggle location="page" />
           {headerTitle}
           {companionModeIndicator}
+          {isEncryptedScratchpad && !isDraft && <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted />}
           {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
             <Badge variant="secondary">{getStreamTypeLabel(stream.type)}</Badge>
           )}

@@ -533,6 +533,29 @@ export interface CachedLabelMembership {
   _cachedAt: number
 }
 
+/**
+ * "Keep me unlocked on this device" record. Persists the UNWRAPPED X25519
+ * private key as a NON-EXTRACTABLE `CryptoKey` (structured-clone-serializable
+ * native key) so a page reload can resume the unlocked session without the
+ * passphrase / Argon2id step.
+ *
+ * Security note: the key is non-extractable — even an attacker with this IDB
+ * record cannot read the raw private bytes back out (`crypto.subtle.exportKey`
+ * rejects); it stays usable only for in-process HPKE decryption. The presence
+ * of a row here IS the "this device is trusted" state. `lock()` / sign-out
+ * delete it. `keyId` is stored so a server-side key rotation can be detected
+ * and the now-stale device key discarded.
+ */
+export interface CachedE2eDeviceKey {
+  id: string // `${workspaceId}:${userId}` — deterministic, one trusted key per user
+  workspaceId: string
+  userId: string
+  keyId: string
+  publicKey: string // base64 — matched against the server key to detect rotation
+  privateKey: CryptoKey // non-extractable; stored via structured clone
+  trustedAt: string
+}
+
 export interface CachedWorkspaceMetadata {
   id: string // workspaceId
   workspaceId: string
@@ -585,6 +608,7 @@ export class ThreaDatabase extends Dexie {
   e2eKeys!: EntityTable<CachedE2eKey, "id">
   labels!: EntityTable<CachedLabel, "id">
   labelMemberships!: EntityTable<CachedLabelMembership, "id">
+  e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
 
   constructor(name: string) {
     super(name)
@@ -855,6 +879,14 @@ export class ThreaDatabase extends Dexie {
       labelMemberships: "id, workspaceId, labelId, userId, [workspaceId+userId], [workspaceId+labelId], _cachedAt",
     })
 
+    // v31: "keep me unlocked on this device" store. Holds the UNWRAPPED but
+    // NON-EXTRACTABLE private CryptoKey so a reload resumes the unlocked
+    // session without re-deriving the KEK. Distinct from `e2eKeys` (the
+    // wrapped bundle) because its lifecycle is device-trust, not key-cache.
+    this.version(31).stores({
+      e2eDeviceKeys: "id, [workspaceId+userId], workspaceId",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -918,6 +950,10 @@ export async function clearAllCachedData(): Promise<void> {
       db.e2eKeys.clear(),
       db.labels.clear(),
       db.labelMemberships.clear(),
+      // The persisted device key IS the unwrapped (non-extractable) private
+      // key — sign-out must drop it so the next account can't resume this
+      // identity's unlocked session.
+      db.e2eDeviceKeys.clear(),
       // Note: we keep pendingMessages to retry sending after re-login
     ])
   } finally {

@@ -37,8 +37,39 @@ export async function importRecipientPublicKey(raw: Uint8Array | ArrayBuffer): P
   return getSuite().kem.deserializePublicKey(buf)
 }
 
-export async function importRecipientPrivateKey(raw: Uint8Array | ArrayBuffer): Promise<CryptoKey> {
+/**
+ * PKCS#8 prefix for an X25519 private key: the fixed ASN.1 header that wraps
+ * the 32 raw private bytes. `@hpke/core`'s own X25519 primitive uses the same
+ * constant; we duplicate it here so the non-extractable import path can call
+ * `crypto.subtle.importKey` directly (the library's `deserializePrivateKey`
+ * always imports as extractable).
+ */
+const PKCS8_ALG_ID_X25519 = new Uint8Array([
+  0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+])
+
+/**
+ * Import the serialized X25519 private key for `hpke.open`.
+ *
+ * Pass `{ extractable: false }` to get a CryptoKey whose raw bytes can never
+ * be read back out (`crypto.subtle.exportKey` rejects) — it stays usable for
+ * decryption via `deriveBits`. This is the form persisted to IndexedDB for
+ * "keep me unlocked on this device": even with the IDB record, an attacker
+ * cannot recover the private key material. The default (`extractable: true`)
+ * matches the underlying library and is what rotation needs to re-wrap.
+ */
+export async function importRecipientPrivateKey(
+  raw: Uint8Array | ArrayBuffer,
+  opts?: { extractable?: boolean }
+): Promise<CryptoKey> {
   const buf = raw instanceof Uint8Array ? raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) : raw
+  if (opts?.extractable === false) {
+    const rawPriv = new Uint8Array(buf)
+    const pkcs8 = new Uint8Array(PKCS8_ALG_ID_X25519.length + rawPriv.length)
+    pkcs8.set(PKCS8_ALG_ID_X25519, 0)
+    pkcs8.set(rawPriv, PKCS8_ALG_ID_X25519.length)
+    return crypto.subtle.importKey("pkcs8", pkcs8, { name: "X25519" }, false, ["deriveBits"])
+  }
   return getSuite().kem.deserializePrivateKey(buf)
 }
 

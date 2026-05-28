@@ -64,6 +64,7 @@ import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-s
 import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
+import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
@@ -366,39 +367,41 @@ export function WorkspaceLayout() {
                       <PreferencesProvider workspaceId={workspaceId}>
                         <SettingsProvider>
                           <WorkspaceKeyboardHandler onOpenSwitcher={openSwitcher} currentStreamId={streamId}>
-                            <QuickSwitcherProvider openSwitcher={openSwitcher}>
-                              <PanelProvider>
-                                <MediaGalleryProvider>
-                                  <TraceProvider>
-                                    <SidebarProvider>
-                                      <SidebarKeyboardHandler />
-                                      <CoordinatedLoadingGate>
-                                        <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
-                                          <MainContentGate>
-                                            <Outlet />
-                                          </MainContentGate>
-                                        </AppShell>
-                                      </CoordinatedLoadingGate>
-                                    </SidebarProvider>
-                                    <QuickSwitcher
-                                      workspaceId={workspaceId}
-                                      open={switcherOpen}
-                                      onOpenChange={setSwitcherOpen}
-                                      initialMode={switcherMode}
-                                    />
-                                    <SettingsDialog />
-                                    <WorkspaceSettingsDialog workspaceId={workspaceId} />
-                                    <AccountSwitcherDialog />
-                                    <LogoutScopeDialog />
-                                    <StreamSettingsDialog workspaceId={workspaceId} />
-                                    <CreateChannelDialog workspaceId={workspaceId} />
-                                    <AttachmentExplorer workspaceId={workspaceId} />
-                                    <TraceDialogContainer />
-                                    <Toaster />
-                                  </TraceProvider>
-                                </MediaGalleryProvider>
-                              </PanelProvider>
-                            </QuickSwitcherProvider>
+                            <E2eUnlockProvider workspaceId={workspaceId}>
+                              <QuickSwitcherProvider openSwitcher={openSwitcher}>
+                                <PanelProvider>
+                                  <MediaGalleryProvider>
+                                    <TraceProvider>
+                                      <SidebarProvider>
+                                        <SidebarKeyboardHandler />
+                                        <CoordinatedLoadingGate>
+                                          <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
+                                            <MainContentGate>
+                                              <Outlet />
+                                            </MainContentGate>
+                                          </AppShell>
+                                        </CoordinatedLoadingGate>
+                                      </SidebarProvider>
+                                      <QuickSwitcher
+                                        workspaceId={workspaceId}
+                                        open={switcherOpen}
+                                        onOpenChange={setSwitcherOpen}
+                                        initialMode={switcherMode}
+                                      />
+                                      <SettingsDialog />
+                                      <WorkspaceSettingsDialog workspaceId={workspaceId} />
+                                      <AccountSwitcherDialog />
+                                      <LogoutScopeDialog />
+                                      <StreamSettingsDialog workspaceId={workspaceId} />
+                                      <CreateChannelDialog workspaceId={workspaceId} />
+                                      <AttachmentExplorer workspaceId={workspaceId} />
+                                      <TraceDialogContainer />
+                                      <Toaster />
+                                    </TraceProvider>
+                                  </MediaGalleryProvider>
+                                </PanelProvider>
+                              </QuickSwitcherProvider>
+                            </E2eUnlockProvider>
                           </WorkspaceKeyboardHandler>
                         </SettingsProvider>
                       </PreferencesProvider>

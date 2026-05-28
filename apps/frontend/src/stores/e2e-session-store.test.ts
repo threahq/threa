@@ -6,6 +6,7 @@ import {
   requireUnlockedPrivateKey,
   resetE2eSessionStoreCache,
   rotatePassphrase,
+  setDeviceTrust,
   setupNewKey,
   unlock,
 } from "./e2e-session-store"
@@ -58,9 +59,15 @@ beforeEach(() => {
 
 afterEach(async () => {
   resetE2eSessionStoreCache()
-  await db.e2eKeys.clear()
+  await Promise.all([db.e2eKeys.clear(), db.e2eDeviceKeys.clear()])
   vi.restoreAllMocks()
 })
+
+/** Simulate a page reload: drop in-memory state but keep IDB (device key + bundle). */
+async function reload(): Promise<void> {
+  resetE2eSessionStoreCache()
+  await loadE2eKeyForUser(WORKSPACE_ID, USER_ID)
+}
 
 describe("e2e session store", () => {
   it("transitions to no-key when the server reports no active key", async () => {
@@ -69,7 +76,7 @@ describe("e2e session store", () => {
   })
 
   it("setupNewKey leaves the store unlocked with the matching keyId", async () => {
-    await setupNewKey(WORKSPACE_ID, USER_ID, "correct-horse-battery-staple", FAST_PARAMS)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "correct-horse-battery-staple", { params: FAST_PARAMS })
     const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
     expect(state.status).toBe("unlocked")
     expect(state.keyId).toBe(serverKey?.keyId)
@@ -83,8 +90,8 @@ describe("e2e session store", () => {
   })
 
   it("lock drops the in-memory private key but keeps the wrapped bundle cached", async () => {
-    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", FAST_PARAMS)
-    lock(WORKSPACE_ID, USER_ID)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
     const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
     expect(state.status).toBe("locked")
     expect(state.privateKey).toBeNull()
@@ -93,8 +100,8 @@ describe("e2e session store", () => {
   })
 
   it("unlock with the correct passphrase restores the unwrapped private key", async () => {
-    await setupNewKey(WORKSPACE_ID, USER_ID, "correct-passphrase", FAST_PARAMS)
-    lock(WORKSPACE_ID, USER_ID)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "correct-passphrase", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
 
     await unlock(WORKSPACE_ID, USER_ID, "correct-passphrase")
     const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
@@ -103,8 +110,8 @@ describe("e2e session store", () => {
   })
 
   it("unlock with the wrong passphrase leaves the store locked and surfaces an error", async () => {
-    await setupNewKey(WORKSPACE_ID, USER_ID, "right", FAST_PARAMS)
-    lock(WORKSPACE_ID, USER_ID)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "right", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
 
     await expect(unlock(WORKSPACE_ID, USER_ID, "wrong")).rejects.toThrow()
     const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
@@ -114,7 +121,7 @@ describe("e2e session store", () => {
   })
 
   it("rotatePassphrase replaces the wrapped bundle but keeps an unlocked session", async () => {
-    await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", FAST_PARAMS)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", { params: FAST_PARAMS })
     const initialKeyId = serverKey?.keyId
 
     await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-pp", "new-pp", FAST_PARAMS)
@@ -124,14 +131,14 @@ describe("e2e session store", () => {
     expect(state.keyId).toBe(serverKey?.keyId)
 
     // Old passphrase should no longer unlock anything; new passphrase should.
-    lock(WORKSPACE_ID, USER_ID)
+    await lock(WORKSPACE_ID, USER_ID)
     await expect(unlock(WORKSPACE_ID, USER_ID, "old-pp")).rejects.toThrow()
     await unlock(WORKSPACE_ID, USER_ID, "new-pp")
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
   })
 
   it("resetE2eSessionStoreCache drops in-memory state for every scope", async () => {
-    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", FAST_PARAMS)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
     resetE2eSessionStoreCache()
     const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
     expect(state.status).toBe("unknown")
@@ -152,7 +159,7 @@ describe("e2e session store", () => {
     })
 
     const loadPromise = loadE2eKeyForUser(WORKSPACE_ID, USER_ID)
-    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", FAST_PARAMS)
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
 
     releaseGet()
@@ -162,5 +169,134 @@ describe("e2e session store", () => {
     expect(state.status).toBe("unlocked")
     expect(state.privateKey).not.toBeNull()
     expect(state.keyId).toBe(serverKey?.keyId)
+  })
+})
+
+describe("e2e session store — keep me unlocked on this device", () => {
+  it("setupNewKey without trust does not persist a device key", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(false)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+
+    await reload()
+    // No device key → a reload must land back on the unlock prompt.
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("locked")
+  })
+
+  it("unlock with trustDevice persists the key and a reload resumes unlocked", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
+    const result = await unlock(WORKSPACE_ID, USER_ID, "pp", { trustDevice: true })
+    expect(result).toEqual({ trustRequested: true, trustPersisted: true })
+
+    const unlocked = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(unlocked.status).toBe("unlocked")
+    expect(unlocked.deviceTrusted).toBe(true)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeDefined()
+
+    await reload()
+    const restored = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(restored.status).toBe("unlocked")
+    expect(restored.privateKey).not.toBeNull()
+    expect(restored.deviceTrusted).toBe(true)
+    // The restored key must actually work for decryption.
+    expect(() => requireUnlockedPrivateKey(WORKSPACE_ID, USER_ID)).not.toThrow()
+  })
+
+  it("unlock survives a failed device-key persist: unlocked, untrusted, no error", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
+
+    // Simulate a browser that can't structured-clone a CryptoKey into IDB
+    // (Firefox/private mode, quota, blocked DB) — the device-key write rejects.
+    vi.spyOn(db.e2eDeviceKeys, "put").mockRejectedValueOnce(new Error("idb put failed"))
+
+    const result = await unlock(WORKSPACE_ID, USER_ID, "pp", { trustDevice: true })
+
+    // The passphrase was correct, so the session is unlocked for this run — a
+    // persist failure must NOT be reported as a wrong-passphrase error.
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state.status).toBe("unlocked")
+    expect(state.privateKey).not.toBeNull()
+    expect(state.error).toBeNull()
+    // ...but the device was not actually kept unlocked.
+    expect(state.deviceTrusted).toBe(false)
+    expect(result).toEqual({ trustRequested: true, trustPersisted: false })
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+  })
+
+  it("setupNewKey with trustDevice persists a usable, non-extractable device key", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, trustDevice: true })
+    const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+    expect(row).toBeDefined()
+    expect(row!.privateKey).toBeInstanceOf(CryptoKey)
+    expect(row!.privateKey.extractable).toBe(false)
+    // Non-extractable means the raw bytes can never be read back out.
+    await expect(crypto.subtle.exportKey("pkcs8", row!.privateKey)).rejects.toThrow()
+  })
+
+  it("lock forgets the device key so a reload requires the passphrase again", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, trustDevice: true })
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeDefined()
+
+    await lock(WORKSPACE_ID, USER_ID)
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(false)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+
+    await reload()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("locked")
+  })
+
+  it("setDeviceTrust toggles persistence without re-entering the passphrase", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await setDeviceTrust(WORKSPACE_ID, USER_ID, true)
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(true)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeDefined()
+
+    await setDeviceTrust(WORKSPACE_ID, USER_ID, false)
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(false)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+    // Still unlocked in-memory — only the device persistence changed.
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+  })
+
+  it("setDeviceTrust(true) throws when the session is locked", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
+    await expect(setDeviceTrust(WORKSPACE_ID, USER_ID, true)).rejects.toThrow()
+  })
+
+  it("a server-side rotation discards the stale device key and relocks", async () => {
+    // Trust this device, then simulate another device rotating the key: the
+    // server now reports a different keyId than the one we persisted.
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, trustDevice: true })
+    serverKey = {
+      keyId: "e2ek_rotated_elsewhere",
+      publicKey: serverKey!.publicKey,
+      encryptedPrivateBundle: serverKey!.encryptedPrivateBundle,
+      kdfSalt: serverKey!.kdfSalt,
+      kdfParams: serverKey!.kdfParams,
+      createdAt: new Date().toISOString(),
+    }
+
+    await reload()
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state.status).toBe("locked")
+    expect(state.deviceTrusted).toBe(false)
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+  })
+
+  it("rotatePassphrase on a trusted device re-persists under the new keyId", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "old-pp", { params: FAST_PARAMS, trustDevice: true })
+    await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-pp", "new-pp", FAST_PARAMS)
+
+    const state = getE2eSessionState(WORKSPACE_ID, USER_ID)
+    expect(state.deviceTrusted).toBe(true)
+    const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+    expect(row?.keyId).toBe(state.keyId)
+
+    // The re-persisted key survives a reload (no relock from a phantom rotation).
+    await reload()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
   })
 })
