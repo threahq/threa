@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
 import {
   ResponsiveDialog,
@@ -19,6 +20,8 @@ interface PassphraseUnlockModalProps {
   open: boolean
   workspaceId: string
   userId: string
+  /** Initial checked state of "keep me unlocked on this device". */
+  defaultTrustDevice?: boolean
   onOpenChange: (open: boolean) => void
   onUnlocked?: () => void
 }
@@ -32,6 +35,7 @@ export function PassphraseUnlockModal({
   open,
   workspaceId,
   userId,
+  defaultTrustDevice = true,
   onOpenChange,
   onUnlocked,
 }: PassphraseUnlockModalProps) {
@@ -40,6 +44,12 @@ export function PassphraseUnlockModal({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fingerprint, setFingerprint] = useState<string | null>(null)
+  const [trustDevice, setTrustDevice] = useState(defaultTrustDevice)
+
+  // Reset the toggle to the caller's default each time the modal opens.
+  useEffect(() => {
+    if (open) setTrustDevice(defaultTrustDevice)
+  }, [open, defaultTrustDevice])
 
   // Recompute the fingerprint whenever the active public key changes
   // (cross-device rotation can swap it under us while the modal is open).
@@ -75,7 +85,7 @@ export function PassphraseUnlockModal({
     setSubmitting(true)
     setError(null)
     try {
-      await unlock(workspaceId, userId, passphrase)
+      await unlock(workspaceId, userId, passphrase, { trustDevice })
       toast.success("Encrypted scratchpads unlocked")
       reset()
       onUnlocked?.()
@@ -115,6 +125,20 @@ export function PassphraseUnlockModal({
                 aria-invalid={error !== null}
               />
               {error && <p className="text-xs text-destructive">{error}</p>}
+            </div>
+            <div className="flex items-start gap-2 text-sm">
+              <Checkbox
+                id="e2e-unlock-trust-device"
+                checked={trustDevice}
+                onCheckedChange={(checked) => setTrustDevice(checked === true)}
+                className="mt-0.5"
+              />
+              <Label htmlFor="e2e-unlock-trust-device" className="cursor-pointer font-normal leading-snug">
+                Keep me unlocked on this device
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Skips the passphrase next time on this device. Don't use on shared or public computers.
+                </span>
+              </Label>
             </div>
           </ResponsiveDialogBody>
           <ResponsiveDialogFooter className="gap-2 px-6 pb-6">

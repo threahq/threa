@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useParams } from "react-router-dom"
 import { Lock, LockOpen, ShieldAlert, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth } from "@/auth"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -15,9 +17,8 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { lock, loadE2eKeyForUser, revokeKeyForUser, useE2eSession } from "@/stores/e2e-session-store"
-import { PassphraseSetupModal } from "./passphrase-setup-modal"
-import { PassphraseUnlockModal } from "./passphrase-unlock-modal"
+import { lock, revokeKeyForUser, setDeviceTrust, useE2eSession } from "@/stores/e2e-session-store"
+import { useE2eUnlock } from "./e2e-unlock-provider"
 
 interface EncryptedScratchpadsSectionProps {
   workspaceId: string
@@ -26,14 +27,22 @@ interface EncryptedScratchpadsSectionProps {
 
 function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScratchpadsSectionProps) {
   const session = useE2eSession(workspaceId, userId)
-  const [setupOpen, setSetupOpen] = useState(false)
-  const [unlockOpen, setUnlockOpen] = useState(false)
+  const { openSetup, openUnlock } = useE2eUnlock()
   const [revokeOpen, setRevokeOpen] = useState(false)
   const [revoking, setRevoking] = useState(false)
+  const [trustPending, setTrustPending] = useState(false)
 
-  useEffect(() => {
-    void loadE2eKeyForUser(workspaceId, userId)
-  }, [workspaceId, userId])
+  const handleTrustChange = async (next: boolean) => {
+    setTrustPending(true)
+    try {
+      await setDeviceTrust(workspaceId, userId, next)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update device trust"
+      toast.error(message)
+    } finally {
+      setTrustPending(false)
+    }
+  }
 
   const handleRevoke = async () => {
     setRevoking(true)
@@ -96,7 +105,7 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
 
       {session.status === "no-key" && (
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setSetupOpen(true)}>
+          <Button size="sm" onClick={() => openSetup({ defaultTrustDevice: false })}>
             Set up encryption
           </Button>
         </div>
@@ -104,7 +113,11 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
 
       {(session.status === "locked" || session.status === "unlocking") && (
         <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => setUnlockOpen(true)} disabled={session.status === "unlocking"}>
+          <Button
+            size="sm"
+            onClick={() => openUnlock({ defaultTrustDevice: false })}
+            disabled={session.status === "unlocking"}
+          >
             <LockOpen className="mr-1 h-4 w-4" />
             Unlock
           </Button>
@@ -115,19 +128,32 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
       )}
 
       {session.status === "unlocked" && (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" onClick={() => lock(workspaceId, userId)}>
-            <Lock className="mr-1 h-4 w-4" />
-            Lock now
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setRevokeOpen(true)}>
-            Revoke key
-          </Button>
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2.5">
+            <Label htmlFor="e2e-trust-device" className="cursor-pointer font-normal leading-snug">
+              Keep me unlocked on this device
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Skips the passphrase next time on this device. Don't enable on shared or public computers.
+              </span>
+            </Label>
+            <Switch
+              id="e2e-trust-device"
+              checked={session.deviceTrusted}
+              disabled={trustPending}
+              onCheckedChange={(next) => void handleTrustChange(next)}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => void lock(workspaceId, userId)}>
+              <Lock className="mr-1 h-4 w-4" />
+              Lock now
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setRevokeOpen(true)}>
+              Revoke key
+            </Button>
+          </div>
         </div>
       )}
-
-      <PassphraseSetupModal open={setupOpen} workspaceId={workspaceId} userId={userId} onOpenChange={setSetupOpen} />
-      <PassphraseUnlockModal open={unlockOpen} workspaceId={workspaceId} userId={userId} onOpenChange={setUnlockOpen} />
 
       <ResponsiveAlertDialog open={revokeOpen} onOpenChange={(next) => !revoking && setRevokeOpen(next)}>
         <ResponsiveAlertDialogContent>

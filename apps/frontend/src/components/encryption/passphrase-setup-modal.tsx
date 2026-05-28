@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -21,6 +21,8 @@ interface PassphraseSetupModalProps {
   open: boolean
   workspaceId: string
   userId: string
+  /** Initial checked state of "keep me unlocked on this device". */
+  defaultTrustDevice?: boolean
   onOpenChange: (open: boolean) => void
   onSetupComplete?: () => void
 }
@@ -64,13 +66,20 @@ export function PassphraseSetupModal({
   open,
   workspaceId,
   userId,
+  defaultTrustDevice = true,
   onOpenChange,
   onSetupComplete,
 }: PassphraseSetupModalProps) {
   const [passphrase, setPassphrase] = useState("")
   const [confirm, setConfirm] = useState("")
   const [acknowledged, setAcknowledged] = useState(false)
+  const [trustDevice, setTrustDevice] = useState(defaultTrustDevice)
   const [submitting, setSubmitting] = useState(false)
+
+  // Reset the toggle to the caller's default each time the modal opens.
+  useEffect(() => {
+    if (open) setTrustDevice(defaultTrustDevice)
+  }, [open, defaultTrustDevice])
 
   const passphraseTooShort = passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH
   const mismatched = confirm.length > 0 && passphrase !== confirm
@@ -87,6 +96,7 @@ export function PassphraseSetupModal({
     setPassphrase("")
     setConfirm("")
     setAcknowledged(false)
+    setTrustDevice(defaultTrustDevice)
     setSubmitting(false)
   }
 
@@ -101,7 +111,7 @@ export function PassphraseSetupModal({
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      await setupNewKey(workspaceId, userId, passphrase)
+      await setupNewKey(workspaceId, userId, passphrase, { trustDevice })
       toast.success("Encrypted scratchpads enabled")
       reset()
       onSetupComplete?.()
@@ -171,6 +181,21 @@ export function PassphraseSetupModal({
               />
               <Label htmlFor="e2e-acknowledged" className="cursor-pointer font-normal leading-snug">
                 I understand that losing this passphrase means losing access to my encrypted scratchpads permanently.
+              </Label>
+            </div>
+
+            <div className="flex items-start gap-2 text-sm">
+              <Checkbox
+                id="e2e-setup-trust-device"
+                checked={trustDevice}
+                onCheckedChange={(checked) => setTrustDevice(checked === true)}
+                className="mt-0.5"
+              />
+              <Label htmlFor="e2e-setup-trust-device" className="cursor-pointer font-normal leading-snug">
+                Keep me unlocked on this device
+                <span className="mt-0.5 block text-xs text-muted-foreground">
+                  Skips the passphrase next time on this device. Don't use on shared or public computers.
+                </span>
               </Label>
             </div>
           </ResponsiveDialogBody>
