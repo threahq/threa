@@ -15,6 +15,24 @@ function setVisibility(state: DocumentVisibilityState) {
   document.dispatchEvent(new Event("visibilitychange"))
 }
 
+function blurWindow() {
+  window.dispatchEvent(new Event("blur"))
+}
+
+function focusWindow() {
+  window.dispatchEvent(new Event("focus"))
+}
+
+function pageHide() {
+  window.dispatchEvent(new Event("pagehide"))
+}
+
+function pageShow(persisted: boolean) {
+  const event = new Event("pageshow")
+  Object.defineProperty(event, "persisted", { value: persisted, configurable: true })
+  window.dispatchEvent(event)
+}
+
 function makeWrapper(queryClient: QueryClient, route: string) {
   return function Wrapper({ children }: { children: ReactNode }) {
     return createElement(
@@ -124,6 +142,44 @@ describe("usePageResumeRefresh", () => {
     })
 
     expect(invalidateSpy).not.toHaveBeenCalled()
+  })
+
+  it("invalidates active stream bootstrap when the window regains focus (desktop app-switch)", () => {
+    const queryClient = new QueryClient()
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries")
+
+    renderHook(() => usePageResumeRefresh(), {
+      wrapper: makeWrapper(queryClient, "/w/ws_1/s/stream_1"),
+    })
+
+    act(() => {
+      blurWindow()
+      vi.advanceTimersByTime(6_000)
+      focusWindow()
+    })
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceKeys.bootstrap("ws_1") })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: streamKeys.bootstrap("ws_1", "stream_1") })
+    expect(invalidateSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it("invalidates workspace + active stream bootstrap when the app is restored from bfcache", () => {
+    const queryClient = new QueryClient()
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries")
+
+    renderHook(() => usePageResumeRefresh(), {
+      wrapper: makeWrapper(queryClient, "/w/ws_1/s/stream_1"),
+    })
+
+    act(() => {
+      pageHide()
+      vi.advanceTimersByTime(6_000)
+      pageShow(true)
+    })
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceKeys.bootstrap("ws_1") })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: streamKeys.bootstrap("ws_1", "stream_1") })
+    expect(invalidateSpy).toHaveBeenCalledTimes(2)
   })
 
   it("invalidates panel stream bootstraps in addition to the route stream", () => {
