@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { LabelableResourceTypes, Visibilities } from "@threa/types"
 import { ServicesProvider, type LabelService } from "@/contexts"
 import * as authModule from "@/auth"
@@ -149,6 +150,18 @@ describe("LabelPicker", () => {
     expect(screen.queryByRole("checkbox", { name: "Shared" })).not.toBeInTheDocument()
     // The untouched row keeps its checkbox — pending is tracked per label.
     expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
+  })
+
+  it("surfaces an error toast when a toggle fails instead of silently snapping back", async () => {
+    const toastError = vi.spyOn(toast, "error").mockImplementation(() => "id")
+    assign.mockRejectedValue(new Error("network down"))
+    mountPicker()
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Shared" }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Failed to apply label"))
+    // The failed toggle left the box unchecked — nothing was persisted.
+    expect(screen.getByRole("checkbox", { name: "Shared" })).not.toBeChecked()
   })
 
   it("filters the list by the search query", () => {

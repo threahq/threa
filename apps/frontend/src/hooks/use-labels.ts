@@ -1,5 +1,6 @@
 import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { useAuth } from "@/auth"
 import { useLabelService } from "@/contexts"
 import { db, type CachedLabel, type CachedLabelMembership, type CachedLabelAssignment } from "@/db"
@@ -413,6 +414,9 @@ export function useAssignLabel(workspaceId: string) {
       void persistAssignment(assignment)
       queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
     },
+    // The picker isn't optimistic — on failure nothing is written, so without
+    // this the box just silently snaps back. Surface it instead of swallowing.
+    onError: () => toast.error("Failed to apply label"),
   })
 }
 
@@ -432,5 +436,6 @@ export function useUnassignLabel(workspaceId: string) {
       if (currentUserId) void removeAssignment(workspaceId, resourceType, resourceId, labelId, currentUserId)
       queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
     },
+    onError: () => toast.error("Failed to remove label"),
   })
 }
