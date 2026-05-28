@@ -375,8 +375,11 @@ export const AGENT_STEP_TYPES = [
   "linear_access",
   "message_sent",
   "message_edited",
+  "response",
   "tool_call",
   "tool_error",
+  "rate_limited",
+  "rate_limit_retry",
 ] as const
 export type AgentStepType = (typeof AGENT_STEP_TYPES)[number]
 
@@ -391,8 +394,11 @@ export const AgentStepTypes = {
   LINEAR_ACCESS: "linear_access",
   MESSAGE_SENT: "message_sent",
   MESSAGE_EDITED: "message_edited",
+  RESPONSE: "response",
   TOOL_CALL: "tool_call",
   TOOL_ERROR: "tool_error",
+  RATE_LIMITED: "rate_limited",
+  RATE_LIMIT_RETRY: "rate_limit_retry",
 } as const satisfies Record<string, AgentStepType>
 
 // Agent reconsideration decision values
