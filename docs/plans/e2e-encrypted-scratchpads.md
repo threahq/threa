@@ -25,8 +25,8 @@ This is what makes the product safe enough for Kris's wife (private journaling a
 ## Non-goals (be loud about these)
 
 - **Defending against the LLM provider.** The provider that runs the inference necessarily sees the prompt. We narrow trust to that one party and prefer zero-retention enterprise tiers, but we do not pretend the LLM provider is blind.
-- **Hiding metadata.** Threa still sees: which user owns the scratchpad, when messages were sent, how big they are, who the invited agent is, whether an invocation succeeded. Reducing this is a v2+ problem (padding, cover traffic).
-- **Group / multi-user E2E.** Scratchpads are 1-to-1 (user ↔ agent). Channels and DMs are out of scope for v1.
+- **Hiding metadata.** Threa still sees: which user owns the scratchpad, when messages were sent, how big they are, which actors are invited, whether an invocation succeeded. Reducing this is a v2+ problem (padding, cover traffic).
+- **Group / multi-_human_ E2E.** A scratchpad has exactly one human owner; the invited agents are a set (0..N actors, e.g. a bot and the enclave together). Multi-_human_ E2E — channels and DMs shared across people — is out of scope for v1.
 - **Post-compromise security.** v1 uses per-message random keys wrapped to long-lived identity keys (good forward secrecy, no PCS). A Signal-style ratchet is a later phase.
 - **Recovery without the user's passphrase.** Lose the passphrase, lose the scratchpad. v1 accepts that. (Social / hardware recovery is a future addition.)
 
@@ -102,7 +102,7 @@ EncryptedMessage {
 }
 ```
 
-`recipients` is the list of everyone who can read this message — for a scratchpad that is normally `[UIK, agent-key]`. The same envelope shape covers user-to-user E2E if we ever ship it.
+`recipients` is the list of everyone who can read this message — for a scratchpad that is `[UIK, ...one key per invited actor]` (normally just the owner plus a single agent, but the set generalizes to several actors). The same envelope shape covers user-to-user E2E if we ever ship it.
 
 ### Storage
 
@@ -116,7 +116,7 @@ ALTER TABLE messages
   ADD COLUMN e2e_version SMALLINT;     -- protocol version for forward compat
 ```
 
-For E2E messages, `content_json` and `content_markdown` are `NULL`. Server enforces "if `e2e_scratchpads.stream_id = streamId`, then content columns must be NULL and ciphertext must be present", and vice versa.
+For E2E messages, `content_json` and `content_markdown` are `NULL`. Server enforces "if `e2e_streams.stream_id = streamId`, then content columns must be NULL and ciphertext must be present", and vice versa.
 
 New tables:
 
@@ -150,14 +150,29 @@ ALTER TABLE agent_session_steps
   ADD COLUMN e2e_version SMALLINT;
 -- For E2E sessions, `content` and `sources` are NULL and the encrypted blob carries both.
 
-CREATE TABLE e2e_scratchpads (
+-- The E2E flag lives on its own table (named `e2e_streams` in the code).
+-- A row here means "this stream is end-to-end encrypted"; its absence means
+-- plaintext. No agent columns — invited agents live in `e2e_stream_actors`.
+CREATE TABLE e2e_streams (
   stream_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL,
   enabled_at TIMESTAMPTZ NOT NULL,
+  owner_user_id TEXT NOT NULL,
   -- denormalized for fast checks in outbox handlers
-  owner_user_key_id TEXT NOT NULL,
-  invited_agent_kind TEXT NOT NULL,    -- 'bot' | 'enclave' | 'none'
-  invited_agent_key_id TEXT
+  owner_user_key_id TEXT NOT NULL
+);
+
+-- Invited non-human actors as a SET, not a scalar. Empty set = owner-only
+-- stream. Composite PK (no synthetic ULID) mirrors `stream_members`, the
+-- documented INV-2 exception for link tables. `kind` is TEXT validated in
+-- code (INV-3); `key_id` is NULL until that actor registers its public key.
+CREATE TABLE e2e_stream_actors (
+  workspace_id TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  kind TEXT NOT NULL,                  -- 'bot' | 'enclave'
+  key_id TEXT,                         -- the actor's pubkey id, set once registered
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (workspace_id, stream_id, kind)
 );
 ```
 
@@ -165,7 +180,7 @@ CREATE TABLE e2e_scratchpads (
 
 ### Server invariants
 
-- **INV-E1**: For any stream in `e2e_scratchpads`, every persisted `messages` row has `ciphertext IS NOT NULL` and `content_json IS NULL` and `content_markdown IS NULL`. Enforced at the repository layer + a check constraint.
+- **INV-E1**: For any stream in `e2e_streams`, every persisted `messages` row has `ciphertext IS NOT NULL` and `content_json IS NULL` and `content_markdown IS NULL`. Enforced at the repository layer + a check constraint.
 - **INV-E2**: Outbox handlers (companion, boundary, memo, naming, search-indexer, mention extractor) short-circuit when the stream is E2E. We add a single helper `isE2eStream(streamId)` they all consult.
 - **INV-E3**: The Pi remote / bot runtime endpoints never decrypt. They forward the envelope verbatim. **This includes `/bot-invocations/:id/steps`** — the server-side `pi_tool_trace` sanitizer (`apps/backend/src/features/public-api/handlers.ts:415-420`) does not run for E2E sessions because there is no plaintext to scrub.
 - **INV-E4**: Sidebar previews and push payloads carry no content for E2E streams. Server returns `"hasContent": true` only; client renders the preview by decrypting locally if it has the key cached.
@@ -475,7 +490,7 @@ Deliverable: a user can set up keys. Nothing else changes yet.
 
 ### Phase 1 — E2E flag + envelope plumbing on a scratchpad (no agent yet)
 
-- `e2e_scratchpads` table, `messages.ciphertext` + `messages.envelope` columns (additive, INV-17).
+- `e2e_streams` table, `messages.ciphertext` + `messages.envelope` columns (additive, INV-17).
 - New endpoint or extension: `POST /api/v1/streams/:id/messages` accepts `{ ciphertext, envelope, e2eVersion }` when the stream is E2E. Server rejects content fields on E2E streams.
 - **Opt-in UI**: `New encrypted scratchpad` command in the Quickswitcher (primary entry point); "Make this end-to-end encrypted" link on empty scratchpads as a secondary path; first-time-per-account onboarding modal; one-click confirm dialog thereafter on the header-link path.
 - **Visual treatment**: padlock chip in stream header, padlock + tooltip in sidebar, subtle background tint on the message list area, "Encrypted message…" placeholder in composer, recipients popover (will show just the user's UIK fingerprint until Phase 2).
@@ -551,6 +566,6 @@ Deliverable: Ariadne works inside an E2E scratchpad. The "private journaling aga
 
 The big architectural forks are decided above ("Decisions taken"). These remain:
 
-1. **E2E representation in the schema.** Per-scratchpad flag in `e2e_scratchpads` + additive message columns (current default), versus a separate stream type `e2e_scratchpad`. Flag is easier to roll out and lets us share UI surfaces; separate type makes it impossible for a server-side code path to accidentally treat E2E content as plaintext. Decide before Phase 1 lands.
+1. ~~**E2E representation in the schema.**~~ **Resolved (shipped Phase 1):** flag table (`e2e_streams`) + additive message columns, sharing the normal stream UI surfaces — not a separate stream type. INV-E1 (repository-layer + check-constraint enforcement) carries the "never treat E2E content as plaintext" guarantee that a separate type would have given structurally.
 2. **LLM provider for Ariadne E2E.** Keep OpenRouter (default) but restrict to providers offering zero-retention enterprise tiers, versus go direct to Anthropic (simpler attestation story, narrower model selection). Decide at Phase 5 kickoff alongside enclave platform.
 3. **Forward secrecy posture.** v1 plan uses per-message random keys wrapped to long-lived identity keys (good FS for content, no PCS). A Signal-style double-ratchet adds PCS but is multiple-PR work and isn't on the Phase 0–5 critical path. Revisit at Phase 6 unless an early adopter explicitly asks for it.
