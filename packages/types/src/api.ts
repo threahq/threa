@@ -12,6 +12,7 @@ import type {
   SavedStatus,
   AuthorType,
   ScheduledMessageStatus,
+  E2eKeyWrapRecipientKind,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent } from "./context-bag"
@@ -305,6 +306,44 @@ export interface CreateMessageInputE2e {
  * `ciphertext` field and gates each against the stream's E2E flag.
  */
 export type CreateMessageInput = CreateMessageInputJson | CreateMessageInputMarkdown | CreateMessageInputE2e
+
+/**
+ * One HPKE wrap of a stream's per-stream symmetric key (SSK) to a single
+ * recipient's long-term public key, for a given `keyGeneration`. The SSK
+ * never leaves the client in plaintext; the server stores these opaque wrap
+ * bytes (base64) and hands them back so a recipient can recover the SSK with
+ * its private key. See @threa/crypto `wrapStreamKey` / `unwrapStreamKey`.
+ */
+export interface E2eKeyWrap {
+  keyGeneration: number
+  recipientKeyId: string
+  recipientKind: E2eKeyWrapRecipientKind
+  /** Base64 HPKE encapsulation (`StreamKeyWrap.enc`). */
+  wrapEnc: string
+  /** Base64 HPKE-wrapped SSK bytes (`StreamKeyWrap.ct`). */
+  wrapCt: string
+}
+
+/**
+ * The owner's initial SSK wrap (generation 0), POSTed right after E2E stream
+ * creation. Its AAD binds to the server-minted stream id, which the client
+ * only learns from the create response — so it can't ride along in the create
+ * body. The recipient slot is the creator's UIK (`e2eOwnerKeyId`), derived
+ * server-side, so only the opaque wrap bytes are needed on the wire.
+ */
+export interface E2eOwnerKeyWrapInput {
+  wrapEnc: string
+  wrapCt: string
+}
+
+/** Response for fetching a stream's SSK wraps (a device recovering the SSK). */
+export interface E2eKeyWrapsResponse {
+  /** Generation new messages currently seal under (`e2e_streams.current_key_generation`). */
+  currentKeyGeneration: number
+  /** All wrap rows for the stream. The caller selects the one matching its
+   *  own `recipientKeyId` and the message's `keyGeneration`. */
+  wraps: E2eKeyWrap[]
+}
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown
 
 /**

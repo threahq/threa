@@ -209,6 +209,10 @@ export {
   E2E_ACTOR_KINDS,
   type E2eActorKind,
   E2eActorKinds,
+  // E2E key-wrap recipient kinds (user / bot / enclave)
+  E2E_KEY_WRAP_RECIPIENT_KINDS,
+  type E2eKeyWrapRecipientKind,
+  E2eKeyWrapRecipientKinds,
 } from "./constants"
 
 // Domain entities (wire format)
@@ -326,6 +330,9 @@ export type { AttachmentCategory } from "./attachment-categories"
 export type {
   // Streams
   CreateStreamInput,
+  E2eKeyWrap,
+  E2eOwnerKeyWrapInput,
+  E2eKeyWrapsResponse,
   UpdateStreamInput,
   UpdateCompanionModeInput,
   StreamBootstrap,

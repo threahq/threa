@@ -11,6 +11,7 @@ const ROW = {
   enabled_at: NOW,
   owner_user_id: "usr_1",
   owner_user_key_id: "e2ek_01",
+  current_key_generation: 0,
 }
 
 interface Captured {
@@ -81,6 +82,7 @@ describe("E2eStreamsRepository.getByStreamId", () => {
       enabledAt: NOW,
       ownerUserId: "usr_1",
       ownerUserKeyId: "e2ek_01",
+      currentKeyGeneration: 0,
     })
   })
 

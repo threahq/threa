@@ -23,6 +23,7 @@ import {
   StreamTypes,
   Visibilities,
   CompanionModes,
+  E2eKeyWrapRecipientKinds,
   type E2eActorKind,
   type StreamType,
   type Visibility,
@@ -32,7 +33,8 @@ import {
   type ContextBag,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
-import { E2eStreamsRepository, E2eStreamActorsRepository } from "../e2e-streams"
+import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
+import type { StreamE2eKeyWrap } from "../e2e-streams"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 
@@ -47,16 +49,28 @@ const createScratchpadParamsSchema = z.object({
   companionPersonaId: z.string().optional(),
 })
 
+/**
+ * E2E activation bundle for stream creation. Carries the owner's UIK key id;
+ * the flag row is written in the create transaction so a plaintext consumer
+ * can never race a window where the stream exists but its E2E flag does not
+ * (INV-E1). The generation-0 SSK wrap is stored in a follow-up call
+ * (`storeOwnerKeyWrap`) because its AAD binds to the server-minted stream id,
+ * which the client only learns from the create response.
+ */
+export interface E2eCreateParams {
+  ownerKeyId: string
+}
+
 export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema> & {
   /** Optional context-bag to attach to the new scratchpad. */
   contextBag?: ContextBag
   /**
    * Optional E2E activation. When present, the scratchpad row is inserted
-   * into `e2e_streams` in the same transaction so plaintext consumers
-   * cannot race a window where the stream exists but its E2E flag does not.
-   * The stream starts with no invited actors — only the owner can decrypt.
+   * into `e2e_streams` (and the owner SSK wrap into `stream_e2e_key_wraps`)
+   * in the same transaction. The stream starts with no invited actors — only
+   * the owner can decrypt.
    */
-  e2e?: { ownerKeyId: string }
+  e2e?: E2eCreateParams
 }
 
 const createChannelParamsSchema = z.object({
@@ -319,9 +333,7 @@ export class StreamService {
     })
   }
 
-  async create(
-    params: CreateStreamParams & { contextBag?: ContextBag; e2e?: { ownerKeyId: string } }
-  ): Promise<Stream> {
+  async create(params: CreateStreamParams & { contextBag?: ContextBag; e2e?: E2eCreateParams }): Promise<Stream> {
     switch (params.type) {
       case StreamTypes.SCRATCHPAD:
         return this.createScratchpad({
@@ -731,6 +743,69 @@ export class StreamService {
       })
 
       return stream
+    })
+  }
+
+  /**
+   * Fetch a stream's SSK wraps so a device can recover the per-stream key and
+   * decrypt history. Returns the generation new messages currently seal under
+   * plus every wrap row. The wraps are HPKE ciphertext (decryptable only with
+   * the matching private key), so it is safe to return the full set to any
+   * member; the caller selects the wrap matching its own key id + the
+   * message's generation. Membership is enforced by the handler before this
+   * call (`validateStreamAccess`).
+   */
+  async listE2eKeyWraps(
+    workspaceId: string,
+    streamId: string
+  ): Promise<{ currentKeyGeneration: number; wraps: StreamE2eKeyWrap[] }> {
+    return withClient(this.pool, async (client) => {
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      const wraps = await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId)
+      return { currentKeyGeneration: e2e.currentKeyGeneration, wraps }
+    })
+  }
+
+  /**
+   * Store the generation-0 SSK wrap the owner computed after learning the
+   * server-minted stream id (the wrap's AAD binds to that id). The slot is
+   * fully derived server-side from the E2E stream's owner key — the client
+   * only supplies the opaque HPKE bytes — so a caller can't address a wrap to
+   * a key they don't own. Idempotent: a retry that races the first write is a
+   * no-op (`ON CONFLICT DO NOTHING`), and a wrap that targets the wrong key
+   * id can never displace the real one.
+   */
+  async storeOwnerKeyWrap(
+    workspaceId: string,
+    streamId: string,
+    userId: string,
+    wrap: { wrapEnc: string; wrapCt: string }
+  ): Promise<void> {
+    await withClient(this.pool, async (client) => {
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2e.ownerUserId !== userId) {
+        throw new HttpError("Only the scratchpad owner can store its key wrap", {
+          status: 403,
+          code: "E2E_NOT_OWNER",
+        })
+      }
+      await StreamE2eKeyWrapsRepository.insertMany(client, [
+        {
+          workspaceId,
+          streamId,
+          keyGeneration: 0,
+          recipientKeyId: e2e.ownerUserKeyId,
+          recipientKind: E2eKeyWrapRecipientKinds.USER,
+          wrapEnc: wrap.wrapEnc,
+          wrapCt: wrap.wrapCt,
+        },
+      ])
     })
   }
 

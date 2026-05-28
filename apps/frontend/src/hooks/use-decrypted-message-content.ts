@@ -77,10 +77,19 @@ export function useDecryptedMessageContent(
     if (!needsDecrypt || !envelopePayload || !session.privateKey || !session.keyId) return
     void requestDecryption(
       eventId,
-      { contentMarkdown: envelopePayload.contentMarkdown ?? "", envelope: envelopePayload.envelope },
-      { privateKey: session.privateKey, recipientKeyId: session.keyId }
+      {
+        contentMarkdown: envelopePayload.contentMarkdown ?? "",
+        envelope: envelopePayload.envelope,
+        ciphertext: envelopePayload.ciphertext,
+      },
+      {
+        privateKey: session.privateKey,
+        recipientKeyId: session.keyId,
+        workspaceId,
+        streamId: event.streamId,
+      }
     )
-  }, [needsDecrypt, envelopePayload, session.privateKey, session.keyId, eventId])
+  }, [needsDecrypt, envelopePayload, session.privateKey, session.keyId, eventId, workspaceId, event.streamId])
 
   if (!envelopePayload) {
     const payload = event.payload as { contentMarkdown?: unknown; contentJson?: unknown } | undefined

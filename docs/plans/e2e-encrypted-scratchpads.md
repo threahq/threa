@@ -104,6 +104,30 @@ EncryptedMessage {
 
 `recipients` is the list of everyone who can read this message — for a scratchpad that is `[UIK, ...one key per invited actor]` (normally just the owner plus a single agent, but the set generalizes to several actors). The same envelope shape covers user-to-user E2E if we ever ship it.
 
+### Per-stream symmetric key (SSK) — the v2 message path
+
+The per-message fan-out above is **read-compatible only**. New messages seal under a **per-stream symmetric key (SSK)** instead, and the envelope on the wire is `e2eVersion: 2`. The fan-out shape (`recipients[]`) is what v1 readers still understand; the SSK shape replaces it for everything we now write.
+
+Why move off fan-out: with the fan-out envelope every message re-runs one HPKE seal _per recipient_ and stores the wrapped key inline, so the recipient set is baked into each message. Adding or removing an actor would mean rewriting history (or accepting that old messages stay readable by the old set). The SSK decouples the message payload from the recipient set:
+
+- **One AES-256 SSK per stream per `keyGeneration`.** Every message in that generation is AEAD-sealed once under the SSK — no per-recipient work on the message path.
+- **The SSK is HPKE-wrapped to each recipient's long-term key out-of-band**, not inline in the message. Wraps live in `stream_e2e_key_wraps` (below), one row per `(generation, recipient)`. A device fetches the wrap addressed to its UIK key id, HPKE-opens it with the in-memory private key, and caches the raw SSK for the unlocked session.
+- **Recipient-set changes roll the generation forward.** Inviting/removing an actor mints a fresh SSK at `generation + 1` and wraps it to the new set; history stays sealed under the old generation, which the removed actor can still open with the wrap it already holds (standard E2E reality, same as Phase 2's bot-revocation note). No history rewrite. For the SSK _foundation_ the generation is always `0` (owner-only; rotation is a later phase).
+
+```text
+StreamEnvelope (v2) {
+  v:             2,
+  keyGeneration: int,     // which SSK generation sealed this message
+  iv:            bytes,   // 12-byte AES-GCM nonce
+  aad:           bytes    // streamId || messageId || senderId (same binding as v1)
+}
+// ciphertext = AES-256-GCM(SSK[keyGeneration], payload, aad) is stored alongside, as in v1.
+```
+
+The wrap binds to the stream via its own AAD (`streamId || keyGeneration || recipientKeyId`), so a wrap can't be replayed onto another stream or generation. Because that AAD includes the **server-minted** `streamId`, the owner can't wrap the SSK at create time (it doesn't know the id yet) — see the two-phase create note under Phased delivery.
+
+`payload` is the same canonical JSON as v1.
+
 ### Storage
 
 New columns on `messages`:
@@ -159,7 +183,31 @@ CREATE TABLE e2e_streams (
   enabled_at TIMESTAMPTZ NOT NULL,
   owner_user_id TEXT NOT NULL,
   -- denormalized for fast checks in outbox handlers
-  owner_user_key_id TEXT NOT NULL
+  owner_user_key_id TEXT NOT NULL,
+  -- the SSK generation a new send must seal under; rolls forward on
+  -- recipient-set change. Always 0 for the owner-only SSK foundation.
+  current_key_generation INTEGER NOT NULL DEFAULT 0
+);
+
+-- HPKE-wrapped SSKs, one row per (generation, recipient). This is where the
+-- SSK lives at rest: the server only ever holds it wrapped to a recipient's
+-- long-term public key, never in plaintext. A device fetches the wrap matching
+-- its UIK key id and HPKE-opens it locally. `wrap_enc` is the HPKE encapsulated
+-- key, `wrap_ct` the wrapped SSK. Composite PK (no synthetic ULID surface)
+-- mirrors the other E2E link tables; `recipient_kind` is TEXT validated in code
+-- (INV-3). Writes are race-safe via ON CONFLICT DO NOTHING on the PK (INV-20),
+-- which also makes the post-create owner-wrap store idempotent.
+CREATE TABLE stream_e2e_key_wraps (
+  id TEXT PRIMARY KEY,                  -- skw_… (INV-2)
+  workspace_id TEXT NOT NULL,
+  stream_id TEXT NOT NULL,
+  key_generation INTEGER NOT NULL,
+  recipient_key_id TEXT NOT NULL,       -- the recipient pubkey id this wrap is addressed to
+  recipient_kind TEXT NOT NULL,         -- 'user' | 'bot' | 'enclave'
+  wrap_enc BYTEA NOT NULL,              -- HPKE encapsulated key
+  wrap_ct BYTEA NOT NULL,               -- HPKE-wrapped SSK
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (workspace_id, stream_id, key_generation, recipient_key_id)
 );
 
 -- Invited non-human actors as a SET, not a scalar. Empty set = owner-only
@@ -186,6 +234,8 @@ CREATE TABLE e2e_stream_actors (
 - **INV-E4**: Sidebar previews and push payloads carry no content for E2E streams. Server returns `"hasContent": true` only; client renders the preview by decrypting locally if it has the key cached.
 - **INV-E5**: Edit/delete operations on E2E messages re-encrypt; we never store a plaintext "edit history" diff.
 - **INV-E6**: For trace steps belonging to an E2E session, `agent_session_steps.content` and `agent_session_steps.sources` are `NULL`; ciphertext + envelope live in new sibling columns. `step_type`, `started_at`, `completed_at`, `tokens_used` stay plaintext (they are routing/UX metadata, not content).
+- **INV-E7**: The server never sees an SSK or any private key. It stores SSKs only HPKE-wrapped in `stream_e2e_key_wraps` and forwards `wrap_enc`/`wrap_ct` verbatim; wrapping and unwrapping happen only on clients/runtimes. Key-wrap writes are race-safe (ON CONFLICT DO NOTHING on the unique slot, INV-20), so a re-POSTed owner wrap is a no-op rather than an error.
+- **INV-E8**: A v2 message's `envelope.keyGeneration` must be `<= e2e_streams.current_key_generation` for its stream — you can read history sealed under an older generation, but you can only _write_ under the current one. The send path seals under the generation returned by the wraps endpoint; the server does not need the SSK to enforce this.
 
 ## Flows
 
@@ -504,6 +554,18 @@ Deliverable: a user can set up keys. Nothing else changes yet.
 
 Deliverable: I can encrypt a scratchpad, message myself across two browser tabs, keyword-search the result, see the lock indicators everywhere they need to appear, and bounce off the sharing block. Nothing visible to backend except ciphertext.
 
+### Phase 1.5 — SSK foundation (per-stream key, v2 message path)
+
+Migrates the Phase 1 message path off per-message recipient fan-out onto the per-stream symmetric key (see "Per-stream symmetric key (SSK)" above). This is the foundation rotation and multi-actor invites build on; v1 fan-out stays read-compatible so nothing already written breaks.
+
+- `stream_e2e_key_wraps` table + `e2e_streams.current_key_generation` column (additive, INV-17). `StreamE2eKeyWrapsRepository` with a set-based UNNEST `insertMany` (INV-56) that is idempotent per slot (INV-20) and a `listForStream` read; BYTEA crosses the boundary as base64.
+- New envelope version: send seals under the stream's SSK as `e2eVersion: 2`; the schema accepts both v2 (SSK) and v1 (fan-out) on read, and the two shapes are structurally disjoint so the union discriminates without a version literal.
+- **Two-phase E2E create.** The wrap AAD binds to the server-minted `streamId`, which the client doesn't know until create returns — so the owner can't wrap inline. The client POSTs create (E2E flag set atomically), learns the real `streamId`, mints the SSK, wraps it bound to that id, then POSTs the wrap to a dedicated `…/e2e/key-wraps` endpoint. `storeOwnerKeyWrap` validates the caller owns the stream and stores the `generation 0` owner wrap. The brief window where the stream has no wrap is benign: the stream is empty and the send path refuses until the SSK resolves.
+- Frontend: an in-memory SSK cache (fetch-and-unwrap, de-duplicated per slot, dropped on lock/account-switch like the decrypt cache) backs both "seal a new message under the current generation" and "open a historical message at its generation". Create seeds the cache with the SSK it just minted to skip an immediate round-trip.
+- Loopback-testable end to end: the v2 envelope the frontend produces is exactly what the backend schema accepts, and the same-user-across-devices flow round-trips through fetch → unwrap → open.
+
+Deliverable: new E2E messages seal under the per-stream key, old fan-out messages still decrypt, and the stream is ready to gain/lose recipients by rolling the generation forward (next).
+
 ### Phase 2 — Pi remote integration (messages + traces)
 
 - Extend `bot_runtime_instances` presence: runtime registers a fresh BIK pubkey on each session (already has `runtimeSessionId`).
@@ -568,4 +630,4 @@ The big architectural forks are decided above ("Decisions taken"). These remain:
 
 1. ~~**E2E representation in the schema.**~~ **Resolved (shipped Phase 1):** flag table (`e2e_streams`) + additive message columns, sharing the normal stream UI surfaces — not a separate stream type. INV-E1 (repository-layer + check-constraint enforcement) carries the "never treat E2E content as plaintext" guarantee that a separate type would have given structurally.
 2. **LLM provider for Ariadne E2E.** Keep OpenRouter (default) but restrict to providers offering zero-retention enterprise tiers, versus go direct to Anthropic (simpler attestation story, narrower model selection). Decide at Phase 5 kickoff alongside enclave platform.
-3. **Forward secrecy posture.** v1 plan uses per-message random keys wrapped to long-lived identity keys (good FS for content, no PCS). A Signal-style double-ratchet adds PCS but is multiple-PR work and isn't on the Phase 0–5 critical path. Revisit at Phase 6 unless an early adopter explicitly asks for it.
+3. **Forward secrecy posture.** The shipped path uses a per-stream symmetric key (SSK) per `keyGeneration`, HPKE-wrapped to long-lived identity keys; the generation rolls forward on recipient-set change. This trades the v1 per-message random key's per-message forward secrecy for a per-generation boundary, in exchange for cheap recipient changes without history rewrite. Neither gives PCS. A Signal-style double-ratchet adds both per-message FS and PCS but is multiple-PR work and isn't on the Phase 0–5 critical path. Revisit at Phase 6 unless an early adopter explicitly asks for it.

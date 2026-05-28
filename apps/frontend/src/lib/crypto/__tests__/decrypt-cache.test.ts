@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { clearDecryptCache, getCachedDecryption, requestDecryption, subscribeToDecryption } from "../decrypt-cache"
 import * as messageEnvelope from "../message-envelope"
 
-const STUB_OPTS = { privateKey: {} as CryptoKey, recipientKeyId: "e2ek_alice" }
+const STUB_OPTS = {
+  privateKey: {} as CryptoKey,
+  recipientKeyId: "e2ek_alice",
+  workspaceId: "ws_1",
+  streamId: "stream_1",
+}
 
 function stubDecrypt(returnValue: messageEnvelope.DecryptedMessageContent | null) {
   return vi.spyOn(messageEnvelope, "tryDecryptMessagePayload").mockResolvedValue(returnValue)

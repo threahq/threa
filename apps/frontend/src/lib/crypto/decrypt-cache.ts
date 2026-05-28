@@ -1,4 +1,4 @@
-import { tryDecryptMessagePayload, type DecryptedMessageContent } from "./message-envelope"
+import { tryDecryptMessagePayload, type DecryptedMessageContent, type DecryptMessageOpts } from "./message-envelope"
 
 /**
  * In-memory cache for decrypted E2E message payloads.
@@ -70,12 +70,14 @@ export function subscribeToDecryption(eventId: string, listener: () => void): ()
 export interface RequestDecryptionInput {
   contentMarkdown: string
   envelope: unknown
+  /** Base64 ciphertext — required for v2 SSK messages where it lives off-envelope. */
+  ciphertext?: string
 }
 
 export function requestDecryption(
   eventId: string,
   payload: RequestDecryptionInput,
-  opts: { privateKey: CryptoKey; recipientKeyId: string }
+  opts: DecryptMessageOpts
 ): Promise<DecryptCacheEntry> {
   const existing = entries.get(eventId)
   if (existing && existing.status !== "pending") return Promise.resolve(existing)

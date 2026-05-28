@@ -61,4 +61,5 @@ export {
   voiceSessionId,
   userEncryptionKeyId,
   enclaveRuntimeId,
+  streamE2eKeyWrapId,
 } from "@threa/backend-common"

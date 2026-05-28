@@ -378,7 +378,9 @@ export function StreamPage() {
           <SidebarToggle location="page" />
           {headerTitle}
           {companionModeIndicator}
-          {isEncryptedScratchpad && !isDraft && <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted />}
+          {isEncryptedScratchpad && !isDraft && (
+            <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
+          )}
           {stream && isScratchpad && !isDraft && (
             <InviteActorButton workspaceId={workspaceId!} stream={stream} kind="enclave" />
           )}

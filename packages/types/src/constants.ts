@@ -627,6 +627,19 @@ export const E2eActorKinds = {
   ENCLAVE: "enclave",
 } as const satisfies Record<string, E2eActorKind>
 
+// Who an SSK key-wrap row (`stream_e2e_key_wraps.recipient_kind`) is wrapped
+// to. Superset of `E2eActorKind`: the stream owner's UIK is a recipient too
+// ("user"), it is just not an *invited actor*. Stored as TEXT, validated in
+// code (INV-3).
+export const E2E_KEY_WRAP_RECIPIENT_KINDS = ["user", "bot", "enclave"] as const
+export type E2eKeyWrapRecipientKind = (typeof E2E_KEY_WRAP_RECIPIENT_KINDS)[number]
+
+export const E2eKeyWrapRecipientKinds = {
+  USER: "user",
+  BOT: "bot",
+  ENCLAVE: "enclave",
+} as const satisfies Record<string, E2eKeyWrapRecipientKind>
+
 /**
  * Floor for interaction-driven socket heartbeats. The frontend throttles
  * interaction-flagged heartbeats to this interval; the backend ignores

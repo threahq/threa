@@ -83,13 +83,34 @@ const e2eRecipientSchema = z.object({
   enc: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
   ct: z.string().min(1).max(MAX_E2E_RECIPIENT_FIELD_BYTES),
 })
-const e2eEnvelopeSchema = z.object({
+// v1 — per-message recipient fan-out (@threa/crypto `Envelope`). The message
+// key is wrapped to each recipient inline. Kept for read-compat; the SSK path
+// (v2) is the direction for new messages.
+const e2eEnvelopeV1Schema = z.object({
   v: z.number().int().positive(),
   ciphertext: z.string().min(1).max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
   iv: z.string().min(1).max(64),
   aad: z.string().max(4096),
   recipients: z.array(e2eRecipientSchema).min(1).max(MAX_E2E_RECIPIENTS),
 })
+
+// v2 — per-stream symmetric key (@threa/crypto `StreamEnvelope`). No inline
+// recipients: the SSK is wrapped out of band in `stream_e2e_key_wraps`. The
+// envelope carries only the framing; the AES-GCM ciphertext rides the
+// top-level `ciphertext` field. `keyGeneration` selects which SSK generation
+// (and therefore which wrap) opens it.
+const e2eEnvelopeV2Schema = z.object({
+  v: z.number().int().positive(),
+  keyGeneration: z.number().int().nonnegative(),
+  iv: z.string().min(1).max(64),
+  aad: z.string().min(1).max(4096),
+})
+
+// The two envelope shapes are structurally disjoint (v2 has `keyGeneration`
+// and no `recipients`; v1 has `recipients` and an inline `ciphertext`), so the
+// union discriminates without a version literal. v2 is tried first since it is
+// the path new messages take.
+const e2eEnvelopeSchema = z.union([e2eEnvelopeV2Schema, e2eEnvelopeV1Schema])
 const createMessageE2eToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),

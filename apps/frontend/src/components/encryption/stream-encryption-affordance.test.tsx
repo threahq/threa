@@ -1,10 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import type { E2eKeyWrapsResponse } from "@threa/types"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import { e2eKeysApi } from "@/api/e2e-keys"
+import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 import { DEFAULT_KDF_PARAMS } from "@/lib/crypto/passphrase"
 import { getE2eSessionState, lock, resetE2eSessionStoreCache, setupNewKey } from "@/stores/e2e-session-store"
+import { clearStreamKeyCache } from "@/lib/crypto/stream-key-cache"
 import { E2eUnlockProvider } from "./e2e-unlock-provider"
 import { ComposerEncryptionNotice, StreamHeaderEncryptionAction } from "./stream-encryption-affordance"
 
@@ -56,11 +60,28 @@ beforeEach(() => {
 
 afterEach(() => {
   resetE2eSessionStoreCache()
+  clearStreamKeyCache()
   vi.restoreAllMocks()
 })
 
 function renderWithProvider(workspaceId: string, ui: React.ReactNode) {
-  return render(<E2eUnlockProvider workspaceId={workspaceId}>{ui}</E2eUnlockProvider>)
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <E2eUnlockProvider workspaceId={workspaceId}>{ui}</E2eUnlockProvider>
+    </QueryClientProvider>
+  )
+}
+
+const STREAM_ID = "stream_test"
+
+/** A wrap set the server returns once an owner wrap exists (content unused — the
+ *  affordance only checks `wraps.length`). */
+function nonEmptyWraps(): E2eKeyWrapsResponse {
+  return {
+    currentKeyGeneration: 0,
+    wraps: [{ keyGeneration: 0, recipientKeyId: "e2ek_owner", recipientKind: "user", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],
+  }
 }
 
 describe("StreamHeaderEncryptionAction", () => {
@@ -128,6 +149,47 @@ describe("ComposerEncryptionNotice", () => {
   it("renders nothing for an unencrypted stream", () => {
     const ws = freshWorkspaceId()
     renderWithProvider(ws, <ComposerEncryptionNotice workspaceId={ws} encrypted={false} />)
+    expect(screen.queryByRole("button", { name: /unlock/i })).not.toBeInTheDocument()
+  })
+})
+
+describe("repair (unlocked stream missing its owner wrap)", () => {
+  it("offers Finish setup when the wrap set is empty, then provisions and clears", async () => {
+    const ws = freshWorkspaceId()
+    await setupNewKey(ws, USER_ID, "pp-correct-horse", { params: FAST_PARAMS })
+    await waitFor(() => expect(getE2eSessionState(ws, USER_ID).status).toBe("unlocked"))
+
+    // The orphaned-create state: the stream exists but no owner wrap was stored.
+    // After repair stores one, the refetch returns a non-empty set.
+    let stored = false
+    vi.spyOn(e2eKeyWrapsApi, "get").mockImplementation(async () =>
+      stored ? nonEmptyWraps() : { currentKeyGeneration: 0, wraps: [] }
+    )
+    const storeSpy = vi.spyOn(e2eKeyWrapsApi, "store").mockImplementation(async () => {
+      stored = true
+    })
+
+    renderWithProvider(ws, <StreamHeaderEncryptionAction workspaceId={ws} encrypted streamId={STREAM_ID} />)
+
+    const repairButton = await screen.findByRole("button", { name: /finish setup/i })
+    await userEvent.click(repairButton)
+
+    await waitFor(() => expect(storeSpy).toHaveBeenCalledTimes(1))
+    // Once the wrap exists, the refetched probe is non-empty and the CTA clears.
+    await waitFor(() => expect(screen.queryByRole("button", { name: /finish setup/i })).not.toBeInTheDocument())
+  })
+
+  it("renders nothing when the stream already has an owner wrap", async () => {
+    const ws = freshWorkspaceId()
+    await setupNewKey(ws, USER_ID, "pp-correct-horse", { params: FAST_PARAMS })
+    await waitFor(() => expect(getE2eSessionState(ws, USER_ID).status).toBe("unlocked"))
+
+    const getSpy = vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue(nonEmptyWraps())
+
+    renderWithProvider(ws, <ComposerEncryptionNotice workspaceId={ws} encrypted streamId={STREAM_ID} />)
+
+    await waitFor(() => expect(getSpy).toHaveBeenCalled())
+    expect(screen.queryByRole("button", { name: /finish setup/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /unlock/i })).not.toBeInTheDocument()
   })
 })
