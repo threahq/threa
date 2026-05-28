@@ -1,4 +1,4 @@
-import { forwardRef } from "react"
+import { forwardRef, type ReactNode } from "react"
 import type { Placement } from "@floating-ui/react"
 import { Hash } from "lucide-react"
 import type { Memo } from "@threa/types"
@@ -12,6 +12,7 @@ interface MemoSuggestionListProps {
   clientRect: (() => DOMRect | null) | null
   command: (item: Memo) => void
   placement?: Placement
+  emptyState?: ReactNode
 }
 
 function MemoSuggestionItem({ item }: { item: Memo }) {
@@ -43,7 +44,7 @@ function MemoSuggestionItem({ item }: { item: Memo }) {
  * with their knowledge-type icon, title, and tags.
  */
 export const MemoSuggestionList = forwardRef<MemoSuggestionListRef, MemoSuggestionListProps>(
-  function MemoSuggestionList({ items, clientRect, command, placement }, ref) {
+  function MemoSuggestionList({ items, clientRect, command, placement, emptyState = "No memos found" }, ref) {
     return (
       <SuggestionList
         ref={ref}
@@ -55,7 +56,7 @@ export const MemoSuggestionList = forwardRef<MemoSuggestionListRef, MemoSuggesti
         renderItem={(item) => <MemoSuggestionItem item={item} />}
         placement={placement}
         width="w-80"
-        emptyState="No memos found"
+        emptyState={emptyState}
       />
     )
   }

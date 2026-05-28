@@ -231,7 +231,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   // Filtered for autocomplete dropdown only
   const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion(mentionStreamContext)
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
-  const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion()
+  const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion({
+    includeMemoSearch: enableMemoEmbed,
+  })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion()
 
   // Emoji autocomplete
