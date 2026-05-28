@@ -2,12 +2,24 @@ import { useMemo } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useAuth } from "@/auth"
 import { useLabelService } from "@/contexts"
-import { db, type CachedLabel, type CachedLabelMembership } from "@/db"
-import { useWorkspaceLabels, useWorkspaceLabelMemberships, useWorkspaceUsers } from "@/stores/workspace-store"
+import { db, type CachedLabel, type CachedLabelMembership, type CachedLabelAssignment } from "@/db"
+import {
+  useWorkspaceLabels,
+  useWorkspaceLabelMemberships,
+  useWorkspaceLabelAssignments,
+  useWorkspaceUsers,
+} from "@/stores/workspace-store"
 import { Visibilities } from "@threa/types"
-import type { CreateLabelInput, Label, LabelMember, UpdateLabelInput } from "@threa/types"
+import type {
+  CreateLabelInput,
+  Label,
+  LabelAssignment,
+  LabelableResourceType,
+  LabelMember,
+  UpdateLabelInput,
+} from "@threa/types"
 
-export type { CachedLabel, CachedLabelMembership }
+export type { CachedLabel, CachedLabelMembership, CachedLabelAssignment }
 
 export const labelKeys = {
   all: ["labels"] as const,
@@ -16,6 +28,41 @@ export const labelKeys = {
 
 function membershipId(workspaceId: string, labelId: string, userId: string): string {
   return `${workspaceId}:${labelId}:${userId}`
+}
+
+/**
+ * Composite key for a cached assignment row. Resource-generic: the same shape
+ * keys a stream, message, or any future labelable resource. Exported so the
+ * socket-sync layer builds identical ids (no drift between optimistic writes
+ * and `label:assigned` events).
+ */
+export function assignmentId(
+  workspaceId: string,
+  resourceType: LabelableResourceType,
+  resourceId: string,
+  labelId: string,
+  userId: string
+): string {
+  return `${workspaceId}:${resourceType}:${resourceId}:${labelId}:${userId}`
+}
+
+export function assignmentToCached(assignment: LabelAssignment): CachedLabelAssignment {
+  return {
+    id: assignmentId(
+      assignment.workspaceId,
+      assignment.resourceType,
+      assignment.resourceId,
+      assignment.labelId,
+      assignment.userId
+    ),
+    workspaceId: assignment.workspaceId,
+    labelId: assignment.labelId,
+    resourceType: assignment.resourceType,
+    resourceId: assignment.resourceId,
+    userId: assignment.userId,
+    assignedAt: assignment.assignedAt,
+    _cachedAt: Date.now(),
+  }
 }
 
 function labelToCached(label: Label): CachedLabel {
@@ -70,6 +117,20 @@ async function removeMembership(workspaceId: string, labelId: string, userId: st
   await db.labelMemberships.delete(membershipId(workspaceId, labelId, userId))
 }
 
+async function persistAssignment(assignment: LabelAssignment): Promise<void> {
+  await db.labelAssignments.put(assignmentToCached(assignment))
+}
+
+async function removeAssignment(
+  workspaceId: string,
+  resourceType: LabelableResourceType,
+  resourceId: string,
+  labelId: string,
+  userId: string
+): Promise<void> {
+  await db.labelAssignments.delete(assignmentId(workspaceId, resourceType, resourceId, labelId, userId))
+}
+
 /**
  * Reconcile the workspace's cached labels + memberships with the authoritative
  * server response. Rows that exist in IDB for this workspace but are missing
@@ -77,21 +138,33 @@ async function removeMembership(workspaceId: string, labelId: string, userId: st
  * the stream-sync / saved-sync reconciliation so labels that were archived
  * while we were offline don't linger in the catalog.
  */
-export async function reconcileLabels(workspaceId: string, labels: Label[], memberships: LabelMember[]): Promise<void> {
+export async function reconcileLabels(
+  workspaceId: string,
+  labels: Label[],
+  memberships: LabelMember[],
+  assignments: LabelAssignment[]
+): Promise<void> {
   const labelIds = new Set(labels.map((l) => l.id))
   const memberKeys = new Set(memberships.map((m) => membershipId(m.workspaceId, m.labelId, m.userId)))
+  const assignmentKeys = new Set(
+    assignments.map((a) => assignmentId(a.workspaceId, a.resourceType, a.resourceId, a.labelId, a.userId))
+  )
 
   const existingLabels = await db.labels.where("workspaceId").equals(workspaceId).primaryKeys()
   const existingMembers = await db.labelMemberships.where("workspaceId").equals(workspaceId).primaryKeys()
+  const existingAssignments = await db.labelAssignments.where("workspaceId").equals(workspaceId).primaryKeys()
 
   const labelsToDelete = (existingLabels as string[]).filter((id) => !labelIds.has(id))
   const membersToDelete = (existingMembers as string[]).filter((key) => !memberKeys.has(key))
+  const assignmentsToDelete = (existingAssignments as string[]).filter((key) => !assignmentKeys.has(key))
 
-  await db.transaction("rw", db.labels, db.labelMemberships, async () => {
+  await db.transaction("rw", db.labels, db.labelMemberships, db.labelAssignments, async () => {
     if (labelsToDelete.length > 0) await db.labels.bulkDelete(labelsToDelete)
     if (membersToDelete.length > 0) await db.labelMemberships.bulkDelete(membersToDelete)
+    if (assignmentsToDelete.length > 0) await db.labelAssignments.bulkDelete(assignmentsToDelete)
     if (labels.length > 0) await db.labels.bulkPut(labels.map(labelToCached))
     if (memberships.length > 0) await db.labelMemberships.bulkPut(memberships.map(memberToCached))
+    if (assignments.length > 0) await db.labelAssignments.bulkPut(assignments.map(assignmentToCached))
   })
 }
 
@@ -108,7 +181,7 @@ export function useLabelsSync(workspaceId: string) {
     queryKey: labelKeys.list(workspaceId),
     queryFn: async () => {
       const res = await labelService.list(workspaceId)
-      await reconcileLabels(workspaceId, res.labels, res.memberships)
+      await reconcileLabels(workspaceId, res.labels, res.memberships, res.assignments)
       return res
     },
     staleTime: Infinity,
@@ -254,6 +327,93 @@ export function usePromoteLabel(workspaceId: string) {
     mutationFn: (labelId: string) => labelService.promote(workspaceId, labelId),
     onSuccess: (label) => {
       void persistLabel(label)
+      queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
+    },
+  })
+}
+
+/** Resolve the current viewer's workspace-scoped user id (UserId), or null. */
+function useCurrentWorkspaceUserId(workspaceId: string): string | null {
+  const { user } = useAuth()
+  const workspaceUsers = useWorkspaceUsers(workspaceId)
+  return useMemo(() => {
+    if (!user) return null
+    return workspaceUsers.find((u) => u.workosUserId === user.id)?.id ?? null
+  }, [user, workspaceUsers])
+}
+
+export interface ResourceLabelState {
+  /** Active (non-archived) labels currently applied to this resource, sorted by name. */
+  labels: CachedLabel[]
+  /** labelIds applied to this resource — drives the picker's checked state. */
+  assignedLabelIds: Set<string>
+}
+
+/**
+ * Labels the current viewer has applied to one resource. Generic over
+ * `resourceType` — a stream today, anything labelable later. Reads the
+ * viewer-scoped assignment cache and resolves each `labelId` against the
+ * workspace's labels; assignments whose label is gone or archived are dropped
+ * (the assignment row may briefly outlive its label after a delete).
+ */
+export function useResourceLabelAssignments(
+  workspaceId: string,
+  resourceType: LabelableResourceType,
+  resourceId: string
+): ResourceLabelState {
+  const assignments = useWorkspaceLabelAssignments(workspaceId)
+  const labels = useWorkspaceLabels(workspaceId)
+
+  return useMemo(() => {
+    const labelById = new Map(labels.map((l) => [l.id, l]))
+    const applied: CachedLabel[] = []
+    const assignedLabelIds = new Set<string>()
+    for (const assignment of assignments) {
+      if (assignment.resourceType !== resourceType || assignment.resourceId !== resourceId) continue
+      const label = labelById.get(assignment.labelId)
+      if (!label || label.archivedAt) continue
+      assignedLabelIds.add(label.id)
+      applied.push(label)
+    }
+    applied.sort((a, b) => a.name.localeCompare(b.name))
+    return { labels: applied, assignedLabelIds }
+  }, [assignments, labels, resourceType, resourceId])
+}
+
+export interface AssignLabelInput {
+  labelId: string
+  resourceType: LabelableResourceType
+  resourceId: string
+}
+
+export function useAssignLabel(workspaceId: string) {
+  const labelService = useLabelService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ labelId, resourceType, resourceId }: AssignLabelInput) =>
+      labelService.assign(workspaceId, labelId, { resourceType, resourceId }),
+    onSuccess: (assignment) => {
+      void persistAssignment(assignment)
+      queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
+    },
+  })
+}
+
+export function useUnassignLabel(workspaceId: string) {
+  const labelService = useLabelService()
+  const queryClient = useQueryClient()
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
+
+  return useMutation({
+    mutationFn: ({ labelId, resourceType, resourceId }: AssignLabelInput) =>
+      labelService.unassign(workspaceId, labelId, { resourceType, resourceId }).then(() => ({
+        labelId,
+        resourceType,
+        resourceId,
+      })),
+    onSuccess: ({ labelId, resourceType, resourceId }) => {
+      if (currentUserId) void removeAssignment(workspaceId, resourceType, resourceId, labelId, currentUserId)
       queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
     },
   })

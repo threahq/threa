@@ -28,6 +28,7 @@ function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBo
     bots: [],
     labels: [],
     labelMemberships: [],
+    labelAssignments: [],
     emojis: [],
     emojiWeights: {},
     commands: [],

@@ -540,6 +540,26 @@ export interface CachedLabelMembership {
 }
 
 /**
+ * A label applied to a resource. Generic over `resourceType` (a stream today;
+ * messages/users/attachments later) — the assignment store never special-cases
+ * the resource. Viewer-scoped: only the current user's assignments are cached,
+ * mirroring private-label visibility. `[workspaceId+resourceType+resourceId]`
+ * answers "which labels are on this resource"; `[workspaceId+labelId]` answers
+ * "which resources carry this label". Composite key
+ * `${workspaceId}:${resourceType}:${resourceId}:${labelId}:${userId}`.
+ */
+export interface CachedLabelAssignment {
+  id: string
+  workspaceId: string
+  labelId: string
+  resourceType: string
+  resourceId: string
+  userId: string
+  assignedAt: string
+  _cachedAt: number
+}
+
+/**
  * "Keep me unlocked on this device" record. Persists the UNWRAPPED X25519
  * private key as a NON-EXTRACTABLE `CryptoKey` (structured-clone-serializable
  * native key) so a page reload can resume the unlocked session without the
@@ -614,6 +634,7 @@ export class ThreaDatabase extends Dexie {
   e2eKeys!: EntityTable<CachedE2eKey, "id">
   labels!: EntityTable<CachedLabel, "id">
   labelMemberships!: EntityTable<CachedLabelMembership, "id">
+  labelAssignments!: EntityTable<CachedLabelAssignment, "id">
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
 
   constructor(name: string) {
@@ -893,6 +914,16 @@ export class ThreaDatabase extends Dexie {
       e2eDeviceKeys: "id, [workspaceId+userId], workspaceId",
     })
 
+    // v32: Generic resource-label assignments. Viewer-scoped rows (only the
+    // current user's) so reads mirror private-label visibility.
+    // [workspaceId+resourceType+resourceId] drives "labels on this resource";
+    // [workspaceId+labelId] drives "resources carrying this label" (e.g. when a
+    // label is deleted we drop its assignments without scanning).
+    this.version(32).stores({
+      labelAssignments:
+        "id, workspaceId, labelId, resourceId, [workspaceId+resourceType+resourceId], [workspaceId+labelId], [workspaceId+userId], _cachedAt",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -956,6 +987,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.e2eKeys.clear(),
       db.labels.clear(),
       db.labelMemberships.clear(),
+      db.labelAssignments.clear(),
       // The persisted device key IS the unwrapped (non-extractable) private
       // key — sign-out must drop it so the next account can't resume this
       // identity's unlocked session.

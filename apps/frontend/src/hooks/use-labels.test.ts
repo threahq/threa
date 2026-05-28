@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import type { Label, LabelMember } from "@threa/types"
+import type { Label, LabelAssignment, LabelMember } from "@threa/types"
 import { db } from "@/db"
 import { reconcileLabels } from "./use-labels"
 
@@ -31,17 +31,31 @@ function makeMember(overrides: Partial<LabelMember> & { labelId: string; userId:
   }
 }
 
+function makeAssignment(
+  overrides: Partial<LabelAssignment> & { labelId: string; resourceId: string }
+): LabelAssignment {
+  return {
+    workspaceId: WORKSPACE_ID,
+    resourceType: "stream",
+    userId: "user_me",
+    assignedAt: new Date().toISOString(),
+    ...overrides,
+  }
+}
+
 describe("reconcileLabels", () => {
   beforeEach(async () => {
     await db.labels.clear()
     await db.labelMemberships.clear()
+    await db.labelAssignments.clear()
   })
 
   it("inserts labels and memberships from the server response", async () => {
     await reconcileLabels(
       WORKSPACE_ID,
       [makeLabel({ id: "lbl_1", name: "First" }), makeLabel({ id: "lbl_2", name: "Second" })],
-      [makeMember({ labelId: "lbl_1", userId: "user_other" })]
+      [makeMember({ labelId: "lbl_1", userId: "user_other" })],
+      []
     )
 
     const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).toArray()
@@ -58,7 +72,7 @@ describe("reconcileLabels", () => {
       _cachedAt: Date.now() - 60_000,
     })
 
-    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_kept", name: "Kept" })], [])
+    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_kept", name: "Kept" })], [], [])
 
     const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).toArray()
     expect(labels.map((l) => l.id)).toEqual(["lbl_kept"])
@@ -78,7 +92,7 @@ describe("reconcileLabels", () => {
       _cachedAt: Date.now() - 60_000,
     })
 
-    await reconcileLabels(WORKSPACE_ID, [], [])
+    await reconcileLabels(WORKSPACE_ID, [], [], [])
 
     const labels = await db.labels.where("workspaceId").equals(WORKSPACE_ID).count()
     const memberships = await db.labelMemberships.where("workspaceId").equals(WORKSPACE_ID).count()
@@ -94,9 +108,34 @@ describe("reconcileLabels", () => {
       _cachedAt: Date.now(),
     })
 
-    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_local" })], [])
+    await reconcileLabels(WORKSPACE_ID, [makeLabel({ id: "lbl_local" })], [], [])
 
     const other = await db.labels.where("workspaceId").equals("ws_other").toArray()
     expect(other.map((l) => l.id)).toEqual(["lbl_other_ws"])
+  })
+
+  it("upserts assignments and prunes ones missing from the server response", async () => {
+    // A stale assignment cached from before — the server no longer reports it.
+    await db.labelAssignments.put({
+      id: `${WORKSPACE_ID}:stream:strm_stale:lbl_1:user_me`,
+      workspaceId: WORKSPACE_ID,
+      labelId: "lbl_1",
+      resourceType: "stream",
+      resourceId: "strm_stale",
+      userId: "user_me",
+      assignedAt: new Date().toISOString(),
+      _cachedAt: Date.now() - 60_000,
+    })
+
+    await reconcileLabels(
+      WORKSPACE_ID,
+      [makeLabel({ id: "lbl_1" })],
+      [],
+      [makeAssignment({ labelId: "lbl_1", resourceId: "strm_live" })]
+    )
+
+    const assignments = await db.labelAssignments.where("workspaceId").equals(WORKSPACE_ID).toArray()
+    expect(assignments.map((a) => a.resourceId)).toEqual(["strm_live"])
+    expect(assignments[0].id).toBe(`${WORKSPACE_ID}:stream:strm_live:lbl_1:user_me`)
   })
 })
