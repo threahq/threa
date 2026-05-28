@@ -690,7 +690,7 @@ function MessageInputComponent({ workspaceId, streamId, disabled, disabledReason
           This replaces a previous ref-counted React state mechanism that was prone to
           leaks across hydration races and virtualization cycles. */}
       <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
-        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!stream?.e2eEnabled} />
+        <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!stream?.e2eEnabled} streamId={stream?.id} />
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>

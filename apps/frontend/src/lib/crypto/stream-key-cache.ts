@@ -1,4 +1,11 @@
-import { base64ToBytes, buildWrapAad, unwrapStreamKey } from "@threa/crypto"
+import {
+  base64ToBytes,
+  buildWrapAad,
+  bytesToBase64,
+  generateStreamKey,
+  unwrapStreamKey,
+  wrapStreamKey,
+} from "@threa/crypto"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
 /**
@@ -57,6 +64,43 @@ export function putStreamKey(workspaceId: string, streamId: string, keyGeneratio
   if (prior === undefined || keyGeneration > prior) {
     currentGenerations.set(streamSlot(workspaceId, streamId), keyGeneration)
   }
+}
+
+export interface ProvisionOwnerStreamKeyInput {
+  workspaceId: string
+  streamId: string
+  /** The owner's UIK key id — the recipient slot the wrap is bound to. */
+  ownerKeyId: string
+  /** The owner's UIK public key — the wrap is encrypted to it. */
+  ownerPublicKey: Uint8Array
+}
+
+/**
+ * Provision the generation-0 SSK for a freshly created owner-only E2E stream:
+ * generate the key, HPKE-wrap it to the owner's UIK (AAD bound to the now-known
+ * stream id), store the wrap, and seed the in-memory cache so the first send
+ * doesn't re-fetch a key we already hold.
+ *
+ * This is the single provisioning path (INV-29/35/37) shared by stream-create
+ * and the locked-state repair affordance. The create flow mints the stream then
+ * calls this; if the wrap store fails the stream is left with zero wraps, and
+ * re-running this from the repair CTA finishes setup without a server-side
+ * teardown. The caller is responsible for only invoking this when the stream has
+ * no existing wraps — re-provisioning a stream that already has a wrap (and thus
+ * possibly ciphertext sealed under a different SSK) would orphan that ciphertext.
+ */
+export async function provisionOwnerStreamKey(input: ProvisionOwnerStreamKeyInput): Promise<void> {
+  const ssk = generateStreamKey()
+  const wrap = await wrapStreamKey({
+    key: ssk,
+    recipientPublicKey: input.ownerPublicKey,
+    aad: buildWrapAad({ streamId: input.streamId, keyGeneration: 0, recipientKeyId: input.ownerKeyId }),
+  })
+  await e2eKeyWrapsApi.store(input.workspaceId, input.streamId, {
+    wrapEnc: bytesToBase64(wrap.enc),
+    wrapCt: bytesToBase64(wrap.ct),
+  })
+  putStreamKey(input.workspaceId, input.streamId, 0, ssk)
 }
 
 /**
