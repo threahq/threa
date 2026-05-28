@@ -139,4 +139,43 @@ describe("LabelPicker", () => {
     )
     expect(assign).not.toHaveBeenCalled()
   })
+
+  describe("mobile", () => {
+    beforeEach(() => {
+      vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    })
+
+    it("renders native toggle buttons that reflect the viewer's own attribution", () => {
+      mountPicker()
+
+      expect(screen.getByRole("button", { name: /Mine/ })).toHaveAttribute("aria-pressed", "true")
+      expect(screen.getByRole("button", { name: /Shared/ })).toHaveAttribute("aria-pressed", "false")
+    })
+
+    it("assigns the viewer's own attribution when tapping a pool label they have not applied", async () => {
+      mountPicker()
+
+      fireEvent.click(screen.getByRole("button", { name: /Shared/ }))
+
+      await waitFor(() =>
+        expect(assign).toHaveBeenCalledWith(WORKSPACE_ID, "label_shared", {
+          resourceType: LabelableResourceTypes.STREAM,
+          resourceId: RESOURCE_ID,
+        })
+      )
+      expect(unassign).not.toHaveBeenCalled()
+    })
+
+    it("filters the list by the search query without auto-focusing the input", () => {
+      mountPicker()
+
+      const search = screen.getByRole("textbox", { name: /search labels/i })
+      expect(search).not.toHaveFocus()
+
+      fireEvent.change(search, { target: { value: "shar" } })
+
+      expect(screen.queryByRole("button", { name: /Mine/ })).not.toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Shared/ })).toBeInTheDocument()
+    })
+  })
 })
