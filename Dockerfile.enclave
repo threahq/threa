@@ -20,6 +20,7 @@ COPY patches/ patches/
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production
 
 # Copy source
+COPY packages/types/ packages/types/
 COPY packages/crypto/ packages/crypto/
 COPY apps/enclave/ apps/enclave/
 

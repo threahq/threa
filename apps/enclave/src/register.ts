@@ -1,4 +1,5 @@
 import pino from "pino"
+import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
 
@@ -14,7 +15,7 @@ export async function registerWithBackend(config: EnclaveConfig, keyPair: Enclav
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.internalApiKey}`,
+      [INTERNAL_API_KEY_HEADER]: config.internalApiKey,
     },
     body: JSON.stringify({
       instanceId: keyPair.instanceId,
@@ -41,7 +42,7 @@ export async function revokeWithBackend(config: EnclaveConfig, keyPair: EnclaveK
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${config.internalApiKey}`,
+        [INTERNAL_API_KEY_HEADER]: config.internalApiKey,
       },
       body: JSON.stringify({ keyId: keyPair.keyId }),
     })

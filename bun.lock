@@ -190,6 +190,7 @@
       "name": "@threa/enclave",
       "dependencies": {
         "@threa/crypto": "workspace:*",
+        "@threa/types": "workspace:*",
         "express": "^5",
         "pino": "^9",
         "pino-http": "^10",
