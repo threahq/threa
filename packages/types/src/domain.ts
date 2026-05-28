@@ -48,7 +48,7 @@ import type {
   BotInvocationStatus,
   BotInvocationTrigger,
   BotInvocationCapability,
-  E2eInvitedAgentKind,
+  E2eActorKind,
 } from "./constants"
 import type { ThreaDocument } from "./prosemirror"
 
@@ -179,12 +179,19 @@ export interface Stream {
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
   /**
-   * Which agent (if any) the owner invited into this E2E stream. `"enclave"`
-   * routes Ariadne replies through the enclave service; `"none"` on an E2E
-   * stream with no invited agent. Undefined only on plaintext (non-E2E)
-   * streams, where the E2E JOIN is omitted entirely.
+   * Non-human actors invited into this E2E stream — each has the stream key
+   * wrapped to it and may reply. An empty array is an E2E stream with no
+   * invited agent. Undefined only on plaintext (non-E2E) streams, where the
+   * E2E JOIN is omitted entirely.
    */
-  e2eInvitedAgentKind?: E2eInvitedAgentKind
+  e2eActors?: E2eActor[]
+}
+
+/** A non-human participant the stream key is wrapped to in an E2E stream. */
+export interface E2eActor {
+  kind: E2eActorKind
+  /** The actor's public-key id the SSK is wrapped to, once a key is registered. */
+  keyId?: string | null
 }
 
 /** Preview of the last message in a stream for sidebar display */

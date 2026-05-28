@@ -201,10 +201,10 @@ export {
   MAGIC_CODE_LENGTH,
   // E2E placeholder shared between backend insert and frontend encrypt/decrypt
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-  // E2E invited agent kinds (none / bot / enclave)
-  E2E_INVITED_AGENT_KINDS,
-  type E2eInvitedAgentKind,
-  E2eInvitedAgentKinds,
+  // E2E actor kinds (bot / enclave)
+  E2E_ACTOR_KINDS,
+  type E2eActorKind,
+  E2eActorKinds,
 } from "./constants"
 
 // Domain entities (wire format)
@@ -215,6 +215,7 @@ export type {
   WorkspaceInvitation,
   WorkspaceInvitationKind,
   Stream,
+  E2eActor,
   LastMessagePreview,
   StreamWithPreview,
   StreamActiveActor,

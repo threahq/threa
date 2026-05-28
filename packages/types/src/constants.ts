@@ -594,20 +594,20 @@ export const ShareErrorCodes = {
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
 export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 
-// Which kind of agent, if any, the owner invited into an E2E scratchpad. Drives
-// which dispatcher the backend uses for replies (and, once the SSK protocol
-// lands, who the stream key is wrapped to).
-//   - "none"    — no agent; the stream is owner-only.
+// Kinds of non-human actor that can be invited into an E2E stream. Each invited
+// actor gets the stream key (SSK) wrapped to it and may reply. Humans are not
+// actors here — they live in `stream_members` with a different identity and
+// lifecycle. The set of invited actors lives in `e2e_stream_actors`; an empty
+// set means the stream is owner-only (no agent).
 //   - "bot"     — Pi-style remote runtime (Phase 2).
 //   - "enclave" — first-party Ariadne running in the enclave service (Phase 5a).
-export const E2E_INVITED_AGENT_KINDS = ["none", "bot", "enclave"] as const
-export type E2eInvitedAgentKind = (typeof E2E_INVITED_AGENT_KINDS)[number]
+export const E2E_ACTOR_KINDS = ["bot", "enclave"] as const
+export type E2eActorKind = (typeof E2E_ACTOR_KINDS)[number]
 
-export const E2eInvitedAgentKinds = {
-  NONE: "none",
+export const E2eActorKinds = {
   BOT: "bot",
   ENCLAVE: "enclave",
-} as const satisfies Record<string, E2eInvitedAgentKind>
+} as const satisfies Record<string, E2eActorKind>
 
 /**
  * Floor for interaction-driven socket heartbeats. The frontend throttles

@@ -9,7 +9,7 @@ import type { BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { StreamEvent } from "./event-repository"
 import type { EventType, JSONContent, LinkPreviewSummary, StreamType } from "@threa/types"
-import { ARIADNE_PERSONA_SLUG, StreamTypes, SLUG_PATTERN, CompanionModes } from "@threa/types"
+import { ARIADNE_PERSONA_SLUG, StreamTypes, SLUG_PATTERN, CompanionModes, E2E_ACTOR_KINDS } from "@threa/types"
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
@@ -117,6 +117,10 @@ const checkSlugAvailableSchema = z.object({
 
 const addMemberSchema = z.object({
   memberId: z.string().min(1, "memberId is required"),
+})
+
+const inviteActorSchema = z.object({
+  kind: z.enum(E2E_ACTOR_KINDS),
 })
 
 /** Default number of events returned in bootstrap and event list queries. */
@@ -876,14 +880,15 @@ export function createStreamHandlers({
       res.status(204).send()
     },
 
-    async inviteEnclave(req: Request, res: Response) {
+    async inviteActor(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
+      const { kind } = inviteActorSchema.parse(req.body)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const stream = await streamService.inviteEnclave(workspaceId, streamId, userId)
+      const stream = await streamService.inviteActor(workspaceId, streamId, userId, kind)
       res.json({ stream })
     },
   }
