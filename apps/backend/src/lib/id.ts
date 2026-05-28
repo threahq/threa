@@ -60,4 +60,5 @@ export {
   labelId,
   voiceSessionId,
   userEncryptionKeyId,
+  enclaveRuntimeId,
 } from "@threa/backend-common"

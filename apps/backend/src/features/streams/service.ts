@@ -23,6 +23,7 @@ import {
   StreamTypes,
   Visibilities,
   CompanionModes,
+  type E2eActorKind,
   type StreamType,
   type Visibility,
   type CompanionMode,
@@ -31,7 +32,7 @@ import {
   type ContextBag,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
-import { E2eStreamsRepository } from "../e2e-streams"
+import { E2eStreamsRepository, E2eStreamActorsRepository } from "../e2e-streams"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 
@@ -53,7 +54,7 @@ export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema
    * Optional E2E activation. When present, the scratchpad row is inserted
    * into `e2e_streams` in the same transaction so plaintext consumers
    * cannot race a window where the stream exists but its E2E flag does not.
-   * Phase 1: `invitedAgentKind` is always "none" — only the owner can decrypt.
+   * The stream starts with no invited actors — only the owner can decrypt.
    */
   e2e?: { ownerKeyId: string }
 }
@@ -404,11 +405,10 @@ export class StreamService {
           workspaceId: params.workspaceId,
           ownerUserId: params.createdBy,
           ownerUserKeyId: params.e2e.ownerKeyId,
-          invitedAgentKind: "none",
-          invitedAgentKeyId: null,
         })
         stream.e2eEnabled = true
         stream.e2eOwnerKeyId = params.e2e.ownerKeyId
+        stream.e2eActors = []
       }
 
       // Publish to outbox for real-time delivery
@@ -690,6 +690,48 @@ export class StreamService {
       }
       throw error
     }
+  }
+
+  /**
+   * Invite a non-human actor (e.g. the enclave) into an E2E stream. Adds the
+   * actor to `e2e_stream_actors` so the frontend starts wrapping the per-stream
+   * SSK to that actor's key(s) (for the enclave, every live EIK — letting
+   * whichever instance the dispatcher picks decrypt). Owner-only: only the
+   * stream's E2E owner can change who can read their encrypted stream. Multiple
+   * actor kinds can coexist on one stream; re-inviting an already-present kind
+   * is a 409. No `e2eCapable` gate here — Phase 5a PR3 ships the invite path
+   * before Ariadne can reply, so the invite is allowed even while the runtime
+   * is non-capable.
+   */
+  async inviteActor(workspaceId: string, streamId: string, userId: string, kind: E2eActorKind): Promise<Stream> {
+    return withTransaction(this.pool, async (client) => {
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2e.ownerUserId !== userId) {
+        throw new HttpError("Only the stream owner can invite an actor", { status: 403, code: "NOT_STREAM_OWNER" })
+      }
+
+      const added = await E2eStreamActorsRepository.add(client, workspaceId, streamId, kind, null)
+      if (!added) {
+        throw new HttpError("This actor is already invited to this stream", {
+          status: 409,
+          code: "ACTOR_ALREADY_INVITED",
+        })
+      }
+
+      const stream = await StreamRepository.findByIdForWorkspace(client, streamId, workspaceId)
+      if (!stream) throw new StreamNotFoundError()
+
+      await OutboxRepository.insert(client, "stream:updated", {
+        workspaceId,
+        streamId,
+        stream,
+      })
+
+      return stream
+    })
   }
 
   async checkSlugAvailable(workspaceId: string, slug: string, excludeStreamId?: string): Promise<boolean> {

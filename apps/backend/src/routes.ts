@@ -41,6 +41,7 @@ import { createPublicApiHandlers, createBotHandlers } from "./features/public-ap
 import { BotRuntimeService } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
+import { createEnclaveRuntimesHandlers, type EnclaveRuntimesService } from "./features/enclave-runtimes"
 import {
   createInternalAuthMiddleware,
   errorHandler,
@@ -112,6 +113,8 @@ interface Dependencies {
   workosOrgService: WorkosOrgService
   userApiKeyService: UserApiKeyService
   voiceTranscriptionService: VoiceTranscriptionService
+  enclaveRuntimesService: EnclaveRuntimesService
+  enclaveInstanceUrlAllowedPrefixes: string[]
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
   storage: StorageProvider
@@ -154,6 +157,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workosOrgService,
     userApiKeyService,
     voiceTranscriptionService,
+    enclaveRuntimesService,
+    enclaveInstanceUrlAllowedPrefixes,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -231,6 +236,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/debug/pool", opsAccess, debug.poolState)
   app.get("/metrics", opsAccess, debug.metrics)
 
+  const enclave = createEnclaveRuntimesHandlers({
+    enclaveRuntimesService,
+    instanceUrlAllowedPrefixes: enclaveInstanceUrlAllowedPrefixes,
+  })
+
   // Internal API — control-plane → regional backend, protected by shared secret
   if (internalApiKey) {
     const internalAuth = createInternalAuthMiddleware(internalApiKey)
@@ -240,6 +250,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/invitations/:id/accept", internalAuth, internal.acceptInvitation)
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
+
+    // Enclave runtime registry — each enclave instance authenticates with the
+    // same shared internal secret to register/refresh/retire its EIK.
+    app.post("/internal/enclave-runtimes/register-key", internalAuth, enclave.registerKey)
+    app.post("/internal/enclave-runtimes/heartbeat", internalAuth, enclave.heartbeat)
+    app.post("/internal/enclave-runtimes/revoke", internalAuth, enclave.revoke)
   }
 
   // Global baseline rate limit
@@ -290,6 +306,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/users/me/e2e-key", ...authed, userE2eKeys.set)
   app.delete("/api/workspaces/:workspaceId/users/me/e2e-key", ...authed, userE2eKeys.revoke)
 
+  // Live enclave instance keys. Workspace-member auth gates the read; the
+  // EIK set itself is global. The frontend wraps the per-stream SSK to each
+  // live EIK so the dispatcher-picked enclave instance can decrypt.
+  app.get("/api/workspaces/:workspaceId/enclave/active-keys", ...authed, enclave.listActiveKeys)
+
   app.get("/api/workspaces/:workspaceId/streams", ...authed, stream.list)
   app.post("/api/workspaces/:workspaceId/streams", ...authed, stream.create)
   app.post("/api/workspaces/:workspaceId/streams/read-all", ...authed, workspace.markAllAsRead)
@@ -301,6 +322,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/streams/:streamId/pin", ...authed, stream.pin)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/notification-level", ...authed, stream.setNotificationLevel)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/join", ...authed, stream.join)
+  app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/actors", ...authed, stream.inviteActor)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/read", ...authed, stream.markAsRead)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/archive", ...authed, stream.archive)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/unarchive", ...authed, stream.unarchive)

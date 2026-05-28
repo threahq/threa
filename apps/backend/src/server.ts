@@ -19,6 +19,7 @@ import {
   createPolishTranscript,
 } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
+import { EnclaveRuntimesService } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
@@ -498,6 +499,11 @@ export async function startServer(): Promise<ServerInstance> {
   // Bot API key service — self-managed keys for bot integrations
   const botApiKeyService = new BotApiKeyService(pool)
 
+  // Enclave runtime registry — register/heartbeat/revoke of enclave instance
+  // keys (EIKs) plus the live-key read for SSK wrapping. Global (no
+  // workspace_id) per INV-8's infra exception.
+  const enclaveRuntimesService = new EnclaveRuntimesService(pool)
+
   // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
   // namespace. One instance shared between HTTP routes (claim/complete/fail)
   // and the WebSocket namespace handler (presence + bootstrap).
@@ -563,6 +569,8 @@ export async function startServer(): Promise<ServerInstance> {
     workosOrgService,
     userApiKeyService,
     voiceTranscriptionService,
+    enclaveRuntimesService,
+    enclaveInstanceUrlAllowedPrefixes: config.enclaveInstanceUrlAllowedPrefixes,
     botApiKeyService,
     botRuntimeService,
     storage,

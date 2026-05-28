@@ -108,6 +108,7 @@ export {
   labelId,
   voiceSessionId,
   userEncryptionKeyId,
+  enclaveRuntimeId,
 } from "./id"
 export {
   parseCookies,

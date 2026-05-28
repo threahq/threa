@@ -21,9 +21,9 @@ RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --produc
 
 # Copy source
 COPY packages/types/ packages/types/
-COPY packages/backend-common/ packages/backend-common/
-COPY apps/control-plane/ apps/control-plane/
+COPY packages/crypto/ packages/crypto/
+COPY apps/enclave/ apps/enclave/
 
 ENV NODE_ENV=production
-EXPOSE 3003
-CMD ["bun", "apps/control-plane/src/index.ts"]
+EXPOSE 3011
+CMD ["bun", "apps/enclave/src/index.ts"]

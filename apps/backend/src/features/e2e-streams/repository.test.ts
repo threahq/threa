@@ -11,8 +11,6 @@ const ROW = {
   enabled_at: NOW,
   owner_user_id: "usr_1",
   owner_user_key_id: "e2ek_01",
-  invited_agent_kind: "none" as const,
-  invited_agent_key_id: null,
 }
 
 interface Captured {
@@ -83,8 +81,6 @@ describe("E2eStreamsRepository.getByStreamId", () => {
       enabledAt: NOW,
       ownerUserId: "usr_1",
       ownerUserKeyId: "e2ek_01",
-      invitedAgentKind: "none",
-      invitedAgentKeyId: null,
     })
   })
 
@@ -109,8 +105,6 @@ describe("E2eStreamsRepository.markStreamE2e", () => {
       workspaceId: "ws_1",
       ownerUserId: "usr_1",
       ownerUserKeyId: "e2ek_01",
-      invitedAgentKind: "none",
-      invitedAgentKeyId: null,
     })
 
     expect(captured.text).toContain("INSERT INTO e2e_streams")
@@ -119,28 +113,7 @@ describe("E2eStreamsRepository.markStreamE2e", () => {
     expect(captured.values).toContain("ws_1")
     expect(captured.values).toContain("usr_1")
     expect(captured.values).toContain("e2ek_01")
-    expect(captured.values).toContain("none")
     expect(inserted.streamId).toBe("stream_01")
-    expect(inserted.invitedAgentKind).toBe("none")
-  })
-
-  it("supports invited bot kind with key id", async () => {
-    const captured: Captured = { text: null, values: null }
-    const botRow = { ...ROW, invited_agent_kind: "bot" as const, invited_agent_key_id: "bkey_01" }
-    const db = createQuerier(captured, [botRow])
-
-    const inserted = await E2eStreamsRepository.markStreamE2e(db, {
-      streamId: "stream_01",
-      workspaceId: "ws_1",
-      ownerUserId: "usr_1",
-      ownerUserKeyId: "e2ek_01",
-      invitedAgentKind: "bot",
-      invitedAgentKeyId: "bkey_01",
-    })
-
-    expect(captured.values).toContain("bot")
-    expect(captured.values).toContain("bkey_01")
-    expect(inserted.invitedAgentKind).toBe("bot")
-    expect(inserted.invitedAgentKeyId).toBe("bkey_01")
+    expect(inserted.ownerUserKeyId).toBe("e2ek_01")
   })
 })

@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from "dexie"
 import type {
   AuthorType,
   CompanionMode,
+  E2eActor,
   EventType,
   JSONContent,
   NotificationLevel,
@@ -86,6 +87,11 @@ export interface CachedStream {
    */
   e2eEnabled?: boolean
   e2eOwnerKeyId?: string | null
+  /**
+   * Non-human actors the owner invited into this E2E scratchpad. Optional so
+   * older cached rows still parse; treated as an empty set when absent.
+   */
+  e2eActors?: E2eActor[]
   _cachedAt: number
 }
 

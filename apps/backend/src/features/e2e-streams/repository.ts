@@ -1,16 +1,12 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
-export type InvitedAgentKind = "bot" | "enclave" | "none"
-
 interface E2eStreamRow {
   stream_id: string
   workspace_id: string
   enabled_at: Date
   owner_user_id: string
   owner_user_key_id: string
-  invited_agent_kind: InvitedAgentKind
-  invited_agent_key_id: string | null
 }
 
 export interface E2eStream {
@@ -19,8 +15,6 @@ export interface E2eStream {
   enabledAt: Date
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: InvitedAgentKind
-  invitedAgentKeyId: string | null
 }
 
 export interface MarkStreamE2eParams {
@@ -28,12 +22,9 @@ export interface MarkStreamE2eParams {
   workspaceId: string
   ownerUserId: string
   ownerUserKeyId: string
-  invitedAgentKind: InvitedAgentKind
-  invitedAgentKeyId: string | null
 }
 
-const COLUMNS =
-  "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, invited_agent_kind, invited_agent_key_id"
+const COLUMNS = "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id"
 
 function mapRow(row: E2eStreamRow): E2eStream {
   return {
@@ -42,8 +33,6 @@ function mapRow(row: E2eStreamRow): E2eStream {
     enabledAt: row.enabled_at,
     ownerUserId: row.owner_user_id,
     ownerUserKeyId: row.owner_user_key_id,
-    invitedAgentKind: row.invited_agent_kind,
-    invitedAgentKeyId: row.invited_agent_key_id,
   }
 }
 
@@ -87,16 +76,13 @@ export const E2eStreamsRepository = {
   async markStreamE2e(db: Querier, params: MarkStreamE2eParams): Promise<E2eStream> {
     const result = await db.query<E2eStreamRow>(sql`
       INSERT INTO e2e_streams (
-        stream_id, workspace_id, owner_user_id, owner_user_key_id,
-        invited_agent_kind, invited_agent_key_id
+        stream_id, workspace_id, owner_user_id, owner_user_key_id
       )
       VALUES (
         ${params.streamId},
         ${params.workspaceId},
         ${params.ownerUserId},
-        ${params.ownerUserKeyId},
-        ${params.invitedAgentKind},
-        ${params.invitedAgentKeyId}
+        ${params.ownerUserKeyId}
       )
       RETURNING ${sql.raw(COLUMNS)}
     `)
