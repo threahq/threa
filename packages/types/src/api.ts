@@ -1078,22 +1078,25 @@ export interface LabelMemberLeftPayload {
 }
 
 /**
- * Wire payload for `label:assigned` (a label applied to a resource). Delivered
- * to the assigning user only (`targetUserId`) — assignments are viewer-scoped.
+ * Wire payload for `label:assigned` (a label applied to a resource). Routing
+ * follows the label's visibility: a private label is viewer-scoped, so
+ * `targetUserId` is the assigning user; a public label is a shared pool, so
+ * `targetUserId` is null and the event fans out to the resource's access scope.
  */
 export interface LabelAssignedPayload {
   workspaceId: string
-  targetUserId: string
+  targetUserId: string | null
   assignment: LabelAssignment
 }
 
 /**
  * Wire payload for `label:unassigned`. The row is gone, so only identity is
- * carried. Delivered to the assigning user only (`targetUserId`).
+ * carried. Routing follows the label's visibility (private → the `userId` whose
+ * row was removed; public → null, fanned out to the resource's access scope).
  */
 export interface LabelUnassignedPayload {
   workspaceId: string
-  targetUserId: string
+  targetUserId: string | null
   labelId: string
   resourceType: LabelableResourceType
   resourceId: string

@@ -352,18 +352,22 @@ function useCurrentWorkspaceUserId(workspaceId: string): string | null {
 }
 
 export interface ResourceLabelState {
-  /** Active (non-archived) labels currently applied to this resource, sorted by name. */
+  /** Active (non-archived) labels applied to this resource by anyone in the shared pool, sorted by name. */
   labels: CachedLabel[]
-  /** labelIds applied to this resource — drives the picker's checked state. */
+  /** Every labelId applied to this resource by any user — drives chips/overview (the shared pool). */
   assignedLabelIds: Set<string>
+  /** labelIds the current viewer applied — drives the picker's checked state ("I tagged it"). */
+  myLabelIds: Set<string>
 }
 
 /**
- * Labels the current viewer has applied to one resource. Generic over
- * `resourceType` — a stream today, anything labelable later. Reads the
- * viewer-scoped assignment cache and resolves each `labelId` against the
- * workspace's labels; assignments whose label is gone or archived are dropped
- * (the assignment row may briefly outlive its label after a delete).
+ * Labels applied to one resource. Generic over `resourceType` — a stream today,
+ * anything labelable later. The assignment cache is a shared pool: a public
+ * label carries every member's attribution row, while a private label carries
+ * only the viewer's. `assignedLabelIds` is the whole pool (what chips/overview
+ * show); `myLabelIds` is the viewer's own rows (the picker checkmark = "I
+ * tagged it"). Assignments whose label is gone or archived are dropped (the row
+ * may briefly outlive its label after a delete).
  */
 export function useResourceLabelAssignments(
   workspaceId: string,
@@ -372,21 +376,24 @@ export function useResourceLabelAssignments(
 ): ResourceLabelState {
   const assignments = useWorkspaceLabelAssignments(workspaceId)
   const labels = useWorkspaceLabels(workspaceId)
+  const currentUserId = useCurrentWorkspaceUserId(workspaceId)
 
   return useMemo(() => {
     const labelById = new Map(labels.map((l) => [l.id, l]))
     const applied: CachedLabel[] = []
     const assignedLabelIds = new Set<string>()
+    const myLabelIds = new Set<string>()
     for (const assignment of assignments) {
       if (assignment.resourceType !== resourceType || assignment.resourceId !== resourceId) continue
       const label = labelById.get(assignment.labelId)
       if (!label || label.archivedAt) continue
+      if (!assignedLabelIds.has(label.id)) applied.push(label)
       assignedLabelIds.add(label.id)
-      applied.push(label)
+      if (assignment.userId === currentUserId) myLabelIds.add(label.id)
     }
     applied.sort((a, b) => a.name.localeCompare(b.name))
-    return { labels: applied, assignedLabelIds }
-  }, [assignments, labels, resourceType, resourceId])
+    return { labels: applied, assignedLabelIds, myLabelIds }
+  }, [assignments, labels, resourceType, resourceId, currentUserId])
 }
 
 export interface AssignLabelInput {

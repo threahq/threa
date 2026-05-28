@@ -44,17 +44,19 @@ function LabelGlyph({ label }: { label: CachedLabel }) {
  * selecting a row flips its assignment and keeps the surface open so several
  * labels can be set in one pass. Renders as a centered dialog on desktop and a
  * bottom drawer on mobile (ResponsiveDialog). The catalog is the viewer's usable
- * labels (`useLabelsView().myLabels`); assignment state is viewer-scoped.
+ * labels (`useLabelsView().myLabels`). The checkmark reflects the viewer's own
+ * attribution (`myLabelIds`): toggling adds or removes *my* row in the shared
+ * pool, never anyone else's.
  */
 export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpenChange }: LabelPickerProps) {
   const isOnline = useIsOnline()
   const { myLabels } = useLabelsView(workspaceId)
-  const { assignedLabelIds } = useResourceLabelAssignments(workspaceId, resourceType, resourceId)
+  const { myLabelIds } = useResourceLabelAssignments(workspaceId, resourceType, resourceId)
   const assign = useAssignLabel(workspaceId)
   const unassign = useUnassignLabel(workspaceId)
 
   const toggle = (label: CachedLabel) => {
-    if (assignedLabelIds.has(label.id)) {
+    if (myLabelIds.has(label.id)) {
       unassign.mutate({ labelId: label.id, resourceType, resourceId })
     } else {
       assign.mutate({ labelId: label.id, resourceType, resourceId })
@@ -92,7 +94,7 @@ export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpe
             {myLabels.length > 0 && (
               <CommandGroup>
                 {myLabels.map((label) => {
-                  const checked = assignedLabelIds.has(label.id)
+                  const checked = myLabelIds.has(label.id)
                   return (
                     <CommandItem
                       key={label.id}
