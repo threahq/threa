@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { E2eInvitedAgentKinds, StreamTypes } from "@threa/types"
+import { E2eInvitedAgentKinds, StreamTypes, type WorkspaceBootstrap } from "@threa/types"
 import { enclaveApi } from "@/api/enclave"
 import { db } from "@/db"
 import { streamKeys } from "./use-streams"
@@ -43,11 +43,14 @@ export function useInviteEnclave(workspaceId: string, streamId: string) {
         return { ...old, stream }
       })
 
-      queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
-        if (!old || typeof old !== "object") return old
-        const ws = old as { streams?: Array<{ id: string }> }
-        if (!ws.streams) return old
-        return { ...ws, streams: ws.streams.map((s) => (s.id === streamId ? { ...s, ...stream } : s)) }
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          streams: old.streams.map((s) =>
+            s.id === streamId ? { ...s, ...stream, lastMessagePreview: s.lastMessagePreview } : s
+          ),
+        }
       })
 
       toast.success("Ariadne invited to this scratchpad")
