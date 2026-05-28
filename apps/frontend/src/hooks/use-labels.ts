@@ -4,6 +4,7 @@ import { useAuth } from "@/auth"
 import { useLabelService } from "@/contexts"
 import { db, type CachedLabel, type CachedLabelMembership } from "@/db"
 import { useWorkspaceLabels, useWorkspaceLabelMemberships, useWorkspaceUsers } from "@/stores/workspace-store"
+import { Visibilities } from "@threa/types"
 import type { CreateLabelInput, Label, LabelMember, UpdateLabelInput } from "@threa/types"
 
 export type { CachedLabel, CachedLabelMembership }
@@ -51,9 +52,9 @@ async function persistLabel(label: Label): Promise<void> {
 }
 
 async function removeLabel(workspaceId: string, labelId: string): Promise<void> {
-  const memberIds = await db.labelMemberships.where("labelId").equals(labelId).primaryKeys()
   await db.transaction("rw", db.labels, db.labelMemberships, async () => {
     await db.labels.delete(labelId)
+    const memberIds = await db.labelMemberships.where("labelId").equals(labelId).primaryKeys()
     if (memberIds.length > 0) {
       await db.labelMemberships.bulkDelete(memberIds as string[])
     }
@@ -163,7 +164,7 @@ export function useLabelsView(workspaceId: string): LabelViewerContext {
     const byName = (a: CachedLabel, b: CachedLabel) => a.name.localeCompare(b.name)
 
     const mine = active.filter((l) => l.creatorUserId === currentUserId).sort(byName)
-    const publicLabels = active.filter((l) => l.visibility === "public").sort(byName)
+    const publicLabels = active.filter((l) => l.visibility === Visibilities.PUBLIC).sort(byName)
     const discoverable = publicLabels.filter((l) => l.creatorUserId !== currentUserId && !joinedLabelIds.has(l.id))
 
     return {

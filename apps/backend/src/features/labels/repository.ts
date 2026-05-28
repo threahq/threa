@@ -124,8 +124,12 @@ export const LabelRepository = {
     return result.rows.map(mapRow)
   },
 
-  /** Workspace-scoped public-slug existence check for the promote/create path. */
-  async publicSlugExists(db: Querier, workspaceId: string, slug: string): Promise<boolean> {
+  /**
+   * Workspace-scoped public-slug existence check for the promote/create path.
+   * `excludeLabelId` skips the row being updated so it doesn't collide with its
+   * own slug.
+   */
+  async publicSlugExists(db: Querier, workspaceId: string, slug: string, excludeLabelId?: string): Promise<boolean> {
     const result = await db.query<{ exists: boolean }>(sql`
       SELECT 1 AS exists
       FROM labels
@@ -133,13 +137,20 @@ export const LabelRepository = {
         AND visibility = ${Visibilities.PUBLIC}
         AND archived_at IS NULL
         AND slug = ${slug}
+        AND (${excludeLabelId ?? null}::text IS NULL OR id <> ${excludeLabelId ?? null})
       LIMIT 1
     `)
     return result.rows.length > 0
   },
 
-  /** Per-user private-slug existence check. */
-  async privateSlugExists(db: Querier, workspaceId: string, userId: string, slug: string): Promise<boolean> {
+  /** Per-user private-slug existence check. `excludeLabelId` skips the row being updated. */
+  async privateSlugExists(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    slug: string,
+    excludeLabelId?: string
+  ): Promise<boolean> {
     const result = await db.query<{ exists: boolean }>(sql`
       SELECT 1 AS exists
       FROM labels
@@ -148,6 +159,7 @@ export const LabelRepository = {
         AND creator_user_id = ${userId}
         AND archived_at IS NULL
         AND slug = ${slug}
+        AND (${excludeLabelId ?? null}::text IS NULL OR id <> ${excludeLabelId ?? null})
       LIMIT 1
     `)
     return result.rows.length > 0

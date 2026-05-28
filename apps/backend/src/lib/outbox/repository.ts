@@ -584,8 +584,18 @@ export interface LabelDeletedOutboxPayload extends WorkspaceScopedPayload {
   labelId: string
 }
 
-export interface LabelMembershipChangedOutboxPayload extends WorkspaceScopedPayload {
+// Membership events are delivered to the affected member only (`targetUserId`),
+// mirroring the viewer-scoped membership data shipped in bootstrap/list. `joined`
+// carries the full row; `left` carries only identity since the row is gone.
+export interface LabelMemberJoinedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
   member: LabelMember
+}
+
+export interface LabelMemberLeftOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  labelId: string
+  userId: string
 }
 
 // Link preview event payloads
@@ -676,8 +686,8 @@ export interface OutboxEventPayloadMap {
   "label:created": LabelUpsertedOutboxPayload
   "label:updated": LabelUpsertedOutboxPayload
   "label:deleted": LabelDeletedOutboxPayload
-  "label:member_joined": LabelMembershipChangedOutboxPayload
-  "label:member_left": LabelMembershipChangedOutboxPayload
+  "label:member_joined": LabelMemberJoinedOutboxPayload
+  "label:member_left": LabelMemberLeftOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]

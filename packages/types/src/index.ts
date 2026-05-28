@@ -382,7 +382,8 @@ export type {
   UpdateLabelInput,
   LabelUpsertedPayload,
   LabelDeletedPayload,
-  LabelMembershipChangedPayload,
+  LabelMemberJoinedPayload,
+  LabelMemberLeftPayload,
   // Emojis
   EmojiEntry,
   // Commands

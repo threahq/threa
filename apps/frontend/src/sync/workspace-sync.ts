@@ -24,7 +24,8 @@ import type {
   ScheduledMessageCancelledPayload,
   LabelUpsertedPayload,
   LabelDeletedPayload,
-  LabelMembershipChangedPayload,
+  LabelMemberJoinedPayload,
+  LabelMemberLeftPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
@@ -1446,7 +1447,7 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
-  const handleLabelMemberJoined = (payload: LabelMembershipChangedPayload) => {
+  const handleLabelMemberJoined = (payload: LabelMemberJoinedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     const { member } = payload
     const now = Date.now()
@@ -1471,16 +1472,14 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
-  const handleLabelMemberLeft = (payload: LabelMembershipChangedPayload) => {
+  const handleLabelMemberLeft = (payload: LabelMemberLeftPayload) => {
     if (payload.workspaceId !== workspaceId) return
-    const { member } = payload
-    const id = `${workspaceId}:${member.labelId}:${member.userId}`
+    const { labelId, userId } = payload
+    const id = `${workspaceId}:${labelId}:${userId}`
 
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
       ...old,
-      labelMemberships: (old.labelMemberships ?? []).filter(
-        (m) => !(m.labelId === member.labelId && m.userId === member.userId)
-      ),
+      labelMemberships: (old.labelMemberships ?? []).filter((m) => !(m.labelId === labelId && m.userId === userId)),
     }))
 
     void db.labelMemberships.delete(id)

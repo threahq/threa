@@ -23,7 +23,8 @@ import {
   type BotResyncOutboxPayload,
   type LabelUpsertedOutboxPayload,
   type LabelDeletedOutboxPayload,
-  type LabelMembershipChangedOutboxPayload,
+  type LabelMemberJoinedOutboxPayload,
+  type LabelMemberLeftOutboxPayload,
 } from "./repository"
 import { logger } from "../logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
@@ -257,8 +258,9 @@ export class BroadcastHandler implements OutboxHandler {
 
     // Labels: `targetUserId` is the routing discriminator. Private-label
     // events ship to the creator's user room only; public-label events go
-    // workspace-wide. Member join/leave is always workspace-scoped (no
-    // private-label memberships).
+    // workspace-wide. Membership events ship to the affected member only —
+    // memberships are viewer-scoped on the wire (bootstrap/list), so no other
+    // user needs them in Phase 1.
     if (isOneOfOutboxEventType(event, ["label:created", "label:updated"])) {
       const payload = event.payload as LabelUpsertedOutboxPayload
       if (payload.targetUserId) {
@@ -280,8 +282,8 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     if (isOneOfOutboxEventType(event, ["label:member_joined", "label:member_left"])) {
-      const payload = event.payload as LabelMembershipChangedOutboxPayload
-      this.io.to(`ws:${workspaceId}`).emit(event.eventType, payload)
+      const payload = event.payload as LabelMemberJoinedOutboxPayload | LabelMemberLeftOutboxPayload
+      this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
       return
     }
 

@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ArrowLeft, Tag, Plus, Globe, Lock, Trash2, Pencil, LogOut, SmilePlus, X } from "lucide-react"
 import { toast } from "sonner"
+import { Visibilities } from "@threa/types"
 import type { Visibility } from "@threa/types"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -170,14 +171,14 @@ function AddLabelDialog({
   const createMutation = useCreateLabel(workspaceId)
   const joinMutation = useJoinLabel(workspaceId)
   const [name, setName] = useState("")
-  const [visibility, setVisibility] = useState<Visibility>("private")
+  const [visibility, setVisibility] = useState<Visibility>(Visibilities.PRIVATE)
   const [color, setColor] = useState<string>(PRESET_COLORS[5])
   const [emoji, setEmoji] = useState<string>("")
   const [description, setDescription] = useState("")
 
   const reset = () => {
     setName("")
-    setVisibility("private")
+    setVisibility(Visibilities.PRIVATE)
     setColor(PRESET_COLORS[5])
     setEmoji("")
     setDescription("")
@@ -281,7 +282,7 @@ function AddLabelDialog({
             <Field label="Visibility" htmlFor="label-visibility">
               <VisibilityPicker value={visibility} onChange={setVisibility} />
               <p className="mt-1.5 text-xs text-muted-foreground">
-                {visibility === "public"
+                {visibility === Visibilities.PUBLIC
                   ? "Visible to everyone in the workspace. Members join to subscribe. You can't undo this."
                   : "Only you can see this label. You can promote it to public later."}
               </p>
@@ -404,7 +405,7 @@ function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: Ca
             <Pencil className="h-3 w-3" />
             Edit
           </Button>
-          {label.visibility === "private" && (
+          {label.visibility === Visibilities.PRIVATE && (
             <Button
               size="sm"
               variant="ghost"
@@ -585,8 +586,8 @@ function LabelSwatchCard({ label, children }: { label: CachedLabel; children?: R
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-semibold leading-tight">{label.name}</h3>
             <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-              {label.visibility === "public" ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              <span>{label.visibility === "public" ? "Public" : "Private"}</span>
+              {label.visibility === Visibilities.PUBLIC ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+              <span>{label.visibility === Visibilities.PUBLIC ? "Public" : "Private"}</span>
             </div>
           </div>
         </div>

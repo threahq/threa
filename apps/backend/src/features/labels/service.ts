@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import { Visibilities, type Label, type LabelMember, type Visibility } from "@threa/types"
-import { generateSlug } from "@threa/backend-common"
+import { generateSlug, generateUniqueSlug } from "@threa/backend-common"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
@@ -60,13 +60,14 @@ export class LabelService {
 
     return withTransaction(this.pool, async (client) => {
       const baseSlug = generateSlug(trimmedName) || "label"
-
-      const slug = await this.findAvailableSlug(client, {
-        workspaceId: params.workspaceId,
-        userId: params.userId,
-        visibility: params.visibility,
-        baseSlug,
-      })
+      const slug = await generateUniqueSlug(baseSlug, (candidate) =>
+        this.slugExists(client, {
+          workspaceId: params.workspaceId,
+          userId: params.userId,
+          visibility: params.visibility,
+          slug: candidate,
+        })
+      )
 
       const id = labelId()
       const label = await LabelRepository.insert(client, {
@@ -107,6 +108,7 @@ export class LabelService {
         }
         await OutboxRepository.insert(client, "label:member_joined", {
           workspaceId: params.workspaceId,
+          targetUserId: params.userId,
           member,
         })
       }
@@ -132,15 +134,19 @@ export class LabelService {
           throw new HttpError("Label name is required", { status: 400, code: "VALIDATION_ERROR" })
         }
         const baseSlug = generateSlug(trimmedName) || "label"
-        // Only recompute if the slug would change — otherwise we'd hit a
-        // false-positive collision against the row's own slug.
+        // Recompute only when the slug base changes, and exclude this row so it
+        // never collides with its own (possibly suffixed) slug — otherwise a
+        // no-op name edit on a suffixed slug would silently bump the suffix.
         if (baseSlug !== existing.slug) {
-          nextSlug = await this.findAvailableSlug(client, {
-            workspaceId: existing.workspaceId,
-            userId: existing.creatorUserId,
-            visibility: existing.visibility,
-            baseSlug,
-          })
+          nextSlug = await generateUniqueSlug(baseSlug, (candidate) =>
+            this.slugExists(client, {
+              workspaceId: existing.workspaceId,
+              userId: existing.creatorUserId,
+              visibility: existing.visibility,
+              slug: candidate,
+              excludeLabelId: existing.id,
+            })
+          )
         }
       }
 
@@ -206,6 +212,7 @@ export class LabelService {
 
       await OutboxRepository.insert(client, "label:member_joined", {
         workspaceId: params.workspaceId,
+        targetUserId: params.userId,
         member,
       })
 
@@ -228,12 +235,9 @@ export class LabelService {
 
       await OutboxRepository.insert(client, "label:member_left", {
         workspaceId: params.workspaceId,
-        member: {
-          labelId: params.labelId,
-          userId: params.userId,
-          workspaceId: params.workspaceId,
-          joinedAt: new Date(0).toISOString(),
-        },
+        targetUserId: params.userId,
+        labelId: params.labelId,
+        userId: params.userId,
       })
     })
   }
@@ -294,6 +298,7 @@ export class LabelService {
       })
       await OutboxRepository.insert(client, "label:member_joined", {
         workspaceId: params.workspaceId,
+        targetUserId: params.userId,
         member,
       })
 
@@ -301,22 +306,13 @@ export class LabelService {
     })
   }
 
-  private async findAvailableSlug(
+  /** Slug-collision predicate for `generateUniqueSlug`, scoped by visibility. */
+  private slugExists(
     client: import("pg").PoolClient,
-    params: { workspaceId: string; userId: string; visibility: Visibility; baseSlug: string }
-  ): Promise<string> {
-    const isPublic = params.visibility === Visibilities.PUBLIC
-    let candidate = params.baseSlug
-    let suffix = 0
-    // 50 is the slug max length; reserve room for "-99" suffix.
-    while (true) {
-      const taken = isPublic
-        ? await LabelRepository.publicSlugExists(client, params.workspaceId, candidate)
-        : await LabelRepository.privateSlugExists(client, params.workspaceId, params.userId, candidate)
-      if (!taken) return candidate
-      suffix++
-      const base = params.baseSlug.slice(0, 46)
-      candidate = `${base}-${suffix}`
-    }
+    params: { workspaceId: string; userId: string; visibility: Visibility; slug: string; excludeLabelId?: string }
+  ): Promise<boolean> {
+    return params.visibility === Visibilities.PUBLIC
+      ? LabelRepository.publicSlugExists(client, params.workspaceId, params.slug, params.excludeLabelId)
+      : LabelRepository.privateSlugExists(client, params.workspaceId, params.userId, params.slug, params.excludeLabelId)
   }
 }

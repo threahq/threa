@@ -1047,8 +1047,23 @@ export interface LabelDeletedPayload {
   labelId: string
 }
 
-/** Wire payload for `label:member_joined` / `label:member_left`. Always public. */
-export interface LabelMembershipChangedPayload {
+/**
+ * Wire payload for `label:member_joined`. Delivered to the affected member only
+ * (`targetUserId`), matching the viewer-scoped memberships shipped in bootstrap.
+ */
+export interface LabelMemberJoinedPayload {
   workspaceId: string
+  targetUserId: string
   member: LabelMember
+}
+
+/**
+ * Wire payload for `label:member_left`. The membership row is gone, so only the
+ * identity is carried. Delivered to the affected member only (`targetUserId`).
+ */
+export interface LabelMemberLeftPayload {
+  workspaceId: string
+  targetUserId: string
+  labelId: string
+  userId: string
 }
