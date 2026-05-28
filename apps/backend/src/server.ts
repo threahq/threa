@@ -570,6 +570,7 @@ export async function startServer(): Promise<ServerInstance> {
     userApiKeyService,
     voiceTranscriptionService,
     enclaveRuntimesService,
+    enclaveInstanceUrlAllowedPrefixes: config.enclaveInstanceUrlAllowedPrefixes,
     botApiKeyService,
     botRuntimeService,
     storage,

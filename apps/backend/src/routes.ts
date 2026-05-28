@@ -114,6 +114,7 @@ interface Dependencies {
   userApiKeyService: UserApiKeyService
   voiceTranscriptionService: VoiceTranscriptionService
   enclaveRuntimesService: EnclaveRuntimesService
+  enclaveInstanceUrlAllowedPrefixes: string[]
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
   storage: StorageProvider
@@ -157,6 +158,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userApiKeyService,
     voiceTranscriptionService,
     enclaveRuntimesService,
+    enclaveInstanceUrlAllowedPrefixes,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -234,7 +236,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/debug/pool", opsAccess, debug.poolState)
   app.get("/metrics", opsAccess, debug.metrics)
 
-  const enclave = createEnclaveRuntimesHandlers({ enclaveRuntimesService })
+  const enclave = createEnclaveRuntimesHandlers({
+    enclaveRuntimesService,
+    instanceUrlAllowedPrefixes: enclaveInstanceUrlAllowedPrefixes,
+  })
 
   // Internal API — control-plane → regional backend, protected by shared secret
   if (internalApiKey) {

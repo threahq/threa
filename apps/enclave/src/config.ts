@@ -8,6 +8,10 @@ export interface EnclaveConfig {
   internalApiKey: string
   /** Heartbeat interval. Backend's staleness window is 2min, so 30s keeps us with 3 retries of grace. */
   heartbeatIntervalMs: number
+  /** Source commit the image was built from, surfaced via /attestation. */
+  sourceCommitSha: string
+  /** Build hash of the running image, surfaced via /attestation. */
+  buildHash: string
 }
 
 export function loadEnclaveConfig(): EnclaveConfig {
@@ -23,5 +27,7 @@ export function loadEnclaveConfig(): EnclaveConfig {
     backendBaseUrl: process.env.BACKEND_BASE_URL!.replace(/\/$/, ""),
     internalApiKey: process.env.INTERNAL_API_KEY!,
     heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
+    sourceCommitSha: process.env.GIT_SHA || "unknown",
+    buildHash: process.env.BUILD_HASH || "unknown",
   }
 }

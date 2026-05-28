@@ -34,8 +34,8 @@ async function main() {
 
   app.get("/attestation", (_req, res) => {
     res.json({
-      sourceCommitSha: process.env.GIT_SHA || "unknown",
-      buildHash: process.env.BUILD_HASH || "unknown",
+      sourceCommitSha: config.sourceCommitSha,
+      buildHash: config.buildHash,
     })
   })
 

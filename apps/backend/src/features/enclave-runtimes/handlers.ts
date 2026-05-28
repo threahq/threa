@@ -6,11 +6,11 @@ import type { EnclaveRuntimesService } from "./service"
 
 /**
  * Block schemes other than http/https and cloud instance-metadata hostnames,
- * and (if `ENCLAVE_INSTANCE_URL_ALLOWED_PREFIXES` is configured) require a
- * prefix match. The dispatcher fetches this URL with the shared bearer
- * attached, so an unconstrained string here is a credential-leak SSRF.
+ * and (if `allowedPrefixes` is configured) require a prefix match. The
+ * dispatcher fetches this URL with the shared bearer attached, so an
+ * unconstrained string here is a credential-leak SSRF.
  */
-function isPermittedInstanceUrl(value: string): boolean {
+function isPermittedInstanceUrl(value: string, allowedPrefixes: string[]): boolean {
   let parsed: URL
   try {
     parsed = new URL(value)
@@ -22,23 +22,25 @@ function isPermittedInstanceUrl(value: string): boolean {
   if (host === "169.254.169.254" || host === "metadata.google.internal" || host === "169.254.170.2") {
     return false
   }
-  const allowedPrefixes = process.env.ENCLAVE_INSTANCE_URL_ALLOWED_PREFIXES
-  if (allowedPrefixes && allowedPrefixes.trim().length > 0) {
-    const prefixes = allowedPrefixes
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean)
-    if (!prefixes.some((p) => value.startsWith(p))) return false
+  if (allowedPrefixes.length > 0 && !allowedPrefixes.some((p) => value.startsWith(p))) {
+    return false
   }
   return true
 }
 
-const registerKeySchema = z.object({
-  instanceId: z.string().min(1),
-  keyId: z.string().min(1),
-  publicKey: z.string().min(1),
-  instanceUrl: z.string().url().refine(isPermittedInstanceUrl, { message: "instanceUrl scheme/host not permitted" }),
-})
+function buildRegisterKeySchema(instanceUrlAllowedPrefixes: string[]) {
+  return z.object({
+    instanceId: z.string().min(1),
+    keyId: z.string().min(1),
+    publicKey: z.string().min(1),
+    instanceUrl: z
+      .string()
+      .url()
+      .refine((value) => isPermittedInstanceUrl(value, instanceUrlAllowedPrefixes), {
+        message: "instanceUrl scheme/host not permitted",
+      }),
+  })
+}
 
 const heartbeatSchema = z.object({
   keyId: z.string().min(1),
@@ -66,9 +68,11 @@ function serializeRuntime(runtime: EnclaveRuntime) {
 
 interface Dependencies {
   enclaveRuntimesService: EnclaveRuntimesService
+  instanceUrlAllowedPrefixes: string[]
 }
 
-export function createEnclaveRuntimesHandlers({ enclaveRuntimesService }: Dependencies) {
+export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, instanceUrlAllowedPrefixes }: Dependencies) {
+  const registerKeySchema = buildRegisterKeySchema(instanceUrlAllowedPrefixes)
   return {
     /**
      * POST /internal/enclave-runtimes/register-key

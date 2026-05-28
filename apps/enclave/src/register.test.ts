@@ -10,6 +10,8 @@ const config: EnclaveConfig = {
   backendBaseUrl: "https://backend.internal",
   internalApiKey: "shared-secret",
   heartbeatIntervalMs: 30_000,
+  sourceCommitSha: "unknown",
+  buildHash: "unknown",
 }
 
 const keyPair = {

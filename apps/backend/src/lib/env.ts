@@ -97,6 +97,8 @@ export interface Config {
   internalApiKey: string | null
   /** This instance's region name (e.g., "eu-north-1") */
   region: string | null
+  /** URL prefixes an enclave instance may register; empty disables the prefix check */
+  enclaveInstanceUrlAllowedPrefixes: string[]
 }
 
 export function loadConfig(): Config {
@@ -208,6 +210,10 @@ export function loadConfig(): Config {
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     region: process.env.REGION || null,
+    enclaveInstanceUrlAllowedPrefixes:
+      process.env.ENCLAVE_INSTANCE_URL_ALLOWED_PREFIXES?.split(",")
+        .map((p) => p.trim())
+        .filter(Boolean) ?? [],
   }
 
   // Validate co-presence: VAPID vars must all be set or all be absent (INV-11)
