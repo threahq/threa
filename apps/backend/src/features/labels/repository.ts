@@ -1,6 +1,13 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { Visibilities, type Label, type LabelMember, type Visibility } from "@threa/types"
+import {
+  Visibilities,
+  type Label,
+  type LabelMember,
+  type LabelAssignment,
+  type LabelableResourceType,
+  type Visibility,
+} from "@threa/types"
 
 interface LabelRow {
   id: string
@@ -250,5 +257,117 @@ export const LabelMemberRepository = {
    */
   async deleteAllForLabel(db: Querier, labelId: string): Promise<void> {
     await db.query(sql`DELETE FROM label_members WHERE label_id = ${labelId}`)
+  },
+}
+
+interface LabelAssignmentRow {
+  label_id: string
+  resource_type: string
+  resource_id: string
+  user_id: string
+  workspace_id: string
+  assigned_at: Date
+}
+
+function mapAssignmentRow(row: LabelAssignmentRow): LabelAssignment {
+  return {
+    labelId: row.label_id,
+    resourceType: row.resource_type as LabelableResourceType,
+    resourceId: row.resource_id,
+    userId: row.user_id,
+    workspaceId: row.workspace_id,
+    assignedAt: row.assigned_at.toISOString(),
+  }
+}
+
+const ASSIGNMENT_COLUMNS = "label_id, resource_type, resource_id, user_id, workspace_id, assigned_at"
+
+/**
+ * A {@link LabelAssignment} carrying its label's visibility. `listForViewer`
+ * needs this to pick the right access rule per row: private rows are the
+ * viewer's own and skip the resource gate, while every public row (any user's)
+ * must be filtered through `listAccessibleStreamIds`.
+ */
+export interface VisibleAssignmentCandidate extends LabelAssignment {
+  labelVisibility: Visibility
+}
+
+export interface AssignmentKey {
+  workspaceId: string
+  labelId: string
+  resourceType: LabelableResourceType
+  resourceId: string
+  userId: string
+}
+
+export const LabelAssignmentRepository = {
+  /**
+   * Idempotent assign (INV-20). ON CONFLICT keeps the original `assigned_at` so
+   * re-applying the same label doesn't churn the timestamp, and still returns
+   * the row.
+   */
+  async assign(db: Querier, params: AssignmentKey): Promise<LabelAssignment> {
+    const result = await db.query<LabelAssignmentRow>(sql`
+      INSERT INTO label_assignments (label_id, resource_type, resource_id, user_id, workspace_id)
+      VALUES (${params.labelId}, ${params.resourceType}, ${params.resourceId}, ${params.userId}, ${params.workspaceId})
+      ON CONFLICT (workspace_id, resource_type, resource_id, label_id, user_id) DO UPDATE
+        SET assigned_at = label_assignments.assigned_at
+      RETURNING ${sql.raw(ASSIGNMENT_COLUMNS)}
+    `)
+    return mapAssignmentRow(result.rows[0]!)
+  },
+
+  /** Remove one assignment. Returns true if a row was deleted. */
+  async unassign(db: Querier, params: AssignmentKey): Promise<boolean> {
+    const result = await db.query(sql`
+      DELETE FROM label_assignments
+      WHERE workspace_id = ${params.workspaceId}
+        AND resource_type = ${params.resourceType}
+        AND resource_id = ${params.resourceId}
+        AND label_id = ${params.labelId}
+        AND user_id = ${params.userId}
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
+  /**
+   * Assignments the viewer is allowed to see, before resource-access filtering:
+   * every assignment on a public label (the shared pool — any user's row) plus
+   * the viewer's own rows on their private labels. Joined to `labels` so a
+   * single query enforces visibility; archived labels are excluded. The caller
+   * still gates the public stream rows through `listAccessibleStreamIds` so a
+   * public label on a private channel only reaches its members.
+   */
+  async listVisibleCandidates(db: Querier, workspaceId: string, userId: string): Promise<VisibleAssignmentCandidate[]> {
+    const result = await db.query<LabelAssignmentRow & { label_visibility: string }>(sql`
+      SELECT ${sql.raw(
+        ASSIGNMENT_COLUMNS.split(", ")
+          .map((c) => `a.${c}`)
+          .join(", ")
+      )}, l.visibility AS label_visibility
+      FROM label_assignments a
+      JOIN labels l ON l.id = a.label_id AND l.workspace_id = a.workspace_id
+      WHERE a.workspace_id = ${workspaceId}
+        AND l.archived_at IS NULL
+        AND (
+          l.visibility = ${Visibilities.PUBLIC}
+          OR (l.visibility = ${Visibilities.PRIVATE} AND a.user_id = ${userId})
+        )
+    `)
+    return result.rows.map((row) => ({
+      ...mapAssignmentRow(row),
+      labelVisibility: row.label_visibility as Visibility,
+    }))
+  },
+
+  /**
+   * Drop every assignment of a label across all users/resources. Callers run
+   * this inside the label-archive transaction so no chip outlives its label.
+   */
+  async deleteAllForLabel(db: Querier, workspaceId: string, labelId: string): Promise<void> {
+    await db.query(sql`
+      DELETE FROM label_assignments
+      WHERE workspace_id = ${workspaceId} AND label_id = ${labelId}
+    `)
   },
 }

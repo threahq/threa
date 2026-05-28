@@ -1,6 +1,6 @@
 import { Server, type Namespace } from "socket.io"
 import type { Pool } from "pg"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
 import {
   OutboxRepository,
   isStreamScopedEvent,
@@ -25,6 +25,8 @@ import {
   type LabelDeletedOutboxPayload,
   type LabelMemberJoinedOutboxPayload,
   type LabelMemberLeftOutboxPayload,
+  type LabelAssignedOutboxPayload,
+  type LabelUnassignedOutboxPayload,
 } from "./repository"
 import { logger } from "../logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
@@ -284,6 +286,37 @@ export class BroadcastHandler implements OutboxHandler {
     if (isOneOfOutboxEventType(event, ["label:member_joined", "label:member_left"])) {
       const payload = event.payload as LabelMemberJoinedOutboxPayload | LabelMemberLeftOutboxPayload
       this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+      return
+    }
+
+    // Assignment routing follows the label's visibility (carried as
+    // `targetUserId`). Private-label rows are viewer-scoped — deliver to the
+    // creator's room. Public-label rows (`targetUserId === null`) are a shared
+    // pool scoped to the resource: reuse the stream room so a public label on a
+    // private channel reaches exactly its members, identical to a message.
+    if (isOneOfOutboxEventType(event, ["label:assigned", "label:unassigned"])) {
+      const payload = event.payload as LabelAssignedOutboxPayload | LabelUnassignedOutboxPayload
+      if (payload.targetUserId) {
+        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
+        return
+      }
+      const { resourceType, resourceId } = "assignment" in payload ? payload.assignment : payload
+      if (resourceType === LabelableResourceTypes.STREAM) {
+        this.io.to(`ws:${workspaceId}:stream:${resourceId}`).emit(event.eventType, payload)
+      } else {
+        // Every labelable resource type must map to an access scope (room) here,
+        // or its public assignments would never broadcast and clients go stale.
+        // The `never` assignment enforces that at build time — adding a type
+        // without wiring a room is a compile error, the safe place to fail.
+        // We log rather than throw because this runs in the background outbox
+        // dispatcher: a throw never marks the event processed, so the cursor
+        // stalls and retries it forever, blocking every later event.
+        const unmapped: never = resourceType
+        logger.error(
+          { eventType: event.eventType, resourceType: unmapped, workspaceId, resourceId },
+          "label assignment: no room mapping for public-label resource type"
+        )
+      }
       return
     }
 

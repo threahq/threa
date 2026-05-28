@@ -33,6 +33,7 @@ import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker
 import { SidebarToggle } from "@/components/layout"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { cn } from "@/lib/utils"
+import { hexToRgba } from "@/lib/labels"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import {
   useCreateLabel,
@@ -80,14 +81,8 @@ export function LabelsPage() {
 function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
   useLabelsSync(workspaceId)
   const view = useLabelsView(workspaceId)
-  const { mine, publicLabels, joinedLabelIds, currentUserId } = view
+  const { myLabels, currentUserId } = view
   const [addOpen, setAddOpen] = useState(false)
-
-  // Your catalog: labels you authored + public labels you explicitly joined.
-  const myLabels = useMemo(() => {
-    const joinedPublic = publicLabels.filter((l) => l.creatorUserId !== currentUserId && joinedLabelIds.has(l.id))
-    return [...mine, ...joinedPublic].sort((a, b) => a.name.localeCompare(b.name))
-  }, [mine, publicLabels, joinedLabelIds, currentUserId])
 
   return (
     <div className="flex h-full flex-col">
@@ -753,18 +748,4 @@ function EmojiField({
       )}
     </div>
   )
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function hexToRgba(hex: string, alpha: number): string {
-  const normalized = hex.replace("#", "")
-  if (normalized.length !== 6) return hex
-  const r = parseInt(normalized.slice(0, 2), 16)
-  const g = parseInt(normalized.slice(2, 4), 16)
-  const b = parseInt(normalized.slice(4, 6), 16)
-  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return hex
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }

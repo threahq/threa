@@ -7,7 +7,7 @@ import type { InvitationService } from "../invitations"
 import type { ActivityService } from "../activity"
 import type { CommandAvailabilityService } from "../commands"
 import type { AvatarService } from "./avatar-service"
-import type { LabelService } from "../labels"
+import type { LabelService, LabelAssignmentService } from "../labels"
 import { getEmojiList } from "../emoji"
 import { getEffectiveLevel } from "../streams"
 import { BotRepository, serializeBot } from "../public-api"
@@ -54,6 +54,7 @@ interface Dependencies {
   commandAvailabilityService: CommandAvailabilityService
   avatarService: AvatarService
   labelService: LabelService
+  labelAssignmentService: LabelAssignmentService
   workosOrgService: WorkosOrgService
   pool: import("pg").Pool
 }
@@ -67,6 +68,7 @@ export function createWorkspaceHandlers({
   commandAvailabilityService,
   avatarService,
   labelService,
+  labelAssignmentService,
   workosOrgService,
   pool,
 }: Dependencies) {
@@ -138,6 +140,7 @@ export function createWorkspaceHandlers({
         dmPeers,
         labels,
         labelMemberships,
+        labelAssignments,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -149,6 +152,7 @@ export function createWorkspaceHandlers({
         streamService.listDmPeers(workspaceId, userId),
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
+        labelAssignmentService.listForViewer(workspaceId, userId),
       ])
 
       if (!workspace) {
@@ -233,6 +237,7 @@ export function createWorkspaceHandlers({
           userPreferences,
           labels,
           labelMemberships,
+          labelAssignments,
           invitations,
           viewerPermissions,
         },

@@ -24,6 +24,7 @@ export type {
   CachedE2eKey,
   CachedLabel,
   CachedLabelMembership,
+  CachedLabelAssignment,
   CachedE2eDeviceKey,
 } from "./database"
 // Re-export EventType from the shared types package

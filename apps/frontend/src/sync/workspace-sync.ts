@@ -26,9 +26,12 @@ import type {
   LabelDeletedPayload,
   LabelMemberJoinedPayload,
   LabelMemberLeftPayload,
+  LabelAssignedPayload,
+  LabelUnassignedPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
+import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import { NOTIFICATION_CONFIG, NotificationLevels, StreamTypes, Visibilities } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 
@@ -1436,13 +1439,21 @@ export function registerWorkspaceSocketHandlers(
       ...old,
       labels: (old.labels ?? []).filter((l) => l.id !== labelId),
       labelMemberships: (old.labelMemberships ?? []).filter((m) => m.labelId !== labelId),
+      // Backend archive drops assignments in the same transaction without
+      // per-row unassign events (see label service) — mirror that here so a
+      // deleted label's chips disappear immediately.
+      labelAssignments: (old.labelAssignments ?? []).filter((a) => a.labelId !== labelId),
     }))
 
-    void db.transaction("rw", [db.labels, db.labelMemberships], async () => {
+    void db.transaction("rw", [db.labels, db.labelMemberships, db.labelAssignments], async () => {
       await db.labels.delete(labelId)
-      const memberships = await db.labelMemberships.where("labelId").equals(labelId).toArray()
-      if (memberships.length > 0) {
-        await db.labelMemberships.bulkDelete(memberships.map((m) => m.id))
+      const membershipIds = await db.labelMemberships.where("labelId").equals(labelId).primaryKeys()
+      if (membershipIds.length > 0) {
+        await db.labelMemberships.bulkDelete(membershipIds as string[])
+      }
+      const assignmentIds = await db.labelAssignments.where("labelId").equals(labelId).primaryKeys()
+      if (assignmentIds.length > 0) {
+        await db.labelAssignments.bulkDelete(assignmentIds as string[])
       }
     })
   }
@@ -1485,6 +1496,50 @@ export function registerWorkspaceSocketHandlers(
     void db.labelMemberships.delete(id)
   }
 
+  // Assignments — viewer-scoped, so these arrive only in the assigning user's
+  // room. Generic over resourceType: the handler never special-cases what kind
+  // of resource was labeled.
+  const sameAssignment = (
+    a: { labelId: string; resourceType: string; resourceId: string; userId: string },
+    b: { labelId: string; resourceType: string; resourceId: string; userId: string }
+  ) =>
+    a.labelId === b.labelId &&
+    a.resourceType === b.resourceType &&
+    a.resourceId === b.resourceId &&
+    a.userId === b.userId
+
+  const handleLabelAssigned = (payload: LabelAssignedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { assignment } = payload
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
+      const assignments = old.labelAssignments ?? []
+      const exists = assignments.some((a) => sameAssignment(a, assignment))
+      return {
+        ...old,
+        labelAssignments: exists
+          ? assignments.map((a) => (sameAssignment(a, assignment) ? assignment : a))
+          : [...assignments, assignment],
+      }
+    })
+
+    void db.labelAssignments.put(assignmentToCached(assignment))
+  }
+
+  const handleLabelUnassigned = (payload: LabelUnassignedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    const { labelId, resourceType, resourceId, userId } = payload
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
+      ...old,
+      labelAssignments: (old.labelAssignments ?? []).filter(
+        (a) => !sameAssignment(a, { labelId, resourceType, resourceId, userId })
+      ),
+    }))
+
+    void db.labelAssignments.delete(assignmentId(workspaceId, resourceType, resourceId, labelId, userId))
+  }
+
   // Register all handlers
   socket.on("stream:created", handleStreamCreated)
   socket.on("stream:updated", handleStreamUpdated)
@@ -1516,6 +1571,8 @@ export function registerWorkspaceSocketHandlers(
   socket.on("label:deleted", handleLabelDeleted)
   socket.on("label:member_joined", handleLabelMemberJoined)
   socket.on("label:member_left", handleLabelMemberLeft)
+  socket.on("label:assigned", handleLabelAssigned)
+  socket.on("label:unassigned", handleLabelUnassigned)
 
   return () => {
     abortController.abort()
@@ -1551,6 +1608,8 @@ export function registerWorkspaceSocketHandlers(
     socket.off("label:deleted", handleLabelDeleted)
     socket.off("label:member_joined", handleLabelMemberJoined)
     socket.off("label:member_left", handleLabelMemberLeft)
+    socket.off("label:assigned", handleLabelAssigned)
+    socket.off("label:unassigned", handleLabelUnassigned)
   }
 }
 
@@ -1635,6 +1694,7 @@ export async function applyWorkspaceBootstrap(
         _cachedAt: now,
       }))
     ),
+    db.labelAssignments.bulkPut(bootstrap.labelAssignments.map(assignmentToCached)),
     // Only write unreadState if no concurrent socket handler has updated it
     // since the fetch started. Socket handlers (stream:activity, activity:created)
     // may have incremented counts during the fetch window.
@@ -1723,6 +1783,7 @@ export async function applyWorkspaceBootstrap(
       joinedAt: m.joinedAt,
       _cachedAt: now,
     })),
+    labelAssignments: bootstrap.labelAssignments.map(assignmentToCached),
     unreadState: {
       id: workspaceId,
       workspaceId,
@@ -1795,6 +1856,7 @@ export async function applyReconnectBootstrapBatch(
       db.bots,
       db.labels,
       db.labelMemberships,
+      db.labelAssignments,
       db.unreadState,
       db.userPreferences,
       db.workspaceMetadata,
@@ -1851,6 +1913,7 @@ export async function applyReconnectBootstrapBatch(
             _cachedAt: now,
           }))
         ),
+        db.labelAssignments.bulkPut(finalBootstrap.labelAssignments.map(assignmentToCached)),
         db.unreadState.put({
           id: workspaceId,
           workspaceId,
@@ -1931,6 +1994,7 @@ export async function applyReconnectBootstrapBatch(
       joinedAt: membership.joinedAt,
       _cachedAt: now,
     })),
+    labelAssignments: finalBootstrap.labelAssignments.map(assignmentToCached),
     unreadState: {
       id: workspaceId,
       workspaceId,
@@ -1972,6 +2036,11 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
   const bootstrapLabelMembershipIds = new Set(
     bootstrap.labelMemberships.map((m) => `${workspaceId}:${m.labelId}:${m.userId}`)
   )
+  const bootstrapLabelAssignmentIds = new Set(
+    bootstrap.labelAssignments.map((a) =>
+      assignmentId(a.workspaceId, a.resourceType, a.resourceId, a.labelId, a.userId)
+    )
+  )
 
   await Promise.all([
     deleteStale(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now),
@@ -1982,6 +2051,7 @@ async function cleanupStaleEntities(workspaceId: string, bootstrap: WorkspaceBoo
     deleteStale(db.bots, "workspaceId", workspaceId, bootstrapBotIds, now),
     deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
     deleteStale(db.labelMemberships, "workspaceId", workspaceId, bootstrapLabelMembershipIds, now),
+    deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
   ])
 }
 

@@ -1,10 +1,16 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import { VISIBILITY_OPTIONS } from "@threa/types"
+import { VISIBILITY_OPTIONS, LABELABLE_RESOURCE_TYPES } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import type { LabelService } from "./service"
+import type { LabelAssignmentService } from "./assignment-service"
 
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/
+
+const assignmentSchema = z.object({
+  resourceType: z.enum(LABELABLE_RESOURCE_TYPES),
+  resourceId: z.string().min(1).max(64),
+})
 
 const createSchema = z.object({
   name: z.string().min(1).max(100),
@@ -28,18 +34,20 @@ const updateSchema = z
 
 interface Dependencies {
   labelService: LabelService
+  labelAssignmentService: LabelAssignmentService
 }
 
-export function createLabelHandlers({ labelService }: Dependencies) {
+export function createLabelHandlers({ labelService, labelAssignmentService }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      const [labels, memberships] = await Promise.all([
+      const [labels, memberships, assignments] = await Promise.all([
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
+        labelAssignmentService.listForViewer(workspaceId, userId),
       ])
-      res.json({ labels, memberships })
+      res.json({ labels, memberships, assignments })
     },
 
     async create(req: Request, res: Response) {
@@ -115,6 +123,46 @@ export function createLabelHandlers({ labelService }: Dependencies) {
       const labelId = req.params.labelId!
       const label = await labelService.promote({ workspaceId, userId, labelId })
       res.json({ label })
+    },
+
+    async assign(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const labelId = req.params.labelId!
+
+      const parsed = assignmentSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid assignment payload", { status: 400, code: "VALIDATION_ERROR" })
+      }
+
+      const assignment = await labelAssignmentService.assign({
+        workspaceId,
+        userId,
+        labelId,
+        resourceType: parsed.data.resourceType,
+        resourceId: parsed.data.resourceId,
+      })
+      res.status(201).json({ assignment })
+    },
+
+    async unassign(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const labelId = req.params.labelId!
+
+      const parsed = assignmentSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid assignment payload", { status: 400, code: "VALIDATION_ERROR" })
+      }
+
+      await labelAssignmentService.unassign({
+        workspaceId,
+        userId,
+        labelId,
+        resourceType: parsed.data.resourceType,
+        resourceId: parsed.data.resourceId,
+      })
+      res.json({ ok: true })
     },
   }
 }

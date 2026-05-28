@@ -62,7 +62,7 @@ import type { InvitationService } from "./features/invitations"
 import type { ActivityService } from "./features/activity"
 import type { SavedMessagesService } from "./features/saved-messages"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
-import type { LabelService } from "./features/labels"
+import type { LabelService, LabelAssignmentService } from "./features/labels"
 import type { PushService } from "./features/push"
 import type { S3Config } from "./lib/env"
 import type { StorageProvider } from "./lib/storage/s3-client"
@@ -97,6 +97,7 @@ interface Dependencies {
   savedMessagesService: SavedMessagesService
   scheduledMessagesService: ScheduledMessagesService
   labelService: LabelService
+  labelAssignmentService: LabelAssignmentService
   pushService: PushService
   s3Config: S3Config
   commandRegistry: CommandRegistry
@@ -141,6 +142,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     savedMessagesService,
     scheduledMessagesService,
     labelService,
+    labelAssignmentService,
     pushService,
     s3Config,
     commandRegistry,
@@ -190,6 +192,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     commandAvailabilityService,
     avatarService,
     labelService,
+    labelAssignmentService,
     workosOrgService,
     pool,
   })
@@ -222,7 +225,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const activity = createActivityHandlers({ activityService })
   const savedMessages = createSavedMessagesHandlers({ savedMessagesService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
-  const label = createLabelHandlers({ labelService })
+  const label = createLabelHandlers({ labelService, labelAssignmentService })
   const agentSession = createAgentSessionHandlers({ pool })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
@@ -452,6 +455,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/labels/:labelId/join", ...authed, label.join)
   app.post("/api/workspaces/:workspaceId/labels/:labelId/leave", ...authed, label.leave)
   app.post("/api/workspaces/:workspaceId/labels/:labelId/promote", ...authed, label.promote)
+  app.post("/api/workspaces/:workspaceId/labels/:labelId/assignments", ...authed, label.assign)
+  app.delete("/api/workspaces/:workspaceId/labels/:labelId/assignments", ...authed, label.unassign)
 
   // Scheduled messages
   app.get("/api/workspaces/:workspaceId/scheduled", ...authed, scheduledMessages.list)

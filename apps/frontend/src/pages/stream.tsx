@@ -14,6 +14,7 @@ import {
   Sparkles,
   Moon,
   Lock,
+  Tag,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
@@ -32,13 +33,14 @@ import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { TimelineView } from "@/components/timeline"
+import { LabelPicker } from "@/components/labels/label-picker"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
-import { CompanionModes, StreamTypes, type StreamType } from "@threa/types"
+import { CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
@@ -110,6 +112,7 @@ export function StreamPage() {
   const [isEditing, setIsEditing] = useState(false)
   const [editValue, setEditValue] = useState("")
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // `stream.displayName` is already viewer-resolved by useStreamOrDraft (DM peer
@@ -179,6 +182,12 @@ export function StreamPage() {
     label: "Settings",
     icon: Settings,
     onSelect: () => openStreamSettings(streamId),
+  })
+  streamMenuActions.push({
+    id: "labels",
+    label: "Labels…",
+    icon: Tag,
+    onSelect: () => setLabelPickerOpen(true),
   })
   if (!isArchived && !isSystem) {
     streamMenuActions.push({
@@ -452,6 +461,15 @@ export function StreamPage() {
       <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
         <TimelineView isDraft={isDraft} autoFocus={!isMobile} />
       </main>
+      {stream && !isDraft && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.STREAM}
+          resourceId={streamId}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
+        />
+      )}
     </div>
   )
 

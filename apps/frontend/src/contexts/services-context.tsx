@@ -92,6 +92,8 @@ export interface LabelService {
   join: typeof labelsApi.join
   leave: typeof labelsApi.leave
   promote: typeof labelsApi.promote
+  assign: typeof labelsApi.assign
+  unassign: typeof labelsApi.unassign
 }
 
 export interface Services {

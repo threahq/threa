@@ -12,6 +12,8 @@ import type {
   BotInvocationCapability,
   Label,
   LabelMember,
+  LabelAssignment,
+  LabelableResourceType,
   SavedMessageView,
   ScheduledMessageView,
   WorkspaceInvitableRole,
@@ -87,6 +89,8 @@ export type OutboxEventType =
   | "label:deleted"
   | "label:member_joined"
   | "label:member_left"
+  | "label:assigned"
+  | "label:unassigned"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -598,6 +602,25 @@ export interface LabelMemberLeftOutboxPayload extends WorkspaceScopedPayload {
   userId: string
 }
 
+// Assignment routing mirrors the label's visibility (like the upsert events
+// above): `targetUserId` is the creator for a private-label row (delivered to
+// their user room only) and null for a public-label row, which fans out to the
+// resource's access scope — the stream room — so the shared pool reaches every
+// member who can see the resource. `assigned` carries the full row; `unassigned`
+// carries only the key since the row is gone.
+export interface LabelAssignedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string | null
+  assignment: LabelAssignment
+}
+
+export interface LabelUnassignedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string | null
+  labelId: string
+  resourceType: LabelableResourceType
+  resourceId: string
+  userId: string
+}
+
 // Link preview event payloads
 export interface LinkPreviewReadyOutboxPayload extends StreamScopedPayload {
   messageId: string
@@ -688,6 +711,8 @@ export interface OutboxEventPayloadMap {
   "label:deleted": LabelDeletedOutboxPayload
   "label:member_joined": LabelMemberJoinedOutboxPayload
   "label:member_left": LabelMemberLeftOutboxPayload
+  "label:assigned": LabelAssignedOutboxPayload
+  "label:unassigned": LabelUnassignedOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]

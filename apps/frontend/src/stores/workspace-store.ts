@@ -11,6 +11,7 @@ import {
   type CachedBot,
   type CachedLabel,
   type CachedLabelMembership,
+  type CachedLabelAssignment,
   type CachedUnreadState,
   type CachedUserPreferences,
   type CachedWorkspaceMetadata,
@@ -37,6 +38,7 @@ const cache = {
   bots: new Map<string, CachedBot[]>(),
   labels: new Map<string, CachedLabel[]>(),
   labelMemberships: new Map<string, CachedLabelMembership[]>(),
+  labelAssignments: new Map<string, CachedLabelAssignment[]>(),
   unreadState: new Map<string, CachedUnreadState>(),
   userPreferences: new Map<string, CachedUserPreferences>(),
   metadata: new Map<string, CachedWorkspaceMetadata>(),
@@ -110,6 +112,7 @@ export function resetWorkspaceStoreCache(): void {
   cache.bots.clear()
   cache.labels.clear()
   cache.labelMemberships.clear()
+  cache.labelAssignments.clear()
   cache.unreadState.clear()
   cache.userPreferences.clear()
   cache.metadata.clear()
@@ -142,6 +145,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     bots,
     labels,
     labelMemberships,
+    labelAssignments,
     unreadState,
     prefs,
     metadata,
@@ -155,6 +159,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     db.bots.where("workspaceId").equals(workspaceId).toArray(),
     db.labels.where("workspaceId").equals(workspaceId).toArray(),
     db.labelMemberships.where("workspaceId").equals(workspaceId).toArray(),
+    db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
     db.unreadState.get(workspaceId),
     db.userPreferences.get(workspaceId),
     db.workspaceMetadata.get(workspaceId),
@@ -176,6 +181,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     bots,
     labels,
     labelMemberships,
+    labelAssignments,
     unreadState,
     userPreferences: prefs,
     metadata,
@@ -200,6 +206,7 @@ export function seedWorkspaceCache(
     bots: CachedBot[]
     labels?: CachedLabel[]
     labelMemberships?: CachedLabelMembership[]
+    labelAssignments?: CachedLabelAssignment[]
     unreadState?: CachedUnreadState
     userPreferences?: CachedUserPreferences
     metadata?: CachedWorkspaceMetadata
@@ -216,6 +223,7 @@ export function seedWorkspaceCache(
   cache.bots.set(workspaceId, data.bots)
   if (data.labels) cache.labels.set(workspaceId, data.labels)
   if (data.labelMemberships) cache.labelMemberships.set(workspaceId, data.labelMemberships)
+  if (data.labelAssignments) cache.labelAssignments.set(workspaceId, data.labelAssignments)
   if (data.unreadState) cache.unreadState.set(workspaceId, data.unreadState)
   if (data.userPreferences) cache.userPreferences.set(workspaceId, data.userPreferences)
   if (data.metadata) cache.metadata.set(workspaceId, data.metadata)
@@ -227,23 +235,21 @@ export function seedWorkspaceCache(
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// Helper: for array-valued hooks, if useLiveQuery resolved empty but the
-// in-memory cache has data, Dexie's async IDB notification hasn't arrived yet.
-// Return the cache so the first visible render after the coordinated-loading
-// gate opens shows real data instead of a flash of empty content.
+// Helper: array-valued hooks read live from IDB but fall back to the in-memory
+// cache while the first query is in flight, so the first visible render after
+// the coordinated-loading gate opens shows real data instead of a flash of
+// empty content (the cache is seeded from the same bootstrap that wrote IDB).
 //
-// This is safe because the cache is always populated from the same bootstrap
-// that wrote to IDB (seedWorkspaceCache runs synchronously after IDB writes).
-// Once liveQuery catches up it will return >= the cache data.
+// useLiveQuery is undefined only until its first resolution; once it resolves
+// it is the source of truth even when empty. We must NOT keep returning the
+// cache after an empty resolution — an incremental delete (e.g. the last
+// assignment removed via a socket event, which updates IDB but not the cache)
+// would otherwise be masked until the next bootstrap.
 // ---------------------------------------------------------------------------
 
 function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[], cached: T[]): T[] {
-  const live = useLiveQuery(queryFn, deps, cached) ?? []
-  // Cache is populated synchronously by seedWorkspaceCache. useLiveQuery may
-  // lag behind due to async IDB change notifications. If live resolved empty
-  // but cache has data, return cache until liveQuery catches up.
-  if (live.length === 0 && cached.length > 0) return cached
-  return live
+  const live = useLiveQuery(queryFn, deps)
+  return live ?? cached
 }
 
 function useSingletonStoreHook<T>(
@@ -337,6 +343,16 @@ export function useWorkspaceLabelMemberships(workspaceId: string | undefined): C
   const cached = workspaceId ? (cache.labelMemberships.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
     () => (workspaceId ? db.labelMemberships.where("workspaceId").equals(workspaceId).toArray() : []),
+    [workspaceId],
+    cached
+  )
+}
+
+export function useWorkspaceLabelAssignments(workspaceId: string | undefined): CachedLabelAssignment[] {
+  useWorkspaceCacheSignal(workspaceId)
+  const cached = workspaceId ? (cache.labelAssignments.get(workspaceId) ?? []) : []
+  return useArrayStoreHook(
+    () => (workspaceId ? db.labelAssignments.where("workspaceId").equals(workspaceId).toArray() : []),
     [workspaceId],
     cached
   )

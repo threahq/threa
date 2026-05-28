@@ -162,6 +162,20 @@ describe("ScratchpadItem", () => {
     expect(screen.getByTestId("location").textContent).toBe(initialPath)
   })
 
+  it("offers the Labels… action on real scratchpads", () => {
+    renderWithRouter(
+      <ScratchpadItem
+        workspaceId="workspace_1"
+        stream={createScratchpad()}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+      />
+    )
+
+    expect(screen.getByText("Labels…")).toBeInTheDocument()
+  })
+
   it("shows the AI companion badge on companion-on scratchpads", () => {
     renderWithRouter(
       <ScratchpadItem
