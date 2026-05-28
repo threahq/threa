@@ -105,17 +105,14 @@ describe("LabelPicker", () => {
   it("checks only labels the viewer applied, not every label in the shared pool", () => {
     mountPicker()
 
-    const mine = screen.getByRole("option", { name: /Mine/ })
-    const shared = screen.getByRole("option", { name: /Shared/ })
-
-    expect(mine.querySelector(".lucide-check")?.getAttribute("class")).toContain("opacity-100")
-    expect(shared.querySelector(".lucide-check")?.getAttribute("class")).toContain("opacity-0")
+    expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
+    expect(screen.getByRole("checkbox", { name: "Shared" })).not.toBeChecked()
   })
 
-  it("assigns the viewer's own attribution when toggling a pool label they have not applied", async () => {
+  it("assigns the viewer's own attribution when checking a pool label they have not applied", async () => {
     mountPicker()
 
-    fireEvent.click(screen.getByRole("option", { name: /Shared/ }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Shared" }))
 
     await waitFor(() =>
       expect(assign).toHaveBeenCalledWith(WORKSPACE_ID, "label_shared", {
@@ -126,10 +123,10 @@ describe("LabelPicker", () => {
     expect(unassign).not.toHaveBeenCalled()
   })
 
-  it("removes the viewer's attribution when toggling a label they applied", async () => {
+  it("removes the viewer's attribution when unchecking a label they applied", async () => {
     mountPicker()
 
-    fireEvent.click(screen.getByRole("option", { name: /Mine/ }))
+    fireEvent.click(screen.getByRole("checkbox", { name: "Mine" }))
 
     await waitFor(() =>
       expect(unassign).toHaveBeenCalledWith(WORKSPACE_ID, "label_mine", {
@@ -140,42 +137,34 @@ describe("LabelPicker", () => {
     expect(assign).not.toHaveBeenCalled()
   })
 
+  it("filters the list by the search query", () => {
+    mountPicker()
+
+    fireEvent.change(screen.getByRole("textbox", { name: /search labels/i }), { target: { value: "shar" } })
+
+    expect(screen.queryByRole("checkbox", { name: "Mine" })).not.toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: "Shared" })).toBeInTheDocument()
+  })
+
+  it("disables the checkboxes while offline", () => {
+    vi.spyOn(connectionStatusModule, "useIsOnline").mockReturnValue(false)
+    mountPicker()
+
+    expect(screen.getByRole("checkbox", { name: "Mine" })).toBeDisabled()
+    expect(screen.getByRole("checkbox", { name: "Shared" })).toBeDisabled()
+  })
+
   describe("mobile", () => {
     beforeEach(() => {
       vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
     })
 
-    it("renders native toggle buttons that reflect the viewer's own attribution", () => {
+    it("renders the same checkbox list inside the drawer without auto-focusing the search", () => {
       mountPicker()
 
-      expect(screen.getByRole("button", { name: /Mine/ })).toHaveAttribute("aria-pressed", "true")
-      expect(screen.getByRole("button", { name: /Shared/ })).toHaveAttribute("aria-pressed", "false")
-    })
-
-    it("assigns the viewer's own attribution when tapping a pool label they have not applied", async () => {
-      mountPicker()
-
-      fireEvent.click(screen.getByRole("button", { name: /Shared/ }))
-
-      await waitFor(() =>
-        expect(assign).toHaveBeenCalledWith(WORKSPACE_ID, "label_shared", {
-          resourceType: LabelableResourceTypes.STREAM,
-          resourceId: RESOURCE_ID,
-        })
-      )
-      expect(unassign).not.toHaveBeenCalled()
-    })
-
-    it("filters the list by the search query without auto-focusing the input", () => {
-      mountPicker()
-
-      const search = screen.getByRole("textbox", { name: /search labels/i })
-      expect(search).not.toHaveFocus()
-
-      fireEvent.change(search, { target: { value: "shar" } })
-
-      expect(screen.queryByRole("button", { name: /Mine/ })).not.toBeInTheDocument()
-      expect(screen.getByRole("button", { name: /Shared/ })).toBeInTheDocument()
+      expect(screen.getByRole("checkbox", { name: "Mine" })).toBeChecked()
+      expect(screen.getByRole("checkbox", { name: "Shared" })).not.toBeChecked()
+      expect(screen.getByRole("textbox", { name: /search labels/i })).not.toHaveFocus()
     })
   })
 })

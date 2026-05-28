@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react"
-import { Check, Search, Tag } from "lucide-react"
+import { Search, Tag } from "lucide-react"
 import { Link } from "react-router-dom"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   ResponsiveDialog,
   ResponsiveDialogContent,
@@ -9,7 +9,6 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { useIsMobile } from "@/hooks/use-mobile"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { cn } from "@/lib/utils"
 import { hexToRgba } from "@/lib/labels"
@@ -53,108 +52,62 @@ function NoLabelsYet({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * Touch-native list for the mobile drawer. cmdk's keyboard-driven selection
- * model gives no press feedback on tap and pops the on-screen keyboard via its
- * auto-focused input, which feels dead and cramped inside a bottom sheet. Here
- * each row is a real button with an `active:` press state and a generous tap
- * target (matches `SidebarActionDrawerEntry`), and the search input never
- * auto-focuses so opening the sheet doesn't raise the keyboard.
+ * One catalog row. A checked box means *I* applied this label; unchecking it
+ * removes my attribution from the shared pool. The checkbox is the control and
+ * the adjacent label (linked by `htmlFor`) extends the hit area across the
+ * whole row, so the same markup feels right with a mouse or a thumb.
  */
-function MobileLabelList({
-  workspaceId,
-  labels,
-  checkedIds,
+function LabelRow({
+  label,
+  checked,
   disabled,
   onToggle,
 }: {
-  workspaceId: string
-  labels: CachedLabel[]
-  checkedIds: Set<string>
+  label: CachedLabel
+  checked: boolean
   disabled: boolean
   onToggle: (label: CachedLabel) => void
 }) {
-  const [query, setQuery] = useState("")
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return q ? labels.filter((label) => label.name.toLowerCase().includes(q)) : labels
-  }, [labels, query])
-
-  if (labels.length === 0) {
-    return (
-      <div className="px-4 py-10 text-center">
-        <NoLabelsYet workspaceId={workspaceId} />
-      </div>
-    )
-  }
-
+  const id = `label-option-${label.id}`
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-2 border-b px-4 py-2.5">
-        <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-        <input
-          type="text"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search labels…"
-          aria-label="Search labels"
-          // text-base keeps the font ≥16px so iOS doesn't zoom on focus.
-          className="w-full bg-transparent text-base outline-none placeholder:text-muted-foreground"
-        />
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
-        {filtered.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-muted-foreground">No labels found.</p>
-        ) : (
-          filtered.map((label) => {
-            const checked = checkedIds.has(label.id)
-            return (
-              <button
-                key={label.id}
-                type="button"
-                aria-pressed={checked}
-                disabled={disabled}
-                onClick={() => onToggle(label)}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors",
-                  "active:bg-muted disabled:pointer-events-none disabled:opacity-50",
-                  checked && "bg-muted/50"
-                )}
-              >
-                <LabelGlyph label={label} />
-                <span className="min-w-0 flex-1 truncate">{label.name}</span>
-                <Check
-                  className={cn(
-                    "h-[18px] w-[18px] shrink-0 text-primary transition-all duration-150",
-                    checked ? "scale-100 opacity-100" : "scale-50 opacity-0"
-                  )}
-                />
-              </button>
-            )
-          })
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-lg px-2 transition-colors",
+        disabled ? "opacity-50" : "hover:bg-muted/50 active:bg-muted"
+      )}
+    >
+      <Checkbox id={id} checked={checked} disabled={disabled} onCheckedChange={() => onToggle(label)} />
+      <label
+        htmlFor={id}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2.5 py-2.5 text-sm",
+          disabled ? "cursor-not-allowed" : "cursor-pointer"
         )}
-      </div>
+      >
+        <LabelGlyph label={label} />
+        <span className="min-w-0 flex-1 truncate">{label.name}</span>
+      </label>
     </div>
   )
 }
 
 /**
- * Apply or remove labels on a single resource. A multi-select toggle list:
- * selecting a row flips its assignment and keeps the surface open so several
- * labels can be set in one pass. Renders as a centered dialog with a cmdk
- * command list on desktop and a touch-native list in a bottom drawer on mobile
- * (ResponsiveDialog). The catalog is the viewer's usable labels
- * (`useLabelsView().myLabels`). The checkmark reflects the viewer's own
- * attribution (`myLabelIds`): toggling adds or removes *my* row in the shared
- * pool, never anyone else's.
+ * Apply or remove labels on a single resource. A checkbox list: ticking a row
+ * applies the label, unticking it removes the viewer's attribution — toggling
+ * adds or removes *my* row in the shared pool, never anyone else's. The list
+ * stays open so several labels can be set in one pass. Renders as a centered
+ * dialog on desktop and a bottom drawer on mobile (ResponsiveDialog); the rows
+ * are identical on both. The catalog is the viewer's usable labels
+ * (`useLabelsView().myLabels`) and the checked state reflects the viewer's own
+ * attribution (`myLabelIds`).
  */
 export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpenChange }: LabelPickerProps) {
-  const isMobile = useIsMobile()
   const isOnline = useIsOnline()
   const { myLabels } = useLabelsView(workspaceId)
   const { myLabelIds } = useResourceLabelAssignments(workspaceId, resourceType, resourceId)
   const assign = useAssignLabel(workspaceId)
   const unassign = useUnassignLabel(workspaceId)
+  const [query, setQuery] = useState("")
 
   const toggle = (label: CachedLabel) => {
     if (myLabelIds.has(label.id)) {
@@ -163,6 +116,11 @@ export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpe
       assign.mutate({ labelId: label.id, resourceType, resourceId })
     }
   }
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return q ? myLabels.filter((label) => label.name.toLowerCase().includes(q)) : myLabels
+  }, [myLabels, query])
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
@@ -177,44 +135,41 @@ export function LabelPicker({ workspaceId, resourceType, resourceId, open, onOpe
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
-        {isMobile ? (
-          <MobileLabelList
-            workspaceId={workspaceId}
-            labels={myLabels}
-            checkedIds={myLabelIds}
-            disabled={!isOnline}
-            onToggle={toggle}
-          />
+        {myLabels.length === 0 ? (
+          <div className="px-4 py-10 text-center">
+            <NoLabelsYet workspaceId={workspaceId} />
+          </div>
         ) : (
-          <Command>
-            <CommandInput placeholder="Search labels…" />
-            <CommandList className="max-h-[min(60vh,360px)] overscroll-contain">
-              <CommandEmpty>
-                {myLabels.length === 0 ? <NoLabelsYet workspaceId={workspaceId} /> : "No labels found."}
-              </CommandEmpty>
-              {myLabels.length > 0 && (
-                <CommandGroup>
-                  {myLabels.map((label) => {
-                    const checked = myLabelIds.has(label.id)
-                    return (
-                      <CommandItem
-                        key={label.id}
-                        value={label.id}
-                        keywords={[label.name]}
-                        disabled={!isOnline}
-                        onSelect={() => toggle(label)}
-                        className="gap-2.5"
-                      >
-                        <LabelGlyph label={label} />
-                        <span className="min-w-0 flex-1 truncate">{label.name}</span>
-                        <Check className={cn("h-4 w-4 shrink-0", checked ? "opacity-100" : "opacity-0")} />
-                      </CommandItem>
-                    )
-                  })}
-                </CommandGroup>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center gap-2 border-b px-4 py-2.5">
+              <Search className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              <input
+                type="text"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search labels…"
+                aria-label="Search labels"
+                // text-base keeps the font ≥16px so iOS doesn't zoom on focus; the
+                // drawer never auto-focuses it, so opening the sheet stays keyboard-free.
+                className="w-full bg-transparent text-base outline-none placeholder:text-muted-foreground sm:text-sm"
+              />
+            </div>
+            <div className="max-h-[min(60vh,360px)] min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
+              {filtered.length === 0 ? (
+                <p className="px-2 py-6 text-center text-sm text-muted-foreground">No labels found.</p>
+              ) : (
+                filtered.map((label) => (
+                  <LabelRow
+                    key={label.id}
+                    label={label}
+                    checked={myLabelIds.has(label.id)}
+                    disabled={!isOnline}
+                    onToggle={toggle}
+                  />
+                ))
               )}
-            </CommandList>
-          </Command>
+            </div>
+          </div>
         )}
 
         {!isOnline && (
