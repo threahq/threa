@@ -35,6 +35,13 @@ export interface ChatCompletionResult {
 /** Injectable so the invoke handler can be tested without network access. */
 export type ChatCompletionFn = (req: ChatCompletionRequest) => Promise<ChatCompletionResult>
 
+/**
+ * Upper bound on a single OpenRouter call. Kept under the backend forwarder's
+ * timeout so the enclave aborts (and the request fails cleanly) before the
+ * backend gives up, rather than leaving a hung connection.
+ */
+const OPENROUTER_TIMEOUT_MS = 100_000
+
 interface OpenRouterResponse {
   model?: string
   choices?: Array<{ message?: { content?: string } }>
@@ -64,6 +71,7 @@ export function createOpenRouterClient(config: EnclaveConfig): ChatCompletionFn 
         // Restrict routing to providers that do not retain request data.
         provider: { data_collection: "deny" },
       }),
+      signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
     })
 
     if (!res.ok) {

@@ -41,9 +41,10 @@ What the enclave does not do:
 
 - No database connection. No persistence of any kind. Everything is
   in-memory and per process lifetime.
-- No payload logging. Access logs carry timing, status, and request IDs
-  only — never request/response bodies. The `Authorization` header is
-  redacted at the `pino-http` layer.
+- No payload logging. The access-log serializer emits only `{id, method, url}`
+  per request — no request/response bodies and no headers, so neither the
+  `Authorization` nor the `X-Internal-Api-Key` header is ever written (the
+  `pino-http` `redact` paths are belt-and-braces on top of that).
 - No outbound traffic except the backend (register/heartbeat/revoke) and the
   OpenRouter API (the LLM upstream).
 
@@ -51,7 +52,7 @@ What the enclave does not do:
 
 | Variable                        | Required             | Purpose                                                                                              |
 | ------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`.                                               |
+| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/invoke`.                                    |
 | `ENCLAVE_SELF_URL`              | yes                  | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`). |
 | `BACKEND_BASE_URL`              | yes                  | Regional backend base URL — target for register/heartbeat/revoke.                                    |
 | `INTERNAL_API_KEY`              | yes                  | Shared bearer secret guarding the enclave's calls to `/internal/enclave-runtimes/*`.                 |

@@ -1,4 +1,4 @@
-import type { Request, Response } from "express"
+import type { NextFunction, Request, Response } from "express"
 import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import {
@@ -184,28 +184,41 @@ function secretsMatch(a: string, b: string): boolean {
 }
 
 /**
- * Express adapter for `/invoke`. Only the backend forwarder may call it — it
- * carries the shared internal-api-key (the EIK pubkey is public, so without this
- * gate anyone could wrap their own SSK to it and use the enclave as an LLM /
- * decryption oracle). Validates the body, runs `handleInvoke`, and answers with
- * status only on failure — error bodies never echo request content (which would
- * defeat the no-plaintext-egress guarantee).
+ * Gate for `/invoke`: only the backend forwarder may call it — it carries the
+ * shared internal-api-key. The EIK pubkey is public, so without this anyone
+ * could wrap their own SSK to it and use the enclave as an LLM / decryption
+ * oracle. Mounted *before* the body parser so an unauthorized caller is rejected
+ * without us parsing (up to multi-MB of) their JSON.
  */
-export function createInvokeHandler(deps: InvokeDeps, internalApiKey: string) {
-  return async (req: Request, res: Response): Promise<void> => {
+export function requireInternalKey(internalApiKey: string) {
+  return (req: Request, res: Response, next: NextFunction): void => {
     const presented = req.header(INTERNAL_API_KEY_HEADER)
     if (!presented || !secretsMatch(presented, internalApiKey)) {
       res.status(401).json({ error: "Unauthorized" })
       return
     }
+    next()
+  }
+}
+
+/**
+ * Express adapter for `/invoke`. Assumes `requireInternalKey` already gated the
+ * request. Validates the body, runs `handleInvoke`, and answers with status only
+ * on failure — error bodies never echo request content (which would defeat the
+ * no-plaintext-egress guarantee).
+ */
+export function createInvokeHandler(deps: InvokeDeps) {
+  return async (req: Request, res: Response): Promise<void> => {
     const parsed = invokeRequestSchema.safeParse(req.body)
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid invoke request" })
       return
     }
     try {
-      // zod has structurally validated the body; the contract type is canonical.
-      const result = await handleInvoke(deps, parsed.data as EnclaveInvokeRequest)
+      // Assigning through the contract type (no `as`) makes a schema/contract
+      // drift a compile error here rather than a silent mismatch.
+      const request: EnclaveInvokeRequest = parsed.data
+      const result = await handleInvoke(deps, request)
       res.json(result)
     } catch (err) {
       if (err instanceof InvokeError) {

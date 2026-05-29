@@ -6,7 +6,7 @@ import { registerWithBackend, revokeWithBackend } from "./register"
 import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
 import { createOpenRouterClient } from "./llm"
-import { createInvokeHandler } from "./invoke"
+import { createInvokeHandler, requireInternalKey } from "./invoke"
 
 const logger = pino({ name: "enclave" })
 
@@ -19,8 +19,10 @@ async function main() {
 
   const app = express()
   app.disable("x-powered-by")
-  app.use(express.json({ limit: "4mb" }))
   app.use(accessLog)
+  // No app-wide body parser: only /invoke takes a body, and it mounts its own
+  // parser *after* the auth gate so an unauthorized caller never costs us a
+  // (multi-MB) JSON parse. The GET routes below need no body.
 
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok" })
@@ -44,7 +46,12 @@ async function main() {
   // The only content-bearing route: decrypt the forwarded turn, call the LLM,
   // seal the reply. The LLM client is the enclave's sole outbound dependency.
   const chatCompletion = createOpenRouterClient(config)
-  app.post("/invoke", createInvokeHandler({ keyPair, chatCompletion }, config.internalApiKey))
+  app.post(
+    "/invoke",
+    requireInternalKey(config.internalApiKey),
+    express.json({ limit: "4mb" }),
+    createInvokeHandler({ keyPair, chatCompletion })
+  )
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, "Enclave request failed")

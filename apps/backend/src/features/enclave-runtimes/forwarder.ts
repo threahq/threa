@@ -52,6 +52,23 @@ export class EnclaveForwarder {
     if (!res.ok) {
       throw new EnclaveForwardError(`Enclave returned ${res.status}`, res.status)
     }
-    return (await res.json()) as EnclaveInvokeResponse
+    // Validate the success shape at the boundary: a malformed 200 should fail
+    // here, not surface as a confusing error deep in the reply-write path.
+    let payload: unknown
+    try {
+      payload = await res.json()
+    } catch {
+      throw new EnclaveForwardError("Enclave returned invalid JSON", res.status)
+    }
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      typeof (payload as { ciphertext?: unknown }).ciphertext !== "string" ||
+      typeof (payload as { model?: unknown }).model !== "string" ||
+      !(payload as { envelope?: unknown }).envelope
+    ) {
+      throw new EnclaveForwardError("Enclave returned an invalid response shape", res.status)
+    }
+    return payload as EnclaveInvokeResponse
   }
 }

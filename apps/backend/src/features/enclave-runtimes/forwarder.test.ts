@@ -54,6 +54,16 @@ describe("EnclaveForwarder.invoke", () => {
     expect((err as EnclaveForwardError).status).toBe(503)
   })
 
+  it("rejects a malformed 200 response at the boundary", async () => {
+    globalThis.fetch = mock(
+      async () => new Response(JSON.stringify({ model: "m" }), { status: 200 })
+    ) as unknown as typeof fetch
+    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+
+    const err = await forwarder.invoke("https://enclave-1.internal", REQUEST).catch((e) => e)
+    expect(err).toBeInstanceOf(EnclaveForwardError)
+  })
+
   it("wraps a network failure as EnclaveForwardError (no request echoed)", async () => {
     globalThis.fetch = mock(async () => {
       throw new Error("ECONNREFUSED")
