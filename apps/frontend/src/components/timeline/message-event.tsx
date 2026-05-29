@@ -1229,6 +1229,7 @@ function SentMessageEvent({
           <MessageEditForm
             messageId={payload.messageId}
             workspaceId={workspaceId}
+            streamId={streamId}
             initialContentJson={payload.contentJson}
             onSave={stopEditing}
             onCancel={stopEditing}
@@ -1244,6 +1245,7 @@ function SentMessageEvent({
         <MessageEditForm
           messageId={payload.messageId}
           workspaceId={workspaceId}
+          streamId={streamId}
           initialContentJson={payload.contentJson}
           onSave={stopEditing}
           onCancel={stopEditing}
@@ -1523,12 +1525,18 @@ function EditingMessageEvent({
         statusIndicator={<span className="text-xs text-muted-foreground">Editing unsent message</span>}
       >
         {!isMobile ? (
-          <UnsentMessageEditForm messageId={event.id} initialContentJson={payload.contentJson} onDone={stopEditing} />
+          <UnsentMessageEditForm
+            messageId={event.id}
+            streamId={streamId}
+            initialContentJson={payload.contentJson}
+            onDone={stopEditing}
+          />
         ) : undefined}
       </MessageLayout>
       {isMobile && (
         <UnsentMessageEditForm
           messageId={event.id}
+          streamId={streamId}
           initialContentJson={payload.contentJson}
           onDone={stopEditing}
           authorName={actorName}

@@ -120,6 +120,7 @@ function renderForm(props: Partial<React.ComponentProps<typeof MessageEditForm>>
         <MessageEditForm
           messageId="msg_1"
           workspaceId="ws_1"
+          streamId="stream_1"
           initialContentJson={initialContentJson}
           onSave={vi.fn()}
           onCancel={vi.fn()}

@@ -13,8 +13,14 @@ const MEMO_SEARCH_LIMIT = 8
  * Manages the inline `/memo` search picker. Backs the suggestion list with the
  * same keyword + semantic memo search the memory explorer uses, fetched through
  * the shared query cache so repeated queries are instant and consistent.
+ *
+ * `anchorStreamId` is the access anchor: the stream being composed in. Passing
+ * it scopes results to what is shareable into that stream (the backend applies
+ * the same access spec an agent invoked there would, resolving the thread root),
+ * so a memo from an unrelated private stream can't be embedded into — and thereby
+ * leaked to — this one.
  */
-export function useMemoSuggestion() {
+export function useMemoSuggestion(anchorStreamId?: string) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const queryClient = useQueryClient()
 
@@ -26,7 +32,7 @@ export function useMemoSuggestion() {
       // search for. The backend orders an empty search by recency; typing a
       // query switches it to keyword + semantic ranking.
       const trimmed = query.trim()
-      const request = { query: trimmed, limit: MEMO_SEARCH_LIMIT }
+      const request = { query: trimmed, limit: MEMO_SEARCH_LIMIT, anchorStreamId }
       const response = await queryClient.fetchQuery({
         queryKey: memoKeys.search(workspaceId, request),
         queryFn: () => searchMemos(workspaceId, request),
@@ -34,7 +40,7 @@ export function useMemoSuggestion() {
       })
       return response.results.map((result) => result.memo)
     },
-    [workspaceId, queryClient]
+    [workspaceId, queryClient, anchorStreamId]
   )
 
   const renderList = useCallback(

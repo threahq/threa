@@ -120,6 +120,13 @@ interface RichEditorProps {
   onEscapeBlur?: () => void
   /** Stream context for filtering which broadcast mentions (@channel, @here) are available */
   streamContext?: MentionStreamContext
+  /**
+   * Access anchor for the `/memo` picker: the stream this editor composes into.
+   * Scopes the picker to memos shareable into that stream so they can't be
+   * embedded into — and leaked to — a stream they don't belong to. Pass the
+   * current stream (thread or root); the backend resolves the thread root.
+   */
+  memoAnchorStreamId?: string
   /** Whether @mentions should be parsed and autocompleted. */
   enableMentions?: boolean
   /** Whether #channel references should be parsed and autocompleted. */
@@ -190,6 +197,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     blurOnEscape = false,
     onEscapeBlur,
     streamContext,
+    memoAnchorStreamId,
     enableMentions = true,
     enableChannels = true,
     enableCommands = true,
@@ -234,7 +242,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
   })
-  const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion()
+  const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 
   // Emoji autocomplete
   const { workspaceId } = useParams<{ workspaceId: string }>()

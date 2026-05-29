@@ -21,6 +21,8 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
 interface MessageEditFormProps {
   messageId: string
   workspaceId: string
+  /** The stream this message belongs to — scopes the `/memo` picker. */
+  streamId: string
   initialContentJson?: JSONContent
   onSave: () => void
   onCancel: () => void
@@ -33,6 +35,7 @@ interface MessageEditFormProps {
 export function MessageEditForm({
   messageId,
   workspaceId,
+  streamId,
   initialContentJson,
   onSave,
   onCancel,
@@ -225,6 +228,7 @@ export function MessageEditForm({
                 disableSelectionToolbar
                 blurOnEscape
                 onEscapeBlur={focusMobileActionBar}
+                memoAnchorStreamId={streamId}
               />
             </div>
           </div>
@@ -278,6 +282,7 @@ export function MessageEditForm({
           ariaLabel="Edit message"
           ariaDescribedBy={instructionsId}
           autoFocus
+          memoAnchorStreamId={streamId}
         />
       </div>
       <div className="flex items-center gap-1.5 mt-1">
