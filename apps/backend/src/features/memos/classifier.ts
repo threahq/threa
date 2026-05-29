@@ -11,11 +11,14 @@ import {
   CLASSIFIER_CONVERSATION_PROMPT,
   CLASSIFIER_EXISTING_MEMO_TEMPLATE,
 } from "./config"
+import { formatDate } from "../../lib/temporal"
 import { memoRepair } from "./repair"
 
 /** Context for cost tracking */
 export interface ClassifierContext {
   workspaceId: string
+  /** Author's timezone for rendering memo timestamps (IANA identifier, e.g., "America/New_York") */
+  authorTimezone?: string
 }
 
 /**
@@ -45,11 +48,17 @@ export class MemoClassifier {
   ): Promise<ConversationClassification> {
     const config = await this.configResolver.resolve(COMPONENT_PATHS.MEMO_CLASSIFIER)
 
+    const tz = context.authorTimezone ?? "UTC"
     const existingMemoSection =
       existingMemos.length > 0
         ? CLASSIFIER_EXISTING_MEMO_TEMPLATE.replace(
             "{{MEMOS}}",
-            existingMemos.map((m, i) => `${i + 1}. ${m.title}\n   ${m.abstract}`).join("\n")
+            existingMemos
+              .map(
+                (m, i) =>
+                  `${i + 1}. ${m.title} (created ${formatDate(m.createdAt, tz, "YYYY-MM-DD")})\n   ${m.abstract}`
+              )
+              .join("\n")
           )
         : ""
 

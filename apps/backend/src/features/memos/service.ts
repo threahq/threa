@@ -242,12 +242,19 @@ export class MemoService implements MemoServiceLike {
 
         const existingMemos = fetchedData.existingConversationMemos.get(item.itemId) ?? []
 
+        // First user message author's timezone, used to anchor relative dates in
+        // memos and to render existing-memo timestamps for the classifier.
+        const firstUserMsg = messagesArray.find((m) => m.authorType === "user")
+        const authorTimezone = firstUserMsg
+          ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
+          : undefined
+
         // AI call (no connection held)
         const classification = await this.classifier.classifyConversation(
           conversation,
           formattedMessages,
           existingMemos,
-          { workspaceId }
+          { workspaceId, authorTimezone }
         )
 
         if (!classification.isKnowledgeWorthy) {
@@ -273,12 +280,6 @@ export class MemoService implements MemoServiceLike {
 
         const isRevision = existingMemos.length > 0
         const revisionReason = classification.revisionReason ?? "Content updated"
-
-        // Use the first user message author's timezone for date anchoring
-        const firstUserMsg = messagesArray.find((m) => m.authorType === "user")
-        const authorTimezone = firstUserMsg
-          ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
-          : undefined
 
         // One conversation yields a set of single-topic memos. On revision we
         // regenerate the whole set (existing memos passed as context for stable
