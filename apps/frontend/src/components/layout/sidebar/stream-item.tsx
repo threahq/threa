@@ -359,11 +359,18 @@ export function StreamItem({
               )}
             >
               <div className="flex items-center gap-2 pr-8">
-                <span className={cn("truncate text-sm", hasUnread ? "font-semibold" : "font-medium")}>
-                  {name}
-                  {threadRootContext && (
-                    <span className="font-normal text-muted-foreground/60 text-xs"> · {threadRootContext}</span>
+                <span
+                  className={cn(
+                    "truncate text-sm",
+                    hasUnread ? "font-semibold" : "font-medium",
+                    // The truncation ellipsis inherits the color of this element. When a grey parent-stream
+                    // context trails the title it's the usual cut point, so tint the container grey (and keep
+                    // the title itself at foreground) so the ellipsis matches the text it's shortening.
+                    threadRootContext && "text-muted-foreground/60"
                   )}
+                >
+                  {threadRootContext ? <span className="text-foreground">{name}</span> : name}
+                  {threadRootContext && <span className="font-normal text-xs"> · {threadRootContext}</span>}
                 </span>
                 {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
                   <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
