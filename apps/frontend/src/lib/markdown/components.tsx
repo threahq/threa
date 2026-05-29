@@ -140,16 +140,19 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   // the memo in the memory explorer.
   const memoHref = href ? parseMemoHref(href) : null
   if (memoHref) {
-    const target = workspaceId ? `/w/${workspaceId}/memory?memo=${memoHref.memoId}` : null
+    const label = <MemoChip label={<ProcessedChildren>{children}</ProcessedChildren>} />
+    // Outside a workspace route there's no memory explorer to link to — render
+    // the chip without an anchor rather than an `href="#"` that jumps to top.
+    if (!workspaceId) return label
+    const target = `/w/${workspaceId}/memory?memo=${memoHref.memoId}`
     const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
-      if (!target) return
       if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
       e.preventDefault()
       navigate(target)
     }
     return (
-      <a href={target ?? "#"} onClick={handleClick} className="no-underline">
-        <MemoChip label={<ProcessedChildren>{children}</ProcessedChildren>} />
+      <a href={target} onClick={handleClick} className="no-underline">
+        {label}
       </a>
     )
   }

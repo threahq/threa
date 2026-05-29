@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
 import { filterCommands } from "./use-command-suggestion"
@@ -18,12 +18,21 @@ const MEMO: CommandItem = {
 }
 const ALL = [MEMO, INVITE, DISCUSS]
 
+const editors: Editor[] = []
+
 function makeEditor() {
   const extensions = createEditorExtensions({ placeholder: "x" })
   const el = document.createElement("div")
   document.body.appendChild(el)
-  return new Editor({ element: el, extensions, content: "" })
+  const editor = new Editor({ element: el, extensions, content: "" })
+  editor.on("destroy", () => el.remove())
+  editors.push(editor)
+  return editor
 }
+
+afterEach(() => {
+  while (editors.length) editors.pop()?.destroy()
+})
 
 function typeText(editor: Editor, text: string) {
   editor.commands.focus()

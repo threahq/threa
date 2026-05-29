@@ -79,6 +79,9 @@ export function buildMemoHref(params: MemoHref): string {
 export function parseMemoHref(href: string): MemoHref | null {
   if (!href.startsWith("memo:")) return null
   const memoId = href.slice("memo:".length)
-  if (!memoId) return null
+  // Canonical ids are a single `[\w-]+` segment (matches the markdown link
+  // pattern). Reject anything with a path/query/fragment suffix so values like
+  // `memo:memo_123/extra` don't slip through as a valid pointer.
+  if (!/^[\w-]+$/.test(memoId)) return null
   return { memoId }
 }

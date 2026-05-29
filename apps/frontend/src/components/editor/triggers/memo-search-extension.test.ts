@@ -1,7 +1,9 @@
-import { describe, it, expect } from "vitest"
+import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
 import { MemoSearchPluginKey } from "./memo-search-extension"
+
+const editors: Editor[] = []
 
 function makeEditor() {
   const extensions = createEditorExtensions({
@@ -20,8 +22,14 @@ function makeEditor() {
   const el = document.createElement("div")
   document.body.appendChild(el)
   const editor = new Editor({ element: el, extensions, content: "" })
+  editor.on("destroy", () => el.remove())
+  editors.push(editor)
   return editor
 }
+
+afterEach(() => {
+  while (editors.length) editors.pop()?.destroy()
+})
 
 function typeText(editor: Editor, text: string) {
   for (const ch of text) editor.view.dispatch(editor.state.tr.insertText(ch))

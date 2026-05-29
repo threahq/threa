@@ -13,7 +13,8 @@ export function parseMemoUrl(text: string): string | null {
   }
 
   if (url.origin !== window.location.origin) return null
-  if (!/\/memory\/?$/.test(url.pathname)) return null
+  // Match only the workspace memory route, not any path ending in "/memory".
+  if (!/^\/w\/[^/]+\/memory\/?$/.test(url.pathname)) return null
 
   const memoId = url.searchParams.get("memo")
   if (!memoId || !memoId.startsWith("memo_")) return null

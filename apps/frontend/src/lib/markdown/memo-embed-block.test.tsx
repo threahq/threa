@@ -17,6 +17,19 @@ function renderMarkdown(content: string) {
   )
 }
 
+function renderMarkdownNoWorkspace(content: string) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={<MarkdownContent content={content} />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
+  )
+}
+
 describe("MarkdownContent — inline memo chip", () => {
   it("renders a lone memo: reference as an inline chip linking to the memo", () => {
     renderMarkdown("[Auth rewrite plan](memo:memo_abc123)")
@@ -39,5 +52,14 @@ describe("MarkdownContent — inline memo chip", () => {
     expect(chip?.closest("a")?.getAttribute("href")).toBe("/w/ws_1/memory?memo=memo_abc123")
     expect(screen.getByText(/see/)).toBeInTheDocument()
     expect(screen.getByText(/for details/)).toBeInTheDocument()
+  })
+
+  it("renders the chip without a link (no href='#' jump) outside a workspace route", () => {
+    renderMarkdownNoWorkspace("[Auth rewrite plan](memo:memo_abc123)")
+
+    const chip = document.querySelector('[data-type="memo-chip"]')
+    expect(chip).not.toBeNull()
+    expect(chip?.closest("a")).toBeNull()
+    expect(screen.getByText("Auth rewrite plan")).toBeInTheDocument()
   })
 })

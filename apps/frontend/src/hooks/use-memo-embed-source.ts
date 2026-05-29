@@ -65,17 +65,16 @@ export function useMemoEmbedSource(memoId: string): MemoEmbedSource {
   const [showSkeleton, setShowSkeleton] = useState(false)
 
   useEffect(() => {
-    setShowSkeleton(false)
-  }, [memoId])
-
-  useEffect(() => {
     if (resolved) {
       setShowSkeleton(false)
       return
     }
+    // Reset + restart the delay whenever the memo changes, so a new pointer
+    // doesn't inherit the previous one's elapsed skeleton timer.
+    setShowSkeleton(false)
     const timer = setTimeout(() => setShowSkeleton(true), SKELETON_DELAY_MS)
     return () => clearTimeout(timer)
-  }, [resolved])
+  }, [resolved, memoId])
 
   if (resolved) return resolved
   return { status: "pending", showSkeleton }

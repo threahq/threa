@@ -24,6 +24,10 @@ describe("parseMemoUrl", () => {
     expect(parseMemoUrl(`${origin}/w/ws_123/streams?memo=memo_abc`)).toBeNull()
   })
 
+  it("returns null for an unrelated path that merely ends in /memory", () => {
+    expect(parseMemoUrl(`${origin}/admin/memory?memo=memo_abc`)).toBeNull()
+  })
+
   it("returns null when the memo param is missing", () => {
     expect(parseMemoUrl(`${origin}/w/ws_123/memory`)).toBeNull()
   })

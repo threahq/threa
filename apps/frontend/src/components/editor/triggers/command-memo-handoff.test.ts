@@ -1,9 +1,15 @@
-import { describe, it, expect } from "vitest"
+import { afterEach, describe, it, expect } from "vitest"
 import { Editor } from "@tiptap/core"
 import { createEditorExtensions } from "../editor-extensions"
 import { MemoSearchPluginKey } from "./memo-search-extension"
 import { MEMO_SEARCH_SLASH_ACTION } from "./command-extension"
 import type { CommandItem } from "./types"
+
+const editors: Editor[] = []
+
+afterEach(() => {
+  while (editors.length) editors.pop()?.destroy()
+})
 
 const MEMO_ITEM: CommandItem = {
   name: "memo",
@@ -44,6 +50,8 @@ function makeEditor() {
   const el = document.createElement("div")
   document.body.appendChild(el)
   const editor = new Editor({ element: el, extensions, content: "" })
+  editor.on("destroy", () => el.remove())
+  editors.push(editor)
   return { editor, getSlashCommand: () => slashCommand, memoStarts }
 }
 
