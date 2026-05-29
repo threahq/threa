@@ -889,6 +889,9 @@ export function MessageComposer({
           <div
             className={cn(
               "rounded-[16px] border border-input bg-card flex flex-col flex-1 min-h-0",
+              // Subtle drop shadow on the resting inline composer (not when expanded into a sheet)
+              !mobileExpanded &&
+                "shadow-[inset_0_1px_0_hsl(33_28%_97%),0_8px_24px_-14px_hsl(28_30%_22%/0.18),0_2px_6px_-2px_hsl(28_30%_22%/0.06)] dark:shadow-[0_8px_24px_-14px_rgb(0_0_0/0.35),0_2px_6px_-2px_rgb(0_0_0/0.12)]",
               // Compact padding when mobile-unfocused (single line), normal otherwise
               isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
               // When mobile-expanded, let the editor grow and override its internal max-height
