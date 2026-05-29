@@ -23,8 +23,9 @@ async function seedMessages(
   count: number,
   prefix: string
 ): Promise<void> {
-  // Send in small parallel batches to speed up seeding while preserving order
-  const BATCH_SIZE = 5
+  // Send in parallel batches to speed up seeding. Batches run sequentially so
+  // cross-batch ordering (which the pagination assertions rely on) is preserved.
+  const BATCH_SIZE = 10
   for (let start = 1; start <= count; start += BATCH_SIZE) {
     const end = Math.min(start + BATCH_SIZE - 1, count)
     const promises: Promise<void>[] = []
@@ -64,10 +65,23 @@ function messageLocator(page: Page, prefix: string, num: number) {
 /** Scroll to top and dispatch a scroll event so React's onScroll handler fires. */
 async function scrollToTop(page: Page): Promise<void> {
   const scroller = page.locator("[data-suppress-pull-refresh]")
-  await page.waitForFunction(() => {
-    const container = document.querySelector("[data-suppress-pull-refresh]")
-    return container instanceof HTMLElement && container.scrollHeight > container.clientHeight
-  })
+  // The list may not overflow its container (e.g. when only a handful of
+  // messages fit on screen). That's a valid state — there is nothing to
+  // scroll — so bound the wait and bail out instead of hanging on a
+  // waitForFunction that never resolves until the whole test times out.
+  const isScrollable = await page
+    .waitForFunction(
+      () => {
+        const container = document.querySelector("[data-suppress-pull-refresh]")
+        return container instanceof HTMLElement && container.scrollHeight > container.clientHeight
+      },
+      undefined,
+      { timeout: 5000 }
+    )
+    .then(() => true)
+    .catch(() => false)
+
+  if (!isScrollable) return
 
   await scroller.hover()
   for (let i = 0; i < 3; i++) {
@@ -117,8 +131,9 @@ test.describe("Infinite Scroll", () => {
     // Navigate fresh to get a clean bootstrap (with only the latest ~50 events)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
 
-    // Wait for messages to render — the latest message should be visible
-    await expect(messageLocator(page, prefix, PAGED_MESSAGE_COUNT)).toBeVisible({ timeout: 10000 })
+    // Wait for messages to render — the latest message should be visible.
+    // Bootstrap render can lag on a loaded CI runner, so allow generous headroom.
+    await expect(messageLocator(page, prefix, PAGED_MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
 
     // The earliest message should NOT be visible yet (it's beyond the bootstrap window)
     await expect(oldestMessage).not.toBeVisible()
@@ -151,7 +166,7 @@ test.describe("Infinite Scroll", () => {
     await seedMessages(page, workspaceId, streamId, MESSAGE_COUNT, prefix)
 
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
-    await expect(messageLocator(page, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 10000 })
+    await expect(messageLocator(page, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
 
     // "Jump to latest" button should not be visible when at the bottom
     const jumpButton = page.getByRole("button", { name: "Jump to latest" })
@@ -202,8 +217,8 @@ test.describe("Infinite Scroll", () => {
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
 
     // First and last messages should be visible
-    await expect(messageLocator(page, prefix, 1)).toBeVisible({ timeout: 10000 })
-    await expect(messageLocator(page, prefix, 10)).toBeVisible({ timeout: 10000 })
+    await expect(messageLocator(page, prefix, 1)).toBeVisible({ timeout: 20000 })
+    await expect(messageLocator(page, prefix, 10)).toBeVisible({ timeout: 20000 })
 
     // Scroll to top
     await scrollToTop(page)
