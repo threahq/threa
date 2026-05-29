@@ -8,8 +8,6 @@ import { MemoSuggestionList } from "./memo-suggestion-list"
 import { useSuggestion } from "./use-suggestion"
 
 const MEMO_SEARCH_LIMIT = 8
-/** Below this, searching is noise — wait for a more specific query. */
-const MIN_QUERY_LENGTH = 2
 
 /**
  * Manages the inline `/memo` search picker. Backs the suggestion list with the
@@ -22,8 +20,12 @@ export function useMemoSuggestion() {
 
   const searchItems = useCallback(
     async (query: string): Promise<Memo[]> => {
+      if (!workspaceId) return []
+      // An empty query is intentional: opening `/memo ` should immediately show
+      // the first page of memos so they're discoverable before you know what to
+      // search for. The backend orders an empty search by recency; typing a
+      // query switches it to keyword + semantic ranking.
       const trimmed = query.trim()
-      if (!workspaceId || trimmed.length < MIN_QUERY_LENGTH) return []
       const request = { query: trimmed, limit: MEMO_SEARCH_LIMIT }
       const response = await queryClient.fetchQuery({
         queryKey: memoKeys.search(workspaceId, request),
@@ -48,9 +50,7 @@ export function useMemoSuggestion() {
         items={props.items}
         clientRect={props.clientRect}
         command={props.command}
-        // Before the query is long enough to search, the empty list means
-        // "keep typing", not "nothing matched" — say so.
-        emptyState={props.query.trim().length < MIN_QUERY_LENGTH ? "Type to search memos" : "No memos found"}
+        emptyState="No memos found"
       />
     ),
     []

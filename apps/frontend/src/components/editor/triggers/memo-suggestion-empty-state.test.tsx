@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest"
-import { act, render, screen } from "@testing-library/react"
+import { describe, it, expect, vi, afterEach } from "vitest"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { SuggestionProps } from "@tiptap/suggestion"
 import type { Memo } from "@threa/types"
+import { api } from "@/api/client"
 import { useMemoSuggestion } from "./use-memo-suggestion"
 
 type MemoSuggestionConfig = ReturnType<typeof useMemoSuggestion>["suggestionConfig"]
@@ -14,13 +15,13 @@ function Harness({ capture }: { capture: (cfg: MemoSuggestionConfig) => void }) 
   return <>{renderMemoList()}</>
 }
 
-// Drive the picker into an empty-results state for the given query. onStart only
-// reads editor.storage, items, query, clientRect and command, so a partial props
-// object is sufficient.
-function activateWithEmptyResults(cfg: MemoSuggestionConfig, query: string) {
+// Drive the picker for the given query with the given results. onStart only
+// reads editor.storage, items, query, clientRect and command, so a partial
+// props object is sufficient.
+function activateWith(cfg: MemoSuggestionConfig, query: string, items: Memo[]) {
   const props = {
     editor: { storage: { memoSearch: {} } },
-    items: [] as Memo[],
+    items,
     query,
     clientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }),
     command: () => {},
@@ -54,16 +55,34 @@ function renderPicker() {
   return () => cfg!
 }
 
-describe("/memo picker empty state", () => {
-  it("prompts to keep typing before the query is long enough to search", () => {
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+function makeMemo(overrides: Partial<Memo>): Memo {
+  return { id: "memo_1", title: "Recent memo", knowledgeType: "decision", tags: [], ...overrides } as unknown as Memo
+}
+
+describe("/memo picker discoverability", () => {
+  it("fetches and shows the first page of memos when /memo opens with no query typed", async () => {
+    const postSpy = vi
+      .spyOn(api, "post")
+      .mockResolvedValue({ results: [{ memo: makeMemo({ title: "Recent memo" }) }] } as never)
     const getCfg = renderPicker()
-    activateWithEmptyResults(getCfg(), "")
-    expect(screen.getByText("Type to search memos")).toBeInTheDocument()
+
+    const items = (await getCfg().items({ query: "" })) as Memo[]
+
+    // An empty query searches (returns recent memos) rather than short-circuiting.
+    expect(postSpy).toHaveBeenCalledWith("/api/workspaces/ws_1/memos/search", expect.objectContaining({ query: "" }))
+    expect(items.map((m) => m.title)).toEqual(["Recent memo"])
+
+    activateWith(getCfg(), "", items)
+    await waitFor(() => expect(screen.getByText("Recent memo")).toBeInTheDocument())
   })
 
-  it("says nothing matched once the query is searchable but returns no memos", () => {
+  it("says nothing matched when a query returns no memos", () => {
     const getCfg = renderPicker()
-    activateWithEmptyResults(getCfg(), "auth rewrite")
+    activateWith(getCfg(), "auth rewrite", [])
     expect(screen.getByText("No memos found")).toBeInTheDocument()
   })
 })
