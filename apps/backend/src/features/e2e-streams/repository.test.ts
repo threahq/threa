@@ -95,6 +95,42 @@ describe("E2eStreamsRepository.getByStreamId", () => {
   })
 })
 
+describe("E2eStreamsRepository.bumpKeyGeneration", () => {
+  afterEach(() => mock.restore())
+
+  it("guards the bump on the prior generation so concurrent rolls can't both win (INV-20)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [{ ...ROW, current_key_generation: 1 }])
+
+    const result = await E2eStreamsRepository.bumpKeyGeneration(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_01",
+      toGeneration: 1,
+    })
+
+    expect(captured.text).toContain("UPDATE e2e_streams")
+    expect(captured.text).toContain("SET current_key_generation =")
+    // bound values: toGeneration (set + new), guard = toGeneration - 1, scope
+    expect(captured.values).toContain(1)
+    expect(captured.values).toContain(0)
+    expect(captured.values).toContain("ws_1")
+    expect(captured.values).toContain("stream_01")
+    expect(result?.currentKeyGeneration).toBe(1)
+  })
+
+  it("returns null when the guard matches no row (lost the race / stale generation)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [], 0)
+
+    const result = await E2eStreamsRepository.bumpKeyGeneration(db, {
+      workspaceId: "ws_1",
+      streamId: "stream_01",
+      toGeneration: 2,
+    })
+    expect(result).toBeNull()
+  })
+})
+
 describe("E2eStreamsRepository.markStreamE2e", () => {
   afterEach(() => mock.restore())
 

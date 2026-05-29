@@ -31,10 +31,23 @@ import {
   type NotificationLevel,
   type ThreadSummary,
   type ContextBag,
+  type E2eKeyRoll,
+  type E2eKeyRollRecipient,
+  type E2eKeyRollInput,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
-import type { StreamE2eKeyWrap } from "../e2e-streams"
+import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
+import { UserE2eKeysRepository } from "../user-e2e-keys"
+import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../enclave-runtimes"
+// Deep import (not the barrel): the bot-runtimes barrel pulls its service →
+// public-api, which risks a cycle back into streams. The repository module is a
+// leaf (db + types only). Same lesson as the BIK schema in lib/schemas.
+import {
+  BotRuntimeInstanceRepository,
+  StreamActiveActorRepository,
+  BOT_RUNTIME_BIK_STALENESS_MS,
+} from "../bot-runtimes/repository"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 
@@ -715,7 +728,12 @@ export class StreamService {
    * before Ariadne can reply, so the invite is allowed even while the runtime
    * is non-capable.
    */
-  async inviteActor(workspaceId: string, streamId: string, userId: string, kind: E2eActorKind): Promise<Stream> {
+  async inviteActor(
+    workspaceId: string,
+    streamId: string,
+    userId: string,
+    kind: E2eActorKind
+  ): Promise<{ stream: Stream; keyRoll: E2eKeyRoll | null }> {
     return withTransaction(this.pool, async (client) => {
       const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
       if (!e2e) {
@@ -742,7 +760,139 @@ export class StreamService {
         stream,
       })
 
-      return stream
+      // Hand the owner everything it needs to roll the SSK forward and wrap it
+      // to the new recipient set (every live actor key). The roll itself is a
+      // separate owner-authenticated POST — the client mints the SSK and we
+      // never see it. `null` when no live actor key exists yet (e.g. a bot with
+      // no running runtime): the actor is recorded and re-keyed once a key
+      // appears, so an invite never blocks on a cold actor.
+      const recipients = await this.resolveActorRecipients(client, e2e)
+      const keyRoll = recipients.length > 0 ? { nextGeneration: e2e.currentKeyGeneration + 1, recipients } : null
+
+      return { stream, keyRoll }
+    })
+  }
+
+  /**
+   * Resolve every currently-live actor key a stream's SSK should be wrapped to
+   * — a bot's BIKs (the bot tied to the scratchpad via its active-actor row)
+   * and every live enclave EIK. The owner's own UIK is intentionally excluded:
+   * the rolling client adds itself from its unlocked session, and the server
+   * never needs the owner's public key. Returns base64 raw X25519 keys.
+   */
+  private async resolveActorRecipients(db: Querier, e2e: E2eStream): Promise<E2eKeyRollRecipient[]> {
+    const actors = await E2eStreamActorsRepository.listForStream(db, e2e.workspaceId, e2e.streamId)
+    const recipients: E2eKeyRollRecipient[] = []
+
+    for (const actor of actors) {
+      if (actor.kind === "enclave") {
+        const eiks = await EnclaveRuntimesRepository.listLive(db, ENCLAVE_RUNTIME_STALENESS_MS)
+        for (const eik of eiks) {
+          recipients.push({
+            recipientKeyId: eik.keyId,
+            recipientKind: E2eKeyWrapRecipientKinds.ENCLAVE,
+            publicKey: Buffer.from(eik.publicKey).toString("base64"),
+          })
+        }
+        continue
+      }
+
+      // kind === "bot": the schema records that *a* bot is invited but not which
+      // one (one bot per scratchpad), so resolve it through the active-actor row.
+      const active = await StreamActiveActorRepository.findByRootStream(db, e2e.workspaceId, e2e.streamId)
+      if (active?.actorType !== "bot") continue
+      const instances = await BotRuntimeInstanceRepository.findLiveWithKeyForBot(db, {
+        workspaceId: e2e.workspaceId,
+        botId: active.actorId,
+        stalenessMs: BOT_RUNTIME_BIK_STALENESS_MS,
+      })
+      for (const instance of instances) {
+        if (!instance.publicKey || !instance.publicKeyId) continue
+        recipients.push({
+          recipientKeyId: instance.publicKeyId,
+          recipientKind: E2eKeyWrapRecipientKinds.BOT,
+          publicKey: instance.publicKey,
+        })
+      }
+    }
+
+    return recipients
+  }
+
+  /**
+   * Roll a stream's SSK forward one generation. The owner mints a fresh SSK
+   * client-side, wraps it to itself plus every actor recipient, and POSTs the
+   * batch here. We store it and bump `current_key_generation` in one
+   * transaction (INV-7) so a new send never seals under a generation that has
+   * no wraps. The server never sees the SSK — only the opaque HPKE wraps.
+   *
+   * Validation is the security boundary that matters for a roll: only the owner
+   * may roll (owner already holds the SSK, so the recipient set itself isn't a
+   * trust boundary — but the owner must not lock *itself* out), and the
+   * generation must be exactly `current + 1` so two device rolls can't collide
+   * (INV-20: the `bumpKeyGeneration` guard makes one win, rolling back the
+   * loser's wraps with the transaction).
+   */
+  async rollStreamKey(workspaceId: string, streamId: string, userId: string, input: E2eKeyRollInput): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      // Serialize concurrent rolls for this stream so the read→insert→bump
+      // sequence is atomic against another device rolling the same generation.
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        `e2e_key_roll:${workspaceId}:${streamId}`,
+      ])
+
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2e.ownerUserId !== userId) {
+        throw new HttpError("Only the stream owner can roll the key", { status: 403, code: "NOT_STREAM_OWNER" })
+      }
+      if (input.keyGeneration !== e2e.currentKeyGeneration + 1) {
+        throw new HttpError("Key generation is stale; refetch before rolling", {
+          status: 409,
+          code: "E2E_STALE_GENERATION",
+        })
+      }
+      // The owner must wrap the new SSK to its own UIK, or it would seal future
+      // messages under a key no device of theirs can recover.
+      const ownerWrapped = input.wraps.some(
+        (w) => w.recipientKind === E2eKeyWrapRecipientKinds.USER && w.recipientKeyId === e2e.ownerUserKeyId
+      )
+      if (!ownerWrapped) {
+        throw new HttpError("The roll must include the owner's own key wrap", {
+          status: 400,
+          code: "E2E_OWNER_WRAP_MISSING",
+        })
+      }
+
+      await StreamE2eKeyWrapsRepository.insertMany(
+        client,
+        input.wraps.map((w) => ({
+          workspaceId,
+          streamId,
+          keyGeneration: input.keyGeneration,
+          recipientKeyId: w.recipientKeyId,
+          recipientKind: w.recipientKind,
+          wrapEnc: w.wrapEnc,
+          wrapCt: w.wrapCt,
+        }))
+      )
+
+      const bumped = await E2eStreamsRepository.bumpKeyGeneration(client, {
+        workspaceId,
+        streamId,
+        toGeneration: input.keyGeneration,
+      })
+      if (!bumped) {
+        // The guard failed under the lock — another roll already advanced the
+        // generation. Roll back our wraps with the transaction so we never
+        // leave half a generation behind.
+        throw new HttpError("Key generation is stale; refetch before rolling", {
+          status: 409,
+          code: "E2E_STALE_GENERATION",
+        })
+      }
     })
   }
 

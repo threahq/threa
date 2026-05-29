@@ -9,7 +9,14 @@ import type { BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { StreamEvent } from "./event-repository"
 import type { EventType, JSONContent, LinkPreviewSummary, StreamType, E2eKeyWrapsResponse } from "@threa/types"
-import { ARIADNE_PERSONA_SLUG, StreamTypes, SLUG_PATTERN, CompanionModes, E2E_ACTOR_KINDS } from "@threa/types"
+import {
+  ARIADNE_PERSONA_SLUG,
+  StreamTypes,
+  SLUG_PATTERN,
+  CompanionModes,
+  E2E_ACTOR_KINDS,
+  E2E_KEY_WRAP_RECIPIENT_KINDS,
+} from "@threa/types"
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
@@ -132,6 +139,28 @@ const inviteActorSchema = z.object({
 const storeKeyWrapSchema = z.object({
   wrapEnc: z.string().min(1).max(1024),
   wrapCt: z.string().min(1).max(1024),
+})
+
+/**
+ * Generation-roll body: a fresh SSK wrapped to every recipient at the new
+ * generation. Same per-wrap byte caps as `storeKeyWrapSchema`. The recipient
+ * list is bounded so a malformed client can't ask us to insert an unbounded
+ * batch — a scratchpad's recipient set (owner + a bot's instances + live
+ * enclaves) is small.
+ */
+const rollKeySchema = z.object({
+  keyGeneration: z.number().int().min(1),
+  wraps: z
+    .array(
+      z.object({
+        recipientKeyId: z.string().min(1).max(128),
+        recipientKind: z.enum(E2E_KEY_WRAP_RECIPIENT_KINDS),
+        wrapEnc: z.string().min(1).max(1024),
+        wrapCt: z.string().min(1).max(1024),
+      })
+    )
+    .min(1)
+    .max(64),
 })
 
 /** Default number of events returned in bootstrap and event list queries. */
@@ -899,8 +928,22 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const stream = await streamService.inviteActor(workspaceId, streamId, userId, kind)
-      res.json({ stream })
+      // `stream` carries Date fields (Express serializes them to ISO on the
+      // wire); `keyRoll` is already the wire shape. Mirrors how the other
+      // stream handlers return `{ stream }` without a wire-type annotation.
+      const { stream, keyRoll } = await streamService.inviteActor(workspaceId, streamId, userId, kind)
+      res.json({ stream, keyRoll })
+    },
+
+    async rollE2eKey(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+      const input = rollKeySchema.parse(req.body)
+
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      await streamService.rollStreamKey(workspaceId, streamId, userId, input)
+      res.status(204).send()
     },
 
     async getE2eKeyWraps(req: Request, res: Response) {

@@ -1,4 +1,4 @@
-import type { E2eKeyWrapsResponse, E2eOwnerKeyWrapInput } from "@threa/types"
+import type { E2eKeyWrapsResponse, E2eOwnerKeyWrapInput, E2eKeyRollInput } from "@threa/types"
 import { api } from "./client"
 
 /**
@@ -20,5 +20,15 @@ export const e2eKeyWrapsApi = {
    */
   async store(workspaceId: string, streamId: string, wrap: E2eOwnerKeyWrapInput): Promise<void> {
     await api.post<void>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/key-wraps`, wrap)
+  },
+
+  /**
+   * Roll the stream's SSK forward one generation: a fresh SSK wrapped to the
+   * owner plus every actor recipient. The server stores the batch and bumps
+   * `current_key_generation` to `input.keyGeneration` atomically, so a new
+   * send never seals under a generation that has no wraps.
+   */
+  async roll(workspaceId: string, streamId: string, input: E2eKeyRollInput): Promise<void> {
+    await api.post<void>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/key-generations`, input)
   },
 }

@@ -16,6 +16,13 @@ import { sql, type Querier } from "../../db"
 
 export type RuntimeSessionLinkStatus = BotRuntimeSessionLinkStatus
 
+/**
+ * How recently a bot runtime instance must have been seen for its BIK to be
+ * wrapped into a stream's SSK roll. Matches the enclave staleness window so the
+ * two actor kinds share one notion of "live enough to receive key material".
+ */
+export const BOT_RUNTIME_BIK_STALENESS_MS = 2 * 60 * 1000
+
 export interface StreamActiveActor {
   id: string
   workspaceId: string
@@ -332,6 +339,30 @@ export const BotRuntimeInstanceRepository = {
       sql`SELECT * FROM bot_runtime_instances WHERE workspace_id = ${params.workspaceId} AND bot_id = ${params.botId} AND instance_id = ${params.instanceId} LIMIT 1`
     )
     return result.rows[0] ? mapRuntimeInstance(result.rows[0]) : null
+  },
+
+  /**
+   * Live instances of one bot that have registered a BIK, for SSK wrapping.
+   * "Live" mirrors the enclave model — recently seen and not offline — so a
+   * roll wraps to every instance that could currently claim an invocation,
+   * letting whichever one the dispatcher picks decrypt. Instances without a
+   * `public_key` (non-E2E runtimes) are excluded.
+   */
+  async findLiveWithKeyForBot(
+    db: Querier,
+    params: { workspaceId: string; botId: string; stalenessMs: number }
+  ): Promise<BotRuntimeInstance[]> {
+    const result = await db.query<BotRuntimeInstanceRow>(sql`
+      SELECT * FROM bot_runtime_instances
+      WHERE workspace_id = ${params.workspaceId}
+        AND bot_id = ${params.botId}
+        AND public_key IS NOT NULL
+        AND public_key_id IS NOT NULL
+        AND status <> 'offline'
+        AND last_seen_at > NOW() - (${params.stalenessMs} || ' milliseconds')::interval
+      ORDER BY last_seen_at DESC
+    `)
+    return result.rows.map(mapRuntimeInstance)
   },
 
   async findLatestForBots(

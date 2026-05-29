@@ -104,3 +104,29 @@ describe("BotRuntimeInstanceRepository.upsertPresence", () => {
     expect(captured.text).toContain("public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key)")
   })
 })
+
+describe("BotRuntimeInstanceRepository.findLiveWithKeyForBot", () => {
+  afterEach(() => mock.restore())
+
+  it("filters to live, keyed instances of the bot and maps the BIK columns", async () => {
+    const captured: Captured = { text: null, values: null }
+    const publicKey = Buffer.alloc(32, 5).toString("base64")
+    const db = createQuerier(captured, [makeRow({ public_key: publicKey, public_key_id: "bik_live" })])
+
+    const result = await BotRuntimeInstanceRepository.findLiveWithKeyForBot(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      stalenessMs: 120_000,
+    })
+
+    expect(captured.text).toContain("public_key IS NOT NULL")
+    expect(captured.text).toContain("public_key_id IS NOT NULL")
+    expect(captured.text).toContain("status <> 'offline'")
+    expect(captured.text).toContain("last_seen_at > NOW() -")
+    expect(captured.values).toContain("ws_1")
+    expect(captured.values).toContain("bot_alice")
+    expect(captured.values).toContain(120_000)
+    expect(result[0]?.publicKey).toBe(publicKey)
+    expect(result[0]?.publicKeyId).toBe("bik_live")
+  })
+})
