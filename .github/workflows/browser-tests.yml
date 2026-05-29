@@ -21,11 +21,11 @@ jobs:
     timeout-minutes: 25
     continue-on-error: true
     env:
-      TOTAL_SHARDS: 3
+      TOTAL_SHARDS: 4
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3]
+        shard_index: [1, 2, 3, 4]
 
     services:
       postgres:
@@ -47,6 +47,16 @@ jobs:
 
       - name: Start MinIO
         run: |
+          # Pull explicitly with retries — Docker Hub manifest fetches fail
+          # transiently, and the shards pull concurrently which makes a blip on
+          # any one of them abort the whole shard before tests even start.
+          for attempt in 1 2 3 4 5; do
+            if docker pull minio/minio:latest; then
+              break
+            fi
+            echo "docker pull minio failed (attempt $attempt/5) — retrying in $((attempt * 5))s"
+            sleep $((attempt * 5))
+          done
           docker run -d --name minio \
             -p 9000:9000 \
             -e MINIO_ROOT_USER=minioadmin \

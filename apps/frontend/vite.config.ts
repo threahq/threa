@@ -68,6 +68,26 @@ function withForwardedHostHeaders() {
   }
 }
 
+function buildProxyConfig() {
+  // /api and /test-auth-login are proxied to the backend (the workspace-router
+  // in E2E). Socket.io connects directly to the backend's wsUrl, so it does not
+  // need a proxy entry here. Shared by the dev server and the E2E preview server.
+  return {
+    "/api": {
+      target: backendTarget,
+      changeOrigin: true,
+      xfwd: true,
+      ...withForwardedHostHeaders(),
+    },
+    "/test-auth-login": {
+      target: backendTarget,
+      changeOrigin: true,
+      xfwd: true,
+      ...withForwardedHostHeaders(),
+    },
+  }
+}
+
 export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(buildVersion),
@@ -82,7 +102,12 @@ export default defineConfig({
       injectRegister: false, // we register manually in main.tsx with updateViaCache: 'none'
       manifest: false, // use existing public/manifest.json
       injectManifest: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg}"],
+        // E2E serves a fresh build behind `vite preview`, so precaching ~14 MiB
+        // of assets into CacheStorage on every test's first load just adds
+        // hundreds of background requests per test and competes with the run.
+        // The SW still registers (push tests need it) and its navigation handler
+        // falls through to the network when nothing is precached.
+        globPatterns: isE2ETest ? [] : ["**/*.{js,css,html,ico,png,svg}"],
         // recover.html is the nuclear-option SW-unregister page (public/recover.html).
         // Precaching it would defeat its purpose — and with CF Pages Pretty URLs, the
         // /recover ↔ /recover.html rewrite loop in _redirects causes the SW install
@@ -111,23 +136,18 @@ export default defineConfig({
     host: "0.0.0.0",
     port: frontendPort,
     hmr: isE2ETest ? false : undefined,
-    proxy: {
-      "/api": {
-        target: backendTarget,
-        changeOrigin: true,
-        xfwd: true,
-        ...withForwardedHostHeaders(),
-      },
-      "/test-auth-login": {
-        target: backendTarget,
-        changeOrigin: true,
-        xfwd: true,
-        ...withForwardedHostHeaders(),
-      },
-    },
+    proxy: buildProxyConfig(),
     watch: {
       usePolling: true,
       interval: 100,
     },
+  },
+  // E2E runs against a production build served by `vite preview` (see
+  // playwright.config.ts). The preview server needs the same proxy as the dev
+  // server, since proxy config does not carry over from `server`.
+  preview: {
+    host: "0.0.0.0",
+    port: frontendPort,
+    proxy: buildProxyConfig(),
   },
 })

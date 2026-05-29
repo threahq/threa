@@ -69,6 +69,18 @@ const cpDbName = `${dbName}_cp`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
 const webServerTimeout = 60000
 
+// In CI the frontend is served as a production build via `vite preview` rather
+// than the Vite dev server: dev-mode on-demand transform competes for CPU with
+// the parallel workers and the shared backend, which was the dominant source of
+// contention timeouts. Locally we keep the dev server for fast iteration/HMR.
+// The build is port-independent (VITE_BACKEND_PORT only configures the preview
+// proxy at runtime), so the preview server still picks up the dynamic ports.
+const frontendCommand = isCI
+  ? "bun run --cwd apps/frontend build:e2e && bun run --cwd apps/frontend preview"
+  : "bun run test:browser:frontend"
+// The CI build needs more headroom than a dev-server boot.
+const frontendServerTimeout = isCI ? 180000 : webServerTimeout
+
 // Only log once (when ports are first allocated)
 if (!process.env.PLAYWRIGHT_PORTS_LOGGED) {
   console.log(
@@ -91,7 +103,11 @@ export default defineConfig({
   fullyParallel: true, // Each test creates unique user + workspace — safe to parallelize
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 4 : undefined, // CI: 4 parallel workers; local: auto (half CPU cores)
+  // CI: 3 workers. The 4-vCPU runner also hosts the backend, control-plane,
+  // wrangler and Vite dev server, so higher worker counts oversubscribe it and
+  // tests fail under contention (only passing on the isolated retry).
+  // Local: auto (half CPU cores).
+  workers: process.env.CI ? 3 : undefined,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
   timeout: 30000, // 30s per test
 
@@ -167,10 +183,10 @@ export default defineConfig({
       timeout: webServerTimeout,
     },
     {
-      command: "bun run test:browser:frontend",
+      command: frontendCommand,
       url: `http://localhost:${frontendPort}`,
       reuseExistingServer: !process.env.CI,
-      timeout: webServerTimeout,
+      timeout: frontendServerTimeout,
       env: {
         VITE_BACKEND_PORT: String(routerPort),
         VITE_PORT: String(frontendPort),
