@@ -214,6 +214,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel]
   )
 
+  // The Quick Links block renders only when the user keeps it in their layout —
+  // removing the section from the editor takes it out of both the normal list
+  // (resolved as a positioned section) and the empty-streams state.
+  const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
+
   // Track sidebar and scroll container dimensions for position calculations
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -359,21 +364,23 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onCreateChannel={handleCreateChannel}
             scratchpadAddMenuActions={scratchpadAddMenuActions}
             quickLinksSlot={
-              <SidebarQuickLinks
-                workspaceId={workspaceId}
-                quickLinks={sidebarConfig.quickLinks}
-                isDraftsPage={isDraftsPage}
-                draftCount={draftCount}
-                isSavedPage={isSavedPage}
-                savedCount={savedCount}
-                isScheduledPage={isScheduledPage}
-                scheduledCount={scheduledCount}
-                isActivityPage={isActivityPage}
-                isMemoryPage={isMemoryPage}
-                isFilesPage={isFilesPage}
-                isLabelsPage={isLabelsPage}
-                unreadActivityCount={unreadActivityCount}
-              />
+              hasQuickLinksSection ? (
+                <SidebarQuickLinks
+                  workspaceId={workspaceId}
+                  quickLinks={sidebarConfig.quickLinks}
+                  isDraftsPage={isDraftsPage}
+                  draftCount={draftCount}
+                  isSavedPage={isSavedPage}
+                  savedCount={savedCount}
+                  isScheduledPage={isScheduledPage}
+                  scheduledCount={scheduledCount}
+                  isActivityPage={isActivityPage}
+                  isMemoryPage={isMemoryPage}
+                  isFilesPage={isFilesPage}
+                  isLabelsPage={isLabelsPage}
+                  unreadActivityCount={unreadActivityCount}
+                />
+              ) : undefined
             }
             scrollContainerRef={scrollContainerRef}
           />

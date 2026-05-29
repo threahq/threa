@@ -12,7 +12,6 @@ import {
   moveSection,
   isPristinePreset,
   setQuickLinkVisibility,
-  cycleQuickLinkVisibility,
   moveQuickLink,
 } from "./sidebar-config"
 
@@ -116,27 +115,6 @@ describe("setQuickLinkVisibility", () => {
 
   it("is a no-op for an unknown key", () => {
     expect(setQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "nope" as never, "hidden")).toEqual(SMART_SIDEBAR_CONFIG)
-  })
-})
-
-describe("cycleQuickLinkVisibility", () => {
-  it("rotates show → active → hidden → show for a link with a live signal", () => {
-    const draftsVisibility = (config: typeof SMART_SIDEBAR_CONFIG) =>
-      config.quickLinks.find((l) => l.key === "drafts")?.visibility
-    const a = cycleQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "drafts")
-    expect(draftsVisibility(a)).toBe("active")
-    const b = cycleQuickLinkVisibility(a, "drafts")
-    expect(draftsVisibility(b)).toBe("hidden")
-    const c = cycleQuickLinkVisibility(b, "drafts")
-    expect(draftsVisibility(c)).toBe("show")
-  })
-
-  it("toggles show ⇄ hidden for a link without a live signal", () => {
-    const filesVisibility = (config: typeof SMART_SIDEBAR_CONFIG) =>
-      config.quickLinks.find((l) => l.key === "files")?.visibility
-    const a = cycleQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "files")
-    expect(filesVisibility(a)).toBe("hidden")
-    expect(filesVisibility(cycleQuickLinkVisibility(a, "files"))).toBe("show")
   })
 })
 

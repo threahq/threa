@@ -164,8 +164,11 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
               <EditorGroupHeading>Preset</EditorGroupHeading>
               <button
                 type="button"
-                onClick={() => setBasePreset(activePreset ?? config.basePreset)}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                // Already pristine → nothing to reset; disable so the click isn't
+                // a silent no-op (a redundant write that looks like it did nothing).
+                disabled={activePreset !== null}
+                onClick={() => setBasePreset(config.basePreset)}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
               >
                 <RotateCcw className="h-3 w-3" />
                 Reset preset
@@ -313,7 +316,15 @@ function SortableSectionRow({
 
   return (
     <li ref={setNodeRef} style={style} className={cn(isDragging && "relative z-10")}>
-      <div className={cn("flex items-center gap-2 rounded-md border bg-card px-2 py-1.5", isDragging && "shadow-md")}>
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
+          // When the nested links render below, square off the bottom so the row
+          // and its sub-list read as one connected group, not two stacked cards.
+          isQuickLinks && "rounded-b-none border-b-0",
+          isDragging && "shadow-md"
+        )}
+      >
         <DragHandle label={`Reorder ${name}`} attributes={attributes} listeners={listeners} />
         <div className="min-w-0 flex-1">
           <SectionRowContent section={section} labelsById={labelsById} />
@@ -365,11 +376,13 @@ function QuickLinksSectionBody({
     if (over && active.id !== over.id) onMove(String(active.id), String(over.id))
   }
 
+  // Continues the section card (it squared its bottom), indenting the links so
+  // they read as sub-elements of the Quick Links block.
   return (
-    <div className="ml-4 mt-1 border-l pl-3">
+    <div className="rounded-b-md border border-t-0 bg-card/50 py-1.5 pl-3 pr-2">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={keys} strategy={verticalListSortingStrategy}>
-          <ul className="space-y-1">
+          <ul className="space-y-1 border-l border-border/50 pl-3">
             {quickLinks.map((link) => (
               <SortableQuickLinkRow
                 key={link.key}
@@ -438,7 +451,9 @@ function QuickLinkVisibilityControl({
   return (
     <ToggleGroup
       type="single"
-      size="sm"
+      // No size prop: the items size themselves (h-7 w-7) for the compact row, so
+      // a context size would only be a misleading value the items override.
+      aria-label={`${label} visibility`}
       value={link.visibility}
       // Radix clears the value when you click the active item; ignore the empty
       // string so a link can't end up in an undefined visibility.
@@ -447,15 +462,22 @@ function QuickLinkVisibilityControl({
       }}
       className="shrink-0 gap-0.5"
     >
-      <ToggleGroupItem value="show" aria-label={`Show ${label}`} className="h-7 w-7 p-0">
+      {/* title duplicates the aria-label as a hover tooltip — the icons (esp. the
+          middle "show when active") aren't self-evident to sighted users. */}
+      <ToggleGroupItem value="show" aria-label={`Show ${label}`} title={`Show ${label}`} className="h-7 w-7 p-0">
         <Eye className="h-3.5 w-3.5" />
       </ToggleGroupItem>
       {hasActive && (
-        <ToggleGroupItem value="active" aria-label={`Show ${label} when active`} className="h-7 w-7 p-0">
+        <ToggleGroupItem
+          value="active"
+          aria-label={`Show ${label} when active`}
+          title={`Show ${label} when active`}
+          className="h-7 w-7 p-0"
+        >
           <CircleDot className="h-3.5 w-3.5" />
         </ToggleGroupItem>
       )}
-      <ToggleGroupItem value="hidden" aria-label={`Hide ${label}`} className="h-7 w-7 p-0">
+      <ToggleGroupItem value="hidden" aria-label={`Hide ${label}`} title={`Hide ${label}`} className="h-7 w-7 p-0">
         <EyeOff className="h-3.5 w-3.5" />
       </ToggleGroupItem>
     </ToggleGroup>
@@ -530,12 +552,14 @@ function AddTray({
   onAdd: (spec: SidebarSectionSpec) => void
 }) {
   if (specs.length === 0) {
-    return <p className="pt-1 text-xs text-muted-foreground">Everything's in your sidebar.</p>
+    return <p className="pt-3 text-xs text-muted-foreground">Everything's in your sidebar.</p>
   }
 
   return (
-    <div className="space-y-1.5 pt-1">
-      <p className="text-xs text-muted-foreground">Drag in, or tap to add:</p>
+    <div className="space-y-1.5 pt-3">
+      {/* Interaction-neutral label: the chips support both drag-to-position and
+          click-to-append, on either platform. */}
+      <p className="text-xs text-muted-foreground">Available to add:</p>
       <ul className="flex flex-wrap gap-1.5">
         {specs.map((spec) => (
           <AddTrayChip key={sectionIdForSpec(spec)} spec={spec} labelsById={labelsById} onAdd={() => onAdd(spec)} />
@@ -571,7 +595,9 @@ function AddTrayChip({
         onClick={onAdd}
         aria-label={`Add ${name}`}
         className={cn(
-          "flex cursor-grab touch-none items-center gap-1 rounded-full border border-dashed bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing",
+          // cursor-pointer (not grab): clicking to add is the primary action; the
+          // grab cursor only appears once a drag is actually under way.
+          "flex cursor-pointer touch-none items-center gap-1 rounded-full border border-dashed bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing",
           isDragging && "opacity-50"
         )}
         {...attributes}

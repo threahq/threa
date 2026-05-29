@@ -151,13 +151,21 @@ describe("SidebarEditorDialog", () => {
     expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false")
   })
 
-  it("resets to the active preset via the Reset preset button", async () => {
-    useConfig(SMART_SIDEBAR_CONFIG)
+  it("resets a customized layout back to its base preset", async () => {
+    // A reordered Smart layout — diverged from the preset, so Reset is enabled.
+    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))
     mount()
 
     await userEvent.click(screen.getByRole("button", { name: "Reset preset" }))
 
     expect(setBasePreset).toHaveBeenCalledWith("smart")
+  })
+
+  it("disables Reset preset when the layout already matches a preset", () => {
+    useConfig(SMART_SIDEBAR_CONFIG)
+    mount()
+
+    expect(screen.getByRole("button", { name: "Reset preset" })).toBeDisabled()
   })
 
   it("adds a section from the Add tray by clicking it", async () => {

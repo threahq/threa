@@ -2,6 +2,7 @@ import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag, type Lu
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
+import { QUICK_LINKS_SECTION_ID } from "@threa/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -46,7 +47,9 @@ interface QuickLinkItem {
   signalSlot: ReactNode
 }
 
-const SECTION_KEY = "quick-links"
+// Collapse-state key for the block; also its section id in the config, so the
+// editor's quick-links section and this rendered block share one stable key.
+const SECTION_KEY = QUICK_LINKS_SECTION_ID
 const DEFAULT_STATE = "open"
 
 function countSlot(count: number): ReactNode {
@@ -106,9 +109,9 @@ export function SidebarQuickLinks({
   // A link renders when it's set to "show", or "show when active" and it
   // currently carries a signal (a count / unread badge). "hidden" never renders.
   const isVisible = (link: SidebarQuickLink): boolean => {
-    if (link.visibility === "hidden") return false
     if (link.visibility === "show") return true
-    return itemByKey[link.key].unreadCount > 0
+    if (link.visibility === "active") return itemByKey[link.key].unreadCount > 0
+    return false
   }
   const visible = quickLinks.filter(isVisible)
 

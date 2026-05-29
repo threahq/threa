@@ -18,6 +18,7 @@ import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope
 import { useSettings, useSidebar } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { getAvatarUrl, type User } from "@threa/types"
@@ -267,21 +268,20 @@ export function SidebarFooter({
 function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem[]; isMobile: boolean }) {
   const [open, setOpen] = useState(false)
 
-  const trigger = (
-    <button
-      type="button"
-      className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      onClick={isMobile ? () => setOpen(true) : undefined}
-    >
-      <Plus className="h-4 w-4" />
-      <span>New</span>
-    </button>
-  )
-
   if (isMobile) {
     return (
       <>
-        {trigger}
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full gap-2"
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+        >
+          <Plus className="h-4 w-4" />
+          New
+        </Button>
         <SidebarActionDrawer
           open={open}
           onOpenChange={setOpen}
@@ -293,6 +293,9 @@ function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem
     )
   }
 
+  // Outline (not filled) so it sits with the ghost account row beneath it rather
+  // than reading as a floating action bar — the app reserves filled primary for
+  // content-area CTAs. Radix wires aria-haspopup/expanded on the trigger.
   return (
     <SidebarActionMenu
       actions={actions}
@@ -300,7 +303,12 @@ function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem
       side="top"
       align="start"
       contentClassName="w-56"
-      trigger={trigger}
+      trigger={
+        <Button variant="outline" size="sm" className="w-full gap-2">
+          <Plus className="h-4 w-4" />
+          New
+        </Button>
+      }
     />
   )
 }

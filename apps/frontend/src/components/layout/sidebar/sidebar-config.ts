@@ -160,22 +160,6 @@ export function setQuickLinkVisibility(
 }
 
 /**
- * Advance a quick link to its next visibility state on tap — the affordance for
- * surfaces that cycle rather than present all states at once. Links with a live
- * signal rotate show → active → hidden → show; links without one are a plain
- * show ⇄ hidden toggle.
- */
-export function cycleQuickLinkVisibility(config: SidebarConfig, key: SidebarQuickLinkKey): SidebarConfig {
-  const current = config.quickLinks.find((link) => link.key === key)
-  if (!current) return config
-  const order: SidebarQuickLinkVisibility[] = quickLinkHasActiveState(key)
-    ? ["show", "active", "hidden"]
-    : ["show", "hidden"]
-  const nextIndex = (order.indexOf(current.visibility) + 1) % order.length
-  return setQuickLinkVisibility(config, key, order[nextIndex])
-}
-
-/**
  * Move the `activeKey` quick link to the position of `overKey`, shifting the
  * rest — the reorder produced by a drag-and-drop drop. Pure; no-op when either
  * key is missing or they are the same.
