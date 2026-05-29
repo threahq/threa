@@ -287,12 +287,189 @@ describe("extractOEmbedDescription", () => {
   })
 })
 
+/** Build a streaming text/html Response that yields the given chunks in order. */
+function streamingHtmlResponse(chunks: string[]): Response {
+  const encoder = new TextEncoder()
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
+      controller.close()
+    },
+  })
+  return new Response(stream, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } })
+}
+
 describe("createLinkPreviewWorker", () => {
   const originalFetch = globalThis.fetch
 
   afterEach(() => {
     globalThis.fetch = originalFetch
     mock.restore()
+  })
+
+  test("captures metadata streamed into <body> after </head> (Next.js App Router)", async () => {
+    // Streaming-SSR frameworks emit a metadata-less <head> first, then stream the real
+    // <title>/<meta og:*> into the body. The head closes in chunk 1; metadata arrives in chunk 2.
+    const headChunk =
+      `<html><head><link rel="preload" href="/_next/static/x.js"/>` +
+      `<meta name="theme-color" content="#141413"/></head>` +
+      `<body><header>nav</header><main>article body</main>`
+    const metaChunk =
+      `<title>Introducing Claude Opus 4.8 \\ Anthropic</title>` +
+      `<meta name="description" content="Our latest model, Claude Opus 4.8, is an upgrade.">` +
+      `<meta property="og:title" content="Introducing Claude Opus 4.8">` +
+      `<meta property="og:description" content="Our latest model, Claude Opus 4.8, is an upgrade.">` +
+      `<meta property="og:image" content="https://cdn.example.com/opus.jpg">` +
+      `<meta property="og:site_name" content="Anthropic">` +
+      `</body></html>`
+
+    const fetchMock = mock(async () => streamingHtmlResponse([headChunk, metaChunk]))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [
+          { id: "lp_900", url: "https://www.anthropic.com/news/claude-opus-4-8" },
+        ]),
+        getPreviewById: mock(async () => ({
+          id: "lp_900",
+          workspaceId: "ws_123",
+          url: "https://www.anthropic.com/news/claude-opus-4-8",
+          normalizedUrl: "https://www.anthropic.com/news/claude-opus-4-8",
+          title: null,
+          description: null,
+          imageUrl: null,
+          faviconUrl: null,
+          siteName: null,
+          contentType: "website",
+          status: "pending",
+          previewType: null,
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: null,
+          expiresAt: null,
+          createdAt: new Date("2026-05-29T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: {
+        getGithubClient: mock(async () => null),
+      } as any,
+    })
+
+    await worker({
+      id: "job_900",
+      name: "link_preview.extract",
+      data: {
+        workspaceId: "ws_123",
+        streamId: "stream_123",
+        messageId: "msg_900",
+        contentMarkdown: "https://www.anthropic.com/news/claude-opus-4-8",
+      },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_900",
+      [
+        expect.objectContaining({
+          id: "lp_900",
+          skipped: false,
+          overwrite: false,
+          metadata: expect.objectContaining({
+            title: "Introducing Claude Opus 4.8",
+            description: "Our latest model, Claude Opus 4.8, is an upgrade.",
+            imageUrl: "https://cdn.example.com/opus.jpg",
+            siteName: "Anthropic",
+            status: "completed",
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
+  })
+
+  test('ignores body attributes like name="descriptionField" and still captures real metadata', async () => {
+    // A body attribute whose value merely starts with "description" must not flip the early-stop
+    // gate: if it did, the loop would stop at </head> and drop the real og:* tags streamed after it.
+    const headChunk =
+      `<html><head><meta name="theme-color" content="#000"/></head>` +
+      `<body><form><input name="descriptionField" value="not metadata"/></form>`
+    const metaChunk =
+      `<title>Real Page Title</title>` +
+      `<meta property="og:title" content="Real Page Title">` +
+      `<meta property="og:description" content="The genuine description.">` +
+      `</body></html>`
+
+    const fetchMock = mock(async () => streamingHtmlResponse([headChunk, metaChunk]))
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const completePreviewsAndPublish = mock(async () => {})
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_901", url: "https://example.com/article" }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_901",
+          workspaceId: "ws_123",
+          url: "https://example.com/article",
+          normalizedUrl: "https://example.com/article",
+          title: null,
+          description: null,
+          imageUrl: null,
+          faviconUrl: null,
+          siteName: null,
+          contentType: "website",
+          status: "pending",
+          previewType: null,
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: null,
+          expiresAt: null,
+          createdAt: new Date("2026-05-29T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish,
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: {
+        getGithubClient: mock(async () => null),
+      } as any,
+    })
+
+    await worker({
+      id: "job_901",
+      name: "link_preview.extract",
+      data: {
+        workspaceId: "ws_123",
+        streamId: "stream_123",
+        messageId: "msg_901",
+        contentMarkdown: "https://example.com/article",
+      },
+    })
+
+    expect(completePreviewsAndPublish).toHaveBeenCalledWith(
+      "ws_123",
+      "stream_123",
+      "msg_901",
+      [
+        expect.objectContaining({
+          id: "lp_901",
+          metadata: expect.objectContaining({
+            title: "Real Page Title",
+            description: "The genuine description.",
+          }),
+        }),
+      ],
+      { forcePublish: undefined }
+    )
   })
 
   test("keeps existing rich GitHub previews when refresh falls back from GitHub", async () => {

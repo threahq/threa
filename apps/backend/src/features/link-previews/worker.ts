@@ -264,12 +264,24 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
 
     const chunks: Uint8Array[] = []
     let totalBytes = 0
-    // Rolling ASCII view of the tail of what we've received, used only to detect </head>
-    // so we can stop reading early. Latin-1 is byte-faithful for the ASCII characters in the
-    // sentinel, independent of the page's true encoding.
+    // Rolling ASCII view of the tail of what we've received, used only to detect </head>.
+    // Latin-1 is byte-faithful for the ASCII characters in the sentinel, independent of the
+    // page's true encoding.
     let asciiTail = ""
     const HEAD_CLOSE = "</head>"
     const TAIL_WINDOW = 4096
+    // Streaming-SSR frameworks (Next.js App Router and friends) emit a metadata-less <head>
+    // and then stream the real <title>/<meta og:*> into the <body> after </head> closes. So
+    // </head> alone is not a safe stop signal — only stop once we've actually seen a metadata
+    // signal. Pages that never provide one are bounded by MAX_HTML_BYTES. Scanned per-chunk
+    // (not on the trimmed tail) so a signal isn't lost when a large chunk overflows the window.
+    // This is a best-effort early-stop gate, not a correctness gate: a missed signal only costs
+    // extra bytes (parseHtmlMeta runs on the full buffer regardless). The `name=…description`
+    // arm is anchored on the value's end so body attributes like `name="descriptionField"`
+    // don't flip the gate early and re-trigger the very </head> bug this guards against.
+    const META_SIGNAL =
+      /<title[\s>]|og:title|twitter:title|og:image|twitter:image|og:description|twitter:description|name=["']?description["'\s>]/i
+    let seenMeta = false
 
     try {
       while (totalBytes < MAX_HTML_BYTES) {
@@ -278,9 +290,12 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
         chunks.push(value)
         totalBytes += value.byteLength
 
-        asciiTail += new TextDecoder("latin1").decode(value)
+        const chunkStr = new TextDecoder("latin1").decode(value)
+        if (!seenMeta && META_SIGNAL.test(chunkStr)) seenMeta = true
+
+        asciiTail += chunkStr
         if (asciiTail.length > TAIL_WINDOW) asciiTail = asciiTail.slice(-TAIL_WINDOW)
-        if (asciiTail.toLowerCase().includes(HEAD_CLOSE)) break
+        if (seenMeta && asciiTail.toLowerCase().includes(HEAD_CLOSE)) break
       }
     } finally {
       reader.cancel()
