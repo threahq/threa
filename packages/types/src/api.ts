@@ -578,9 +578,10 @@ export interface WorkspaceBootstrap {
    */
   labels: Label[]
   /**
-   * Viewer's `label_members` rows. Private labels are implicitly "joined" by
-   * their creator and are NOT represented here — the viewer derives ownership
-   * from `Label.creatorUserId` instead.
+   * Viewer's `label_members` rows. Every label the viewer created or joined —
+   * public or private — has a membership row (the creator is auto-joined at
+   * create time), so "joined" is one uniform check. `Label.creatorUserId` is
+   * retained for edit/archive/promote permissions.
    */
   labelMemberships: LabelMember[]
   /**

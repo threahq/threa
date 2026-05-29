@@ -208,7 +208,11 @@ export interface LabelViewerContext {
   publicLabels: CachedLabel[]
   /** Public labels the viewer has not joined and did not create. */
   discoverable: CachedLabel[]
-  /** Set of public labelIds the viewer has joined (excludes creator-implicit membership). */
+  /**
+   * labelIds the viewer has a membership row for (every label they created or
+   * joined now has one). Only consulted to bucket public labels created by
+   * *others*; the viewer's own labels are bucketed via `creatorUserId`.
+   */
   joinedLabelIds: Set<string>
   rawLabels: CachedLabel[]
   rawMemberships: CachedLabelMembership[]
@@ -218,8 +222,10 @@ export interface LabelViewerContext {
  * Bucket the workspace's labels into the views the Labels page needs. Private
  * labels are only visible to their creator (bootstrap already enforces this on
  * the wire). Public labels are visible to everyone in the workspace; "joined"
- * means the viewer has an explicit `LabelMember` row, "discoverable" is the
- * rest. Creators of a public label are joined implicitly (no membership row).
+ * means the viewer has a `LabelMember` row, "discoverable" is the rest. Every
+ * label now carries a creator membership row, so the viewer's own labels are
+ * bucketed via `creatorUserId` (into `mine`) and their membership row is not
+ * consulted for them.
  */
 export function useLabelsView(workspaceId: string): LabelViewerContext {
   const { user } = useAuth()

@@ -62,3 +62,96 @@ describe("LabelService.archive", () => {
     expect(assignmentCleanup).not.toHaveBeenCalled()
   })
 })
+
+describe("LabelService.create", () => {
+  afterEach(() => mock.restore())
+
+  it("auto-joins the creator and emits member_joined even for a private label", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "privateSlugExists").mockResolvedValue(false)
+    spyOn(LabelRepository, "insert").mockResolvedValue(fakeLabel({ visibility: Visibilities.PRIVATE }))
+    const join = spyOn(LabelMemberRepository, "join").mockResolvedValue({
+      labelId: LABEL_ID,
+      userId: USER_ID,
+      workspaceId: WORKSPACE_ID,
+      joinedAt: NOW,
+    })
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.create({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      name: "Secret",
+      visibility: Visibilities.PRIVATE,
+      color: "#ff0000",
+      emoji: null,
+      description: null,
+    })
+
+    expect(join).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: USER_ID, workspaceId: WORKSPACE_ID })
+    )
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:member_joined",
+      expect.objectContaining({ targetUserId: USER_ID })
+    )
+  })
+})
+
+describe("LabelService.leave", () => {
+  afterEach(() => mock.restore())
+
+  it("archives the label and clears its assignments when the last member leaves", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findByIdForUpdate").mockResolvedValue(fakeLabel())
+    spyOn(LabelMemberRepository, "leave").mockResolvedValue(true)
+    spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(0)
+    const archive = spyOn(LabelRepository, "archive").mockResolvedValue(true)
+    spyOn(LabelMemberRepository, "deleteAllForLabel").mockResolvedValue(undefined)
+    const assignmentCleanup = spyOn(LabelAssignmentRepository, "deleteAllForLabel").mockResolvedValue(undefined)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.leave({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+
+    expect(archive).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
+    expect(assignmentCleanup).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, LABEL_ID)
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:deleted",
+      expect.objectContaining({ labelId: LABEL_ID })
+    )
+  })
+
+  it("emits member_left and keeps the label when other members remain", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findByIdForUpdate").mockResolvedValue(fakeLabel())
+    spyOn(LabelMemberRepository, "leave").mockResolvedValue(true)
+    spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(2)
+    const archive = spyOn(LabelRepository, "archive").mockResolvedValue(true)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.leave({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+
+    expect(archive).not.toHaveBeenCalled()
+    expect(outbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "label:member_left",
+      expect.objectContaining({ labelId: LABEL_ID, userId: USER_ID, targetUserId: USER_ID })
+    )
+  })
+
+  it("is a no-op when the caller was not a member (no count, no events)", async () => {
+    const service = setupService()
+    spyOn(LabelRepository, "findByIdForUpdate").mockResolvedValue(fakeLabel())
+    spyOn(LabelMemberRepository, "leave").mockResolvedValue(false)
+    const count = spyOn(LabelMemberRepository, "countForLabel").mockResolvedValue(0)
+    const outbox = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.leave({ workspaceId: WORKSPACE_ID, userId: USER_ID, labelId: LABEL_ID })
+
+    expect(count).not.toHaveBeenCalled()
+    expect(outbox).not.toHaveBeenCalled()
+  })
+})
