@@ -9,7 +9,15 @@ export const e2eActorsApi = {
    * must perform — minting a fresh SSK and wrapping it to the new recipient set
    * — or `keyRoll: null` when there is no live actor key to wrap to yet.
    */
-  async invite(workspaceId: string, streamId: string, kind: E2eActorKind): Promise<InviteActorResponse> {
-    return api.post<InviteActorResponse>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actors`, { kind })
+  async invite(
+    workspaceId: string,
+    streamId: string,
+    kind: E2eActorKind,
+    actorId?: string
+  ): Promise<InviteActorResponse> {
+    return api.post<InviteActorResponse>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actors`, {
+      kind,
+      actorId,
+    })
   },
 }

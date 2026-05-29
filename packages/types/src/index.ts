@@ -209,6 +209,7 @@ export {
   E2E_ACTOR_KINDS,
   type E2eActorKind,
   E2eActorKinds,
+  E2E_ENCLAVE_ACTOR_ID,
   // E2E key-wrap recipient kinds (user / bot / enclave)
   E2E_KEY_WRAP_RECIPIENT_KINDS,
   type E2eKeyWrapRecipientKind,

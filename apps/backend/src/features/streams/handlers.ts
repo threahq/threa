@@ -126,9 +126,17 @@ const addMemberSchema = z.object({
   memberId: z.string().min(1, "memberId is required"),
 })
 
-const inviteActorSchema = z.object({
-  kind: z.enum(E2E_ACTOR_KINDS),
-})
+const inviteActorSchema = z
+  .object({
+    kind: z.enum(E2E_ACTOR_KINDS),
+    // The pinned principal. Required for a bot (its bot_id); ignored for the
+    // enclave, which always uses its singleton sentinel id server-side.
+    actorId: z.string().min(1).max(128).optional(),
+  })
+  .refine((d) => d.kind !== "bot" || !!d.actorId, {
+    message: "actorId is required when inviting a bot",
+    path: ["actorId"],
+  })
 
 /**
  * Owner SSK wrap body. The wraps are tiny (X25519 enc + AES-wrapped 32-byte
@@ -924,14 +932,14 @@ export function createStreamHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
-      const { kind } = inviteActorSchema.parse(req.body)
+      const { kind, actorId } = inviteActorSchema.parse(req.body)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
       // `stream` carries Date fields (Express serializes them to ISO on the
       // wire); `keyRoll` is already the wire shape. Mirrors how the other
       // stream handlers return `{ stream }` without a wire-type annotation.
-      const { stream, keyRoll } = await streamService.inviteActor(workspaceId, streamId, userId, kind)
+      const { stream, keyRoll } = await streamService.inviteActor(workspaceId, streamId, userId, kind, actorId)
       res.json({ stream, keyRoll })
     },
 

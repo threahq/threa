@@ -627,6 +627,13 @@ export const E2eActorKinds = {
   ENCLAVE: "enclave",
 } as const satisfies Record<string, E2eActorKind>
 
+// The `actor_id` pinned on an E2E stream's enclave actor row. The enclave is a
+// single first-party service (one logical Ariadne, many ephemeral EIK
+// instances), so it needs no per-instance id — this fixed sentinel keeps the
+// (workspace, stream, kind, actor_id) primary key satisfied with one enclave
+// row per stream. Bot actor rows use the real bot_id instead.
+export const E2E_ENCLAVE_ACTOR_ID = "enclave"
+
 // Who an SSK key-wrap row (`stream_e2e_key_wraps.recipient_kind`) is wrapped
 // to. Superset of `E2eActorKind`: the stream owner's UIK is a recipient too
 // ("user"), it is just not an *invited actor*. Stored as TEXT, validated in

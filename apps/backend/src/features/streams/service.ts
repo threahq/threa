@@ -31,6 +31,7 @@ import {
   type NotificationLevel,
   type ThreadSummary,
   type ContextBag,
+  E2E_ENCLAVE_ACTOR_ID,
   type E2eKeyRoll,
   type E2eKeyRollRecipient,
   type E2eKeyRollInput,
@@ -40,14 +41,11 @@ import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepos
 import type { E2eStream, StreamE2eKeyWrap } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { EnclaveRuntimesRepository, ENCLAVE_RUNTIME_STALENESS_MS } from "../enclave-runtimes"
-// Deep import (not the barrel): the bot-runtimes barrel pulls its service →
-// public-api, which risks a cycle back into streams. The repository module is a
-// leaf (db + types only). Same lesson as the BIK schema in lib/schemas.
-import {
-  BotRuntimeInstanceRepository,
-  StreamActiveActorRepository,
-  BOT_RUNTIME_BIK_STALENESS_MS,
-} from "../bot-runtimes/repository"
+// Deep imports (not the barrel): the bot-runtimes/public-api barrels pull their
+// services, which risk a cycle back into streams. These repository modules are
+// leaves (db + types only). Same lesson as the BIK schema in lib/schemas.
+import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../bot-runtimes/repository"
+import { BotRepository } from "../public-api/bot-repository"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
 
@@ -732,7 +730,8 @@ export class StreamService {
     workspaceId: string,
     streamId: string,
     userId: string,
-    kind: E2eActorKind
+    kind: E2eActorKind,
+    actorId?: string
   ): Promise<{ stream: Stream; keyRoll: E2eKeyRoll | null }> {
     return withTransaction(this.pool, async (client) => {
       const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
@@ -743,7 +742,13 @@ export class StreamService {
         throw new HttpError("Only the stream owner can invite an actor", { status: 403, code: "NOT_STREAM_OWNER" })
       }
 
-      const added = await E2eStreamActorsRepository.add(client, workspaceId, streamId, kind, null)
+      // Pin the actor to a concrete principal. The enclave is a singleton
+      // service (sentinel id); a bot must name a real, accessible bot_id so the
+      // SSK is wrapped to *that* bot — its key may rotate under the id, but the
+      // underlying bot can't be silently swapped.
+      const pinnedActorId = await this.resolvePinnedActorId(client, workspaceId, kind, actorId)
+
+      const added = await E2eStreamActorsRepository.add(client, workspaceId, streamId, kind, pinnedActorId, null)
       if (!added) {
         throw new HttpError("This actor is already invited to this stream", {
           status: 409,
@@ -774,11 +779,36 @@ export class StreamService {
   }
 
   /**
+   * Validate the principal an invite pins. The enclave is a singleton service,
+   * so its actor row always carries the fixed sentinel id regardless of what
+   * the client sent. A bot must name a real, non-archived bot in this
+   * workspace — the SSK gets wrapped to that bot's keys, so an unknown id would
+   * silently produce an un-decryptable actor.
+   */
+  private async resolvePinnedActorId(
+    db: Querier,
+    workspaceId: string,
+    kind: E2eActorKind,
+    actorId: string | undefined
+  ): Promise<string> {
+    if (kind === "enclave") return E2E_ENCLAVE_ACTOR_ID
+    if (!actorId) {
+      throw new HttpError("A bot id is required to invite a bot", { status: 400, code: "ACTOR_ID_REQUIRED" })
+    }
+    const bot = await BotRepository.findById(db, workspaceId, actorId)
+    if (!bot || bot.archivedAt) {
+      throw new HttpError("Bot not found", { status: 404, code: "BOT_NOT_FOUND" })
+    }
+    return actorId
+  }
+
+  /**
    * Resolve every currently-live actor key a stream's SSK should be wrapped to
-   * — a bot's BIKs (the bot tied to the scratchpad via its active-actor row)
-   * and every live enclave EIK. The owner's own UIK is intentionally excluded:
-   * the rolling client adds itself from its unlocked session, and the server
-   * never needs the owner's public key. Returns base64 raw X25519 keys.
+   * — each invited bot's live BIKs (pinned by bot_id, so its key may rotate but
+   * the principal can't be swapped) and every live enclave EIK. The owner's own
+   * UIK is intentionally excluded: the rolling client adds itself from its
+   * unlocked session, and the server never needs the owner's public key.
+   * Returns base64 raw X25519 keys.
    */
   private async resolveActorRecipients(db: Querier, e2e: E2eStream): Promise<E2eKeyRollRecipient[]> {
     const actors = await E2eStreamActorsRepository.listForStream(db, e2e.workspaceId, e2e.streamId)
@@ -797,13 +827,11 @@ export class StreamService {
         continue
       }
 
-      // kind === "bot": the schema records that *a* bot is invited but not which
-      // one (one bot per scratchpad), so resolve it through the active-actor row.
-      const active = await StreamActiveActorRepository.findByRootStream(db, e2e.workspaceId, e2e.streamId)
-      if (active?.actorType !== "bot") continue
+      // kind === "bot": the actor row pins the concrete bot_id, so wrap to that
+      // bot's live BIK-bearing instances directly — no active-actor guess.
       const instances = await BotRuntimeInstanceRepository.findLiveWithKeyForBot(db, {
         workspaceId: e2e.workspaceId,
-        botId: active.actorId,
+        botId: actor.actorId,
         stalenessMs: BOT_RUNTIME_BIK_STALENESS_MS,
       })
       for (const instance of instances) {

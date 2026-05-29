@@ -43,10 +43,10 @@ export function useInviteActor(workspaceId: string, streamId: string) {
   const [isInviting, setIsInviting] = useState(false)
 
   const invite = useCallback(
-    async (kind: E2eActorKind) => {
+    async (kind: E2eActorKind, actorId?: string) => {
       setIsInviting(true)
       try {
-        const { stream, keyRoll } = await e2eActorsApi.invite(workspaceId, streamId, kind)
+        const { stream, keyRoll } = await e2eActorsApi.invite(workspaceId, streamId, kind, actorId)
 
         // Reactive source of truth for the open stream is the IDB row
         // (useWorkspaceStreams → useLiveQuery), so update it surgically.

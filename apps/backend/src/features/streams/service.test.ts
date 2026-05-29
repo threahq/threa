@@ -9,7 +9,8 @@ import { UserRepository } from "../workspaces"
 import { MessageRepository } from "../messaging"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { EnclaveRuntimesRepository } from "../enclave-runtimes"
-import { BotRuntimeInstanceRepository, StreamActiveActorRepository } from "../bot-runtimes/repository"
+import { BotRuntimeInstanceRepository } from "../bot-runtimes/repository"
+import { BotRepository } from "../public-api/bot-repository"
 import * as idModule from "../../lib/id"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -537,7 +538,7 @@ describe("StreamService.inviteActor", () => {
   const mockFindByIdForWorkspace = spyOn(StreamRepository, "findByIdForWorkspace")
   const mockListForStream = spyOn(E2eStreamActorsRepository, "listForStream")
   const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
-  const mockFindActiveActor = spyOn(StreamActiveActorRepository, "findByRootStream")
+  const mockFindBot = spyOn(BotRepository, "findById")
   const mockFindLiveBiks = spyOn(BotRuntimeInstanceRepository, "findLiveWithKeyForBot")
 
   const updatedStream = {
@@ -545,7 +546,7 @@ describe("StreamService.inviteActor", () => {
     workspaceId: "ws_1",
     type: "scratchpad",
     e2eEnabled: true,
-    e2eActors: [{ kind: "enclave", keyId: null }],
+    e2eActors: [{ kind: "enclave", actorId: "enclave", keyId: null }],
   } as never
 
   const ownedE2eStream = {
@@ -562,19 +563,19 @@ describe("StreamService.inviteActor", () => {
     mockAddActor.mockReset().mockResolvedValue(true)
     mockFindByIdForWorkspace.mockReset().mockResolvedValue(updatedStream)
     mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
-    // Default: no resolvable actor keys → keyRoll null. Individual tests opt in.
-    mockListForStream.mockReset().mockResolvedValue([{ kind: "enclave", keyId: null }])
+    // Default: one enclave actor, no live key → keyRoll null. Tests opt in.
+    mockListForStream.mockReset().mockResolvedValue([{ kind: "enclave", actorId: "enclave", keyId: null }])
     mockListLiveEiks.mockReset().mockResolvedValue([])
-    mockFindActiveActor.mockReset().mockResolvedValue(null)
+    mockFindBot.mockReset().mockResolvedValue({ id: "bot_pi", archivedAt: null } as never)
     mockFindLiveBiks.mockReset().mockResolvedValue([])
   })
 
-  test("adds the enclave actor, emits stream:updated, and returns null keyRoll when no live key exists", async () => {
+  test("pins the enclave sentinel id, emits stream:updated, and returns null keyRoll when no live key exists", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
 
     const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "enclave")
 
-    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "enclave", null)
+    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "enclave", "enclave", null)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:updated", {
       workspaceId: "ws_1",
       streamId: "stream_e2e",
@@ -602,19 +603,60 @@ describe("StreamService.inviteActor", () => {
     })
   })
 
-  test("resolves a bot's live BIKs via the active-actor row", async () => {
+  test("pins the bot by id and wraps to that bot's live BIKs (no active-actor guess)", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
-    mockListForStream.mockResolvedValue([{ kind: "bot", keyId: null }])
-    mockFindActiveActor.mockResolvedValue({ actorType: "bot", actorId: "bot_pi" } as never)
+    mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_pi", keyId: null }])
     mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", publicKeyId: "bik_1" }] as never)
 
-    const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot")
+    const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi")
 
+    expect(mockFindBot).toHaveBeenCalledWith({}, "ws_1", "bot_pi")
+    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "bot", "bot_pi", null)
     expect(mockFindLiveBiks).toHaveBeenCalledWith({}, expect.objectContaining({ botId: "bot_pi" }))
     expect(result.keyRoll).toEqual({
       nextGeneration: 1,
       recipients: [{ recipientKeyId: "bik_1", recipientKind: "bot", publicKey: "Ymlr" }],
     })
+  })
+
+  test("wraps to every invited bot's BIKs when a scratchpad holds multiple bots", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+    mockListForStream.mockResolvedValue([
+      { kind: "bot", actorId: "bot_a", keyId: null },
+      { kind: "bot", actorId: "bot_b", keyId: null },
+    ])
+    mockFindLiveBiks.mockImplementation((_db, params: { botId: string }) =>
+      Promise.resolve(
+        params.botId === "bot_a"
+          ? ([{ publicKey: "QQ", publicKeyId: "bik_a" }] as never)
+          : ([{ publicKey: "Qg", publicKeyId: "bik_b" }] as never)
+      )
+    )
+
+    const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_b")
+
+    expect(result.keyRoll?.recipients.map((r) => r.recipientKeyId).sort()).toEqual(["bik_a", "bik_b"])
+  })
+
+  test("throws 404 when the named bot does not exist", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+    mockFindBot.mockResolvedValue(null)
+
+    const error = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_ghost").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(404)
+    expect((error as HttpError).code).toBe("BOT_NOT_FOUND")
+    expect(mockAddActor).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when inviting a bot without a bot id", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+
+    const error = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("ACTOR_ID_REQUIRED")
+    expect(mockAddActor).not.toHaveBeenCalled()
   })
 
   test("throws 400 when the stream is not end-to-end encrypted", async () => {
@@ -641,7 +683,7 @@ describe("StreamService.inviteActor", () => {
     expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 
-  test("throws 409 when that actor kind is already invited", async () => {
+  test("throws 409 when that actor is already invited", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
     mockAddActor.mockResolvedValue(false)
 
