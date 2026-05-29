@@ -104,12 +104,19 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     try {
       await enclaveForwarder.assignSession(built.instanceUrl, built.assignment)
     } catch (err) {
-      // Handoff failed — don't leave the session hanging RUNNING. Mark it FAILED
-      // (so it doesn't trip the one-running guard) and rethrow for job retry.
+      // Handoff failed — mark the session FAILED so the retry (and the
+      // one-running guard) can re-assign a fresh session. If that write *also*
+      // fails, log it loudly (INV-11, not a silent swallow) and still rethrow the
+      // original assign error: orphan-cleanup reclaims a RUNNING session with no
+      // live enclave heartbeating it — the same backstop that covers an enclave
+      // dying mid-turn. A durable pre-handoff state is part of the resume rework
+      // (Slice C).
       await AgentSessionRepository.updateStatus(pool, session.id, SessionStatuses.FAILED, {
         error: "enclave assign failed",
         onlyIfStatus: SessionStatuses.RUNNING,
-      }).catch(() => {})
+      }).catch((statusErr) =>
+        logger.error({ statusErr, sessionId: session.id }, "Failed to mark session FAILED after assign failure")
+      )
       throw err
     }
 
