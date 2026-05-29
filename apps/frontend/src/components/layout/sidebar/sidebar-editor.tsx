@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { LabelChip } from "@/components/labels/label-chip"
 import { QUICK_LINK_META } from "./quick-links"
+import { BADGE_CONFIG } from "./config"
 import {
   isPristinePreset,
   moveSection,
@@ -58,6 +59,7 @@ import {
   removeSection,
   hasSection,
   sectionPresentation,
+  sectionIdForSpec,
   toggleQuickLink,
   moveQuickLink,
 } from "./sidebar-config"
@@ -118,18 +120,21 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent desktopClassName="sm:max-w-md sm:max-h-[80vh]">
-        <ResponsiveDialogHeader>
+      <ResponsiveDialogContent
+        desktopClassName="sm:max-w-md sm:max-h-[80vh] sm:flex flex-col gap-0 p-0"
+        drawerClassName="flex flex-col"
+      >
+        <ResponsiveDialogHeader className="border-b px-4 py-3 sm:px-6">
           <ResponsiveDialogTitle>Customize sidebar</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
             Start from a preset, then reorder, hide, add, or remove anything.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody className="space-y-5">
+        <ResponsiveDialogBody className="space-y-5 py-5 sm:py-6">
           <section className="space-y-2">
             <EditorGroupHeading>Preset</EditorGroupHeading>
-            <div className="inline-flex gap-1 rounded-md bg-muted p-0.5">
+            <div role="group" aria-label="Preset" className="inline-flex gap-1 rounded-md bg-muted p-0.5">
               {SIDEBAR_BASE_PRESETS.map((preset) => (
                 <button
                   key={preset}
@@ -197,20 +202,17 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-                {addableSmart.map((spec) => (
-                  <AddSectionItem
-                    key={`smart:${spec.kind === "smart" ? spec.bucket : ""}`}
-                    onSelect={() => setConfig(addSection(config, spec))}
-                  >
-                    <span aria-hidden>{sectionPresentation(spec).icon}</span>
-                    {sectionPresentation(spec).label}
-                  </AddSectionItem>
-                ))}
+                {addableSmart.map((spec) => {
+                  const { icon, label } = sectionPresentation(spec)
+                  return (
+                    <AddSectionItem key={sectionIdForSpec(spec)} onSelect={() => setConfig(addSection(config, spec))}>
+                      <span aria-hidden>{icon}</span>
+                      {label}
+                    </AddSectionItem>
+                  )
+                })}
                 {addableTypes.map((spec) => (
-                  <AddSectionItem
-                    key={`type:${spec.kind === "type" ? spec.streamType : ""}`}
-                    onSelect={() => setConfig(addSection(config, spec))}
-                  >
+                  <AddSectionItem key={sectionIdForSpec(spec)} onSelect={() => setConfig(addSection(config, spec))}>
                     {sectionPresentation(spec).label}
                   </AddSectionItem>
                 ))}
@@ -357,10 +359,18 @@ function SectionRowContent({ section, labelsById }: { section: SidebarSection; l
     if (!label) return <span className="truncate text-sm italic text-muted-foreground">Unavailable label</span>
     return <LabelChip label={label} />
   }
+  // Stream-type sections carry no emoji; mirror the live sidebar's lucide glyph
+  // (BADGE_CONFIG) so a reordered "Channels"/"Scratchpads"/"DMs" row stays
+  // recognizable. Smart buckets use their emoji from sectionPresentation.
   const { label, icon } = sectionPresentation(section.spec)
+  const TypeIcon = section.spec.kind === "type" ? BADGE_CONFIG[section.spec.streamType].icon : null
   return (
     <span className="flex items-center gap-1.5 truncate text-sm font-medium">
-      {icon && <span aria-hidden>{icon}</span>}
+      {TypeIcon ? (
+        <TypeIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+      ) : (
+        icon && <span aria-hidden>{icon}</span>
+      )}
       {label}
     </span>
   )

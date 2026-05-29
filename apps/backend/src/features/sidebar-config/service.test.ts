@@ -36,6 +36,19 @@ describe("SidebarConfigService.getConfig", () => {
 
     expect(config).toEqual(DEFAULT_SIDEBAR_CONFIG)
   })
+
+  it("normalizes a stored config that pre-dates quick links", async () => {
+    const service = setupService()
+    // A row persisted before quick links were configurable has no quickLinks key.
+    spyOn(SidebarConfigRepository, "find").mockResolvedValue({
+      basePreset: "smart",
+      sections: [],
+    } as unknown as SidebarConfig)
+
+    const config = await service.getConfig(WORKSPACE_ID, USER_ID)
+
+    expect(config.quickLinks).toEqual(DEFAULT_QUICK_LINKS)
+  })
 })
 
 describe("SidebarConfigService.updateConfig", () => {
