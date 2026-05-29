@@ -85,23 +85,33 @@ async function scrollToTop(page: Page): Promise<void> {
 
   if (!isScrollable) return
 
-  await scroller.hover()
-  for (let i = 0; i < 3; i++) {
+  // Anchor at the bottom first, then sweep up to the top. A cold virtualized list
+  // can mount pinned at the top (the latest message never scrolled into view);
+  // from there an up-only wheel produces no scroll movement, so Virtuoso never
+  // re-emits the `rangeChanged` that arms the older-page fetch — and reaching the
+  // bottom is also what settles its at-bottom gate (the pagination triggers are
+  // gated on that). Jumping to the bottom then wheeling up guarantees the top
+  // boundary is genuinely re-crossed on every call.
+  await page.evaluate(() => {
+    const container = document.querySelector("[data-suppress-pull-refresh]")
+    if (container instanceof HTMLElement) container.scrollTop = container.scrollHeight
+  })
+  await page.waitForTimeout(50)
+
+  // Wheel from a point near the TOP of the scroller, not its center. Once we've
+  // scrolled up, the floating "Jump to latest" button mounts bottom-center with
+  // `pointer-events-auto`; `scroller.hover()` (which targets the center) then
+  // throws "subtree intercepts pointer events", and inside an expect.poll that
+  // throw is swallowed and retried until the whole test times out. The top strip
+  // is never covered by that button.
+  const box = await scroller.boundingBox()
+  if (box) {
+    await page.mouse.move(box.x + box.width / 2, box.y + 24)
+  }
+  for (let i = 0; i < 4; i++) {
     await page.mouse.wheel(0, -4000)
     await page.waitForTimeout(50)
   }
-
-  // Dispatch a few synthetic scroll events because heavily loaded runners can
-  // miss a single boundary transition while Virtuoso is still measuring items.
-  await page.evaluate(() => {
-    const container = document.querySelector("[data-suppress-pull-refresh]")
-    if (container instanceof HTMLElement) {
-      container.scrollTop = 0
-      for (let i = 0; i < 3; i++) {
-        container.dispatchEvent(new Event("scroll", { bubbles: true }))
-      }
-    }
-  })
   await page.waitForTimeout(100)
 }
 
@@ -115,6 +125,13 @@ test.describe("Infinite Scroll", () => {
   })
 
   test("should load older messages when scrolling to the top", async ({ page }) => {
+    // A short viewport forces Virtuoso to genuinely virtualize: with the default
+    // tall viewport all 50 bootstrap rows render at once, so the scroller barely
+    // overflows and reaching the very top (which arms `startReached` → fetch
+    // older) is unreliable. A small window keeps the bottom rows unmounted, so a
+    // scroll-to-top is a real boundary crossing that paginates deterministically.
+    await page.setViewportSize({ width: 1024, height: 400 })
+
     const PAGED_MESSAGE_COUNT = 51 // One item beyond bootstrap is enough to exercise pagination
     const channelName = `scroll-older-${testId}`
     await createChannel(page, channelName)
@@ -130,8 +147,22 @@ test.describe("Infinite Scroll", () => {
 
     await seedMessages(page, workspaceId, streamId, PAGED_MESSAGE_COUNT, prefix)
 
-    // Navigate fresh to get a clean bootstrap (with only the latest ~50 events)
+    // Navigate to the stream, then hard-reload to force a genuinely cold
+    // bootstrap. `createChannel` first navigated into the freshly-created (empty)
+    // stream, caching a bootstrap with `hasOlderEvents: false`. Seeding happens
+    // over the API while parked on /drafts (no live socket delivery to this
+    // client), so re-navigating can keep serving that stale empty-state snapshot
+    // — `startReached` then fires on scroll-to-top but bails because the cached
+    // `hasOlderEvents` is still false, and the older page never loads. A reload
+    // drops the in-memory query cache and refetches the real window (50 events,
+    // `hasOlderEvents: true`). Real clients don't hit this — they receive the
+    // messages live and invalidate the bootstrap on resubscribe (INV-53).
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    // Let the (possibly stale) first navigation settle before reloading — a
+    // reload fired back-to-back with the in-flight goto races its bootstrap and
+    // can re-cache the same stale snapshot. Wait for first paint, then reload.
+    await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 20000 })
+    await page.reload()
 
     // Wait for the bootstrap window to render. Don't pin on the very latest
     // message being in view: on a loaded runner the virtualized list can mount
@@ -141,28 +172,43 @@ test.describe("Infinite Scroll", () => {
     // scroll-up-loads-older assertion below needs.
     await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 20000 })
 
-    // The earliest message should NOT be visible yet (it's beyond the bootstrap window)
-    await expect(oldestMessage).not.toBeVisible()
+    // The earliest message should NOT be in the list yet (beyond the bootstrap window)
+    await expect(oldestMessage).toHaveCount(0)
 
-    // Keep nudging the scroller back to the top until the oldest message from
-    // the next page is actually rendered. After each prepend the browser keeps
-    // the user's visual position stable, so a second scroll-to-top is often
-    // required on slower runners before the earliest item is in view.
+    // Keep nudging the scroller to the top until the older page is fetched and
+    // the earliest message is rendered into the virtualized list. We assert it
+    // becomes attached (rendered) rather than pixel-visible: a prepend keeps the
+    // user's visual position stable by anchoring the previously-top row, so the
+    // freshly prepended item sits just above the fold and isn't in the viewport
+    // until a further scroll. Whether older messages *load* on scroll-to-top is
+    // the behavior under test; the post-prepend scroll-restoration is separate
+    // (and exercised via "Jump to latest" below). Virtuoso only mounts rows in
+    // its render window, so an attached oldest row proves the scroll reached the
+    // top and the older page paginated in.
     await expect
       .poll(
         async () => {
           await scrollToTop(page)
-          return await oldestMessage.isVisible()
+          return await oldestMessage.count()
         },
         {
           timeout: 30000,
           message: "should render older messages after repeated scrolls to the top",
         }
       )
-      .toBe(true)
+      .toBeGreaterThan(0)
   })
 
   test("should show 'Jump to latest' when scrolled far from bottom and hide when scrolled back", async ({ page }) => {
+    // The "Jump to latest" affordance keys off Virtuoso's rendered range
+    // (`distFromEnd > 10` items), so it only appears once the bottom of the list
+    // is virtualized out of view. On the default tall viewport these 55 short
+    // messages all fit inside Virtuoso's render window — the last item stays
+    // rendered even at the top, distFromEnd is ~0, and the button never shows.
+    // A short viewport forces genuine virtualization, which is the real
+    // condition under which the button matters.
+    await page.setViewportSize({ width: 1024, height: 400 })
+
     const channelName = `scroll-jump-${testId}`
     await createChannel(page, channelName)
 

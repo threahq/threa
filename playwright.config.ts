@@ -75,11 +75,17 @@ const webServerTimeout = 60000
 // contention timeouts. Locally we keep the dev server for fast iteration/HMR.
 // The build is port-independent (VITE_BACKEND_PORT only configures the preview
 // proxy at runtime), so the preview server still picks up the dynamic ports.
-const frontendCommand = isCI
+//
+// Set PLAYWRIGHT_PROD_FRONTEND=1 to opt into the prod build locally without the
+// rest of the CI environment (notably the 5454/9000 port remap). Prod-build-only
+// failures — e.g. virtualized-list scroll position differing from the dev server
+// — are otherwise impossible to reproduce on a dev machine.
+const useProdFrontend = isCI || !!process.env.PLAYWRIGHT_PROD_FRONTEND
+const frontendCommand = useProdFrontend
   ? "bun run --cwd apps/frontend build:e2e && bun run --cwd apps/frontend preview"
   : "bun run test:browser:frontend"
-// The CI build needs more headroom than a dev-server boot.
-const frontendServerTimeout = isCI ? 180000 : webServerTimeout
+// The prod build needs more headroom than a dev-server boot.
+const frontendServerTimeout = useProdFrontend ? 180000 : webServerTimeout
 
 // Only log once (when ports are first allocated)
 if (!process.env.PLAYWRIGHT_PORTS_LOGGED) {
