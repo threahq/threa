@@ -14,9 +14,11 @@ the one service in the monorepo that runs on Node.
 It generates an Enclave Instance Key (EIK) at boot, registers it with the
 backend, heartbeats so the live set reflects liveness, and answers `/invoke`:
 the backend forwards an encrypted scratchpad turn (ciphertext + the SSK wrap
-addressed to this EIK), the enclave unwraps the SSK, opens the message(s), calls
-the LLM (OpenRouter, zero-retention), and returns the reply sealed back under the
-SSK. Plaintext exists only in-process, for the request, and is never logged.
+addressed to this EIK), the enclave unwraps the SSK, opens the message(s), runs
+the same `AgentRuntime` loop the backend uses for non-E2E personas — over an
+enclave-only LLM client (OpenRouter, zero-retention, single egress) — and returns
+each reply the loop sends sealed back under the SSK. Plaintext exists only
+in-process, for the request, and is never logged.
 
 ## Trust boundary (5a)
 
@@ -32,7 +34,8 @@ What the enclave does today:
 - Exposes `/pubkey` (the registered EIK), `/healthz`, and `/attestation`
   (source commit + build hash) for liveness and verification.
 - Answers `POST /invoke`: unwraps the forwarded SSK with its in-memory EIK,
-  opens the turn, calls OpenRouter (zero-retention), and returns the reply
+  opens the turn, runs the agent loop (text + tool-calling capable; no tools and
+  no mid-turn reconsideration wired yet), and returns each reply the loop sends
   sealed under the SSK.
 - Best-effort revokes its key on graceful shutdown; the backend's staleness
   window tombstones the row within 2 minutes regardless.

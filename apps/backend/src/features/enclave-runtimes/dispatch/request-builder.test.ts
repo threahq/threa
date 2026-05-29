@@ -63,7 +63,6 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
     trigger: msg("msg_trigger", "user", "hello"),
     priorMessages: [],
     persona: PERSONA,
-    replyMessageId: "msg_reply",
     replySenderId: "persona_ariadne",
     ...over,
   }
@@ -78,7 +77,7 @@ describe("buildEnclaveInvokeRequest", () => {
     expect(built!.request.system).toBe("You are Ariadne.")
     expect(built!.request.temperature).toBe(0.7)
     expect(built!.request).not.toHaveProperty("maxTokens") // null → omitted
-    expect(built!.request.reply).toEqual({ keyGeneration: 1, messageId: "msg_reply", senderId: "persona_ariadne" })
+    expect(built!.request.reply).toEqual({ keyGeneration: 1, senderId: "persona_ariadne" })
     expect(built!.request.prompt.ciphertext).toBe(Buffer.from("cipher:hello").toString("base64"))
     expect(built!.request.wraps).toEqual([{ keyGeneration: 1, wrapEnc: "enc_eik_live_1", wrapCt: "ct_eik_live_1" }])
   })

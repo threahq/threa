@@ -432,11 +432,24 @@ export interface EnclaveSskWrap {
 }
 
 /**
+ * One sealed reply the enclave produced this turn. The agent loop may send more
+ * than one message, so the enclave mints each reply's id (a `msg_…` ULID) and
+ * binds it into the seal AAD (`streamId|messageId|senderId`); the backend stores
+ * the ciphertext under that same id. Server-minting the id up front isn't viable
+ * because the message count is only known after the loop runs.
+ */
+export interface EnclaveSealedReply {
+  messageId: string
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+}
+
+/**
  * Body the backend forwards to a live enclave's `POST /invoke`. The backend
  * never decrypts: it ships ciphertext + the wraps addressed to that EIK, and
- * the enclave unwraps, opens, calls the LLM, and seals the reply. `system` is
- * the persona's (non-secret) prompt; `reply` carries the server-minted message
- * id + Ariadne's sender id the reply must be sealed/bound to.
+ * the enclave unwraps, opens, runs the agent loop, and seals each reply. `system`
+ * is the persona's (non-secret) prompt; `reply` carries the generation each reply
+ * is sealed under + Ariadne's sender id the replies are bound to.
  */
 export interface EnclaveInvokeRequest {
   streamId: string
@@ -447,13 +460,16 @@ export interface EnclaveInvokeRequest {
   model: string
   temperature?: number
   maxTokens?: number
-  reply: { keyGeneration: number; messageId: string; senderId: string }
+  reply: { keyGeneration: number; senderId: string }
 }
 
-/** The enclave's reply: the sealed message plus non-secret model metadata. */
+/**
+ * The enclave's turn output: the messages the agent loop sealed (zero or more,
+ * oldest→newest) plus non-secret model metadata. Usage is summed across every
+ * model call the loop made.
+ */
 export interface EnclaveInvokeResponse {
-  ciphertext: string
-  envelope: EnclaveStreamEnvelope
+  messages: EnclaveSealedReply[]
   model: string
   usage?: { promptTokens?: number; completionTokens?: number }
 }

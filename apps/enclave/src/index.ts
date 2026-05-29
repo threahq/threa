@@ -5,7 +5,7 @@ import { createEnclaveKeyPair } from "./keystore"
 import { registerWithBackend, revokeWithBackend } from "./register"
 import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
-import { createOpenRouterClient } from "./llm"
+import { createOpenRouterChat } from "./llm"
 import { createInvokeHandler, requireInternalKey } from "./invoke"
 
 const logger = pino({ name: "enclave" })
@@ -43,14 +43,14 @@ async function main() {
     })
   })
 
-  // The only content-bearing route: decrypt the forwarded turn, call the LLM,
-  // seal the reply. The LLM client is the enclave's sole outbound dependency.
-  const chatCompletion = createOpenRouterClient(config)
+  // The only content-bearing route: decrypt the forwarded turn, run the agent
+  // loop, seal each reply. OpenRouter is the enclave's sole outbound dependency.
+  const rawChat = createOpenRouterChat(config)
   app.post(
     "/invoke",
     requireInternalKey(config.internalApiKey),
     express.json({ limit: "4mb" }),
-    createInvokeHandler({ keyPair, chatCompletion })
+    createInvokeHandler({ keyPair, rawChat })
   )
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

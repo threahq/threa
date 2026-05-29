@@ -1,6 +1,5 @@
 import type { Pool } from "pg"
 import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
-import { messageId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
 import type { EnclaveInvokeJobData, JobHandler } from "../../../lib/queue/job-queue"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
@@ -46,14 +45,14 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
     if (!actors.some((a) => a.kind === "enclave")) return
 
-    // Idempotency: if a reply for this trigger already exists (the job was
-    // redelivered after a prior full success), skip — don't re-invoke the
-    // enclave. This covers the common at-least-once case cheaply. The narrow
-    // window where invoke() succeeded but createMessage never committed can
-    // still re-invoke; durable invoke-tracking (a tracking table, INV-57) lands
-    // with the agent-loop/session follow-up that reworks this path.
-    const replyDedupeKey = `enclave-reply:${triggerId}`
-    if (await MessageRepository.findByClientMessageId(pool, streamId, replyDedupeKey)) return
+    // Idempotency: if this turn's first reply already exists (the job was
+    // redelivered after a prior success), skip — don't re-invoke the enclave.
+    // This covers the common at-least-once case cheaply. The narrow window where
+    // invoke() succeeded but the writes never committed can still re-invoke;
+    // durable invoke-tracking (a tracking table, INV-57) lands with the
+    // session/resume follow-up that reworks this path.
+    const replyDedupeKey = (index: number) => `enclave-reply:${triggerId}:${index}`
+    if (await MessageRepository.findByClientMessageId(pool, streamId, replyDedupeKey(0))) return
 
     // The enclave serves Ariadne; refuse if that persona isn't e2e-capable.
     if (!isE2eCapablePersona(ARIADNE_AGENT_ID)) return
@@ -69,7 +68,6 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       MessageRepository.findSurrounding(pool, triggerId, streamId, MAX_HISTORY_MESSAGES, 0),
     ])
 
-    const replyMessageId = messageId()
     const built = buildEnclaveInvokeRequest({
       e2e,
       actors,
@@ -83,7 +81,6 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
         temperature: persona.temperature,
         maxTokens: persona.maxTokens,
       },
-      replyMessageId,
       replySenderId: ARIADNE_AGENT_ID,
     })
     if (!built) {
@@ -93,21 +90,25 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
 
     const response = await enclaveForwarder.invoke(built.instanceUrl, built.request)
 
-    await eventService.createMessage({
-      id: replyMessageId,
-      workspaceId,
-      streamId,
-      authorId: ARIADNE_AGENT_ID,
-      authorType: AuthorTypes.PERSONA,
-      contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-      contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-      ciphertext: Buffer.from(response.ciphertext, "base64"),
-      envelope: response.envelope,
-      e2eVersion: 2,
-      // Restrict agent reach to this scratchpad; and dedupe a redelivered job so
-      // a transient retry can't post Ariadne's reply twice.
-      accessibleStreamIds: [streamId],
-      clientMessageId: replyDedupeKey,
-    })
+    // The loop may send more than one message; write each under the id the
+    // enclave minted and bound into the seal AAD, oldest→newest.
+    for (const [index, reply] of response.messages.entries()) {
+      await eventService.createMessage({
+        id: reply.messageId,
+        workspaceId,
+        streamId,
+        authorId: ARIADNE_AGENT_ID,
+        authorType: AuthorTypes.PERSONA,
+        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+        ciphertext: Buffer.from(reply.ciphertext, "base64"),
+        envelope: reply.envelope,
+        e2eVersion: 2,
+        // Restrict agent reach to this scratchpad; and dedupe a redelivered job
+        // so a transient retry can't post Ariadne's replies twice.
+        accessibleStreamIds: [streamId],
+        clientMessageId: replyDedupeKey(index),
+      })
+    }
   }
 }

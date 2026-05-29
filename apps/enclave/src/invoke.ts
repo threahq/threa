@@ -1,28 +1,17 @@
 import type { NextFunction, Request, Response } from "express"
 import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
-import {
-  base64ToBytes,
-  buildMessageAad,
-  buildWrapAad,
-  bytesToBase64,
-  openMessageAsString,
-  sealMessage,
-  unwrapStreamKey,
-} from "@threa/crypto"
-import { INTERNAL_API_KEY_HEADER, type EnclaveInvokeRequest, type EnclaveInvokeResponse } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, type EnclaveInvokeRequest } from "@threa/types"
 import type { EnclaveKeyPair } from "./keystore"
-import type { ChatCompletionFn, ChatMessage } from "./llm"
+import type { RawChatFn } from "./llm"
+import { InvokeError, runEnclaveTurn } from "./agent/run-turn"
 
 /**
  * `/invoke` — the enclave's only content-bearing endpoint.
  *
- * The backend forwards an E2E scratchpad turn here without ever decrypting it:
- * the ciphertext of the triggering message + prior history, plus the SSK wraps
- * addressed to THIS enclave's EIK. The enclave unwraps each generation's SSK
- * with its in-memory private key, opens the messages, calls the LLM, and seals
- * the reply back under the current SSK. Plaintext exists only in this process,
- * for the duration of the request, and is never logged or persisted.
+ * The backend forwards an E2E scratchpad turn here without ever decrypting it.
+ * This module is the HTTP shell: auth gate, body validation, and error mapping.
+ * The decrypt → run-the-agent-loop → seal work lives in `agent/run-turn.ts`.
  */
 
 // Bounds on a forwarded turn, centralized rather than inlined in the schema
@@ -72,10 +61,9 @@ export const invokeRequestSchema = z.object({
   model: z.string().min(1).max(MAX_MODEL_ID_CHARS),
   temperature: z.number().min(0).max(2).optional(),
   maxTokens: z.number().int().min(1).max(MAX_COMPLETION_TOKENS).optional(),
-  /** Where to seal the reply: current generation + the server-minted reply id + Ariadne's sender id. */
+  /** Where to seal replies: current generation + Ariadne's sender id. */
   reply: z.object({
     keyGeneration: z.number().int().min(0),
-    messageId: z.string().min(1),
     senderId: z.string().min(1),
   }),
 })
@@ -86,95 +74,8 @@ export type InvokeRequest = EnclaveInvokeRequest
 
 export interface InvokeDeps {
   keyPair: EnclaveKeyPair
-  chatCompletion: ChatCompletionFn
+  rawChat: RawChatFn
 }
-
-/**
- * Pure core of `/invoke` (no Express) so it can be loopback-tested: wrap an SSK
- * to a generated EIK, seal a prompt, run this, and confirm the reply opens.
- */
-export async function handleInvoke(deps: InvokeDeps, request: EnclaveInvokeRequest): Promise<EnclaveInvokeResponse> {
-  const { keyPair } = deps
-
-  // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
-  // binds to our own keyId — a wrap addressed elsewhere simply won't open.
-  const sskByGeneration = new Map<number, Uint8Array>()
-  for (const wrap of request.wraps) {
-    const ssk = await unwrap(keyPair, request.streamId, wrap)
-    sskByGeneration.set(wrap.keyGeneration, ssk)
-  }
-
-  const messages: ChatMessage[] = [{ role: "system", content: request.system }]
-
-  // History the enclave can't decrypt (generations predating its invite) is
-  // skipped rather than fatal — it simply isn't context this actor is entitled to.
-  for (const item of request.history) {
-    const ssk = sskByGeneration.get(item.envelope.keyGeneration)
-    if (!ssk) continue
-    const content = await openMessageAsString({
-      key: ssk,
-      envelope: item.envelope,
-      ciphertext: base64ToBytes(item.ciphertext),
-    })
-    messages.push({ role: item.role, content })
-  }
-
-  const promptSsk = sskByGeneration.get(request.prompt.envelope.keyGeneration)
-  if (!promptSsk) {
-    throw new InvokeError("No SSK wrap for the prompt's key generation")
-  }
-  const promptText = await openMessageAsString({
-    key: promptSsk,
-    envelope: request.prompt.envelope,
-    ciphertext: base64ToBytes(request.prompt.ciphertext),
-  })
-  messages.push({ role: "user", content: promptText })
-
-  const completion = await deps.chatCompletion({
-    model: request.model,
-    messages,
-    temperature: request.temperature,
-    maxTokens: request.maxTokens,
-  })
-
-  const replySsk = sskByGeneration.get(request.reply.keyGeneration)
-  if (!replySsk) {
-    throw new InvokeError("No SSK wrap for the reply's key generation")
-  }
-  const sealed = await sealMessage({
-    key: replySsk,
-    keyGeneration: request.reply.keyGeneration,
-    payload: completion.text,
-    aad: buildMessageAad({
-      streamId: request.streamId,
-      messageId: request.reply.messageId,
-      senderId: request.reply.senderId,
-    }),
-  })
-
-  return {
-    ciphertext: bytesToBase64(sealed.ciphertext),
-    envelope: sealed.envelope,
-    model: completion.model,
-    usage: completion.usage,
-  }
-}
-
-async function unwrap(
-  keyPair: EnclaveKeyPair,
-  streamId: string,
-  wrap: { keyGeneration: number; wrapEnc: string; wrapCt: string }
-): Promise<Uint8Array> {
-  return unwrapStreamKey({
-    enc: base64ToBytes(wrap.wrapEnc),
-    ct: base64ToBytes(wrap.wrapCt),
-    recipientPrivateKey: keyPair.privateKey,
-    aad: buildWrapAad({ streamId, keyGeneration: wrap.keyGeneration, recipientKeyId: keyPair.keyId }),
-  })
-}
-
-/** Marks a caller/data fault so the Express layer can answer 400 instead of 500. */
-export class InvokeError extends Error {}
 
 /** Length-safe constant-time secret comparison (avoids the throw on length mismatch). */
 function secretsMatch(a: string, b: string): boolean {
@@ -203,8 +104,8 @@ export function requireInternalKey(internalApiKey: string) {
 
 /**
  * Express adapter for `/invoke`. Assumes `requireInternalKey` already gated the
- * request. Validates the body, runs `handleInvoke`, and answers with status only
- * on failure — error bodies never echo request content (which would defeat the
+ * request. Validates the body, runs the turn, and answers with status only on
+ * failure — error bodies never echo request content (which would defeat the
  * no-plaintext-egress guarantee).
  */
 export function createInvokeHandler(deps: InvokeDeps) {
@@ -218,7 +119,7 @@ export function createInvokeHandler(deps: InvokeDeps) {
       // Assigning through the contract type (no `as`) makes a schema/contract
       // drift a compile error here rather than a silent mismatch.
       const request: EnclaveInvokeRequest = parsed.data
-      const result = await handleInvoke(deps, request)
+      const result = await runEnclaveTurn(deps, request)
       res.json(result)
     } catch (err) {
       if (err instanceof InvokeError) {
