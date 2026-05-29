@@ -24,9 +24,9 @@ test.describe("Push Notification Settings", () => {
     await expect(dialog).toBeVisible({ timeout: 10000 })
 
     // Verify notification cards are present
-    await expect(dialog.getByText("Notification Level")).toBeVisible()
-    await expect(dialog.getByText("Push Notifications", { exact: true })).toBeVisible()
-    await expect(dialog.getByText("Get notified even when you're away from the app")).toBeVisible()
+    await expect(dialog.getByText("Notification level")).toBeVisible()
+    await expect(dialog.getByText("Push notifications", { exact: true })).toBeVisible()
+    await expect(dialog.getByText(/Get notified on this device even when Threa isn't open/i)).toBeVisible()
   })
 
   test("shows blocked message in headless browser (default denied permission)", async ({ page }) => {
@@ -40,7 +40,7 @@ test.describe("Push Notification Settings", () => {
 
     // Headless Chromium denies notification permission by default,
     // so the card should show the "blocked" message
-    await expect(dialog.getByText("Push notifications are blocked")).toBeVisible({ timeout: 5000 })
+    await expect(dialog.getByText(/blocked at the browser level/i)).toBeVisible({ timeout: 5000 })
   })
 
   test("VAPID key endpoint responds", async ({ page }) => {
