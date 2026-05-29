@@ -128,7 +128,7 @@ function extractAssistantText(result: { text: string; response: { messages: Mode
   return undefined
 }
 
-function mergeSourceItems(existing: SourceItem[], incoming: SourceItem[]): SourceItem[] {
+export function mergeSourceItems(existing: SourceItem[], incoming: SourceItem[]): SourceItem[] {
   if (incoming.length === 0) return existing
   const merged = [...existing]
   const seen = new Set(merged.map((s) => `${s.url}|${s.title}`))

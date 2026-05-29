@@ -1482,6 +1482,7 @@
                       "web_search",
                       "visit_page",
                       "workspace_search",
+                      "research",
                       "github_access",
                       "linear_access",
                       "message_sent",

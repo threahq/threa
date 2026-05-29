@@ -45,6 +45,7 @@ import {
   type PersonaAgentInput,
   type PersonaAgentDeps,
   WorkspaceAgent,
+  GeneralResearcher,
   PersonaRepository,
   TraceEmitter,
   SessionAbortRegistry,
@@ -283,6 +284,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       configResolver: ctx.configResolver,
       embeddingService,
     })
+    const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
     const searchService = new SearchService({
       pool: ctx.pool,
       embeddingService,
@@ -376,6 +378,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       sessionAbortRegistry: new SessionAbortRegistry(),
       userPreferencesService,
       workspaceAgent,
+      generalResearcher,
       searchService,
       conversationSummaryService,
       attachmentService,

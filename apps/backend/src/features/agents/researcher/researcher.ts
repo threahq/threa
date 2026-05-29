@@ -4,6 +4,7 @@ import { withClient } from "../../../db"
 import { isAbortError, type AI } from "@threa/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
+import { composeAbortSignal } from "../../../lib/abort-signal"
 import type { TraceSource } from "@threa/types"
 import type { EmbeddingServiceLike } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
@@ -667,48 +668,15 @@ export class WorkspaceAgent {
     params: { signal: AbortSignal | undefined; deadlineAt: number | undefined },
     perCallMs: number
   ): { signal: AbortSignal; cleanup: () => void } {
-    const controller = new AbortController()
     const { signal: parentSignal, deadlineAt } = params
-
     const remainingBudget = deadlineAt !== undefined ? Math.max(0, deadlineAt - Date.now()) : Infinity
-    const effectiveMs = Math.min(perCallMs, remainingBudget)
-
-    const abortWithTimeout = () => {
-      try {
-        controller.abort(new DOMException("per-call timeout", "TimeoutError"))
-      } catch {
-        // DOMException not available in all runtimes; fall back to a plain Error
-        controller.abort(new Error("per-call timeout"))
-      }
-    }
-
-    let timer: ReturnType<typeof setTimeout> | null = null
-    if (effectiveMs <= 0) {
-      // Already past the deadline — abort synchronously so the awaiting AI call
-      // throws AbortError immediately instead of consuming its full per-call budget.
-      abortWithTimeout()
-    } else if (effectiveMs !== Infinity) {
-      timer = setTimeout(abortWithTimeout, effectiveMs)
-    }
-
-    let parentListener: (() => void) | null = null
-    if (parentSignal) {
-      if (parentSignal.aborted) {
-        controller.abort(parentSignal.reason)
-      } else {
-        parentListener = () => controller.abort(parentSignal.reason)
-        parentSignal.addEventListener("abort", parentListener, { once: true })
-      }
-    }
-
-    const cleanup = () => {
-      if (timer !== null) clearTimeout(timer)
-      if (parentListener && parentSignal) {
-        parentSignal.removeEventListener("abort", parentListener)
-      }
-    }
-
-    return { signal: controller.signal, cleanup }
+    // Clamp the per-call cap to the remaining total budget so a late call can't
+    // outlive the deadline (Greptile caught exactly this bug — see PR #333).
+    return composeAbortSignal({
+      parent: parentSignal,
+      timeoutMs: Math.min(perCallMs, remainingBudget),
+      timeoutReason: "per-call timeout",
+    })
   }
 
   /**

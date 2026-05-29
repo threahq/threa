@@ -3,6 +3,7 @@ import { z } from "zod"
 import { withClient, type Querier } from "../../db"
 import {
   AgentStepTypes,
+  AgentToolNames,
   AgentTriggers,
   AuthorTypes,
   StreamTypes,
@@ -30,10 +31,11 @@ import type { MemoExplorerService } from "../memos"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { ModelRegistry } from "@threa/agent-runtime"
 import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
+import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
-import { createMemoizedGithubClient, createMemoizedLinearClient } from "./tools"
+import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
 import { AgentRuntime, SessionTraceObserver, OtelObserver, type NewMessageInfo } from "./runtime"
 import {
   SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS,
@@ -55,6 +57,7 @@ export interface PersonaAgentDeps {
   sessionAbortRegistry: SessionAbortRegistry
   userPreferencesService: UserPreferencesService
   workspaceAgent: WorkspaceAgent
+  generalResearcher: GeneralResearcher
   searchService: SearchService
   conversationSummaryService: ConversationSummaryService
   attachmentService: AttachmentService
@@ -146,6 +149,7 @@ export class PersonaAgent {
       sessionAbortRegistry,
       userPreferencesService,
       workspaceAgent,
+      generalResearcher,
       searchService,
       conversationSummaryService,
       attachmentService,
@@ -440,12 +444,64 @@ export class PersonaAgent {
           ? { workspaceId, getClient: createMemoizedLinearClient(workspaceIntegrationService, workspaceId) }
           : undefined
 
+        // Build the general researcher callback. Like runWorkspaceAgent it
+        // requires invoking-user context (workspace search primitives are
+        // access-scoped to that user). The researcher drives the persona's
+        // PRIMITIVE tools — web, URL reads, workspace search, GitHub, Linear —
+        // NOT a nested workspace_research sub-agent (runWorkspaceAgent is
+        // deliberately omitted from its tool set).
+        let runGeneralResearch:
+          | ((query: string, opts: RunGeneralResearchOptions) => Promise<GeneralResearchResult>)
+          | undefined
+        if (agentContext.triggerMessage && agentContext.invokingUserId) {
+          // Drop integration tools the workspace hasn't connected so buildToolSet
+          // doesn't log "tools enabled but no deps" warnings on every research
+          // call. Web + workspace primitives degrade silently already.
+          const researcherEnabledTools = GENERAL_RESEARCH_TOOL_POLICY.filter((toolName) => {
+            if (toolName.startsWith("github_")) return Boolean(githubDeps)
+            if (toolName.startsWith("linear_")) return Boolean(linearDeps)
+            return true
+          })
+          const researcherTools = buildToolSet({
+            enabledTools: researcherEnabledTools,
+            tavilyApiKey,
+            currentTime: agentContext.streamContext.temporal?.currentTime,
+            timezone: agentContext.streamContext.temporal?.timezone,
+            workspace: workspaceDeps,
+            github: githubDeps,
+            linear: linearDeps,
+            supportsVision: false,
+          })
+          const researchCostContext: CostContext = {
+            workspaceId,
+            userId: agentContext.invokingUserId,
+            sessionId: session.id,
+            origin: "user",
+          }
+          const conversationContext = formatConversationContext(
+            agentContext.streamContext.conversationHistory,
+            agentContext.authorNames
+          )
+          runGeneralResearch = (query, { signal, onSubstep, deadlineAt }) =>
+            generalResearcher.research({
+              workspaceId,
+              query,
+              conversationContext,
+              tools: researcherTools,
+              costContext: researchCostContext,
+              signal,
+              deadlineAt,
+              onSubstep,
+            })
+        }
+
         const tools = buildToolSet({
           enabledTools: persona.enabledTools,
           tavilyApiKey,
           currentTime: agentContext.streamContext.temporal?.currentTime,
           timezone: agentContext.streamContext.temporal?.timezone,
           runWorkspaceAgent,
+          runGeneralResearch,
           workspace: workspaceDeps,
           github: githubDeps,
           linear: linearDeps,
@@ -534,10 +590,12 @@ export class PersonaAgent {
             return null
           },
           toolSignalProvider: (_toolCallId, toolName) => {
-            // Only wire graceful-abort for workspace_research in V1. Future long-running
-            // tools can opt in here. The registry is lazily populated so sessions that
-            // never invoke research don't allocate a controller.
-            if (toolName !== "workspace_research") return undefined
+            // Wire graceful-abort for the long-running research tools. Both share
+            // one per-session controller (the persona runs tools sequentially, so
+            // they never overlap), which the `agent_session:research:abort` socket
+            // handler aborts. The registry is lazily populated so sessions that
+            // never research don't allocate a controller.
+            if (toolName !== "workspace_research" && toolName !== AgentToolNames.GENERAL_RESEARCH) return undefined
             const controller = sessionAbortRegistry.register(session.id, {
               workspaceId,
               streamId: sessionStreamId,
@@ -865,6 +923,34 @@ export class PersonaAgent {
       }
     }
   }
+}
+
+/** Number of recent messages handed to the general researcher as grounding context. */
+const RESEARCH_CONTEXT_MESSAGE_COUNT = 6
+/** Per-message character cap in the researcher's conversation context block. */
+const RESEARCH_CONTEXT_MESSAGE_CHARS = 300
+
+/**
+ * Build a compact, recent-conversation context string for the general
+ * researcher. The researcher does not see the live chat — only the delegated
+ * query plus this block — so it carries just enough to disambiguate references
+ * ("the PR we discussed", "their proposal") without dumping full history.
+ */
+function formatConversationContext(
+  history: Array<{ authorId: string; contentMarkdown: string }>,
+  authorNames: Map<string, string>
+): string | undefined {
+  const recent = history.slice(-RESEARCH_CONTEXT_MESSAGE_COUNT)
+  const lines: string[] = []
+  for (const message of recent) {
+    const text = message.contentMarkdown.trim()
+    if (!text) continue
+    const author = authorNames.get(message.authorId) ?? "Unknown"
+    const clipped =
+      text.length > RESEARCH_CONTEXT_MESSAGE_CHARS ? `${text.slice(0, RESEARCH_CONTEXT_MESSAGE_CHARS)}…` : text
+    lines.push(`${author}: ${clipped}`)
+  }
+  return lines.length > 0 ? lines.join("\n") : undefined
 }
 
 function dedupeMessageIds(ids: string[]): string[] {

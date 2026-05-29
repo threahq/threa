@@ -51,6 +51,7 @@ import {
   type PersonaAgentInput,
   type PersonaAgentDeps,
   WorkspaceAgent,
+  GeneralResearcher,
   PersonaRepository,
   TraceEmitter,
   SessionAbortRegistry,
@@ -293,6 +294,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       configResolver: ctx.configResolver,
       embeddingService,
     })
+    const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
     const searchService = new SearchService({
       pool: ctx.pool,
       embeddingService,
@@ -395,6 +397,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       sessionAbortRegistry: new SessionAbortRegistry(),
       userPreferencesService,
       workspaceAgent,
+      generalResearcher,
       searchService,
       conversationSummaryService,
       attachmentService,

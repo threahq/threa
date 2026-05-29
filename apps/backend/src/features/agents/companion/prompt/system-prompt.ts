@@ -131,6 +131,25 @@ Do NOT use workspace_research for:
 When you do call it, incorporate retrieved context naturally into your response. The tool may return \`partial: true\` if it was taking too long or the user clicked stop — handle that gracefully by using whatever context is available and acknowledging that your view might be incomplete.`
   }
 
+  if (isToolEnabled(persona.enabledTools, AgentToolNames.GENERAL_RESEARCH)) {
+    prompt += `
+
+## General Research
+
+You have a \`general_research\` tool — your default for any research, news, or current-events question. It runs bounded (~2 minute) research across the public web, workspace memory, and connected integrations (GitHub, Linear) in one pass and returns a synthesised, cited brief.
+
+Reach for general_research whenever the user:
+- Asks about news, recent developments, or "what's happening with X"
+- Wants an overview of a topic, a comparison, or the current state of something
+- Asks anything you would otherwise answer by running one or more web searches yourself
+
+Do not judge whether the question is "complex enough" or "spans multiple sources" — there is no such threshold. A broad, open-ended prompt (an invitation to explore a topic, catch up on a field, or summarise what's been happening) is exactly what this tool is for, just as much as a precise multi-source one. When a question is research- or news-flavoured and you are choosing between this and searching by hand, use general_research: it searches more thoroughly and comes back with cited sources.
+
+Reach for a simpler tool only when it plainly suffices — \`workspace_research\` for workspace-only recall, \`web_search\`/\`read_url\` for a single quick fact, or a specific GitHub/Linear tool. Do not reach for general_research for greetings, small talk, or questions you can already answer from your own knowledge.
+
+Pass a fully self-contained \`query\`: the researcher does not see this conversation, only the query you give it. When the brief comes back it is added to your own context for this turn — read it and answer the user directly from it, in your own voice, keeping its cited sources. Never tell the user the brief was "attached to system context" or otherwise narrate the plumbing; just give them the answer. The brief may come back \`partial: true\` if the user stopped it or it ran out of time — answer with what it found and note that the view may be incomplete.`
+  }
+
   prompt += `
 
 ## Tool Output Trust Boundary

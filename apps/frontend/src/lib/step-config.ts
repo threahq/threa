@@ -3,12 +3,13 @@
  * Single source of truth for all step type display properties.
  * Both inline activity indicators and trace dialog use this config.
  */
-import type { AgentStepType } from "@threa/types"
+import { AgentStepTypes, type AgentStepType } from "@threa/types"
 import {
   Inbox,
   Lightbulb,
   RotateCcw,
   Search,
+  Telescope,
   FileText,
   Building2,
   Github,
@@ -83,6 +84,14 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     hue: 270,
     saturation: 60,
     lightness: 50,
+  },
+  research: {
+    label: "Research",
+    inlineLabel: "Researching...",
+    icon: Telescope,
+    hue: 175,
+    saturation: 65,
+    lightness: 40,
   },
   github_access: {
     label: "GitHub",
@@ -165,4 +174,15 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
 export function getStepInlineLabel(stepType: AgentStepType | null): string {
   if (!stepType) return "Working..."
   return STEP_DISPLAY_CONFIG[stepType]?.inlineLabel ?? "Working..."
+}
+
+/**
+ * Step types whose tool supports cooperative graceful abort (the "Stop research"
+ * affordance). Both researchers share the per-session abort registry; add a new
+ * step type here to make it stoppable everywhere (trace dialog + inline timeline).
+ */
+const ABORTABLE_STEP_TYPES: readonly AgentStepType[] = [AgentStepTypes.WORKSPACE_SEARCH, AgentStepTypes.RESEARCH]
+
+export function isAbortableStepType(stepType: AgentStepType | null | undefined): boolean {
+  return stepType != null && ABORTABLE_STEP_TYPES.includes(stepType)
 }

@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
-import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
+import { STEP_DISPLAY_CONFIG, isAbortableStepType } from "@/lib/step-config"
 import {
   ChevronRight,
   CircleSlash,
@@ -68,7 +68,7 @@ export function TraceStep({ step, workspaceId, streamId, liveSubsteps, onAbortRe
     <>
       <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
       <span className="text-muted-foreground">Running…</span>
-      {step.stepType === "workspace_search" && onAbortResearch && <StopResearchButton onClick={onAbortResearch} />}
+      {isAbortableStepType(step.stepType) && onAbortResearch && <StopResearchButton onClick={onAbortResearch} />}
     </>
   ) : undefined
 
@@ -433,6 +433,57 @@ function renderStepContent(
       // In-flight / substep-only content: the observer has persisted a running
       // { substeps } JSON but tool:complete hasn't fired yet. Render just the
       // timeline. Fall back to the raw content string if nothing is available.
+      if (substepsToShow.length > 0) {
+        return <SubstepTimeline substeps={substepsToShow} stepType={stepType} isLive={isInProgress} />
+      }
+      return <span className="text-muted-foreground">{content}</span>
+    }
+
+    case "research": {
+      // General research mirrors workspace_search's trace shape: a phase
+      // timeline merged from persisted (step.content JSON) + live socket
+      // substeps, an optional partial badge, and a completion summary. The
+      // completed payload carries sourceCount + briefAdded rather than the
+      // memo/message/attachment counts workspace_search reports.
+      const persistedSubsteps = Array.isArray(structured?.substeps)
+        ? (structured!.substeps as Array<{ text?: unknown; at?: unknown }>)
+            .filter((s) => typeof s.text === "string" && typeof s.at === "string")
+            .map((s) => ({ text: s.text as string, at: s.at as string }))
+        : []
+      const substepsToShow = mergeSubstepsByText(persistedSubsteps, liveSubsteps ?? [])
+      const isPartial = structured?.partial === true
+      const partialReason = typeof structured?.partialReason === "string" ? structured.partialReason : null
+
+      if (structured && "sourceCount" in structured) {
+        const sourceCount = structured.sourceCount as number
+        const briefAdded = structured.briefAdded === true
+        const brief = typeof structured.brief === "string" ? structured.brief.trim() : null
+        return (
+          <div className="space-y-2.5">
+            <div className="text-muted-foreground">
+              {briefAdded ? "Synthesised a brief from" : "Returned findings from"} {sourceCount}{" "}
+              {sourceCount === 1 ? "source" : "sources"}.
+            </div>
+            {isPartial && <PartialResultBadge stepType={stepType} reason={partialReason} />}
+            {brief && (
+              <Collapsible>
+                <CollapsibleTrigger className="group flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                  <ChevronRight className="w-3 h-3 transition-transform group-data-[state=open]:rotate-90" />
+                  Read the full brief
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-1.5">
+                  <div className="rounded bg-muted/50 px-3 py-2 text-sm">
+                    <MarkdownContent content={brief} className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0" />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+            {substepsToShow.length > 0 && (
+              <SubstepTimeline substeps={substepsToShow} stepType={stepType} isLive={isInProgress} />
+            )}
+          </div>
+        )
+      }
       if (substepsToShow.length > 0) {
         return <SubstepTimeline substeps={substepsToShow} stepType={stepType} isLive={isInProgress} />
       }
