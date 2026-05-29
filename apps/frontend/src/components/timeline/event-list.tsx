@@ -441,9 +441,13 @@ export function EventList({
           messageCount: activity.messageCount,
         })
         substeps.set(activity.sessionId, activity.substep)
-        // V1: only workspace_search supports graceful abort. The registry is generic
-        // so other tools can opt in by adding their step type here.
-        canAbort.set(activity.sessionId, activity.currentStepType === AgentStepTypes.WORKSPACE_SEARCH)
+        // Both research tools support graceful abort via the shared per-session
+        // abort registry. Other tools can opt in by adding their step type here.
+        canAbort.set(
+          activity.sessionId,
+          activity.currentStepType === AgentStepTypes.WORKSPACE_SEARCH ||
+            activity.currentStepType === AgentStepTypes.RESEARCH
+        )
       }
     }
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps, sessionCanAbort: canAbort }

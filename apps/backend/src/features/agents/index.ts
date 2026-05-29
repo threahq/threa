@@ -184,6 +184,14 @@ export type { WorkspaceAgentResult, WorkspaceAgentInput, WorkspaceAgentDeps, Wor
 export { computeAgentAccessSpec } from "./researcher"
 export type { AgentAccessSpec, ComputeAccessSpecParams } from "./researcher"
 
+export { GeneralResearcher } from "./general-researcher"
+export type {
+  GeneralResearcherDeps,
+  GeneralResearchInput,
+  GeneralResearchResult,
+  GeneralResearchSubstep,
+} from "./general-researcher"
+
 // Config (exported for static-config-resolver)
 export { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "./companion/config"
 export { COMPANION_SUMMARY_MODEL_ID, COMPANION_SUMMARY_TEMPERATURE } from "./companion/config"
@@ -197,3 +205,10 @@ export {
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_SYSTEM_PROMPT,
 } from "./researcher/config"
+export {
+  GENERAL_RESEARCH_MODEL_ID,
+  GENERAL_RESEARCH_TEMPERATURE,
+  GENERAL_RESEARCH_MAX_ITERATIONS,
+  GENERAL_RESEARCH_TOTAL_BUDGET_MS,
+  GENERAL_RESEARCH_TOOL_POLICY,
+} from "./general-researcher"

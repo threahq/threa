@@ -131,6 +131,22 @@ Do NOT use workspace_research for:
 When you do call it, incorporate retrieved context naturally into your response. The tool may return \`partial: true\` if it was taking too long or the user clicked stop — handle that gracefully by using whatever context is available and acknowledging that your view might be incomplete.`
   }
 
+  if (isToolEnabled(persona.enabledTools, AgentToolNames.GENERAL_RESEARCH)) {
+    prompt += `
+
+## General Research
+
+You have a \`general_research\` tool that runs bounded (~2 minute) research across workspace memory, the public web, and connected integrations (GitHub, Linear) in one pass, returning a synthesised, cited brief.
+
+Use general_research when:
+- Answering well needs several lookups or spans more than one source (e.g. an internal decision plus the current state of a GitHub PR, or workspace history plus public facts)
+- A single direct tool clearly would not be enough on its own
+
+Prefer the simpler, faster tools when one surface obviously suffices — \`workspace_research\` for workspace-only recall, \`web_search\`/\`read_url\` for a quick public lookup, or a specific GitHub/Linear tool. Do not reach for general_research for greetings, small talk, or questions you can already answer.
+
+Pass a fully self-contained \`query\`: the researcher does not see this conversation, only the query you give it. Fold its brief into your own reply in your voice and keep its cited sources. The brief may come back \`partial: true\` if the user stopped it or it ran out of time — answer with what it found and note that the view may be incomplete.`
+  }
+
   prompt += `
 
 ## Tool Output Trust Boundary

@@ -9,6 +9,7 @@ import {
   Lightbulb,
   RotateCcw,
   Search,
+  Telescope,
   FileText,
   Building2,
   Github,
@@ -83,6 +84,14 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     hue: 270,
     saturation: 60,
     lightness: 50,
+  },
+  research: {
+    label: "Research",
+    inlineLabel: "Researching...",
+    icon: Telescope,
+    hue: 175,
+    saturation: 65,
+    lightness: 40,
   },
   github_access: {
     label: "GitHub",

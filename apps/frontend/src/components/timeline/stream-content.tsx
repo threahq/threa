@@ -1646,7 +1646,11 @@ function VirtuosoMessageList({
           messageCount: activity.messageCount,
         })
         substeps.set(activity.sessionId, activity.substep)
-        canAbort.set(activity.sessionId, activity.currentStepType === AgentStepTypes.WORKSPACE_SEARCH)
+        canAbort.set(
+          activity.sessionId,
+          activity.currentStepType === AgentStepTypes.WORKSPACE_SEARCH ||
+            activity.currentStepType === AgentStepTypes.RESEARCH
+        )
       }
     }
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps, sessionCanAbort: canAbort }

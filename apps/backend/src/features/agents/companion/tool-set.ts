@@ -1,10 +1,12 @@
 import { AgentToolNames } from "@threa/types"
 import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threa/agent-runtime"
 import type { WorkspaceAgentResult } from "../researcher"
-import type { GitHubToolDeps, LinearToolDeps, RunWorkspaceAgentOptions } from "../tools"
+import type { GeneralResearchResult } from "../general-researcher"
+import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
 import type { WorkspaceToolDeps } from "../tools/tool-deps"
 import { logger } from "../../../lib/logger"
 import {
+  createGeneralResearchTool,
   createSearchMessagesTool,
   createSearchStreamsTool,
   createSearchUsersTool,
@@ -46,6 +48,7 @@ export interface ToolSetConfig {
   currentTime?: string
   timezone?: string
   runWorkspaceAgent?: (query: string, opts: RunWorkspaceAgentOptions) => Promise<WorkspaceAgentResult>
+  runGeneralResearch?: (query: string, opts: RunGeneralResearchOptions) => Promise<GeneralResearchResult>
   workspace?: WorkspaceToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
@@ -64,6 +67,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     currentTime,
     timezone,
     runWorkspaceAgent,
+    runGeneralResearch,
     workspace,
     github,
     linear,
@@ -93,6 +97,13 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
   const tools: Array<AgentTool | null> = [
     // Workspace research (available when agent has trigger context)
     runWorkspaceAgent ? createWorkspaceResearchTool({ runWorkspaceAgent }) : null,
+
+    // General research — bounded multi-surface research (workspace + web +
+    // integrations). Like workspace_research it needs the trigger context that
+    // populates `runGeneralResearch`; additionally gated by persona enablement.
+    runGeneralResearch && isToolEnabled(enabledTools, AgentToolNames.GENERAL_RESEARCH)
+      ? createGeneralResearchTool({ runGeneralResearch })
+      : null,
 
     // Web tools
     tavilyApiKey && isToolEnabled(enabledTools, AgentToolNames.WEB_SEARCH)

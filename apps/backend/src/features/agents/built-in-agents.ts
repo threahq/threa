@@ -63,6 +63,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.SEND_MESSAGE,
       AgentToolNames.WEB_SEARCH,
       AgentToolNames.READ_URL,
+      AgentToolNames.GENERAL_RESEARCH,
       AgentToolNames.DESCRIBE_MEMO,
       AgentToolNames.GITHUB_LIST_REPOS,
       AgentToolNames.GITHUB_LIST_BRANCHES,
