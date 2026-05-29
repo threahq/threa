@@ -64,9 +64,9 @@ export class Memorizer {
   }
 
   /**
-   * Regenerate the full set of memos for a conversation that already has memos but
-   * gained new content. Existing memos are passed as context for stable titles and
-   * vocabulary; the caller supersedes the prior set and persists the returned one.
+   * Memorize a conversation that already has memos: emit only the topics that are
+   * new or changed since them. Existing memos are passed as context so unchanged
+   * topics are not re-emitted; they are left untouched (additive, no supersession).
    */
   async reviseMemo(formattedMessages: string, context: MemorizerContext): Promise<MemoContent[]> {
     const existingMemos = context.existingMemos ?? []
