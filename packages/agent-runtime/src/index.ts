@@ -4,7 +4,7 @@ export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from
 export type { AgentEvent, NewMessageInfo } from "./runtime/agent-events"
 export type { AgentObserver } from "./runtime/agent-observer"
 export { OtelObserver } from "./runtime/otel-observer"
-export { AgentRuntime } from "./runtime/agent-runtime"
+export { AgentRuntime, mergeSourceItems } from "./runtime/agent-runtime"
 export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./runtime/agent-runtime"
 
 // Tools (web + internal)

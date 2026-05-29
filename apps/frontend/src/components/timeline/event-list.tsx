@@ -2,7 +2,6 @@ import { useMemo } from "react"
 import {
   COMMAND_EVENT_TYPES,
   AGENT_SESSION_EVENT_TYPES,
-  AgentStepTypes,
   type CommandEventType,
   type AgentSessionEventType,
   type AgentSessionStartedPayload,
@@ -14,6 +13,7 @@ import {
 import type { MessageAgentActivity } from "@/hooks"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useAbortResearch } from "@/hooks"
+import { isAbortableStepType } from "@/lib/step-config"
 import { EventItem } from "./event-item"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
@@ -441,13 +441,7 @@ export function EventList({
           messageCount: activity.messageCount,
         })
         substeps.set(activity.sessionId, activity.substep)
-        // Both research tools support graceful abort via the shared per-session
-        // abort registry. Other tools can opt in by adding their step type here.
-        canAbort.set(
-          activity.sessionId,
-          activity.currentStepType === AgentStepTypes.WORKSPACE_SEARCH ||
-            activity.currentStepType === AgentStepTypes.RESEARCH
-        )
+        canAbort.set(activity.sessionId, isAbortableStepType(activity.currentStepType))
       }
     }
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps, sessionCanAbort: canAbort }

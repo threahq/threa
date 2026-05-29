@@ -40,9 +40,8 @@ export const GENERAL_RESEARCH_MAX_ITERATIONS = 6
  *
  * When exceeded the researcher stops and returns whatever it has synthesised so
  * far (`partial: true, partialReason: "timeout"`). The persona loop uses the
- * partial brief to answer — the session is NOT killed. ~2 minutes by design
- * (Kris: "happy for it to run for ~2 min", explicitly not a 15-minute deep
- * researcher).
+ * partial brief to answer — the session is NOT killed. ~2 minutes by design: a
+ * focused investigation, not a long-running deep researcher.
  */
 export const GENERAL_RESEARCH_TOTAL_BUDGET_MS = 120_000
 
@@ -61,7 +60,7 @@ export const GENERAL_RESEARCH_MAX_BRIEF_CHARS = 8_000
  *   directly rather than nesting another sub-agent (no researcher-in-researcher).
  * - `send_message` — the runtime always provides it; the final brief is the
  *   captured send_message content.
- * - attachment/vision loaders — out of scope for a text research brief in V1.
+ * - attachment/vision loaders — out of scope for a text research brief.
  *
  * This is an explicit allowlist (typed `AgentToolName[]`, so a typo or removed
  * tool fails to compile). When a new research-capable PRIMITIVE tool is added to

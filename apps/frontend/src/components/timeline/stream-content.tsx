@@ -43,13 +43,13 @@ import { ErrorView } from "@/components/error-view"
 import {
   StreamTypes,
   Visibilities,
-  AgentStepTypes,
   type Stream,
   type StreamEvent,
   type StreamMember,
   type WorkspaceBootstrap,
   type StreamBootstrap,
 } from "@threa/types"
+import { isAbortableStepType } from "@/lib/step-config"
 import {
   EventList,
   TimelineItemContent,
@@ -1646,11 +1646,7 @@ function VirtuosoMessageList({
           messageCount: activity.messageCount,
         })
         substeps.set(activity.sessionId, activity.substep)
-        canAbort.set(
-          activity.sessionId,
-          activity.currentStepType === AgentStepTypes.WORKSPACE_SEARCH ||
-            activity.currentStepType === AgentStepTypes.RESEARCH
-        )
+        canAbort.set(activity.sessionId, isAbortableStepType(activity.currentStepType))
       }
     }
     return { sessionLiveCounts: counts, sessionLiveSubsteps: substeps, sessionCanAbort: canAbort }

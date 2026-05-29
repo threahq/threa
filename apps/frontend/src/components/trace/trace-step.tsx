@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { RelativeTime } from "@/components/relative-time"
 import { formatDuration } from "@/lib/dates"
-import { STEP_DISPLAY_CONFIG } from "@/lib/step-config"
+import { STEP_DISPLAY_CONFIG, isAbortableStepType } from "@/lib/step-config"
 import {
   ChevronRight,
   CircleSlash,
@@ -68,9 +68,7 @@ export function TraceStep({ step, workspaceId, streamId, liveSubsteps, onAbortRe
     <>
       <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: hueColor }} />
       <span className="text-muted-foreground">Running…</span>
-      {(step.stepType === "workspace_search" || step.stepType === "research") && onAbortResearch && (
-        <StopResearchButton onClick={onAbortResearch} />
-      )}
+      {isAbortableStepType(step.stepType) && onAbortResearch && <StopResearchButton onClick={onAbortResearch} />}
     </>
   ) : undefined
 

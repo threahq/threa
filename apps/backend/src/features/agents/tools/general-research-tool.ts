@@ -34,13 +34,6 @@ export interface GeneralResearchCallbacks {
 /** Fallback signal for callers that did not wire toolSignalProvider (tests). Never fires. */
 const NEVER_SIGNAL = new AbortController().signal
 
-/** Map a SourceItem type onto the trace source type space (avoids a nested ternary, INV-47). */
-function toTraceSourceType(type: string | undefined): "github" | "workspace" | "web" {
-  if (type === "github") return "github"
-  if (type === "workspace") return "workspace"
-  return "web"
-}
-
 /**
  * Bounded, multi-step research across workspace knowledge, the public web, and
  * connected integrations (GitHub, Linear). Delegates to the general researcher
@@ -98,7 +91,9 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
       },
       extractSources: (_input, result) =>
         (result.sources ?? []).map((source) => ({
-          type: toTraceSourceType(source.type),
+          // SourceType ("web" | "workspace" | "github") is a subset of TraceSourceType,
+          // so the source type carries through directly; default to "web".
+          type: source.type ?? "web",
           title: source.title,
           url: source.url,
           snippet: source.snippet,

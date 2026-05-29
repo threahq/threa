@@ -3,6 +3,7 @@ import { z } from "zod"
 import { withClient, type Querier } from "../../db"
 import {
   AgentStepTypes,
+  AgentToolNames,
   AgentTriggers,
   AuthorTypes,
   StreamTypes,
@@ -594,7 +595,7 @@ export class PersonaAgent {
             // they never overlap), which the `agent_session:research:abort` socket
             // handler aborts. The registry is lazily populated so sessions that
             // never research don't allocate a controller.
-            if (toolName !== "workspace_research" && toolName !== "general_research") return undefined
+            if (toolName !== "workspace_research" && toolName !== AgentToolNames.GENERAL_RESEARCH) return undefined
             const controller = sessionAbortRegistry.register(session.id, {
               workspaceId,
               streamId: sessionStreamId,

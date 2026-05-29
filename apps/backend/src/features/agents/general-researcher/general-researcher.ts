@@ -1,6 +1,7 @@
 import type { SourceItem } from "@threa/types"
-import { isAbortError, type AI, type CostContext } from "@threa/agent-runtime"
+import { isAbortError, mergeSourceItems, type AI, type CostContext } from "@threa/agent-runtime"
 import { AgentRuntime, type AgentTool } from "../runtime"
+import { composeAbortSignal } from "../../../lib/abort-signal"
 import { COMPONENT_PATHS, type ConfigResolver, type GeneralResearcherConfig } from "../../../lib/ai/config-resolver"
 import { logger } from "../../../lib/logger"
 import { ResearchProgressObserver } from "./progress-observer"
@@ -102,7 +103,11 @@ export class GeneralResearcher {
     // One run-level signal: aborts at the deadline OR when the session is
     // stopped, whichever comes first. Handed to every tool's execute so a tool
     // in flight at the deadline is cancelled. Leak-safe cleanup in `finally`.
-    const { signal: runSignal, cleanup } = composeRunSignal(input.signal, input.deadlineAt)
+    const { signal: runSignal, cleanup } = composeAbortSignal({
+      parent: input.signal,
+      timeoutMs: Math.max(0, input.deadlineAt - Date.now()),
+      timeoutReason: "research deadline",
+    })
 
     const runtime = new AgentRuntime({
       ai: this.deps.ai,
@@ -139,7 +144,9 @@ export class GeneralResearcher {
     try {
       const result = await runtime.run()
       const brief = clip(sink.value?.content ?? result.sentContents.at(-1) ?? "")
-      const sources = mergeSources(result.sources, observer.sources)
+      // result.sources is the runtime's own deduped accumulation across every
+      // tool call — the canonical citation list. Just cap it.
+      const sources = result.sources.slice(0, MAX_RESULT_SOURCES)
       if (!brief) {
         // Loop finished without producing a brief (rare). Treat as partial so the
         // persona acknowledges incomplete research rather than asserting an answer.
@@ -157,8 +164,10 @@ export class GeneralResearcher {
             : "Time budget reached. Returning partial findings…"
         )
         return {
+          // No runtime result on the abort path — combine any sources the brief
+          // carried with what the observer accumulated from completed tools.
           brief: clip(sink.value?.content ?? ""),
-          sources: mergeSources(sink.value?.sources ?? [], observer.sources),
+          sources: mergeSourceItems(sink.value?.sources ?? [], observer.sources).slice(0, MAX_RESULT_SOURCES),
           substeps,
           partial: true,
           partialReason: reason,
@@ -186,61 +195,4 @@ function clip(text: string): string {
   return trimmed.length > GENERAL_RESEARCH_MAX_BRIEF_CHARS
     ? `${trimmed.slice(0, GENERAL_RESEARCH_MAX_BRIEF_CHARS)}…`
     : trimmed
-}
-
-function mergeSources(primary: SourceItem[], secondary: SourceItem[]): SourceItem[] {
-  const merged: SourceItem[] = []
-  const seen = new Set<string>()
-  for (const source of [...primary, ...secondary]) {
-    if (!source.url || !source.title) continue
-    const key = `${source.url}|${source.title}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    merged.push(source)
-    if (merged.length >= MAX_RESULT_SOURCES) break
-  }
-  return merged
-}
-
-/**
- * Compose a single AbortSignal that fires when the parent (session stop) signal
- * aborts OR the wall-clock deadline passes. Returns a cleanup that clears the
- * timer and listener — call it in a `finally` so a finished run leaks neither.
- *
- * Built manually (not `AbortSignal.any` + `AbortSignal.timeout`) to match the
- * workspace researcher's leak-safe pattern and to abort synchronously when the
- * deadline is already past.
- */
-function composeRunSignal(parent: AbortSignal, deadlineAt: number): { signal: AbortSignal; cleanup: () => void } {
-  const controller = new AbortController()
-  const abortTimeout = () => {
-    try {
-      controller.abort(new DOMException("research deadline", "TimeoutError"))
-    } catch {
-      controller.abort(new Error("research deadline"))
-    }
-  }
-
-  const remaining = Math.max(0, deadlineAt - Date.now())
-  let timer: ReturnType<typeof setTimeout> | null = null
-  if (remaining <= 0) {
-    abortTimeout()
-  } else {
-    timer = setTimeout(abortTimeout, remaining)
-  }
-
-  let parentListener: (() => void) | null = null
-  if (parent.aborted) {
-    controller.abort(parent.reason)
-  } else {
-    parentListener = () => controller.abort(parent.reason)
-    parent.addEventListener("abort", parentListener, { once: true })
-  }
-
-  const cleanup = () => {
-    if (timer !== null) clearTimeout(timer)
-    if (parentListener) parent.removeEventListener("abort", parentListener)
-  }
-
-  return { signal: controller.signal, cleanup }
 }
