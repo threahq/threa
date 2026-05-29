@@ -6,6 +6,21 @@ function makeService(fn: () => Promise<GitHubClient | null>): WorkspaceIntegrati
   return { getGithubClient: fn } as unknown as WorkspaceIntegrationService
 }
 
+describe("createMemoizedGithubClient options", () => {
+  it("requests the unauthenticated fallback so agent tools can read public repos without an integration", async () => {
+    let receivedOptions: unknown
+    const service = {
+      getGithubClient: async (_workspaceId: string, options?: unknown) => {
+        receivedOptions = options
+        return null
+      },
+    } as unknown as WorkspaceIntegrationService
+    const getClient = createMemoizedGithubClient(service, "ws_1")
+    await getClient()
+    expect(receivedOptions).toEqual({ allowUnauthenticatedFallback: true })
+  })
+})
+
 describe("createMemoizedGithubClient", () => {
   it("fetches once and reuses the resolved client across calls", async () => {
     let calls = 0
