@@ -65,10 +65,47 @@ export async function loginAndCreateWorkspace(
   }
 
   await waitForWorkspaceProvisioned(page, workspaceId)
+  await setAllSidebarPreset(page, workspaceId)
   await page.goto(`/w/${workspaceId}`)
   await expect(page.getByRole("button", { name: "+ New Scratchpad" })).toBeVisible({ timeout: 10000 })
 
   return { testId, email, name, workspaceName }
+}
+
+/**
+ * Pin the type-based ("All") sidebar layout for a workspace+viewer.
+ *
+ * The product default is the "Smart" preset (urgency buckets: Important / Recent
+ * / Pinned / Everything Else), where a brand-new channel with no activity lands
+ * in the collapsed "Everything Else" bucket and isn't visible in the sidebar.
+ * The E2E suite navigates via the always-open Channels / Scratchpads / DMs
+ * sections, so it pins the deterministic All preset at setup. Smart-bucket
+ * resolution has its own unit coverage (`resolve-sections.test.ts`).
+ *
+ * Body mirrors `ALL_SIDEBAR_CONFIG` in `@threa/types` (not importable from the
+ * repo-root test runtime); `quickLinks` is omitted because the PATCH schema
+ * defaults + normalizes it to the full set. The backend Zod schema rejects any
+ * drift loudly, so a stale literal fails fast rather than silently.
+ */
+async function setAllSidebarPreset(page: Page, workspaceId: string): Promise<void> {
+  const response = await page.request.patch(`/api/workspaces/${workspaceId}/sidebar-config`, {
+    data: {
+      basePreset: "all",
+      sections: [
+        { id: "scratchpads", spec: { kind: "type", streamType: "scratchpad" } },
+        { id: "channels", spec: { kind: "type", streamType: "channel" } },
+        { id: "dms", spec: { kind: "type", streamType: "dm" } },
+      ],
+    },
+  })
+  await expectApiOk(response, "Set All sidebar preset")
+}
+
+/** Extract the workspace id from the current `/w/:workspaceId/...` URL. */
+function workspaceIdFromUrl(page: Page): string {
+  const match = page.url().match(/\/w\/([^/?]+)/)
+  if (!match) throw new Error(`Could not extract workspaceId from URL: ${page.url()}`)
+  return match[1]
 }
 
 /**
@@ -89,16 +126,26 @@ export async function loginInNewContext(
 }
 
 /**
- * Switch sidebar to "All" view mode (shows Channels/Scratchpads/DMs sections).
- * No-op if already in All view or if empty state (no view toggle).
+ * Ensure the sidebar shows the type-based Channels/Scratchpads/DMs sections.
+ *
+ * The old Smart/All view toggle is gone — the layout is now driven by the
+ * persisted sidebar config (see {@link setAllSidebarPreset}). Workspaces created
+ * via {@link loginAndCreateWorkspace} already pin the All preset, so for the
+ * creator this is a cheap wait once any stream exists. A second user context
+ * that joined a workspace mid-test is still on the default Smart preset, so we
+ * persist the All preset for that viewer and reload to repaint from it.
  */
 export async function switchToAllView(page: Page): Promise<void> {
-  const allButton = page.getByRole("button", { name: "All" })
-  await allButton.waitFor({ state: "visible", timeout: 3000 }).catch(() => {})
-  if (await allButton.isVisible()) {
-    await allButton.click()
-    await expect(page.getByRole("heading", { name: "Channels", level: 3 })).toBeVisible({ timeout: 5000 })
-  }
+  const channelsHeading = page.getByRole("heading", { name: "Channels", level: 3 })
+  const alreadyAllView = await channelsHeading
+    .waitFor({ state: "visible", timeout: 3000 })
+    .then(() => true)
+    .catch(() => false)
+  if (alreadyAllView) return
+
+  await setAllSidebarPreset(page, workspaceIdFromUrl(page))
+  await page.reload()
+  await expect(channelsHeading).toBeVisible({ timeout: 10000 })
 }
 
 /**
