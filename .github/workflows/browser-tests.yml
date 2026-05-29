@@ -21,11 +21,11 @@ jobs:
     timeout-minutes: 25
     continue-on-error: true
     env:
-      TOTAL_SHARDS: 3
+      TOTAL_SHARDS: 4
     strategy:
       fail-fast: false
       matrix:
-        shard_index: [1, 2, 3]
+        shard_index: [1, 2, 3, 4]
 
     services:
       postgres:
