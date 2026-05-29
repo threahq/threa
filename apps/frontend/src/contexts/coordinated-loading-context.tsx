@@ -188,6 +188,16 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   }, [idbUsers, workspaceId])
   const avatarsReady = usePreloadImages(avatarUrls)
 
+  // Avatar preloading avoids an avatar pop-in on the very first cold load, but
+  // it hits the network — on a flaky connection those image requests hang until
+  // the preload's 2s timeout, while offline they `onerror` instantly. Gating
+  // the reveal on it makes a returning user wait longer "out and about" than
+  // offline: their entire read model is already in IDB. So when the cache is
+  // primed we reveal immediately (offline-first: cached content is never held
+  // behind a network wait) and let avatars stream in through their own <img>
+  // loads. Only a genuine cold load (nothing cached) still waits on the preload.
+  const revealReady = avatarsReady || idbCachePrimed
+
   // After the initial coordinated load completes, stream-specific bootstraps
   // (triggered by navigating to a new stream) should not re-trigger the
   // top-bar loading indicator. Individual stream loading is handled by
@@ -253,13 +263,14 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     return "loading"
   }, [isReady, showSkeleton])
 
-  // Mark initial load as complete once data + avatar images are ready
+  // Mark initial load as complete once data is ready (and, on a cold load,
+  // avatars preloaded — see `revealReady`).
   useEffect(() => {
-    if (!isLoading && avatarsReady && !initialLoadCompleteRef.current) {
+    if (!isLoading && revealReady && !initialLoadCompleteRef.current) {
       initialLoadCompleteRef.current = true
       setIsReady(true)
     }
-  }, [isLoading, avatarsReady])
+  }, [isLoading, revealReady])
 
   // Show skeleton after delay if still loading during initial load
   useEffect(() => {
