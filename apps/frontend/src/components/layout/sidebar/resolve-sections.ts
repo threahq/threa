@@ -32,40 +32,52 @@ export interface ResolvedSection {
 /**
  * Turn a {@link SidebarConfig} into the ordered, capped, sorted stream lists the
  * sidebar renders. Pure — no React, no IO — so it is exercised directly in tests
- * and reused by every view. Sections are resolved independently against the
- * shared pool with no cross-section dedup: smart buckets and stream types are
- * mutually exclusive by construction, while a label section is deliberately an
- * additive lens (a labeled stream still appears in its smart/type section).
+ * and reused by every view. Each stream appears in the topmost section that
+ * claims it: sections resolve in order and a stream already shown above is
+ * excluded from every section below. Smart buckets and stream types are mutually
+ * exclusive by construction, but label sections overlap with them (a labeled
+ * stream also matches its smart/type bucket), so without this the same stream
+ * would show twice — once in its label lens and again lower down. Exclusion runs
+ * before each section's caps, so a capped bucket (e.g. Recent) backfills the
+ * slots freed by streams claimed above it.
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
-  return config.sections.map((section) => ({
-    section,
-    items: resolveItems(section.spec, input),
-  }))
+  const claimed = new Set<string>()
+  return config.sections.map((section) => {
+    const items = resolveItems(section.spec, input, claimed)
+    for (const item of items) claimed.add(item.id)
+    return { section, items }
+  })
 }
 
-function resolveItems(spec: SidebarSectionSpec, input: ResolveSectionsInput): StreamItemData[] {
-  if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input)
-  if (spec.kind === "type") return resolveTypeSection(spec.streamType, input)
-  return resolveLabelSection(spec.labelId, input)
+function resolveItems(
+  spec: SidebarSectionSpec,
+  input: ResolveSectionsInput,
+  exclude: ReadonlySet<string>
+): StreamItemData[] {
+  if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
+  if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
+  return resolveLabelSection(spec.labelId, input, exclude)
 }
 
 /** Streams carrying a label, by activity. Draws from real streams only (synthetic DM drafts can't be labeled). */
 function resolveLabelSection(
   labelId: string,
-  { processedStreams, streamIdsByLabel, getUnreadCount }: ResolveSectionsInput
+  { processedStreams, streamIdsByLabel, getUnreadCount }: ResolveSectionsInput,
+  exclude: ReadonlySet<string>
 ): StreamItemData[] {
   const streamIds = streamIdsByLabel.get(labelId)
   if (!streamIds || streamIds.size === 0) return []
-  const items = processedStreams.filter((stream) => streamIds.has(stream.id))
+  const items = processedStreams.filter((stream) => streamIds.has(stream.id) && !exclude.has(stream.id))
   return sortStreams(items, "activity", getUnreadCount)
 }
 
 function resolveSmartBucket(
   bucket: SectionKey,
-  { processedStreams, virtualDmStreams, getUnreadCount }: ResolveSectionsInput
+  { processedStreams, virtualDmStreams, getUnreadCount }: ResolveSectionsInput,
+  exclude: ReadonlySet<string>
 ): StreamItemData[] {
-  const pool = [...processedStreams, ...virtualDmStreams]
+  const pool = [...processedStreams, ...virtualDmStreams].filter((stream) => !exclude.has(stream.id))
   const items = pool.filter((stream) => stream.section === bucket)
 
   switch (bucket) {
@@ -97,22 +109,26 @@ function resolveSmartBucket(
 
 function resolveTypeSection(
   streamType: TypeSectionStream,
-  { processedStreams, virtualDmStreams, getUnreadCount }: ResolveSectionsInput
+  { processedStreams, virtualDmStreams, getUnreadCount }: ResolveSectionsInput,
+  exclude: ReadonlySet<string>
 ): StreamItemData[] {
+  const streams = processedStreams.filter((stream) => !exclude.has(stream.id))
+
   if (streamType === "scratchpad") {
-    const items = processedStreams.filter((stream) => stream.type === StreamTypes.SCRATCHPAD)
+    const items = streams.filter((stream) => stream.type === StreamTypes.SCRATCHPAD)
     return sortStreams(items, ALL_SECTIONS.scratchpads.sortType, getUnreadCount)
   }
 
   if (streamType === "channel") {
-    const items = processedStreams.filter((stream) => stream.type === StreamTypes.CHANNEL)
+    const items = streams.filter((stream) => stream.type === StreamTypes.CHANNEL)
     return sortStreams(items, ALL_SECTIONS.channels.sortType, getUnreadCount)
   }
 
   // DMs: real DMs by activity, then system streams, then synthetic DM drafts.
-  const realDms = processedStreams.filter((stream) => stream.type === StreamTypes.DM)
-  const systemStreams = processedStreams.filter((stream) => stream.type === StreamTypes.SYSTEM)
+  const realDms = streams.filter((stream) => stream.type === StreamTypes.DM)
+  const systemStreams = streams.filter((stream) => stream.type === StreamTypes.SYSTEM)
+  const drafts = virtualDmStreams.filter((stream) => !exclude.has(stream.id))
   sortStreams(realDms, "activity", getUnreadCount)
   sortStreams(systemStreams, ALL_SECTIONS.dms.sortType, getUnreadCount)
-  return [...realDms, ...systemStreams, ...virtualDmStreams]
+  return [...realDms, ...systemStreams, ...drafts]
 }

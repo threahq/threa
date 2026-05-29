@@ -142,17 +142,17 @@ describe("resolveSections — All preset", () => {
 })
 
 describe("resolveSections — label sections", () => {
-  const config = {
+  const labelFirst = {
     basePreset: "smart" as const,
     sections: [
-      { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
       { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+      { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
     ],
     // Quick links are irrelevant to section resolution; an empty list satisfies the type.
     quickLinks: [],
   }
 
-  it("filters streams by assignment, sorts by activity, and is additive (a labeled stream still shows in its bucket)", () => {
+  it("claims labeled streams for the topmost label section, removing them from buckets below", () => {
     const processedStreams = [
       makeItem({ id: "s_old", section: "recent", activity: 1 }),
       makeItem({ id: "s_new", section: "recent", activity: 9 }),
@@ -161,23 +161,51 @@ describe("resolveSections — label sections", () => {
     // s_new and s_other carry the label; s_old does not.
     const streamIdsByLabel = new Map([["lbl_1", new Set(["s_new", "s_other"])]])
 
-    const result = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel })).map((r) => ({
+    const result = resolveSections(labelFirst, makeInput({ processedStreams, streamIdsByLabel })).map((r) => ({
       id: r.section.id,
       items: r.items.map((i) => i.id),
     }))
 
     expect(result).toEqual([
-      // Recent bucket is unchanged by the label section above/below it.
-      { id: "recent", items: ["s_new", "s_old"] },
-      // Label lens: both labeled streams, by activity — s_new (recent) also
-      // appears here (additive), s_other (a pinned stream) is pulled in too.
+      // Label lens (topmost): both labeled streams, by activity.
       { id: labelSectionId("lbl_1"), items: ["s_new", "s_other"] },
+      // Recent no longer shows s_new — it was claimed by the label section above.
+      { id: "recent", items: ["s_old"] },
+    ])
+  })
+
+  it("keeps a stream in the bucket above and drops it from the label section below", () => {
+    const recentFirst = {
+      basePreset: "smart" as const,
+      sections: [
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+        { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "s_old", section: "recent", activity: 1 }),
+      makeItem({ id: "s_new", section: "recent", activity: 9 }),
+      makeItem({ id: "s_other", section: "pinned", activity: 5 }),
+    ]
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["s_new", "s_other"])]])
+
+    const result = resolveSections(recentFirst, makeInput({ processedStreams, streamIdsByLabel })).map((r) => ({
+      id: r.section.id,
+      items: r.items.map((i) => i.id),
+    }))
+
+    expect(result).toEqual([
+      // Recent (topmost) keeps s_new; s_old is read but within the cap.
+      { id: "recent", items: ["s_new", "s_old"] },
+      // Label section only keeps s_other; s_new was claimed by Recent above.
+      { id: labelSectionId("lbl_1"), items: ["s_other"] },
     ])
   })
 
   it("resolves to an empty section when the label has no assigned streams", () => {
     const processedStreams = [makeItem({ id: "s_1", section: "recent", activity: 1 })]
-    const result = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel: new Map() }))
+    const result = resolveSections(labelFirst, makeInput({ processedStreams, streamIdsByLabel: new Map() }))
     expect(result.find((r) => r.section.id === labelSectionId("lbl_1"))?.items).toEqual([])
   })
 })
