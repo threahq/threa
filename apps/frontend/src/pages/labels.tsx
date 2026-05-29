@@ -1,9 +1,9 @@
 import { useMemo, useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, Tag, Plus, Globe, Lock, Trash2, Pencil, LogOut, SmilePlus, X } from "lucide-react"
+import { ArrowLeft, Tag, Plus, Globe, Lock, Trash2, Pencil, LogOut, SmilePlus, X, PanelLeft } from "lucide-react"
 import { toast } from "sonner"
 import { Visibilities } from "@threa/types"
-import type { Visibility } from "@threa/types"
+import type { Visibility, SidebarConfig } from "@threa/types"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -43,10 +43,12 @@ import {
   useLabelsView,
   useLeaveLabel,
   usePromoteLabel,
+  useSidebarConfig,
   useUpdateLabel,
   type CachedLabel,
   type LabelViewerContext,
 } from "@/hooks"
+import { hasLabelSection, toggleLabelSection } from "@/components/layout/sidebar/sidebar-config"
 
 // A curated palette of saturated, distinct colors that read well as full-bleed
 // swatches. Users can override via hex input; these are the suggestions.
@@ -82,6 +84,9 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
   useLabelsSync(workspaceId)
   const view = useLabelsView(workspaceId)
   const { myLabels, currentUserId } = view
+  // One sidebar-config instance for the whole catalog so the per-card pin
+  // buttons share its optimistic-write guard (see SidebarPinButton).
+  const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [addOpen, setAddOpen] = useState(false)
 
   return (
@@ -127,13 +132,21 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
               <AddLabelTile onClick={() => setAddOpen(true)} />
               {myLabels.map((label) =>
                 label.creatorUserId === currentUserId ? (
-                  <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />
+                  <OwnedLabelCard
+                    key={label.id}
+                    workspaceId={workspaceId}
+                    label={label}
+                    sidebarConfig={sidebarConfig}
+                    onSidebarConfigChange={setSidebarConfig}
+                  />
                 ) : (
                   <JoinedLabelCard
                     key={label.id}
                     workspaceId={workspaceId}
                     label={label}
                     userId={currentUserId ?? ""}
+                    sidebarConfig={sidebarConfig}
+                    onSidebarConfigChange={setSidebarConfig}
                   />
                 )
               )}
@@ -355,7 +368,48 @@ function JoinMatchRow({ label, disabled, onJoin }: { label: CachedLabel; disable
 // Catalog cards
 // ---------------------------------------------------------------------------
 
-function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: CachedLabel }) {
+/**
+ * Toggles a `{ kind: "label" }` section for this label in the viewer's sidebar
+ * config. One section per label; appended on add, removed on toggle-off. The
+ * config + setter are threaded from the page so every card shares one
+ * `useSidebarConfig` instance (its optimistic-write guard is per-instance, so
+ * per-card instances would race on rapid toggles across labels).
+ */
+function SidebarPinButton({
+  config,
+  onConfigChange,
+  labelId,
+}: {
+  config: SidebarConfig
+  onConfigChange: (config: SidebarConfig) => void
+  labelId: string
+}) {
+  const pinned = hasLabelSection(config, labelId)
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      aria-pressed={pinned}
+      className={cn("h-7 gap-1.5 px-2 text-xs", pinned && "text-primary")}
+      onClick={() => onConfigChange(toggleLabelSection(config, labelId))}
+    >
+      <PanelLeft className="h-3 w-3" />
+      {pinned ? "In sidebar" : "Show in sidebar"}
+    </Button>
+  )
+}
+
+function OwnedLabelCard({
+  workspaceId,
+  label,
+  sidebarConfig,
+  onSidebarConfigChange,
+}: {
+  workspaceId: string
+  label: CachedLabel
+  sidebarConfig: SidebarConfig
+  onSidebarConfigChange: (config: SidebarConfig) => void
+}) {
   const isOnline = useIsOnline()
   const [editing, setEditing] = useState(false)
   const [confirmKind, setConfirmKind] = useState<"delete" | "promote" | null>(null)
@@ -422,6 +476,7 @@ function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: Ca
             <Trash2 className="h-3 w-3" />
             Delete
           </Button>
+          <SidebarPinButton config={sidebarConfig} onConfigChange={onSidebarConfigChange} labelId={label.id} />
         </div>
       </LabelSwatchCard>
 
@@ -529,7 +584,19 @@ function LabelEditCard({
   )
 }
 
-function JoinedLabelCard({ workspaceId, label, userId }: { workspaceId: string; label: CachedLabel; userId: string }) {
+function JoinedLabelCard({
+  workspaceId,
+  label,
+  userId,
+  sidebarConfig,
+  onSidebarConfigChange,
+}: {
+  workspaceId: string
+  label: CachedLabel
+  userId: string
+  sidebarConfig: SidebarConfig
+  onSidebarConfigChange: (config: SidebarConfig) => void
+}) {
   const isOnline = useIsOnline()
   const leaveMutation = useLeaveLabel(workspaceId)
 
@@ -545,16 +612,19 @@ function JoinedLabelCard({ workspaceId, label, userId }: { workspaceId: string; 
 
   return (
     <LabelSwatchCard label={label}>
-      <Button
-        size="sm"
-        variant="ghost"
-        className="mt-3 h-7 w-fit gap-1.5 px-3 text-xs"
-        onClick={handleLeave}
-        disabled={!isOnline || leaveMutation.isPending}
-      >
-        <LogOut className="h-3 w-3" />
-        Leave
-      </Button>
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1.5 px-2 text-xs"
+          onClick={handleLeave}
+          disabled={!isOnline || leaveMutation.isPending}
+        >
+          <LogOut className="h-3 w-3" />
+          Leave
+        </Button>
+        <SidebarPinButton config={sidebarConfig} onConfigChange={onSidebarConfigChange} labelId={label.id} />
+      </div>
     </LabelSwatchCard>
   )
 }

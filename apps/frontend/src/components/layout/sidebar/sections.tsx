@@ -11,6 +11,11 @@ import { getActivityTime } from "./utils"
 interface SectionHeaderProps {
   label: string
   icon?: string
+  /**
+   * Renders in place of the plain `{icon} {label}` title (chevron and right-side
+   * controls are kept). Used by label sections to show a tinted `LabelChip`.
+   */
+  titleContent?: ReactNode
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -37,6 +42,7 @@ interface SectionHeaderProps {
 export function SectionHeader({
   label,
   icon,
+  titleContent,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -49,7 +55,12 @@ export function SectionHeader({
   const isInteractive = !!onToggle && !!state
   const isCollapsed = state === "collapsed"
   let headerTitle: string | undefined
-  if (state) headerTitle = isCollapsed ? "Expand section" : "Collapse section"
+  if (state) {
+    const verb = isCollapsed ? "Expand" : "Collapse"
+    // Name the section so multiple collapsed headers (e.g. several label
+    // sections) stay distinguishable to screen readers and on hover.
+    headerTitle = label ? `${verb} ${label}` : `${verb} section`
+  }
   const hasAggregate = isCollapsed && unreadAggregate > 0
   const hasMentions = mentionAggregate > 0
   const hasMenu = !!addMenuActions && addMenuActions.length > 0
@@ -78,16 +89,22 @@ export function SectionHeader({
   const headingContent = (
     <div className="flex items-center gap-1.5 min-w-0">
       {isInteractive && <Chevron className="h-3 w-3 text-muted-foreground/70 shrink-0" aria-hidden />}
-      <h3
-        className={cn(
-          "font-semibold uppercase tracking-wide text-muted-foreground m-0 truncate",
-          nested ? "text-[10px]" : "text-xs",
-          hasAggregate && "text-foreground"
-        )}
-      >
-        {icon && `${icon} `}
-        {label}
-      </h3>
+      {titleContent ? (
+        // Keep the heading element (and its name) so screen-readers navigating by
+        // heading still reach label sections; the chip supplies its own styling.
+        <h3 className="m-0 min-w-0 truncate">{titleContent}</h3>
+      ) : (
+        <h3
+          className={cn(
+            "font-semibold uppercase tracking-wide text-muted-foreground m-0 truncate",
+            nested ? "text-[10px]" : "text-xs",
+            hasAggregate && "text-foreground"
+          )}
+        >
+          {icon && `${icon} `}
+          {label}
+        </h3>
+      )}
     </div>
   )
 
@@ -195,6 +212,8 @@ function filterActiveByRecency(
 interface StreamSectionProps {
   label: string
   icon?: string
+  /** Custom header title node (e.g. a label chip), forwarded to SectionHeader. */
+  titleContent?: ReactNode
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -222,6 +241,7 @@ interface StreamSectionProps {
 export function StreamSection({
   label,
   icon,
+  titleContent,
   items,
   allStreams,
   workspaceId,
@@ -247,6 +267,7 @@ export function StreamSection({
       <SectionHeader
         label={label}
         icon={icon}
+        titleContent={titleContent}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -314,6 +335,7 @@ const TIER_VISIBLE_LIMIT = 10
 export function TieredStreamSection({
   label,
   icon,
+  titleContent,
   items,
   allStreams,
   workspaceId,
@@ -369,6 +391,7 @@ export function TieredStreamSection({
       <SectionHeader
         label={label}
         icon={icon}
+        titleContent={titleContent}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}

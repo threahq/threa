@@ -132,11 +132,34 @@ label; backfill migration for existing private labels; `leave()` →
 last-member-archive (race-safe). `listVisibleTo`/membership reads simplified to
 the uniform set; `creator_user_id` retained for permissions.
 
-### PR4 — Sidebar label sections + shared chip
+### PR4 — Sidebar label sections + shared chip ✅ implemented
 
-Shared tinted `LabelChip` (`components/labels/label-chip.tsx`). Add the `label`
-section kind end-to-end (resolver filter by assignment, tinted section header,
-add/remove entry points: label picker, labels page, section-header menu).
+Shipped the `label` section kind end-to-end + the shared tinted `LabelChip`:
+
+- **`LabelChip`** (`components/labels/label-chip.tsx`): tinted pill —
+  `hexToRgba(color, 0.12)` bg, ~30% border, name in ink, leading `LabelGlyph`
+  (emoji on a tinted disc, or a solid color dot when the label has no emoji).
+  Per-label authored color only (DESIGN.md §2.2). Reused by PR5.
+- **`{ kind: "label"; labelId }`** added to `SidebarSectionSpec` (`@threa/types`)
+  - the backend Zod schema. Resolver filters real streams by assignment and
+    sorts by activity; it's an **additive lens** — a labeled stream still appears
+    in its smart/type section (the resolver never dedups, so this needs no
+    `hideAboveShown`). Orphan sections (label archived) are skipped at render.
+- **Tinted header**: `SectionHeader` gained an optional `titleContent`; label
+  sections render the `LabelChip` there, resolved from the labels cache by id
+  (so rename/recolor stays live). `sidebar.tsx` builds `labelsById` +
+  `streamIdsByLabel` from the workspace caches.
+- **Entry point**: a "Show in sidebar" toggle on each owned/joined label card
+  (Labels page) adds/removes the section via `toggleLabelSection` →
+  `useSidebarConfig().setConfig`. One deterministic section per label.
+- Tests: resolver label-section (additive + empty), `toggleLabelSection`
+  helpers (object-compare, INV-24). Typecheck + lint clean.
+
+**Deviations (deferred, not dropped):** `hideAboveShown` + the `remainder` kind
+remain deferred — additive label lenses work without them (no dedup), so adding
+them now would be speculative (INV-36). The roomy "Sidebar" settings panel,
+drag-reorder, and the label-picker / section-header-menu add paths are deferred;
+the Labels-page toggle is the single add/remove surface for now.
 
 ### PR5 — Stream top-bar label stack
 

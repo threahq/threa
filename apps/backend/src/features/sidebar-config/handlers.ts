@@ -7,6 +7,7 @@ import { SIDEBAR_SECTION_KEYS, SIDEBAR_TYPE_SECTIONS, SIDEBAR_BASE_PRESETS } fro
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("smart"), bucket: z.enum(SIDEBAR_SECTION_KEYS) }),
   z.object({ kind: z.literal("type"), streamType: z.enum(SIDEBAR_TYPE_SECTIONS) }),
+  z.object({ kind: z.literal("label"), labelId: z.string().min(1).max(64) }),
 ])
 
 const sidebarSectionSchema = z.object({

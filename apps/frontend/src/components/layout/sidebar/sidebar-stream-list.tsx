@@ -1,6 +1,8 @@
 import type { RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
+import { LabelChip } from "@/components/labels/label-chip"
+import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection } from "./sections"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import type { ResolvedSection } from "./resolve-sections"
@@ -30,6 +32,8 @@ interface SidebarStreamListProps {
   processedStreams: StreamItemData[]
   /** Ordered sections with their resolved, sorted, capped stream lists. */
   resolvedSections: ResolvedSection[]
+  /** Labels visible to the viewer, by id — resolves the header chip for `label` sections. */
+  labelsById: Map<string, CachedLabel>
   getUnreadCount: (streamId: string) => number
   getMentionCount: (streamId: string) => number
   getSectionState: (section: string, defaultState?: CollapseState) => CollapseState
@@ -52,6 +56,7 @@ export function SidebarStreamList({
   activeStreamId,
   processedStreams,
   resolvedSections,
+  labelsById,
   getUnreadCount,
   getMentionCount,
   getSectionState,
@@ -101,6 +106,13 @@ export function SidebarStreamList({
         const presentation = sectionPresentation(section.spec)
         if (presentation.hideWhenEmpty && items.length === 0) return null
 
+        // Label sections render a tinted chip header resolved from the labels
+        // cache; a section whose label was archived/deleted is an orphan — skip it.
+        const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
+        if (section.spec.kind === "label" && !label) return null
+        const titleContent = label ? <LabelChip label={label} /> : undefined
+        const headerLabel = label ? label.name : presentation.label
+
         const state = getSectionState(section.id, presentation.defaultCollapse)
         const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
         const add = addWiringFor(section.spec)
@@ -110,7 +122,8 @@ export function SidebarStreamList({
             <TieredStreamSection
               key={section.id}
               sectionKey={section.id}
-              label={presentation.label}
+              label={headerLabel}
+              titleContent={titleContent}
               icon={presentation.icon}
               items={items}
               allStreams={processedStreams}
@@ -135,7 +148,8 @@ export function SidebarStreamList({
         return (
           <StreamSection
             key={section.id}
-            label={presentation.label}
+            label={headerLabel}
+            titleContent={titleContent}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}
