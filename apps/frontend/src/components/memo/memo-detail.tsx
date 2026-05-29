@@ -14,9 +14,8 @@ import type { MemoExplorerDetail, MemoExplorerStreamRef } from "@/api"
  * Full memo detail renderer — title, abstract, key points, provenance, and
  * source messages. Shared by the memory explorer page (`MemoryPage`) and the
  * in-stream memo preview dialog (`MemoPreviewDialog`) so both surfaces render
- * a memo identically. The helpers below (`KnowledgeTypeBadge`,
- * `formatStreamRef`, `buildSourceLink`) are exported for callers that compose
- * their own memo rows (e.g. the explorer's result list).
+ * a memo identically. `KnowledgeTypeBadge` and `formatStreamRef` are also
+ * exported because the explorer's result list composes its own memo rows.
  */
 
 export function formatStreamRef(stream: MemoExplorerStreamRef | null): string | null {
@@ -29,7 +28,7 @@ export function formatStreamRef(stream: MemoExplorerStreamRef | null): string | 
   return streamFallbackLabel(stream.type as StreamType, "generic")
 }
 
-export function buildSourceLink(workspaceId: string, streamId: string, messageId?: string): string {
+function buildSourceLink(workspaceId: string, streamId: string, messageId?: string): string {
   const search = messageId ? `?m=${messageId}` : ""
   return `/w/${workspaceId}/s/${streamId}${search}`
 }
