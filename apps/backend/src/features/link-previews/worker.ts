@@ -264,12 +264,20 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
 
     const chunks: Uint8Array[] = []
     let totalBytes = 0
-    // Rolling ASCII view of the tail of what we've received, used only to detect </head>
-    // so we can stop reading early. Latin-1 is byte-faithful for the ASCII characters in the
-    // sentinel, independent of the page's true encoding.
+    // Rolling ASCII view of the tail of what we've received, used only to detect </head>.
+    // Latin-1 is byte-faithful for the ASCII characters in the sentinel, independent of the
+    // page's true encoding.
     let asciiTail = ""
     const HEAD_CLOSE = "</head>"
     const TAIL_WINDOW = 4096
+    // Streaming-SSR frameworks (Next.js App Router and friends) emit a metadata-less <head>
+    // and then stream the real <title>/<meta og:*> into the <body> after </head> closes. So
+    // </head> alone is not a safe stop signal — only stop once we've actually seen a metadata
+    // signal. Pages that never provide one are bounded by MAX_HTML_BYTES. Scanned per-chunk
+    // (not on the trimmed tail) so a signal isn't lost when a large chunk overflows the window.
+    const META_SIGNAL =
+      /<title[\s>]|og:title|og:image|og:description|twitter:title|twitter:description|name=["']?description/i
+    let seenMeta = false
 
     try {
       while (totalBytes < MAX_HTML_BYTES) {
@@ -278,9 +286,12 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
         chunks.push(value)
         totalBytes += value.byteLength
 
-        asciiTail += new TextDecoder("latin1").decode(value)
+        const chunkStr = new TextDecoder("latin1").decode(value)
+        if (!seenMeta && META_SIGNAL.test(chunkStr)) seenMeta = true
+
+        asciiTail += chunkStr
         if (asciiTail.length > TAIL_WINDOW) asciiTail = asciiTail.slice(-TAIL_WINDOW)
-        if (asciiTail.toLowerCase().includes(HEAD_CLOSE)) break
+        if (seenMeta && asciiTail.toLowerCase().includes(HEAD_CLOSE)) break
       }
     } finally {
       reader.cancel()
