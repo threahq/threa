@@ -9,7 +9,7 @@ const REQUEST: EnclaveInvokeRequest = {
   prompt: { ciphertext: "Y3Q=", envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" } },
   system: "You are Ariadne.",
   model: "anthropic/claude-sonnet-4.6",
-  reply: { keyGeneration: 0, messageId: "msg_reply", senderId: "persona_ariadne" },
+  reply: { keyGeneration: 0, senderId: "persona_ariadne" },
 }
 
 const originalFetch = globalThis.fetch
@@ -27,8 +27,13 @@ describe("EnclaveForwarder.invoke", () => {
       captured.body = init?.body as string
       return new Response(
         JSON.stringify({
-          ciphertext: "cmVwbHk=",
-          envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+          messages: [
+            {
+              messageId: "msg_reply",
+              ciphertext: "cmVwbHk=",
+              envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+            },
+          ],
           model: "anthropic/claude-sonnet-4.6",
         }),
         { status: 200, headers: { "Content-Type": "application/json" } }
@@ -40,9 +45,10 @@ describe("EnclaveForwarder.invoke", () => {
 
     expect(captured.url).toBe("https://enclave-1.internal/invoke")
     expect(captured.headers?.[INTERNAL_API_KEY_HEADER]).toBe("shared-secret")
-    expect(JSON.parse(captured.body!)).toMatchObject({ streamId: "stream_1", reply: { messageId: "msg_reply" } })
-    expect(res.ciphertext).toBe("cmVwbHk=")
-    expect(res.envelope.keyGeneration).toBe(0)
+    expect(JSON.parse(captured.body!)).toMatchObject({ streamId: "stream_1", reply: { senderId: "persona_ariadne" } })
+    expect(res.messages[0]!.ciphertext).toBe("cmVwbHk=")
+    expect(res.messages[0]!.messageId).toBe("msg_reply")
+    expect(res.messages[0]!.envelope.keyGeneration).toBe(0)
   })
 
   it("throws EnclaveForwardError with the status on a non-ok response", async () => {
@@ -55,12 +61,23 @@ describe("EnclaveForwarder.invoke", () => {
   })
 
   it("rejects a malformed 200 response at the boundary", async () => {
+    // Missing the messages array entirely.
     globalThis.fetch = mock(
       async () => new Response(JSON.stringify({ model: "m" }), { status: 200 })
     ) as unknown as typeof fetch
-    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    let forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    let err = await forwarder.invoke("https://enclave-1.internal", REQUEST).catch((e) => e)
+    expect(err).toBeInstanceOf(EnclaveForwardError)
 
-    const err = await forwarder.invoke("https://enclave-1.internal", REQUEST).catch((e) => e)
+    // A messages array with an element missing its messageId.
+    globalThis.fetch = mock(
+      async () =>
+        new Response(JSON.stringify({ model: "m", messages: [{ ciphertext: "x", envelope: { v: 2 } }] }), {
+          status: 200,
+        })
+    ) as unknown as typeof fetch
+    forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    err = await forwarder.invoke("https://enclave-1.internal", REQUEST).catch((e) => e)
     expect(err).toBeInstanceOf(EnclaveForwardError)
   })
 

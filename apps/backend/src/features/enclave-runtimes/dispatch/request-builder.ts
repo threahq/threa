@@ -33,9 +33,7 @@ export interface BuildInvokeInputs {
   /** Prior messages, oldest→newest, for context. */
   priorMessages: Message[]
   persona: PersonaInvokeConfig
-  /** Server-minted id the reply is sealed under and stored as. */
-  replyMessageId: string
-  /** The persona id the reply is authored by (Ariadne). */
+  /** The persona id the replies are authored by + bound to in their seal AAD (Ariadne). */
   replySenderId: string
 }
 
@@ -89,7 +87,7 @@ export function buildEnclaveInvokeRequest(inputs: BuildInvokeInputs): BuiltEncla
     model: persona.model.replace(/^openrouter:/, ""),
     ...(persona.temperature !== null ? { temperature: persona.temperature } : {}),
     ...(persona.maxTokens !== null ? { maxTokens: persona.maxTokens } : {}),
-    reply: { keyGeneration: currentGen, messageId: inputs.replyMessageId, senderId: inputs.replySenderId },
+    reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
   }
 
   return { instanceUrl: chosen.instanceUrl, request }

@@ -11,8 +11,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@threa/agent-runtime": "workspace:*",
     "@threa/crypto": "workspace:*",
     "@threa/types": "workspace:*",
+    "ai": "^5.0.113",
     "express": "^5",
     "pino": "^9",
     "pino-http": "^10",

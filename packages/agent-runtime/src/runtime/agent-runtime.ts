@@ -31,8 +31,17 @@ export interface NewMessageAwareness {
   lastProcessedSequence: bigint
 }
 
+/**
+ * The slice of `AI` the loop actually calls. Narrowed from the full wrapper so
+ * alternative hosts (e.g. the enclave) can supply just `generateTextWithTools`
+ * over their own transport without implementing — or bundling — the embeddings,
+ * cost, and telemetry surface of the production `createAI`. The backend's full
+ * `AI` still satisfies this by structural subtyping.
+ */
+export type AgentRuntimeAI = Pick<AI, "generateTextWithTools">
+
 export interface AgentRuntimeConfig {
-  ai: AI
+  ai: AgentRuntimeAI
   model: LanguageModel
   /**
    * Original provider:model string for `model`. Required alongside `costContext`

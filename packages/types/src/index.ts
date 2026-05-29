@@ -342,6 +342,7 @@ export type {
   EnclaveStreamEnvelope,
   EnclaveSealedMessage,
   EnclaveSskWrap,
+  EnclaveSealedReply,
   EnclaveInvokeRequest,
   EnclaveInvokeResponse,
   UpdateStreamInput,

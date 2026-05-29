@@ -60,15 +60,24 @@ export class EnclaveForwarder {
     } catch {
       throw new EnclaveForwardError("Enclave returned invalid JSON", res.status)
     }
-    if (
-      !payload ||
-      typeof payload !== "object" ||
-      typeof (payload as { ciphertext?: unknown }).ciphertext !== "string" ||
-      typeof (payload as { model?: unknown }).model !== "string" ||
-      !(payload as { envelope?: unknown }).envelope
-    ) {
+    if (!isValidInvokeResponse(payload)) {
       throw new EnclaveForwardError("Enclave returned an invalid response shape", res.status)
     }
-    return payload as EnclaveInvokeResponse
+    return payload
   }
+}
+
+/** Structural guard for the turn output: a sealed-reply array + model metadata. */
+function isValidInvokeResponse(payload: unknown): payload is EnclaveInvokeResponse {
+  if (!payload || typeof payload !== "object") return false
+  const { messages, model } = payload as { messages?: unknown; model?: unknown }
+  if (typeof model !== "string" || !Array.isArray(messages)) return false
+  return messages.every(
+    (m) =>
+      m &&
+      typeof m === "object" &&
+      typeof (m as { messageId?: unknown }).messageId === "string" &&
+      typeof (m as { ciphertext?: unknown }).ciphertext === "string" &&
+      Boolean((m as { envelope?: unknown }).envelope)
+  )
 }
