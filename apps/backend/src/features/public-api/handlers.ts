@@ -645,6 +645,9 @@ export function createPublicApiHandlers({
         capabilities: params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : undefined,
         statusText: sanitizeStatusText(params.statusText),
         mergeCapabilities: true,
+        // Invocation-side touch carries no BIK; preserve the key the live
+        // session registered rather than clearing it on every poll tick.
+        retainBik: true,
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
     } catch (err) {

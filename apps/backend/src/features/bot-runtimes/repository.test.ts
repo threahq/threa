@@ -71,16 +71,27 @@ describe("BotRuntimeInstanceRepository.upsertPresence", () => {
 
     expect(captured.text).toContain("public_key")
     expect(captured.text).toContain("public_key_id")
-    // A presence upsert that omits the key (touch / session-link path) must not
-    // clobber a key an earlier session registered — only overwrite when present.
-    expect(captured.text).toContain("public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key)")
-    expect(captured.text).toContain(
-      "public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id)"
-    )
+    // BIK is per-session: a default presence write OVERWRITES it so a session
+    // that registers no key can't leave a stale one live.
+    expect(captured.text).toContain("public_key = EXCLUDED.public_key")
+    expect(captured.text).toContain("public_key_id = EXCLUDED.public_key_id")
+    expect(captured.text).not.toContain("public_key = COALESCE")
     expect(captured.values).toContain(publicKey)
     expect(captured.values).toContain("bik_abc12")
     expect(result.publicKey).toBe(publicKey)
     expect(result.publicKeyId).toBe("bik_abc12")
+  })
+
+  it("retains the existing BIK via COALESCE only when retainBik is set (touch / session-link)", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeRow()])
+
+    await BotRuntimeInstanceRepository.upsertPresence(db, { ...BASE_PARAMS, retainBik: true })
+
+    expect(captured.text).toContain("public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key)")
+    expect(captured.text).toContain(
+      "public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id)"
+    )
   })
 
   it("binds null BIK columns when no key is supplied", async () => {
@@ -94,14 +105,14 @@ describe("BotRuntimeInstanceRepository.upsertPresence", () => {
     expect(result.publicKeyId).toBeNull()
   })
 
-  it("keeps the COALESCE-preserve clause in the capabilities-merge branch too", async () => {
+  it("merges capabilities while still overwriting the BIK by default", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [makeRow()])
 
     await BotRuntimeInstanceRepository.upsertPresence(db, { ...BASE_PARAMS, mergeCapabilities: true })
 
     expect(captured.text).toContain("capabilities = bot_runtime_instances.capabilities || EXCLUDED.capabilities")
-    expect(captured.text).toContain("public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key)")
+    expect(captured.text).toContain("public_key = EXCLUDED.public_key")
   })
 })
 

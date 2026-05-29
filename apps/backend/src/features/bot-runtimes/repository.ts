@@ -393,23 +393,27 @@ export const BotRuntimeInstanceRepository = {
       publicKey?: string | null
       publicKeyId?: string | null
       mergeCapabilities?: boolean
+      retainBik?: boolean
     }
   ): Promise<BotRuntimeInstance> {
-    // BIK columns use COALESCE(EXCLUDED, existing) on conflict so a presence
-    // upsert that doesn't carry a key (invocation-side touch, session-link
-    // path) preserves a key an earlier session registered, while a session
-    // start that does carry one rotates it. Clearing a key is out of scope —
-    // a wrap to a retired BIK is simply undecryptable, same as revocation.
+    // BIK is per-session key material, so a presence write OVERWRITES it by
+    // default — a session that registers no key clears any stale one, so
+    // `findLiveWithKeyForBot` never hands out wraps for a key the runtime has
+    // rotated away. Only the server-internal writes that legitimately don't
+    // carry the key (the invocation touch and the session-link path) pass
+    // `retainBik` to keep the live session's key instead of nulling it.
     const publicKey = params.publicKey ?? null
     const publicKeyId = params.publicKeyId ?? null
-    const result = params.mergeCapabilities
-      ? await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text, public_key, public_key_id)
+    const capabilitiesSet = params.mergeCapabilities
+      ? "capabilities = bot_runtime_instances.capabilities || EXCLUDED.capabilities"
+      : "capabilities = EXCLUDED.capabilities"
+    const bikSet = params.retainBik
+      ? "public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key), public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id)"
+      : "public_key = EXCLUDED.public_key, public_key_id = EXCLUDED.public_key_id"
+    const result =
+      await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text, public_key, public_key_id)
       VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.statusText ?? null}, ${publicKey}, ${publicKeyId})
-      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, capabilities = bot_runtime_instances.capabilities || EXCLUDED.capabilities, status_text = EXCLUDED.status_text, public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key), public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id), last_seen_at = NOW(), updated_at = NOW()
-      RETURNING *`)
-      : await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text, public_key, public_key_id)
-      VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.statusText ?? null}, ${publicKey}, ${publicKeyId})
-      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, capabilities = EXCLUDED.capabilities, status_text = EXCLUDED.status_text, public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key), public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id), last_seen_at = NOW(), updated_at = NOW()
+      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, ${sql.raw(capabilitiesSet)}, status_text = EXCLUDED.status_text, ${sql.raw(bikSet)}, last_seen_at = NOW(), updated_at = NOW()
       RETURNING *`)
     return mapRuntimeInstance(result.rows[0]!)
   },
