@@ -19,7 +19,12 @@ import {
   createPolishTranscript,
 } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
-import { EnclaveRuntimesService } from "./features/enclave-runtimes"
+import {
+  EnclaveRuntimesService,
+  EnclaveForwarder,
+  EnclaveDispatchHandler,
+  createEnclaveInvokeWorker,
+} from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
@@ -677,6 +682,20 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  // Enclave (Ariadne E2E) forwarder + worker. Only wired when an internal key
+  // is configured — the forwarder authenticates to the enclave with it, and the
+  // enclave rejects callers that don't present it.
+  const enclaveForwarder = config.internalApiKey
+    ? new EnclaveForwarder({ internalApiKey: config.internalApiKey })
+    : null
+  if (enclaveForwarder) {
+    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, enclaveForwarder, eventService })
+    jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
+      tier: QueueTiers.INTERACTIVE,
+      fairness: QueueFairness.NONE,
+    })
+  }
+
   // Context-bag pre-compute worker — warms the shared summary cache and
   // persists the initial render snapshot for newly-created bag-attached
   // scratchpads so the first real user turn hits the cache. Posts no
@@ -963,6 +982,9 @@ export async function startServer(): Promise<ServerInstance> {
   const botNamespace = io.of("/bot")
   const broadcastHandler = new BroadcastHandler(pools.realtime, io, botNamespace)
   const companionHandler = new CompanionHandler(pool, jobQueue)
+  // Mirrors CompanionHandler for E2E streams: enqueue an enclave-invoke job per
+  // user turn when the enclave actor is invited. Gated on the forwarder.
+  const enclaveDispatchHandler = enclaveForwarder ? new EnclaveDispatchHandler(pool, jobQueue) : null
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const namingHandler = new NamingHandler(pool, jobQueue)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
@@ -1003,6 +1025,7 @@ export async function startServer(): Promise<ServerInstance> {
     activityFeedHandler,
     botInvocationOutboxHandler,
     linkPreviewOutboxHandler,
+    ...(enclaveDispatchHandler ? [enclaveDispatchHandler] : []),
     ...(pushNotificationHandler ? [pushNotificationHandler] : []),
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
   ]
