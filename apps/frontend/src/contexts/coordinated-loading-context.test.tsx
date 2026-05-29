@@ -307,6 +307,63 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("phase").textContent).toBe("ready")
   })
 
+  it("reveals cached content immediately when IDB is primed even while avatars are still preloading", async () => {
+    // Offline-first regression: a returning user's read model is fully in IDB,
+    // but avatar preloading hits the network. On a flaky connection those image
+    // requests hang until the 2s preload timeout, so gating the reveal on them
+    // made the app slower "out and about" than offline (where they error
+    // instantly). A primed cache must reveal immediately and let avatars stream
+    // in afterward.
+    makeReadyWorkspaceState()
+    mockSeedCacheFromIdbResult = true
+    mockUsers = [{ id: "user_1", avatarUrl: "https://cdn.example/avatar.png" }]
+    vi.spyOn(usePreloadImagesModule, "usePreloadImages").mockReturnValue(false)
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("still waits on avatar preload during a genuine cold load (nothing cached)", async () => {
+    // Counterpart to the primed-cache case: with no IDB cache there is nothing
+    // to reveal early, so the cold-load nicety of preloading avatars before the
+    // first paint (avoiding an initials→avatar flash) still applies — the gate
+    // holds until the preload resolves.
+    makeReadyWorkspaceState()
+    mockSeedCacheFromIdbResult = false // cache not primed
+    mockUsers = [{ id: "user_1", avatarUrl: "https://cdn.example/avatar.png" }]
+    const preloadSpy = vi.spyOn(usePreloadImagesModule, "usePreloadImages").mockReturnValue(false)
+
+    const { rerender } = render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    // Data is ready but avatars are not preloaded and the cache isn't primed —
+    // the gate must not open yet.
+    expect(screen.getByTestId("phase").textContent).not.toBe("ready")
+
+    preloadSpy.mockReturnValue(true)
+    rerender(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
   it("reports stream state as idle during the initial coordinated load", async () => {
     mockStreamResults = [{ status: "pending", fetchStatus: "fetching", isLoading: true, isError: false, error: null }]
 
