@@ -716,15 +716,14 @@ export class StreamService {
   }
 
   /**
-   * Invite a non-human actor (e.g. the enclave) into an E2E stream. Adds the
-   * actor to `e2e_stream_actors` so the frontend starts wrapping the per-stream
-   * SSK to that actor's key(s) (for the enclave, every live EIK — letting
-   * whichever instance the dispatcher picks decrypt). Owner-only: only the
-   * stream's E2E owner can change who can read their encrypted stream. Multiple
-   * actor kinds can coexist on one stream; re-inviting an already-present kind
-   * is a 409. No `e2eCapable` gate here — Phase 5a PR3 ships the invite path
-   * before Ariadne can reply, so the invite is allowed even while the runtime
-   * is non-capable.
+   * Invite a non-human actor into an E2E stream, pinned to a concrete principal:
+   * a bot's `bot_id` (its key may rotate under that id, but the underlying bot
+   * can't be swapped), or the enclave singleton. Adds it to `e2e_stream_actors`
+   * and returns the key roll the owner must perform to wrap the SSK to the new
+   * recipient set (every live actor key). Owner-only: only the stream's E2E
+   * owner can change who can read it. Multiple bots can coexist; re-inviting the
+   * same actor (same kind + id) is a 409. No `e2eCapable` gate here — the invite
+   * path ships before the runtime can reply, so it's allowed while non-capable.
    */
   async inviteActor(
     workspaceId: string,
