@@ -76,14 +76,28 @@ interface GitHubApiHeaders {
 export class GitHubClient {
   private octokit: Octokit
 
+  // `record`/`credentials`/`metadata` are null for an anonymous client. GitHub's
+  // REST API serves public repositories without auth, so an unauthenticated
+  // client still works for open-source repos; private resources answer 404,
+  // which the tool layer surfaces as GITHUB_NOT_FOUND.
   constructor(
     private service: WorkspaceIntegrationService,
     private workspaceId: string,
-    private record: WorkspaceIntegrationRecord,
-    private credentials: GitHubIntegrationCredentials,
-    private metadata: GitHubIntegrationMetadata
+    private record: WorkspaceIntegrationRecord | null,
+    private credentials: GitHubIntegrationCredentials | null,
+    private metadata: GitHubIntegrationMetadata | null
   ) {
-    this.octokit = new Octokit({ auth: credentials.accessToken })
+    this.octokit = credentials ? new Octokit({ auth: credentials.accessToken }) : new Octokit()
+  }
+
+  /**
+   * Build a client with no installation state. It reads public repositories via
+   * GitHub's anonymous REST access; private resources answer 404. Use this when
+   * the workspace has no usable GitHub integration but a caller still wants
+   * open-source reads.
+   */
+  static anonymous(service: WorkspaceIntegrationService, workspaceId: string): GitHubClient {
+    return new GitHubClient(service, workspaceId, null, null, null)
   }
 
   async request<T>(route: string, parameters: Record<string, unknown> = {}): Promise<T> {
@@ -100,7 +114,9 @@ export class GitHubClient {
       const headers = getErrorHeaders(error)
       await this.captureRateLimit(headers)
 
-      if (status === 401 && !retried) {
+      // Only authenticated installations can refresh; an anonymous client has
+      // no credentials to renew, so its 401 propagates as-is.
+      if (status === 401 && !retried && this.record && this.credentials) {
         const refreshed = await this.service.refreshGithubCredentialsForClient(this.workspaceId, this.record)
         if (!refreshed) {
           throw error
@@ -117,7 +133,9 @@ export class GitHubClient {
   }
 
   private async captureRateLimit(headers: GitHubApiHeaders | undefined): Promise<void> {
-    if (!headers) return
+    // Anonymous clients have no integration record to persist against, and their
+    // rate-limit headers are per-IP rather than workspace state.
+    if (!headers || !this.metadata) return
     const remaining = parseIntegerHeader(headers["x-ratelimit-remaining"])
     const resetSeconds = parseIntegerHeader(headers["x-ratelimit-reset"])
     const resetAt = resetSeconds ? new Date(resetSeconds * 1000).toISOString() : null
@@ -333,8 +351,29 @@ export class WorkspaceIntegrationService {
     return { workspaceId }
   }
 
-  async getGithubClient(workspaceId: string): Promise<GitHubClient | null> {
-    if (!this.app) return null
+  /**
+   * Resolve a GitHub client for a workspace.
+   *
+   * When `allowUnauthenticatedFallback` is set, the paths where the workspace
+   * has no usable installation (no app configured, no active integration,
+   * undecryptable or unrefreshable credentials) return an anonymous client that
+   * can still read public/open-source repositories instead of `null`. Callers
+   * that only want authenticated access (e.g. link-preview enrichment) omit the
+   * flag and keep the original null-on-missing behavior.
+   *
+   * The near-rate-limit branch deliberately does NOT fall back: it is a
+   * back-off circuit-breaker for an installation that exists but is throttled.
+   * Handing back an anonymous client there would silently downgrade a heavy
+   * GitHub user to the shared per-IP anonymous quota and mask the rate-limit
+   * state, so it keeps returning `null` (surfaced as GITHUB_NOT_CONNECTED).
+   */
+  async getGithubClient(
+    workspaceId: string,
+    options: { allowUnauthenticatedFallback?: boolean } = {}
+  ): Promise<GitHubClient | null> {
+    const fallback = () => (options.allowUnauthenticatedFallback ? GitHubClient.anonymous(this, workspaceId) : null)
+
+    if (!this.app) return fallback()
 
     const record = await WorkspaceIntegrationRepository.findByWorkspaceAndProvider(
       this.deps.pool,
@@ -342,7 +381,7 @@ export class WorkspaceIntegrationService {
       WorkspaceIntegrationProviders.GITHUB
     )
     if (!record || record.status !== WorkspaceIntegrationStatuses.ACTIVE) {
-      return null
+      return fallback()
     }
 
     const metadata = this.parseMetadata(record.metadata)
@@ -355,12 +394,12 @@ export class WorkspaceIntegrationService {
       credentials = this.parseCredentials(workspaceId, record.credentials)
     } catch (error) {
       log.warn({ err: error, workspaceId }, "GitHub integration credentials could not be decrypted")
-      return null
+      return fallback()
     }
 
     if (this.shouldRefreshToken(credentials.tokenExpiresAt)) {
       const refreshed = await this.refreshGithubCredentialsForClient(workspaceId, record)
-      if (!refreshed) return null
+      if (!refreshed) return fallback()
       return new GitHubClient(this, workspaceId, refreshed.record, refreshed.credentials, refreshed.metadata)
     }
 

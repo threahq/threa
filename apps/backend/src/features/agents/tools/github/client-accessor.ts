@@ -37,6 +37,10 @@ export async function withGithubClient<T>(
  * agent turn so chained GitHub tool calls share one DB fetch and (possibly) one token
  * refresh. A rejection clears the cache so a later call in the same turn gets a fresh
  * attempt instead of inheriting a transient failure.
+ *
+ * Agent tools opt into the unauthenticated fallback: when the workspace has no GitHub
+ * integration, the tools still work against public/open-source repositories instead of
+ * reporting GITHUB_NOT_CONNECTED.
  */
 export function createMemoizedGithubClient(
   service: WorkspaceIntegrationService,
@@ -44,7 +48,7 @@ export function createMemoizedGithubClient(
 ): () => Promise<GitHubClient | null> {
   let cached: Promise<GitHubClient | null> | null = null
   return async () => {
-    if (cached === null) cached = service.getGithubClient(workspaceId)
+    if (cached === null) cached = service.getGithubClient(workspaceId, { allowUnauthenticatedFallback: true })
     try {
       return await cached
     } catch (err) {
