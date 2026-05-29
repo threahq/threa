@@ -16,6 +16,7 @@ import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamsApiModule from "@/api/streams"
 import * as contextsModule from "@/contexts"
+import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
 
 // Note: DOM polyfills (ResizeObserver, Range, Element.getClientRects, etc.)
 // are in src/test/setup.ts which runs before tests via vitest config
@@ -31,6 +32,11 @@ const mockSearchState = {
   search: vi.fn(),
   clear: vi.fn(),
 }
+
+// Contextual stream-command collaborators, asserted on across tests.
+const mockArchiveMutateAsync = vi.fn()
+const mockDeleteDraft = vi.fn()
+const mockOpenStreamSettings = vi.fn()
 
 const mockWorkspaceBootstrap = {
   data: {} as {
@@ -125,7 +131,16 @@ function installSpies() {
   } as unknown as ReturnType<typeof hooksModule.useWorkspaceBootstrap>)
   vi.spyOn(hooksModule, "useDraftScratchpads").mockReturnValue({
     createDraft: vi.fn(),
+    deleteDraft: mockDeleteDraft,
   } as unknown as ReturnType<typeof hooksModule.useDraftScratchpads>)
+  vi.spyOn(hooksModule, "useArchiveStream").mockReturnValue({
+    mutateAsync: mockArchiveMutateAsync,
+    mutate: vi.fn(),
+    isPending: false,
+  } as unknown as ReturnType<typeof hooksModule.useArchiveStream>)
+  vi.spyOn(streamSettingsModule, "useStreamSettings").mockReturnValue({
+    openStreamSettings: mockOpenStreamSettings,
+  } as unknown as ReturnType<typeof streamSettingsModule.useStreamSettings>)
   vi.spyOn(hooksModule, "useCreateStream").mockReturnValue({
     mutateAsync: vi.fn(),
   } as unknown as ReturnType<typeof hooksModule.useCreateStream>)
@@ -229,6 +244,9 @@ describe("QuickSwitcher Integration Tests", () => {
     mockSearchState.isLoading = false
     mockSearchState.search = vi.fn()
     mockSearchState.clear = vi.fn()
+    mockArchiveMutateAsync.mockReset()
+    mockDeleteDraft.mockReset()
+    mockOpenStreamSettings.mockReset()
     mockWorkspaceBootstrap.data = {
       streams: mockStreamsList,
       streamMemberships: [],
@@ -1364,6 +1382,79 @@ describe("QuickSwitcher Integration Tests", () => {
 
       await waitFor(() => {
         expect(document.querySelector('a[href="/w/workspace_1/s/draft_dm_member_3"]')).toBeInTheDocument()
+      })
+    })
+  })
+
+  describe("contextual stream commands", () => {
+    it("should surface current-stream commands under a stream-named section in command mode", async () => {
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+
+      // Section header names the stream so it stays clear these are stream-specific.
+      await waitFor(() => {
+        expect(screen.getByText("This stream — #general")).toBeInTheDocument()
+      })
+      expect(screen.getByText("Archive this stream")).toBeInTheDocument()
+      expect(screen.getByText("Open stream settings")).toBeInTheDocument()
+      expect(screen.getByText("Browse files in this stream")).toBeInTheDocument()
+      expect(screen.getByText("Labels…")).toBeInTheDocument()
+      // Global commands remain available below the contextual section.
+      expect(screen.getByText("New Channel")).toBeInTheDocument()
+    })
+
+    it("should not surface contextual commands when no stream is in view", async () => {
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+
+      await waitFor(() => {
+        expect(screen.getByText("New Channel")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
+      expect(screen.queryByText(/This stream/)).not.toBeInTheDocument()
+    })
+
+    it("should keep contextual commands visible (with their section) while filtering", async () => {
+      const user = userEvent.setup()
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "archive")
+
+      await waitFor(() => {
+        expect(screen.getByText("Archive this stream")).toBeInTheDocument()
+      })
+      expect(screen.getByText("This stream — #general")).toBeInTheDocument()
+    })
+
+    it("should open stream settings for the current stream", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+
+      await waitFor(() => {
+        expect(screen.getByText("Open stream settings")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Open stream settings"))
+
+      expect(mockOpenStreamSettings).toHaveBeenCalledWith("stream_channel1")
+    })
+
+    it("should confirm before archiving, and only archive after confirmation", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
+
+      await waitFor(() => {
+        expect(screen.getByText("Archive this stream")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Archive this stream"))
+
+      // Confirmation modal appears; nothing is archived yet.
+      await waitFor(() => {
+        expect(screen.getByText("Archive #general?")).toBeInTheDocument()
+      })
+      expect(mockArchiveMutateAsync).not.toHaveBeenCalled()
+
+      await user.click(screen.getByRole("button", { name: "Archive" }))
+
+      await waitFor(() => {
+        expect(mockArchiveMutateAsync).toHaveBeenCalledWith("stream_channel1")
       })
     })
   })

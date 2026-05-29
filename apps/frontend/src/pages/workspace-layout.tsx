@@ -387,6 +387,7 @@ export function WorkspaceLayout() {
                                         open={switcherOpen}
                                         onOpenChange={setSwitcherOpen}
                                         initialMode={switcherMode}
+                                        currentStreamId={streamId}
                                       />
                                       <SettingsDialog />
                                       <WorkspaceSettingsDialog workspaceId={workspaceId} />
