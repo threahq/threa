@@ -5,10 +5,11 @@
  * the purely-presentational labels/icons/collapse behavior on top); the backend
  * persists it per (workspace, user) and broadcasts changes for cross-device sync.
  *
- * The two presets below are the only shapes a config takes today. A
- * user-editable order and label-driven sections land in later steps — this
- * module exists so the persisted shape is the full document, not a `smart|all`
- * flag that a richer editor would have to migrate away from.
+ * The layout is a single ordered list of typed **sections**. Quick links are one
+ * of those sections (`kind: "quicklinks"`), so the user can position the whole
+ * block anywhere among their stream/label sections — or remove it entirely — and
+ * the individual links inside it carry their own order + visibility in
+ * {@link SidebarConfig.quickLinks}.
  */
 
 /** Smart-view buckets a stream can be sorted into. */
@@ -30,6 +31,13 @@ export type SidebarSectionSpec =
    * stored here (only the id, so a renamed/recolored label stays in sync).
    */
   | { kind: "label"; labelId: string }
+  /**
+   * The Quick Links block (Drafts / Saved / Files / …). A position-only marker:
+   * the links themselves — their order and per-link visibility — live in
+   * {@link SidebarConfig.quickLinks}, independent of this section's placement, so
+   * removing and re-adding the section preserves the viewer's link choices.
+   */
+  | { kind: "quicklinks" }
 
 export interface SidebarSection {
   /** Stable key — also the collapse-state persistence key on the frontend. */
@@ -41,69 +49,158 @@ export const SIDEBAR_BASE_PRESETS = ["smart", "all"] as const
 export type SidebarBasePreset = (typeof SIDEBAR_BASE_PRESETS)[number]
 
 /**
- * Quick-link destinations in the sidebar's "Quick Links" group. The user can
- * reorder them and hide ones they don't use; the set itself is fixed (these are
+ * Quick-link destinations in the sidebar's "Quick Links" block. The user can
+ * reorder them and set each one's visibility; the set itself is fixed (these are
  * the workspace's standing views).
  */
 export const SIDEBAR_QUICK_LINKS = ["drafts", "saved", "files", "scheduled", "memory", "labels", "activity"] as const
 export type SidebarQuickLinkKey = (typeof SIDEBAR_QUICK_LINKS)[number]
 
+/** Stable section id for the Quick Links block — doubles as its collapse-state key. */
+export const QUICK_LINKS_SECTION_ID = "quick-links"
+
 /**
- * A quick link's placement: array position is its order; `enabled` is its
- * visibility. Hidden links stay in the list (so the editor can show and
- * re-enable them, preserving their position) rather than being removed.
+ * Quick links that carry a live signal (a count / unread badge). Only these
+ * support the "show when active" visibility — the rest are always-on
+ * destinations with nothing to gate on, so they're a plain show/hide.
  */
-export interface SidebarQuickLink {
-  key: SidebarQuickLinkKey
-  enabled: boolean
+export const SIDEBAR_QUICK_LINKS_WITH_ACTIVE_STATE = ["drafts", "saved", "scheduled", "activity"] as const
+export type SidebarActiveQuickLinkKey = (typeof SIDEBAR_QUICK_LINKS_WITH_ACTIVE_STATE)[number]
+
+/** Whether a quick link has a live signal and thus supports "show when active". */
+export function quickLinkHasActiveState(key: SidebarQuickLinkKey): key is SidebarActiveQuickLinkKey {
+  return (SIDEBAR_QUICK_LINKS_WITH_ACTIVE_STATE as readonly string[]).includes(key)
 }
 
-/** All quick links, enabled, in canonical order — the preset/seed default. */
-export const DEFAULT_QUICK_LINKS: SidebarQuickLink[] = SIDEBAR_QUICK_LINKS.map((key) => ({ key, enabled: true }))
+/**
+ * A quick link's visibility:
+ * - `show`: always visible.
+ * - `active`: visible only when the link has a live signal (a count > 0). Valid
+ *   only for {@link SIDEBAR_QUICK_LINKS_WITH_ACTIVE_STATE}; coerced to `show`
+ *   for links without a signal.
+ * - `hidden`: never visible (kept in the list so the editor can re-show it
+ *   without losing its position).
+ */
+export const SIDEBAR_QUICK_LINK_VISIBILITIES = ["show", "active", "hidden"] as const
+export type SidebarQuickLinkVisibility = (typeof SIDEBAR_QUICK_LINK_VISIBILITIES)[number]
+
+/** Array position is the link's order; `visibility` is its show/active/hide state. */
+export interface SidebarQuickLink {
+  key: SidebarQuickLinkKey
+  visibility: SidebarQuickLinkVisibility
+}
+
+/** All quick links, shown, in canonical order — the preset/seed default. */
+export const DEFAULT_QUICK_LINKS: SidebarQuickLink[] = SIDEBAR_QUICK_LINKS.map((key) => ({
+  key,
+  visibility: "show",
+}))
+
+/**
+ * Persisted-document version. Bumped when the document shape changes in a way
+ * {@link normalizeSidebarConfig} must migrate. v2 introduced the quick-links
+ * section + tri-state link visibility; pre-v2 documents are migrated on read.
+ */
+export const SIDEBAR_CONFIG_VERSION = 2
 
 export interface SidebarConfig {
+  /** Document version; absent/legacy documents are treated as v1 and migrated. */
+  version: number
   basePreset: SidebarBasePreset
   sections: SidebarSection[]
   quickLinks: SidebarQuickLink[]
 }
 
+/** The legacy ({ enabled }) and current ({ visibility }) shapes a stored link can take. */
+export type StoredQuickLink = {
+  key: SidebarQuickLinkKey
+  visibility?: SidebarQuickLinkVisibility
+  /** Pre-v2 boolean flag, migrated to {@link SidebarQuickLink.visibility}. */
+  enabled?: boolean
+}
+
 /**
- * Ensure a config carries a complete, deduped `quickLinks` list. Documents
- * persisted before quick links were configurable (and any partial list) get the
- * missing keys appended (enabled) in canonical order, and unknown keys dropped —
- * so every destination stays reachable and a future new link shows up for
- * existing users. Idempotent; safe to apply on every read/write.
+ * The loose input {@link normalizeSidebarConfig} accepts: a full
+ * {@link SidebarConfig} (frontend) or a partially-typed document straight off
+ * the wire (backend Zod output, or a pre-v2 row missing `version`/`visibility`).
+ * Normalization collapses it to a canonical {@link SidebarConfig}.
  */
-export function normalizeSidebarConfig(config: SidebarConfig): SidebarConfig {
+export type RawSidebarConfig = {
+  version?: number
+  basePreset: SidebarBasePreset
+  sections?: SidebarSection[]
+  quickLinks?: StoredQuickLink[]
+}
+
+/** Resolve a stored link's visibility, migrating the pre-v2 boolean and coercing invalid `active`. */
+function normalizeQuickLinkVisibility(link: StoredQuickLink): SidebarQuickLinkVisibility {
+  const stored = link.visibility
+  if (stored === "show" || stored === "active" || stored === "hidden") {
+    // "active" only makes sense for links with a live signal.
+    return stored === "active" && !quickLinkHasActiveState(link.key) ? "show" : stored
+  }
+  // Pre-v2 documents carried a boolean `enabled` instead of a visibility.
+  if (typeof link.enabled === "boolean") return link.enabled ? "show" : "hidden"
+  return "show"
+}
+
+/**
+ * Bring a config to the current shape: a complete, deduped, tri-state quick-link
+ * list and a sections list that includes the quick-links block. Idempotent and
+ * safe on every read/write boundary.
+ *
+ * - Quick links: each gets the missing keys appended (shown) in canonical order,
+ *   unknown keys dropped, the pre-v2 boolean `enabled` migrated to `visibility`,
+ *   and an invalid `active` coerced to `show` — so every destination stays
+ *   reachable and a future new link shows up for existing users.
+ * - Sections: duplicate ids dropped. A pre-v2 document (version < current) that
+ *   never had the quick-links section gets it prepended, so existing users keep
+ *   their quick links. A current-version document is left as-is, so a user who
+ *   deliberately removed the block keeps it gone.
+ */
+export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig {
+  const storedLinks = config.quickLinks ?? []
   const seen = new Set<SidebarQuickLinkKey>()
   const quickLinks: SidebarQuickLink[] = []
-  for (const link of config.quickLinks ?? []) {
+  for (const link of storedLinks) {
     if (SIDEBAR_QUICK_LINKS.includes(link.key) && !seen.has(link.key)) {
       seen.add(link.key)
-      quickLinks.push({ key: link.key, enabled: link.enabled })
+      quickLinks.push({ key: link.key, visibility: normalizeQuickLinkVisibility(link) })
     }
   }
   for (const key of SIDEBAR_QUICK_LINKS) {
-    if (!seen.has(key)) quickLinks.push({ key, enabled: true })
+    if (!seen.has(key)) quickLinks.push({ key, visibility: "show" })
   }
 
   // Drop any duplicate section ids so the document is fully idempotent — two
   // sections sharing an id would trip React keys and the drag list's sortable
   // ids. The write path already dedups via addSection; this guards stray data.
   const seenSectionIds = new Set<string>()
-  const sections = (config.sections ?? []).filter((section) => {
+  let sections = (config.sections ?? []).filter((section) => {
     if (seenSectionIds.has(section.id)) return false
     seenSectionIds.add(section.id)
     return true
   })
 
-  return { ...config, sections, quickLinks }
+  // v1 → v2: existing users had quick links rendered above their sections, not
+  // as a section. Prepend the block so it stays visible after the upgrade. Only
+  // for pre-v2 documents — at the current version, an absent block means the
+  // user removed it and we must respect that.
+  const isPreV2 = (config.version ?? 1) < SIDEBAR_CONFIG_VERSION
+  const hasQuickLinksSection = sections.some((s) => s.spec.kind === "quicklinks")
+  if (isPreV2 && !hasQuickLinksSection) {
+    sections = [{ id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } }, ...sections]
+  }
+
+  return { ...config, version: SIDEBAR_CONFIG_VERSION, sections, quickLinks }
 }
 
 /** Section ids double as collapse-state keys, so they must stay stable. */
 export const SMART_SIDEBAR_CONFIG: SidebarConfig = {
+  version: SIDEBAR_CONFIG_VERSION,
   basePreset: "smart",
   sections: [
+    { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } },
     { id: "important", spec: { kind: "smart", bucket: "important" } },
     { id: "recent", spec: { kind: "smart", bucket: "recent" } },
     { id: "pinned", spec: { kind: "smart", bucket: "pinned" } },
@@ -113,8 +210,10 @@ export const SMART_SIDEBAR_CONFIG: SidebarConfig = {
 }
 
 export const ALL_SIDEBAR_CONFIG: SidebarConfig = {
+  version: SIDEBAR_CONFIG_VERSION,
   basePreset: "all",
   sections: [
+    { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } },
     { id: "scratchpads", spec: { kind: "type", streamType: "scratchpad" } },
     { id: "channels", spec: { kind: "type", streamType: "channel" } },
     { id: "dms", spec: { kind: "type", streamType: "dm" } },

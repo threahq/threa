@@ -181,6 +181,54 @@ store hooks (INV-48). Typecheck + lint clean.
 This completes the initiative: labels are now visible in both the sidebar
 (PR4) and the stream top bar (PR5).
 
+## Follow-up: Quick Links as a section + tri-state visibility + drag-to-add
+
+A second editor pass (this branch), after the customize panel merged (#691),
+deepening editability:
+
+- **Quick Links is now a section** (`SidebarSectionSpec` gains `{ kind:
+"quicklinks" }`). It sits in the same ordered list as stream/label sections, so
+  the whole block is draggable to any position — or removable entirely. Its
+  individual links keep their own order + visibility in `SidebarConfig.quickLinks`
+  (a position-only marker in `sections`, payload in `quickLinks`), so removing and
+  re-adding the block preserves the viewer's link choices. The editor renders the
+  links nested under the Quick Links row with their own `DndContext` (drags don't
+  bubble to the sections list). The live sidebar renders the block at its section
+  position via a `quickLinksSlot` passed into `SidebarStreamList` (the sidebar owns
+  the live counts, so the slot is built there, not in the list).
+- **Tri-state link visibility** (`SidebarQuickLinkVisibility`: `show` / `active` /
+  `hidden`) replaces the boolean `enabled`. `active` ("show when active") is valid
+  only for links carrying a live signal (`SIDEBAR_QUICK_LINKS_WITH_ACTIVE_STATE`:
+  drafts/saved/scheduled/activity) and renders the link only when its count > 0;
+  it's coerced to `show` for signal-less links in both the helper and
+  `normalizeSidebarConfig`. The editor uses a `ToggleGroup` (eye / dot / eye-off).
+- **Reset preset** button next to the preset toggle.
+- **Drag-to-add**: an always-visible Add tray of chips below the list. Drag a chip
+  onto a position (or the empty-list dropzone) to insert there; click still
+  appends. One `DndContext` handles both tray-drops and section reorders (tray ids
+  carry an `add:` prefix; `addSectionAt` inserts at the drop index).
+- **Always-available New button** pinned at the sidebar bottom (`SidebarFooter`),
+  opening every stream flavor (scratchpad variants + channel) — a dropdown on
+  desktop, a drawer on mobile — so creation no longer depends on a section's
+  hover-only "+".
+
+### Document versioning + migration (INV-20-adjacent: tolerate concurrent shapes)
+
+`SidebarConfig` gains `version` (`SIDEBAR_CONFIG_VERSION = 2`).
+`normalizeSidebarConfig` (run at every read/write/sync boundary) migrates pre-v2
+documents: boolean `enabled` → `visibility`, and — only for pre-v2 docs — prepends
+the quick-links section so existing users keep their links after the upgrade. At
+the current version an absent block means the user deliberately removed it, so it's
+left gone. The backend Zod schema accepts both the legacy (`enabled`) and current
+(`visibility`) link shapes and the new `quicklinks` spec, keeping a backend-first
+rollout safe. No DB migration (the doc is a per-user JSONB blob).
+
+Tests: helper unit tests (`setQuickLinkVisibility` coercion, `cycleQuickLinkVisibility`,
+`addSectionAt`), editor component tests (nested order, tri-state controls, remove
+block, reset, drag-tray click-add), `quick-links` render tests (active-state gating),
+service tests (v1→v2 migration, dual-shape schema), and updated resolve/sync
+fixtures. Typecheck + lint + full frontend suite (2004) green.
+
 ## Cross-cutting invariants
 
 INV-51/52 (colocate label backend, import via barrels), INV-20 (race-safe

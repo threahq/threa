@@ -10,6 +10,7 @@ import {
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
+  SIDEBAR_CONFIG_VERSION,
   type StreamBootstrap,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -206,6 +207,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       "ws_1",
       makeBootstrap({
         sidebarConfig: {
+          version: SIDEBAR_CONFIG_VERSION,
           basePreset: "all",
           sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
           quickLinks: DEFAULT_QUICK_LINKS,
@@ -216,6 +218,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     const stored = await db.sidebarConfigs.get("ws_1")
     expect(stored?.config).toEqual({
+      version: SIDEBAR_CONFIG_VERSION,
       basePreset: "all",
       sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
       quickLinks: DEFAULT_QUICK_LINKS,

@@ -343,8 +343,22 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           />
         }
         body={
-          <>
-            <div className="mb-2">
+          <SidebarStreamList
+            workspaceId={workspaceId}
+            hasError={Boolean(error)}
+            hasUserStreams={hasUserStreams}
+            activeStreamId={activeStreamId}
+            processedStreams={processedStreams}
+            resolvedSections={resolvedSections}
+            labelsById={labelsById}
+            getUnreadCount={getUnreadCount}
+            getMentionCount={getMentionCount}
+            getSectionState={getSectionState}
+            toggleSectionState={toggleSectionState}
+            onCreateScratchpad={handleCreateScratchpad}
+            onCreateChannel={handleCreateChannel}
+            scratchpadAddMenuActions={scratchpadAddMenuActions}
+            quickLinksSlot={
               <SidebarQuickLinks
                 workspaceId={workspaceId}
                 quickLinks={sidebarConfig.quickLinks}
@@ -360,27 +374,19 @@ export function Sidebar({ workspaceId }: SidebarProps) {
                 isLabelsPage={isLabelsPage}
                 unreadActivityCount={unreadActivityCount}
               />
-            </div>
-            <SidebarStreamList
-              workspaceId={workspaceId}
-              hasError={Boolean(error)}
-              hasUserStreams={hasUserStreams}
-              activeStreamId={activeStreamId}
-              processedStreams={processedStreams}
-              resolvedSections={resolvedSections}
-              labelsById={labelsById}
-              getUnreadCount={getUnreadCount}
-              getMentionCount={getMentionCount}
-              getSectionState={getSectionState}
-              toggleSectionState={toggleSectionState}
-              onCreateScratchpad={handleCreateScratchpad}
-              onCreateChannel={handleCreateChannel}
-              scratchpadAddMenuActions={scratchpadAddMenuActions}
-              scrollContainerRef={scrollContainerRef}
-            />
-          </>
+            }
+            scrollContainerRef={scrollContainerRef}
+          />
         }
-        footer={<SidebarFooter workspaceId={workspaceId} currentUser={currentUser} />}
+        footer={
+          <SidebarFooter
+            workspaceId={workspaceId}
+            currentUser={currentUser}
+            onCreateScratchpad={handleCreateScratchpad}
+            onCreateChannel={handleCreateChannel}
+            scratchpadAddMenuActions={scratchpadAddMenuActions}
+          />
+        }
       />
       <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
     </>

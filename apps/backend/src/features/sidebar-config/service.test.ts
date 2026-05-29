@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { ALL_SIDEBAR_CONFIG, DEFAULT_SIDEBAR_CONFIG, DEFAULT_QUICK_LINKS, type SidebarConfig } from "@threa/types"
+import {
+  ALL_SIDEBAR_CONFIG,
+  DEFAULT_SIDEBAR_CONFIG,
+  DEFAULT_QUICK_LINKS,
+  SIDEBAR_CONFIG_VERSION,
+  QUICK_LINKS_SECTION_ID,
+  type SidebarConfig,
+  type RawSidebarConfig,
+} from "@threa/types"
 import { SidebarConfigService } from "./service"
 import { SidebarConfigRepository } from "./repository"
 import { updateSidebarConfigSchema } from "./handlers"
@@ -49,6 +57,26 @@ describe("SidebarConfigService.getConfig", () => {
 
     expect(config.quickLinks).toEqual(DEFAULT_QUICK_LINKS)
   })
+
+  it("migrates a pre-v2 document: boolean enabled → visibility, and adds the quick-links section", async () => {
+    const service = setupService()
+    // A v1 row: no version, quick links carried boolean `enabled`, no quick-links section.
+    spyOn(SidebarConfigRepository, "find").mockResolvedValue({
+      basePreset: "smart",
+      sections: [{ id: "recent", spec: { kind: "smart", bucket: "recent" } }],
+      quickLinks: [
+        { key: "drafts", enabled: false },
+        { key: "saved", enabled: true },
+      ],
+    } as unknown as SidebarConfig)
+
+    const config = await service.getConfig(WORKSPACE_ID, USER_ID)
+
+    expect(config.version).toBe(SIDEBAR_CONFIG_VERSION)
+    expect(config.sections[0]).toEqual({ id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } })
+    expect(config.quickLinks.find((l) => l.key === "drafts")?.visibility).toBe("hidden")
+    expect(config.quickLinks.find((l) => l.key === "saved")?.visibility).toBe("show")
+  })
 })
 
 describe("SidebarConfigService.updateConfig", () => {
@@ -60,9 +88,14 @@ describe("SidebarConfigService.updateConfig", () => {
     const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
     const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
+    // A canonical v2 document, so normalization is idempotent (result === next).
     const next: SidebarConfig = {
+      version: SIDEBAR_CONFIG_VERSION,
       basePreset: "all",
-      sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+      sections: [
+        { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } },
+        { id: "channels", spec: { kind: "type", streamType: "channel" } },
+      ],
       quickLinks: DEFAULT_QUICK_LINKS,
     }
     const result = await service.updateConfig(WORKSPACE_ID, USER_ID, next)
@@ -81,7 +114,9 @@ describe("SidebarConfigService.updateConfig", () => {
     const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
 
-    const partial: SidebarConfig = { basePreset: "smart", sections: [], quickLinks: [] }
+    // A pre-version client body: no `version`, empty quick links. The service
+    // normalizes it to the full set on write.
+    const partial: RawSidebarConfig = { basePreset: "smart", sections: [], quickLinks: [] }
     const result = await service.updateConfig(WORKSPACE_ID, USER_ID, partial)
 
     expect(result.quickLinks).toEqual(DEFAULT_QUICK_LINKS)
@@ -99,5 +134,29 @@ describe("updateSidebarConfigSchema", () => {
     // The service then normalizes the empty list to the full default set.
     const parsed = updateSidebarConfigSchema.parse({ basePreset: "smart", sections: [] })
     expect(parsed.quickLinks).toEqual([])
+  })
+
+  it("accepts both the legacy boolean `enabled` and the current `visibility` link shapes", () => {
+    const parsed = updateSidebarConfigSchema.parse({
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } }],
+      quickLinks: [
+        { key: "drafts", visibility: "active" },
+        { key: "saved", enabled: false },
+      ],
+    })
+    expect(parsed.quickLinks).toEqual([
+      { key: "drafts", visibility: "active" },
+      { key: "saved", enabled: false },
+    ])
+  })
+
+  it("accepts the quicklinks section spec", () => {
+    const parsed = updateSidebarConfigSchema.parse({
+      basePreset: "smart",
+      sections: [{ id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } }],
+    })
+    expect(parsed.sections[0].spec).toEqual({ kind: "quicklinks" })
   })
 })

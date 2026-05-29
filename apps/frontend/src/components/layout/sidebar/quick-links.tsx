@@ -103,15 +103,23 @@ export function SidebarQuickLinks({
     },
   }
 
+  // A link renders when it's set to "show", or "show when active" and it
+  // currently carries a signal (a count / unread badge). "hidden" never renders.
+  const isVisible = (link: SidebarQuickLink): boolean => {
+    if (link.visibility === "hidden") return false
+    if (link.visibility === "show") return true
+    return itemByKey[link.key].unreadCount > 0
+  }
+  const visible = quickLinks.filter(isVisible)
+
   // Aggregate only "real" attention-worthy signals — drafts and saved counts
   // are persistent artifacts, not unread activity. The activity feed is the
   // only source of new-attention signal in the quick links today, and only when
-  // the viewer keeps it visible.
-  const activityEnabled = quickLinks.some((link) => link.key === "activity" && link.enabled)
-  const unreadAggregate = activityEnabled ? unreadActivityCount : 0
+  // the viewer actually keeps it visible.
+  const activityVisible = visible.some((link) => link.key === "activity")
+  const unreadAggregate = activityVisible ? unreadActivityCount : 0
 
   const isOpen = state === "open"
-  const visible = quickLinks.filter((link) => link.enabled)
 
   // Every link can be hidden from the editor; render nothing when none remain.
   if (visible.length === 0) return null

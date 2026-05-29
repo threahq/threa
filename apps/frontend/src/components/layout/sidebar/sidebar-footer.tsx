@@ -1,5 +1,15 @@
 import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutRef } from "react"
-import { ArrowLeftRight, ChevronUp, DollarSign, LogOut, Settings, User as UserIcon } from "lucide-react"
+import {
+  ArrowLeftRight,
+  ChevronUp,
+  DollarSign,
+  FileText,
+  Hash,
+  LogOut,
+  Plus,
+  Settings,
+  User as UserIcon,
+} from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
@@ -16,6 +26,16 @@ import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "
 interface SidebarFooterProps {
   workspaceId: string
   currentUser: User | null
+  /** Create a default scratchpad — the New button's primary click. */
+  onCreateScratchpad: () => void | Promise<void>
+  /** Open the create-channel flow — the New menu's "New Channel" entry. */
+  onCreateChannel: () => void | Promise<void>
+  /**
+   * Scratchpad creators (Scratchpad / Quick Note / Encrypted) for the New menu;
+   * merged with a "New Channel" entry so every stream flavor is reachable from
+   * the always-visible footer button.
+   */
+  scratchpadAddMenuActions?: SidebarActionItem[]
 }
 
 interface SidebarFooterTriggerProps extends Omit<ComponentPropsWithoutRef<"button">, "children"> {
@@ -68,7 +88,13 @@ function SidebarFooterHeader({ avatarSrc, currentUser }: { avatarSrc?: string | 
   )
 }
 
-export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) {
+export function SidebarFooter({
+  workspaceId,
+  currentUser,
+  onCreateScratchpad,
+  onCreateChannel,
+  scratchpadAddMenuActions,
+}: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
   const { openSettings } = useSettings()
   const { logout } = useAuth()
@@ -76,6 +102,18 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
   const isMobile = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
   const queryClient = useQueryClient()
+
+  // Every stream flavor reachable from one always-visible control: the scratchpad
+  // creators (Scratchpad / Quick Note / Encrypted) plus channels.
+  const createActions = useMemo<SidebarActionItem[]>(() => {
+    const scratchpadActions: SidebarActionItem[] = scratchpadAddMenuActions ?? [
+      { id: "new-scratchpad", label: "New Scratchpad", icon: FileText, onSelect: onCreateScratchpad },
+    ]
+    return [
+      ...scratchpadActions,
+      { id: "new-channel", label: "New Channel", icon: Hash, onSelect: onCreateChannel, separatorBefore: true },
+    ]
+  }, [scratchpadAddMenuActions, onCreateScratchpad, onCreateChannel])
 
   const handleOpenSettings = useCallback(
     (tab: "profile" | "appearance") => {
@@ -190,7 +228,8 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
 
   if (isMobile) {
     return (
-      <>
+      <div className="flex flex-col gap-1">
+        <SidebarCreateButton actions={createActions} isMobile />
         <SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} onClick={() => setDrawerOpen(true)} />
         <SidebarActionDrawer
           open={drawerOpen}
@@ -200,18 +239,68 @@ export function SidebarFooter({ workspaceId, currentUser }: SidebarFooterProps) 
           description="Choose an account action."
           header={<SidebarFooterHeader avatarSrc={avatarSrc} currentUser={currentUser} />}
         />
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <SidebarCreateButton actions={createActions} isMobile={false} />
+      <SidebarActionMenu
+        actions={menuActions}
+        ariaLabel="Account menu"
+        side="top"
+        align="start"
+        contentClassName="w-56"
+        trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} />}
+      />
+    </div>
+  )
+}
+
+/**
+ * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
+ * every stream flavor (scratchpad variants + channel). Uses a bottom drawer on
+ * mobile and a dropdown on desktop, mirroring the account menu beneath it.
+ * Top-level per INV-18.
+ */
+function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem[]; isMobile: boolean }) {
+  const [open, setOpen] = useState(false)
+
+  const trigger = (
+    <button
+      type="button"
+      className="flex w-full items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={isMobile ? () => setOpen(true) : undefined}
+    >
+      <Plus className="h-4 w-4" />
+      <span>New</span>
+    </button>
+  )
+
+  if (isMobile) {
+    return (
+      <>
+        {trigger}
+        <SidebarActionDrawer
+          open={open}
+          onOpenChange={setOpen}
+          actions={actions}
+          title="Create"
+          description="Start a new stream."
+        />
       </>
     )
   }
 
   return (
     <SidebarActionMenu
-      actions={menuActions}
-      ariaLabel="Account menu"
+      actions={actions}
+      ariaLabel="Create stream"
       side="top"
       align="start"
       contentClassName="w-56"
-      trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} />}
+      trigger={trigger}
     />
   )
 }

@@ -2,12 +2,19 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { SidebarConfigService } from "./service"
 import { HttpError } from "../../lib/errors"
-import { SIDEBAR_SECTION_KEYS, SIDEBAR_TYPE_SECTIONS, SIDEBAR_BASE_PRESETS, SIDEBAR_QUICK_LINKS } from "@threa/types"
+import {
+  SIDEBAR_SECTION_KEYS,
+  SIDEBAR_TYPE_SECTIONS,
+  SIDEBAR_BASE_PRESETS,
+  SIDEBAR_QUICK_LINKS,
+  SIDEBAR_QUICK_LINK_VISIBILITIES,
+} from "@threa/types"
 
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("smart"), bucket: z.enum(SIDEBAR_SECTION_KEYS) }),
   z.object({ kind: z.literal("type"), streamType: z.enum(SIDEBAR_TYPE_SECTIONS) }),
   z.object({ kind: z.literal("label"), labelId: z.string().min(1).max(64) }),
+  z.object({ kind: z.literal("quicklinks") }),
 ])
 
 const sidebarSectionSchema = z.object({
@@ -15,16 +22,21 @@ const sidebarSectionSchema = z.object({
   spec: sidebarSectionSpecSchema,
 })
 
+// `visibility` is the current tri-state; `enabled` is the pre-v2 boolean an
+// older client may still send. Both are optional so either shape validates; the
+// service's normalizeSidebarConfig collapses them to a canonical visibility.
 const sidebarQuickLinkSchema = z.object({
   key: z.enum(SIDEBAR_QUICK_LINKS),
-  enabled: z.boolean(),
+  visibility: z.enum(SIDEBAR_QUICK_LINK_VISIBILITIES).optional(),
+  enabled: z.boolean().optional(),
 })
 
 // The PATCH body is the full config document — it replaces the stored layout.
-// quickLinks is optional + defaulted so a client predating the field (an
-// in-flight request during a backend-first rollout) still validates; the
-// service normalizes the (possibly empty) list to the full set on write.
+// version + quickLinks are optional/defaulted so a client predating either field
+// (an in-flight request during a backend-first rollout) still validates; the
+// service normalizes (version bump, full quick-link set) on write.
 const updateSidebarConfigSchema = z.object({
+  version: z.number().int().optional(),
   basePreset: z.enum(SIDEBAR_BASE_PRESETS),
   sections: z.array(sidebarSectionSchema).max(50),
   quickLinks: z.array(sidebarQuickLinkSchema).max(SIDEBAR_QUICK_LINKS.length).optional().default([]),

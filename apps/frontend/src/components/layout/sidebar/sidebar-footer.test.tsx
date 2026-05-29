@@ -82,6 +82,8 @@ describe("SidebarFooter", () => {
     renderWithRouter(
       <SidebarFooter
         workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
         currentUser={{
           id: "user_1",
           workspaceId: "workspace_1",
@@ -121,6 +123,8 @@ describe("SidebarFooter", () => {
     renderWithRouter(
       <SidebarFooter
         workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
         currentUser={{
           id: "user_1",
           workspaceId: "workspace_1",

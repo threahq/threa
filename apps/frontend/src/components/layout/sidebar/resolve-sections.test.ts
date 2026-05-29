@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest"
-import { StreamTypes, Visibilities, ALL_SIDEBAR_CONFIG, SMART_SIDEBAR_CONFIG } from "@threa/types"
+import {
+  StreamTypes,
+  Visibilities,
+  ALL_SIDEBAR_CONFIG,
+  SMART_SIDEBAR_CONFIG,
+  SIDEBAR_CONFIG_VERSION,
+} from "@threa/types"
 import { resolveSections, type ResolveSectionsInput } from "./resolve-sections"
 import { labelSectionId } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"
@@ -48,12 +54,18 @@ function makeInput(
   return { virtualDmStreams: [], getUnreadCount: () => 0, streamIdsByLabel: new Map(), ...over }
 }
 
-/** Collapse the resolver output to a comparable shape: section id → item ids. */
+/**
+ * Collapse the resolver output to a comparable shape: section id → item ids.
+ * The quick-links block is a positional placeholder that draws no streams, so it
+ * is dropped here — these tests are about how streams partition into sections.
+ */
 function shape(over: Parameters<typeof makeInput>[0], preset = SMART_SIDEBAR_CONFIG) {
-  return resolveSections(preset, makeInput(over)).map((resolved) => ({
-    id: resolved.section.id,
-    items: resolved.items.map((item) => item.id),
-  }))
+  return resolveSections(preset, makeInput(over))
+    .filter((resolved) => resolved.section.spec.kind !== "quicklinks")
+    .map((resolved) => ({
+      id: resolved.section.id,
+      items: resolved.items.map((item) => item.id),
+    }))
 }
 
 function unreadFrom(unreadIds: Set<string>) {
@@ -143,6 +155,7 @@ describe("resolveSections — All preset", () => {
 
 describe("resolveSections — label sections", () => {
   const labelFirst = {
+    version: SIDEBAR_CONFIG_VERSION,
     basePreset: "smart" as const,
     sections: [
       { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
@@ -176,6 +189,7 @@ describe("resolveSections — label sections", () => {
 
   it("keeps a stream in the bucket above and drops it from the label section below", () => {
     const recentFirst = {
+      version: SIDEBAR_CONFIG_VERSION,
       basePreset: "smart" as const,
       sections: [
         { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
