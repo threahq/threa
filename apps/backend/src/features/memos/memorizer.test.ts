@@ -55,6 +55,7 @@ describe("memoSetSchema", () => {
     keyPoints: [],
     tags: ["ids"],
     sourceMessageIds: ["msg_1"],
+    continuesExistingMemo: null,
   }
 
   it("accepts a set of single-topic memos", () => {
@@ -78,6 +79,16 @@ describe("memoSetSchema", () => {
 
   it("rejects an unknown knowledge type", () => {
     const result = memoSetSchema.safeParse({ memos: [{ ...validMemo, knowledgeType: "gossip" }] })
+    expect(result.success).toBe(false)
+  })
+
+  it("accepts a 1-based link to an existing memo", () => {
+    const result = memoSetSchema.safeParse({ memos: [{ ...validMemo, continuesExistingMemo: 2 }] })
+    expect(result.success).toBe(true)
+  })
+
+  it("rejects a zero or negative link index", () => {
+    const result = memoSetSchema.safeParse({ memos: [{ ...validMemo, continuesExistingMemo: 0 }] })
     expect(result.success).toBe(false)
   })
 })

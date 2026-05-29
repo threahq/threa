@@ -4,7 +4,6 @@ import { COMPONENT_PATHS } from "../../lib/ai/config-resolver"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import type { Conversation } from "../conversations"
 import type { Memo } from "./repository"
-import type { KnowledgeType } from "@threa/types"
 import {
   conversationClassificationSchema,
   CLASSIFIER_CONVERSATION_SYSTEM_PROMPT,
@@ -27,7 +26,6 @@ export interface ClassifierContext {
  */
 export interface ConversationClassification {
   isKnowledgeWorthy: boolean
-  knowledgeType: KnowledgeType | null
   shouldReviseExisting: boolean
   revisionReason: string | null
   confidence: number
@@ -92,7 +90,6 @@ export class MemoClassifier {
 
     return {
       isKnowledgeWorthy: value.isKnowledgeWorthy,
-      knowledgeType: value.knowledgeType ?? null,
       shouldReviseExisting: existingMemos.length > 0 ? (value.shouldReviseExisting ?? false) : false,
       revisionReason: value.revisionReason ?? null,
       confidence: value.confidence ?? 0.5,

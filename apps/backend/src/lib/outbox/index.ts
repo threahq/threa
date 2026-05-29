@@ -40,7 +40,6 @@ export {
   type ConversationCreatedOutboxPayload,
   type ConversationUpdatedOutboxPayload,
   type MemoCreatedOutboxPayload,
-  type MemoRevisedOutboxPayload,
   type CommandDispatchedOutboxPayload,
   type CommandCompletedOutboxPayload,
   type CommandFailedOutboxPayload,

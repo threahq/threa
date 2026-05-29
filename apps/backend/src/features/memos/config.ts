@@ -155,15 +155,14 @@ export function resolveMemoSearchMode(mode: MemoSearchMode = DEFAULT_MEMO_SEARCH
  */
 export const conversationClassificationSchema = z.object({
   isKnowledgeWorthy: z.boolean().describe("Whether this conversation contains knowledge worth preserving"),
-  knowledgeType: z
-    .enum(KNOWLEDGE_TYPES)
+  shouldReviseExisting: z
+    .boolean()
     .nullable()
-    .describe(`Primary type of knowledge if worthy: ${KNOWLEDGE_TYPES.map((t) => `"${t}"`).join(" | ")}`),
-  shouldReviseExisting: z.boolean().nullable().describe("If a memo exists, whether it should be revised"),
+    .describe("If memos already exist, whether the conversation adds new or changed knowledge worth memorizing"),
   revisionReason: z
     .string()
     .nullable()
-    .describe("Why the existing memo should be revised (if shouldReviseExisting is true)"),
+    .describe("What is new or changed relative to the existing memos (if shouldReviseExisting is true)"),
   confidence: z.number().min(0).max(1).nullable().describe("Confidence in this classification (0.0 to 1.0)"),
 })
 
@@ -190,6 +189,14 @@ export const memoItemSchema = z.object({
     .describe("Up to 3 supporting facts; leave empty when the abstract already stands alone"),
   tags: z.array(z.string()).max(5).describe("Up to 5 relevant tags for categorization"),
   sourceMessageIds: z.array(z.string()).describe("IDs of the messages this specific memo draws from"),
+  continuesExistingMemo: z
+    .number()
+    .int()
+    .positive()
+    .nullable()
+    .describe(
+      "If this memo updates or directly follows on from one of the existing memos listed in the prompt (e.g. a decision that changed), that memo's 1-based number. This records a LINK between them — it does NOT delete the old memo. Null if this memo is unrelated to the existing ones or there are none."
+    ),
 })
 
 export type MemoItemOutput = z.infer<typeof memoItemSchema>
@@ -251,7 +258,7 @@ Message count: {{MESSAGE_COUNT}}
 export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memos for this conversation
 {{MEMOS}}
 
-Should this conversation's memos be regenerated based on the conversation above — e.g. new information was added, a conclusion changed, or a new topic emerged?`
+Does the conversation above contain new or changed knowledge not already captured by these memos — e.g. new information, a changed conclusion, or a new topic? If so, set shouldReviseExisting true.`
 
 // ============================================================================
 // Memorizer Prompts
@@ -294,12 +301,12 @@ export const MEMORIZER_CONVERSATION_PROMPT = `Extract the memos worth rememberin
 
 Return one memo per distinct topic worth remembering, each terse and self-contained. Most conversations yield one or two; return fewer rather than padding, and return none if nothing here is worth keeping. For each memo, set sourceMessageIds to only the messages that topic draws from.`
 
-export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos but has gained new content. Regenerate the complete set of memos for it from scratch, using the existing memos only to keep titles and vocabulary stable.
+export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. Capture only what is NEW or has CHANGED since them. Do NOT re-create memos for topics the existing memos already cover unchanged.
 
 ## Memory Context (prior memos for vocabulary consistency)
 {{MEMORY_CONTEXT}}
 
-## Existing Memos for this conversation
+## Existing Memos for this conversation (numbered)
 {{EXISTING_MEMOS}}
 
 ## Updated Conversation
@@ -307,7 +314,7 @@ export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos bu
 
 {{EXISTING_TAGS_SECTION}}
 
-Produce the memos that should now represent this conversation: one per distinct topic worth remembering, each terse and self-contained. Carry forward still-valid knowledge, fold in what changed, and drop anything no longer worth keeping. For each memo, set sourceMessageIds to only the messages that topic draws from.`
+Emit one memo per genuinely new or changed topic, each terse and single-topic. If a memo updates or directly follows on from one of the numbered existing memos (e.g. a decision that changed, or a refinement of the same topic), set continuesExistingMemo to that memo's number — this records a link, it does not delete the old memo. If a memo is unrelated to the existing ones, leave continuesExistingMemo null. Return no memos if nothing new or changed is worth remembering. For each memo, set sourceMessageIds to only the messages that topic draws from.`
 
 export const MEMORIZER_EXISTING_TAGS_TEMPLATE = `## Existing Tags in Workspace
 Prefer these tags when applicable, but create new ones if needed:

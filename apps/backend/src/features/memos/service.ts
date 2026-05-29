@@ -22,7 +22,8 @@ const MIN_CONVERSATION_MESSAGES = 1
 export interface ProcessResult {
   processed: number
   memosCreated: number
-  memosRevised: number
+  /** Subset of created memos that link to (continue/update) an existing memo. */
+  memosLinked: number
 }
 
 /** Data prepared for memo creation (before DB insert) */
@@ -41,25 +42,19 @@ interface MemoToCreate {
   tags: string[]
   status: import("@threa/types").MemoStatus
   version?: number
+  /** Non-destructive link to an existing memo this one continues/updates. */
+  parentMemoId?: string
   embedding: number[]
 }
 
 /** Outbox event to insert after memo creation */
 interface OutboxEvent {
-  eventType: "memo:created" | "memo:revised"
+  eventType: "memo:created"
   payload: {
     workspaceId: string
     memoId: string
-    previousMemoId?: string
     memo: import("@threa/types").Memo
-    revisionReason?: string
   }
-}
-
-/** Memo supersession to perform */
-interface MemoSupersession {
-  memoId: string
-  reason: string
 }
 
 /** Interface for memo service implementations */
@@ -181,17 +176,16 @@ export class MemoService implements MemoServiceLike {
     })
 
     if (!fetchedData) {
-      return { processed: 0, memosCreated: 0, memosRevised: 0 }
+      return { processed: 0, memosCreated: 0, memosLinked: 0 }
     }
 
     // Phase 2: AI processing (no connection held, can take seconds/minutes)
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
     const memosToCreate: MemoToCreate[] = []
     const outboxEvents: OutboxEvent[] = []
-    const supersessions: MemoSupersession[] = []
     const deferredItemIds = new Set<string>()
     let memosCreated = 0
-    let memosRevised = 0
+    let memosLinked = 0
     let itemsFailed = 0
 
     // Process conversation items
@@ -279,11 +273,11 @@ export class MemoService implements MemoServiceLike {
         }
 
         const isRevision = existingMemos.length > 0
-        const revisionReason = classification.revisionReason ?? "Content updated"
 
-        // One conversation yields a set of single-topic memos. On revision we
-        // regenerate the whole set (existing memos passed as context for stable
-        // vocabulary) and supersede the prior set below.
+        // A conversation yields a set of single-topic memos. On revision the
+        // memorizer sees the existing memos and emits only what is new or changed,
+        // optionally linking a memo to the one it continues (non-destructive — the
+        // linked memo stays active; supersession is a later read-time/agent call).
         const contents = isRevision
           ? await this.memorizer.reviseMemo(formattedMessages, {
               memoryContext,
@@ -302,28 +296,21 @@ export class MemoService implements MemoServiceLike {
             })
 
         if (contents.length === 0) {
-          // Nothing worth keeping. On revision, leave the existing set untouched.
           logger.info({ conversationId: conversation.id, isRevision }, "Memorizer returned no memos")
           continue
         }
 
-        if (isRevision) {
-          for (const old of existingMemos) {
-            supersessions.push({ memoId: old.id, reason: revisionReason })
-          }
-        }
+        // Embed all abstracts in one batched call rather than per memo (INV-35/37).
+        const embeddings = await this.embeddingService.embedBatch(
+          contents.map((c) => c.abstract),
+          { workspaceId, functionId: "memo-embedding" }
+        )
 
         for (let i = 0; i < contents.length; i++) {
           const content = contents[i]
-          const embedding = await this.embeddingService.embed(content.abstract, {
-            workspaceId,
-            functionId: "memo-embedding",
-          })
-
-          // Pair each regenerated memo with a superseded predecessor (by position)
-          // so revisions carry the revised signal and version lineage; surplus
-          // regenerated memos are reported as newly created.
-          const predecessor = isRevision ? existingMemos[i] : undefined
+          // A linked memo continues an existing one: carry its version forward so the
+          // chain reads as a progression, even though both stay active.
+          const parent = content.parentMemoId ? existingMemos.find((m) => m.id === content.parentMemoId) : undefined
 
           const memo: MemoToCreate = {
             id: memoId(),
@@ -338,35 +325,22 @@ export class MemoService implements MemoServiceLike {
             knowledgeType: content.knowledgeType,
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
-            version: predecessor ? predecessor.version + 1 : undefined,
-            embedding,
+            version: parent ? parent.version + 1 : undefined,
+            parentMemoId: parent?.id,
+            embedding: embeddings[i],
           }
 
           memosToCreate.push(memo)
-
-          if (predecessor) {
-            outboxEvents.push({
-              eventType: "memo:revised",
-              payload: {
-                workspaceId,
-                memoId: memo.id,
-                previousMemoId: predecessor.id,
-                memo: this.toWireMemoFromData(memo),
-                revisionReason,
-              },
-            })
-            memosRevised++
-          } else {
-            outboxEvents.push({
-              eventType: "memo:created",
-              payload: {
-                workspaceId,
-                memoId: memo.id,
-                memo: this.toWireMemoFromData(memo),
-              },
-            })
-            memosCreated++
-          }
+          outboxEvents.push({
+            eventType: "memo:created",
+            payload: {
+              workspaceId,
+              memoId: memo.id,
+              memo: this.toWireMemoFromData(memo),
+            },
+          })
+          memosCreated++
+          if (parent) memosLinked++
         }
 
         logger.info(
@@ -391,11 +365,6 @@ export class MemoService implements MemoServiceLike {
 
     // Phase 3: Save all results in ONE transaction (fast, ~200ms instead of 10-50 seconds)
     await withTransaction(this.pool, async (client) => {
-      // Perform supersessions
-      for (const supersession of supersessions) {
-        await MemoRepository.supersede(client, supersession.memoId, supersession.reason)
-      }
-
       // Insert all memos
       for (const memoData of memosToCreate) {
         const { embedding, ...memoFields } = memoData
@@ -425,11 +394,11 @@ export class MemoService implements MemoServiceLike {
 
     const processed = fetchedData.pending.length - deferredItemIds.size
     logger.info(
-      { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated, memosRevised },
+      { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated, memosLinked },
       "Memo batch processed"
     )
 
-    return { processed, memosCreated, memosRevised }
+    return { processed, memosCreated, memosLinked }
   }
 
   /** Convert MemoToCreate data to wire format (before DB insert, so use current timestamp) */
@@ -448,7 +417,7 @@ export class MemoService implements MemoServiceLike {
       participantIds: memoData.participantIds,
       knowledgeType: memoData.knowledgeType,
       tags: memoData.tags,
-      parentMemoId: null,
+      parentMemoId: memoData.parentMemoId ?? null,
       status: memoData.status,
       version: memoData.version ?? 1,
       revisionReason: null,
