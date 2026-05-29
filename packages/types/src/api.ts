@@ -396,6 +396,59 @@ export interface E2eKeyRollInput {
   keyGeneration: number
   wraps: E2eKeyWrapInput[]
 }
+
+// ============================================================================
+// Enclave invoke contract (backend forwarder ↔ enclave `/invoke`)
+// ============================================================================
+
+/** Message framing for SSK-sealed content on the enclave wire (mirrors @threa/crypto `StreamEnvelope`). */
+export interface EnclaveStreamEnvelope {
+  v: number
+  keyGeneration: number
+  iv: string
+  aad: string
+}
+
+/** One SSK-sealed message: base64 ciphertext + its envelope. */
+export interface EnclaveSealedMessage {
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+}
+
+/** An SSK wrap addressed to the enclave's EIK, so it can recover that generation's key. */
+export interface EnclaveSskWrap {
+  keyGeneration: number
+  wrapEnc: string
+  wrapCt: string
+}
+
+/**
+ * Body the backend forwards to a live enclave's `POST /invoke`. The backend
+ * never decrypts: it ships ciphertext + the wraps addressed to that EIK, and
+ * the enclave unwraps, opens, calls the LLM, and seals the reply. `system` is
+ * the persona's (non-secret) prompt; `reply` carries the server-minted message
+ * id + Ariadne's sender id the reply must be sealed/bound to.
+ */
+export interface EnclaveInvokeRequest {
+  streamId: string
+  wraps: EnclaveSskWrap[]
+  history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
+  prompt: EnclaveSealedMessage
+  system: string
+  model: string
+  temperature?: number
+  maxTokens?: number
+  reply: { keyGeneration: number; messageId: string; senderId: string }
+}
+
+/** The enclave's reply: the sealed message plus non-secret model metadata. */
+export interface EnclaveInvokeResponse {
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+  model: string
+  usage?: { promptTokens?: number; completionTokens?: number }
+}
+
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown
 
 /**

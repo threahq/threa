@@ -120,6 +120,7 @@ export {
   EMPTY_AGENT_ID,
   BUILT_IN_AGENTS,
   getBuiltInAgentConfig,
+  isE2eCapablePersona,
   listVisibleBuiltInAgentConfigs,
   applyBuiltInAgentPatch,
   builtInAgentConfigPatchSchema,

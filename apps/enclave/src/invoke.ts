@@ -8,8 +8,8 @@ import {
   openMessageAsString,
   sealMessage,
   unwrapStreamKey,
-  type StreamEnvelope,
 } from "@threa/crypto"
+import type { EnclaveInvokeRequest, EnclaveInvokeResponse } from "@threa/types"
 import type { EnclaveKeyPair } from "./keystore"
 import type { ChatCompletionFn, ChatMessage } from "./llm"
 
@@ -70,16 +70,9 @@ export const invokeRequestSchema = z.object({
   }),
 })
 
-export type InvokeRequest = z.infer<typeof invokeRequestSchema>
-
-export interface InvokeResponse {
-  /** Base64 AES-GCM ciphertext of the reply, sealed under the current SSK. */
-  ciphertext: string
-  envelope: StreamEnvelope
-  /** Non-secret metadata for observability on the backend side. */
-  model: string
-  usage?: { promptTokens?: number; completionTokens?: number }
-}
+// The zod-inferred shape is the runtime guard; the canonical contract lives in
+// @threa/types so the backend forwarder builds exactly what we validate here.
+export type InvokeRequest = EnclaveInvokeRequest
 
 export interface InvokeDeps {
   keyPair: EnclaveKeyPair
@@ -90,7 +83,7 @@ export interface InvokeDeps {
  * Pure core of `/invoke` (no Express) so it can be loopback-tested: wrap an SSK
  * to a generated EIK, seal a prompt, run this, and confirm the reply opens.
  */
-export async function handleInvoke(deps: InvokeDeps, request: InvokeRequest): Promise<InvokeResponse> {
+export async function handleInvoke(deps: InvokeDeps, request: EnclaveInvokeRequest): Promise<EnclaveInvokeResponse> {
   const { keyPair } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
@@ -186,7 +179,8 @@ export function createInvokeHandler(deps: InvokeDeps) {
       return
     }
     try {
-      const result = await handleInvoke(deps, parsed.data)
+      // zod has structurally validated the body; the contract type is canonical.
+      const result = await handleInvoke(deps, parsed.data as EnclaveInvokeRequest)
       res.json(result)
     } catch (err) {
       if (err instanceof InvokeError) {

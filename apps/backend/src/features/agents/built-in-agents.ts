@@ -24,6 +24,10 @@ export const builtInAgentConfigSchema = z.object({
   managedBy: z.literal("system"),
   status: agentStatusSchema,
   visibility: agentVisibilitySchema,
+  // Whether this persona may run inside an E2E scratchpad — served by the
+  // enclave, which decrypts in isolation. Only e2e-capable personas can be the
+  // enclave actor; the dispatch path refuses to forward to a non-capable one.
+  e2eCapable: z.boolean(),
 })
 
 export const builtInAgentConfigPatchSchema = builtInAgentConfigSchema
@@ -87,6 +91,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     managedBy: "system",
     status: "active",
     visibility: "visible",
+    e2eCapable: true,
   },
   [EMPTY_AGENT_ID]: {
     id: EMPTY_AGENT_ID,
@@ -103,6 +108,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
     managedBy: "system",
     status: "active",
     visibility: "internal",
+    e2eCapable: false,
   },
 } as const satisfies Record<string, BuiltInAgentConfig>
 
@@ -113,6 +119,15 @@ const BUILT_IN_AGENT_CONFIGS: Record<string, BuiltInAgentConfig> = BUILT_IN_AGEN
  */
 export function getBuiltInAgentConfig(agentId: string): BuiltInAgentConfig | null {
   return BUILT_IN_AGENT_CONFIGS[agentId] ?? null
+}
+
+/**
+ * Whether the persona behind `agentId` may serve an E2E scratchpad. Only
+ * built-in personas can today (the enclave runs Ariadne); a non-built-in or
+ * unknown id is never e2e-capable. Used by the enclave invite/dispatch gate.
+ */
+export function isE2eCapablePersona(agentId: string): boolean {
+  return BUILT_IN_AGENT_CONFIGS[agentId]?.e2eCapable === true
 }
 
 /**
