@@ -7,6 +7,7 @@ import type {
   Memo as WireMemo,
   StreamEvent as WireStreamEvent,
   UserPreferences,
+  SidebarConfig,
   LastMessagePreview,
   Bot as WireBot,
   BotInvocationCapability,
@@ -58,6 +59,7 @@ export type OutboxEventType =
   | "agent_session:failed"
   | "agent_session:deleted"
   | "user_preferences:updated"
+  | "sidebar_config:updated"
   | "budget:alert"
   | "stream:member_joined"
   | "stream:member_added"
@@ -429,6 +431,12 @@ export interface UserPreferencesUpdatedOutboxPayload extends WorkspaceScopedPayl
   preferences: UserPreferences
 }
 
+// Sidebar config event payload (author-scoped - only visible to the user who updated)
+export interface SidebarConfigUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  authorId: string
+  sidebarConfig: SidebarConfig
+}
+
 // Invitation event payloads
 export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
   invitationId: string
@@ -682,6 +690,7 @@ export interface OutboxEventPayloadMap {
   "agent_session:failed": AgentSessionFailedOutboxPayload
   "agent_session:deleted": AgentSessionDeletedOutboxPayload
   "user_preferences:updated": UserPreferencesUpdatedOutboxPayload
+  "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
   "budget:alert": BudgetAlertOutboxPayload
   "invitation:sent": InvitationSentOutboxPayload
   "invitation:link-created": InvitationLinkCreatedOutboxPayload
@@ -783,6 +792,7 @@ export type AuthorScopedEventType =
   | "stream:read"
   | "stream:read_all"
   | "user_preferences:updated"
+  | "sidebar_config:updated"
   | "link_preview:dismissed"
 
 const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
@@ -790,6 +800,7 @@ const AUTHOR_SCOPED_EVENTS: AuthorScopedEventType[] = [
   "stream:read_all",
   "link_preview:dismissed",
   "user_preferences:updated",
+  "sidebar_config:updated",
 ]
 
 /**

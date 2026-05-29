@@ -29,6 +29,8 @@ export {
 
 export { useEvents, eventKeys } from "./use-events"
 
+export { useSidebarConfig } from "./use-sidebar-config"
+
 export { useDraftScratchpads } from "./use-draft-scratchpads"
 
 export {

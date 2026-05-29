@@ -14,6 +14,7 @@ import {
   type CachedLabelAssignment,
   type CachedUnreadState,
   type CachedUserPreferences,
+  type CachedSidebarConfig,
   type CachedWorkspaceMetadata,
 } from "@/db"
 
@@ -41,6 +42,7 @@ const cache = {
   labelAssignments: new Map<string, CachedLabelAssignment[]>(),
   unreadState: new Map<string, CachedUnreadState>(),
   userPreferences: new Map<string, CachedUserPreferences>(),
+  sidebarConfig: new Map<string, CachedSidebarConfig>(),
   metadata: new Map<string, CachedWorkspaceMetadata>(),
 }
 
@@ -115,6 +117,7 @@ export function resetWorkspaceStoreCache(): void {
   cache.labelAssignments.clear()
   cache.unreadState.clear()
   cache.userPreferences.clear()
+  cache.sidebarConfig.clear()
   cache.metadata.clear()
   cacheVersion.clear()
   for (const workspaceId of workspaceIds) {
@@ -148,6 +151,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     labelAssignments,
     unreadState,
     prefs,
+    sidebarConfig,
     metadata,
   ] = await Promise.all([
     db.workspaces.get(workspaceId),
@@ -162,6 +166,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
     db.unreadState.get(workspaceId),
     db.userPreferences.get(workspaceId),
+    db.sidebarConfigs.get(workspaceId),
     db.workspaceMetadata.get(workspaceId),
   ])
 
@@ -184,6 +189,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     labelAssignments,
     unreadState,
     userPreferences: prefs,
+    sidebarConfig,
     metadata,
   })
 
@@ -209,6 +215,7 @@ export function seedWorkspaceCache(
     labelAssignments?: CachedLabelAssignment[]
     unreadState?: CachedUnreadState
     userPreferences?: CachedUserPreferences
+    sidebarConfig?: CachedSidebarConfig
     metadata?: CachedWorkspaceMetadata
   }
 ): void {
@@ -226,6 +233,7 @@ export function seedWorkspaceCache(
   if (data.labelAssignments) cache.labelAssignments.set(workspaceId, data.labelAssignments)
   if (data.unreadState) cache.unreadState.set(workspaceId, data.unreadState)
   if (data.userPreferences) cache.userPreferences.set(workspaceId, data.userPreferences)
+  if (data.sidebarConfig) cache.sidebarConfig.set(workspaceId, data.sidebarConfig)
   if (data.metadata) cache.metadata.set(workspaceId, data.metadata)
   emitWorkspaceCacheChange(workspaceId)
 }
@@ -369,6 +377,16 @@ export function useWorkspaceUserPreferences(workspaceId: string | undefined): Ca
   const cached = workspaceId ? cache.userPreferences.get(workspaceId) : undefined
   return useSingletonStoreHook(
     () => (workspaceId ? db.userPreferences.get(workspaceId) : undefined),
+    [workspaceId],
+    cached
+  )
+}
+
+export function useWorkspaceSidebarConfig(workspaceId: string | undefined): CachedSidebarConfig | undefined {
+  useWorkspaceCacheSignal(workspaceId)
+  const cached = workspaceId ? cache.sidebarConfig.get(workspaceId) : undefined
+  return useSingletonStoreHook(
+    () => (workspaceId ? db.sidebarConfigs.get(workspaceId) : undefined),
     [workspaceId],
     cached
   )

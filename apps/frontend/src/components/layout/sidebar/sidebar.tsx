@@ -11,6 +11,7 @@ import {
   useDraftScratchpads,
   useLiveSavedCount,
   useLiveScheduledCount,
+  useSidebarConfig,
   useUnreadCounts,
 } from "@/hooks"
 import { useSyncStatus } from "@/sync/sync-status"
@@ -32,7 +33,6 @@ import { SidebarQuickLinks } from "./quick-links"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
-import { presetForViewMode } from "./sidebar-config"
 import { resolveSections } from "./resolve-sections"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream } from "./utils"
@@ -46,15 +46,9 @@ interface SidebarProps {
 
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { phase } = useCoordinatedLoading()
-  const {
-    viewMode,
-    setViewMode,
-    getSectionState,
-    toggleSectionState,
-    setSidebarHeight,
-    setScrollContainerOffset,
-    collapseOnMobile,
-  } = useSidebar()
+  const { getSectionState, toggleSectionState, setSidebarHeight, setScrollContainerOffset, collapseOnMobile } =
+    useSidebar()
+  const { config: sidebarConfig, setBasePreset } = useSidebarConfig(workspaceId)
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
@@ -188,10 +182,10 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const hasUserStreams = hasUserStreamsFromStreams || virtualDmStreams.length > 0
 
-  // Resolve the active view's preset config into ordered, sorted, capped lists.
+  // Resolve the persisted sidebar config into ordered, sorted, capped lists.
   const resolvedSections = useMemo(
-    () => resolveSections(presetForViewMode(viewMode), { processedStreams, virtualDmStreams, getUnreadCount }),
-    [viewMode, processedStreams, virtualDmStreams, getUnreadCount]
+    () => resolveSections(sidebarConfig, { processedStreams, virtualDmStreams, getUnreadCount }),
+    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount]
   )
 
   // Track sidebar and scroll container dimensions for position calculations
@@ -317,8 +311,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       header={
         <SidebarHeader
           workspaceName={workspace?.name ?? ""}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
+          basePreset={sidebarConfig.basePreset}
+          onBasePresetChange={setBasePreset}
           hideViewToggle={!hasUserStreams}
         />
       }

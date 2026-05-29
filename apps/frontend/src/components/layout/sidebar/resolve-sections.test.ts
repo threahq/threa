@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { StreamTypes, Visibilities, ALL_SIDEBAR_CONFIG, SMART_SIDEBAR_CONFIG } from "@threa/types"
 import { resolveSections, type ResolveSectionsInput } from "./resolve-sections"
-import { ALL_PRESET, SMART_PRESET } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"
 
 interface ItemOverrides {
@@ -42,7 +41,7 @@ function makeItem(overrides: ItemOverrides): StreamItemData {
 }
 
 /** Collapse the resolver output to a comparable shape: section id → item ids. */
-function shape(input: ResolveSectionsInput, preset = SMART_PRESET) {
+function shape(input: ResolveSectionsInput, preset = SMART_SIDEBAR_CONFIG) {
   return resolveSections(preset, input).map((resolved) => ({
     id: resolved.section.id,
     items: resolved.items.map((item) => item.id),
@@ -77,7 +76,7 @@ describe("resolveSections — Smart preset", () => {
     const processedStreams = Array.from({ length: 13 }, (_, i) =>
       makeItem({ id: `imp_${i}`, section: "important", urgency: "mentions", activity: i })
     )
-    const resolved = resolveSections(SMART_PRESET, {
+    const resolved = resolveSections(SMART_SIDEBAR_CONFIG, {
       processedStreams,
       virtualDmStreams: [],
       getUnreadCount: () => 1,
@@ -95,9 +94,11 @@ describe("resolveSections — Smart preset", () => {
       makeItem({ id: "r4", section: "recent", activity: 50 }),
     ]
     const getUnreadCount = unreadFrom(new Set(["u1", "u2"]))
-    const recent = resolveSections(SMART_PRESET, { processedStreams, virtualDmStreams: [], getUnreadCount }).find(
-      (r) => r.section.id === "recent"
-    )
+    const recent = resolveSections(SMART_SIDEBAR_CONFIG, {
+      processedStreams,
+      virtualDmStreams: [],
+      getUnreadCount,
+    }).find((r) => r.section.id === "recent")
     // 2 unreads + 3 reads = 5, dropping r4.
     expect(recent?.items.map((i) => i.id)).toEqual(["u1", "u2", "r1", "r2", "r3"])
   })
@@ -107,9 +108,11 @@ describe("resolveSections — Smart preset", () => {
       makeItem({ id: `u${i}`, section: "recent", activity: 100 - i })
     )
     const getUnreadCount = () => 1
-    const recent = resolveSections(SMART_PRESET, { processedStreams, virtualDmStreams: [], getUnreadCount }).find(
-      (r) => r.section.id === "recent"
-    )
+    const recent = resolveSections(SMART_SIDEBAR_CONFIG, {
+      processedStreams,
+      virtualDmStreams: [],
+      getUnreadCount,
+    }).find((r) => r.section.id === "recent")
     expect(recent?.items).toHaveLength(7)
   })
 })
@@ -127,7 +130,7 @@ describe("resolveSections — All preset", () => {
     ]
     const virtualDmStreams = [makeItem({ id: "vdm_1", type: StreamTypes.DM, activity: 0 })]
 
-    expect(shape({ processedStreams, virtualDmStreams, getUnreadCount: () => 0 }, ALL_PRESET)).toEqual([
+    expect(shape({ processedStreams, virtualDmStreams, getUnreadCount: () => 0 }, ALL_SIDEBAR_CONFIG)).toEqual([
       // Scratchpads by activity (most recent first).
       { id: "scratchpads", items: ["sp_1", "sp_2"] },
       // Channels alphabetically (no unreads to float).

@@ -1,0 +1,63 @@
+import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import type { PoolClient } from "pg"
+import { ALL_SIDEBAR_CONFIG, DEFAULT_SIDEBAR_CONFIG, type SidebarConfig } from "@threa/types"
+import { SidebarConfigService } from "./service"
+import { SidebarConfigRepository } from "./repository"
+import { OutboxRepository } from "../../lib/outbox"
+import * as dbModule from "../../db"
+
+const WORKSPACE_ID = "ws_1"
+const USER_ID = "usr_1"
+
+function setupService() {
+  // withTransaction invokes the callback with a fake client.
+  spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
+  return new SidebarConfigService({} as any)
+}
+
+describe("SidebarConfigService.getConfig", () => {
+  afterEach(() => mock.restore())
+
+  it("returns the stored config when the user has customized it", async () => {
+    const service = setupService()
+    spyOn(SidebarConfigRepository, "find").mockResolvedValue(ALL_SIDEBAR_CONFIG)
+
+    const config = await service.getConfig(WORKSPACE_ID, USER_ID)
+
+    expect(config).toEqual(ALL_SIDEBAR_CONFIG)
+  })
+
+  it("falls back to the default config when none is stored", async () => {
+    const service = setupService()
+    spyOn(SidebarConfigRepository, "find").mockResolvedValue(null)
+
+    const config = await service.getConfig(WORKSPACE_ID, USER_ID)
+
+    expect(config).toEqual(DEFAULT_SIDEBAR_CONFIG)
+  })
+})
+
+describe("SidebarConfigService.updateConfig", () => {
+  afterEach(() => mock.restore())
+
+  it("persists the config and emits an author-scoped sidebar_config:updated event", async () => {
+    const service = setupService()
+
+    const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
+    const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const next: SidebarConfig = {
+      basePreset: "all",
+      sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+    }
+    const result = await service.updateConfig(WORKSPACE_ID, USER_ID, next)
+
+    expect(result).toEqual(next)
+    expect(upsert).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, USER_ID, next)
+    expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "sidebar_config:updated", {
+      workspaceId: WORKSPACE_ID,
+      authorId: USER_ID,
+      sidebarConfig: next,
+    })
+  })
+})

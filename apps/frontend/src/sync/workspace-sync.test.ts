@@ -7,7 +7,7 @@ import {
   mergeReconnectWorkspaceBootstrap,
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
-import type { StreamBootstrap, WorkspaceBootstrap } from "@threa/types"
+import { DEFAULT_SIDEBAR_CONFIG, type StreamBootstrap, type WorkspaceBootstrap } from "@threa/types"
 import type { Socket } from "socket.io-client"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
@@ -37,6 +37,7 @@ function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBo
     activityCounts: {},
     unreadActivityCount: 0,
     mutedStreamIds: [],
+    sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId: "ws_1",
       userId: "user_1",
@@ -103,6 +104,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       db.bots.clear(),
       db.unreadState.clear(),
       db.userPreferences.clear(),
+      db.sidebarConfigs.clear(),
       db.workspaceMetadata.clear(),
     ])
   })
@@ -192,6 +194,25 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     // Socket-handler stream MUST survive — _cachedAt > fetchStartedAt
     expect(await db.streams.get("stream_socket")).toBeDefined()
+  })
+
+  it("persists the bootstrap sidebar config to IDB", async () => {
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        sidebarConfig: {
+          basePreset: "all",
+          sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+        },
+      }),
+      Date.now()
+    )
+
+    const stored = await db.sidebarConfigs.get("ws_1")
+    expect(stored?.config).toEqual({
+      basePreset: "all",
+      sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+    })
   })
 
   it("removes stale users not in bootstrap", async () => {

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
 import type { CreateStreamInput } from "@/api"
-import type { Stream, WorkspaceBootstrap } from "@threa/types"
+import { DEFAULT_SIDEBAR_CONFIG, type Stream, type WorkspaceBootstrap } from "@threa/types"
 import { workspaceKeys } from "./use-workspaces"
 import { useCreateStream } from "./use-streams"
 import * as syncEngineModule from "@/sync/sync-engine"
@@ -58,6 +58,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
     labelMemberships: [],
     labelAssignments: [],
     viewerPermissions: [],
+    sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId: "ws_1",
       userId: "member_1",

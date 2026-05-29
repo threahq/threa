@@ -10,6 +10,7 @@ export type {
   CachedBot,
   CachedUnreadState,
   CachedUserPreferences,
+  CachedSidebarConfig,
   CachedWorkspaceMetadata,
   PendingOperation,
   PendingMessage,
