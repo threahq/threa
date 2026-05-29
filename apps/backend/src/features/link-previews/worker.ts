@@ -275,8 +275,12 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
     // </head> alone is not a safe stop signal — only stop once we've actually seen a metadata
     // signal. Pages that never provide one are bounded by MAX_HTML_BYTES. Scanned per-chunk
     // (not on the trimmed tail) so a signal isn't lost when a large chunk overflows the window.
+    // This is a best-effort early-stop gate, not a correctness gate: a missed signal only costs
+    // extra bytes (parseHtmlMeta runs on the full buffer regardless). The `name=…description`
+    // arm is anchored on the value's end so body attributes like `name="descriptionField"`
+    // don't flip the gate early and re-trigger the very </head> bug this guards against.
     const META_SIGNAL =
-      /<title[\s>]|og:title|og:image|og:description|twitter:title|twitter:description|name=["']?description/i
+      /<title[\s>]|og:title|twitter:title|og:image|twitter:image|og:description|twitter:description|name=["']?description["'\s>]/i
     let seenMeta = false
 
     try {
