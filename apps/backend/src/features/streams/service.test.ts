@@ -7,7 +7,10 @@ import { StreamEventRepository } from "./event-repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { MessageRepository } from "../messaging"
-import { E2eStreamsRepository, E2eStreamActorsRepository } from "../e2e-streams"
+import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
+import { EnclaveRuntimesRepository } from "../enclave-runtimes"
+import { BotRuntimeInstanceRepository } from "../bot-runtimes/repository"
+import { BotRepository } from "../public-api/bot-repository"
 import * as idModule from "../../lib/id"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -533,19 +536,25 @@ describe("StreamService.inviteActor", () => {
   const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
   const mockAddActor = spyOn(E2eStreamActorsRepository, "add")
   const mockFindByIdForWorkspace = spyOn(StreamRepository, "findByIdForWorkspace")
+  const mockListForStream = spyOn(E2eStreamActorsRepository, "listForStream")
+  const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
+  const mockFindBot = spyOn(BotRepository, "findById")
+  const mockFindLiveBiks = spyOn(BotRuntimeInstanceRepository, "findLiveWithKeyForBot")
 
   const updatedStream = {
     id: "stream_e2e",
     workspaceId: "ws_1",
     type: "scratchpad",
     e2eEnabled: true,
-    e2eActors: [{ kind: "enclave", keyId: null }],
+    e2eActors: [{ kind: "enclave", actorId: "enclave", keyId: null }],
   } as never
 
   const ownedE2eStream = {
     streamId: "stream_e2e",
     workspaceId: "ws_1",
     ownerUserId: "usr_owner",
+    ownerUserKeyId: "e2ek_owner",
+    currentKeyGeneration: 0,
   } as never
 
   beforeEach(() => {
@@ -554,32 +563,100 @@ describe("StreamService.inviteActor", () => {
     mockAddActor.mockReset().mockResolvedValue(true)
     mockFindByIdForWorkspace.mockReset().mockResolvedValue(updatedStream)
     mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
+    // Default: one enclave actor, no live key → keyRoll null. Tests opt in.
+    mockListForStream.mockReset().mockResolvedValue([{ kind: "enclave", actorId: "enclave", keyId: null }])
+    mockListLiveEiks.mockReset().mockResolvedValue([])
+    mockFindBot.mockReset().mockResolvedValue({ id: "bot_pi", archivedAt: null } as never)
+    mockFindLiveBiks.mockReset().mockResolvedValue([])
   })
 
-  test("adds the enclave actor and emits stream:updated", async () => {
+  test("pins the enclave sentinel id, emits stream:updated, and returns null keyRoll when no live key exists", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
 
     const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "enclave")
 
-    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "enclave", null)
+    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "enclave", "enclave", null)
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:updated", {
       workspaceId: "ws_1",
       streamId: "stream_e2e",
       stream: updatedStream,
     })
-    expect(result).toBe(updatedStream)
+    expect(result.stream).toBe(updatedStream)
+    expect(result.keyRoll).toBeNull()
   })
 
-  test("allows inviting the enclave when a bot is already present (multi-actor)", async () => {
+  test("returns a keyRoll wrapping the next generation to every live enclave EIK", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
-    // The bot occupies a different (workspace, stream, kind) slot, so the
-    // enclave insert still succeeds.
-    mockAddActor.mockResolvedValue(true)
+    mockListLiveEiks.mockResolvedValue([
+      { keyId: "eik_a", publicKey: new Uint8Array([1, 2, 3]) },
+      { keyId: "eik_b", publicKey: new Uint8Array([4, 5, 6]) },
+    ] as never)
 
     const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "enclave")
 
-    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "enclave", null)
-    expect(result).toBe(updatedStream)
+    expect(result.keyRoll).toEqual({
+      nextGeneration: 1,
+      recipients: [
+        { recipientKeyId: "eik_a", recipientKind: "enclave", publicKey: Buffer.from([1, 2, 3]).toString("base64") },
+        { recipientKeyId: "eik_b", recipientKind: "enclave", publicKey: Buffer.from([4, 5, 6]).toString("base64") },
+      ],
+    })
+  })
+
+  test("pins the bot by id and wraps to that bot's live BIKs (no active-actor guess)", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+    mockListForStream.mockResolvedValue([{ kind: "bot", actorId: "bot_pi", keyId: null }])
+    mockFindLiveBiks.mockResolvedValue([{ publicKey: "Ymlr", publicKeyId: "bik_1" }] as never)
+
+    const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_pi")
+
+    expect(mockFindBot).toHaveBeenCalledWith({}, "ws_1", "bot_pi")
+    expect(mockAddActor).toHaveBeenCalledWith({}, "ws_1", "stream_e2e", "bot", "bot_pi", null)
+    expect(mockFindLiveBiks).toHaveBeenCalledWith({}, expect.objectContaining({ botId: "bot_pi" }))
+    expect(result.keyRoll).toEqual({
+      nextGeneration: 1,
+      recipients: [{ recipientKeyId: "bik_1", recipientKind: "bot", publicKey: "Ymlr" }],
+    })
+  })
+
+  test("wraps to every invited bot's BIKs when a scratchpad holds multiple bots", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+    mockListForStream.mockResolvedValue([
+      { kind: "bot", actorId: "bot_a", keyId: null },
+      { kind: "bot", actorId: "bot_b", keyId: null },
+    ])
+    mockFindLiveBiks.mockImplementation((_db, params: { botId: string }) =>
+      Promise.resolve(
+        params.botId === "bot_a"
+          ? ([{ publicKey: "QQ", publicKeyId: "bik_a" }] as never)
+          : ([{ publicKey: "Qg", publicKeyId: "bik_b" }] as never)
+      )
+    )
+
+    const result = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_b")
+
+    expect(result.keyRoll?.recipients.map((r) => r.recipientKeyId).sort()).toEqual(["bik_a", "bik_b"])
+  })
+
+  test("throws 404 when the named bot does not exist", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+    mockFindBot.mockResolvedValue(null)
+
+    const error = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot", "bot_ghost").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(404)
+    expect((error as HttpError).code).toBe("BOT_NOT_FOUND")
+    expect(mockAddActor).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when inviting a bot without a bot id", async () => {
+    mockGetByStreamId.mockResolvedValue(ownedE2eStream)
+
+    const error = await service.inviteActor("ws_1", "stream_e2e", "usr_owner", "bot").catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("ACTOR_ID_REQUIRED")
+    expect(mockAddActor).not.toHaveBeenCalled()
   })
 
   test("throws 400 when the stream is not end-to-end encrypted", async () => {
@@ -606,7 +683,7 @@ describe("StreamService.inviteActor", () => {
     expect(mockInsertOutbox).not.toHaveBeenCalled()
   })
 
-  test("throws 409 when that actor kind is already invited", async () => {
+  test("throws 409 when that actor is already invited", async () => {
     mockGetByStreamId.mockResolvedValue(ownedE2eStream)
     mockAddActor.mockResolvedValue(false)
 
@@ -616,6 +693,107 @@ describe("StreamService.inviteActor", () => {
     expect((error as HttpError).status).toBe(409)
     expect((error as HttpError).code).toBe("ACTOR_ALREADY_INVITED")
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamService.rollStreamKey", () => {
+  let service: StreamService
+
+  const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
+  const mockInsertManyWraps = spyOn(StreamE2eKeyWrapsRepository, "insertMany")
+  const mockBumpGeneration = spyOn(E2eStreamsRepository, "bumpKeyGeneration")
+
+  // A transaction client that answers the advisory-lock query rollStreamKey
+  // issues before any repo call.
+  const lockClient = { query: mock(async () => ({ rows: [], rowCount: 0 })) } as never
+
+  const ownedStream = {
+    streamId: "stream_e2e",
+    workspaceId: "ws_1",
+    ownerUserId: "usr_owner",
+    ownerUserKeyId: "e2ek_owner",
+    currentKeyGeneration: 0,
+  } as never
+
+  const ownerWrap = { recipientKeyId: "e2ek_owner", recipientKind: "user", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }
+  const botWrap = { recipientKeyId: "bik_1", recipientKind: "bot", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    spyOn(db, "withTransaction").mockImplementation((_pool, fn) => fn(lockClient))
+    mockGetByStreamId.mockReset().mockResolvedValue(ownedStream)
+    mockInsertManyWraps.mockReset().mockResolvedValue(undefined as never)
+    mockBumpGeneration.mockReset().mockResolvedValue({
+      streamId: "stream_e2e",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_owner",
+      ownerUserKeyId: "e2ek_owner",
+      currentKeyGeneration: 1,
+    } as never)
+  })
+
+  // Restore the shared `withTransaction` stub (plain `{}` client) so the
+  // lock-client impl set above doesn't leak into later describes.
+  afterAll(() => {
+    spyOn(db, "withTransaction").mockImplementation((_pool, fn) => fn({} as PoolClient))
+  })
+
+  test("stores the wrap batch and bumps the generation atomically", async () => {
+    await service.rollStreamKey("ws_1", "stream_e2e", "usr_owner", {
+      keyGeneration: 1,
+      wraps: [ownerWrap, botWrap] as never,
+    })
+
+    expect(mockInsertManyWraps).toHaveBeenCalledWith(
+      lockClient,
+      expect.arrayContaining([expect.objectContaining({ keyGeneration: 1, recipientKeyId: "bik_1" })])
+    )
+    expect(mockBumpGeneration).toHaveBeenCalledWith(lockClient, {
+      workspaceId: "ws_1",
+      streamId: "stream_e2e",
+      toGeneration: 1,
+    })
+  })
+
+  test("throws 403 when the caller is not the owner", async () => {
+    const error = await service
+      .rollStreamKey("ws_1", "stream_e2e", "usr_intruder", { keyGeneration: 1, wraps: [ownerWrap] as never })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(403)
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+    expect(mockBumpGeneration).not.toHaveBeenCalled()
+  })
+
+  test("throws 409 when the generation is not exactly current + 1", async () => {
+    const error = await service
+      .rollStreamKey("ws_1", "stream_e2e", "usr_owner", { keyGeneration: 5, wraps: [ownerWrap] as never })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(409)
+    expect((error as HttpError).code).toBe("E2E_STALE_GENERATION")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when the owner's own wrap is missing (no self-lockout)", async () => {
+    const error = await service
+      .rollStreamKey("ws_1", "stream_e2e", "usr_owner", { keyGeneration: 1, wraps: [botWrap] as never })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_OWNER_WRAP_MISSING")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 409 when the bump guard loses the race after wraps were staged", async () => {
+    mockBumpGeneration.mockResolvedValue(null)
+
+    const error = await service
+      .rollStreamKey("ws_1", "stream_e2e", "usr_owner", { keyGeneration: 1, wraps: [ownerWrap] as never })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(409)
+    expect((error as HttpError).code).toBe("E2E_STALE_GENERATION")
   })
 })
 

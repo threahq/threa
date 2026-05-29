@@ -645,6 +645,9 @@ export function createPublicApiHandlers({
         capabilities: params.runtimeSessionId ? { runtimeSessionId: params.runtimeSessionId } : undefined,
         statusText: sanitizeStatusText(params.statusText),
         mergeCapabilities: true,
+        // Invocation-side touch carries no BIK; preserve the key the live
+        // session registered rather than clearing it on every poll tick.
+        retainBik: true,
       })
       await broadcastBotPresence(params.workspaceId, params.botId, presence)
     } catch (err) {
@@ -709,6 +712,8 @@ export function createPublicApiHandlers({
           ...(result.data.runtimeSessionId && { runtimeSessionId: result.data.runtimeSessionId }),
         },
         statusText: sanitizeStatusText(result.data.statusText),
+        publicKey: result.data.publicKey,
+        publicKeyId: result.data.publicKeyId,
       })
       await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({

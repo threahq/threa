@@ -6,6 +6,7 @@ import {
   unwrapStreamKey,
   wrapStreamKey,
 } from "@threa/crypto"
+import type { E2eKeyRollRecipient } from "@threa/types"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
 /**
@@ -101,6 +102,67 @@ export async function provisionOwnerStreamKey(input: ProvisionOwnerStreamKeyInpu
     wrapCt: bytesToBase64(wrap.ct),
   })
   putStreamKey(input.workspaceId, input.streamId, 0, ssk)
+}
+
+export interface RekeyStreamInput {
+  workspaceId: string
+  streamId: string
+  /** The generation to mint — `currentKeyGeneration + 1`, from the invite response. */
+  nextGeneration: number
+  /** The owner's UIK key id — the recipient slot the owner's own wrap binds to. */
+  ownerKeyId: string
+  /** The owner's UIK public key — the owner's wrap is encrypted to it. */
+  ownerPublicKey: Uint8Array
+  /** Every invited actor key the SSK must also be wrapped to (bot BIKs, enclave EIKs). */
+  actorRecipients: E2eKeyRollRecipient[]
+}
+
+/**
+ * Roll a stream's SSK forward after a recipient-set change (inviting an actor).
+ * Mints a fresh SSK at `nextGeneration`, wraps it to the owner's UIK plus every
+ * actor recipient (each AAD bound to this stream + generation + recipient), and
+ * POSTs the batch; the server stores it and bumps the generation atomically.
+ * Seeds the cache with the new SSK so the owner's next send seals under it
+ * without a refetch.
+ *
+ * A fresh key (not a re-wrap of the old SSK) is the point: history stays sealed
+ * under the prior generation, which a later-removed actor can still open with
+ * the wrap it already holds but a newly-added actor cannot — it has no wrap for
+ * any generation before this one.
+ */
+export async function rekeyStream(input: RekeyStreamInput): Promise<void> {
+  const ssk = generateStreamKey()
+  const recipients = [
+    { recipientKeyId: input.ownerKeyId, recipientKind: "user" as const, publicKey: input.ownerPublicKey },
+    ...input.actorRecipients.map((r) => ({
+      recipientKeyId: r.recipientKeyId,
+      recipientKind: r.recipientKind,
+      publicKey: base64ToBytes(r.publicKey),
+    })),
+  ]
+
+  const wraps = await Promise.all(
+    recipients.map(async (r) => {
+      const wrap = await wrapStreamKey({
+        key: ssk,
+        recipientPublicKey: r.publicKey,
+        aad: buildWrapAad({
+          streamId: input.streamId,
+          keyGeneration: input.nextGeneration,
+          recipientKeyId: r.recipientKeyId,
+        }),
+      })
+      return {
+        recipientKeyId: r.recipientKeyId,
+        recipientKind: r.recipientKind,
+        wrapEnc: bytesToBase64(wrap.enc),
+        wrapCt: bytesToBase64(wrap.ct),
+      }
+    })
+  )
+
+  await e2eKeyWrapsApi.roll(input.workspaceId, input.streamId, { keyGeneration: input.nextGeneration, wraps })
+  putStreamKey(input.workspaceId, input.streamId, input.nextGeneration, ssk)
 }
 
 /**

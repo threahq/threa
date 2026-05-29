@@ -77,6 +77,29 @@ export const E2eStreamsRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  /**
+   * Roll the stream's SSK generation forward to `toGeneration`. Race-safe
+   * (INV-20): the `WHERE current_key_generation = toGeneration - 1` guard means
+   * exactly one of two concurrent rolls wins — the loser sees `null` and must
+   * not have stored its wrap batch (callers bump inside the same transaction as
+   * the wrap insert, so a lost bump rolls back its orphan wraps). Never a blind
+   * `+ 1`: the caller asserts the generation it wrapped under.
+   */
+  async bumpKeyGeneration(
+    db: Querier,
+    params: { workspaceId: string; streamId: string; toGeneration: number }
+  ): Promise<E2eStream | null> {
+    const result = await db.query<E2eStreamRow>(sql`
+      UPDATE e2e_streams
+      SET current_key_generation = ${params.toGeneration}
+      WHERE workspace_id = ${params.workspaceId}
+        AND stream_id = ${params.streamId}
+        AND current_key_generation = ${params.toGeneration - 1}
+      RETURNING ${sql.raw(COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   async markStreamE2e(db: Querier, params: MarkStreamE2eParams): Promise<E2eStream> {
     const result = await db.query<E2eStreamRow>(sql`
       INSERT INTO e2e_streams (

@@ -80,7 +80,10 @@ export class BotRuntimeService {
     acceptingInvocations: boolean
     capabilities?: Record<string, unknown>
     statusText?: string | null
+    publicKey?: string | null
+    publicKeyId?: string | null
     mergeCapabilities?: boolean
+    retainBik?: boolean
   }): Promise<BotRuntimeInstance> {
     return BotRuntimeInstanceRepository.upsertPresence(this.pool, {
       id: botRuntimeInstanceId(),
@@ -93,7 +96,10 @@ export class BotRuntimeService {
       acceptingInvocations: params.acceptingInvocations,
       capabilities: params.capabilities ?? {},
       statusText: params.statusText,
+      publicKey: params.publicKey,
+      publicKeyId: params.publicKeyId,
       mergeCapabilities: params.mergeCapabilities,
+      retainBik: params.retainBik,
     })
   }
 
@@ -250,6 +256,9 @@ export class BotRuntimeService {
         supportsSessionControlCommands: true,
         sessionControlCommands: ["compact", "model", "thinking", "skill"],
       },
+      // Session-link write doesn't carry the runtime's BIK; keep the key the
+      // live session registered via bot:hello rather than nulling it.
+      retainBik: true,
     })
     await this.setActiveActorInTransaction(db, {
       workspaceId: params.workspaceId,

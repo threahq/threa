@@ -4,6 +4,7 @@ import { BOT_INVOCATION_CAPABILITIES, BOT_RUNTIME_KINDS, BOT_RUNTIME_STATUSES } 
 import type { BotRuntimeService } from "./service"
 import type { BotInvocation, BotRuntimeSessionLink, StreamActiveActor } from "./repository"
 import type { BotApiKeyService } from "../public-api"
+import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 import { createBotSocketAuthMiddleware, readSocketToken, type BotSocketData } from "./socket-auth"
 import { BotSocketRegistry } from "./bot-socket-registry"
 import { logger } from "../../lib/logger"
@@ -22,20 +23,29 @@ const runtimeSessionIdSchema = z
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, "runtimeSessionId must be 1-64 chars of [A-Za-z0-9_-]")
 
-const helloSchema = z.object({
-  instanceId: instanceIdSchema,
-  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
-  runtimeSessionId: runtimeSessionIdSchema.optional(),
-  displayName: z.string().max(256).optional().nullable(),
-  capabilities: z.record(z.string(), z.unknown()).optional(),
-  supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
-  // ISO timestamp — server echoes the next cursor in the ack and the runtime
-  // sends it back on the following hello so we only replay events the
-  // runtime hasn't already seen.
-  sinceCursor: z.iso.datetime({ offset: true }).optional(),
-  status: z.enum(BOT_RUNTIME_STATUSES).optional(),
-  acceptingInvocations: z.boolean().optional(),
-})
+const helloSchema = z
+  .object({
+    instanceId: instanceIdSchema,
+    runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+    runtimeSessionId: runtimeSessionIdSchema.optional(),
+    displayName: z.string().max(256).optional().nullable(),
+    capabilities: z.record(z.string(), z.unknown()).optional(),
+    supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
+    // ISO timestamp — server echoes the next cursor in the ack and the runtime
+    // sends it back on the following hello so we only replay events the
+    // runtime hasn't already seen.
+    sinceCursor: z.iso.datetime({ offset: true }).optional(),
+    status: z.enum(BOT_RUNTIME_STATUSES).optional(),
+    acceptingInvocations: z.boolean().optional(),
+    // BIK — the runtime registers a fresh per-session public key here so the
+    // SSK can be wrapped to it once invited into an E2E scratchpad. Shared
+    // definition with the HTTP presence schema (INV-31) so they can't drift.
+    ...botIdentityKeyFields,
+  })
+  .refine(bothOrNeitherBotIdentityKey, {
+    message: "publicKey and publicKeyId must be provided together",
+    path: ["publicKey"],
+  })
 
 export type BotHelloPayload = z.infer<typeof helloSchema>
 
@@ -169,6 +179,8 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             ...(data.capabilities ?? {}),
             ...(runtimeSessionId ? { runtimeSessionId } : {}),
           },
+          publicKey: data.publicKey,
+          publicKeyId: data.publicKeyId,
         })
 
         socket.join(botRoom)

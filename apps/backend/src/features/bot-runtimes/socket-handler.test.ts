@@ -275,6 +275,46 @@ describe("attachBotNamespace bot:hello", () => {
     expect(call.sinceCursor.toISOString()).toBe("2026-05-26T11:00:00.000Z")
   })
 
+  it("forwards a registered BIK (publicKey + publicKeyId) to presence", async () => {
+    const { socket, botRuntimeService } = setup()
+    const ack = mock((_r: BotHelloResponse) => {})
+    const publicKey = Buffer.alloc(32, 7).toString("base64")
+
+    await socket.trigger("bot:hello", { ...VALID_HELLO, publicKey, publicKeyId: "bik_abc12" }, ack)
+
+    expect(ack.mock.calls[0]?.[0]).toMatchObject({ ok: true })
+    const call = (botRuntimeService.upsertPresenceFromBotKey as ReturnType<typeof mock>).mock.calls[0]?.[0] as {
+      publicKey: string
+      publicKeyId: string
+    }
+    expect(call.publicKey).toBe(publicKey)
+    expect(call.publicKeyId).toBe("bik_abc12")
+  })
+
+  it("rejects a half-registered BIK (publicKey without publicKeyId)", async () => {
+    const { socket, botRuntimeService } = setup()
+    const ack = mock((_r: BotHelloResponse) => {})
+
+    await socket.trigger("bot:hello", { ...VALID_HELLO, publicKey: Buffer.alloc(32).toString("base64") }, ack)
+
+    expect(ack.mock.calls[0]?.[0]).toMatchObject({ ok: false, error: "Invalid bot:hello payload" })
+    expect((botRuntimeService.upsertPresenceFromBotKey as ReturnType<typeof mock>).mock.calls.length).toBe(0)
+  })
+
+  it("rejects a BIK whose publicKey is not a 32-byte key", async () => {
+    const { socket, botRuntimeService } = setup()
+    const ack = mock((_r: BotHelloResponse) => {})
+
+    await socket.trigger(
+      "bot:hello",
+      { ...VALID_HELLO, publicKey: Buffer.alloc(16).toString("base64"), publicKeyId: "bik_short" },
+      ack
+    )
+
+    expect(ack.mock.calls[0]?.[0]).toMatchObject({ ok: false, error: "Invalid bot:hello payload" })
+    expect((botRuntimeService.upsertPresenceFromBotKey as ReturnType<typeof mock>).mock.calls.length).toBe(0)
+  })
+
   it("serializes activeActorByStream and activeSessionLinks in the ack", async () => {
     const actor: StreamActiveActor = {
       id: "saa_1",

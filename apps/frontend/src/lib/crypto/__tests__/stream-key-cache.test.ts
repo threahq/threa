@@ -1,7 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { buildWrapAad, bytesToBase64, generateStreamKey, wrapStreamKey } from "@threa/crypto"
+import {
+  base64ToBytes,
+  buildWrapAad,
+  bytesToBase64,
+  generateStreamKey,
+  unwrapStreamKey,
+  wrapStreamKey,
+} from "@threa/crypto"
 import { generateUIK, type UserIdentityKey } from "../keys"
-import { clearStreamKeyCache, putStreamKey, resolveCurrentStreamKey, resolveStreamKey } from "../stream-key-cache"
+import {
+  clearStreamKeyCache,
+  putStreamKey,
+  rekeyStream,
+  resolveCurrentStreamKey,
+  resolveStreamKey,
+} from "../stream-key-cache"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
 const WS = "ws_1"
@@ -102,6 +115,74 @@ describe("resolveStreamKey", () => {
       privateKey: uik.privateKey,
     })
     expect(result).toBeNull()
+  })
+})
+
+describe("rekeyStream", () => {
+  it("wraps a fresh SSK to the owner + every actor recipient and POSTs the batch at the next generation", async () => {
+    const owner = await generateUIK()
+    const bot = await generateUIK()
+    const roll = vi.spyOn(e2eKeyWrapsApi, "roll").mockResolvedValue(undefined)
+
+    await rekeyStream({
+      workspaceId: WS,
+      streamId: STREAM,
+      nextGeneration: 1,
+      ownerKeyId: KEY_ID,
+      ownerPublicKey: owner.publicKey,
+      actorRecipients: [{ recipientKeyId: "bik_1", recipientKind: "bot", publicKey: bytesToBase64(bot.publicKey) }],
+    })
+
+    expect(roll).toHaveBeenCalledTimes(1)
+    const [, , input] = roll.mock.calls[0]!
+    expect(input.keyGeneration).toBe(1)
+    expect(input.wraps.map((w) => `${w.recipientKind}:${w.recipientKeyId}`).sort()).toEqual([
+      "bot:bik_1",
+      "user:e2ek_alice",
+    ])
+
+    // Both wraps must open to the *same* fresh SSK, each under its own
+    // (stream, generation, recipient) AAD — proving the roll is decryptable by
+    // every recipient and bound so the server can't relocate a wrap row.
+    const ownerWrap = input.wraps.find((w) => w.recipientKeyId === KEY_ID)!
+    const botWrap = input.wraps.find((w) => w.recipientKeyId === "bik_1")!
+    const ownerKey = await unwrapStreamKey({
+      enc: base64ToBytes(ownerWrap.wrapEnc),
+      ct: base64ToBytes(ownerWrap.wrapCt),
+      recipientPrivateKey: owner.privateKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 1, recipientKeyId: KEY_ID }),
+    })
+    const botKey = await unwrapStreamKey({
+      enc: base64ToBytes(botWrap.wrapEnc),
+      ct: base64ToBytes(botWrap.wrapCt),
+      recipientPrivateKey: bot.privateKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 1, recipientKeyId: "bik_1" }),
+    })
+    expect(ownerKey).toEqual(botKey)
+  })
+
+  it("seeds the cache with the new SSK so the next send uses it without a refetch", async () => {
+    const owner = await generateUIK()
+    vi.spyOn(e2eKeyWrapsApi, "roll").mockResolvedValue(undefined)
+    const get = vi.spyOn(e2eKeyWrapsApi, "get")
+
+    await rekeyStream({
+      workspaceId: WS,
+      streamId: STREAM,
+      nextGeneration: 1,
+      ownerKeyId: KEY_ID,
+      ownerPublicKey: owner.publicKey,
+      actorRecipients: [],
+    })
+
+    const current = await resolveCurrentStreamKey({
+      workspaceId: WS,
+      streamId: STREAM,
+      recipientKeyId: KEY_ID,
+      privateKey: owner.privateKey,
+    })
+    expect(current?.keyGeneration).toBe(1)
+    expect(get).not.toHaveBeenCalled()
   })
 })
 

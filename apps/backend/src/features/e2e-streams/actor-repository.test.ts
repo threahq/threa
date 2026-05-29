@@ -25,19 +25,20 @@ describe("E2eStreamActorsRepository.listForStream", () => {
   it("scopes the lookup to workspace + stream and maps snake_case to camelCase", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [
-      { kind: "bot", key_id: "bkey_01" },
-      { kind: "enclave", key_id: null },
+      { kind: "bot", actor_id: "bot_pi", key_id: "bkey_01" },
+      { kind: "enclave", actor_id: "enclave", key_id: null },
     ])
 
     const result = await E2eStreamActorsRepository.listForStream(db, "ws_1", "stream_01")
 
     expect(captured.text).toContain("FROM e2e_stream_actors")
+    expect(captured.text).toContain("actor_id")
     expect(captured.text).toContain("workspace_id =")
     expect(captured.text).toContain("stream_id =")
     expect(captured.values).toEqual(["ws_1", "stream_01"])
     expect(result).toEqual([
-      { kind: "bot", keyId: "bkey_01" },
-      { kind: "enclave", keyId: null },
+      { kind: "bot", actorId: "bot_pi", keyId: "bkey_01" },
+      { kind: "enclave", actorId: "enclave", keyId: null },
     ])
   })
 })
@@ -45,24 +46,24 @@ describe("E2eStreamActorsRepository.listForStream", () => {
 describe("E2eStreamActorsRepository.add", () => {
   afterEach(() => mock.restore())
 
-  it("inserts idempotently (ON CONFLICT DO NOTHING) and returns true when a row is created", async () => {
+  it("inserts idempotently per (workspace, stream, kind, actor_id) and returns true when a row is created", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [], 1)
 
-    const added = await E2eStreamActorsRepository.add(db, "ws_1", "stream_01", "enclave", null)
+    const added = await E2eStreamActorsRepository.add(db, "ws_1", "stream_01", "bot", "bot_pi", null)
 
     expect(captured.text).toContain("INSERT INTO e2e_stream_actors")
-    expect(captured.text).toContain("ON CONFLICT")
+    expect(captured.text).toContain("ON CONFLICT (workspace_id, stream_id, kind, actor_id)")
     expect(captured.text).toContain("DO NOTHING")
-    expect(captured.values).toEqual(["ws_1", "stream_01", "enclave", null])
+    expect(captured.values).toEqual(["ws_1", "stream_01", "bot", "bot_pi", null])
     expect(added).toBe(true)
   })
 
-  it("returns false when that kind was already invited (no row inserted)", async () => {
+  it("returns false when that actor was already invited (no row inserted)", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [], 0)
 
-    const added = await E2eStreamActorsRepository.add(db, "ws_1", "stream_01", "enclave", null)
+    const added = await E2eStreamActorsRepository.add(db, "ws_1", "stream_01", "enclave", "enclave", null)
     expect(added).toBe(false)
   })
 })
@@ -70,13 +71,14 @@ describe("E2eStreamActorsRepository.add", () => {
 describe("E2eStreamActorsRepository.remove", () => {
   afterEach(() => mock.restore())
 
-  it("deletes the actor scoped to workspace + stream + kind", async () => {
+  it("deletes the actor scoped to workspace + stream + kind + actor_id", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [], 1)
 
-    await E2eStreamActorsRepository.remove(db, "ws_1", "stream_01", "bot")
+    await E2eStreamActorsRepository.remove(db, "ws_1", "stream_01", "bot", "bot_pi")
 
     expect(captured.text).toContain("DELETE FROM e2e_stream_actors")
-    expect(captured.values).toEqual(["ws_1", "stream_01", "bot"])
+    expect(captured.text).toContain("actor_id =")
+    expect(captured.values).toEqual(["ws_1", "stream_01", "bot", "bot_pi"])
   })
 })

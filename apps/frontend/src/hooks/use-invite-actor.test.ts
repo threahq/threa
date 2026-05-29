@@ -43,19 +43,24 @@ describe("canInviteActor", () => {
   })
 
   it("rejects when that actor kind is already invited", () => {
-    expect(canInviteActor(makeStream({ e2eActors: [{ kind: E2eActorKinds.ENCLAVE }] }), E2eActorKinds.ENCLAVE)).toBe(
-      false
-    )
+    expect(
+      canInviteActor(
+        makeStream({ e2eActors: [{ kind: E2eActorKinds.ENCLAVE, actorId: "enclave" }] }),
+        E2eActorKinds.ENCLAVE
+      )
+    ).toBe(false)
   })
 
   it("allows inviting the enclave when only a bot is invited (multi-actor)", () => {
-    expect(canInviteActor(makeStream({ e2eActors: [{ kind: E2eActorKinds.BOT }] }), E2eActorKinds.ENCLAVE)).toBe(true)
+    expect(
+      canInviteActor(makeStream({ e2eActors: [{ kind: E2eActorKinds.BOT, actorId: "bot_1" }] }), E2eActorKinds.ENCLAVE)
+    ).toBe(true)
   })
 })
 
 describe("isActorInvited", () => {
   it("is true only when that kind is present in the actor set", () => {
-    const withEnclave = makeStream({ e2eActors: [{ kind: E2eActorKinds.ENCLAVE }] })
+    const withEnclave = makeStream({ e2eActors: [{ kind: E2eActorKinds.ENCLAVE, actorId: "enclave" }] })
     expect(isActorInvited(withEnclave, E2eActorKinds.ENCLAVE)).toBe(true)
     expect(isActorInvited(withEnclave, E2eActorKinds.BOT)).toBe(false)
     expect(isActorInvited(makeStream({ e2eActors: [] }), E2eActorKinds.ENCLAVE)).toBe(false)
@@ -63,7 +68,12 @@ describe("isActorInvited", () => {
   })
 
   it("detects an actor among multiple invited kinds", () => {
-    const multi = makeStream({ e2eActors: [{ kind: E2eActorKinds.BOT }, { kind: E2eActorKinds.ENCLAVE }] })
+    const multi = makeStream({
+      e2eActors: [
+        { kind: E2eActorKinds.BOT, actorId: "bot_1" },
+        { kind: E2eActorKinds.ENCLAVE, actorId: "enclave" },
+      ],
+    })
     expect(isActorInvited(multi, E2eActorKinds.BOT)).toBe(true)
     expect(isActorInvited(multi, E2eActorKinds.ENCLAVE)).toBe(true)
   })

@@ -345,6 +345,57 @@ export interface E2eKeyWrapsResponse {
    *  own `recipientKeyId` and the message's `keyGeneration`. */
   wraps: E2eKeyWrap[]
 }
+
+/**
+ * One recipient the client must HPKE-wrap the next SSK generation to during a
+ * key roll: the owner's UIK is implicit (the client adds itself from session),
+ * so this list carries the invited actors' currently-live keys — a bot's BIKs
+ * and/or every live enclave EIK. `publicKey` is the raw X25519 key (base64).
+ */
+export interface E2eKeyRollRecipient {
+  recipientKeyId: string
+  recipientKind: E2eKeyWrapRecipientKind
+  /** Raw X25519 public key, base64. */
+  publicKey: string
+}
+
+/**
+ * Instructions for rolling a stream's SSK forward after a recipient-set change.
+ * The client mints a fresh SSK at `nextGeneration`, wraps it to itself plus
+ * every `recipients` entry, and POSTs the batch (see `E2eKeyRollInput`). Null
+ * on an invite when there is no live actor key to wrap to yet — the actor is
+ * recorded and re-keyed once a key appears.
+ */
+export interface E2eKeyRoll {
+  nextGeneration: number
+  recipients: E2eKeyRollRecipient[]
+}
+
+/** Response to inviting an actor: the updated stream plus the roll the client must perform. */
+export interface InviteActorResponse {
+  stream: Stream
+  keyRoll: E2eKeyRoll | null
+}
+
+/** One SSK wrap the client supplies during a roll. Bytes are opaque base64. */
+export interface E2eKeyWrapInput {
+  recipientKeyId: string
+  recipientKind: E2eKeyWrapRecipientKind
+  wrapEnc: string
+  wrapCt: string
+}
+
+/**
+ * Body for `POST …/e2e/key-generations`: the new generation plus a wrap of the
+ * fresh SSK to every authorized recipient. The server stores the batch and
+ * bumps `current_key_generation` to `keyGeneration` in one transaction, after
+ * validating the generation is exactly `current + 1`, the owner's own wrap is
+ * present (no self-lockout), and no wrap addresses an unauthorized key id.
+ */
+export interface E2eKeyRollInput {
+  keyGeneration: number
+  wraps: E2eKeyWrapInput[]
+}
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown
 
 /**

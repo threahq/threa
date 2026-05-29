@@ -233,7 +233,7 @@ const SELECT_FIELDS_WITH_E2E = `
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
   (
-    SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
+    SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'actorId', a.actor_id, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
     FROM e2e_stream_actors a
     WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
   ) AS e2e_actors
@@ -537,7 +537,7 @@ export const StreamRepository = {
         lm.created_at as last_message_at,
         e.owner_user_key_id AS e2e_owner_user_key_id,
         (
-          SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
+          SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'actorId', a.actor_id, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
           FROM e2e_stream_actors a
           WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
         ) AS e2e_actors

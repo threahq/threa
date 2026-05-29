@@ -191,6 +191,12 @@ export interface Stream {
 /** A non-human participant the stream key is wrapped to in an E2E stream. */
 export interface E2eActor {
   kind: E2eActorKind
+  /**
+   * The concrete principal this actor row pins: a bot's `bot_id`, or the
+   * `E2E_ENCLAVE_ACTOR_ID` sentinel for the enclave. The SSK is wrapped to this
+   * principal's live keys, so swapping the underlying bot requires a new invite.
+   */
+  actorId: string
   /** The actor's public-key id the SSK is wrapped to, once a key is registered. */
   keyId?: string | null
 }
