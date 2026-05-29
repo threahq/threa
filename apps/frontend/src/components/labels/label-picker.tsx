@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Search, Tag } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { cn } from "@/lib/utils"
-import { hexToRgba } from "@/lib/labels"
+import { LabelGlyph } from "./label-chip"
 import { useAssignLabel, useLabelsView, useResourceLabelAssignments, useUnassignLabel, type CachedLabel } from "@/hooks"
 import type { LabelableResourceType } from "@threa/types"
 
@@ -32,18 +32,6 @@ interface LabelPickerProps {
 // flashing a spinner; past it the round-trip is slow enough that silent UI
 // reads as broken. Mirrors the app's other anti-flicker delays.
 const LOADING_DELAY_MS = 300
-
-function LabelGlyph({ label }: { label: CachedLabel }) {
-  return (
-    <span
-      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-xs leading-none"
-      style={{ backgroundColor: hexToRgba(label.color, 0.15), color: label.color }}
-      aria-hidden
-    >
-      {label.emoji ?? <Tag className="h-3 w-3" />}
-    </span>
-  )
-}
 
 function NoLabelsYet({ workspaceId }: { workspaceId: string }) {
   return (
@@ -108,7 +96,7 @@ function LabelRow({
           disabled ? "cursor-not-allowed" : "cursor-pointer"
         )}
       >
-        <LabelGlyph label={label} />
+        <LabelGlyph label={label} className="h-5 w-5 text-xs" fallback="tag" />
         <span className="min-w-0 flex-1 truncate">{label.name}</span>
       </label>
     </div>

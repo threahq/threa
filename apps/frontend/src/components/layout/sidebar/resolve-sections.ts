@@ -17,6 +17,11 @@ export interface ResolveSectionsInput {
   /** Synthetic DM drafts for members the user hasn't messaged yet. */
   virtualDmStreams: StreamItemData[]
   getUnreadCount: (streamId: string) => number
+  /**
+   * For each label id, the set of stream ids the viewer can see that carry it.
+   * Drives `{ kind: "label" }` sections; an absent label resolves to empty.
+   */
+  streamIdsByLabel: Map<string, Set<string>>
 }
 
 export interface ResolvedSection {
@@ -27,9 +32,10 @@ export interface ResolvedSection {
 /**
  * Turn a {@link SidebarConfig} into the ordered, capped, sorted stream lists the
  * sidebar renders. Pure — no React, no IO — so it is exercised directly in tests
- * and reused by every view. Each spec is mutually exclusive today (a stream
- * lands in exactly one smart bucket and is exactly one type), so sections are
- * resolved independently against the shared pool.
+ * and reused by every view. Sections are resolved independently against the
+ * shared pool with no cross-section dedup: smart buckets and stream types are
+ * mutually exclusive by construction, while a label section is deliberately an
+ * additive lens (a labeled stream still appears in its smart/type section).
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
   return config.sections.map((section) => ({
@@ -40,7 +46,19 @@ export function resolveSections(config: SidebarConfig, input: ResolveSectionsInp
 
 function resolveItems(spec: SidebarSectionSpec, input: ResolveSectionsInput): StreamItemData[] {
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input)
-  return resolveTypeSection(spec.streamType, input)
+  if (spec.kind === "type") return resolveTypeSection(spec.streamType, input)
+  return resolveLabelSection(spec.labelId, input)
+}
+
+/** Streams carrying a label, by activity. Draws from real streams only (synthetic DM drafts can't be labeled). */
+function resolveLabelSection(
+  labelId: string,
+  { processedStreams, streamIdsByLabel, getUnreadCount }: ResolveSectionsInput
+): StreamItemData[] {
+  const streamIds = streamIdsByLabel.get(labelId)
+  if (!streamIds || streamIds.size === 0) return []
+  const items = processedStreams.filter((stream) => streamIds.has(stream.id))
+  return sortStreams(items, "activity", getUnreadCount)
 }
 
 function resolveSmartBucket(

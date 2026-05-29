@@ -23,6 +23,8 @@ import {
   useWorkspaceDmPeers,
   useWorkspaceFromStore,
   useWorkspaceUnreadState,
+  useWorkspaceLabels,
+  useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
@@ -38,7 +40,8 @@ import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream } from "./utils"
 import type { StreamItemData } from "./types"
 import { resolveDmDisplayName } from "@/lib/streams"
-import { StreamTypes, Visibilities } from "@threa/types"
+import type { CachedLabel } from "@/hooks"
+import { StreamTypes, Visibilities, LabelableResourceTypes } from "@threa/types"
 
 interface SidebarProps {
   workspaceId: string
@@ -60,6 +63,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const idbStreams = useWorkspaceStreams(workspaceId)
   const idbStreamMemberships = useWorkspaceStreamMemberships(workspaceId)
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
+  const labels = useWorkspaceLabels(workspaceId)
+  const labelAssignments = useWorkspaceLabelAssignments(workspaceId)
   const { createDraft } = useDraftScratchpads(workspaceId)
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, unreadActivityCount } = useActivityCounts(workspaceId)
@@ -182,10 +187,29 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const hasUserStreams = hasUserStreamsFromStreams || virtualDmStreams.length > 0
 
+  // Active labels by id — resolves the chip header for label sections.
+  const labelsById = useMemo(() => {
+    const map = new Map<string, CachedLabel>()
+    for (const label of labels) if (!label.archivedAt) map.set(label.id, label)
+    return map
+  }, [labels])
+
+  // labelId → set of stream ids the viewer can see carrying that label.
+  const streamIdsByLabel = useMemo(() => {
+    const map = new Map<string, Set<string>>()
+    for (const assignment of labelAssignments) {
+      if (assignment.resourceType !== LabelableResourceTypes.STREAM) continue
+      const set = map.get(assignment.labelId) ?? new Set<string>()
+      set.add(assignment.resourceId)
+      map.set(assignment.labelId, set)
+    }
+    return map
+  }, [labelAssignments])
+
   // Resolve the persisted sidebar config into ordered, sorted, capped lists.
   const resolvedSections = useMemo(
-    () => resolveSections(sidebarConfig, { processedStreams, virtualDmStreams, getUnreadCount }),
-    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount]
+    () => resolveSections(sidebarConfig, { processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel }),
+    [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel]
   )
 
   // Track sidebar and scroll container dimensions for position calculations
@@ -341,6 +365,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             activeStreamId={activeStreamId}
             processedStreams={processedStreams}
             resolvedSections={resolvedSections}
+            labelsById={labelsById}
             getUnreadCount={getUnreadCount}
             getMentionCount={getMentionCount}
             getSectionState={getSectionState}

@@ -11,6 +11,37 @@ import { SMART_SECTIONS } from "./config"
  */
 export type { SidebarConfig, SidebarSection, SidebarSectionSpec, SidebarBasePreset }
 
+/**
+ * Section id for a label lens. Deterministic (one section per label) so the
+ * toggle below is idempotent and the id doubles as the collapse-state key.
+ */
+export function labelSectionId(labelId: string): string {
+  return `label:${labelId}`
+}
+
+/** Whether the config already pins the given label as a sidebar section. */
+export function hasLabelSection(config: SidebarConfig, labelId: string): boolean {
+  return config.sections.some((s) => s.spec.kind === "label" && s.spec.labelId === labelId)
+}
+
+/**
+ * Add the label section if absent, remove it if present. New sections append to
+ * the end (reordering is a later editor concern). Pure — the caller persists
+ * the result via `useSidebarConfig().setConfig`.
+ */
+export function toggleLabelSection(config: SidebarConfig, labelId: string): SidebarConfig {
+  if (hasLabelSection(config, labelId)) {
+    return {
+      ...config,
+      sections: config.sections.filter((s) => !(s.spec.kind === "label" && s.spec.labelId === labelId)),
+    }
+  }
+  return {
+    ...config,
+    sections: [...config.sections, { id: labelSectionId(labelId), spec: { kind: "label", labelId } }],
+  }
+}
+
 /** How a resolved section renders. Derived purely from its spec. */
 export interface SectionPresentation {
   label: string
@@ -53,9 +84,26 @@ const TYPE_PRESENTATION: Record<Extract<StreamType, "scratchpad" | "channel" | "
   },
 }
 
+/**
+ * Presentation for a label section. The header is rendered as a tinted
+ * `LabelChip` from the labels cache (the spec only carries the id), so `label`
+ * here is just an accessibility/fallback string the caller overrides. Tiered so
+ * a heavily-used label doesn't flood the sidebar; kept visible when empty since
+ * the user deliberately pinned it.
+ */
+const LABEL_PRESENTATION: SectionPresentation = {
+  label: "",
+  tiered: true,
+  compact: true,
+  showPreviewOnHover: true,
+  hideWhenEmpty: false,
+  defaultCollapse: "open",
+}
+
 /** Resolve how a section should render from its spec. */
 export function sectionPresentation(spec: SidebarSectionSpec): SectionPresentation {
   if (spec.kind === "type") return TYPE_PRESENTATION[spec.streamType]
+  if (spec.kind === "label") return LABEL_PRESENTATION
 
   const config = SMART_SECTIONS[spec.bucket]
   return {

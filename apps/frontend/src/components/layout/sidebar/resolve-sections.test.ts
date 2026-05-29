@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest"
 import { StreamTypes, Visibilities, ALL_SIDEBAR_CONFIG, SMART_SIDEBAR_CONFIG } from "@threa/types"
 import { resolveSections, type ResolveSectionsInput } from "./resolve-sections"
+import { labelSectionId } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"
 
 interface ItemOverrides {
@@ -40,9 +41,16 @@ function makeItem(overrides: ItemOverrides): StreamItemData {
   }
 }
 
+/** Fill resolver-input defaults so each test only states what it cares about. */
+function makeInput(
+  over: Partial<ResolveSectionsInput> & Pick<ResolveSectionsInput, "processedStreams">
+): ResolveSectionsInput {
+  return { virtualDmStreams: [], getUnreadCount: () => 0, streamIdsByLabel: new Map(), ...over }
+}
+
 /** Collapse the resolver output to a comparable shape: section id → item ids. */
-function shape(input: ResolveSectionsInput, preset = SMART_SIDEBAR_CONFIG) {
-  return resolveSections(preset, input).map((resolved) => ({
+function shape(over: Parameters<typeof makeInput>[0], preset = SMART_SIDEBAR_CONFIG) {
+  return resolveSections(preset, makeInput(over)).map((resolved) => ({
     id: resolved.section.id,
     items: resolved.items.map((item) => item.id),
   }))
@@ -76,11 +84,7 @@ describe("resolveSections — Smart preset", () => {
     const processedStreams = Array.from({ length: 13 }, (_, i) =>
       makeItem({ id: `imp_${i}`, section: "important", urgency: "mentions", activity: i })
     )
-    const resolved = resolveSections(SMART_SIDEBAR_CONFIG, {
-      processedStreams,
-      virtualDmStreams: [],
-      getUnreadCount: () => 1,
-    })
+    const resolved = resolveSections(SMART_SIDEBAR_CONFIG, makeInput({ processedStreams, getUnreadCount: () => 1 }))
     expect(resolved.find((r) => r.section.id === "important")?.items).toHaveLength(10)
   })
 
@@ -94,11 +98,9 @@ describe("resolveSections — Smart preset", () => {
       makeItem({ id: "r4", section: "recent", activity: 50 }),
     ]
     const getUnreadCount = unreadFrom(new Set(["u1", "u2"]))
-    const recent = resolveSections(SMART_SIDEBAR_CONFIG, {
-      processedStreams,
-      virtualDmStreams: [],
-      getUnreadCount,
-    }).find((r) => r.section.id === "recent")
+    const recent = resolveSections(SMART_SIDEBAR_CONFIG, makeInput({ processedStreams, getUnreadCount })).find(
+      (r) => r.section.id === "recent"
+    )
     // 2 unreads + 3 reads = 5, dropping r4.
     expect(recent?.items.map((i) => i.id)).toEqual(["u1", "u2", "r1", "r2", "r3"])
   })
@@ -108,11 +110,9 @@ describe("resolveSections — Smart preset", () => {
       makeItem({ id: `u${i}`, section: "recent", activity: 100 - i })
     )
     const getUnreadCount = () => 1
-    const recent = resolveSections(SMART_SIDEBAR_CONFIG, {
-      processedStreams,
-      virtualDmStreams: [],
-      getUnreadCount,
-    }).find((r) => r.section.id === "recent")
+    const recent = resolveSections(SMART_SIDEBAR_CONFIG, makeInput({ processedStreams, getUnreadCount })).find(
+      (r) => r.section.id === "recent"
+    )
     expect(recent?.items).toHaveLength(7)
   })
 })
@@ -138,5 +138,44 @@ describe("resolveSections — All preset", () => {
       // Real DMs (activity), then system streams, then synthetic drafts.
       { id: "dms", items: ["dm_new", "dm_old", "sys_1", "vdm_1"] },
     ])
+  })
+})
+
+describe("resolveSections — label sections", () => {
+  const config = {
+    basePreset: "smart" as const,
+    sections: [
+      { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+      { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+    ],
+  }
+
+  it("filters streams by assignment, sorts by activity, and is additive (a labeled stream still shows in its bucket)", () => {
+    const processedStreams = [
+      makeItem({ id: "s_old", section: "recent", activity: 1 }),
+      makeItem({ id: "s_new", section: "recent", activity: 9 }),
+      makeItem({ id: "s_other", section: "pinned", activity: 5 }),
+    ]
+    // s_new and s_other carry the label; s_old does not.
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["s_new", "s_other"])]])
+
+    const result = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel })).map((r) => ({
+      id: r.section.id,
+      items: r.items.map((i) => i.id),
+    }))
+
+    expect(result).toEqual([
+      // Recent bucket is unchanged by the label section above/below it.
+      { id: "recent", items: ["s_new", "s_old"] },
+      // Label lens: both labeled streams, by activity — s_new (recent) also
+      // appears here (additive), s_other (a pinned stream) is pulled in too.
+      { id: labelSectionId("lbl_1"), items: ["s_new", "s_other"] },
+    ])
+  })
+
+  it("resolves to an empty section when the label has no assigned streams", () => {
+    const processedStreams = [makeItem({ id: "s_1", section: "recent", activity: 1 })]
+    const result = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel: new Map() }))
+    expect(result.find((r) => r.section.id === labelSectionId("lbl_1"))?.items).toEqual([])
   })
 })

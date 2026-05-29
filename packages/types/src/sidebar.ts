@@ -23,6 +23,13 @@ export type SidebarTypeSection = (typeof SIDEBAR_TYPE_SECTIONS)[number]
 export type SidebarSectionSpec =
   | { kind: "smart"; bucket: SidebarSectionKey }
   | { kind: "type"; streamType: SidebarTypeSection }
+  /**
+   * A label lens: streams the viewer can see that carry this label. Additive —
+   * a labeled stream still appears in its smart/type section too. The label's
+   * name/color/emoji are resolved from the labels cache at render time, not
+   * stored here (only the id, so a renamed/recolored label stays in sync).
+   */
+  | { kind: "label"; labelId: string }
 
 export interface SidebarSection {
   /** Stable key — also the collapse-state persistence key on the frontend. */
