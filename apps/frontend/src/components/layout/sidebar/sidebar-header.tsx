@@ -1,6 +1,7 @@
 import { Search as SearchIcon, Terminal, FileText } from "lucide-react"
 import { Link } from "react-router-dom"
-import { useQuickSwitcher, usePreferences, type ViewMode } from "@/contexts"
+import type { SidebarBasePreset } from "@threa/types"
+import { useQuickSwitcher, usePreferences } from "@/contexts"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { ThemeDropdown } from "@/components/theme-dropdown"
@@ -11,13 +12,13 @@ import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "
 
 interface SidebarHeaderProps {
   workspaceName: string
-  viewMode: ViewMode
-  onViewModeChange: (mode: ViewMode) => void
+  basePreset: SidebarBasePreset
+  onBasePresetChange: (preset: SidebarBasePreset) => void
   /** Hide the view toggle (e.g., when no streams exist) */
   hideViewToggle?: boolean
 }
 
-export function SidebarHeader({ workspaceName, viewMode, onViewModeChange, hideViewToggle }: SidebarHeaderProps) {
+export function SidebarHeader({ workspaceName, basePreset, onBasePresetChange, hideViewToggle }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
   const { collapseOnMobile } = useSidebar()
   const { preferences } = usePreferences()
@@ -79,19 +80,19 @@ export function SidebarHeader({ workspaceName, viewMode, onViewModeChange, hideV
         <div className="flex items-center gap-2 px-3 pb-3 pt-2">
           <div className="flex gap-1 rounded-md bg-muted p-0.5">
             <button
-              onClick={() => onViewModeChange("smart")}
+              onClick={() => onBasePresetChange("smart")}
               className={cn(
                 "rounded px-2 py-1 text-xs font-medium transition-all",
-                viewMode === "smart" ? "bg-card text-primary" : "text-muted-foreground hover:text-foreground"
+                basePreset === "smart" ? "bg-card text-primary" : "text-muted-foreground hover:text-foreground"
               )}
             >
               Smart
             </button>
             <button
-              onClick={() => onViewModeChange("all")}
+              onClick={() => onBasePresetChange("all")}
               className={cn(
                 "rounded px-2 py-1 text-xs font-medium transition-all",
-                viewMode === "all" ? "bg-card text-primary" : "text-muted-foreground hover:text-foreground"
+                basePreset === "all" ? "bg-card text-primary" : "text-muted-foreground hover:text-foreground"
               )}
             >
               All

@@ -13,8 +13,6 @@ type SidebarState = "collapsed" | "preview" | "pinned"
 /** Simplified open state for persistence (preview is transient) */
 type SidebarOpenState = "open" | "collapsed"
 
-type ViewMode = "smart" | "all"
-
 /**
  * Binary open/collapsed state for a collapsible sidebar section.
  * Sections with activity still surface an aggregate badge when collapsed so
@@ -38,7 +36,6 @@ interface UrgencyBlock {
 interface SidebarPersistedState {
   openState: SidebarOpenState
   width: number
-  viewMode: ViewMode
   /** Per-section open/collapsed state. Absent keys fall back to per-section defaults at the callsite. */
   sectionStates: Record<string, CollapseState>
 }
@@ -51,7 +48,6 @@ const SIDEBAR_STATE_KEY = "threa-sidebar-state"
 const DEFAULT_PERSISTED_STATE: SidebarPersistedState = {
   openState: "open",
   width: DEFAULT_SIDEBAR_WIDTH,
-  viewMode: "smart",
   sectionStates: {
     "quick-links": "open",
     other: "collapsed",
@@ -63,8 +59,6 @@ interface SidebarContextValue {
   state: SidebarState
   /** Current sidebar width in pixels */
   width: number
-  /** Current view mode (smart/all) */
-  viewMode: ViewMode
   /** Open/collapsed state per section key. Use `getSectionState` for reads with defaults. */
   sectionStates: Record<string, CollapseState>
   /** Read a section's state, falling back to the provided default (default: "open"). */
@@ -99,8 +93,6 @@ interface SidebarContextValue {
   stopResizing: () => void
   /** Set sidebar width */
   setWidth: (width: number) => void
-  /** Set view mode */
-  setViewMode: (mode: ViewMode) => void
   /**
    * Flip a section between open and collapsed.
    * If no state has been stored yet, flips from `defaultState` (default: "open").
@@ -178,7 +170,6 @@ function getStoredState(key: string): SidebarPersistedState {
           typeof parsed.width === "number" && parsed.width >= MIN_SIDEBAR_WIDTH && parsed.width <= MAX_SIDEBAR_WIDTH
             ? parsed.width
             : DEFAULT_PERSISTED_STATE.width,
-        viewMode: parsed.viewMode === "all" ? "all" : "smart",
         sectionStates: readSectionStates(parsed),
       }
     }
@@ -385,14 +376,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     [updatePersistedState]
   )
 
-  // View mode
-  const setViewMode = useCallback(
-    (mode: ViewMode) => {
-      updatePersistedState({ viewMode: mode })
-    },
-    [updatePersistedState]
-  )
-
   const getSectionState = useCallback(
     (section: string, defaultState: CollapseState = "open"): CollapseState => {
       return persistedState.sectionStates[section] ?? defaultState
@@ -490,7 +473,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
       value={{
         state,
         width: persistedState.width,
-        viewMode: persistedState.viewMode,
         sectionStates: persistedState.sectionStates,
         getSectionState,
         isMobile,
@@ -508,7 +490,6 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         startResizing,
         stopResizing,
         setWidth,
-        setViewMode,
         toggleSectionState,
         setSectionState,
         setUrgencyBlock,
@@ -530,4 +511,4 @@ export function useSidebar() {
   return context
 }
 
-export type { ViewMode, UrgencyBlock, CollapseState }
+export type { UrgencyBlock, CollapseState }

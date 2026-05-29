@@ -14,6 +14,7 @@ import type {
   WorkspaceBootstrap,
   StreamMember,
   UserPreferences,
+  SidebarConfig,
   LastMessagePreview,
   ActivityCreatedPayload,
   SavedUpsertedPayload,
@@ -111,6 +112,12 @@ interface UserPreferencesUpdatedPayload {
   workspaceId: string
   authorId: string
   preferences: UserPreferences
+}
+
+interface SidebarConfigUpdatedPayload {
+  workspaceId: string
+  authorId: string
+  sidebarConfig: SidebarConfig
 }
 
 // ============================================================================
@@ -1155,6 +1162,24 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
+  // Handle sidebar config updated (from other sessions of the same user)
+  const handleSidebarConfigUpdated = (payload: SidebarConfigUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+      if (!old) return old
+      return { ...old, sidebarConfig: payload.sidebarConfig }
+    })
+
+    // Write to IDB so the IDB-backed sidebar store hook reacts immediately.
+    db.sidebarConfigs.put({
+      id: workspaceId,
+      workspaceId,
+      config: payload.sidebarConfig,
+      _cachedAt: Date.now(),
+    })
+  }
+
   // Handle bot created
   const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
@@ -1555,6 +1580,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:member_added", handleStreamMemberAdded)
   socket.on("stream:member_removed", handleStreamMemberRemoved)
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
+  socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
@@ -1592,6 +1618,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:member_added", handleStreamMemberAdded)
     socket.off("stream:member_removed", handleStreamMemberRemoved)
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
+    socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)
@@ -1725,6 +1752,17 @@ export async function applyWorkspaceBootstrap(
         })
       }
     }),
+    db.transaction("rw", [db.sidebarConfigs], async () => {
+      const existing = await db.sidebarConfigs.get(workspaceId)
+      if (!existing || !fetchStartedAt || existing._cachedAt < fetchStartedAt) {
+        await db.sidebarConfigs.put({
+          id: workspaceId,
+          workspaceId,
+          config: bootstrap.sidebarConfig,
+          _cachedAt: now,
+        })
+      }
+    }),
     db.workspaceMetadata.put({
       id: workspaceId,
       workspaceId,
@@ -1801,6 +1839,12 @@ export async function applyWorkspaceBootstrap(
       sendMode: bootstrap.userPreferences.messageSendMode,
       _cachedAt: now,
     },
+    sidebarConfig: {
+      id: workspaceId,
+      workspaceId,
+      config: bootstrap.sidebarConfig,
+      _cachedAt: now,
+    },
     metadata: {
       id: workspaceId,
       workspaceId,
@@ -1859,6 +1903,7 @@ export async function applyReconnectBootstrapBatch(
       db.labelAssignments,
       db.unreadState,
       db.userPreferences,
+      db.sidebarConfigs,
       db.workspaceMetadata,
       db.events,
       db.pendingMessages,
@@ -1944,6 +1989,16 @@ export async function applyReconnectBootstrapBatch(
         })
       }
 
+      const existingSidebarConfig = await db.sidebarConfigs.get(workspaceId)
+      if (!existingSidebarConfig || !fetchStartedAt || existingSidebarConfig._cachedAt < fetchStartedAt) {
+        await db.sidebarConfigs.put({
+          id: workspaceId,
+          workspaceId,
+          config: finalBootstrap.sidebarConfig,
+          _cachedAt: now,
+        })
+      }
+
       for (const [streamId, bootstrap] of streamBootstraps) {
         await applyStreamBootstrapInCurrentTransaction(workspaceId, streamId, bootstrap, now)
       }
@@ -2010,6 +2065,12 @@ export async function applyReconnectBootstrapBatch(
       id: workspaceId,
       workspaceId,
       sendMode: finalBootstrap.userPreferences.messageSendMode,
+      _cachedAt: now,
+    },
+    sidebarConfig: {
+      id: workspaceId,
+      workspaceId,
+      config: finalBootstrap.sidebarConfig,
       _cachedAt: now,
     },
     metadata: {

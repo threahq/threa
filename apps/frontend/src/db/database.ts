@@ -6,6 +6,7 @@ import type {
   EventType,
   JSONContent,
   NotificationLevel,
+  SidebarConfig,
   StreamContextBagPayload,
   StreamType,
   WorkspaceRoleSlug,
@@ -352,6 +353,13 @@ export interface CachedUserPreferences {
   _cachedAt: number
 }
 
+export interface CachedSidebarConfig {
+  id: string // workspaceId
+  workspaceId: string
+  config: SidebarConfig
+  _cachedAt: number
+}
+
 /**
  * Persisted UI toggle state for a single collapsible markdown block inside
  * a message (code block, blockquote, or quote reply). Scoped per message so
@@ -636,6 +644,7 @@ export class ThreaDatabase extends Dexie {
   labelMemberships!: EntityTable<CachedLabelMembership, "id">
   labelAssignments!: EntityTable<CachedLabelAssignment, "id">
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
+  sidebarConfigs!: EntityTable<CachedSidebarConfig, "id">
 
   constructor(name: string) {
     super(name)
@@ -925,6 +934,12 @@ export class ThreaDatabase extends Dexie {
       labelAssignments: "id, workspaceId, labelId, _cachedAt",
     })
 
+    // v33: Per-(workspace, user) sidebar layout for offline-first reads. One row
+    // per workspace (keyed by workspaceId), mirroring userPreferences.
+    this.version(33).stores({
+      sidebarConfigs: "id, workspaceId",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -989,6 +1004,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.labels.clear(),
       db.labelMemberships.clear(),
       db.labelAssignments.clear(),
+      db.sidebarConfigs.clear(),
       // The persisted device key IS the unwrapped (non-extractable) private
       // key — sign-out must drop it so the next account can't resume this
       // identity's unlocked session.

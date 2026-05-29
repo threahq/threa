@@ -103,12 +103,27 @@ either now would be speculative (INV-36). Smart's "Everything Else" is modeled a
 Recent vanish today, they do not fall through). `hideAboveShown` + `remainder`
 land in **PR4**, where additive label lenses are the first thing to exercise them.
 
-### PR2 — Sidebar editor + config persistence
+### PR2 — Config persistence (Smart/All toggle as the writer) ✅ implemented
 
-Backend per-user config (table + types + bootstrap field + sync events + API),
-plus the editor: inline add/remove and a "Sidebar" settings panel
-(drag-reorder, add/remove kinds, reset-to-preset). Existing users' configs
-seeded server-side from their last preset on first read.
+Shipped the full per-user persistence vertical slice: shared `SidebarConfig`
+wire type in `@threa/types`, `sidebar_configs` table (one JSONB document per
+(workspace, user), absent row → default Smart preset), backend feature folder
+(`apps/backend/src/features/sidebar-config/`: repository + service +
+Zod-validated handlers), `sidebar_config:updated` author-scoped outbox event,
+`WorkspaceBootstrap.sidebarConfig`, GET/PATCH routes, and the frontend offline
+mirror (Dexie `sidebarConfigs` table, store seed + `useWorkspaceSidebarConfig`,
+sync handler + socket registration, `sidebarConfigApi`, `useSidebarConfig` with
+optimistic write). The existing Smart/All toggle now persists the full config
+server-side and syncs across devices; `viewMode` was removed from the
+localStorage `SidebarProvider` (config is now the source of truth; collapse
+states stay device-local).
+
+**Deviation:** the rich editor (drag-reorder, inline add/remove kinds, a
+"Sidebar" settings panel, reset-to-preset) is deferred to a later stacked PR —
+it earns its place once PR4's label sections give a reason to reorder/add
+sections. Persisting from the toggle keeps PR2 a reviewable slice and avoids a
+speculative editor (INV-36). Existing users seed to the Smart preset on first
+read rather than migrating their prior localStorage `viewMode`.
 
 ### PR3 — Label model: unified membership + lifecycle
 

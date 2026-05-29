@@ -34,6 +34,7 @@ import type {
   Bot,
 } from "./domain"
 import type { UserPreferences } from "./preferences"
+import type { SidebarConfig } from "./sidebar"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
 
 // ============================================================================
@@ -568,6 +569,8 @@ export interface WorkspaceBootstrap {
   unreadActivityCount: number
   mutedStreamIds: string[]
   userPreferences: UserPreferences
+  /** Viewer's persisted sidebar layout for this workspace (defaults to the Smart preset). */
+  sidebarConfig: SidebarConfig
   /**
    * Labels visible to the viewer: all of the viewer's own private labels +
    * every public label in the workspace (joined or not — the Discover tab

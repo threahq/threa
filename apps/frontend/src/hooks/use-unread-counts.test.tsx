@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
-import type { StreamMember, WorkspaceBootstrap } from "@threa/types"
+import { DEFAULT_SIDEBAR_CONFIG, type StreamMember, type WorkspaceBootstrap } from "@threa/types"
 import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
 
@@ -66,6 +66,7 @@ function makeBootstrap(): WorkspaceBootstrap {
     labelMemberships: [],
     labelAssignments: [],
     viewerPermissions: [],
+    sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId: "ws_1",
       userId: "member_1",

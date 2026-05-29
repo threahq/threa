@@ -1,13 +1,17 @@
-import type { StreamWithPreview } from "@threa/types"
+import type { StreamWithPreview, SidebarSectionKey } from "@threa/types"
 
 export type UrgencyLevel = "mentions" | "activity" | "quiet" | "ai"
 
 /** Sorting strategies for sidebar sections */
 export type SortType = "activity" | "importance" | "alphabetic_active_first"
 
-export const SMART_SECTION_KEYS = ["important", "recent", "pinned", "other"] as const
-
-export type SectionKey = (typeof SMART_SECTION_KEYS)[number]
+/**
+ * Smart-view bucket a stream is categorized into. The canonical list of keys
+ * lives in `@threa/types` (`SIDEBAR_SECTION_KEYS`) since it's also the persisted
+ * wire shape; this is the same domain value, so we derive from it rather than
+ * re-declaring the literal union and risking drift.
+ */
+export type SectionKey = SidebarSectionKey
 
 export interface StreamItemData extends StreamWithPreview {
   urgency: UrgencyLevel

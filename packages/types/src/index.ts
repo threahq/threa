@@ -560,6 +560,23 @@ export {
   type UpdateUserPreferencesInput,
 } from "./preferences"
 
+// Sidebar configuration
+export {
+  SIDEBAR_SECTION_KEYS,
+  type SidebarSectionKey,
+  SIDEBAR_TYPE_SECTIONS,
+  type SidebarTypeSection,
+  type SidebarSectionSpec,
+  type SidebarSection,
+  SIDEBAR_BASE_PRESETS,
+  type SidebarBasePreset,
+  type SidebarConfig,
+  SMART_SIDEBAR_CONFIG,
+  ALL_SIDEBAR_CONFIG,
+  sidebarConfigForPreset,
+  DEFAULT_SIDEBAR_CONFIG,
+} from "./sidebar"
+
 // API Keys
 export {
   SENT_VIA_API_PREFIX,

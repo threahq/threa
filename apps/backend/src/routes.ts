@@ -22,6 +22,7 @@ import { createEmojiHandlers } from "./features/emoji"
 import { createConversationHandlers } from "./features/conversations"
 import { CommandAvailabilityService, createCommandHandlers } from "./features/commands"
 import { createUserPreferencesHandlers } from "./features/user-preferences"
+import { createSidebarConfigHandlers } from "./features/sidebar-config"
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
 import { createAIUsageHandlers } from "./features/ai-usage"
 import type { AI } from "@threa/agent-runtime"
@@ -68,6 +69,7 @@ import type { S3Config } from "./lib/env"
 import type { StorageProvider } from "./lib/storage/s3-client"
 import type { CommandRegistry } from "./features/commands"
 import type { UserPreferencesService } from "./features/user-preferences"
+import type { SidebarConfigService } from "./features/sidebar-config"
 import type { UserE2eKeysService } from "./features/user-e2e-keys"
 import type { AvatarService } from "./features/workspaces"
 import type { BotChannelService } from "./features/api-keys"
@@ -91,6 +93,7 @@ interface Dependencies {
   memoExplorerService: MemoExplorerService
   conversationService: ConversationService
   userPreferencesService: UserPreferencesService
+  sidebarConfigService: SidebarConfigService
   userE2eKeysService: UserE2eKeysService
   invitationService: InvitationService
   activityService: ActivityService
@@ -136,6 +139,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     memoExplorerService,
     conversationService,
     userPreferencesService,
+    sidebarConfigService,
     userE2eKeysService,
     invitationService,
     activityService,
@@ -187,6 +191,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceService,
     streamService,
     userPreferencesService,
+    sidebarConfigService,
     invitationService,
     activityService,
     commandAvailabilityService,
@@ -218,6 +223,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const conversation = createConversationHandlers({ conversationService, streamService })
   const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
+  const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
   const aiUsage = createAIUsageHandlers({ pool })
   const debug = createDebugHandlers({ pool, poolMonitor })
@@ -300,6 +306,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // User preferences
   app.get("/api/workspaces/:workspaceId/preferences", ...authed, preferences.get)
   app.patch("/api/workspaces/:workspaceId/preferences", ...authed, preferences.update)
+
+  // Sidebar config (per-user, per-workspace layout)
+  app.get("/api/workspaces/:workspaceId/sidebar-config", ...authed, sidebarConfig.get)
+  app.patch("/api/workspaces/:workspaceId/sidebar-config", ...authed, sidebarConfig.update)
 
   // End-to-end encryption keys (Phase 0)
   // Server stores only ciphertext + public key. Body is the encrypted private

@@ -4,7 +4,12 @@ import { QueryClient } from "@tanstack/react-query"
 import { SyncEngine } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
 import { db } from "@/db"
-import { DEFAULT_USER_PREFERENCES, type WorkspaceBootstrap, type StreamBootstrap } from "@threa/types"
+import {
+  DEFAULT_USER_PREFERENCES,
+  DEFAULT_SIDEBAR_CONFIG,
+  type WorkspaceBootstrap,
+  type StreamBootstrap,
+} from "@threa/types"
 
 type EventHandler = (...args: unknown[]) => void
 
@@ -106,6 +111,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
     labelMemberships: [],
     labelAssignments: [],
     viewerPermissions: [],
+    sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       ...DEFAULT_USER_PREFERENCES,
       workspaceId: "ws_1",
