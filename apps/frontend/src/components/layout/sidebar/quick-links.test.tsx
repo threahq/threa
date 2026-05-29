@@ -51,10 +51,16 @@ describe("SidebarQuickLinks", () => {
     renderQuickLinks()
 
     expect(screen.getByText("Drafts")).toBeInTheDocument()
-    expect(screen.getByText("Threads")).toBeInTheDocument()
     expect(screen.getByText("Files")).toBeInTheDocument()
     expect(screen.getByText("Memory")).toBeInTheDocument()
     expect(screen.getByText("Activity")).toBeInTheDocument()
+  })
+
+  it("does not render a Threads quick link", () => {
+    stubSidebar("open")
+    renderQuickLinks()
+
+    expect(screen.queryByText("Threads")).not.toBeInTheDocument()
   })
 
   it("renders only the header when collapsed", () => {
