@@ -23,8 +23,24 @@ import {
 const testRunId = Math.random().toString(36).substring(7)
 const testEmail = (name: string) => `${name}-${testRunId}@test.com`
 
-// Helper to wait for async outbox processing
-const waitForOutbox = () => new Promise((resolve) => setTimeout(resolve, 500))
+// Emoji usage weights are computed asynchronously by the outbox listener after
+// a message/reaction is persisted. Poll the bootstrap until the expected weights
+// land instead of sleeping a fixed interval — a fixed `setTimeout` is racy under
+// CI load and was the source of intermittent failures (INV-22).
+const waitForEmojiWeights = async (
+  client: TestClient,
+  workspaceId: string,
+  predicate: (weights: Record<string, number>) => boolean,
+  { timeoutMs = 5000, intervalMs = 100 }: { timeoutMs?: number; intervalMs?: number } = {}
+) => {
+  const deadline = Date.now() + timeoutMs
+  let bootstrap = await getWorkspaceBootstrap(client, workspaceId)
+  while (!predicate(bootstrap.emojiWeights ?? {}) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+    bootstrap = await getWorkspaceBootstrap(client, workspaceId)
+  }
+  return bootstrap
+}
 
 describe("Emoji E2E Tests", () => {
   describe("Emoji List", () => {
@@ -178,11 +194,12 @@ describe("Emoji E2E Tests", () => {
       await sendMessage(client, workspace.id, scratchpad.id, "Another thumbs up 👍")
       await sendMessage(client, workspace.id, scratchpad.id, "Fire! 🔥")
 
-      // Wait for outbox listener to process events
-      await waitForOutbox()
-
-      // Get bootstrap to check weights
-      const bootstrap = await getWorkspaceBootstrap(client, workspace.id)
+      // Wait for the outbox listener to record both emojis
+      const bootstrap = await waitForEmojiWeights(
+        client,
+        workspace.id,
+        (weights) => (weights["+1"] ?? 0) >= 2 && (weights["fire"] ?? 0) >= 1
+      )
 
       // Should have tracked +1 emoji (used twice)
       expect(bootstrap.emojiWeights["+1"]).toBeGreaterThanOrEqual(2)
@@ -200,10 +217,12 @@ describe("Emoji E2E Tests", () => {
       await addReaction(client, workspace.id, message.id, "❤️")
       await addReaction(client, workspace.id, message.id, "🎉")
 
-      // Wait for outbox listener to process events
-      await waitForOutbox()
-
-      const bootstrap = await getWorkspaceBootstrap(client, workspace.id)
+      // Wait for the outbox listener to record both reaction emojis
+      const bootstrap = await waitForEmojiWeights(
+        client,
+        workspace.id,
+        (weights) => (weights["heart"] ?? 0) >= 1 && (weights["tada"] ?? 0) >= 1
+      )
 
       // Should have tracked heart and tada
       expect(bootstrap.emojiWeights["heart"]).toBeGreaterThanOrEqual(1)
@@ -219,10 +238,8 @@ describe("Emoji E2E Tests", () => {
       // Wall of same emoji
       await sendMessage(client, workspace.id, scratchpad.id, "👍👍👍👍👍")
 
-      // Wait for outbox listener to process events
-      await waitForOutbox()
-
-      const bootstrap = await getWorkspaceBootstrap(client, workspace.id)
+      // Wait for the outbox listener to count all 5 occurrences
+      const bootstrap = await waitForEmojiWeights(client, workspace.id, (weights) => (weights["+1"] ?? 0) >= 5)
 
       // Should count all 5 occurrences
       expect(bootstrap.emojiWeights["+1"]).toBeGreaterThanOrEqual(5)
@@ -236,14 +253,12 @@ describe("Emoji E2E Tests", () => {
 
       // First message
       await sendMessage(client, workspace.id, scratchpad.id, "First 👍")
-      await waitForOutbox()
-      const bootstrap1 = await getWorkspaceBootstrap(client, workspace.id)
+      const bootstrap1 = await waitForEmojiWeights(client, workspace.id, (weights) => (weights["+1"] ?? 0) >= 1)
       const weight1 = bootstrap1.emojiWeights["+1"] ?? 0
 
-      // Second message
+      // Second message — wait until the weight climbs past the first reading
       await sendMessage(client, workspace.id, scratchpad.id, "Second 👍")
-      await waitForOutbox()
-      const bootstrap2 = await getWorkspaceBootstrap(client, workspace.id)
+      const bootstrap2 = await waitForEmojiWeights(client, workspace.id, (weights) => (weights["+1"] ?? 0) > weight1)
       const weight2 = bootstrap2.emojiWeights["+1"] ?? 0
 
       // Weight should have increased

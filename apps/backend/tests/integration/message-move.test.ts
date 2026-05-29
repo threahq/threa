@@ -3,7 +3,7 @@ import type { Pool } from "pg"
 import { EventService } from "../../src/features/messaging"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { StreamEventRepository, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
-import { eventId, personaId, sessionId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { eventId, messageId, personaId, sessionId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
 
 describe("message move integration", () => {
@@ -50,6 +50,27 @@ describe("message move integration", () => {
     })
     await StreamMemberRepository.insert(pool, sourceStreamId, actor.id)
 
+    // Claim the stream's single RUNNING agent-session slot *before* any user
+    // message exists. The integration suite preloads a live server
+    // (tests/setup.ts) whose companion worker polls this same database, and a
+    // companion-on scratchpad dispatches a persona-agent job for every USER
+    // message. That worker's `insertRunningOrSkip` would otherwise race this
+    // test's plain `insert` on `idx_agent_sessions_one_running_per_stream`
+    // (23505, flaky). With the slot already held, `CompanionHandler`
+    // suppresses the dispatch (it skips while a session is RUNNING) and any
+    // job that did dispatch no-ops in `insertRunningOrSkip` — so no second
+    // running session, and no stub response leaks onto the stream. The
+    // `triggerMessageId` is a placeholder; nothing reads the session's
+    // `trigger_message_id`, and the started-event payload below still records
+    // the real `target.id`.
+    const traceSession = await AgentSessionRepository.insert(pool, {
+      id: sessionId(),
+      streamId: sourceStreamId,
+      personaId: personaId(),
+      triggerMessageId: messageId(),
+      status: SessionStatuses.RUNNING,
+    })
+
     const target = await eventService.createMessage({
       workspaceId: testWorkspaceId,
       streamId: sourceStreamId,
@@ -79,13 +100,6 @@ describe("message move integration", () => {
       ...testMessageContent("moved b"),
     })
 
-    const traceSession = await AgentSessionRepository.insert(pool, {
-      id: sessionId(),
-      streamId: sourceStreamId,
-      personaId: personaId(),
-      triggerMessageId: target.id,
-      status: SessionStatuses.RUNNING,
-    })
     const traceStartedEventId = eventId()
     await StreamEventRepository.insert(pool, {
       id: traceStartedEventId,

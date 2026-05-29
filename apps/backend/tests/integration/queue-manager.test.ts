@@ -113,6 +113,15 @@ describe("QueueManager", () => {
         expect(hookCalls[0].meta.failedCount).toBe(0)
         expect(hookCalls[0].meta.insertedAt).toBeInstanceOf(Date)
 
+        // The onDLQ hook resolves `hookCalled` from inside the DLQ-move
+        // transaction's savepoint — i.e. before the outer transaction commits.
+        // Wait until the committed DLQ state is visible on a fresh connection
+        // rather than reading once and racing the commit (INV-22).
+        await waitForCondition(
+          async () => (await QueueRepository.getById(pool, messageId))?.dlqAt != null,
+          2000,
+          `Message ${messageId} did not reach a committed DLQ state`
+        )
         const message = await QueueRepository.getById(pool, messageId)
         expect(message).not.toBeNull()
         expect(message!.dlqAt).not.toBeNull()
