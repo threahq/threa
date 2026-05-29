@@ -93,6 +93,9 @@ export const MemoSearchExtension = Extension.create<MemoSearchOptions>({
         startOfLine: false,
         findSuggestionMatch: findMemoSearchMatch,
         // Suppress inside code blocks / inline code (mirrors createTriggerExtension).
+        // A literal backtick directly before `/memo` (`` `/memo`` ) can't match the
+        // trigger anyway — MEMO_TRIGGER requires whitespace or block-start before
+        // `/memo`, and a backtick is neither.
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
           for (let depth = $from.depth; depth >= 0; depth--) {

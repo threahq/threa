@@ -17,10 +17,16 @@ function Harness({ capture }: { capture: (cfg: MemoSuggestionConfig) => void }) 
 
 // Drive the picker for the given query with the given results. onStart only
 // reads editor.storage, items, query, clientRect and command, so a partial
-// props object is sufficient.
-function activateWith(cfg: MemoSuggestionConfig, query: string, items: Memo[]) {
+// props object is sufficient. `storage` is the editor.storage.memoSearch object
+// the hook writes popupVisible into — pass one in to assert on it.
+function activateWith(
+  cfg: MemoSuggestionConfig,
+  query: string,
+  items: Memo[],
+  storage: Record<string, unknown> = {}
+) {
   const props = {
-    editor: { storage: { memoSearch: {} } },
+    editor: { storage: { memoSearch: storage } },
     items,
     query,
     clientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) }),
@@ -84,5 +90,14 @@ describe("/memo picker discoverability", () => {
     const getCfg = renderPicker()
     activateWith(getCfg(), "auth rewrite", [])
     expect(screen.getByText("No memos found")).toBeInTheDocument()
+  })
+
+  it("marks the popup visible even with zero results so Escape dismisses it (not blur the editor)", () => {
+    const getCfg = renderPicker()
+    const storage: { popupVisible?: boolean } = {}
+    // An empty result set still renders the empty-state popup; popupVisible must
+    // be true so isSuggestionActive reports it and Escape/Enter route to the picker.
+    activateWith(getCfg(), "", [], storage)
+    expect(storage.popupVisible).toBe(true)
   })
 })

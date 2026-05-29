@@ -60,6 +60,11 @@ export function useMemoSuggestion() {
     extensionName: "memoSearch",
     searchItems,
     renderList,
+    // While the picker is open it always renders something — recent memos, search
+    // results, or the "No memos found" empty state — so treat it as visible even
+    // with zero results. That way Escape dismisses the picker (instead of blurring
+    // the editor) and Enter is trapped while it's open — see isSuggestionActive.
+    rendersEmptyState: true,
   })
 
   return {
