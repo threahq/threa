@@ -50,7 +50,6 @@ export type OutboxEventType =
   | "conversation:message_assigned"
   | "conversation:message_reassigned"
   | "memo:created"
-  | "memo:revised"
   | "command:dispatched"
   | "command:completed"
   | "command:failed"
@@ -373,13 +372,6 @@ export interface MemoCreatedOutboxPayload extends WorkspaceScopedPayload {
   memo: WireMemo
 }
 
-export interface MemoRevisedOutboxPayload extends WorkspaceScopedPayload {
-  memoId: string
-  previousMemoId: string
-  memo: WireMemo
-  revisionReason: string
-}
-
 // Author-scoped event payloads (only visible to the author)
 export interface CommandDispatchedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
@@ -681,7 +673,6 @@ export interface OutboxEventPayloadMap {
   "conversation:message_assigned": ConversationMessageAssignedOutboxPayload
   "conversation:message_reassigned": ConversationMessageReassignedOutboxPayload
   "memo:created": MemoCreatedOutboxPayload
-  "memo:revised": MemoRevisedOutboxPayload
   "command:dispatched": CommandDispatchedOutboxPayload
   "command:completed": CommandCompletedOutboxPayload
   "command:failed": CommandFailedOutboxPayload

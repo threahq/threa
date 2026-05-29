@@ -337,15 +337,13 @@ export const MemoRepository = {
     return result.rows.map(mapRowToMemo)
   },
 
-  async findActiveByConversation(db: Querier, conversationId: string): Promise<Memo | null> {
+  async findActiveBySourceConversation(db: Querier, conversationId: string): Promise<Memo[]> {
     const result = await db.query<MemoRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
       WHERE source_conversation_id = ${conversationId} AND status = 'active'
-      ORDER BY version DESC
-      LIMIT 1
+      ORDER BY created_at ASC
     `)
-    if (!result.rows[0]) return null
-    return mapRowToMemo(result.rows[0])
+    return result.rows.map(mapRowToMemo)
   },
 
   async insert(db: Querier, params: InsertMemoParams): Promise<Memo> {
@@ -453,19 +451,6 @@ export const MemoRepository = {
           updated_at = NOW()
       WHERE id = ${id}
     `)
-  },
-
-  async supersede(db: Querier, id: string, reason: string): Promise<Memo | null> {
-    const result = await db.query<MemoRow>(sql`
-      UPDATE memos
-      SET status = 'superseded',
-          revision_reason = ${reason},
-          updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
-    if (!result.rows[0]) return null
-    return mapRowToMemo(result.rows[0])
   },
 
   async archive(db: Querier, id: string): Promise<Memo | null> {
