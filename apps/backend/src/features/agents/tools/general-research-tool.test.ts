@@ -38,6 +38,30 @@ describe("general_research tool", () => {
     expect(output.substeps[0].text).toBe("Searching the web…")
   })
 
+  test("carries the full brief in the trace content but keeps it out of the LLM output", async () => {
+    const runGeneralResearch = mock(async () => buildResult())
+    const tool = createGeneralResearchTool({ runGeneralResearch })
+
+    const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
+
+    // The brief is inspectable in the trace dialog…
+    const traceContent = JSON.parse(tool.config.trace.formatContent({ query: "anything" }, result))
+    expect(traceContent.brief).toBe("Synthesised, cited research brief.")
+    // …but never duplicated into the lean status output the model reads.
+    expect(JSON.parse(result.output).brief).toBeUndefined()
+  })
+
+  test("omits the brief from trace content when the researcher returned none", async () => {
+    const runGeneralResearch = mock(async () => buildResult({ brief: "" }))
+    const tool = createGeneralResearchTool({ runGeneralResearch })
+
+    const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
+
+    const traceContent = JSON.parse(tool.config.trace.formatContent({ query: "anything" }, result))
+    expect(traceContent.brief).toBeUndefined()
+    expect(traceContent.briefAdded).toBe(false)
+  })
+
   test("passes a wall-clock deadline and the abort signal through to the researcher", async () => {
     let seen: RunGeneralResearchOptions | undefined
     const runGeneralResearch = mock(async (_query: string, opts: RunGeneralResearchOptions) => {

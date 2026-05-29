@@ -234,6 +234,51 @@ describe("TraceStep", () => {
     )
   })
 
+  it("reveals the full research brief from a collapsed disclosure", async () => {
+    const user = userEvent.setup()
+
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "research",
+            content: JSON.stringify({
+              status: "ok",
+              sourceCount: 3,
+              briefAdded: true,
+              brief: "## Recent AI news\n\nModel **X** shipped on Tuesday.",
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText(/Synthesised a brief from 3 sources/i)).toBeInTheDocument()
+    await user.click(screen.getByText(/Read the full brief/i))
+    expect(screen.getByText("Recent AI news")).toBeInTheDocument()
+    expect(screen.getByText(/shipped on Tuesday/i)).toBeInTheDocument()
+  })
+
+  it("renders a research step without a brief and shows no disclosure", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "research",
+            content: JSON.stringify({ status: "ok", sourceCount: 2, briefAdded: false }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText(/Returned findings from 2 sources/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Read the full brief/i)).not.toBeInTheDocument()
+  })
+
   it("renders tool_call args as a pretty-printed code block to prevent overflow", () => {
     // Regression for the case where wide JSON args (e.g. GitHub tool calls
     // with long repo paths) were rendered as a single inline span, which

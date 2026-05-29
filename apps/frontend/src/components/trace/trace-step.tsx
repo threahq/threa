@@ -457,6 +457,7 @@ function renderStepContent(
       if (structured && "sourceCount" in structured) {
         const sourceCount = structured.sourceCount as number
         const briefAdded = structured.briefAdded === true
+        const brief = typeof structured.brief === "string" ? structured.brief.trim() : null
         return (
           <div className="space-y-2.5">
             <div className="text-muted-foreground">
@@ -464,6 +465,19 @@ function renderStepContent(
               {sourceCount === 1 ? "source" : "sources"}.
             </div>
             {isPartial && <PartialResultBadge stepType={stepType} reason={partialReason} />}
+            {brief && (
+              <Collapsible>
+                <CollapsibleTrigger className="group flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                  <ChevronRight className="w-3 h-3 transition-transform group-data-[state=open]:rotate-90" />
+                  Read the full brief
+                </CollapsibleTrigger>
+                <CollapsibleContent className="pt-1.5">
+                  <div className="rounded bg-muted/50 px-3 py-2 text-sm">
+                    <MarkdownContent content={brief} className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0" />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
             {substepsToShow.length > 0 && (
               <SubstepTimeline substeps={substepsToShow} stepType={stepType} isLive={isInProgress} />
             )}

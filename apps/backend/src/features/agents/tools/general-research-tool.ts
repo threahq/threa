@@ -46,7 +46,7 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
   return defineAgentTool({
     name: "general_research",
     description:
-      "Run bounded (~2 minute) research across workspace knowledge, the public web, and connected integrations (GitHub, Linear) in one pass, returning a synthesised, cited brief. Use this when answering well needs several lookups or spans more than one source. Prefer a single direct tool (web_search, read_url, a GitHub/Linear tool, or workspace_research for workspace-only recall) when one surface clearly suffices.",
+      'Your default tool for any research, news, or current-events question — reach for it whenever the user wants current information, an overview of a topic, recent developments, or anything you would otherwise answer by running web searches yourself. There is no complexity threshold: a single broad question like "what\'s new in AI" qualifies just as much as a multi-source one. It runs bounded (~2 minute) research across the public web, workspace knowledge, and connected integrations (GitHub, Linear) in one pass and returns a synthesised, cited brief. Only reach for a single direct tool instead when it clearly suffices: web_search or read_url for a quick one-fact lookup, workspace_research for workspace-only recall, or a specific GitHub/Linear tool.',
     inputSchema: GeneralResearchSchema,
 
     execute: async (input, { signal, onProgress }): Promise<AgentToolResult> => {
@@ -83,10 +83,16 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
     trace: {
       stepType: AgentStepTypes.RESEARCH,
       formatContent: (_input, result) => {
+        // The trace carries the full synthesised brief so it stays inspectable
+        // in the trace dialog even when the persona's reply folds it in poorly.
+        // The LLM-facing `output` stays lean — the model already receives the
+        // brief via systemContext next turn, so we never duplicate it there.
         try {
-          return result.output
+          const summary = JSON.parse(result.output) as Record<string, unknown>
+          const brief = result.systemContext?.trim()
+          return JSON.stringify(brief ? { ...summary, brief } : summary)
         } catch {
-          return "{}"
+          return result.output
         }
       },
       extractSources: (_input, result) =>
