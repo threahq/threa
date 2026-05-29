@@ -732,36 +732,6 @@ describe("Memo Repositories", () => {
       })
     })
 
-    describe("supersede", () => {
-      test("marks memo as superseded with reason", async () => {
-        const id = memoId()
-
-        await withTransaction(pool, async (client) => {
-          await MemoRepository.insert(client, {
-            id,
-            workspaceId: testWorkspaceId,
-            memoType: "message",
-            sourceMessageId: `msg_supersede_${Date.now()}`,
-            title: "To Be Superseded",
-            abstract: "Original content",
-            keyPoints: [],
-            sourceMessageIds: [],
-            participantIds: [],
-            knowledgeType: "context",
-            tags: [],
-            status: "active",
-          })
-        })
-
-        const superseded = await withTransaction(pool, async (client) => {
-          return MemoRepository.supersede(client, id, "New information available")
-        })
-
-        expect(superseded?.status).toBe("superseded")
-        expect(superseded?.revisionReason).toBe("New information available")
-      })
-    })
-
     describe("getAllTags", () => {
       test("returns unique tags from all memos in workspace", async () => {
         const localWorkspaceId = workspaceId()

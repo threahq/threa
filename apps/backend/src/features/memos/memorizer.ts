@@ -24,12 +24,6 @@ export interface MemoContent {
   keyPoints: string[]
   tags: string[]
   sourceMessageIds: string[]
-  /**
-   * Id of an existing memo this one continues/updates, when the model linked them.
-   * A non-destructive directed link (stored as parentMemoId) — the linked memo
-   * stays active; whether it is actually superseded is a later read-time/agent call.
-   */
-  parentMemoId?: string
 }
 
 /**
@@ -96,7 +90,6 @@ export class Memorizer {
   ): Promise<MemoContent[]> {
     const config = await this.configResolver.resolve(COMPONENT_PATHS.MEMO_MEMORIZER)
     const messages = context.content as Message[]
-    const existingMemos = context.existingMemos ?? []
     const messageCount = formattedMessages.split("<message").length - 1
 
     const { value } = await this.ai.generateObject({
@@ -116,13 +109,6 @@ export class Memorizer {
 
     return value.memos.map((memo) => {
       const validSourceIds = memo.sourceMessageIds.filter((id) => messages.some((m) => m.id === id))
-      // continuesExistingMemo is a 1-based index into the existing memos shown in the
-      // prompt; resolve to a real id and ignore out-of-range/hallucinated values.
-      const linkIndex = memo.continuesExistingMemo
-      const parentMemoId =
-        linkIndex != null && linkIndex >= 1 && linkIndex <= existingMemos.length
-          ? existingMemos[linkIndex - 1].id
-          : undefined
       return {
         title: memo.title,
         abstract: memo.abstract,
@@ -130,7 +116,6 @@ export class Memorizer {
         keyPoints: memo.keyPoints,
         tags: memo.tags,
         sourceMessageIds: validSourceIds.length > 0 ? validSourceIds : messages.map((m) => m.id),
-        parentMemoId,
       }
     })
   }

@@ -453,19 +453,6 @@ export const MemoRepository = {
     `)
   },
 
-  async supersede(db: Querier, id: string, reason: string): Promise<Memo | null> {
-    const result = await db.query<MemoRow>(sql`
-      UPDATE memos
-      SET status = 'superseded',
-          revision_reason = ${reason},
-          updated_at = NOW()
-      WHERE id = ${id}
-      RETURNING ${sql.raw(SELECT_FIELDS)}
-    `)
-    if (!result.rows[0]) return null
-    return mapRowToMemo(result.rows[0])
-  },
-
   async archive(db: Querier, id: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
       UPDATE memos

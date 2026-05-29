@@ -189,14 +189,6 @@ export const memoItemSchema = z.object({
     .describe("Up to 3 supporting facts; leave empty when the abstract already stands alone"),
   tags: z.array(z.string()).max(5).describe("Up to 5 relevant tags for categorization"),
   sourceMessageIds: z.array(z.string()).describe("IDs of the messages this specific memo draws from"),
-  continuesExistingMemo: z
-    .number()
-    .int()
-    .positive()
-    .nullable()
-    .describe(
-      "If this memo updates or directly follows on from one of the existing memos listed in the prompt (e.g. a decision that changed), that memo's 1-based number. This records a LINK between them — it does NOT delete the old memo. Null if this memo is unrelated to the existing ones or there are none."
-    ),
 })
 
 export type MemoItemOutput = z.infer<typeof memoItemSchema>
@@ -306,7 +298,7 @@ export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. C
 ## Memory Context (prior memos for vocabulary consistency)
 {{MEMORY_CONTEXT}}
 
-## Existing Memos for this conversation (numbered)
+## Existing Memos for this conversation
 {{EXISTING_MEMOS}}
 
 ## Updated Conversation
@@ -314,7 +306,7 @@ export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. C
 
 {{EXISTING_TAGS_SECTION}}
 
-Emit one memo per genuinely new or changed topic, each terse and single-topic. If a memo updates or directly follows on from one of the numbered existing memos (e.g. a decision that changed, or a refinement of the same topic), set continuesExistingMemo to that memo's number — this records a link, it does not delete the old memo. If a memo is unrelated to the existing ones, leave continuesExistingMemo null. Return no memos if nothing new or changed is worth remembering. For each memo, set sourceMessageIds to only the messages that topic draws from.`
+Emit one memo per genuinely new or changed topic, each terse and single-topic. Return no memos if nothing new or changed is worth remembering. For each memo, set sourceMessageIds to only the messages that topic draws from.`
 
 export const MEMORIZER_EXISTING_TAGS_TEMPLATE = `## Existing Tags in Workspace
 Prefer these tags when applicable, but create new ones if needed:

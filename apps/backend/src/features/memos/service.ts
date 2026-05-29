@@ -22,8 +22,6 @@ const MIN_CONVERSATION_MESSAGES = 1
 export interface ProcessResult {
   processed: number
   memosCreated: number
-  /** Subset of created memos that link to (continue/update) an existing memo. */
-  memosLinked: number
 }
 
 /** Data prepared for memo creation (before DB insert) */
@@ -41,9 +39,6 @@ interface MemoToCreate {
   knowledgeType: import("@threa/types").KnowledgeType
   tags: string[]
   status: import("@threa/types").MemoStatus
-  version?: number
-  /** Non-destructive link to an existing memo this one continues/updates. */
-  parentMemoId?: string
   embedding: number[]
 }
 
@@ -176,7 +171,7 @@ export class MemoService implements MemoServiceLike {
     })
 
     if (!fetchedData) {
-      return { processed: 0, memosCreated: 0, memosLinked: 0 }
+      return { processed: 0, memosCreated: 0 }
     }
 
     // Phase 2: AI processing (no connection held, can take seconds/minutes)
@@ -185,7 +180,6 @@ export class MemoService implements MemoServiceLike {
     const outboxEvents: OutboxEvent[] = []
     const deferredItemIds = new Set<string>()
     let memosCreated = 0
-    let memosLinked = 0
     let itemsFailed = 0
 
     // Process conversation items
@@ -275,9 +269,8 @@ export class MemoService implements MemoServiceLike {
         const isRevision = existingMemos.length > 0
 
         // A conversation yields a set of single-topic memos. On revision the
-        // memorizer sees the existing memos and emits only what is new or changed,
-        // optionally linking a memo to the one it continues (non-destructive — the
-        // linked memo stays active; supersession is a later read-time/agent call).
+        // memorizer sees the existing memos and emits only what is new or changed;
+        // existing memos are left untouched (no supersession, no linking yet).
         const contents = isRevision
           ? await this.memorizer.reviseMemo(formattedMessages, {
               memoryContext,
@@ -305,12 +298,15 @@ export class MemoService implements MemoServiceLike {
           contents.map((c) => c.abstract),
           { workspaceId, functionId: "memo-embedding" }
         )
+        // Fail loudly rather than silently storing an undefined embedding (INV-11).
+        if (embeddings.length !== contents.length) {
+          throw new Error(
+            `Embedding count mismatch for conversation ${conversation.id}: expected ${contents.length}, got ${embeddings.length}`
+          )
+        }
 
         for (let i = 0; i < contents.length; i++) {
           const content = contents[i]
-          // A linked memo continues an existing one: carry its version forward so the
-          // chain reads as a progression, even though both stay active.
-          const parent = content.parentMemoId ? existingMemos.find((m) => m.id === content.parentMemoId) : undefined
 
           const memo: MemoToCreate = {
             id: memoId(),
@@ -325,8 +321,6 @@ export class MemoService implements MemoServiceLike {
             knowledgeType: content.knowledgeType,
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
-            version: parent ? parent.version + 1 : undefined,
-            parentMemoId: parent?.id,
             embedding: embeddings[i],
           }
 
@@ -340,7 +334,6 @@ export class MemoService implements MemoServiceLike {
             },
           })
           memosCreated++
-          if (parent) memosLinked++
         }
 
         logger.info(
@@ -394,11 +387,11 @@ export class MemoService implements MemoServiceLike {
 
     const processed = fetchedData.pending.length - deferredItemIds.size
     logger.info(
-      { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated, memosLinked },
+      { workspaceId, streamId, processed, deferred: deferredItemIds.size, memosCreated },
       "Memo batch processed"
     )
 
-    return { processed, memosCreated, memosLinked }
+    return { processed, memosCreated }
   }
 
   /** Convert MemoToCreate data to wire format (before DB insert, so use current timestamp) */
@@ -417,9 +410,9 @@ export class MemoService implements MemoServiceLike {
       participantIds: memoData.participantIds,
       knowledgeType: memoData.knowledgeType,
       tags: memoData.tags,
-      parentMemoId: memoData.parentMemoId ?? null,
+      parentMemoId: null,
       status: memoData.status,
-      version: memoData.version ?? 1,
+      version: 1,
       revisionReason: null,
       createdAt: now,
       updatedAt: now,

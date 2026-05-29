@@ -71,7 +71,6 @@ export function createMemoBatchProcessWorker(deps: MemoBatchWorkerDeps): JobHand
         streamId,
         processed: result.processed,
         memosCreated: result.memosCreated,
-        memosLinked: result.memosLinked,
       },
       "Memo batch processing completed"
     )
