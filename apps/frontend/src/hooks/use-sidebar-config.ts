@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react"
+import { useCallback, useMemo, useRef } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
@@ -7,6 +7,7 @@ import {
   type WorkspaceBootstrap,
   DEFAULT_SIDEBAR_CONFIG,
   sidebarConfigForPreset,
+  normalizeSidebarConfig,
 } from "@threa/types"
 import { sidebarConfigApi } from "@/api"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -27,7 +28,10 @@ export function useSidebarConfig(workspaceId: string) {
   // settlement is allowed to touch the cache / rollback.
   const latestMutationIdRef = useRef(0)
   const cached = useWorkspaceSidebarConfig(workspaceId)
-  const config = cached?.config ?? DEFAULT_SIDEBAR_CONFIG
+  // Normalize so a document persisted before quick links were configurable (or
+  // any partial list) reads back with the full, ordered quick-link set. Memoized
+  // on the cached row so the reference stays stable for downstream `useMemo` deps.
+  const config = useMemo(() => normalizeSidebarConfig(cached?.config ?? DEFAULT_SIDEBAR_CONFIG), [cached])
 
   const mutation = useMutation({
     mutationFn: (next: SidebarConfig) => sidebarConfigApi.update(workspaceId, next),

@@ -7,7 +7,12 @@ import {
   mergeReconnectWorkspaceBootstrap,
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
-import { DEFAULT_SIDEBAR_CONFIG, type StreamBootstrap, type WorkspaceBootstrap } from "@threa/types"
+import {
+  DEFAULT_SIDEBAR_CONFIG,
+  DEFAULT_QUICK_LINKS,
+  type StreamBootstrap,
+  type WorkspaceBootstrap,
+} from "@threa/types"
 import type { Socket } from "socket.io-client"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
@@ -203,6 +208,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
         sidebarConfig: {
           basePreset: "all",
           sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+          quickLinks: DEFAULT_QUICK_LINKS,
         },
       }),
       Date.now()
@@ -212,6 +218,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(stored?.config).toEqual({
       basePreset: "all",
       sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+      quickLinks: DEFAULT_QUICK_LINKS,
     })
   })
 

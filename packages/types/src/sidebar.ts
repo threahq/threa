@@ -40,9 +40,53 @@ export interface SidebarSection {
 export const SIDEBAR_BASE_PRESETS = ["smart", "all"] as const
 export type SidebarBasePreset = (typeof SIDEBAR_BASE_PRESETS)[number]
 
+/**
+ * Quick-link destinations in the sidebar's "Quick Links" group. The user can
+ * reorder them and hide ones they don't use; the set itself is fixed (these are
+ * the workspace's standing views).
+ */
+export const SIDEBAR_QUICK_LINKS = ["drafts", "saved", "files", "scheduled", "memory", "labels", "activity"] as const
+export type SidebarQuickLinkKey = (typeof SIDEBAR_QUICK_LINKS)[number]
+
+/**
+ * A quick link's placement: array position is its order; `enabled` is its
+ * visibility. Hidden links stay in the list (so the editor can show and
+ * re-enable them, preserving their position) rather than being removed.
+ */
+export interface SidebarQuickLink {
+  key: SidebarQuickLinkKey
+  enabled: boolean
+}
+
+/** All quick links, enabled, in canonical order — the preset/seed default. */
+export const DEFAULT_QUICK_LINKS: SidebarQuickLink[] = SIDEBAR_QUICK_LINKS.map((key) => ({ key, enabled: true }))
+
 export interface SidebarConfig {
   basePreset: SidebarBasePreset
   sections: SidebarSection[]
+  quickLinks: SidebarQuickLink[]
+}
+
+/**
+ * Ensure a config carries a complete, deduped `quickLinks` list. Documents
+ * persisted before quick links were configurable (and any partial list) get the
+ * missing keys appended (enabled) in canonical order, and unknown keys dropped —
+ * so every destination stays reachable and a future new link shows up for
+ * existing users. Idempotent; safe to apply on every read/write.
+ */
+export function normalizeSidebarConfig(config: SidebarConfig): SidebarConfig {
+  const seen = new Set<SidebarQuickLinkKey>()
+  const quickLinks: SidebarQuickLink[] = []
+  for (const link of config.quickLinks ?? []) {
+    if (SIDEBAR_QUICK_LINKS.includes(link.key) && !seen.has(link.key)) {
+      seen.add(link.key)
+      quickLinks.push({ key: link.key, enabled: link.enabled })
+    }
+  }
+  for (const key of SIDEBAR_QUICK_LINKS) {
+    if (!seen.has(key)) quickLinks.push({ key, enabled: true })
+  }
+  return { ...config, quickLinks }
 }
 
 /** Section ids double as collapse-state keys, so they must stay stable. */
@@ -54,6 +98,7 @@ export const SMART_SIDEBAR_CONFIG: SidebarConfig = {
     { id: "pinned", spec: { kind: "smart", bucket: "pinned" } },
     { id: "other", spec: { kind: "smart", bucket: "other" } },
   ],
+  quickLinks: DEFAULT_QUICK_LINKS,
 }
 
 export const ALL_SIDEBAR_CONFIG: SidebarConfig = {
@@ -63,6 +108,7 @@ export const ALL_SIDEBAR_CONFIG: SidebarConfig = {
     { id: "channels", spec: { kind: "type", streamType: "channel" } },
     { id: "dms", spec: { kind: "type", streamType: "dm" } },
   ],
+  quickLinks: DEFAULT_QUICK_LINKS,
 }
 
 export function sidebarConfigForPreset(preset: SidebarBasePreset): SidebarConfig {

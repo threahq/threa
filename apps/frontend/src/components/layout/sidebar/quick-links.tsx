@@ -1,13 +1,31 @@
-import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag } from "lucide-react"
-import type { ComponentType, ReactNode } from "react"
+import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag, type LucideIcon } from "lucide-react"
+import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
+import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { SectionHeader } from "./sections"
 
+/**
+ * Per-key label + icon for the quick links. Single source of truth shared by the
+ * rendered list and the sidebar editor (which lists every link for reorder /
+ * show-hide), so the two never drift.
+ */
+export const QUICK_LINK_META: Record<SidebarQuickLinkKey, { label: string; icon: LucideIcon }> = {
+  drafts: { label: "Drafts", icon: FileEdit },
+  saved: { label: "Saved", icon: Bookmark },
+  files: { label: "Files", icon: Paperclip },
+  scheduled: { label: "Scheduled", icon: CalendarClock },
+  memory: { label: "Memory", icon: Brain },
+  labels: { label: "Labels", icon: Tag },
+  activity: { label: "Activity", icon: Bell },
+}
+
 interface SidebarQuickLinksProps {
   workspaceId: string
+  /** The viewer's quick-link layout (order + visibility) from their sidebar config. */
+  quickLinks: SidebarQuickLink[]
   isDraftsPage: boolean
   draftCount: number
   isSavedPage: boolean
@@ -22,10 +40,7 @@ interface SidebarQuickLinksProps {
 }
 
 interface QuickLinkItem {
-  key: string
   to: string
-  icon: ComponentType<{ className?: string }>
-  label: string
   isActive: boolean
   unreadCount: number
   signalSlot: ReactNode
@@ -34,8 +49,13 @@ interface QuickLinkItem {
 const SECTION_KEY = "quick-links"
 const DEFAULT_STATE = "open"
 
+function countSlot(count: number): ReactNode {
+  return count > 0 ? <span className="ml-auto text-xs text-muted-foreground">({count})</span> : null
+}
+
 export function SidebarQuickLinks({
   workspaceId,
+  quickLinks,
   isDraftsPage,
   draftCount,
   isSavedPage,
@@ -51,79 +71,50 @@ export function SidebarQuickLinks({
   const { collapseOnMobile, getSectionState, toggleSectionState } = useSidebar()
   const state = getSectionState(SECTION_KEY, DEFAULT_STATE)
 
-  const items: QuickLinkItem[] = [
-    {
-      key: "drafts",
+  // The route/count signal data per key; presentation (label/icon) comes from
+  // QUICK_LINK_META so the editor and the list stay in sync.
+  const itemByKey: Record<SidebarQuickLinkKey, QuickLinkItem> = {
+    drafts: {
       to: `/w/${workspaceId}/drafts`,
-      icon: FileEdit,
-      label: "Drafts",
       isActive: isDraftsPage,
       unreadCount: draftCount,
-      signalSlot: draftCount > 0 ? <span className="ml-auto text-xs text-muted-foreground">({draftCount})</span> : null,
+      signalSlot: countSlot(draftCount),
     },
-    {
-      key: "saved",
+    saved: {
       to: `/w/${workspaceId}/saved`,
-      icon: Bookmark,
-      label: "Saved",
       isActive: isSavedPage,
       unreadCount: savedCount,
-      signalSlot: savedCount > 0 ? <span className="ml-auto text-xs text-muted-foreground">({savedCount})</span> : null,
+      signalSlot: countSlot(savedCount),
     },
-    {
-      key: "files",
-      to: `/w/${workspaceId}/files`,
-      icon: Paperclip,
-      label: "Files",
-      isActive: isFilesPage,
-      unreadCount: 0,
-      signalSlot: null,
-    },
-    {
-      key: "scheduled",
+    files: { to: `/w/${workspaceId}/files`, isActive: isFilesPage, unreadCount: 0, signalSlot: null },
+    scheduled: {
       to: `/w/${workspaceId}/scheduled`,
-      icon: CalendarClock,
-      label: "Scheduled",
       isActive: isScheduledPage,
       unreadCount: scheduledCount,
-      signalSlot:
-        scheduledCount > 0 ? <span className="ml-auto text-xs text-muted-foreground">({scheduledCount})</span> : null,
+      signalSlot: countSlot(scheduledCount),
     },
-    {
-      key: "memory",
-      to: `/w/${workspaceId}/memory`,
-      icon: Brain,
-      label: "Memory",
-      isActive: isMemoryPage,
-      unreadCount: 0,
-      signalSlot: null,
-    },
-    {
-      key: "labels",
-      to: `/w/${workspaceId}/labels`,
-      icon: Tag,
-      label: "Labels",
-      isActive: isLabelsPage,
-      unreadCount: 0,
-      signalSlot: null,
-    },
-    {
-      key: "activity",
+    memory: { to: `/w/${workspaceId}/memory`, isActive: isMemoryPage, unreadCount: 0, signalSlot: null },
+    labels: { to: `/w/${workspaceId}/labels`, isActive: isLabelsPage, unreadCount: 0, signalSlot: null },
+    activity: {
       to: `/w/${workspaceId}/activity`,
-      icon: Bell,
-      label: "Activity",
       isActive: isActivityPage,
       unreadCount: unreadActivityCount,
       signalSlot: unreadActivityCount > 0 ? <UnreadBadge count={unreadActivityCount} className="ml-auto" /> : null,
     },
-  ]
+  }
 
   // Aggregate only "real" attention-worthy signals — drafts and saved counts
   // are persistent artifacts, not unread activity. The activity feed is the
-  // only source of new-attention signal in the quick links today.
-  const unreadAggregate = unreadActivityCount
+  // only source of new-attention signal in the quick links today, and only when
+  // the viewer keeps it visible.
+  const activityEnabled = quickLinks.some((link) => link.key === "activity" && link.enabled)
+  const unreadAggregate = activityEnabled ? unreadActivityCount : 0
 
   const isOpen = state === "open"
+  const visible = quickLinks.filter((link) => link.enabled)
+
+  // Every link can be hidden from the editor; render nothing when none remain.
+  if (visible.length === 0) return null
 
   return (
     <div className="space-y-1">
@@ -135,22 +126,26 @@ export function SidebarQuickLinks({
       />
 
       {isOpen &&
-        items.map(({ key, to, icon: Icon, label, isActive, unreadCount, signalSlot }) => (
-          <Link
-            key={key}
-            to={to}
-            onClick={collapseOnMobile}
-            className={cn(
-              "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-              isActive ? "bg-primary/10" : "hover:bg-muted/50",
-              !isActive && unreadCount === 0 && "text-muted-foreground"
-            )}
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-            {signalSlot}
-          </Link>
-        ))}
+        visible.map(({ key }) => {
+          const { label, icon: Icon } = QUICK_LINK_META[key]
+          const { to, isActive, unreadCount, signalSlot } = itemByKey[key]
+          return (
+            <Link
+              key={key}
+              to={to}
+              onClick={collapseOnMobile}
+              className={cn(
+                "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                isActive ? "bg-primary/10" : "hover:bg-muted/50",
+                !isActive && unreadCount === 0 && "text-muted-foreground"
+              )}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+              {signalSlot}
+            </Link>
+          )
+        })}
     </div>
   )
 }

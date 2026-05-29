@@ -2,7 +2,7 @@ import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { SidebarConfigRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
-import { type SidebarConfig, DEFAULT_SIDEBAR_CONFIG } from "@threa/types"
+import { type SidebarConfig, DEFAULT_SIDEBAR_CONFIG, normalizeSidebarConfig } from "@threa/types"
 
 export class SidebarConfigService {
   constructor(private pool: Pool) {}
@@ -12,9 +12,10 @@ export class SidebarConfigService {
    * when they have never customized it.
    */
   async getConfig(workspaceId: string, userId: string): Promise<SidebarConfig> {
-    // Single query, INV-30.
+    // Single query, INV-30. Normalize so documents persisted before quick links
+    // were configurable come back with the full, ordered quick-link list.
     const stored = await SidebarConfigRepository.find(this.pool, workspaceId, userId)
-    return stored ?? DEFAULT_SIDEBAR_CONFIG
+    return normalizeSidebarConfig(stored ?? DEFAULT_SIDEBAR_CONFIG)
   }
 
   /**
@@ -22,16 +23,17 @@ export class SidebarConfigService {
    * the outbox (author-scoped event).
    */
   async updateConfig(workspaceId: string, userId: string, config: SidebarConfig): Promise<SidebarConfig> {
+    const normalized = normalizeSidebarConfig(config)
     return withTransaction(this.pool, async (client) => {
-      await SidebarConfigRepository.upsert(client, workspaceId, userId, config)
+      await SidebarConfigRepository.upsert(client, workspaceId, userId, normalized)
 
       await OutboxRepository.insert(client, "sidebar_config:updated", {
         workspaceId,
         authorId: userId,
-        sidebarConfig: config,
+        sidebarConfig: normalized,
       })
 
-      return config
+      return normalized
     })
   }
 }

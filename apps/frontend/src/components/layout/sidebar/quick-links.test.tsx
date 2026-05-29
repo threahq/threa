@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { render, screen, userEvent } from "@/test"
+import { DEFAULT_QUICK_LINKS } from "@threa/types"
 import * as Contexts from "@/contexts"
 import type { CollapseState } from "@/contexts"
 import { SidebarQuickLinks } from "./quick-links"
@@ -24,6 +25,7 @@ function renderQuickLinks(props: Partial<Parameters<typeof SidebarQuickLinks>[0]
     <MemoryRouter>
       <SidebarQuickLinks
         workspaceId="workspace_1"
+        quickLinks={DEFAULT_QUICK_LINKS}
         isDraftsPage={false}
         draftCount={0}
         isSavedPage={false}
@@ -61,6 +63,29 @@ describe("SidebarQuickLinks", () => {
     renderQuickLinks()
 
     expect(screen.queryByText("Threads")).not.toBeInTheDocument()
+  })
+
+  it("hides links the viewer has disabled and honors the configured order", () => {
+    stubSidebar("open")
+    renderQuickLinks({
+      quickLinks: [
+        { key: "activity", enabled: true },
+        { key: "labels", enabled: false },
+        { key: "drafts", enabled: true },
+      ],
+    })
+
+    // Disabled link is gone; the rest render in the order given.
+    expect(screen.queryByText("Labels")).not.toBeInTheDocument()
+    const rendered = screen.getAllByRole("link").map((l) => l.textContent)
+    expect(rendered).toEqual(["Activity", "Drafts"])
+  })
+
+  it("renders nothing when every link is hidden", () => {
+    stubSidebar("open")
+    const { container } = renderQuickLinks({ quickLinks: [{ key: "drafts", enabled: false }] })
+
+    expect(container).toBeEmptyDOMElement()
   })
 
   it("renders only the header when collapsed", () => {

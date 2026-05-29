@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { ALL_SIDEBAR_CONFIG, DEFAULT_SIDEBAR_CONFIG, type SidebarConfig } from "@threa/types"
+import { ALL_SIDEBAR_CONFIG, DEFAULT_SIDEBAR_CONFIG, DEFAULT_QUICK_LINKS, type SidebarConfig } from "@threa/types"
 import { SidebarConfigService } from "./service"
 import { SidebarConfigRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
@@ -49,6 +49,7 @@ describe("SidebarConfigService.updateConfig", () => {
     const next: SidebarConfig = {
       basePreset: "all",
       sections: [{ id: "channels", spec: { kind: "type", streamType: "channel" } }],
+      quickLinks: DEFAULT_QUICK_LINKS,
     }
     const result = await service.updateConfig(WORKSPACE_ID, USER_ID, next)
 
@@ -59,5 +60,22 @@ describe("SidebarConfigService.updateConfig", () => {
       authorId: USER_ID,
       sidebarConfig: next,
     })
+  })
+
+  it("normalizes a config with an incomplete quick-link list before persisting", async () => {
+    const service = setupService()
+    const upsert = spyOn(SidebarConfigRepository, "upsert").mockResolvedValue(undefined)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const partial: SidebarConfig = { basePreset: "smart", sections: [], quickLinks: [] }
+    const result = await service.updateConfig(WORKSPACE_ID, USER_ID, partial)
+
+    expect(result.quickLinks).toEqual(DEFAULT_QUICK_LINKS)
+    expect(upsert).toHaveBeenCalledWith(
+      expect.anything(),
+      WORKSPACE_ID,
+      USER_ID,
+      expect.objectContaining({ quickLinks: DEFAULT_QUICK_LINKS })
+    )
   })
 })
