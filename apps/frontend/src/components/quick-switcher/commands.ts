@@ -33,6 +33,20 @@ export interface CommandContext {
   requestInput: (request: InputRequest) => void
   openSettings: (tab?: SettingsTab) => void
   openExplorer: (overrides?: Partial<ExplorerFilters>) => void
+  /**
+   * The stream currently in view (route param), or null on non-stream routes.
+   * Contextual stream commands (archive, settings, files, labels) read this to
+   * know what they act on; they are only surfaced when it is set.
+   */
+  currentStreamId?: string | null
+  /** Resolved display name of `currentStreamId`, for section headers/confirm copy. */
+  currentStreamName?: string | null
+  /** Open the stream settings dialog for a stream. */
+  openStreamSettings: (streamId: string) => void
+  /** Open the destructive confirmation for archiving (or deleting a draft) a stream. */
+  requestArchiveStream: (streamId: string) => void
+  /** Open the label picker for a stream. */
+  openLabelPicker: (streamId: string) => void
 }
 
 export interface Command {

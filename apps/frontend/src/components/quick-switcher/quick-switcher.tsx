@@ -1,8 +1,20 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { Search, Terminal, FileText } from "lucide-react"
+import { toast } from "sonner"
+import { LabelableResourceTypes } from "@threa/types"
 import { ResponsiveDialog, ResponsiveDialogContent } from "@/components/ui/responsive-dialog"
-import { useDraftScratchpads } from "@/hooks"
+import {
+  ResponsiveAlertDialog,
+  ResponsiveAlertDialogAction,
+  ResponsiveAlertDialogCancel,
+  ResponsiveAlertDialogContent,
+  ResponsiveAlertDialogDescription,
+  ResponsiveAlertDialogFooter,
+  ResponsiveAlertDialogHeader,
+  ResponsiveAlertDialogTitle,
+} from "@/components/ui/responsive-alert-dialog"
+import { useDraftScratchpads, useArchiveStream, useStreamName, isDraftId } from "@/hooks"
 import {
   useWorkspaceUsers,
   useWorkspaceStreams,
@@ -15,6 +27,8 @@ import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
 import { useCreateChannel } from "@/components/create-channel"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
+import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { LabelPicker } from "@/components/labels/label-picker"
 import { useStreamItems } from "./use-stream-items"
 import { useCommandItems } from "./use-command-items"
 import { useSearchItems } from "./use-search-items"
@@ -32,6 +46,8 @@ interface QuickSwitcherProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   initialMode?: QuickSwitcherMode
+  /** Stream currently in view (route param) — drives contextual stream commands. */
+  currentStreamId?: string | null
 }
 
 const MODE_PREFIXES: Record<QuickSwitcherMode, string> = {
@@ -68,13 +84,27 @@ export function getDisplayQuery(query: string, mode: QuickSwitcherMode): string 
   return query
 }
 
-export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode }: QuickSwitcherProps) {
+export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, currentStreamId }: QuickSwitcherProps) {
   const navigate = useNavigate()
   const user = useUser()
-  const { createDraft } = useDraftScratchpads(workspaceId)
+  const { createDraft, deleteDraft } = useDraftScratchpads(workspaceId)
   const { openSettings } = useSettings()
   const { openCreateChannel } = useCreateChannel()
   const { open: openExplorer } = useExplorerUrlState()
+  const { openStreamSettings } = useStreamSettings()
+  const archiveStream = useArchiveStream(workspaceId)
+  const currentStreamName = useStreamName(workspaceId, currentStreamId ?? "")
+
+  // Destructive stream actions confirm before running; the label picker is a
+  // standalone dialog opened after the palette closes. The pending-archive
+  // target captures its name/draft-status at request time so the confirm copy
+  // can't drift if the route (and thus `currentStreamId`) changes underneath.
+  const [pendingArchive, setPendingArchive] = useState<{
+    streamId: string
+    name: string
+    isDraft: boolean
+  } | null>(null)
+  const [labelPickerStreamId, setLabelPickerStreamId] = useState<string | null>(null)
 
   const streams = useWorkspaceStreams(workspaceId)
   const streamMemberships = useWorkspaceStreamMemberships(workspaceId)
@@ -137,6 +167,39 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode }: 
     setInputValue("")
   }, [])
 
+  // Contextual stream actions close the palette first, then open their own
+  // surface (settings dialog, confirm modal, label picker), which render as
+  // siblings so they survive the palette unmounting its content.
+  const handleOpenStreamSettings = useCallback(
+    (streamId: string) => {
+      handleClose()
+      openStreamSettings(streamId)
+    },
+    [handleClose, openStreamSettings]
+  )
+
+  const requestArchiveStream = useCallback(
+    (streamId: string) => {
+      handleClose()
+      // Contextual archive only ever targets the current stream, so its
+      // resolved name is correct here — freeze it for the confirm dialog.
+      setPendingArchive({
+        streamId,
+        name: currentStreamName ?? "this stream",
+        isDraft: isDraftId(streamId),
+      })
+    },
+    [handleClose, currentStreamName]
+  )
+
+  const openLabelPicker = useCallback(
+    (streamId: string) => {
+      handleClose()
+      setLabelPickerStreamId(streamId)
+    },
+    [handleClose]
+  )
+
   const commandContext: CommandContext = useMemo(
     () => ({
       workspaceId,
@@ -149,6 +212,11 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode }: 
       requestInput,
       openSettings,
       openExplorer,
+      currentStreamId,
+      currentStreamName,
+      openStreamSettings: handleOpenStreamSettings,
+      requestArchiveStream,
+      openLabelPicker,
     }),
     [
       workspaceId,
@@ -161,6 +229,11 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode }: 
       requestInput,
       openSettings,
       openExplorer,
+      currentStreamId,
+      currentStreamName,
+      handleOpenStreamSettings,
+      requestArchiveStream,
+      openLabelPicker,
     ]
   )
 
@@ -294,201 +367,264 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode }: 
     [inputRequest, inputValue]
   )
 
+  const handleConfirmArchive = useCallback(async () => {
+    if (!pendingArchive) return
+    const { streamId, isDraft } = pendingArchive
+    try {
+      if (isDraft) {
+        await deleteDraft(streamId)
+        // Drafts are fully deleted — leave the (now-gone) stream if viewing it.
+        if (currentStreamId === streamId) navigate(`/w/${workspaceId}`)
+        toast.success("Draft deleted")
+      } else {
+        await archiveStream.mutateAsync(streamId)
+        toast.success("Stream archived")
+      }
+    } catch {
+      toast.error(isDraft ? "Failed to delete draft" : "Failed to archive stream")
+    } finally {
+      setPendingArchive(null)
+    }
+  }, [pendingArchive, deleteDraft, navigate, workspaceId, currentStreamId, archiveStream])
+
+  const archiveIsDraft = pendingArchive?.isDraft ?? false
+  const archiveStreamLabel = pendingArchive?.name ?? "this stream"
+
   const ModeIcon = inputRequest?.icon ?? MODE_ICONS[mode]
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent
-        ref={dialogRef}
-        desktopClassName="overflow-hidden p-0 gap-0 shadow-lg sm:!fixed sm:!top-[20%] sm:!translate-y-0 sm:max-w-[600px] sm:rounded-2xl sm:border"
-        drawerClassName="overflow-hidden p-0"
-        hideCloseButton
-        onPointerDownOutside={(e) => {
-          // Prevent closing when clicking on suggestion popover (rendered via portal)
-          const target = e.target as HTMLElement
-          if (target.closest('[role="listbox"]')) {
-            e.preventDefault()
-          }
-        }}
-        onEscapeKeyDown={(e) => {
-          // If TipTap already handled this event (closed a popover), don't close dialog
-          if (e.defaultPrevented) return
-
-          // Use ref for synchronous access (state updates are batched)
-          // When suggestion popover is open, close it instead of closing dialog
-          // (Radix intercepts Escape before TipTap sees it, so we close imperatively)
-          if (isSuggestionPopoverActiveRef.current) {
-            e.preventDefault()
-            richInputRef.current?.closePopovers()
-            return
-          }
-          // When filter select picker is open, close it instead of closing dialog
-          if (currentResult.isFilterSelectActive && currentResult.closeFilterSelect) {
-            e.preventDefault()
-            currentResult.closeFilterSelect()
-            return
-          }
-          // When in inputRequest mode, Escape returns to command list instead of closing
-          if (inputRequest) {
-            e.preventDefault()
-            clearInputRequest()
-            requestAnimationFrame(() => {
-              richInputRef.current?.focus()
-            })
-          }
-        }}
-        onKeyDown={(e) => {
-          // If TipTap already handled this event (e.g., popover keyboard nav), don't interfere
-          if (e.defaultPrevented) return
-
-          const isMod = e.metaKey || e.ctrlKey
-          // Use ref for synchronous access (state updates are batched)
-          // When suggestion popover is open, let TipTap handle keyboard events
-          if (isSuggestionPopoverActiveRef.current) return
-
-          // Global arrow key navigation - works even when focus is on tabs
-          // Refocus input so Enter works on items (not mode tabs)
-          switch (true) {
-            case !inputRequest && e.key === "ArrowDown":
+    <>
+      <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+        <ResponsiveDialogContent
+          ref={dialogRef}
+          desktopClassName="overflow-hidden p-0 gap-0 shadow-lg sm:!fixed sm:!top-[20%] sm:!translate-y-0 sm:max-w-[600px] sm:rounded-2xl sm:border"
+          drawerClassName="overflow-hidden p-0"
+          hideCloseButton
+          onPointerDownOutside={(e) => {
+            // Prevent closing when clicking on suggestion popover (rendered via portal)
+            const target = e.target as HTMLElement
+            if (target.closest('[role="listbox"]')) {
               e.preventDefault()
-              setSelectedIndex((prev) => clamp(prev + 1, 0, items.length - 1))
-              if (focusedTabIndex !== null) {
-                focusInput()
-              }
-              break
-            case !inputRequest && e.key === "ArrowUp":
-              e.preventDefault()
-              setSelectedIndex((prev) => clamp(prev - 1, 0, items.length - 1))
-              if (focusedTabIndex !== null) {
-                focusInput()
-              }
-              break
-            case !inputRequest && e.key === "Enter" && focusedTabIndex === null:
-              e.preventDefault()
-              const item = items[selectedIndex]
-              if (!item) return
-              handleSelectItem(item, isMod)
-              break
-          }
-        }}
-      >
-        {/* Mobile: mode tabs above the input for better hierarchy */}
-        {!inputRequest && isMobile && (
-          <ModeTabs
-            currentMode={mode}
-            onModeChange={handleModeChange}
-            focusedTabIndex={focusedTabIndex}
-            onFocusedTabIndexChange={setFocusedTabIndex}
-            onTabSelect={focusInput}
-          />
-        )}
+            }
+          }}
+          onEscapeKeyDown={(e) => {
+            // If TipTap already handled this event (closed a popover), don't close dialog
+            if (e.defaultPrevented) return
 
-        {/* Input area */}
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center gap-3 px-4 py-3 rounded-[10px] border border-border bg-background transition-all focus-within:border-primary/60 focus-within:shadow-[0_0_0_2px_hsl(var(--primary)/0.06)]">
-            <ModeIcon className="h-4 w-4 shrink-0 opacity-50" />
-            {inputRequest ? (
-              // Plain input for command input requests (e.g., "Enter channel name")
-              <input
-                ref={inputRef}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleInputKeyDown}
-                placeholder={inputRequest.placeholder}
-                className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                autoFocus={!isMobile}
-                aria-label="Command input"
-              />
-            ) : (
-              // RichInput for all modes - triggers only enabled for search mode
-              <RichInput
-                ref={richInputRef}
-                value={query}
-                onChange={(value) => {
-                  // Normalize the query in two steps:
-                  // 1. Remove redundant prefixes: "? ? foo" → "? foo", "> > bar" → "> bar"
-                  // 2. Ensure space after prefix: "?foo" → "? foo" (TipTap strips trailing whitespace)
-                  const withoutRedundant = value.replace(/^([?>])\s*\1/, "$1")
-                  const normalized = withoutRedundant.replace(/^([?>])(?=\S)/, "$1 ")
-                  setQuery(normalized)
-                  setSelectedIndex(0)
-                }}
-                onSubmit={(withModifier) => {
-                  // Enter pressed with no popover open - select current item
-                  const item = items[selectedIndex]
-                  if (item) {
-                    handleSelectItem(item, withModifier)
-                  }
-                }}
-                onPopoverActiveChange={handlePopoverActiveChange}
-                triggers={triggers}
-                placeholder={MODE_PLACEHOLDERS[mode]}
-                ariaLabel={mode === "search" ? "Search query input" : "Quick switcher input"}
-                autoFocus={!isMobile}
-              />
-            )}
+            // Use ref for synchronous access (state updates are batched)
+            // When suggestion popover is open, close it instead of closing dialog
+            // (Radix intercepts Escape before TipTap sees it, so we close imperatively)
+            if (isSuggestionPopoverActiveRef.current) {
+              e.preventDefault()
+              richInputRef.current?.closePopovers()
+              return
+            }
+            // When filter select picker is open, close it instead of closing dialog
+            if (currentResult.isFilterSelectActive && currentResult.closeFilterSelect) {
+              e.preventDefault()
+              currentResult.closeFilterSelect()
+              return
+            }
+            // When in inputRequest mode, Escape returns to command list instead of closing
+            if (inputRequest) {
+              e.preventDefault()
+              clearInputRequest()
+              requestAnimationFrame(() => {
+                richInputRef.current?.focus()
+              })
+            }
+          }}
+          onKeyDown={(e) => {
+            // If TipTap already handled this event (e.g., popover keyboard nav), don't interfere
+            if (e.defaultPrevented) return
+
+            const isMod = e.metaKey || e.ctrlKey
+            // Use ref for synchronous access (state updates are batched)
+            // When suggestion popover is open, let TipTap handle keyboard events
+            if (isSuggestionPopoverActiveRef.current) return
+
+            // Global arrow key navigation - works even when focus is on tabs
+            // Refocus input so Enter works on items (not mode tabs)
+            switch (true) {
+              case !inputRequest && e.key === "ArrowDown":
+                e.preventDefault()
+                setSelectedIndex((prev) => clamp(prev + 1, 0, items.length - 1))
+                if (focusedTabIndex !== null) {
+                  focusInput()
+                }
+                break
+              case !inputRequest && e.key === "ArrowUp":
+                e.preventDefault()
+                setSelectedIndex((prev) => clamp(prev - 1, 0, items.length - 1))
+                if (focusedTabIndex !== null) {
+                  focusInput()
+                }
+                break
+              case !inputRequest && e.key === "Enter" && focusedTabIndex === null:
+                e.preventDefault()
+                const item = items[selectedIndex]
+                if (!item) return
+                handleSelectItem(item, isMod)
+                break
+            }
+          }}
+        >
+          {/* Mobile: mode tabs above the input for better hierarchy */}
+          {!inputRequest && isMobile && (
+            <ModeTabs
+              currentMode={mode}
+              onModeChange={handleModeChange}
+              focusedTabIndex={focusedTabIndex}
+              onFocusedTabIndexChange={setFocusedTabIndex}
+              onTabSelect={focusInput}
+            />
+          )}
+
+          {/* Input area */}
+          <div className="p-4 border-b border-border">
+            <div className="flex items-center gap-3 px-4 py-3 rounded-[10px] border border-border bg-background transition-all focus-within:border-primary/60 focus-within:shadow-[0_0_0_2px_hsl(var(--primary)/0.06)]">
+              <ModeIcon className="h-4 w-4 shrink-0 opacity-50" />
+              {inputRequest ? (
+                // Plain input for command input requests (e.g., "Enter channel name")
+                <input
+                  ref={inputRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                  placeholder={inputRequest.placeholder}
+                  className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  autoFocus={!isMobile}
+                  aria-label="Command input"
+                />
+              ) : (
+                // RichInput for all modes - triggers only enabled for search mode
+                <RichInput
+                  ref={richInputRef}
+                  value={query}
+                  onChange={(value) => {
+                    // Normalize the query in two steps:
+                    // 1. Remove redundant prefixes: "? ? foo" → "? foo", "> > bar" → "> bar"
+                    // 2. Ensure space after prefix: "?foo" → "? foo" (TipTap strips trailing whitespace)
+                    const withoutRedundant = value.replace(/^([?>])\s*\1/, "$1")
+                    const normalized = withoutRedundant.replace(/^([?>])(?=\S)/, "$1 ")
+                    setQuery(normalized)
+                    setSelectedIndex(0)
+                  }}
+                  onSubmit={(withModifier) => {
+                    // Enter pressed with no popover open - select current item
+                    const item = items[selectedIndex]
+                    if (item) {
+                      handleSelectItem(item, withModifier)
+                    }
+                  }}
+                  onPopoverActiveChange={handlePopoverActiveChange}
+                  triggers={triggers}
+                  placeholder={MODE_PLACEHOLDERS[mode]}
+                  ariaLabel={mode === "search" ? "Search query input" : "Quick switcher input"}
+                  autoFocus={!isMobile}
+                />
+              )}
+            </div>
           </div>
-        </div>
 
-        {/* Desktop: mode tabs below the input (keyboard-navigable) */}
-        {!inputRequest && !isMobile && (
-          <ModeTabs
-            currentMode={mode}
-            onModeChange={handleModeChange}
-            focusedTabIndex={focusedTabIndex}
-            onFocusedTabIndexChange={setFocusedTabIndex}
-            onTabSelect={focusInput}
-          />
-        )}
+          {/* Desktop: mode tabs below the input (keyboard-navigable) */}
+          {!inputRequest && !isMobile && (
+            <ModeTabs
+              currentMode={mode}
+              onModeChange={handleModeChange}
+              focusedTabIndex={focusedTabIndex}
+              onFocusedTabIndexChange={setFocusedTabIndex}
+              onTabSelect={focusInput}
+            />
+          )}
 
-        {/* Hint from input request */}
-        {inputRequest && (
-          <div className="px-4 py-3 text-xs text-muted-foreground border-b border-border">{inputRequest.hint}</div>
-        )}
+          {/* Hint from input request */}
+          {inputRequest && (
+            <div className="px-4 py-3 text-xs text-muted-foreground border-b border-border">{inputRequest.hint}</div>
+          )}
 
-        {/* Mode-specific header (e.g., search filters) */}
-        {!inputRequest && currentResult.header}
+          {/* Mode-specific header (e.g., search filters) */}
+          {!inputRequest && currentResult.header}
 
-        {/* Item list */}
-        {!inputRequest && (
-          <ItemList
-            items={items}
-            selectedIndex={selectedIndex}
-            onSelectIndex={setSelectedIndex}
-            onSelectItem={handleSelectItem}
-            isLoading={currentResult.isLoading}
-            emptyMessage={currentResult.emptyMessage}
-          />
-        )}
+          {/* Item list */}
+          {!inputRequest && (
+            <ItemList
+              items={items}
+              selectedIndex={selectedIndex}
+              onSelectIndex={setSelectedIndex}
+              onSelectItem={handleSelectItem}
+              isLoading={currentResult.isLoading}
+              emptyMessage={currentResult.emptyMessage}
+            />
+          )}
 
-        {/* Keyboard hints footer — hidden on mobile (no physical keyboard) */}
-        {!inputRequest && (
-          <div className="hidden sm:flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
-            <div className="flex gap-4">
+          {/* Keyboard hints footer — hidden on mobile (no physical keyboard) */}
+          {!inputRequest && (
+            <div className="hidden sm:flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
+              <div className="flex gap-4">
+                <span>
+                  <kbd className="kbd-hint">↑↓</kbd> Navigate
+                </span>
+                <span>
+                  <kbd className="kbd-hint">↵</kbd> Open
+                </span>
+                <span>
+                  <kbd className="kbd-hint">{navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}↵</kbd> New tab
+                </span>
+              </div>
               <span>
-                <kbd className="kbd-hint">↑↓</kbd> Navigate
-              </span>
-              <span>
-                <kbd className="kbd-hint">↵</kbd> Open
-              </span>
-              <span>
-                <kbd className="kbd-hint">{navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}↵</kbd> New tab
+                <kbd className="kbd-hint">esc</kbd> Close
               </span>
             </div>
-            <span>
-              <kbd className="kbd-hint">esc</kbd> Close
-            </span>
-          </div>
-        )}
+          )}
 
-        {/* Escape hint - shown after 2s to help users with Vimium or similar */}
-        {/* Uses absolute positioning to avoid layout shift (INV-21) */}
-        {showEscapeHint && (
-          <div className="absolute -bottom-8 left-0 right-0 text-xs text-muted-foreground/80 text-center animate-in fade-in duration-500">
-            Tip: Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Ctrl+[</kbd> or click outside to close
-          </div>
-        )}
-      </ResponsiveDialogContent>
-    </ResponsiveDialog>
+          {/* Escape hint - shown after 2s to help users with Vimium or similar */}
+          {/* Uses absolute positioning to avoid layout shift (INV-21) */}
+          {showEscapeHint && (
+            <div className="absolute -bottom-8 left-0 right-0 text-xs text-muted-foreground/80 text-center animate-in fade-in duration-500">
+              Tip: Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Ctrl+[</kbd> or click outside to close
+            </div>
+          )}
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
+
+      <ResponsiveAlertDialog
+        open={pendingArchive !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingArchive(null)
+        }}
+      >
+        <ResponsiveAlertDialogContent>
+          <ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogTitle>
+              {archiveIsDraft ? "Delete this draft?" : `Archive ${archiveStreamLabel}?`}
+            </ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogDescription>
+              {archiveIsDraft
+                ? "This draft will be permanently deleted. This can't be undone."
+                : "This stream will be hidden from the sidebar. You can unarchive it later."}
+            </ResponsiveAlertDialogDescription>
+          </ResponsiveAlertDialogHeader>
+          <ResponsiveAlertDialogFooter>
+            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+            <ResponsiveAlertDialogAction onClick={handleConfirmArchive}>
+              {archiveIsDraft ? "Delete" : "Archive"}
+            </ResponsiveAlertDialogAction>
+          </ResponsiveAlertDialogFooter>
+        </ResponsiveAlertDialogContent>
+      </ResponsiveAlertDialog>
+
+      {labelPickerStreamId && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.STREAM}
+          resourceId={labelPickerStreamId}
+          open={labelPickerStreamId !== null}
+          onOpenChange={(next) => {
+            if (!next) setLabelPickerStreamId(null)
+          }}
+        />
+      )}
+    </>
   )
 }
