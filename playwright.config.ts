@@ -69,6 +69,18 @@ const cpDbName = `${dbName}_cp`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
 const webServerTimeout = 60000
 
+// In CI the frontend is served as a production build via `vite preview` rather
+// than the Vite dev server: dev-mode on-demand transform competes for CPU with
+// the parallel workers and the shared backend, which was the dominant source of
+// contention timeouts. Locally we keep the dev server for fast iteration/HMR.
+// The build is port-independent (VITE_BACKEND_PORT only configures the preview
+// proxy at runtime), so the preview server still picks up the dynamic ports.
+const frontendCommand = isCI
+  ? "bun run --cwd apps/frontend build:e2e && bun run --cwd apps/frontend preview"
+  : "bun run test:browser:frontend"
+// The CI build needs more headroom than a dev-server boot.
+const frontendServerTimeout = isCI ? 180000 : webServerTimeout
+
 // Only log once (when ports are first allocated)
 if (!process.env.PLAYWRIGHT_PORTS_LOGGED) {
   console.log(
@@ -171,10 +183,10 @@ export default defineConfig({
       timeout: webServerTimeout,
     },
     {
-      command: "bun run test:browser:frontend",
+      command: frontendCommand,
       url: `http://localhost:${frontendPort}`,
       reuseExistingServer: !process.env.CI,
-      timeout: webServerTimeout,
+      timeout: frontendServerTimeout,
       env: {
         VITE_BACKEND_PORT: String(routerPort),
         VITE_PORT: String(frontendPort),

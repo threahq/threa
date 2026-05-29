@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:e2e": "vite build",
     "preview": "vite preview",
     "test": "bun ../../scripts/test-silent.ts frontend",
     "test:watch": "vitest",
