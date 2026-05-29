@@ -43,7 +43,8 @@ export function StreamLabelStack({ workspaceId, streamId, className }: StreamLab
       // Negative margin keeps the glyphs visually aligned with neighbouring
       // header controls while the padding gives a comfortable tap target.
       className={cn(
-        "-m-1 flex items-center rounded-full p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "-m-1 flex items-center rounded-md p-1 transition-colors hover:bg-muted/60",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
     >
