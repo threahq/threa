@@ -32,9 +32,10 @@ import { SidebarQuickLinks } from "./quick-links"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
-import { ALL_SECTIONS, SMART_SECTIONS } from "./config"
+import { presetForViewMode } from "./sidebar-config"
+import { resolveSections } from "./resolve-sections"
 import type { SidebarActionItem } from "./sidebar-actions"
-import { calculateUrgency, categorizeStream, sortStreams } from "./utils"
+import { calculateUrgency, categorizeStream } from "./utils"
 import type { StreamItemData } from "./types"
 import { resolveDmDisplayName } from "@/lib/streams"
 import { StreamTypes, Visibilities } from "@threa/types"
@@ -58,7 +59,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
   const syncEngine = useSyncEngine()
-  const isLoading = syncStatus === "syncing" || syncStatus === "idle"
   const error = syncStatus === "error"
   const workspace = useWorkspaceFromStore(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId)
@@ -188,93 +188,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   const hasUserStreams = hasUserStreamsFromStreams || virtualDmStreams.length > 0
 
-  // Organize streams by section
-  const streamsBySection = useMemo(() => {
-    const important: StreamItemData[] = []
-    const recentCandidates: StreamItemData[] = [] // All streams that could go in Recent
-    const pinned: StreamItemData[] = []
-    const other: StreamItemData[] = []
-    const smartStreams = [...processedStreams, ...virtualDmStreams]
-
-    for (const stream of smartStreams) {
-      switch (stream.section) {
-        case "important":
-          important.push(stream)
-          break
-        case "recent":
-          recentCandidates.push(stream)
-          break
-        case "pinned":
-          pinned.push(stream)
-          break
-        case "other":
-          other.push(stream)
-          break
-      }
-    }
-
-    // Sort each section using configured sort types
-    sortStreams(important, SMART_SECTIONS.important.sortType, getUnreadCount)
-    sortStreams(pinned, SMART_SECTIONS.pinned.sortType, getUnreadCount)
-    sortStreams(other, SMART_SECTIONS.other.sortType, getUnreadCount)
-
-    // Recent section: special filtering logic
-    // Show unreads OR up to 5 most recent (excluding items already in Important)
-    // - If no unreads: show at most 5 recent streams
-    // - If <5 unreads: show unreads + remaining reads up to 5 total
-    // - If ≥5 unreads: show all unreads
-    sortStreams(recentCandidates, SMART_SECTIONS.recent.sortType, getUnreadCount)
-
-    const recentUnreads = recentCandidates.filter((s) => getUnreadCount(s.id) > 0)
-    const recentReads = recentCandidates.filter((s) => getUnreadCount(s.id) === 0)
-
-    let recent: StreamItemData[]
-    if (recentUnreads.length >= 5) {
-      // Show all unreads when there are 5 or more
-      recent = recentUnreads
-    } else {
-      // Show unreads + fill remaining slots with reads (up to 5 total)
-      const remainingSlots = 5 - recentUnreads.length
-      recent = [...recentUnreads, ...recentReads.slice(0, remainingSlots)]
-    }
-
-    // Limit Important to 10
-    return {
-      important: important.slice(0, 10),
-      recent,
-      pinned,
-      other,
-    }
-  }, [processedStreams, virtualDmStreams, getUnreadCount])
-
-  // Organize streams by type for "All" view
-  const streamsByType = useMemo(() => {
-    const scratchpads: StreamItemData[] = []
-    const channels: StreamItemData[] = []
-    const dms: StreamItemData[] = []
-
-    for (const stream of processedStreams) {
-      if (stream.type === StreamTypes.SCRATCHPAD) {
-        scratchpads.push(stream)
-      } else if (stream.type === StreamTypes.CHANNEL) {
-        channels.push(stream)
-      } else if (stream.type === StreamTypes.DM || stream.type === StreamTypes.SYSTEM) {
-        dms.push(stream)
-      }
-      // Note: threads are not shown in All view
-    }
-
-    // Sort each section using configured sort types
-    sortStreams(scratchpads, ALL_SECTIONS.scratchpads.sortType, getUnreadCount)
-    sortStreams(channels, ALL_SECTIONS.channels.sortType, getUnreadCount)
-    const realDms = dms.filter((stream) => stream.type === StreamTypes.DM)
-    const systemStreams = dms.filter((stream) => stream.type === StreamTypes.SYSTEM)
-
-    sortStreams(realDms, "activity", getUnreadCount)
-    sortStreams(systemStreams, ALL_SECTIONS.dms.sortType, getUnreadCount)
-
-    return { scratchpads, channels, dms: [...realDms, ...systemStreams, ...virtualDmStreams] }
-  }, [processedStreams, getUnreadCount, virtualDmStreams])
+  // Resolve the active view's preset config into ordered, sorted, capped lists.
+  const resolvedSections = useMemo(
+    () => resolveSections(presetForViewMode(viewMode), { processedStreams, virtualDmStreams, getUnreadCount }),
+    [viewMode, processedStreams, virtualDmStreams, getUnreadCount]
+  )
 
   // Track sidebar and scroll container dimensions for position calculations
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -424,14 +342,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           </div>
           <SidebarStreamList
             workspaceId={workspaceId}
-            viewMode={viewMode}
-            isLoading={isLoading}
             hasError={Boolean(error)}
             hasUserStreams={hasUserStreams}
             activeStreamId={activeStreamId}
             processedStreams={processedStreams}
-            streamsBySection={streamsBySection}
-            streamsByType={streamsByType}
+            resolvedSections={resolvedSections}
             getUnreadCount={getUnreadCount}
             getMentionCount={getMentionCount}
             getSectionState={getSectionState}
