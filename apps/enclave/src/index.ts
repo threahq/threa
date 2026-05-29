@@ -44,7 +44,7 @@ async function main() {
   // The only content-bearing route: decrypt the forwarded turn, call the LLM,
   // seal the reply. The LLM client is the enclave's sole outbound dependency.
   const chatCompletion = createOpenRouterClient(config)
-  app.post("/invoke", createInvokeHandler({ keyPair, chatCompletion }))
+  app.post("/invoke", createInvokeHandler({ keyPair, chatCompletion }, config.internalApiKey))
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, "Enclave request failed")

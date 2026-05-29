@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import type { Request, Response } from "express"
 import {
   buildMessageAad,
   buildWrapAad,
@@ -8,8 +9,9 @@ import {
   sealMessage,
   wrapStreamKey,
 } from "@threa/crypto"
+import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "./keystore"
-import { handleInvoke, InvokeError, type InvokeRequest } from "./invoke"
+import { createInvokeHandler, handleInvoke, InvokeError, type InvokeRequest } from "./invoke"
 import type { ChatCompletionFn, ChatCompletionRequest } from "./llm"
 
 const STREAM_ID = "stream_journal"
@@ -136,5 +138,45 @@ describe("handleInvoke", () => {
     await expect(handleInvoke({ keyPair, chatCompletion: stubLlm("x").fn }, request)).rejects.toBeInstanceOf(
       InvokeError
     )
+  })
+})
+
+describe("createInvokeHandler auth", () => {
+  function fakeReq(headerValue: string | undefined): Request {
+    return {
+      header: (name: string) => (name === INTERNAL_API_KEY_HEADER ? headerValue : undefined),
+      body: {},
+    } as unknown as Request
+  }
+  function fakeRes(): Response & { statusCode: number; payload: unknown } {
+    const res = {
+      statusCode: 200,
+      payload: undefined as unknown,
+      status(code: number) {
+        this.statusCode = code
+        return this
+      },
+      json(body: unknown) {
+        this.payload = body
+        return this
+      },
+    }
+    return res as unknown as Response & { statusCode: number; payload: unknown }
+  }
+
+  it("401s when the internal-api-key header is missing", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const handler = createInvokeHandler({ keyPair, chatCompletion: stubLlm("x").fn }, "shared-secret")
+    const res = fakeRes()
+    await handler(fakeReq(undefined), res)
+    expect(res.statusCode).toBe(401)
+  })
+
+  it("401s when the internal-api-key is wrong", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const handler = createInvokeHandler({ keyPair, chatCompletion: stubLlm("x").fn }, "shared-secret")
+    const res = fakeRes()
+    await handler(fakeReq("not-the-secret"), res)
+    expect(res.statusCode).toBe(401)
   })
 })

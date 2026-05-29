@@ -1,4 +1,5 @@
 import type { Request, Response } from "express"
+import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
 import {
   base64ToBytes,
@@ -9,7 +10,7 @@ import {
   sealMessage,
   unwrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveInvokeRequest, EnclaveInvokeResponse } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, type EnclaveInvokeRequest, type EnclaveInvokeResponse } from "@threa/types"
 import type { EnclaveKeyPair } from "./keystore"
 import type { ChatCompletionFn, ChatMessage } from "./llm"
 
@@ -166,13 +167,28 @@ async function unwrap(
 /** Marks a caller/data fault so the Express layer can answer 400 instead of 500. */
 export class InvokeError extends Error {}
 
+/** Length-safe constant-time secret comparison (avoids the throw on length mismatch). */
+function secretsMatch(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  return ab.length === bb.length && timingSafeEqual(ab, bb)
+}
+
 /**
- * Express adapter for `/invoke`. Validates the body, runs `handleInvoke`, and
- * answers with status only on failure — error bodies never echo request content
- * (which would defeat the no-plaintext-egress guarantee).
+ * Express adapter for `/invoke`. Only the backend forwarder may call it — it
+ * carries the shared internal-api-key (the EIK pubkey is public, so without this
+ * gate anyone could wrap their own SSK to it and use the enclave as an LLM /
+ * decryption oracle). Validates the body, runs `handleInvoke`, and answers with
+ * status only on failure — error bodies never echo request content (which would
+ * defeat the no-plaintext-egress guarantee).
  */
-export function createInvokeHandler(deps: InvokeDeps) {
+export function createInvokeHandler(deps: InvokeDeps, internalApiKey: string) {
   return async (req: Request, res: Response): Promise<void> => {
+    const presented = req.header(INTERNAL_API_KEY_HEADER)
+    if (!presented || !secretsMatch(presented, internalApiKey)) {
+      res.status(401).json({ error: "Unauthorized" })
+      return
+    }
     const parsed = invokeRequestSchema.safeParse(req.body)
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid invoke request" })
