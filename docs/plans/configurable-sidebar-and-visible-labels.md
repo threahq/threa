@@ -161,11 +161,25 @@ them now would be speculative (INV-36). The roomy "Sidebar" settings panel,
 drag-reorder, and the label-picker / section-header-menu add paths are deferred;
 the Labels-page toggle is the single add/remove surface for now.
 
-### PR5 — Stream top-bar label stack
+### PR5 — Stream top-bar label stack ✅ implemented
 
-`components/labels/stream-label-stack.tsx` in the `stream.tsx` header. Reuses
-`LabelChip`. Hover fan-out (desktop) / vaul drawer (mobile), cap 3 + `+N`,
-display-only.
+`StreamLabelStack` (`components/labels/stream-label-stack.tsx`) in the stream
+header (`pages/stream.tsx`, in the title cluster just after the title, gated
+`stream && !isDraft`).
+Reads the shared assignment pool via `useResourceLabelAssignments` (deduped +
+active-only, live through the `label:assigned/unassigned` socket handlers).
+Collapsed: up to 3 overlapping `LabelGlyph` marks + a `+N` count. Reuses the
+shared chip — desktop **hover** fans out to `LabelChip` name-pills in a
+`HoverCard` overlay (no layout shift, INV-21); mobile **tap** opens a vaul
+`Drawer` of the same chips. Display-only — editing stays in `LabelPicker`
+(its existing "Labels…" menu trigger is untouched). Renders nothing when the
+stream has no labels.
+
+Tests: collapsed cap/`+N`/aria-count + empty-state, via scoped `spyOn` on the
+store hooks (INV-48). Typecheck + lint clean.
+
+This completes the initiative: labels are now visible in both the sidebar
+(PR4) and the stream top bar (PR5).
 
 ## Cross-cutting invariants
 

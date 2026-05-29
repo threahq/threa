@@ -28,34 +28,24 @@ export function LabelGlyph({
   className?: string
   fallback?: "dot" | "tag"
 }) {
-  if (label.emoji) {
-    return (
-      <span
-        className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded text-[11px] leading-none", className)}
-        style={{ backgroundColor: hexToRgba(label.color, 0.15), color: label.color }}
-        aria-hidden
-      >
-        {label.emoji}
-      </span>
-    )
-  }
-  if (fallback === "tag") {
-    return (
-      <span
-        className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded", className)}
-        style={{ backgroundColor: hexToRgba(label.color, 0.15), color: label.color }}
-        aria-hidden
-      >
-        <Tag className="h-3 w-3" />
-      </span>
-    )
-  }
+  // One tinted-disc box for every case (emoji / tag / dot) so marks share a
+  // footprint and shape — matching the label swatch language elsewhere. The
+  // no-emoji case centers a small solid dot in the authored color.
+  const mark =
+    label.emoji ??
+    (fallback === "tag" ? (
+      <Tag className="h-3 w-3" />
+    ) : (
+      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: label.color }} />
+    ))
   return (
     <span
-      className={cn("h-2.5 w-2.5 shrink-0 rounded-full", className)}
-      style={{ backgroundColor: label.color }}
+      className={cn("flex h-4 w-4 shrink-0 items-center justify-center rounded text-[11px] leading-none", className)}
+      style={{ backgroundColor: hexToRgba(label.color, 0.15), color: label.color }}
       aria-hidden
-    />
+    >
+      {mark}
+    </span>
   )
 }
 
