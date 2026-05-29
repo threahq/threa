@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock } from "bun:test"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
@@ -12,6 +12,8 @@ const config: EnclaveConfig = {
   heartbeatIntervalMs: 30_000,
   sourceCommitSha: "unknown",
   buildHash: "unknown",
+  openRouterApiKey: "sk-test",
+  openRouterBaseUrl: "https://openrouter.ai/api/v1",
 }
 
 const keyPair = {
@@ -30,7 +32,7 @@ interface Captured {
 const originalFetch = globalThis.fetch
 
 function stubFetch(captured: Captured, status = 201): void {
-  globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+  globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
     captured.url = typeof url === "string" ? url : url.toString()
     captured.headers = (init?.headers ?? {}) as Record<string, string>
     return new Response(null, { status })
@@ -40,7 +42,7 @@ function stubFetch(captured: Captured, status = 201): void {
 describe("registerWithBackend", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
-    mock.restore()
+    vi.restoreAllMocks()
   })
 
   it("authenticates with the X-Internal-Api-Key header, not Authorization (the backend internalAuth contract)", async () => {
@@ -65,7 +67,7 @@ describe("registerWithBackend", () => {
 describe("revokeWithBackend", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch
-    mock.restore()
+    vi.restoreAllMocks()
   })
 
   it("authenticates with the X-Internal-Api-Key header", async () => {
