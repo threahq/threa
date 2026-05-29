@@ -240,10 +240,11 @@ export function createReadUrlTool() {
           }
         }
 
-        const contentType = response.headers.get("content-type") || ""
+        // Media types are case-insensitive (RFC 9110), so normalize before matching.
+        const contentType = (response.headers.get("content-type") || "").toLowerCase()
         const isHtml = contentType.includes("text/html")
         const isPlain = contentType.includes("text/plain")
-        const declaresJson = /\bjson\b/i.test(contentType) || contentType.includes("+json")
+        const declaresJson = /\bjson\b/.test(contentType) || contentType.includes("+json")
 
         if (!isHtml && !isPlain && !declaresJson) {
           return {

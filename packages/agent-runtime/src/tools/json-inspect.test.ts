@@ -74,6 +74,14 @@ describe("json-inspect", () => {
       const value = { a: 1, b: [true, false], c: "hi" }
       expect(structuralPreview(value)).toEqual(value)
     })
+
+    it("truncates pathologically long key names", () => {
+      const longKey = "k".repeat(500)
+      const preview = structuralPreview({ [longKey]: 1 }) as Record<string, unknown>
+      const outKey = Object.keys(preview)[0]!
+      expect(outKey.length).toBeLessThan(500)
+      expect(outKey).toContain("…(500 chars)")
+    })
   })
 
   describe("applySelect", () => {

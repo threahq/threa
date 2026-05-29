@@ -23,9 +23,16 @@ const PREVIEW_MAX_DEPTH = 6
 const PREVIEW_ARRAY_SAMPLE = 3
 const PREVIEW_OBJECT_KEYS = 30
 const PREVIEW_STRING_MAX = 200
+// Cap key *length* too, not just key count — pathologically long property names
+// would otherwise be copied verbatim and defeat the large-payload size guard.
+const SUMMARY_KEY_MAX = 120
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
+function summarizeKeyName(key: string): string {
+  return key.length <= SUMMARY_KEY_MAX ? key : `${key.slice(0, SUMMARY_KEY_MAX)}…(${key.length} chars)`
 }
 
 export function typeName(value: unknown): string {
@@ -47,7 +54,7 @@ function inlineShape(value: unknown, depth = 0): string {
     if (depth >= INLINE_MAX_DEPTH) return "object"
     const keys = Object.keys(value)
     const shown = keys.slice(0, INLINE_MAX_KEYS)
-    const parts = shown.map((k) => `${k}:${inlineShape(value[k], depth + 1)}`)
+    const parts = shown.map((k) => `${summarizeKeyName(k)}:${inlineShape(value[k], depth + 1)}`)
     if (keys.length > shown.length) parts.push("…")
     return `{${parts.join(", ")}}`
   }
@@ -68,7 +75,7 @@ export function describeShape(value: unknown, depth = 0): unknown {
     const keys = Object.keys(value)
     const shown = keys.slice(0, SHAPE_MAX_KEYS)
     const out: Record<string, unknown> = {}
-    for (const k of shown) out[k] = describeShape(value[k], depth + 1)
+    for (const k of shown) out[summarizeKeyName(k)] = describeShape(value[k], depth + 1)
     if (keys.length > shown.length) out["…"] = `(${keys.length - shown.length} more keys)`
     return out
   }
@@ -104,7 +111,7 @@ export function structuralPreview(value: unknown, depth = 0): unknown {
     const keys = Object.keys(value)
     const shown = keys.slice(0, PREVIEW_OBJECT_KEYS)
     const out: Record<string, unknown> = {}
-    for (const k of shown) out[k] = structuralPreview(value[k], depth + 1)
+    for (const k of shown) out[summarizeKeyName(k)] = structuralPreview(value[k], depth + 1)
     if (keys.length > shown.length) out["…"] = `(${keys.length - shown.length} more keys)`
     return out
   }

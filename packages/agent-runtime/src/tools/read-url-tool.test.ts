@@ -270,6 +270,17 @@ describe("read-url-tool", () => {
       expect(parsed.content).toEqual({ served: "as text/plain" })
     })
 
+    it("matches content types case-insensitively", async () => {
+      globalThis.fetch = jsonResponse({ ok: true }, "Application/JSON; charset=UTF-8")
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/data" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.content).toEqual({ ok: true })
+    })
+
     it("keeps real plain text as text", async () => {
       globalThis.fetch = jsonResponse("just some prose, not json", "text/plain")
 
