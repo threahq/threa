@@ -1,6 +1,5 @@
-import { Search as SearchIcon, Terminal, FileText } from "lucide-react"
+import { Search as SearchIcon, Terminal, FileText, SlidersHorizontal } from "lucide-react"
 import { Link } from "react-router-dom"
-import type { SidebarBasePreset } from "@threa/types"
 import { useQuickSwitcher, usePreferences } from "@/contexts"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -12,13 +11,13 @@ import { getEffectiveKeyBinding, formatKeyBinding, formatKeyBindingText } from "
 
 interface SidebarHeaderProps {
   workspaceName: string
-  basePreset: SidebarBasePreset
-  onBasePresetChange: (preset: SidebarBasePreset) => void
-  /** Hide the view toggle (e.g., when no streams exist) */
+  /** Open the sidebar customization panel (presets, quick links, sections). */
+  onEditLayout: () => void
+  /** Hide the customize control (e.g., when no streams exist) */
   hideViewToggle?: boolean
 }
 
-export function SidebarHeader({ workspaceName, basePreset, onBasePresetChange, hideViewToggle }: SidebarHeaderProps) {
+export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
   const { collapseOnMobile } = useSidebar()
   const { preferences } = usePreferences()
@@ -75,38 +74,26 @@ export function SidebarHeader({ workspaceName, basePreset, onBasePresetChange, h
         />
       </div>
 
-      {/* View toggle - hidden when no streams */}
+      {/* Customize control — hidden when there are no streams. Presets,
+           quick-link visibility, and section order all live in the panel it opens. */}
       {!hideViewToggle && (
-        <div className="flex items-center gap-2 px-3 pb-3 pt-2">
-          <div className="flex gap-1 rounded-md bg-muted p-0.5">
-            <button
-              type="button"
-              aria-pressed={basePreset === "smart"}
-              onClick={() => onBasePresetChange("smart")}
-              className={cn(
-                "rounded px-2 py-1 text-xs font-medium transition-all",
-                basePreset === "smart" ? "bg-card text-primary" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              Smart
-            </button>
-            <button
-              type="button"
-              aria-pressed={basePreset === "all"}
-              onClick={() => onBasePresetChange("all")}
-              className={cn(
-                "rounded px-2 py-1 text-xs font-medium transition-all",
-                basePreset === "all" ? "bg-card text-primary" : "text-muted-foreground hover:text-foreground"
-              )}
-            >
-              All
-            </button>
-          </div>
+        <div className="flex items-center px-3 pb-3 pt-2">
+          <button
+            type="button"
+            onClick={onEditLayout}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            )}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            Customize sidebar
+          </button>
         </div>
       )}
 
-      {/* When the view toggle is hidden we still need trailing breathing room
-           under the pill row so the list below doesn't butt against the border. */}
+      {/* When the customize control is hidden we still need trailing breathing
+           room under the pill row so the list below doesn't butt against the border. */}
       {hideViewToggle && <div className="h-3" aria-hidden="true" />}
     </div>
   )

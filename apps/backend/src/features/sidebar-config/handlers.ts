@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { SidebarConfigService } from "./service"
 import { HttpError } from "../../lib/errors"
-import { SIDEBAR_SECTION_KEYS, SIDEBAR_TYPE_SECTIONS, SIDEBAR_BASE_PRESETS } from "@threa/types"
+import { SIDEBAR_SECTION_KEYS, SIDEBAR_TYPE_SECTIONS, SIDEBAR_BASE_PRESETS, SIDEBAR_QUICK_LINKS } from "@threa/types"
 
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("smart"), bucket: z.enum(SIDEBAR_SECTION_KEYS) }),
@@ -15,10 +15,19 @@ const sidebarSectionSchema = z.object({
   spec: sidebarSectionSpecSchema,
 })
 
+const sidebarQuickLinkSchema = z.object({
+  key: z.enum(SIDEBAR_QUICK_LINKS),
+  enabled: z.boolean(),
+})
+
 // The PATCH body is the full config document — it replaces the stored layout.
+// quickLinks is optional + defaulted so a client predating the field (an
+// in-flight request during a backend-first rollout) still validates; the
+// service normalizes the (possibly empty) list to the full set on write.
 const updateSidebarConfigSchema = z.object({
   basePreset: z.enum(SIDEBAR_BASE_PRESETS),
   sections: z.array(sidebarSectionSchema).max(50),
+  quickLinks: z.array(sidebarQuickLinkSchema).max(SIDEBAR_QUICK_LINKS.length).optional().default([]),
 })
 
 export { updateSidebarConfigSchema }

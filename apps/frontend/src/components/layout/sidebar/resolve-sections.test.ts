@@ -148,6 +148,8 @@ describe("resolveSections — label sections", () => {
       { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
       { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
     ],
+    // Quick links are irrelevant to section resolution; an empty list satisfies the type.
+    quickLinks: [],
   }
 
   it("filters streams by assignment, sorts by activity, and is additive (a labeled stream still shows in its bucket)", () => {

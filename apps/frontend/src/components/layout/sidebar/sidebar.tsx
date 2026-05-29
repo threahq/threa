@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
@@ -35,6 +35,7 @@ import { SidebarQuickLinks } from "./quick-links"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
+import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream } from "./utils"
@@ -51,7 +52,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { phase } = useCoordinatedLoading()
   const { getSectionState, toggleSectionState, setSidebarHeight, setScrollContainerOffset, collapseOnMobile } =
     useSidebar()
-  const { config: sidebarConfig, setBasePreset } = useSidebarConfig(workspaceId)
+  const { config: sidebarConfig } = useSidebarConfig(workspaceId)
+  const [isEditorOpen, setIsEditorOpen] = useState(false)
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
@@ -329,55 +331,58 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   }
 
   return (
-    <SidebarShell
-      sidebarRef={sidebarRef}
-      scrollContainerRef={scrollContainerRef}
-      header={
-        <SidebarHeader
-          workspaceName={workspace?.name ?? ""}
-          basePreset={sidebarConfig.basePreset}
-          onBasePresetChange={setBasePreset}
-          hideViewToggle={!hasUserStreams}
-        />
-      }
-      body={
-        <>
-          <div className="mb-2">
-            <SidebarQuickLinks
-              workspaceId={workspaceId}
-              isDraftsPage={isDraftsPage}
-              draftCount={draftCount}
-              isSavedPage={isSavedPage}
-              savedCount={savedCount}
-              isScheduledPage={isScheduledPage}
-              scheduledCount={scheduledCount}
-              isActivityPage={isActivityPage}
-              isMemoryPage={isMemoryPage}
-              isFilesPage={isFilesPage}
-              isLabelsPage={isLabelsPage}
-              unreadActivityCount={unreadActivityCount}
-            />
-          </div>
-          <SidebarStreamList
-            workspaceId={workspaceId}
-            hasError={Boolean(error)}
-            hasUserStreams={hasUserStreams}
-            activeStreamId={activeStreamId}
-            processedStreams={processedStreams}
-            resolvedSections={resolvedSections}
-            labelsById={labelsById}
-            getUnreadCount={getUnreadCount}
-            getMentionCount={getMentionCount}
-            getSectionState={getSectionState}
-            toggleSectionState={toggleSectionState}
-            onCreateScratchpad={handleCreateScratchpad}
-            onCreateChannel={handleCreateChannel}
-            scratchpadAddMenuActions={scratchpadAddMenuActions}
-            scrollContainerRef={scrollContainerRef}
+    <>
+      <SidebarShell
+        sidebarRef={sidebarRef}
+        scrollContainerRef={scrollContainerRef}
+        header={
+          <SidebarHeader
+            workspaceName={workspace?.name ?? ""}
+            onEditLayout={() => setIsEditorOpen(true)}
+            hideViewToggle={!hasUserStreams}
           />
-        </>
-      }
-      footer={<SidebarFooter workspaceId={workspaceId} currentUser={currentUser} />}
-    />
+        }
+        body={
+          <>
+            <div className="mb-2">
+              <SidebarQuickLinks
+                workspaceId={workspaceId}
+                quickLinks={sidebarConfig.quickLinks}
+                isDraftsPage={isDraftsPage}
+                draftCount={draftCount}
+                isSavedPage={isSavedPage}
+                savedCount={savedCount}
+                isScheduledPage={isScheduledPage}
+                scheduledCount={scheduledCount}
+                isActivityPage={isActivityPage}
+                isMemoryPage={isMemoryPage}
+                isFilesPage={isFilesPage}
+                isLabelsPage={isLabelsPage}
+                unreadActivityCount={unreadActivityCount}
+              />
+            </div>
+            <SidebarStreamList
+              workspaceId={workspaceId}
+              hasError={Boolean(error)}
+              hasUserStreams={hasUserStreams}
+              activeStreamId={activeStreamId}
+              processedStreams={processedStreams}
+              resolvedSections={resolvedSections}
+              labelsById={labelsById}
+              getUnreadCount={getUnreadCount}
+              getMentionCount={getMentionCount}
+              getSectionState={getSectionState}
+              toggleSectionState={toggleSectionState}
+              onCreateScratchpad={handleCreateScratchpad}
+              onCreateChannel={handleCreateChannel}
+              scratchpadAddMenuActions={scratchpadAddMenuActions}
+              scrollContainerRef={scrollContainerRef}
+            />
+          </>
+        }
+        footer={<SidebarFooter workspaceId={workspaceId} currentUser={currentUser} />}
+      />
+      <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
+    </>
   )
 }
