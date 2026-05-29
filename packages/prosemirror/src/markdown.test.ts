@@ -453,6 +453,76 @@ describe("@threa/prosemirror quote reply round-trip", () => {
   })
 })
 
+describe("@threa/prosemirror memo embed round-trip", () => {
+  it("round-trips an inline memoEmbed node losslessly", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth rewrite" } }],
+        },
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "See above." }],
+        },
+      ],
+    }
+
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("[Auth rewrite](memo:memo_01ABC)\n\nSee above.")
+
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth rewrite" } }],
+    })
+    expect(parsed.content?.[1]?.type).toBe("paragraph")
+  })
+
+  it("falls back to a 'Memo' title when none is cached", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC" } }] }],
+    }
+
+    expect(serializeToMarkdown(doc)).toBe("[Memo](memo:memo_01ABC)")
+  })
+
+  it("round-trips titles containing brackets and backslashes", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth [v2]\\rewrite" } }],
+        },
+      ],
+    }
+
+    const markdown = serializeToMarkdown(doc)
+    expect(markdown).toBe("[Auth [v2\\]\\\\rewrite](memo:memo_01ABC)")
+
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth [v2]\\rewrite" } }],
+    })
+  })
+
+  it("parses an inline memo: link mid-sentence as a memoEmbed within the paragraph", () => {
+    const parsed = parseMarkdown("See [Auth rewrite](memo:memo_01ABC) for details")
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "See " },
+        { type: "memoEmbed", attrs: { memoId: "memo_01ABC", title: "Auth rewrite" } },
+        { type: "text", text: " for details" },
+      ],
+    })
+  })
+})
+
 describe("mention/channel whitespace boundary", () => {
   it("should not parse @ as mention in email addresses", () => {
     const result = parseMarkdown("test@gmail.com")

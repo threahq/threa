@@ -32,6 +32,8 @@ import { AttachmentReferenceExtension } from "./attachment-reference-extension"
 import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import { QuoteReplyExtension } from "./quote-reply-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
+import { MemoEmbedExtension } from "./memo-embed-extension"
+import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
 
@@ -44,6 +46,7 @@ interface CreateEditorExtensionsOptions {
   channelSuggestion?: ChannelOptions["suggestion"]
   commandSuggestion?: CommandOptions["suggestion"]
   emojiSuggestion?: EmojiExtensionOptions["suggestion"]
+  memoSearchSuggestion?: MemoSearchOptions["suggestion"]
   /** Look up emoji by shortcode - used for input rule auto-convert */
   toEmoji?: (shortcode: string) => string | null
 }
@@ -132,6 +135,9 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
     // Shared message pointer blocks (cross-stream shares)
     SharedMessageExtension,
 
+    // Memo embed pointer blocks (inline memory references)
+    MemoEmbedExtension,
+
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,
 
@@ -173,6 +179,15 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
       EmojiExtension.configure({
         suggestion: config.emojiSuggestion,
         toEmoji: config.toEmoji,
+      })
+    )
+  }
+
+  // Add /memo inline-search extension if suggestion config provided
+  if (config.memoSearchSuggestion) {
+    extensions.push(
+      MemoSearchExtension.configure({
+        suggestion: config.memoSearchSuggestion,
       })
     )
   }

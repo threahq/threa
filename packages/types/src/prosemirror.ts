@@ -188,6 +188,7 @@ export type ThreaInlineNode =
   | ThreaCommand
   | ThreaEmoji
   | ThreaAttachmentReference
+  | ThreaMemoEmbed
   | ThreaHardBreak
 
 /**
@@ -256,6 +257,23 @@ export interface ThreaAttachmentReference {
     status: "uploading" | "uploaded" | "error"
     imageIndex?: number | null
     error?: string | null
+  }
+}
+
+/**
+ * Memo embed (pointer) - an inline reference to a memo in the workspace
+ * memory. Serializes to a `[Title](memo:id)` markdown link; rendered as an
+ * inline chip in the composer and timeline, with a hydrated preview card shown
+ * below the message. Carries the memo id + a cached title hint so the chip can
+ * render before hydration completes.
+ */
+export interface ThreaMemoEmbed {
+  type: "memoEmbed"
+  attrs: {
+    /** The ID of the referenced memo */
+    memoId: string
+    /** Memo title cached at insert time so the chip can render before hydration */
+    title?: string
   }
 }
 
@@ -387,6 +405,14 @@ const hardBreakNodeSchema = z.object({
   type: z.literal("hardBreak"),
 })
 
+const memoEmbedNodeSchema = z.object({
+  type: z.literal("memoEmbed"),
+  attrs: z.object({
+    memoId: z.string(),
+    title: z.string().optional(),
+  }),
+})
+
 // Inline node union
 const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   textNodeSchema,
@@ -395,6 +421,7 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   commandNodeSchema,
   emojiNodeSchema,
   attachmentReferenceNodeSchema,
+  memoEmbedNodeSchema,
   hardBreakNodeSchema,
 ])
 

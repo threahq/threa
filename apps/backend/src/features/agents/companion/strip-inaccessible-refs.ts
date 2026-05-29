@@ -3,6 +3,7 @@ import { serializeToMarkdown } from "@threa/prosemirror"
 import { AttachmentSafetyStatuses, type JSONContent } from "@threa/types"
 import { MessageRepository } from "../../messaging"
 import { AttachmentRepository, AttachmentReferenceRepository } from "../../attachments"
+import { MemoRepository } from "../../memos"
 import { logger } from "../../../lib/logger"
 
 /**
@@ -20,9 +21,11 @@ export type DroppedRefReason =
   | "attachment-out-of-scope"
   | "attachment-cross-workspace"
   | "attachment-not-clean"
+  | "memo-not-found"
+  | "memo-not-active"
 
 export interface DroppedRef {
-  type: "sharedMessage" | "quoteReply" | "attachmentReference"
+  type: "sharedMessage" | "quoteReply" | "attachmentReference" | "memoEmbed"
   reason: DroppedRefReason
   /** Identifier(s) the agent tried to use; logged only — not echoed to UI. */
   ids: Record<string, string>
@@ -45,21 +48,29 @@ export interface StripParams {
 }
 
 /**
- * Pre-validate `sharedMessage` / `quoteReply` / `attachmentReference` nodes in
- * an agent's outgoing message and drop those that won't pass write-time
- * validation. Returns the cleaned content tree + matching markdown.
+ * Pre-validate `sharedMessage` / `quoteReply` / `attachmentReference` /
+ * `memoEmbed` nodes in an agent's outgoing message and drop the ones that
+ * shouldn't ship. Returns the cleaned content tree + matching markdown.
  *
- * Why: event-service rejects the entire message when *any* reference fails
- * the access gate (intentional — strict for users, defense-in-depth here).
- * For agent-authored messages we'd rather lose the bad pointer than the
- * whole response, since the prose around it is usually still useful.
+ * Why: event-service rejects the entire message when a share/quote/attachment
+ * reference fails the access gate (intentional — strict for users,
+ * defense-in-depth here). For agent-authored messages we'd rather lose the bad
+ * pointer than the whole response, since the prose around it is usually still
+ * useful.
  *
- * The validation mirrors event-service step 1 (attachments) and step 7
- * (cross-stream shares/quotes) exactly: same access-scope semantics
- * (`accessibleStreamIds` from `AgentAccessSpec`), same workspace boundary
- * (cross-workspace messages collapse into "not found" per INV-8), same
- * reference-projection fallback for attachments. Refs that survive here
- * will pass event-service.
+ * The share/quote/attachment validation mirrors event-service step 1
+ * (attachments) and step 7 (cross-stream shares/quotes) exactly: same
+ * access-scope semantics (`accessibleStreamIds` from `AgentAccessSpec`), same
+ * workspace boundary (cross-workspace messages collapse into "not found" per
+ * INV-8), same reference-projection fallback for attachments. Refs that survive
+ * here will pass event-service.
+ *
+ * `memoEmbed` has no write-time gate (event-service silently passes it, same as
+ * for users), so this isn't about avoiding rejection — it's about not posting a
+ * card for a memo the model invented. LLMs hallucinate ids, so we drop memo
+ * pointers that don't resolve to an active memo in the workspace (INV-8).
+ * Per-recipient visibility is still enforced at render time by the memo-detail
+ * endpoint, so we deliberately don't re-check stream reach here.
  *
  * Same-stream `quoteReply` is left alone — it's purely presentational, has
  * no DB write path, and writing a same-stream quote with a stale id is
@@ -72,6 +83,7 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
   // Pass 1: collect candidate ids so we batch the DB lookups.
   const messageIdsToCheck = new Set<string>()
   const attachmentIdsToCheck = new Set<string>()
+  const memoIdsToCheck = new Set<string>()
   walk(contentJson, (node) => {
     if (node.type === "sharedMessage") {
       const id = (node.attrs?.messageId as string | undefined) ?? null
@@ -86,12 +98,20 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
     } else if (node.type === "attachmentReference") {
       const id = (node.attrs?.id as string | undefined) ?? null
       if (id) attachmentIdsToCheck.add(id)
+    } else if (node.type === "memoEmbed") {
+      const id = (node.attrs?.memoId as string | undefined) ?? null
+      if (id) memoIdsToCheck.add(id)
     }
   })
 
   const messageMap =
     messageIdsToCheck.size > 0
       ? await MessageRepository.findByIdsInWorkspace(pool, workspaceId, [...messageIdsToCheck])
+      : new Map()
+
+  const memoMap =
+    memoIdsToCheck.size > 0
+      ? await MemoRepository.findByIdsInWorkspace(pool, workspaceId, [...memoIdsToCheck])
       : new Map()
 
   const attachments =
@@ -217,6 +237,24 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
           return null
       }
     },
+    onMemoEmbed: (node) => {
+      const memoId = node.attrs?.memoId as string | undefined
+      if (!memoId) {
+        dropped.push({ type: "memoEmbed", reason: "memo-not-found", ids: { memoId: "" } })
+        return null
+      }
+      const memo = memoMap.get(memoId)
+      if (!memo) {
+        // INV-8: cross-workspace memos collapse here into "not found".
+        dropped.push({ type: "memoEmbed", reason: "memo-not-found", ids: { memoId } })
+        return null
+      }
+      if (memo.status !== "active") {
+        dropped.push({ type: "memoEmbed", reason: "memo-not-active", ids: { memoId } })
+        return null
+      }
+      return node
+    },
   })
 
   if (dropped.length > 0) {
@@ -244,6 +282,7 @@ interface RewriteHandlers {
   onSharedMessage: (node: JSONContent) => JSONContent | null
   onQuoteReply: (node: JSONContent) => JSONContent | null
   onAttachmentReference: (node: JSONContent) => JSONContent | null
+  onMemoEmbed: (node: JSONContent) => JSONContent | null
 }
 
 /**
@@ -262,6 +301,10 @@ function rewrite(node: JSONContent, handlers: RewriteHandlers): JSONContent {
   }
   if (node.type === "attachmentReference") {
     const replaced = handlers.onAttachmentReference(node)
+    return replaced ?? { type: "_dropped" }
+  }
+  if (node.type === "memoEmbed") {
+    const replaced = handlers.onMemoEmbed(node)
     return replaced ?? { type: "_dropped" }
   }
   if (!node.content) return node

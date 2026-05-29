@@ -1,10 +1,11 @@
 import type { Components } from "react-markdown"
 import { Children, isValidElement, type ReactNode, type MouseEvent } from "react"
-import { useNavigate } from "react-router-dom"
-import { parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
+import { useNavigate, useParams } from "react-router-dom"
+import { parseMemoHref, parseQuoteHref, parseSharedMessageHref } from "@threa/prosemirror"
 import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { useLinkPreviewContext } from "./link-preview-context"
@@ -132,6 +133,29 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   const attachmentContext = useAttachmentContext()
   const linkPreviewContext = useLinkPreviewContext()
   const navigate = useNavigate()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+
+  // `memo:` reference — render the inline memo chip. The hydrated preview card
+  // renders separately below the message (`MemoPreviewList`). The chip links to
+  // the memo in the memory explorer.
+  const memoHref = href ? parseMemoHref(href) : null
+  if (memoHref) {
+    const label = <MemoChip label={<ProcessedChildren>{children}</ProcessedChildren>} />
+    // Outside a workspace route there's no memory explorer to link to — render
+    // the chip without an anchor rather than an `href="#"` that jumps to top.
+    if (!workspaceId) return label
+    const target = `/w/${workspaceId}/memory?memo=${memoHref.memoId}`
+    const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+      e.preventDefault()
+      navigate(target)
+    }
+    return (
+      <a href={target} onClick={handleClick} className="no-underline">
+        {label}
+      </a>
+    )
+  }
 
   // Check if this is an attachment link
   if (href?.startsWith("attachment:")) {

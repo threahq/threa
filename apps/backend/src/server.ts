@@ -348,12 +348,12 @@ export async function startServer(): Promise<ServerInstance> {
     const initialMarkdown = normalizeMessage(params.content)
     const initialJson = parseMarkdown(initialMarkdown, undefined, toEmoji)
     // For agent-authored messages, pre-validate the structural pointers
-    // (`shared-message:`, `quote:`, `attachment:`) and drop nodes that
-    // wouldn't pass event-service's strict gate. Without this, a single
-    // bad ref (out-of-scope stream, deleted message, cross-workspace id)
-    // causes the entire message to fail rather than just losing the
-    // pointer. The helper re-serializes the cleaned tree to keep the
-    // wire markdown in sync with `contentJson`.
+    // (`shared-message:`, `quote:`, `attachment:`, `memo:`) and drop nodes
+    // that wouldn't pass event-service's strict gate or point at a memo the
+    // model invented. Without this, a single bad ref (out-of-scope stream,
+    // deleted message, cross-workspace id) causes the entire message to fail
+    // rather than just losing the pointer. The helper re-serializes the
+    // cleaned tree to keep the wire markdown in sync with `contentJson`.
     let contentJson = initialJson
     let contentMarkdown = initialMarkdown
     if (params.accessibleStreamIds) {

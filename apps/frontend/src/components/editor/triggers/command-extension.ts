@@ -4,6 +4,14 @@ import type { CommandItem } from "./types"
 
 export const CommandPluginKey = new PluginKey("slashCommand")
 
+/**
+ * Client-action id for the synthetic "memo" slash entry. Selecting it doesn't
+ * insert a command chip — it types `/memo ` so the separate memo-search trigger
+ * takes over. Frontend-only: this id is consumed at pick time and never reaches
+ * the backend (no chip is created).
+ */
+export const MEMO_SEARCH_SLASH_ACTION = "memo-search"
+
 export interface CommandNodeAttrs {
   name: string
   /**
@@ -22,12 +30,19 @@ export type CommandOptions = TriggerExtensionOptions<CommandItem>
 /**
  * TipTap extension for /slash commands.
  * Creates an inline node that renders as a styled command chip.
+ *
+ * The palette triggers mid-sentence (`startOfLine: false`), not just at the
+ * start of a block. Which commands surface is decided per-item by the
+ * suggestion list's filter (see `useCommandSuggestion`): whole-message commands
+ * (`placement: "message"`, the default — e.g. `/invite`, `/discuss-with-ariadne`)
+ * only show when the `/` opens the message, while inline commands
+ * (`placement: "inline"` — e.g. the memo embed) show anywhere.
  */
 export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeAttrs>({
   name: "slashCommand",
   pluginKey: CommandPluginKey,
   char: "/",
-  startOfLine: true,
+  startOfLine: false,
   attributes: {
     name: { dataAttr: "data-name" },
     clientActionId: { dataAttr: "data-client-action-id", default: null },
@@ -38,4 +53,11 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
     name: c.name,
     clientActionId: c.clientActionId ?? null,
   }),
+  onSelectItem: ({ editor, range, item }) => {
+    // The "memo" entry is a discovery shortcut into the memo-search trigger:
+    // replace the typed `/memo` with `/memo ` so MemoSearchExtension activates.
+    if (item.clientActionId !== MEMO_SEARCH_SLASH_ACTION) return false
+    editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
+    return true
+  },
 })

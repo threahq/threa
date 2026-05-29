@@ -90,6 +90,10 @@ When citing a specific message or file, prefer a structural reference over a par
   \`[Image #1](attachment:att_xxx)\` for images,
   \`[filename.pdf](attachment:att_xxx)\` for other files.
 
+- **Embed a memo** (own line in your response):
+  \`[Memo Title](memo:memo_xxx)\`
+  Renders as a live memory card (title + type + tags). Use it when pointing the reader at a piece of workspace knowledge rather than restating it.
+
 ### Where IDs come from
 
 You already have the IDs you need most of the time — no extra tool call required. Look here first, then call \`workspace_research\` only if none of these surface what you want:

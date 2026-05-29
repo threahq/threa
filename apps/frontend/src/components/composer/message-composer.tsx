@@ -70,6 +70,11 @@ function getPreviewText(doc: JSONContent): string {
       return author ? `Sharing message from ${author}` : "Sharing a message"
     }
 
+    if (node.type === "memoEmbed") {
+      const title = typeof node.attrs?.title === "string" ? node.attrs.title : ""
+      return title ? `Memo: ${title}` : "Memo"
+    }
+
     if (node.type === "codeBlock") {
       const text = (node.content ?? []).map((c) => c.text ?? "").join("")
       return text.split("\n")[0] ?? ""

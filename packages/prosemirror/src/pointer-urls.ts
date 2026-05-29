@@ -12,6 +12,8 @@
  *   - `attachment:attachmentId` — the inline reference an
  *     `attachmentReference` node serialises to (metadata rides on the
  *     link title; see `attachment-markdown.ts`).
+ *   - `memo:memoId` — the pointer link a `memoEmbed` block serialises
+ *     to. Single segment; the memo card body is hydrated at read time.
  *
  * Centralising the build/parse helpers here keeps the format in one
  * place: the markdown serializer, the markdown parser, and the
@@ -64,4 +66,22 @@ export function parseSharedMessageHref(href: string): SharedMessageHref | null {
   const parts = href.slice("shared-message:".length).split("/")
   if (parts.length < 2) return null
   return { streamId: parts[0], messageId: parts[1] }
+}
+
+export interface MemoHref {
+  memoId: string
+}
+
+export function buildMemoHref(params: MemoHref): string {
+  return `memo:${params.memoId}`
+}
+
+export function parseMemoHref(href: string): MemoHref | null {
+  if (!href.startsWith("memo:")) return null
+  const memoId = href.slice("memo:".length)
+  // Canonical ids are a single `[\w-]+` segment (matches the markdown link
+  // pattern). Reject anything with a path/query/fragment suffix so values like
+  // `memo:memo_123/extra` don't slip through as a valid pointer.
+  if (!/^[\w-]+$/.test(memoId)) return null
+  return { memoId }
 }

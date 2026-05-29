@@ -1,25 +1,41 @@
 import { useCallback, useMemo } from "react"
 import { useParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import type { Editor } from "@tiptap/react"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
+import { MEMO_SEARCH_SLASH_ACTION } from "./command-extension"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { streamKeys } from "@/hooks/use-streams"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { useSuggestion } from "./use-suggestion"
 
 /**
- * Filter commands by query string.
- * Matches against name and description, case-insensitive.
+ * True when the `/` that opened the palette is the only content of the message
+ * (ignoring surrounding whitespace) — i.e. the user typed `/<query>` and nothing
+ * else. Whole-message commands (`/invite`, `/discuss`) are gated on this so they
+ * don't surface when the slash is used mid-sentence.
  */
-function filterCommands(items: CommandItem[], query: string): CommandItem[] {
-  if (!query) return items
+function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
+  if (!editor) return true
+  return editor.state.doc.textContent.trim() === `/${query}`
+}
 
+/**
+ * Filter commands by query string and cursor context.
+ *
+ * Matches name/description case-insensitively, and drops whole-message commands
+ * (anything not `placement: "inline"`) unless the slash opens the message.
+ */
+export function filterCommands(items: CommandItem[], query: string, editor?: Editor): CommandItem[] {
+  const opensMessage = slashOpensMessage(editor, query)
   const lowerQuery = query.toLowerCase()
-  return items.filter(
-    (item) => item.name.toLowerCase().includes(lowerQuery) || item.description.toLowerCase().includes(lowerQuery)
-  )
+  return items.filter((item) => {
+    if (item.placement !== "inline" && !opensMessage) return false
+    if (!lowerQuery) return true
+    return item.name.toLowerCase().includes(lowerQuery) || item.description.toLowerCase().includes(lowerQuery)
+  })
 }
 
 export function resolveEffectiveCommandInfos(
@@ -27,6 +43,19 @@ export function resolveEffectiveCommandInfos(
   streamCommands: readonly CommandInfo[] | undefined
 ): readonly CommandInfo[] {
   return streamCommands ?? workspaceCommands ?? []
+}
+
+/**
+ * Discovery shortcut surfaced in the `/` menu when memo embeds are enabled.
+ * Picking it doesn't insert a chip — `CommandExtension.onSelectItem` types
+ * `/memo ` to hand off to the memo-search trigger.
+ */
+const MEMO_SLASH_ITEM: CommandItem = {
+  name: "memo",
+  description: "Search and embed a memo",
+  clientActionId: MEMO_SEARCH_SLASH_ACTION,
+  // Memo embeds drop into prose, so the discovery entry surfaces mid-sentence too.
+  placement: "inline",
 }
 
 /**
@@ -39,7 +68,7 @@ export function resolveEffectiveCommandInfos(
  * gets the familiar "type command, press send" UX rather than an action
  * firing the moment they pick from the autocomplete.
  */
-export function useCommandSuggestion() {
+export function useCommandSuggestion({ includeMemoSearch = false }: { includeMemoSearch?: boolean } = {}) {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const metadata = useWorkspaceMetadata(workspaceId)
   const queryClient = useQueryClient()
@@ -54,7 +83,7 @@ export function useCommandSuggestion() {
 
   const commands = useMemo<CommandItem[]>(() => {
     const effective = resolveEffectiveCommandInfos(metadata?.commands, streamBootstrap?.commands)
-    return effective
+    const serverCommands = effective
       .filter((cmd) => {
         // Gate discuss-with-ariadne on there being a source stream to reference.
         if (cmd.clientActionId === DISCUSS_WITH_ARIADNE_COMMAND) return !!streamId
@@ -68,7 +97,8 @@ export function useCommandSuggestion() {
         args: cmd.args,
         clientActionId: cmd.clientActionId,
       }))
-  }, [metadata?.commands, streamBootstrap?.commands, streamId])
+    return includeMemoSearch ? [MEMO_SLASH_ITEM, ...serverCommands] : serverCommands
+  }, [metadata?.commands, streamBootstrap?.commands, streamId, includeMemoSearch])
 
   const renderList = useCallback(
     (props: {
