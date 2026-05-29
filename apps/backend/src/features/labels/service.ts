@@ -82,16 +82,15 @@ export class LabelService {
         description: params.description,
       })
 
-      // Creator auto-joins their own public labels so the "My Labels" tab
-      // shows them without a separate join hop. Private labels skip this —
-      // ownership is derived from `creatorUserId`.
-      if (params.visibility === Visibilities.PUBLIC) {
-        await LabelMemberRepository.join(client, {
-          labelId: id,
-          userId: params.userId,
-          workspaceId: params.workspaceId,
-        })
-      }
+      // Every label — public or private — gets a creator membership row so
+      // "joined" is one uniform concept across the model. `creator_user_id`
+      // still drives edit/archive/promote permissions; membership drives the
+      // "My Labels" view and real-time fan-out.
+      const member = await LabelMemberRepository.join(client, {
+        labelId: id,
+        userId: params.userId,
+        workspaceId: params.workspaceId,
+      })
 
       await OutboxRepository.insert(client, "label:created", {
         workspaceId: params.workspaceId,
@@ -99,19 +98,13 @@ export class LabelService {
         label,
       })
 
-      if (params.visibility === Visibilities.PUBLIC) {
-        const member: LabelMember = {
-          labelId: id,
-          userId: params.userId,
-          workspaceId: params.workspaceId,
-          joinedAt: label.createdAt,
-        }
-        await OutboxRepository.insert(client, "label:member_joined", {
-          workspaceId: params.workspaceId,
-          targetUserId: params.userId,
-          member,
-        })
-      }
+      // Member events are always delivered to the affected member only, so this
+      // is creator-scoped regardless of label visibility.
+      await OutboxRepository.insert(client, "label:member_joined", {
+        workspaceId: params.workspaceId,
+        targetUserId: params.userId,
+        member,
+      })
 
       return label
     })
@@ -181,26 +174,37 @@ export class LabelService {
         throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
       }
 
-      const archived = await LabelRepository.archive(client, params.workspaceId, params.labelId)
-      if (!archived) return
+      await this.archiveCascade(client, existing)
+    })
+  }
 
-      await LabelMemberRepository.deleteAllForLabel(client, params.labelId)
-      // Drop assignments too so no resource keeps a chip for the dead label.
-      // No per-row unassign events: `label:deleted` already tells clients the
-      // label is gone, and they skip orphaned assignments on render.
-      await LabelAssignmentRepository.deleteAllForLabel(client, params.workspaceId, params.labelId)
+  /**
+   * Soft-archive a label and tear down everything that hangs off it: member
+   * rows, resource assignments, and a `label:deleted` event. Shared by the
+   * creator-initiated `archive` and the last-member `leave` path. No per-row
+   * unassign events — `label:deleted` already tells clients the label is gone
+   * and they skip orphaned assignments on render. No-op if already archived.
+   */
+  private async archiveCascade(client: import("pg").PoolClient, label: Label): Promise<void> {
+    const archived = await LabelRepository.archive(client, label.workspaceId, label.id)
+    if (!archived) return
 
-      await OutboxRepository.insert(client, "label:deleted", {
-        workspaceId: params.workspaceId,
-        targetUserId: existing.visibility === Visibilities.PRIVATE ? existing.creatorUserId : null,
-        labelId: params.labelId,
-      })
+    await LabelMemberRepository.deleteAllForLabel(client, label.id)
+    await LabelAssignmentRepository.deleteAllForLabel(client, label.workspaceId, label.id)
+
+    await OutboxRepository.insert(client, "label:deleted", {
+      workspaceId: label.workspaceId,
+      targetUserId: label.visibility === Visibilities.PRIVATE ? label.creatorUserId : null,
+      labelId: label.id,
     })
   }
 
   async join(params: { workspaceId: string; userId: string; labelId: string }): Promise<LabelMember> {
     return withTransaction(this.pool, async (client) => {
-      const existing = await LabelRepository.findById(client, params.workspaceId, params.labelId)
+      // Lock the label row so a join can't race the last-member-leave archival:
+      // either we observe the archived label and reject, or we add our member
+      // before leave's count runs and it sees us as a survivor (INV-20).
+      const existing = await LabelRepository.findByIdForUpdate(client, params.workspaceId, params.labelId)
       if (!existing || existing.archivedAt) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
@@ -226,16 +230,32 @@ export class LabelService {
 
   async leave(params: { workspaceId: string; userId: string; labelId: string }): Promise<void> {
     await withTransaction(this.pool, async (client) => {
-      const existing = await LabelRepository.findById(client, params.workspaceId, params.labelId)
+      // Lock the label row so concurrent leaves serialize: the last-member
+      // check below must not race two callers into both seeing a survivor
+      // (orphaned label) or both archiving (INV-20).
+      const existing = await LabelRepository.findByIdForUpdate(client, params.workspaceId, params.labelId)
       if (!existing) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
 
+      // No explicit visibility gate: a private label only ever has its creator
+      // as a member (join() rejects private labels), so a non-creator's leave
+      // no-ops here via `removed === false`.
       const removed = await LabelMemberRepository.leave(client, {
         labelId: params.labelId,
         userId: params.userId,
       })
       if (!removed) return
+
+      // The last member out archives the label so no ownerless label lingers in
+      // the workspace (and, for a private label, leaving is its deletion).
+      // Clients learn of this via the `label:deleted` emitted by archiveCascade
+      // — deliberately not `label:member_left`, since the whole label is gone.
+      const remaining = await LabelMemberRepository.countForLabel(client, params.workspaceId, params.labelId)
+      if (remaining === 0) {
+        await this.archiveCascade(client, existing)
+        return
+      }
 
       await OutboxRepository.insert(client, "label:member_left", {
         workspaceId: params.workspaceId,
@@ -277,19 +297,22 @@ export class LabelService {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
 
-      // A private-only label has no member rows — auto-add the creator so the
-      // promoted label still shows in their "My Labels" tab.
+      // The creator already has a membership row (every label gets one at
+      // create time), so this join is idempotent — it just re-reads the row to
+      // carry in the member_joined event below.
       const member = await LabelMemberRepository.join(client, {
         labelId: promoted.id,
         userId: params.userId,
         workspaceId: params.workspaceId,
       })
 
-      // The private creator already had the row; we emit `label:deleted` to
-      // the creator's private channel (so their private view drops it) and a
-      // workspace-wide `label:created` so everyone else picks it up. A single
-      // `label:updated` could not switch routing because the old row was
-      // user-scoped and the new row is workspace-scoped.
+      // We emit `label:deleted` to the creator's private channel (so their
+      // private view drops the now-stale user-scoped row, membership included)
+      // and a workspace-wide `label:created` so everyone picks up the public
+      // row. A single `label:updated` could not switch routing because the old
+      // row was user-scoped and the new row is workspace-scoped. The
+      // `label:member_joined` below then re-adds the creator's membership that
+      // `label:deleted` cleared on their client.
       await OutboxRepository.insert(client, "label:deleted", {
         workspaceId: params.workspaceId,
         targetUserId: existing.creatorUserId,

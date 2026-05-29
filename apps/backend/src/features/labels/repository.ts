@@ -112,9 +112,29 @@ export const LabelRepository = {
   },
 
   /**
-   * List labels visible to the viewer: all public labels in the workspace
-   * (joined or not — the Discover tab needs both) plus the viewer's own
-   * private labels. Archived rows are excluded.
+   * Like {@link findById} but takes a row lock so callers can serialize a
+   * read-decide-write against concurrent writers (INV-20). Used by the
+   * last-member-leave path to make the "is this the final member?" check
+   * race-safe: concurrent `leave`s on the same label queue on this lock.
+   */
+  async findByIdForUpdate(db: Querier, workspaceId: string, labelId: string): Promise<Label | null> {
+    const result = await db.query<LabelRow>(sql`
+      SELECT ${sql.raw(LABEL_COLUMNS)}
+      FROM labels
+      WHERE id = ${labelId} AND workspace_id = ${workspaceId}
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * List labels visible to the viewer, expressed against the uniform membership
+   * set: every public label in the workspace (joined or not — the Discover tab
+   * needs both) plus any label the viewer is a member of. Since every label —
+   * including private ones — now carries a creator membership row, the viewer's
+   * own private labels surface via membership rather than a `creator_user_id`
+   * special case (and visibility would automatically follow any future
+   * shared-private model). Archived rows are excluded.
    */
   async listVisibleTo(db: Querier, workspaceId: string, userId: string): Promise<Label[]> {
     const result = await db.query<LabelRow>(sql`
@@ -124,7 +144,12 @@ export const LabelRepository = {
         AND archived_at IS NULL
         AND (
           visibility = ${Visibilities.PUBLIC}
-          OR (visibility = ${Visibilities.PRIVATE} AND creator_user_id = ${userId})
+          OR EXISTS (
+            SELECT 1 FROM label_members m
+            WHERE m.label_id = labels.id
+              AND m.user_id = ${userId}
+              AND m.workspace_id = ${workspaceId}
+          )
         )
       ORDER BY created_at DESC
     `)
@@ -240,6 +265,16 @@ export const LabelMemberRepository = {
       WHERE label_id = ${params.labelId} AND user_id = ${params.userId}
     `)
     return (result.rowCount ?? 0) > 0
+  },
+
+  /** Count current members of a label. Used by the last-member-leave check. */
+  async countForLabel(db: Querier, workspaceId: string, labelId: string): Promise<number> {
+    const result = await db.query<{ count: string }>(sql`
+      SELECT COUNT(*)::text AS count
+      FROM label_members
+      WHERE workspace_id = ${workspaceId} AND label_id = ${labelId}
+    `)
+    return Number(result.rows[0]?.count ?? "0")
   },
 
   async listForUser(db: Querier, workspaceId: string, userId: string): Promise<LabelMember[]> {
