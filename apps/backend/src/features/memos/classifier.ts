@@ -40,17 +40,18 @@ export class MemoClassifier {
   async classifyConversation(
     conversation: Conversation,
     formattedMessages: string,
-    existingMemo: Memo | undefined,
+    existingMemos: Memo[],
     context: ClassifierContext
   ): Promise<ConversationClassification> {
     const config = await this.configResolver.resolve(COMPONENT_PATHS.MEMO_CLASSIFIER)
 
-    const existingMemoSection = existingMemo
-      ? CLASSIFIER_EXISTING_MEMO_TEMPLATE.replace("{{MEMO_TITLE}}", existingMemo.title)
-          .replace("{{MEMO_ABSTRACT}}", existingMemo.abstract)
-          .replace("{{MEMO_VERSION}}", String(existingMemo.version))
-          .replace("{{MEMO_CREATED}}", existingMemo.createdAt.toISOString())
-      : ""
+    const existingMemoSection =
+      existingMemos.length > 0
+        ? CLASSIFIER_EXISTING_MEMO_TEMPLATE.replace(
+            "{{MEMOS}}",
+            existingMemos.map((m, i) => `${i + 1}. ${m.title}\n   ${m.abstract}`).join("\n")
+          )
+        : ""
 
     const messageCount = formattedMessages.split("<message").length - 1
 
@@ -74,7 +75,7 @@ export class MemoClassifier {
         metadata: {
           conversationId: conversation.id,
           messageCount,
-          hasExistingMemo: !!existingMemo,
+          existingMemoCount: existingMemos.length,
         },
       },
       context: { workspaceId: context.workspaceId, origin: "system" },
@@ -83,7 +84,7 @@ export class MemoClassifier {
     return {
       isKnowledgeWorthy: value.isKnowledgeWorthy,
       knowledgeType: value.knowledgeType ?? null,
-      shouldReviseExisting: existingMemo ? (value.shouldReviseExisting ?? false) : false,
+      shouldReviseExisting: existingMemos.length > 0 ? (value.shouldReviseExisting ?? false) : false,
       revisionReason: value.revisionReason ?? null,
       confidence: value.confidence ?? 0.5,
     }

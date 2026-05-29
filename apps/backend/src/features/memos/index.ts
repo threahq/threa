@@ -32,7 +32,8 @@ export {
   MEMO_GEM_CONFIDENCE_FLOOR,
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
   conversationClassificationSchema,
-  memoContentSchema,
+  memoItemSchema,
+  memoSetSchema,
   getMemorizerSystemPrompt,
 } from "./config"
 

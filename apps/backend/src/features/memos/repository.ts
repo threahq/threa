@@ -337,15 +337,13 @@ export const MemoRepository = {
     return result.rows.map(mapRowToMemo)
   },
 
-  async findActiveByConversation(db: Querier, conversationId: string): Promise<Memo | null> {
+  async findActiveBySourceConversation(db: Querier, conversationId: string): Promise<Memo[]> {
     const result = await db.query<MemoRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
       WHERE source_conversation_id = ${conversationId} AND status = 'active'
-      ORDER BY version DESC
-      LIMIT 1
+      ORDER BY created_at ASC
     `)
-    if (!result.rows[0]) return null
-    return mapRowToMemo(result.rows[0])
+    return result.rows.map(mapRowToMemo)
   },
 
   async insert(db: Querier, params: InsertMemoParams): Promise<Memo> {

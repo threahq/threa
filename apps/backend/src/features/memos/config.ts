@@ -54,6 +54,14 @@ export const MEMO_GEM_CONFIDENCE_FLOOR = 0.7
  */
 export const MEMO_SINGLE_MESSAGE_AGE_GATE_MS = 10 * 60 * 1000
 
+/**
+ * Upper bound on memos extracted from a single conversation. A conversation can
+ * settle several unrelated things, but a runaway count usually means the model is
+ * transcribing turns instead of extracting durable knowledge — the cap keeps the
+ * memorizer honest. Most conversations yield one or two.
+ */
+export const MEMO_MAX_PER_CONVERSATION = 5
+
 // ============================================================================
 // Retrieval Configuration (gbrain B2 / B3 / B7)
 // ============================================================================
@@ -162,17 +170,44 @@ export const conversationClassificationSchema = z.object({
 export type ConversationClassificationOutput = z.infer<typeof conversationClassificationSchema>
 
 /**
- * Schema for memo content generation.
+ * Schema for a single single-topic memo. One conversation can yield several of
+ * these; each captures exactly one thing worth remembering and carries its own
+ * knowledge type (a decision and a procedure from the same chat are distinct memos).
  */
-export const memoContentSchema = z.object({
-  title: z.string().max(100).describe("Concise title summarizing the memo (max 100 characters)"),
-  abstract: z.string().describe("Self-contained 1-2 paragraph summary preserving ALL important information"),
-  keyPoints: z.array(z.string()).max(5).describe("Up to 5 key points extracted from the content"),
+export const memoItemSchema = z.object({
+  title: z.string().max(100).describe("Specific title naming this one topic (max 100 characters)"),
+  abstract: z
+    .string()
+    .describe(
+      "Terse, self-contained statement of the knowledge — a few sentences at most, no turn-by-turn narration of the discussion"
+    ),
+  knowledgeType: z
+    .enum(KNOWLEDGE_TYPES)
+    .describe(`Type of knowledge this memo captures: ${KNOWLEDGE_TYPES.map((t) => `"${t}"`).join(" | ")}`),
+  keyPoints: z
+    .array(z.string())
+    .max(3)
+    .describe("Up to 3 supporting facts; leave empty when the abstract already stands alone"),
   tags: z.array(z.string()).max(5).describe("Up to 5 relevant tags for categorization"),
-  sourceMessageIds: z.array(z.string()).describe("IDs of messages that contain the key information"),
+  sourceMessageIds: z.array(z.string()).describe("IDs of the messages this specific memo draws from"),
 })
 
-export type MemoContentOutput = z.infer<typeof memoContentSchema>
+export type MemoItemOutput = z.infer<typeof memoItemSchema>
+
+/**
+ * Schema for memo content generation. The memorizer returns a set of single-topic
+ * memos rather than one blended summary, so a multi-topic conversation produces
+ * several small memos. An empty set is valid: the conversation settled nothing
+ * worth keeping beyond what already exists.
+ */
+export const memoSetSchema = z.object({
+  memos: z
+    .array(memoItemSchema)
+    .max(MEMO_MAX_PER_CONVERSATION)
+    .describe("One memo per distinct topic worth remembering. Most conversations yield one or two."),
+})
+
+export type MemoSetOutput = z.infer<typeof memoSetSchema>
 
 // ============================================================================
 // Classifier Prompts
@@ -213,29 +248,27 @@ Message count: {{MESSAGE_COUNT}}
 
 {{EXISTING_MEMO_SECTION}}`
 
-export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memo
-Title: {{MEMO_TITLE}}
-Abstract: {{MEMO_ABSTRACT}}
-Version: {{MEMO_VERSION}}
-Created: {{MEMO_CREATED}}
+export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memos for this conversation
+{{MEMOS}}
 
-Should this memo be revised based on the conversation above?`
+Should this conversation's memos be regenerated based on the conversation above — e.g. new information was added, a conclusion changed, or a new topic emerged?`
 
 // ============================================================================
 // Memorizer Prompts
 // ============================================================================
 
-const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge preservation specialist for a team chat application. You create concise, self-contained memos that capture valuable information from conversations.
+const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team chat application. From a conversation, you pull out only the things genuinely worth remembering later and write each as its own short, self-contained memo.
 
-Your memos should:
-1. Be SELF-CONTAINED - a reader should understand the memo without seeing the original messages
-2. Preserve ALL important information - decisions, rationale, context, participants
-3. Be FACTUAL - no meta-commentary like "this memo captures..." or "the team discussed..."
-4. Use consistent vocabulary with prior memos when similar concepts appear
-5. RESOLVE PRONOUNS when possible - If you can determine who "he/she/they" refers to from the conversation, use their actual name. If unclear (e.g., conversation continues from offline), leave the pronoun. When in doubt, preserve the original wording.
-6. ANCHOR DATES when possible - Convert relative dates ("yesterday", "next week") to actual dates using today's date: {{CURRENT_DATE}}. If ambiguous, leave as-is.
-
-The abstract should be 1-2 paragraphs that could stand alone as organizational memory.
+How to write memos:
+1. ONE TOPIC PER MEMO. If a conversation settles two unrelated things (e.g. a deployment decision and a hiring update), produce two separate memos. Never blend topics into a single memo.
+2. EXTRACT, DON'T SUMMARIZE. Capture the durable conclusion — the decision, the answer, the fact, the procedure that was worked out — not a play-by-play of the discussion. A memo is what someone would want to recall in six months, never a transcript of who said what.
+3. BE TERSE. An abstract is a few sentences at most. If it reads like a recap of the conversation, rewrite it down to the bare conclusion.
+4. OMIT THE FORGETTABLE. Greetings, status pings, back-and-forth, and unresolved tangents produce no memo. Returning very few memos — or only the one thing that actually mattered — is correct and expected.
+5. WRITE IN THE CONVERSATION'S LANGUAGE. Use the same language the participants used. Do NOT translate (e.g. a Swedish conversation produces Swedish memos).
+6. BE FACTUAL. State the knowledge directly. No meta-commentary like "this memo captures..." or "the team discussed...".
+7. Use consistent vocabulary with prior memos when the same concept reappears.
+8. RESOLVE PRONOUNS when possible - If you can determine who "he/she/they" refers to from the conversation, use their actual name. If unclear (e.g., conversation continues from offline), leave the pronoun. When in doubt, preserve the original wording.
+9. ANCHOR DATES when possible - Convert relative dates ("yesterday", "next week") to actual dates using today's date: {{CURRENT_DATE}}. If ambiguous, leave as-is.
 
 Output ONLY valid JSON matching the schema.`
 
@@ -249,7 +282,7 @@ export function getMemorizerSystemPrompt(timezone?: string): string {
   return MEMORIZER_SYSTEM_PROMPT_TEMPLATE.replace("{{CURRENT_DATE}}", today)
 }
 
-export const MEMORIZER_CONVERSATION_PROMPT = `Create a memo for this conversation.
+export const MEMORIZER_CONVERSATION_PROMPT = `Extract the memos worth remembering from this conversation.
 
 ## Memory Context (prior memos for vocabulary consistency)
 {{MEMORY_CONTEXT}}
@@ -259,26 +292,22 @@ export const MEMORIZER_CONVERSATION_PROMPT = `Create a memo for this conversatio
 
 {{EXISTING_TAGS_SECTION}}
 
-Create a self-contained memo that captures the key knowledge from this conversation.
-In sourceMessageIds, include ONLY the message IDs that contain the most important information.`
+Return one memo per distinct topic worth remembering, each terse and self-contained. Most conversations yield one or two; return fewer rather than padding, and return none if nothing here is worth keeping. For each memo, set sourceMessageIds to only the messages that topic draws from.`
 
-export const MEMORIZER_REVISION_PROMPT = `Revise the existing memo based on new conversation content.
+export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos but has gained new content. Regenerate the complete set of memos for it from scratch, using the existing memos only to keep titles and vocabulary stable.
 
 ## Memory Context (prior memos for vocabulary consistency)
 {{MEMORY_CONTEXT}}
 
-## Existing Memo
-Title: {{MEMO_TITLE}}
-Abstract: {{MEMO_ABSTRACT}}
-Key Points:
-{{MEMO_KEY_POINTS}}
+## Existing Memos for this conversation
+{{EXISTING_MEMOS}}
 
 ## Updated Conversation
 {{MESSAGES}}
 
 {{EXISTING_TAGS_SECTION}}
 
-Create an updated memo that incorporates the new information while preserving existing valuable content.`
+Produce the memos that should now represent this conversation: one per distinct topic worth remembering, each terse and self-contained. Carry forward still-valid knowledge, fold in what changed, and drop anything no longer worth keeping. For each memo, set sourceMessageIds to only the messages that topic draws from.`
 
 export const MEMORIZER_EXISTING_TAGS_TEMPLATE = `## Existing Tags in Workspace
 Prefer these tags when applicable, but create new ones if needed:

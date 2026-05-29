@@ -656,9 +656,10 @@ describe("Memo Repositories", () => {
       })
     })
 
-    describe("findActiveByConversation", () => {
-      test("returns active memo for conversation", async () => {
-        const id = memoId()
+    describe("findActiveBySourceConversation", () => {
+      test("returns all active memos for conversation", async () => {
+        const firstId = memoId()
+        const secondId = memoId()
         const convId = conversationId()
 
         await withTransaction(pool, async (client) => {
@@ -668,32 +669,36 @@ describe("Memo Repositories", () => {
             workspaceId: testWorkspaceId,
           })
 
-          await MemoRepository.insert(client, {
-            id,
-            workspaceId: testWorkspaceId,
-            memoType: "conversation",
-            sourceConversationId: convId,
-            title: "Active Conversation Memo",
-            abstract: "Test abstract",
-            keyPoints: [],
-            sourceMessageIds: [],
-            participantIds: [],
-            knowledgeType: "decision",
-            tags: [],
-            status: "active",
-          })
+          for (const [id, title] of [
+            [firstId, "First topic memo"],
+            [secondId, "Second topic memo"],
+          ] as const) {
+            await MemoRepository.insert(client, {
+              id,
+              workspaceId: testWorkspaceId,
+              memoType: "conversation",
+              sourceConversationId: convId,
+              title,
+              abstract: "Test abstract",
+              keyPoints: [],
+              sourceMessageIds: [],
+              participantIds: [],
+              knowledgeType: "decision",
+              tags: [],
+              status: "active",
+            })
+          }
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findActiveByConversation(client, convId)
+          return MemoRepository.findActiveBySourceConversation(client, convId)
         })
 
-        expect(found).not.toBeNull()
-        expect(found?.id).toBe(id)
-        expect(found?.status).toBe("active")
+        expect(found.map((m) => m.id).sort()).toEqual([firstId, secondId].sort())
+        expect(found.every((m) => m.status === "active")).toBe(true)
       })
 
-      test("does not return superseded memo", async () => {
+      test("does not return superseded memos", async () => {
         const convId = conversationId()
 
         await withTransaction(pool, async (client) => {
@@ -720,10 +725,10 @@ describe("Memo Repositories", () => {
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findActiveByConversation(client, convId)
+          return MemoRepository.findActiveBySourceConversation(client, convId)
         })
 
-        expect(found).toBeNull()
+        expect(found).toEqual([])
       })
     })
 

@@ -128,7 +128,7 @@ export class MemoService implements MemoServiceLike {
       const conversationItemIds = pending.filter((p) => p.itemType === "conversation").map((p) => p.itemId)
       const conversations = new Map<string, NonNullable<Awaited<ReturnType<typeof ConversationRepository.findById>>>>()
       const conversationMessages = new Map<string, Map<string, Message | null>>()
-      const existingConversationMemos = new Map<string, Memo | null>()
+      const existingConversationMemos = new Map<string, Memo[]>()
 
       for (const convId of conversationItemIds) {
         const conv = await ConversationRepository.findById(client, convId)
@@ -136,8 +136,8 @@ export class MemoService implements MemoServiceLike {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, conv.messageIds)
           conversationMessages.set(convId, msgs)
-          const existingMemo = await MemoRepository.findActiveByConversation(client, convId)
-          existingConversationMemos.set(convId, existingMemo)
+          const existingMemos = await MemoRepository.findActiveBySourceConversation(client, convId)
+          existingConversationMemos.set(convId, existingMemos)
         }
       }
 
@@ -240,17 +240,17 @@ export class MemoService implements MemoServiceLike {
           continue
         }
 
-        const existingMemo = fetchedData.existingConversationMemos.get(item.itemId)
+        const existingMemos = fetchedData.existingConversationMemos.get(item.itemId) ?? []
 
         // AI call (no connection held)
         const classification = await this.classifier.classifyConversation(
           conversation,
           formattedMessages,
-          existingMemo ?? undefined,
+          existingMemos,
           { workspaceId }
         )
 
-        if (!classification.isKnowledgeWorthy || !classification.knowledgeType) {
+        if (!classification.isKnowledgeWorthy) {
           continue
         }
 
@@ -266,91 +266,63 @@ export class MemoService implements MemoServiceLike {
           continue
         }
 
-        if (existingMemo && classification.shouldReviseExisting) {
-          // Use the first user message author's timezone for date anchoring
-          const firstUserMsg = messagesArray.find((m) => m.authorType === "user")
-          const authorTimezone = firstUserMsg
-            ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
-            : undefined
+        // Existing memos that the classifier judged unchanged: leave them as-is.
+        if (existingMemos.length > 0 && !classification.shouldReviseExisting) {
+          continue
+        }
 
-          // Prepare revision
-          const content = await this.memorizer.reviseMemo(formattedMessages, {
-            memoryContext,
-            content: messagesArray,
-            existingMemo,
-            existingTags: fetchedData.existingTags,
-            workspaceId,
-            authorTimezone,
-          })
+        const isRevision = existingMemos.length > 0
+        const revisionReason = classification.revisionReason ?? "Content updated"
 
-          const embedding = await this.embeddingService.embed(content.abstract, {
-            workspaceId,
-            functionId: "memo-embedding",
-          })
+        // Use the first user message author's timezone for date anchoring
+        const firstUserMsg = messagesArray.find((m) => m.authorType === "user")
+        const authorTimezone = firstUserMsg
+          ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
+          : undefined
 
-          const newMemo: MemoToCreate = {
-            id: memoId(),
-            workspaceId,
-            memoType: MemoTypes.CONVERSATION,
-            sourceConversationId: conversation.id,
-            title: content.title,
-            abstract: content.abstract,
-            keyPoints: content.keyPoints,
-            sourceMessageIds: content.sourceMessageIds,
-            participantIds: conversation.participantIds,
-            knowledgeType: existingMemo.knowledgeType,
-            tags: content.tags,
-            status: MemoStatuses.ACTIVE,
-            version: existingMemo.version + 1,
-            embedding,
-          }
-
-          supersessions.push({
-            memoId: existingMemo.id,
-            reason: classification.revisionReason ?? "Content updated",
-          })
-          memosToCreate.push(newMemo)
-          outboxEvents.push({
-            eventType: "memo:revised",
-            payload: {
+        // One conversation yields a set of single-topic memos. On revision we
+        // regenerate the whole set (existing memos passed as context for stable
+        // vocabulary) and supersede the prior set below.
+        const contents = isRevision
+          ? await this.memorizer.reviseMemo(formattedMessages, {
+              memoryContext,
+              content: messagesArray,
+              existingMemos,
+              existingTags: fetchedData.existingTags,
               workspaceId,
-              memoId: newMemo.id,
-              previousMemoId: existingMemo.id,
-              memo: this.toWireMemoFromData(newMemo),
-              revisionReason: classification.revisionReason ?? "Content updated",
-            },
-          })
-          memosRevised++
+              authorTimezone,
+            })
+          : await this.memorizer.memorizeConversation(formattedMessages, {
+              memoryContext,
+              content: messagesArray,
+              existingTags: fetchedData.existingTags,
+              workspaceId,
+              authorTimezone,
+            })
 
-          logger.info(
-            {
-              conversationId: conversation.id,
-              previousMemoId: existingMemo.id,
-              newMemoId: newMemo.id,
-              version: existingMemo.version + 1,
-            },
-            "Memo revised"
-          )
-        } else if (!existingMemo) {
-          // Use the first user message author's timezone for date anchoring
-          const firstUserMsg = messagesArray.find((m) => m.authorType === "user")
-          const authorTimezone = firstUserMsg
-            ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
-            : undefined
+        if (contents.length === 0) {
+          // Nothing worth keeping. On revision, leave the existing set untouched.
+          logger.info({ conversationId: conversation.id, isRevision }, "Memorizer returned no memos")
+          continue
+        }
 
-          // Create new memo
-          const content = await this.memorizer.memorizeConversation(formattedMessages, {
-            memoryContext,
-            content: messagesArray,
-            existingTags: fetchedData.existingTags,
-            workspaceId,
-            authorTimezone,
-          })
+        if (isRevision) {
+          for (const old of existingMemos) {
+            supersessions.push({ memoId: old.id, reason: revisionReason })
+          }
+        }
 
+        for (let i = 0; i < contents.length; i++) {
+          const content = contents[i]
           const embedding = await this.embeddingService.embed(content.abstract, {
             workspaceId,
             functionId: "memo-embedding",
           })
+
+          // Pair each regenerated memo with a superseded predecessor (by position)
+          // so revisions carry the revised signal and version lineage; surplus
+          // regenerated memos are reported as newly created.
+          const predecessor = isRevision ? existingMemos[i] : undefined
 
           const memo: MemoToCreate = {
             id: memoId(),
@@ -362,25 +334,44 @@ export class MemoService implements MemoServiceLike {
             keyPoints: content.keyPoints,
             sourceMessageIds: content.sourceMessageIds,
             participantIds: conversation.participantIds,
-            knowledgeType: classification.knowledgeType,
+            knowledgeType: content.knowledgeType,
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
+            version: predecessor ? predecessor.version + 1 : undefined,
             embedding,
           }
 
           memosToCreate.push(memo)
-          outboxEvents.push({
-            eventType: "memo:created",
-            payload: {
-              workspaceId,
-              memoId: memo.id,
-              memo: this.toWireMemoFromData(memo),
-            },
-          })
-          memosCreated++
 
-          logger.info({ conversationId: conversation.id, memoId: memo.id }, "Conversation memo created")
+          if (predecessor) {
+            outboxEvents.push({
+              eventType: "memo:revised",
+              payload: {
+                workspaceId,
+                memoId: memo.id,
+                previousMemoId: predecessor.id,
+                memo: this.toWireMemoFromData(memo),
+                revisionReason,
+              },
+            })
+            memosRevised++
+          } else {
+            outboxEvents.push({
+              eventType: "memo:created",
+              payload: {
+                workspaceId,
+                memoId: memo.id,
+                memo: this.toWireMemoFromData(memo),
+              },
+            })
+            memosCreated++
+          }
         }
+
+        logger.info(
+          { conversationId: conversation.id, isRevision, memoCount: contents.length },
+          "Conversation memos generated"
+        )
       } catch (error) {
         itemsFailed++
         logger.error(
@@ -438,30 +429,6 @@ export class MemoService implements MemoServiceLike {
     )
 
     return { processed, memosCreated, memosRevised }
-  }
-
-  private toWireMemo(memo: Memo): import("@threa/types").Memo {
-    return {
-      id: memo.id,
-      workspaceId: memo.workspaceId,
-      memoType: memo.memoType,
-      sourceMessageId: memo.sourceMessageId,
-      sourceConversationId: memo.sourceConversationId,
-      title: memo.title,
-      abstract: memo.abstract,
-      keyPoints: memo.keyPoints,
-      sourceMessageIds: memo.sourceMessageIds,
-      participantIds: memo.participantIds,
-      knowledgeType: memo.knowledgeType,
-      tags: memo.tags,
-      parentMemoId: memo.parentMemoId,
-      status: memo.status,
-      version: memo.version,
-      revisionReason: memo.revisionReason,
-      createdAt: memo.createdAt.toISOString(),
-      updatedAt: memo.updatedAt.toISOString(),
-      archivedAt: memo.archivedAt?.toISOString() ?? null,
-    }
   }
 
   /** Convert MemoToCreate data to wire format (before DB insert, so use current timestamp) */
