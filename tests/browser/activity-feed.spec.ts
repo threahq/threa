@@ -18,6 +18,27 @@ function activityLink(page: Page, workspaceId: string) {
   return page.locator(`a[href="/w/${workspaceId}/activity"]`)
 }
 
+// The Activity badge shows the aggregate unread-activity count, which includes
+// incidental rows like the `member_added` activity created when the user joins
+// the channel — not just the mention. Match any positive count rather than a
+// brittle exact number; mention-specific assertions live on the activity feed.
+const ACTIVITY_BADGE_COUNT = /^[1-9]\d*$/
+
+/** Poll the bootstrap until the stream has accrued the expected number of mentions. */
+async function waitForMentionCount(page: Page, workspaceId: string, streamId: string, expected: number) {
+  await expect
+    .poll(
+      async () => {
+        const bootstrapRes = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
+        if (!bootstrapRes.ok()) return -1
+        const body = (await bootstrapRes.json()) as { data: { mentionCounts: Record<string, number> } }
+        return body.data.mentionCounts[streamId] ?? 0
+      },
+      { timeout: 20000 }
+    )
+    .toBe(expected)
+}
+
 async function waitForStreamReadState(page: Page, workspaceId: string, streamId: string) {
   await expect
     .poll(
@@ -113,24 +134,28 @@ test.describe("Activity Feed", () => {
 
       // ──── User B: Verify activity count badge on Activity link ────
 
-      await expect(actLink.getByText("1")).toBeVisible({ timeout: 10000 })
+      await expect(actLink.getByText(ACTIVITY_BADGE_COUNT)).toBeVisible({ timeout: 10000 })
 
       // ──── User B: Navigate to Activity page ────
 
       await actLink.click()
       await expect(ctxB.page).toHaveURL(new RegExp(`/w/${workspaceId}/activity`))
 
-      // Should see the activity item with actor name and stream context
+      // Should see the activity item with actor name and stream context.
+      // Scope to the mention row: the feed also lists the member_added row from
+      // joining the channel, which references the same #channel — an unscoped
+      // getByText(`#${channelSlug}`) would hit a strict-mode violation.
       const mainContent = ctxB.page.getByRole("main")
-      await expect(mainContent.getByText("mentioned you in")).toBeVisible({ timeout: 10000 })
-      await expect(mainContent.getByText(`#${channelSlug}`)).toBeVisible()
+      const mentionActivity = mainContent.getByRole("link").filter({ hasText: "mentioned you in" })
+      await expect(mentionActivity).toBeVisible({ timeout: 10000 })
+      await expect(mentionActivity.getByText(`#${channelSlug}`)).toBeVisible()
 
       // Content preview should include part of the message
-      await expect(mainContent.getByText(/please review this/)).toBeVisible()
+      await expect(mentionActivity.getByText(/please review this/)).toBeVisible()
 
       // ──── User B: Click activity item → navigates to stream ────
 
-      await mainContent.getByText("mentioned you in").click()
+      await mentionActivity.click()
       await expect(ctxB.page).toHaveURL(new RegExp(`/w/${workspaceId}/s/${streamId}`))
 
       // The message should be visible in the stream
@@ -145,7 +170,7 @@ test.describe("Activity Feed", () => {
 
       // The mention indicator should be gone since stream was read
       await expect(channelLink.locator("span.text-destructive")).not.toBeVisible({ timeout: 10000 })
-      await expect(actLink.getByText("1")).not.toBeVisible({ timeout: 10000 })
+      await expect(actLink.getByText(ACTIVITY_BADGE_COUNT)).not.toBeVisible({ timeout: 10000 })
     } finally {
       await ctxA.context.close()
       if (ctxB) await ctxB.context.close()
@@ -284,9 +309,13 @@ test.describe("Activity Feed", () => {
         expect(res.ok()).toBeTruthy()
       }
 
-      // Wait for both mentions to arrive — activity count shows 2
+      // Wait until both mentions have actually been delivered before marking
+      // everything read — otherwise a late mention re-raises the badge after the
+      // mark-all-read click. Gate on the mention projection (decoupled from the
+      // aggregate activity badge, which also counts the join's member_added row).
+      await waitForMentionCount(ctxB.page, workspaceId, streamId, 2)
       const channelLink = ctxB.page.getByRole("link", { name: `#${channelSlug}` })
-      await expect(actLink.getByText("2")).toBeVisible({ timeout: 20000 })
+      await expect(actLink.getByText(ACTIVITY_BADGE_COUNT)).toBeVisible({ timeout: 10000 })
       await expect(channelLink.locator("span.text-destructive")).toBeVisible()
 
       // Navigate to Activity page

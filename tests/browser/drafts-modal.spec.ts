@@ -1,5 +1,11 @@
 import { test, expect, type Page } from "@playwright/test"
-import { clickReplyInThread, createChannel, loginAndCreateWorkspace, switchToAllView } from "./helpers"
+import {
+  clickReplyInThread,
+  createChannel,
+  createScratchpadFromSidebar,
+  loginAndCreateWorkspace,
+  switchToAllView,
+} from "./helpers"
 
 /**
  * Tests for the Drafts page feature.
@@ -61,12 +67,8 @@ test.describe("Drafts Page", () => {
     // Wait for draft to be saved (debounced at 500ms)
     await waitForDraftSaved(page)
 
-    // Navigate away to another location (switch to All view to access button, then create scratchpad)
-    await switchToAllView(page)
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.getByText(/Type a message|No messages yet|Start a conversation/).first()).toBeVisible({
-      timeout: 5000,
-    })
+    // Navigate away to another location by creating a new scratchpad
+    await createScratchpadFromSidebar(page)
 
     // Verify Drafts link is highlighted (no longer greyed out)
     const draftsLink = page.locator('a[href*="/drafts"]')
@@ -86,12 +88,8 @@ test.describe("Drafts Page", () => {
     await page.keyboard.type(draftContent)
     await waitForDraftSaved(page)
 
-    // Navigate away (switch to All view to access button)
-    await switchToAllView(page)
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.getByText(/Type a message|No messages yet|Start a conversation/).first()).toBeVisible({
-      timeout: 5000,
-    })
+    // Navigate away by creating a new scratchpad
+    await createScratchpadFromSidebar(page)
 
     // Click Drafts link to navigate to page
     await page.locator('a[href*="/drafts"]').click()
@@ -209,12 +207,8 @@ test.describe("Drafts Page", () => {
     await page.keyboard.type(`QS test ${testId}`)
     await waitForDraftSaved(page)
 
-    // Navigate away (switch to All view to access button)
-    await switchToAllView(page)
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.getByText(/Type a message|No messages yet|Start a conversation/).first()).toBeVisible({
-      timeout: 5000,
-    })
+    // Navigate away by creating a new scratchpad
+    await createScratchpadFromSidebar(page)
 
     // Open quick switcher with Cmd+K. Blur the editor first to prevent
     // the editor from intercepting the keyboard shortcut.
@@ -273,12 +267,8 @@ test.describe("Drafts Page", () => {
     // and the IndexedDB write to land before navigating away.
     await waitForDraftSaved(page)
 
-    // Navigate away (switch to All view to access button)
-    await switchToAllView(page)
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.getByText(/Type a message|No messages yet|Start a conversation/).first()).toBeVisible({
-      timeout: 5000,
-    })
+    // Navigate away by creating a new scratchpad
+    await createScratchpadFromSidebar(page)
 
     // Drafts link should not be greyed (attachment-only draft counts)
     const draftsLink = page.locator('a[href*="/drafts"]')

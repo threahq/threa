@@ -85,8 +85,12 @@ test.describe("Agent Activity", () => {
     const { workspaceId, streamId, threadId } = await waitForThreadId(page, messageText)
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
 
-    // Wait for thread panel to load with content (not just the empty "Start a new thread" state)
-    await expect(page.getByText("stub response from the companion")).toBeVisible({ timeout: 10000 })
+    // Wait for thread panel to load with content (not just the empty "Start a new thread" state).
+    // Scope to the panel: the channel timeline also renders a truncated reply preview with the
+    // same text, so an unscoped getByText hits a strict-mode violation once that preview renders.
+    await expect(page.getByTestId("panel").getByText("stub response from the companion")).toBeVisible({
+      timeout: 10000,
+    })
   }
 
   test("should show agent response in thread after @mention in channel", async ({ page }) => {

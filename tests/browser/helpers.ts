@@ -126,6 +126,26 @@ export function createDmDraftId(userId: string): string {
 }
 
 /**
+ * Create a new scratchpad from the sidebar when the workspace already has streams.
+ *
+ * The big "+ New Scratchpad" button only renders in the empty state (a brand-new
+ * workspace with no streams). Once any stream exists, the Scratchpads section header
+ * exposes a "New scratchpad…" menu trigger whose dropdown carries the New Scratchpad /
+ * Quick Note / Encrypted Scratchpad actions — so tests that already created a channel
+ * must go through the menu, not the empty-state button.
+ */
+export async function createScratchpadFromSidebar(page: Page): Promise<void> {
+  await switchToAllView(page)
+  const addButton = page.getByRole("button", { name: /New scratchpad/i })
+  await expect(addButton).toBeVisible({ timeout: 10000 })
+  await addButton.click()
+  await page.getByRole("menuitem", { name: "New Scratchpad", exact: true }).click()
+  await expect(page.getByText(/Type a message|No messages yet|Start a conversation/).first()).toBeVisible({
+    timeout: 10000,
+  })
+}
+
+/**
  * Create a channel via the create channel modal and wait for it to load.
  * By default switches to "All" view after creation so the channel appears in sidebar.
  */
