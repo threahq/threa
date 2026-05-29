@@ -91,7 +91,11 @@ export default defineConfig({
   fullyParallel: true, // Each test creates unique user + workspace — safe to parallelize
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 3 : undefined, // CI: 3 workers — 4 oversubscribed the 4-vCPU runner (shared backend/frontend), causing tests to fail under contention and pass only on isolated retry; local: auto (half CPU cores)
+  // CI: 3 workers. The 4-vCPU runner also hosts the backend, control-plane,
+  // wrangler and Vite dev server, so higher worker counts oversubscribe it and
+  // tests fail under contention (only passing on the isolated retry).
+  // Local: auto (half CPU cores).
+  workers: process.env.CI ? 3 : undefined,
   reporter: process.env.CI ? [["github"], ["line"], ["html", { open: "never" }]] : "list",
   timeout: 30000, // 30s per test
 

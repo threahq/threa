@@ -23,9 +23,11 @@ async function seedMessages(
   count: number,
   prefix: string
 ): Promise<void> {
-  // Send in parallel batches to speed up seeding. Batches run sequentially so
-  // cross-batch ordering (which the pagination assertions rely on) is preserved.
-  const BATCH_SIZE = 10
+  // Send in small parallel batches to speed up seeding. Batches are kept small
+  // so the assertions that depend on the oldest message (msg-001) staying the
+  // single message outside the bootstrap window are not destabilised by
+  // within-batch ordering races between concurrent POSTs.
+  const BATCH_SIZE = 5
   for (let start = 1; start <= count; start += BATCH_SIZE) {
     const end = Math.min(start + BATCH_SIZE - 1, count)
     const promises: Promise<void>[] = []
