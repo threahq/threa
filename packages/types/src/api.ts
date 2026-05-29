@@ -401,7 +401,16 @@ export interface E2eKeyRollInput {
 // Enclave invoke contract (backend forwarder ↔ enclave `/invoke`)
 // ============================================================================
 
-/** Message framing for SSK-sealed content on the enclave wire (mirrors @threa/crypto `StreamEnvelope`). */
+/**
+ * Message framing for SSK-sealed content on the enclave wire. Deliberately a
+ * field-for-field mirror of `@threa/crypto`'s `StreamEnvelope` (`v`,
+ * `keyGeneration`, `iv`, `aad`): `@threa/types` stays dependency-free, so it
+ * doesn't pull `@threa/crypto` (and `@hpke/core`) into every consumer
+ * (frontend, control-plane, …) just to share four fields. The two are bridged
+ * by structural typing where the enclave hands these to `openMessage`/
+ * `sealMessage`; if `StreamEnvelope` ever gains a required field, that handoff
+ * fails to compile in `invoke.ts` (CI-caught) rather than diverging silently.
+ */
 export interface EnclaveStreamEnvelope {
   v: number
   keyGeneration: number

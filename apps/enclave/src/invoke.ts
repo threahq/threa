@@ -25,6 +25,15 @@ import type { ChatCompletionFn, ChatMessage } from "./llm"
  * for the duration of the request, and is never logged or persisted.
  */
 
+// Bounds on a forwarded turn, centralized rather than inlined in the schema
+// (INV-33). The history window especially is a tuning knob the dispatch path
+// owns; the rest cap a malformed/hostile body.
+const MAX_HISTORY_MESSAGES = 200
+const MAX_WRAP_RECIPIENTS = 64
+const MAX_SYSTEM_PROMPT_CHARS = 100_000
+const MAX_MODEL_ID_CHARS = 200
+const MAX_COMPLETION_TOKENS = 32_000
+
 const streamEnvelopeSchema = z.object({
   v: z.number(),
   keyGeneration: z.number().int().min(0),
@@ -49,20 +58,20 @@ export const invokeRequestSchema = z.object({
       })
     )
     .min(1)
-    .max(64),
+    .max(MAX_WRAP_RECIPIENTS),
   /** Prior turns, oldest→newest. Each item's role tells the model who spoke. */
   history: z
     .array(sealedMessageSchema.extend({ role: z.enum(["user", "assistant"]) }))
-    .max(200)
+    .max(MAX_HISTORY_MESSAGES)
     .default([]),
   /** The user message that triggered this invocation (always the latest `user` turn). */
   prompt: sealedMessageSchema,
   /** Ariadne's system prompt — non-secret persona text the backend supplies in the clear. */
-  system: z.string().min(1).max(100_000),
+  system: z.string().min(1).max(MAX_SYSTEM_PROMPT_CHARS),
   /** OpenRouter model id, e.g. `anthropic/claude-sonnet-4.6`. */
-  model: z.string().min(1).max(200),
+  model: z.string().min(1).max(MAX_MODEL_ID_CHARS),
   temperature: z.number().min(0).max(2).optional(),
-  maxTokens: z.number().int().min(1).max(32_000).optional(),
+  maxTokens: z.number().int().min(1).max(MAX_COMPLETION_TOKENS).optional(),
   /** Where to seal the reply: current generation + the server-minted reply id + Ariadne's sender id. */
   reply: z.object({
     keyGeneration: z.number().int().min(0),
