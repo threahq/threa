@@ -39,13 +39,11 @@ describe("MemoSearchExtension trigger matching", () => {
     expect(memoState(editor).active).toBe(false)
   })
 
-  it("activates on a bare /memo typed mid-sentence with an empty query", () => {
+  it("does NOT activate on a bare /memo mid-sentence (deferred to slash palette until a space follows)", () => {
     const editor = makeEditor()
     editor.commands.focus()
     typeText(editor, "hello /memo")
-    const state = memoState(editor)
-    expect(state.active).toBe(true)
-    expect(state.query).toBe("")
+    expect(memoState(editor).active).toBe(false)
   })
 
   it("activates on /memo followed by a query and captures the multi-word query", () => {

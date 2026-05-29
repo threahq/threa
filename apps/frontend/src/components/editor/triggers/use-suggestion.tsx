@@ -19,8 +19,12 @@ export interface UseSuggestionConfig<T> {
    * ref to avoid stale closures). Required unless `searchItems` is provided.
    */
   getItems?: () => T[]
-  /** Filter items by query string. Required unless `searchItems` is provided. */
-  filterItems?: (items: T[], query: string) => T[]
+  /**
+   * Filter items by query string. Required unless `searchItems` is provided.
+   * Receives the editor so filters can gate on cursor context (e.g. the slash
+   * palette hides whole-message commands unless the `/` opens the message).
+   */
+  filterItems?: (items: T[], query: string, editor?: Editor) => T[]
   /**
    * Async item source (e.g. server-backed search). When provided, it replaces
    * the `getItems` + `filterItems` path entirely; the returned promise is handed
@@ -94,16 +98,19 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
   // creation time. Async search (when configured) takes precedence over the
   // sync getItems + filterItems path; the promise is returned as-is so the
   // suggestion plugin can await it.
-  const getSuggestionItems = useCallback(({ query }: { query: string }): T[] | Promise<T[]> => {
-    const search = searchItemsRef.current
-    if (search) {
-      latestQueryRef.current = query
-      return search(query)
-    }
-    const items = getItemsRef.current?.() ?? []
-    const filter = filterItemsRef.current
-    return filter ? filter(items, query) : items
-  }, [])
+  const getSuggestionItems = useCallback(
+    ({ query, editor }: { query: string; editor?: Editor }): T[] | Promise<T[]> => {
+      const search = searchItemsRef.current
+      if (search) {
+        latestQueryRef.current = query
+        return search(query)
+      }
+      const items = getItemsRef.current?.() ?? []
+      const filter = filterItemsRef.current
+      return filter ? filter(items, query, editor) : items
+    },
+    []
+  )
 
   const onStart = useCallback(
     (props: SuggestionProps<T>) => {

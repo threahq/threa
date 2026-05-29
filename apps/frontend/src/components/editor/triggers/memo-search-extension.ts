@@ -7,10 +7,11 @@
  * deletes the typed trigger and inserts an inline `memoEmbed` chip in its place.
  *
  * The query may contain spaces, so a custom `findSuggestionMatch` captures
- * everything after `/memo ` rather than stopping at the first whitespace. The
- * trailing space after `/memo` is optional so the trigger fires mid-sentence on
- * a bare `/memo`, while a bare `/memo` at the very start of a block is left to
- * the slash-command palette (which offers a "memo" discovery entry).
+ * everything after `/memo ` rather than stopping at the first whitespace. A
+ * bare `/memo` (no trailing space yet) is left to the slash-command palette —
+ * which now fires mid-sentence too and offers a "memo" discovery entry — so the
+ * two surfaces never both open. Memo-search takes over once a space follows
+ * (`/memo ` or `/memo <query>`), which is also how the palette hands off.
  */
 import { Extension } from "@tiptap/core"
 import Suggestion from "@tiptap/suggestion"
@@ -34,10 +35,11 @@ export interface MemoSearchOptions {
   }
 }
 
-// `/memo` at a word boundary, then an optional separating space + the (possibly
-// multi-word) query up to the caret. The trailing space/query group is optional
-// so a bare `/memo` mid-sentence still matches.
-const MEMO_TRIGGER = /(?:^|\s)\/memo(?:[ \t](.*))?$/
+// `/memo` at a word boundary, then a REQUIRED separating space + the (possibly
+// multi-word) query up to the caret. The space is mandatory so a bare `/memo`
+// (no trailing space yet) defers to the slash palette — only `/memo ` and
+// `/memo <query>` activate the picker here, avoiding a double popover.
+const MEMO_TRIGGER = /(?:^|\s)\/memo[ \t](.*)$/
 
 function findMemoSearchMatch(config: { $position: ResolvedPos }) {
   const { $position } = config
@@ -49,13 +51,6 @@ function findMemoSearchMatch(config: { $position: ResolvedPos }) {
   const fullMatch = match[0]
   const trigger = fullMatch.trimStart() // "/memo <query>" without the leading boundary char
   const leading = fullMatch.length - trigger.length
-
-  // A bare `/memo` at the very start of a block (no separating space yet) is
-  // the slash-palette's discovery shortcut, not a live trigger — defer to it so
-  // both surfaces don't fire at once. Mid-sentence bare `/memo` (preceded by
-  // whitespace) and any `/memo ` with a space still activate here.
-  const atBlockStart = leading === 0
-  if (atBlockStart && match[1] === undefined) return null
 
   const query = match[1] ?? ""
   const matchStart = $position.pos - fullMatch.length + leading

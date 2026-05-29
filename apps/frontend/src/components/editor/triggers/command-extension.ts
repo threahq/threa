@@ -30,12 +30,19 @@ export type CommandOptions = TriggerExtensionOptions<CommandItem>
 /**
  * TipTap extension for /slash commands.
  * Creates an inline node that renders as a styled command chip.
+ *
+ * The palette triggers mid-sentence (`startOfLine: false`), not just at the
+ * start of a block. Which commands surface is decided per-item by the
+ * suggestion list's filter (see `useCommandSuggestion`): whole-message commands
+ * (`placement: "message"`, the default — e.g. `/invite`, `/discuss-with-ariadne`)
+ * only show when the `/` opens the message, while inline commands
+ * (`placement: "inline"` — e.g. the memo embed) show anywhere.
  */
 export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeAttrs>({
   name: "slashCommand",
   pluginKey: CommandPluginKey,
   char: "/",
-  startOfLine: true,
+  startOfLine: false,
   attributes: {
     name: { dataAttr: "data-name" },
     clientActionId: { dataAttr: "data-client-action-id", default: null },

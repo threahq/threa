@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react"
 import { useParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import type { Editor } from "@tiptap/react"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
@@ -11,16 +12,30 @@ import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { useSuggestion } from "./use-suggestion"
 
 /**
- * Filter commands by query string.
- * Matches against name and description, case-insensitive.
+ * True when the `/` that opened the palette is the only content of the message
+ * (ignoring surrounding whitespace) — i.e. the user typed `/<query>` and nothing
+ * else. Whole-message commands (`/invite`, `/discuss`) are gated on this so they
+ * don't surface when the slash is used mid-sentence.
  */
-function filterCommands(items: CommandItem[], query: string): CommandItem[] {
-  if (!query) return items
+function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
+  if (!editor) return true
+  return editor.state.doc.textContent.trim() === `/${query}`
+}
 
+/**
+ * Filter commands by query string and cursor context.
+ *
+ * Matches name/description case-insensitively, and drops whole-message commands
+ * (anything not `placement: "inline"`) unless the slash opens the message.
+ */
+export function filterCommands(items: CommandItem[], query: string, editor?: Editor): CommandItem[] {
+  const opensMessage = slashOpensMessage(editor, query)
   const lowerQuery = query.toLowerCase()
-  return items.filter(
-    (item) => item.name.toLowerCase().includes(lowerQuery) || item.description.toLowerCase().includes(lowerQuery)
-  )
+  return items.filter((item) => {
+    if (item.placement !== "inline" && !opensMessage) return false
+    if (!lowerQuery) return true
+    return item.name.toLowerCase().includes(lowerQuery) || item.description.toLowerCase().includes(lowerQuery)
+  })
 }
 
 export function resolveEffectiveCommandInfos(
@@ -39,6 +54,8 @@ const MEMO_SLASH_ITEM: CommandItem = {
   name: "memo",
   description: "Search and embed a memo",
   clientActionId: MEMO_SEARCH_SLASH_ACTION,
+  // Memo embeds drop into prose, so the discovery entry surfaces mid-sentence too.
+  placement: "inline",
 }
 
 /**

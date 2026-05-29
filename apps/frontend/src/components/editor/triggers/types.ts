@@ -26,6 +26,19 @@ export interface ChannelItem {
 }
 
 /**
+ * Where a slash command is allowed to surface in the composer.
+ *
+ * - `"message"` commands take over the whole message (they're dispatched as a
+ *   command, not embedded in prose), so they only appear when the `/` is the
+ *   sole content of the message — e.g. `/invite`, `/discuss-with-ariadne`.
+ * - `"inline"` commands insert into the surrounding text and may be triggered
+ *   mid-sentence — e.g. the memo embed.
+ *
+ * Omitted = `"message"` (the safe default for server-dispatched commands).
+ */
+export type CommandPlacement = "inline" | "message"
+
+/**
  * Interface for slash commands.
  */
 export interface CommandItem {
@@ -41,6 +54,8 @@ export interface CommandItem {
    * to the backend. Used for UI-only commands like `/discuss-with-ariadne`.
    */
   clientActionId?: string
+  /** See {@link CommandPlacement}. Defaults to `"message"` when omitted. */
+  placement?: CommandPlacement
 }
 
 /**
