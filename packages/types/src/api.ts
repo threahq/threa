@@ -445,13 +445,17 @@ export interface EnclaveSealedReply {
 }
 
 /**
- * Body the backend forwards to a live enclave's `POST /invoke`. The backend
- * never decrypts: it ships ciphertext + the wraps addressed to that EIK, and
- * the enclave unwraps, opens, runs the agent loop, and seals each reply. `system`
- * is the persona's (non-secret) prompt; `reply` carries the generation each reply
- * is sealed under + Ariadne's sender id the replies are bound to.
+ * The work the backend assigns to a live enclave via `POST /sessions`. The
+ * backend never decrypts: it ships ciphertext + the wraps addressed to that EIK
+ * plus the `sessionId` it created the `agent_sessions` row under. The enclave
+ * acks the assignment (202), then runs the agent loop asynchronously — unwrapping,
+ * opening, sealing each reply — and reports progress/completion back over the
+ * session callbacks (heartbeat, complete). `system` is the persona's (non-secret)
+ * prompt; `reply` carries the generation each reply is sealed under + Ariadne's
+ * sender id the replies are bound to.
  */
-export interface EnclaveInvokeRequest {
+export interface EnclaveSessionAssignment {
+  sessionId: string
   streamId: string
   wraps: EnclaveSskWrap[]
   history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
@@ -464,11 +468,11 @@ export interface EnclaveInvokeRequest {
 }
 
 /**
- * The enclave's turn output: the messages the agent loop sealed (zero or more,
- * oldest→newest) plus non-secret model metadata. Usage is summed across every
- * model call the loop made.
+ * The enclave's turn output, posted back to `POST .../sessions/:id/complete`:
+ * the messages the agent loop sealed (zero or more, oldest→newest) plus
+ * non-secret model metadata. Usage is summed across every model call the loop made.
  */
-export interface EnclaveInvokeResponse {
+export interface EnclaveSessionResult {
   messages: EnclaveSealedReply[]
   model: string
   usage?: { promptTokens?: number; completionTokens?: number }

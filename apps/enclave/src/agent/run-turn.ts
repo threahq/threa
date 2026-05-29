@@ -9,7 +9,7 @@ import {
   sealMessage,
   unwrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveInvokeRequest, EnclaveInvokeResponse, EnclaveSealedReply, EnclaveSskWrap } from "@threa/types"
+import type { EnclaveSessionAssignment, EnclaveSessionResult, EnclaveSealedReply, EnclaveSskWrap } from "@threa/types"
 import { AgentRuntime } from "@threa/agent-runtime/runtime"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
@@ -42,8 +42,8 @@ export interface EnclaveTurnDeps {
 
 export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
-  request: EnclaveInvokeRequest
-): Promise<EnclaveInvokeResponse> {
+  request: EnclaveSessionAssignment
+): Promise<EnclaveSessionResult> {
   const { keyPair, rawChat } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD

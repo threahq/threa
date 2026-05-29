@@ -1,18 +1,20 @@
-import { INTERNAL_API_KEY_HEADER, type EnclaveInvokeRequest, type EnclaveInvokeResponse } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, type EnclaveSessionAssignment } from "@threa/types"
 
 /**
- * Backend → enclave client for `POST /invoke`. The backend forwards an
- * E2E scratchpad turn (ciphertext + the SSK wrap addressed to the target EIK)
- * to a live enclave instance and gets back the sealed reply. It never sees
- * plaintext — only the opaque envelopes cross this boundary.
+ * Backend → enclave client for `POST /sessions`. The backend assigns an
+ * E2E scratchpad turn (ciphertext + the SSK wrap addressed to the target EIK +
+ * the server-created sessionId) to a live enclave instance. The enclave acks
+ * with 202 and runs the agent loop asynchronously, reporting back over the
+ * session callbacks (heartbeat / complete). The backend never sees plaintext —
+ * only opaque envelopes cross this boundary.
  *
  * Authenticated with the shared internal-API-key header (the same secret the
  * enclave uses to call `/internal/enclave-runtimes/*`). The `instanceUrl` is
  * the address the enclave registered, already SSRF-validated at registration.
  */
 
-/** LLM round-trips can be slow; give the enclave generous headroom before aborting. */
-const DEFAULT_TIMEOUT_MS = 120_000
+/** Assignment is a quick handoff (the enclave returns 202 before doing the work). */
+const DEFAULT_TIMEOUT_MS = 15_000
 
 export class EnclaveForwardError extends Error {
   constructor(
@@ -32,8 +34,9 @@ export class EnclaveForwarder {
     this.timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
-  async invoke(instanceUrl: string, request: EnclaveInvokeRequest): Promise<EnclaveInvokeResponse> {
-    const url = `${instanceUrl.replace(/\/$/, "")}/invoke`
+  /** Assign a session to the enclave. Resolves on a 202 ack; throws otherwise. */
+  async assignSession(instanceUrl: string, assignment: EnclaveSessionAssignment): Promise<void> {
+    const url = `${instanceUrl.replace(/\/$/, "")}/sessions`
     let res: Response
     try {
       res = await fetch(url, {
@@ -42,42 +45,17 @@ export class EnclaveForwarder {
           "Content-Type": "application/json",
           [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
         },
-        body: JSON.stringify(request),
+        body: JSON.stringify(assignment),
         signal: AbortSignal.timeout(this.timeoutMs),
       })
     } catch (err) {
-      // Network failure / timeout — never include the request (it carries ciphertext refs).
-      throw new EnclaveForwardError(`Enclave request failed: ${err instanceof Error ? err.message : "network error"}`)
+      // Network failure / timeout — never include the assignment (it carries ciphertext refs).
+      throw new EnclaveForwardError(`Enclave assign failed: ${err instanceof Error ? err.message : "network error"}`)
     }
-    if (!res.ok) {
-      throw new EnclaveForwardError(`Enclave returned ${res.status}`, res.status)
+    // 202 Accepted is the only success: the enclave took ownership and will drive
+    // the session over the callbacks. Anything else is a failed handoff.
+    if (res.status !== 202) {
+      throw new EnclaveForwardError(`Enclave assign returned ${res.status}`, res.status)
     }
-    // Validate the success shape at the boundary: a malformed 200 should fail
-    // here, not surface as a confusing error deep in the reply-write path.
-    let payload: unknown
-    try {
-      payload = await res.json()
-    } catch {
-      throw new EnclaveForwardError("Enclave returned invalid JSON", res.status)
-    }
-    if (!isValidInvokeResponse(payload)) {
-      throw new EnclaveForwardError("Enclave returned an invalid response shape", res.status)
-    }
-    return payload
   }
-}
-
-/** Structural guard for the turn output: a sealed-reply array + model metadata. */
-function isValidInvokeResponse(payload: unknown): payload is EnclaveInvokeResponse {
-  if (!payload || typeof payload !== "object") return false
-  const { messages, model } = payload as { messages?: unknown; model?: unknown }
-  if (typeof model !== "string" || !Array.isArray(messages)) return false
-  return messages.every(
-    (m) =>
-      m &&
-      typeof m === "object" &&
-      typeof (m as { messageId?: unknown }).messageId === "string" &&
-      typeof (m as { ciphertext?: unknown }).ciphertext === "string" &&
-      Boolean((m as { envelope?: unknown }).envelope)
-  )
 }

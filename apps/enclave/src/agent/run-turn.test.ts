@@ -8,7 +8,7 @@ import {
   sealMessage,
   wrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveInvokeRequest } from "@threa/types"
+import type { EnclaveSessionAssignment } from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn, RawChatRequest, RawChatResult } from "../llm"
 import { InvokeError, runEnclaveTurn } from "./run-turn"
@@ -65,8 +65,9 @@ function sendMessageReply(...contents: string[]): RawChatResult {
   }
 }
 
-function baseRequest(over: Partial<EnclaveInvokeRequest>): EnclaveInvokeRequest {
+function baseRequest(over: Partial<EnclaveSessionAssignment>): EnclaveSessionAssignment {
   return {
+    sessionId: "session_test",
     streamId: STREAM_ID,
     wraps: [],
     history: [],

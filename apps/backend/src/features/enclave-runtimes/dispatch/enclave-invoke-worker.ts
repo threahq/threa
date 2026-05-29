@@ -1,40 +1,38 @@
 import type { Pool } from "pg"
-import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
+import { sessionId as newSessionId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
 import type { EnclaveInvokeJobData, JobHandler } from "../../../lib/queue/job-queue"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
-import { MessageRepository, type EventService } from "../../messaging"
-import { ARIADNE_AGENT_ID, getBuiltInAgentConfig, isE2eCapablePersona } from "../../agents"
+import { MessageRepository } from "../../messaging"
+import {
+  AgentSessionRepository,
+  SessionStatuses,
+  ARIADNE_AGENT_ID,
+  getBuiltInAgentConfig,
+  isE2eCapablePersona,
+} from "../../agents"
 import { EnclaveRuntimesRepository } from "../repository"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "../service"
 import type { EnclaveForwarder } from "../forwarder"
-import { buildEnclaveInvokeRequest } from "./request-builder"
+import { buildEnclaveSessionAssignment } from "./request-builder"
 
 /** How many prior messages of context to forward. */
 const MAX_HISTORY_MESSAGES = 30
 
-// Same opaque placeholder the user-send path stores for E2E rows (INV-E1: the
-// canonical payload is the ciphertext; plaintext consumers see this).
-const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
-  type: "doc",
-  content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],
-}
-
 export interface EnclaveInvokeWorkerDeps {
   pool: Pool
   enclaveForwarder: EnclaveForwarder
-  eventService: EventService
 }
 
 /**
- * Forwards a user turn in an E2E scratchpad to the enclave and writes Ariadne's
- * sealed reply back. The backend never decrypts: it ships ciphertext + the SSK
- * wraps addressed to a live EIK, and stores the reply the enclave seals. The
- * reply is authored by the persona, so the dispatch handler (user-only) never
- * re-triggers on it.
+ * Assigns a user turn in an E2E scratchpad to a live enclave. The backend never
+ * decrypts: it creates the `agent_sessions` row, ships ciphertext + the SSK wraps
+ * addressed to a chosen live EIK, and hands the session off (the enclave acks 202
+ * and drives the loop asynchronously, reporting back over the session callbacks).
+ * Ariadne's replies are written by the `/complete` callback, not here.
  */
 export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHandler<EnclaveInvokeJobData> {
-  const { pool, enclaveForwarder, eventService } = deps
+  const { pool, enclaveForwarder } = deps
 
   return async (job) => {
     const { workspaceId, streamId, messageId: triggerId } = job.data
@@ -45,14 +43,13 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
     if (!actors.some((a) => a.kind === "enclave")) return
 
-    // Idempotency: if this turn's first reply already exists (the job was
-    // redelivered after a prior success), skip — don't re-invoke the enclave.
-    // This covers the common at-least-once case cheaply. The narrow window where
-    // invoke() succeeded but the writes never committed can still re-invoke;
-    // durable invoke-tracking (a tracking table, INV-57) lands with the
-    // session/resume follow-up that reworks this path.
-    const replyDedupeKey = (index: number) => `enclave-reply:${triggerId}:${index}`
-    if (await MessageRepository.findByClientMessageId(pool, streamId, replyDedupeKey(0))) return
+    // Idempotency: a turn already has a session in flight or done for this trigger
+    // (job redelivered after a prior success). A FAILED session is allowed to
+    // re-assign — a fresh session id is minted below, so the retry is clean.
+    const existing = await AgentSessionRepository.findByTriggerMessage(pool, triggerId)
+    if (existing && (existing.status === SessionStatuses.RUNNING || existing.status === SessionStatuses.COMPLETED)) {
+      return
+    }
 
     // The enclave serves Ariadne; refuse if that persona isn't e2e-capable.
     if (!isE2eCapablePersona(ARIADNE_AGENT_ID)) return
@@ -68,7 +65,8 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       MessageRepository.findSurrounding(pool, triggerId, streamId, MAX_HISTORY_MESSAGES, 0),
     ])
 
-    const built = buildEnclaveInvokeRequest({
+    const sid = newSessionId()
+    const built = buildEnclaveSessionAssignment({
       e2e,
       actors,
       liveEiks,
@@ -82,33 +80,39 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
         maxTokens: persona.maxTokens,
       },
       replySenderId: ARIADNE_AGENT_ID,
+      sessionId: sid,
     })
     if (!built) {
       logger.info({ workspaceId, streamId }, "enclave dispatch: no live enclave can serve this stream; skipping")
       return
     }
 
-    const response = await enclaveForwarder.invoke(built.instanceUrl, built.request)
+    // Create the session row owned by the chosen EIK. Skip if another session is
+    // already RUNNING for this stream (one-running-per-stream guard, INV-20).
+    // last_seen_sequence is an inert placeholder here; mid-turn reconsideration
+    // (which uses it) is a later slice.
+    const session = await AgentSessionRepository.insertRunningOrSkip(pool, {
+      id: sid,
+      streamId,
+      personaId: ARIADNE_AGENT_ID,
+      triggerMessageId: triggerId,
+      serverId: built.keyId,
+      initialSequence: 0n,
+    })
+    if (!session) return
 
-    // The loop may send more than one message; write each under the id the
-    // enclave minted and bound into the seal AAD, oldest→newest.
-    for (const [index, reply] of response.messages.entries()) {
-      await eventService.createMessage({
-        id: reply.messageId,
-        workspaceId,
-        streamId,
-        authorId: ARIADNE_AGENT_ID,
-        authorType: AuthorTypes.PERSONA,
-        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-        ciphertext: Buffer.from(reply.ciphertext, "base64"),
-        envelope: reply.envelope,
-        e2eVersion: 2,
-        // Restrict agent reach to this scratchpad; and dedupe a redelivered job
-        // so a transient retry can't post Ariadne's replies twice.
-        accessibleStreamIds: [streamId],
-        clientMessageId: replyDedupeKey(index),
-      })
+    try {
+      await enclaveForwarder.assignSession(built.instanceUrl, built.assignment)
+    } catch (err) {
+      // Handoff failed — don't leave the session hanging RUNNING. Mark it FAILED
+      // (so it doesn't trip the one-running guard) and rethrow for job retry.
+      await AgentSessionRepository.updateStatus(pool, session.id, SessionStatuses.FAILED, {
+        error: "enclave assign failed",
+        onlyIfStatus: SessionStatuses.RUNNING,
+      }).catch(() => {})
+      throw err
     }
+
+    logger.info({ workspaceId, streamId, sessionId: sid, keyId: built.keyId }, "Enclave session assigned")
   }
 }

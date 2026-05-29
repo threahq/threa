@@ -6,7 +6,8 @@ import { registerWithBackend, revokeWithBackend } from "./register"
 import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
 import { createOpenRouterChat } from "./llm"
-import { createInvokeHandler, requireInternalKey } from "./invoke"
+import { createBackendCallbacks } from "./agent/backend-callbacks"
+import { createSessionsHandler, requireInternalKey } from "./sessions"
 
 const logger = pino({ name: "enclave" })
 
@@ -43,14 +44,17 @@ async function main() {
     })
   })
 
-  // The only content-bearing route: decrypt the forwarded turn, run the agent
-  // loop, seal each reply. OpenRouter is the enclave's sole outbound dependency.
+  // The only content-bearing route: the backend assigns a turn, we ack 202 and
+  // run the agent loop asynchronously, reporting replies back over the session
+  // callbacks. OpenRouter is the enclave's sole outbound LLM dependency.
   const rawChat = createOpenRouterChat(config)
+  const callbacks = createBackendCallbacks(config)
+  const inFlight = new Set<string>()
   app.post(
-    "/invoke",
+    "/sessions",
     requireInternalKey(config.internalApiKey),
     express.json({ limit: "4mb" }),
-    createInvokeHandler({ keyPair, rawChat })
+    createSessionsHandler({ keyPair, rawChat, callbacks, inFlight })
   )
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
