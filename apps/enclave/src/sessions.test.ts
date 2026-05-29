@@ -163,6 +163,35 @@ describe("createSessionsHandler", () => {
     expect(completed!.result.messageIds).toEqual([streamed[0]!.reply.messageId])
   })
 
+  it("clears inFlight even when the detached run throws (no permanently-pinned session)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const assignment = await assignmentFor(keyPair, ssk, "boom")
+
+    // rawChat throws → runEnclaveTurn rejects → runEnclaveSession swallows + the
+    // handler's .finally must still release the session id.
+    const rawChat: RawChatFn = async () => {
+      throw new Error("model exploded")
+    }
+    let completed = false
+    const callbacks: BackendCallbacks = {
+      heartbeat: async () => {},
+      message: async () => {},
+      complete: async () => {
+        completed = true
+      },
+    }
+    const inFlight = new Set<string>()
+    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight })
+
+    const res = fakeRes()
+    handler({ body: assignment } as unknown as Request, res)
+    expect(res.statusCode).toBe(202)
+
+    await vi.waitFor(() => expect(inFlight.size).toBe(0))
+    expect(completed).toBe(false) // the failed turn never acked completion
+  })
+
   it("acks 202 without re-running when the session is already in flight", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()

@@ -25,16 +25,19 @@ const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
   content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],
 }
 
+// These base64 fields are persisted verbatim and only decrypted later (in the
+// browser / a future enclave read), so validate decodability at the boundary —
+// malformed base64 that slips through becomes a permanently unreadable message.
 const streamEnvelopeSchema = z.object({
   v: z.number(),
   keyGeneration: z.number().int().min(0),
-  iv: z.string().min(1),
-  aad: z.string().min(1),
+  iv: z.base64().min(1),
+  aad: z.base64().min(1),
 })
 
 const messageSchema = z.object({
   messageId: z.string().min(1),
-  ciphertext: z.string().min(1),
+  ciphertext: z.base64().min(1),
   envelope: streamEnvelopeSchema,
 })
 

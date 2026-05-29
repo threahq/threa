@@ -65,5 +65,10 @@ describe("EnclaveForwarder.assignSession", () => {
     const err = await forwarder.assignSession("https://enclave-1.internal", ASSIGNMENT).catch((e) => e)
     expect(err).toBeInstanceOf(EnclaveForwardError)
     expect((err as EnclaveForwardError).status).toBeUndefined()
+    // The wrapped error carries the cause but never echoes the assignment (which
+    // references ciphertext + ids) — guards the no-plaintext-egress boundary.
+    expect((err as EnclaveForwardError).message).toContain("ECONNREFUSED")
+    expect((err as EnclaveForwardError).message).not.toContain(ASSIGNMENT.sessionId)
+    expect((err as EnclaveForwardError).message).not.toContain(ASSIGNMENT.streamId)
   })
 })

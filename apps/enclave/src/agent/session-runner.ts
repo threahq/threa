@@ -48,8 +48,12 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     await deps.callbacks.complete(sessionId, result)
     logger.info({ sessionId, messages: result.messageIds.length }, "Enclave session completed")
   } catch (err) {
+    // This runs after the prompt/history were decrypted, so log only a scrubbed
+    // classification — never the raw error object, which an upstream SDK might
+    // populate with request/response content (the enclave never logs payloads).
     // Nothing to ack — the backend reclaims the session when heartbeats stop.
-    logger.error({ err, sessionId }, "Enclave session failed")
+    const errorName = err instanceof Error ? err.name : typeof err
+    logger.error({ errorName, sessionId }, "Enclave session failed")
   } finally {
     clearInterval(heartbeat)
   }

@@ -72,17 +72,20 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
 describe("buildEnclaveSessionAssignment", () => {
   it("builds a request to the EIK that can decrypt the current generation, stripping the model prefix", () => {
     const built = buildEnclaveSessionAssignment(inputs())
-    expect(built).not.toBeNull()
-    expect(built!.instanceUrl).toBe("https://enclave-1.internal")
-    expect(built!.keyId).toBe("eik_live")
-    expect(built!.assignment.sessionId).toBe("session_test")
-    expect(built!.assignment.model).toBe("anthropic/claude-sonnet-4.6")
-    expect(built!.assignment.system).toBe("You are Ariadne.")
-    expect(built!.assignment.temperature).toBe(0.7)
+    expect(built).toMatchObject({
+      instanceUrl: "https://enclave-1.internal",
+      keyId: "eik_live",
+      assignment: {
+        sessionId: "session_test",
+        model: "anthropic/claude-sonnet-4.6", // openrouter: prefix stripped
+        system: "You are Ariadne.",
+        temperature: 0.7,
+        reply: { keyGeneration: 1, senderId: "persona_ariadne" },
+        prompt: { ciphertext: Buffer.from("cipher:hello").toString("base64") },
+        wraps: [{ keyGeneration: 1, wrapEnc: "enc_eik_live_1", wrapCt: "ct_eik_live_1" }],
+      },
+    })
     expect(built!.assignment).not.toHaveProperty("maxTokens") // null → omitted
-    expect(built!.assignment.reply).toEqual({ keyGeneration: 1, senderId: "persona_ariadne" })
-    expect(built!.assignment.prompt.ciphertext).toBe(Buffer.from("cipher:hello").toString("base64"))
-    expect(built!.assignment.wraps).toEqual([{ keyGeneration: 1, wrapEnc: "enc_eik_live_1", wrapCt: "ct_eik_live_1" }])
   })
 
   it("returns null when no enclave actor is invited", () => {
