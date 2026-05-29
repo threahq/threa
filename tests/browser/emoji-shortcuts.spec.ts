@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test"
 import { loginAndCreateWorkspace } from "./helpers"
 
+// Emoji is inserted as plain text (the unicode character), not a `[data-type='emoji']`
+// atom node — the composer switched to editable text so mobile browsers can delete it
+// natively. Assert the inserted grapheme rather than the legacy node.
+const EMOJI_RE = /\p{Extended_Pictographic}/u
+
 /**
  * Emoji shortcut E2E tests.
  *
@@ -65,8 +70,8 @@ test.describe("Emoji Shortcuts", () => {
     // Click the first emoji in the grid
     await page.locator("[data-emoji-grid] button").first().click()
 
-    // Emoji should be inserted - check for emoji node in editor
-    await expect(editor.locator("[data-type='emoji']")).toBeVisible()
+    // Emoji should be inserted as text into the editor
+    await expect(editor).toContainText(EMOJI_RE)
 
     // Grid should close after selection
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
@@ -85,7 +90,7 @@ test.describe("Emoji Shortcuts", () => {
     await page.keyboard.press("Enter")
 
     // Emoji should be inserted
-    await expect(editor.locator("[data-type='emoji']")).toBeVisible()
+    await expect(editor).toContainText(EMOJI_RE)
 
     // Grid should close
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
@@ -104,7 +109,7 @@ test.describe("Emoji Shortcuts", () => {
     await page.keyboard.press("Tab")
 
     // Emoji should be inserted
-    await expect(editor.locator("[data-type='emoji']")).toBeVisible()
+    await expect(editor).toContainText(EMOJI_RE)
 
     // Grid should close
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
@@ -124,7 +129,7 @@ test.describe("Emoji Shortcuts", () => {
     await page.keyboard.press("Tab")
 
     // Emoji should be inserted
-    await expect(editor.locator("[data-type='emoji']")).toBeVisible()
+    await expect(editor).toContainText(EMOJI_RE)
   })
 
   test("should auto-convert :shortcode: when typing closing colon", async ({ page }) => {
@@ -133,8 +138,8 @@ test.describe("Emoji Shortcuts", () => {
     // Type a complete shortcode with closing colon
     await page.keyboard.type(":fire:")
 
-    // Emoji should be auto-converted to emoji node
-    await expect(editor.locator("[data-type='emoji']")).toBeVisible({ timeout: 2000 })
+    // Emoji should be auto-converted to the emoji character
+    await expect(editor).toContainText(EMOJI_RE, { timeout: 2000 })
 
     // The emoji picker should NOT be visible (input rule handled it)
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
@@ -247,7 +252,7 @@ test.describe("Emoji Shortcuts", () => {
     await page.keyboard.type(":fire:")
 
     // Wait for emoji to convert in editor
-    await expect(editor.locator("[data-type='emoji']")).toBeVisible({ timeout: 2000 })
+    await expect(editor).toContainText(EMOJI_RE, { timeout: 2000 })
 
     // Type additional text after the emoji
     await page.keyboard.type(" Great job!")
