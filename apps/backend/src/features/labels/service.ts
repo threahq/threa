@@ -201,7 +201,10 @@ export class LabelService {
 
   async join(params: { workspaceId: string; userId: string; labelId: string }): Promise<LabelMember> {
     return withTransaction(this.pool, async (client) => {
-      const existing = await LabelRepository.findById(client, params.workspaceId, params.labelId)
+      // Lock the label row so a join can't race the last-member-leave archival:
+      // either we observe the archived label and reject, or we add our member
+      // before leave's count runs and it sees us as a survivor (INV-20).
+      const existing = await LabelRepository.findByIdForUpdate(client, params.workspaceId, params.labelId)
       if (!existing || existing.archivedAt) {
         throw new HttpError("Label not found", { status: 404, code: "LABEL_NOT_FOUND" })
       }
@@ -248,7 +251,7 @@ export class LabelService {
       // the workspace (and, for a private label, leaving is its deletion).
       // Clients learn of this via the `label:deleted` emitted by archiveCascade
       // — deliberately not `label:member_left`, since the whole label is gone.
-      const remaining = await LabelMemberRepository.countForLabel(client, params.labelId)
+      const remaining = await LabelMemberRepository.countForLabel(client, params.workspaceId, params.labelId)
       if (remaining === 0) {
         await this.archiveCascade(client, existing)
         return

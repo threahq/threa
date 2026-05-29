@@ -146,7 +146,9 @@ export const LabelRepository = {
           visibility = ${Visibilities.PUBLIC}
           OR EXISTS (
             SELECT 1 FROM label_members m
-            WHERE m.label_id = labels.id AND m.user_id = ${userId}
+            WHERE m.label_id = labels.id
+              AND m.user_id = ${userId}
+              AND m.workspace_id = ${workspaceId}
           )
         )
       ORDER BY created_at DESC
@@ -266,9 +268,11 @@ export const LabelMemberRepository = {
   },
 
   /** Count current members of a label. Used by the last-member-leave check. */
-  async countForLabel(db: Querier, labelId: string): Promise<number> {
+  async countForLabel(db: Querier, workspaceId: string, labelId: string): Promise<number> {
     const result = await db.query<{ count: string }>(sql`
-      SELECT COUNT(*)::text AS count FROM label_members WHERE label_id = ${labelId}
+      SELECT COUNT(*)::text AS count
+      FROM label_members
+      WHERE workspace_id = ${workspaceId} AND label_id = ${labelId}
     `)
     return Number(result.rows[0]?.count ?? "0")
   },
