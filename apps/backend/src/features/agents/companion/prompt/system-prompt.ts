@@ -167,12 +167,13 @@ ${recencyGroundingBullet}
 
 ## Reading URLs
 
-You have a \`read_url\` tool to fetch and read the full content of a web page.
+You have a \`read_url\` tool to fetch and read the content of a web page or JSON resource.
 
 When to use read_url:
 - After web_search when you need more detail than the snippet provides
 - When the user shares a specific URL they want you to analyze
-- To verify information or get complete context from a source`
+- To verify information or get complete context from a source
+- To read JSON APIs: small responses come back in full. For large ones you get the data's \`shape\` (a schema sketch), a sampled \`preview\`, and a \`hint\` — then call read_url again with a \`select\` path (e.g. \`.data.items[0:20]\`, \`.results[3].name\`, \`.users[*].email\`) to drill into the part you need.`
   }
 
   // Add attachment tool instructions if enabled
