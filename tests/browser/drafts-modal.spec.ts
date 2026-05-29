@@ -210,10 +210,11 @@ test.describe("Drafts Page", () => {
     // Navigate away by creating a new scratchpad
     await createScratchpadFromSidebar(page)
 
-    // Open quick switcher with Cmd+K. Blur the editor first to prevent
-    // the editor from intercepting the keyboard shortcut.
-    await page.locator("header").first().click()
-    await page.keyboard.press("Meta+k")
+    // Open the quick switcher via its toolbar button rather than the Cmd+K
+    // accelerator: headless Chromium intermittently swallows browser-reserved
+    // Cmd/Ctrl shortcuts before the app sees them. This test covers the
+    // "> drafts" command path, not the keybinding itself.
+    await page.getByRole("button", { name: /Jump to stream/i }).click()
     await expect(page.getByRole("tab", { name: "Stream search" })).toBeVisible({ timeout: 5000 })
 
     // Type command prefix and search for drafts
