@@ -16,6 +16,8 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
 
 interface UnsentMessageEditFormProps {
   messageId: string
+  /** The stream this message belongs to — scopes the `/memo` picker. */
+  streamId: string
   initialContentJson?: JSONContent
   onDone: () => void
   authorName?: string
@@ -23,6 +25,7 @@ interface UnsentMessageEditFormProps {
 
 export function UnsentMessageEditForm({
   messageId,
+  streamId,
   initialContentJson,
   onDone,
   authorName,
@@ -207,6 +210,7 @@ export function UnsentMessageEditForm({
                 disableSelectionToolbar
                 blurOnEscape
                 onEscapeBlur={focusMobileActionBar}
+                streamId={streamId}
               />
             </div>
           </div>
@@ -259,6 +263,7 @@ export function UnsentMessageEditForm({
           ariaLabel="Edit unsent message"
           ariaDescribedBy={instructionsId}
           autoFocus
+          streamId={streamId}
         />
       </div>
       <div className="flex items-center gap-1.5 mt-1">

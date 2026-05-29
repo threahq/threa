@@ -282,6 +282,7 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
       disableSelectionToolbar={isMobile}
       blurOnEscape
       scopeId={scheduled?.id}
+      streamId={scheduled?.streamId}
       streamContext={streamContext}
       staticToolbarOpen={!isMobile && formatOpen}
       belowToolbarContent={

@@ -42,6 +42,13 @@ export interface MemoSearchRequest {
   query?: string
   exact?: boolean
   limit?: number
+  /**
+   * The stream the search is being run from (e.g. the `/memo` picker in a
+   * composer). When set, results are scoped to what is shareable into that
+   * stream so memos from unrelated streams can't leak in. Omit for the memory
+   * explorer, which browses everything the user can access.
+   */
+  streamId?: string
   filters?: MemoSearchFilters
 }
 
@@ -58,6 +65,7 @@ export async function searchMemos(workspaceId: string, request: MemoSearchReques
     query: request.query ?? "",
     exact: request.exact,
     limit: request.limit,
+    streamId: request.streamId,
     in: request.filters?.in,
     memoType: request.filters?.memoType,
     knowledgeType: request.filters?.knowledgeType,

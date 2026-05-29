@@ -149,6 +149,44 @@ describe("Memo Explorer E2E Tests", () => {
     expect(data.memo.sourceMessages[0]?.streamId).toBe(thread.id)
   })
 
+  test("scopes /memo search to the composing stream like an agent invoked there", async () => {
+    const client = new TestClient()
+    await loginAs(client, testEmail("scope"), "Memo Scope")
+    const workspace = await createWorkspace(client, `Memo Scope ${testRunId}`)
+
+    // A private scratchpad holds knowledge the owner can reach from anywhere...
+    const scratchpad = await createScratchpad(client, workspace.id, "off")
+    const privateMessage = await sendMessage(client, workspace.id, scratchpad.id, "Secret roadmap note")
+    const scopedPhrase = `scratchpad secret ${testRunId}`
+    const scratchpadMemoId = await insertMemo({
+      pool,
+      workspaceId: workspace.id,
+      sourceMessageId: privateMessage.id,
+      participantIds: [privateMessage.authorId],
+      title: "Scratchpad secret",
+      abstract: `This ${scopedPhrase} lives in a private scratchpad.`,
+    })
+
+    // ...and a public channel is the stream we compose `/memo` from.
+    const publicChannel = await createChannel(client, workspace.id, `memo-scope-${testRunId}`, "public")
+
+    // Without a composing stream (the memory explorer) the owner sees the memo.
+    const explorerResponse = await client.post<MemoSearchApiResponse>(`/api/workspaces/${workspace.id}/memos/search`, {
+      query: `"${scopedPhrase}"`,
+    })
+    expect(explorerResponse.status).toBe(200)
+    expect(explorerResponse.data.results.map((result) => result.memo.id)).toContain(scratchpadMemoId)
+
+    // Composing in a public channel scopes to public content only, so the
+    // private-scratchpad memo is excluded — no leak into the shared stream.
+    const scopedResponse = await client.post<MemoSearchApiResponse>(`/api/workspaces/${workspace.id}/memos/search`, {
+      query: `"${scopedPhrase}"`,
+      streamId: publicChannel.id,
+    })
+    expect(scopedResponse.status).toBe(200)
+    expect(scopedResponse.data.results).toHaveLength(0)
+  })
+
   test("hides private-channel memos from non-participants", async () => {
     const ownerClient = new TestClient()
     await loginAs(ownerClient, testEmail("owner"), "Memo Owner")

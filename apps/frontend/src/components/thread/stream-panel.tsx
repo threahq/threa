@@ -102,7 +102,10 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const draftThreadPendingEvents = useStreamEvents(isDraft ? (panelId ?? undefined) : undefined)
   const hasDraftThreadPendingEvents = isDraft && draftThreadPendingEvents && draftThreadPendingEvents.length > 0
   const draftThreadTimelineItems = useMemo(
-    () => (hasDraftThreadPendingEvents ? groupTimelineItems(draftThreadPendingEvents!, currentWorkspaceUserId ?? undefined) : []),
+    () =>
+      hasDraftThreadPendingEvents
+        ? groupTimelineItems(draftThreadPendingEvents!, currentWorkspaceUserId ?? undefined)
+        : [],
     [hasDraftThreadPendingEvents, draftThreadPendingEvents, currentWorkspaceUserId]
   )
   const cachedParentMessage = useMemo(() => {
@@ -468,6 +471,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     placeholder="Write your reply..."
                     workspaceId={workspaceId}
                     scopeId={panelId}
+                    streamId={draftInfo.parentStreamId}
                     expanded
                     onCollapse={handleDraftCollapse}
                     autoFocus
@@ -537,6 +541,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   autoFocus={!isMobile}
                   workspaceId={workspaceId}
                   scopeId={panelId}
+                  streamId={draftInfo.parentStreamId}
                   onExpandClick={handleDraftExpand}
                   streamContext={draftStreamContext}
                   onStashDraft={stash.handleStashDraft}

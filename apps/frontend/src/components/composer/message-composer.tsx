@@ -508,6 +508,7 @@ export function MessageComposer({
       ariaDescribedBy={instructionsId}
       blurOnEscape
       streamContext={streamContext}
+      streamId={streamId}
     />
   )
 
@@ -673,6 +674,7 @@ export function MessageComposer({
               blurOnEscape
               onEscapeBlur={focusExpandedShell}
               streamContext={streamContext}
+              streamId={streamId}
               belowToolbarContent={
                 pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
                   <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">
