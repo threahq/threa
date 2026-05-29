@@ -1,4 +1,4 @@
-import { Bell, Bookmark, Brain, CalendarClock, FileEdit, MessageSquareText, Paperclip, Tag } from "lucide-react"
+import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag } from "lucide-react"
 import type { ComponentType, ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { UnreadBadge } from "@/components/unread-badge"
@@ -88,15 +88,6 @@ export function SidebarQuickLinks({
       unreadCount: scheduledCount,
       signalSlot:
         scheduledCount > 0 ? <span className="ml-auto text-xs text-muted-foreground">({scheduledCount})</span> : null,
-    },
-    {
-      key: "threads",
-      to: `/w/${workspaceId}/threads`,
-      icon: MessageSquareText,
-      label: "Threads",
-      isActive: false,
-      unreadCount: 0,
-      signalSlot: null,
     },
     {
       key: "memory",
