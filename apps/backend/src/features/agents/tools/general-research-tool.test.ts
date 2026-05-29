@@ -29,11 +29,13 @@ describe("general_research tool", () => {
     expect(result.sources).toEqual([{ type: "web", title: "Docs", url: "https://example.com/docs", snippet: "…" }])
 
     const output = JSON.parse(result.output)
-    expect(output.status).toBe("ok")
-    expect(output.partial).toBe(false)
-    expect(output.briefAdded).toBe(true)
-    expect(output.sourceCount).toBe(1)
-    expect(output.substeps).toHaveLength(1)
+    expect(output).toMatchObject({
+      status: "ok",
+      partial: false,
+      briefAdded: true,
+      sourceCount: 1,
+    })
+    expect(output.substeps[0].text).toBe("Searching the web…")
   })
 
   test("passes a wall-clock deadline and the abort signal through to the researcher", async () => {
@@ -62,10 +64,12 @@ describe("general_research tool", () => {
     const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
 
     const output = JSON.parse(result.output)
-    expect(output.status).toBe("partial")
-    expect(output.partial).toBe(true)
-    expect(output.partialReason).toBe("timeout")
-    expect(output.briefAdded).toBe(false)
+    expect(output).toMatchObject({
+      status: "partial",
+      partial: true,
+      partialReason: "timeout",
+      briefAdded: false,
+    })
     expect(result.systemContext).toBeUndefined()
   })
 })
