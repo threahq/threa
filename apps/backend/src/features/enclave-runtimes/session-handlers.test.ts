@@ -82,6 +82,7 @@ describe("createEnclaveSessionHandlers.message", () => {
       id: "msg_a",
       workspaceId: "ws_1",
       streamId: "stream_1",
+      sessionId: "session_1", // stamped for session→messages reverse lookup / cleanup
       authorId: "persona_ariadne",
       authorType: AuthorTypes.PERSONA,
       e2eVersion: 2,

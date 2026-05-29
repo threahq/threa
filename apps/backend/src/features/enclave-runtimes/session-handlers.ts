@@ -49,19 +49,20 @@ interface Dependencies {
   eventService: EventService
 }
 
-export function createEnclaveSessionHandlers({ pool, eventService }: Dependencies) {
-  /** Load a session that must be the running, completable target of a callback. */
-  async function loadRunningSession(id: string): Promise<AgentSession> {
-    const session = await AgentSessionRepository.findById(pool, id)
-    if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
-    if (session.status !== SessionStatuses.RUNNING) {
-      // COMPLETED/DELETED/SUPERSEDED/FAILED — the turn was finished, cancelled, or
-      // reclaimed; the enclave should stop. 409 tells it to discard.
-      throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
-    }
-    return session
+/**
+ * The session must be the live target of a callback. A missing row is 404; any
+ * terminal status (COMPLETED/DELETED/SUPERSEDED/FAILED) is 409 — the turn was
+ * finished, cancelled, or reclaimed, so the enclave should stop and discard.
+ * Callers that special-case COMPLETED (idempotent acks) check it before this.
+ */
+function assertRunning(session: AgentSession | null): asserts session is AgentSession {
+  if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
+  if (session.status !== SessionStatuses.RUNNING) {
+    throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
   }
+}
 
+export function createEnclaveSessionHandlers({ pool, eventService }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
@@ -88,7 +89,8 @@ export function createEnclaveSessionHandlers({ pool, eventService }: Dependencie
       const parsed = messageSchema.safeParse(req.body)
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
-      const session = await loadRunningSession(id)
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
       const stream = await StreamRepository.findById(pool, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
@@ -97,6 +99,10 @@ export function createEnclaveSessionHandlers({ pool, eventService }: Dependencie
         id: reply.messageId,
         workspaceId: stream.workspaceId,
         streamId: session.streamId,
+        // Stamp the session so the message is reachable via session→messages
+        // reverse lookup — required for orphan/supersede cleanup of a reply that
+        // was streamed before the turn failed mid-flight.
+        sessionId: id,
         authorId: session.personaId,
         authorType: AuthorTypes.PERSONA,
         contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
@@ -127,14 +133,11 @@ export function createEnclaveSessionHandlers({ pool, eventService }: Dependencie
       if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
 
       const session = await AgentSessionRepository.findById(pool, id)
-      if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
-      if (session.status === SessionStatuses.COMPLETED) {
-        res.status(200).json({ status: "already_completed" })
+      if (session?.status === SessionStatuses.COMPLETED) {
+        res.status(200).json({ status: "already_completed" }) // idempotent redelivery
         return
       }
-      if (session.status !== SessionStatuses.RUNNING) {
-        throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
-      }
+      assertRunning(session)
 
       const messageIds = parsed.data.messageIds
       await AgentSessionRepository.completeSession(pool, id, {
