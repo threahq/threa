@@ -131,5 +131,7 @@ describe("isPristinePreset", () => {
     expect(isPristinePreset(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))).toBeNull()
     // So does membership: a pinned label makes it custom.
     expect(isPristinePreset(toggleLabelSection(SMART_SIDEBAR_CONFIG, "lbl_1"))).toBeNull()
+    // And so does a quick-link change, even with the sections untouched.
+    expect(isPristinePreset(toggleQuickLink(SMART_SIDEBAR_CONFIG, "drafts"))).toBeNull()
   })
 })

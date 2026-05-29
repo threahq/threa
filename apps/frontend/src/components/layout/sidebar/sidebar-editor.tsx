@@ -26,6 +26,7 @@ import {
   type SidebarBasePreset,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
+import { usePreferences } from "@/contexts"
 import { useSidebarConfig } from "@/hooks/use-sidebar-config"
 import { useWorkspaceLabels } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks"
@@ -79,6 +80,10 @@ interface SidebarEditorDialogProps {
  */
 export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: SidebarEditorDialogProps) {
   const { config, setConfig, setBasePreset } = useSidebarConfig(workspaceId)
+  const { preferences } = usePreferences()
+  // dnd-kit applies its reorder transition via an inline style, which the global
+  // `.reduced-motion` stylesheet rule can't reach — so gate it here.
+  const reduceMotion = preferences?.accessibility.reducedMotion ?? false
   const labels = useWorkspaceLabels(workspaceId)
   const labelsById = useMemo(() => new Map(labels.map((label) => [label.id, label])), [labels])
 
@@ -113,7 +118,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent desktopClassName="sm:max-w-md">
+      <ResponsiveDialogContent desktopClassName="sm:max-w-md sm:max-h-[80vh]">
         <ResponsiveDialogHeader>
           <ResponsiveDialogTitle>Customize sidebar</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
@@ -121,7 +126,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
-        <ResponsiveDialogBody className="max-h-[60vh] space-y-5 overflow-y-auto">
+        <ResponsiveDialogBody className="space-y-5">
           <section className="space-y-2">
             <EditorGroupHeading>Preset</EditorGroupHeading>
             <div className="inline-flex gap-1 rounded-md bg-muted p-0.5">
@@ -151,6 +156,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
                     <SortableQuickLinkRow
                       key={link.key}
                       link={link}
+                      reduceMotion={reduceMotion}
                       onToggle={() => setConfig(toggleQuickLink(config, link.key))}
                     />
                   ))}
@@ -174,6 +180,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
                         key={section.id}
                         section={section}
                         labelsById={labelsById}
+                        reduceMotion={reduceMotion}
                         onRemove={() => setConfig(removeSection(config, section.id))}
                       />
                     ))}
@@ -224,8 +231,8 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
           </section>
         </ResponsiveDialogBody>
 
-        <ResponsiveDialogFooter>
-          <Button size="sm" onClick={() => onOpenChange(false)}>
+        <ResponsiveDialogFooter className="border-t px-4 py-3 sm:px-6">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Done
           </Button>
         </ResponsiveDialogFooter>
@@ -240,9 +247,17 @@ function EditorGroupHeading({ children }: { children: React.ReactNode }) {
 }
 
 /** A reorderable quick-link row with a visibility switch. Top-level per INV-18. */
-function SortableQuickLinkRow({ link, onToggle }: { link: SidebarQuickLink; onToggle: () => void }) {
+function SortableQuickLinkRow({
+  link,
+  reduceMotion,
+  onToggle,
+}: {
+  link: SidebarQuickLink
+  reduceMotion: boolean
+  onToggle: () => void
+}) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: link.key })
-  const style = { transform: CSS.Transform.toString(transform), transition }
+  const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
   const { label, icon: Icon } = QUICK_LINK_META[link.key]
 
   return (
@@ -251,7 +266,7 @@ function SortableQuickLinkRow({ link, onToggle }: { link: SidebarQuickLink; onTo
       style={style}
       className={cn(
         "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
-        isDragging && "relative z-10 shadow-sm"
+        isDragging && "relative z-10 shadow-md"
       )}
     >
       <DragHandle label={`Reorder ${label}`} attributes={attributes} listeners={listeners} />
@@ -273,14 +288,16 @@ function SortableQuickLinkRow({ link, onToggle }: { link: SidebarQuickLink; onTo
 function SortableSectionRow({
   section,
   labelsById,
+  reduceMotion,
   onRemove,
 }: {
   section: SidebarSection
   labelsById: Map<string, CachedLabel>
+  reduceMotion: boolean
   onRemove: () => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
-  const style = { transform: CSS.Transform.toString(transform), transition }
+  const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
   const name = sectionDisplayName(section, labelsById)
 
   return (
@@ -289,7 +306,7 @@ function SortableSectionRow({
       style={style}
       className={cn(
         "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
-        isDragging && "relative z-10 shadow-sm"
+        isDragging && "relative z-10 shadow-md"
       )}
     >
       <DragHandle label={`Reorder ${name}`} attributes={attributes} listeners={listeners} />

@@ -33,7 +33,13 @@ import type {
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
-import { NOTIFICATION_CONFIG, NotificationLevels, StreamTypes, Visibilities } from "@threa/types"
+import {
+  NOTIFICATION_CONFIG,
+  NotificationLevels,
+  StreamTypes,
+  Visibilities,
+  normalizeSidebarConfig,
+} from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 
 // ============================================================================
@@ -1166,16 +1172,21 @@ export function registerWorkspaceSocketHandlers(
   const handleSidebarConfigUpdated = (payload: SidebarConfigUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
+    // Normalize at the write boundary so an event from a not-yet-upgraded
+    // backend (missing quickLinks) can't seed an incomplete document into the
+    // query cache / IDB for any reader that bypasses useSidebarConfig.
+    const config = normalizeSidebarConfig(payload.sidebarConfig)
+
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
-      return { ...old, sidebarConfig: payload.sidebarConfig }
+      return { ...old, sidebarConfig: config }
     })
 
     // Write to IDB so the IDB-backed sidebar store hook reacts immediately.
     db.sidebarConfigs.put({
       id: workspaceId,
       workspaceId,
-      config: payload.sidebarConfig,
+      config,
       _cachedAt: Date.now(),
     })
   }

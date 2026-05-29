@@ -3,9 +3,11 @@ import { render, screen, userEvent, spyOnExport } from "@/test"
 import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, type SidebarConfig } from "@threa/types"
 import * as sidebarConfigHook from "@/hooks/use-sidebar-config"
 import * as workspaceStore from "@/stores/workspace-store"
+import * as contexts from "@/contexts"
 import * as dialogModule from "@/components/ui/responsive-dialog"
 import * as dropdownModule from "@/components/ui/dropdown-menu"
 import { SidebarEditorDialog } from "./sidebar-editor"
+import { moveSection } from "./sidebar-config"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -37,6 +39,9 @@ describe("SidebarEditorDialog", () => {
     setConfig.mockClear()
     setBasePreset.mockClear()
     vi.spyOn(workspaceStore, "useWorkspaceLabels").mockReturnValue([])
+    vi.spyOn(contexts, "usePreferences").mockReturnValue({
+      preferences: null,
+    } as unknown as ReturnType<typeof contexts.usePreferences>)
 
     for (const key of [
       "ResponsiveDialog",
@@ -121,6 +126,15 @@ describe("SidebarEditorDialog", () => {
     expect(screen.getByRole("button", { name: "Smart" })).toHaveAttribute("aria-pressed", "true")
     await userEvent.click(screen.getByRole("button", { name: "All" }))
     expect(setBasePreset).toHaveBeenCalledWith("all")
+  })
+
+  it("highlights neither preset once the layout is customized", () => {
+    // A reordered Smart layout matches no preset.
+    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))
+    mount()
+
+    expect(screen.getByRole("button", { name: "Smart" })).toHaveAttribute("aria-pressed", "false")
+    expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false")
   })
 
   it("adds a section that isn't already present", async () => {

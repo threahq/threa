@@ -21,10 +21,13 @@ const sidebarQuickLinkSchema = z.object({
 })
 
 // The PATCH body is the full config document — it replaces the stored layout.
+// quickLinks is optional + defaulted so a client predating the field (an
+// in-flight request during a backend-first rollout) still validates; the
+// service normalizes the (possibly empty) list to the full set on write.
 const updateSidebarConfigSchema = z.object({
   basePreset: z.enum(SIDEBAR_BASE_PRESETS),
   sections: z.array(sidebarSectionSchema).max(50),
-  quickLinks: z.array(sidebarQuickLinkSchema).max(SIDEBAR_QUICK_LINKS.length),
+  quickLinks: z.array(sidebarQuickLinkSchema).max(SIDEBAR_QUICK_LINKS.length).optional().default([]),
 })
 
 export { updateSidebarConfigSchema }

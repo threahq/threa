@@ -3,6 +3,7 @@ import type { PoolClient } from "pg"
 import { ALL_SIDEBAR_CONFIG, DEFAULT_SIDEBAR_CONFIG, DEFAULT_QUICK_LINKS, type SidebarConfig } from "@threa/types"
 import { SidebarConfigService } from "./service"
 import { SidebarConfigRepository } from "./repository"
+import { updateSidebarConfigSchema } from "./handlers"
 import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
 
@@ -77,5 +78,13 @@ describe("SidebarConfigService.updateConfig", () => {
       USER_ID,
       expect.objectContaining({ quickLinks: DEFAULT_QUICK_LINKS })
     )
+  })
+})
+
+describe("updateSidebarConfigSchema", () => {
+  it("accepts a body without quickLinks (old client) and defaults it to an empty list", () => {
+    // The service then normalizes the empty list to the full default set.
+    const parsed = updateSidebarConfigSchema.parse({ basePreset: "smart", sections: [] })
+    expect(parsed.quickLinks).toEqual([])
   })
 })

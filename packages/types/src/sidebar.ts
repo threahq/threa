@@ -86,7 +86,18 @@ export function normalizeSidebarConfig(config: SidebarConfig): SidebarConfig {
   for (const key of SIDEBAR_QUICK_LINKS) {
     if (!seen.has(key)) quickLinks.push({ key, enabled: true })
   }
-  return { ...config, quickLinks }
+
+  // Drop any duplicate section ids so the document is fully idempotent — two
+  // sections sharing an id would trip React keys and the drag list's sortable
+  // ids. The write path already dedups via addSection; this guards stray data.
+  const seenSectionIds = new Set<string>()
+  const sections = (config.sections ?? []).filter((section) => {
+    if (seenSectionIds.has(section.id)) return false
+    seenSectionIds.add(section.id)
+    return true
+  })
+
+  return { ...config, sections, quickLinks }
 }
 
 /** Section ids double as collapse-state keys, so they must stay stable. */
