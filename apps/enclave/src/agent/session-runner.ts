@@ -36,9 +36,17 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
   }, HEARTBEAT_INTERVAL_MS)
 
   try {
-    const result = await runEnclaveTurn({ keyPair: deps.keyPair, rawChat: deps.rawChat }, assignment)
+    const result = await runEnclaveTurn(
+      {
+        keyPair: deps.keyPair,
+        rawChat: deps.rawChat,
+        // Stream each reply back as the loop sends it (delivered before the loop continues).
+        onMessage: (reply) => deps.callbacks.message(sessionId, reply),
+      },
+      assignment
+    )
     await deps.callbacks.complete(sessionId, result)
-    logger.info({ sessionId, messages: result.messages.length }, "Enclave session completed")
+    logger.info({ sessionId, messages: result.messageIds.length }, "Enclave session completed")
   } catch (err) {
     // Nothing to ack — the backend reclaims the session when heartbeats stop.
     logger.error({ err, sessionId }, "Enclave session failed")

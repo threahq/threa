@@ -274,6 +274,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     // (liveness refresh + sealed replies on completion). Same shared-secret gate.
     const enclaveSession = createEnclaveSessionHandlers({ pool, eventService })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
+    app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
     app.post("/internal/enclave-runtimes/sessions/:id/complete", internalAuth, enclaveSession.complete)
   }
 

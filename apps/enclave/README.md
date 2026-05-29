@@ -19,8 +19,10 @@ acks 202 and runs the turn _asynchronously_ — unwrapping the SSK, opening the
 message(s), running the same `AgentRuntime` loop the backend uses for non-E2E
 personas (over an enclave-only LLM client: OpenRouter, zero-retention, single
 egress), and sealing each reply back under the SSK. While the loop runs it
-refreshes the session heartbeat; on completion it posts the sealed replies back.
-Plaintext exists only in-process, for the duration of the loop, and is never logged.
+refreshes the session heartbeat and streams each sealed reply back the moment the
+loop sends it (so an interim "I'll look into it" lands ahead of the final answer),
+then acks completion. Plaintext exists only in-process, for the loop's duration,
+and is never logged.
 
 ## Trust boundary (5a)
 
@@ -38,8 +40,8 @@ What the enclave does today:
 - Owns assigned sessions via `POST /sessions`: acks 202, then asynchronously
   unwraps the SSK with its in-memory EIK, runs the agent loop (text +
   tool-calling capable; no tools and no mid-turn reconsideration wired yet),
-  refreshes the session heartbeat while working, and posts each sealed reply back
-  to the backend on completion.
+  refreshes the session heartbeat while working, streams each sealed reply back
+  as the loop sends it (`.../messages`), and acks completion (`.../complete`).
 - Best-effort revokes its key on graceful shutdown; the backend's staleness
   window tombstones the row within 2 minutes regardless.
 
@@ -52,7 +54,7 @@ What the enclave does not do:
   `Authorization` nor the `X-Internal-Api-Key` header is ever written (the
   `pino-http` `redact` paths are belt-and-braces on top of that).
 - No outbound traffic except the backend (register/heartbeat/revoke + the
-  per-session heartbeat/complete callbacks) and the OpenRouter API (the LLM upstream).
+  per-session heartbeat/messages/complete callbacks) and the OpenRouter API (the LLM upstream).
 
 ## Environment
 
@@ -71,7 +73,7 @@ What the enclave does not do:
 In production the egress firewall should pin the enclave to exactly:
 
 - `BACKEND_BASE_URL` — for `/internal/enclave-runtimes/*`: registration,
-  heartbeat, revoke, and the per-session heartbeat/complete callbacks.
+  heartbeat, revoke, and the per-session heartbeat/messages/complete callbacks.
 - `OPENROUTER_BASE_URL` (`openrouter.ai`) — the LLM upstream for `/sessions`.
 
 No other outbound traffic is required.

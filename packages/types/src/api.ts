@@ -432,11 +432,12 @@ export interface EnclaveSskWrap {
 }
 
 /**
- * One sealed reply the enclave produced this turn. The agent loop may send more
- * than one message, so the enclave mints each reply's id (a `msg_…` ULID) and
- * binds it into the seal AAD (`streamId|messageId|senderId`); the backend stores
- * the ciphertext under that same id. Server-minting the id up front isn't viable
- * because the message count is only known after the loop runs.
+ * One sealed reply the enclave produced this turn, streamed back to
+ * `POST .../sessions/:id/messages` the moment the agent loop sends it (so an
+ * interim "I'll look into it" lands before the final answer, not batched at the
+ * end). The enclave mints each reply's id (a `msg_…` ULID) and binds it into the
+ * seal AAD (`streamId|messageId|senderId`); the backend stores the ciphertext
+ * under that same id.
  */
 export interface EnclaveSealedReply {
   messageId: string
@@ -468,12 +469,14 @@ export interface EnclaveSessionAssignment {
 }
 
 /**
- * The enclave's turn output, posted back to `POST .../sessions/:id/complete`:
- * the messages the agent loop sealed (zero or more, oldest→newest) plus
- * non-secret model metadata. Usage is summed across every model call the loop made.
+ * The completion ack, posted to `POST .../sessions/:id/complete` after the loop
+ * finishes. The replies themselves were already streamed via `.../messages`, so
+ * this carries only the ids the enclave sent (oldest→newest, for the session's
+ * `sent_message_ids`) plus non-secret model metadata. Usage is summed across
+ * every model call the loop made.
  */
 export interface EnclaveSessionResult {
-  messages: EnclaveSealedReply[]
+  messageIds: string[]
   model: string
   usage?: { promptTokens?: number; completionTokens?: number }
 }

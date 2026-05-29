@@ -1,4 +1,4 @@
-import { INTERNAL_API_KEY_HEADER, type EnclaveSessionResult } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, type EnclaveSealedReply, type EnclaveSessionResult } from "@threa/types"
 import type { EnclaveConfig } from "../config"
 
 /**
@@ -11,11 +11,14 @@ import type { EnclaveConfig } from "../config"
 export interface BackendCallbacks {
   /** Refresh the session's heartbeat so orphan-cleanup doesn't reclaim it mid-turn. */
   heartbeat(sessionId: string): Promise<void>
-  /** Hand back the sealed replies and mark the session complete. */
+  /** Stream one sealed reply back the moment the loop sends it (written + broadcast now). */
+  message(sessionId: string, reply: EnclaveSealedReply): Promise<void>
+  /** Mark the session complete once the loop finishes (replies already streamed). */
   complete(sessionId: string, result: EnclaveSessionResult): Promise<void>
 }
 
 const HEARTBEAT_TIMEOUT_MS = 10_000
+const MESSAGE_TIMEOUT_MS = 30_000
 const COMPLETE_TIMEOUT_MS = 30_000
 
 export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks {
@@ -33,6 +36,16 @@ export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks 
         signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session heartbeat failed: ${res.status}`)
+    },
+
+    async message(sessionId, reply) {
+      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/messages`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(reply),
+        signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session message failed: ${res.status}`)
     },
 
     async complete(sessionId, result) {

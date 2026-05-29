@@ -9,7 +9,12 @@ import {
   buildMessageAad,
   wrapStreamKey,
 } from "@threa/crypto"
-import { INTERNAL_API_KEY_HEADER, type EnclaveSessionAssignment, type EnclaveSessionResult } from "@threa/types"
+import {
+  INTERNAL_API_KEY_HEADER,
+  type EnclaveSealedReply,
+  type EnclaveSessionAssignment,
+  type EnclaveSessionResult,
+} from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "./keystore"
 import type { BackendCallbacks } from "./agent/backend-callbacks"
 import type { RawChatFn } from "./llm"
@@ -124,9 +129,13 @@ describe("createSessionsHandler", () => {
     const assignment = await assignmentFor(keyPair, ssk, "What's the capital of France?")
 
     const rawChat: RawChatFn = async () => ({ message: { content: "Paris." }, model: "stub/model" })
+    const streamed: { sessionId: string; reply: EnclaveSealedReply }[] = []
     let completed: { sessionId: string; result: EnclaveSessionResult } | null = null
     const callbacks: BackendCallbacks = {
       heartbeat: async () => {},
+      message: async (sessionId, reply) => {
+        streamed.push({ sessionId, reply })
+      },
       complete: async (sessionId, result) => {
         completed = { sessionId, result }
       },
@@ -141,15 +150,17 @@ describe("createSessionsHandler", () => {
     // The loop runs detached; wait for it to drain (the handler clears inFlight on finish).
     await vi.waitFor(() => expect(inFlight.size).toBe(0))
 
-    expect(completed).not.toBeNull()
-    expect(completed!.sessionId).toBe("session_test")
-    const reply = completed!.result.messages[0]!
+    // The reply was streamed via message(), and complete() acked with its id.
+    expect(streamed).toHaveLength(1)
+    expect(streamed[0]!.sessionId).toBe("session_test")
     const text = await openMessageAsString({
       key: ssk,
-      envelope: reply.envelope,
-      ciphertext: Buffer.from(reply.ciphertext, "base64"),
+      envelope: streamed[0]!.reply.envelope,
+      ciphertext: Buffer.from(streamed[0]!.reply.ciphertext, "base64"),
     })
     expect(text).toBe("Paris.")
+    expect(completed).not.toBeNull()
+    expect(completed!.result.messageIds).toEqual([streamed[0]!.reply.messageId])
   })
 
   it("acks 202 without re-running when the session is already in flight", async () => {
@@ -164,7 +175,7 @@ describe("createSessionsHandler", () => {
         ran = true
         return { message: { content: "x" }, model: "stub" }
       }) as RawChatFn,
-      callbacks: { heartbeat: async () => {}, complete: async () => {} },
+      callbacks: { heartbeat: async () => {}, message: async () => {}, complete: async () => {} },
       inFlight: new Set([assignment.sessionId]), // already running
     })
     const res = fakeRes()

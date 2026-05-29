@@ -3,7 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
 import { HttpError } from "../../lib/errors"
-import { AgentSessionRepository, SessionStatuses } from "../agents"
+import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../agents"
 import { StreamRepository } from "../streams"
 import type { EventService } from "../messaging"
 
@@ -14,7 +14,8 @@ import type { EventService } from "../messaging"
  * never sees plaintext (INV-E7).
  *
  *   POST /internal/enclave-runtimes/sessions/:id/heartbeat  — liveness refresh
- *   POST /internal/enclave-runtimes/sessions/:id/complete   — sealed replies + ack
+ *   POST /internal/enclave-runtimes/sessions/:id/messages   — one sealed reply, streamed
+ *   POST /internal/enclave-runtimes/sessions/:id/complete   — ack (ids + metadata)
  */
 
 // Same opaque placeholder the user-send path stores for E2E rows (INV-E1: the
@@ -31,16 +32,14 @@ const streamEnvelopeSchema = z.object({
   aad: z.string().min(1),
 })
 
+const messageSchema = z.object({
+  messageId: z.string().min(1),
+  ciphertext: z.string().min(1),
+  envelope: streamEnvelopeSchema,
+})
+
 const completeSchema = z.object({
-  messages: z
-    .array(
-      z.object({
-        messageId: z.string().min(1),
-        ciphertext: z.string().min(1),
-        envelope: streamEnvelopeSchema,
-      })
-    )
-    .max(64),
+  messageIds: z.array(z.string().min(1)).max(64),
   model: z.string().min(1),
   usage: z.object({ promptTokens: z.number().optional(), completionTokens: z.number().optional() }).optional(),
 })
@@ -51,6 +50,18 @@ interface Dependencies {
 }
 
 export function createEnclaveSessionHandlers({ pool, eventService }: Dependencies) {
+  /** Load a session that must be the running, completable target of a callback. */
+  async function loadRunningSession(id: string): Promise<AgentSession> {
+    const session = await AgentSessionRepository.findById(pool, id)
+    if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
+    if (session.status !== SessionStatuses.RUNNING) {
+      // COMPLETED/DELETED/SUPERSEDED/FAILED — the turn was finished, cancelled, or
+      // reclaimed; the enclave should stop. 409 tells it to discard.
+      throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
+    }
+    return session
+  }
+
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
@@ -65,10 +76,48 @@ export function createEnclaveSessionHandlers({ pool, eventService }: Dependencie
     },
 
     /**
+     * POST /internal/enclave-runtimes/sessions/:id/messages
+     * Write one sealed reply the moment the loop streamed it (so interim messages
+     * appear in real time). The created message broadcasts via the normal outbox
+     * path. Idempotent: the enclave-minted id keys a clientMessageId dedupe.
+     */
+    async message(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = messageSchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await loadRunningSession(id)
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
+      const reply = parsed.data
+      await eventService.createMessage({
+        id: reply.messageId,
+        workspaceId: stream.workspaceId,
+        streamId: session.streamId,
+        authorId: session.personaId,
+        authorType: AuthorTypes.PERSONA,
+        contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
+        contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+        ciphertext: Buffer.from(reply.ciphertext, "base64"),
+        envelope: reply.envelope,
+        e2eVersion: 2,
+        // Restrict the agent's reach to this scratchpad; dedupe a redelivered
+        // stream so a reply can't post twice (keyed by the enclave-minted id).
+        accessibleStreamIds: [session.streamId],
+        clientMessageId: `enclave-reply:${id}:${reply.messageId}`,
+      })
+
+      res.status(204).end()
+    },
+
+    /**
      * POST /internal/enclave-runtimes/sessions/:id/complete
-     * The ack: write each sealed reply the loop produced, then mark the session
-     * COMPLETED. Idempotent on redelivery — an already-completed session no-ops,
-     * and per-message clientMessageId dedupe stops duplicate rows.
+     * The ack: the replies were already streamed via `.../messages`, so this just
+     * records the sent ids and marks the session COMPLETED. Idempotent on
+     * redelivery — an already-completed session no-ops.
      */
     async complete(req: Request, res: Response) {
       const id = req.params.id
@@ -84,38 +133,14 @@ export function createEnclaveSessionHandlers({ pool, eventService }: Dependencie
         return
       }
       if (session.status !== SessionStatuses.RUNNING) {
-        // DELETED/SUPERSEDED/FAILED — the turn was cancelled or reclaimed; discard.
         throw new HttpError("Session is not running", { status: 409, code: "SESSION_NOT_RUNNING" })
       }
 
-      const stream = await StreamRepository.findById(pool, session.streamId)
-      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
-
-      const sentMessageIds: string[] = []
-      for (const [index, reply] of parsed.data.messages.entries()) {
-        await eventService.createMessage({
-          id: reply.messageId,
-          workspaceId: stream.workspaceId,
-          streamId: session.streamId,
-          authorId: session.personaId,
-          authorType: AuthorTypes.PERSONA,
-          contentJson: E2E_PLACEHOLDER_CONTENT_JSON,
-          contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
-          ciphertext: Buffer.from(reply.ciphertext, "base64"),
-          envelope: reply.envelope,
-          e2eVersion: 2,
-          // Restrict the agent's reach to this scratchpad; dedupe a redelivered
-          // completion so replies can't post twice.
-          accessibleStreamIds: [session.streamId],
-          clientMessageId: `enclave-reply:${id}:${index}`,
-        })
-        sentMessageIds.push(reply.messageId)
-      }
-
+      const messageIds = parsed.data.messageIds
       await AgentSessionRepository.completeSession(pool, id, {
         lastSeenSequence: session.lastSeenSequence ?? 0n,
-        responseMessageId: sentMessageIds[0] ?? null,
-        sentMessageIds,
+        responseMessageId: messageIds[0] ?? null,
+        sentMessageIds: messageIds,
       })
 
       res.status(204).end()
