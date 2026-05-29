@@ -80,6 +80,8 @@ export class BotRuntimeService {
     acceptingInvocations: boolean
     capabilities?: Record<string, unknown>
     statusText?: string | null
+    publicKey?: string | null
+    publicKeyId?: string | null
     mergeCapabilities?: boolean
   }): Promise<BotRuntimeInstance> {
     return BotRuntimeInstanceRepository.upsertPresence(this.pool, {
@@ -93,6 +95,8 @@ export class BotRuntimeService {
       acceptingInvocations: params.acceptingInvocations,
       capabilities: params.capabilities ?? {},
       statusText: params.statusText,
+      publicKey: params.publicKey,
+      publicKeyId: params.publicKeyId,
       mergeCapabilities: params.mergeCapabilities,
     })
   }

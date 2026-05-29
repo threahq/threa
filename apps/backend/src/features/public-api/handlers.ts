@@ -709,6 +709,8 @@ export function createPublicApiHandlers({
           ...(result.data.runtimeSessionId && { runtimeSessionId: result.data.runtimeSessionId }),
         },
         statusText: sanitizeStatusText(result.data.statusText),
+        publicKey: result.data.publicKey,
+        publicKeyId: result.data.publicKeyId,
       })
       await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({

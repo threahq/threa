@@ -18,6 +18,7 @@ import {
   AGENT_STEP_TYPES,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
+import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 
 const PUBLIC_SEARCH_MAX_LIMIT = 50
 const PUBLIC_ATTACHMENT_SEARCH_MAX_LIMIT = 50
@@ -64,16 +65,22 @@ export const listStreamsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional().default(50),
 })
 
-export const upsertPresenceSchema = z.object({
-  runtimeKind: z.enum(BOT_RUNTIME_KINDS),
-  instanceId: z.string().min(1).max(128),
-  runtimeSessionId: z.string().min(1).max(256).optional(),
-  displayName: z.string().max(100).optional(),
-  status: z.enum(BOT_RUNTIME_STATUSES),
-  acceptingInvocations: z.boolean(),
-  capabilities: z.record(z.string(), z.unknown()).optional().default({}),
-  statusText: z.string().max(200).optional(),
-})
+export const upsertPresenceSchema = z
+  .object({
+    runtimeKind: z.enum(BOT_RUNTIME_KINDS),
+    instanceId: z.string().min(1).max(128),
+    runtimeSessionId: z.string().min(1).max(256).optional(),
+    displayName: z.string().max(100).optional(),
+    status: z.enum(BOT_RUNTIME_STATUSES),
+    acceptingInvocations: z.boolean(),
+    capabilities: z.record(z.string(), z.unknown()).optional().default({}),
+    statusText: z.string().max(200).optional(),
+    ...botIdentityKeyFields,
+  })
+  .refine(bothOrNeitherBotIdentityKey, {
+    message: "publicKey and publicKeyId must be provided together",
+    path: ["publicKey"],
+  })
 
 export const createRuntimeSessionSchema = z.object({
   runtimeKind: z.literal("pi-local"),
