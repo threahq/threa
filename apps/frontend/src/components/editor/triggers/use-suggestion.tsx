@@ -31,6 +31,16 @@ export interface UseSuggestionConfig<T> {
    * straight to TipTap's suggestion plugin, which awaits it before rendering.
    */
   searchItems?: (query: string) => Promise<T[]>
+  /**
+   * Whether `renderList` shows an empty state, so the popup stays on-screen even
+   * with zero items. When true, `popupVisible` tracks whether the suggestion is
+   * active rather than whether it has items — so `isSuggestionActive` reports the
+   * popup, and Escape dismisses it (instead of blurring the editor) while Enter
+   * is trapped by the picker. Triggers that render nothing on empty results
+   * (mention/channel/slash/emoji) leave this false so zero-result queries don't
+   * block Enter from sending.
+   */
+  rendersEmptyState?: boolean
   /** Render the suggestion list component */
   renderList: (props: {
     ref: RefObject<SuggestionListRef | null>
@@ -65,7 +75,7 @@ export interface UseSuggestionResult<T> {
  * Handles the lifecycle callbacks and portal rendering.
  */
 export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionResult<T> {
-  const { extensionName, getItems, filterItems, searchItems, renderList } = config
+  const { extensionName, getItems, filterItems, searchItems, rendersEmptyState, renderList } = config
   const [state, setState] = useState<SuggestionState<T> | null>(null)
   const listRef = useRef<SuggestionListRef>(null)
   const editorRef = useRef<Editor | null>(null)
@@ -115,7 +125,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
   const onStart = useCallback(
     (props: SuggestionProps<T>) => {
       editorRef.current = props.editor
-      setPopupVisible(props.editor, props.items.length > 0)
+      setPopupVisible(props.editor, rendersEmptyState || props.items.length > 0)
       setState({
         items: props.items,
         query: props.query,
@@ -123,7 +133,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
         command: props.command,
       })
     },
-    [setPopupVisible]
+    [setPopupVisible, rendersEmptyState]
   )
 
   const onUpdate = useCallback(
@@ -131,7 +141,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
       // Drop out-of-order async resolutions: only the latest requested query's
       // results may update the popup (see latestQueryRef).
       if (searchItemsRef.current && props.query !== latestQueryRef.current) return
-      setPopupVisible(props.editor, props.items.length > 0)
+      setPopupVisible(props.editor, rendersEmptyState || props.items.length > 0)
       setState({
         items: props.items,
         query: props.query,
@@ -139,7 +149,7 @@ export function useSuggestion<T>(config: UseSuggestionConfig<T>): UseSuggestionR
         command: props.command,
       })
     },
-    [setPopupVisible]
+    [setPopupVisible, rendersEmptyState]
   )
 
   const onExit = useCallback(

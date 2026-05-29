@@ -71,4 +71,19 @@ describe("MemoSearchExtension trigger matching", () => {
     expect(state.active).toBe(true)
     expect(state.query).toBe("")
   })
+
+  it("does NOT activate inside inline code", () => {
+    const editor = makeEditor()
+    editor.commands.focus()
+    editor.chain().focus().setMark("code").run()
+    typeText(editor, "/memo auth")
+    expect(memoState(editor).active).toBe(false)
+  })
+
+  it("does NOT activate when a backtick sits directly before /memo (`` `/memo`` )", () => {
+    const editor = makeEditor()
+    editor.commands.focus()
+    typeText(editor, "see `/memo auth")
+    expect(memoState(editor).active).toBe(false)
+  })
 })
