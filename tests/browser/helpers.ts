@@ -101,6 +101,50 @@ async function setAllSidebarPreset(page: Page, workspaceId: string): Promise<voi
   await expectApiOk(response, "Set All sidebar preset")
 }
 
+/**
+ * Switch a workspace+viewer back to the product-default "Smart" preset
+ * (urgency buckets) and reload so the sidebar repaints from it.
+ *
+ * The suite pins the deterministic All preset by default (see
+ * {@link setAllSidebarPreset}), but the All preset's sections are by stream
+ * *type* (Channels / Scratchpads / DMs) and so never include threads. Threads
+ * only surface in the Smart preset's urgency buckets, so tests that assert on a
+ * sidebar thread entry must opt back into Smart. Body mirrors
+ * `SMART_SIDEBAR_CONFIG` in `@threa/types` (not importable from the repo-root
+ * test runtime); the backend Zod schema rejects drift loudly.
+ */
+export async function setSmartSidebarPreset(page: Page): Promise<void> {
+  const response = await page.request.patch(`/api/workspaces/${workspaceIdFromUrl(page)}/sidebar-config`, {
+    data: {
+      basePreset: "smart",
+      sections: [
+        { id: "important", spec: { kind: "smart", bucket: "important" } },
+        { id: "recent", spec: { kind: "smart", bucket: "recent" } },
+        { id: "pinned", spec: { kind: "smart", bucket: "pinned" } },
+        { id: "other", spec: { kind: "smart", bucket: "other" } },
+      ],
+    },
+  })
+  await expectApiOk(response, "Set Smart sidebar preset")
+  await page.reload()
+}
+
+/**
+ * Expand every collapsed sidebar section so stream items in any urgency bucket
+ * render. Section headers are buttons exposing `aria-expanded`; a collapsed
+ * bucket (e.g. "Everything Else") unmounts its items, so a test that needs an
+ * item which may have landed in a collapsed bucket expands them all first.
+ */
+export async function expandCollapsedSidebarSections(page: Page): Promise<void> {
+  const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
+  for (let i = 0; i < 6; i += 1) {
+    const collapsed = sidebar.getByRole("button", { expanded: false })
+    if ((await collapsed.count()) === 0) break
+    await collapsed.first().click()
+    await page.waitForTimeout(100)
+  }
+}
+
 /** Extract the workspace id from the current `/w/:workspaceId/...` URL. */
 function workspaceIdFromUrl(page: Page): string {
   const match = page.url().match(/\/w\/([^/?]+)/)

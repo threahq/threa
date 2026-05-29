@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { createChannel, loginAndCreateWorkspace } from "./helpers"
+import { createChannel, loginAndCreateWorkspace, switchToAllView } from "./helpers"
 
 /**
  * Tests for editor auto-focus behavior:
@@ -43,8 +43,10 @@ test.describe("Editor Auto-Focus", () => {
     const channelName = `focus-nav-${testId}`
     await createChannel(page, channelName, { switchToAll: false })
 
-    // Switch to "All" sidebar view so channels are always visible
-    await page.locator("button", { hasText: /^All$/ }).click()
+    // Switch to the type-based "All" sidebar layout so the channel link is
+    // always visible (the old Smart/All toggle button is gone — layout is now
+    // driven by the persisted sidebar config).
+    await switchToAllView(page)
 
     // Navigate to Drafts (away from channel)
     await page.getByRole("link", { name: "Drafts" }).click()

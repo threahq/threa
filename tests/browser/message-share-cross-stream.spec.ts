@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
 
 /**
@@ -78,21 +78,39 @@ async function getWorkspaceUserIdByEmail(page: Page, workspaceId: string, email:
   return user.id
 }
 
+/**
+ * Locate a message row by its text within the main timeline. Scoping to
+ * `main` matters: the channel's last-message preview in the sidebar
+ * (`navigation`) also renders the message text but has no `data-message-id`
+ * ancestor, so an unscoped `getByText(...).first()` grabs the preview and the
+ * row lookup resolves to nothing.
+ */
+function mainMessageRow(page: Page, text: string): Locator {
+  return page.getByRole("main").locator("[data-message-id]").filter({ hasText: text }).first()
+}
+
 async function openMessageContextMenu(page: Page, text: string): Promise<void> {
-  const row = page.getByText(text, { exact: false }).first().locator("xpath=ancestor::*[@data-message-id][1]")
+  const row = mainMessageRow(page, text)
   await row.hover()
   await row.getByRole("button", { name: /message actions/i }).click()
 }
 
-async function createScratchpad(page: Page, name: string): Promise<string> {
-  await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-  // The new-scratchpad action navigates immediately to the draft route.
-  // Wait for the URL to settle on /s/<id> so subsequent helpers can read it.
-  await expect(page).toHaveURL(/\/w\/[^/]+\/s\/[^/?]+/, { timeout: 5000 })
-  // Optional rename via the page header — best-effort; skipped if not exposed.
-  const header = page.getByRole("heading", { level: 1 }).first()
-  await header.waitFor({ state: "visible", timeout: 5000 })
-  return name
+/**
+ * Create a scratchpad via the streams API. The in-sidebar "+ New Scratchpad"
+ * affordance only renders in the empty state or the "All" preset's Scratchpads
+ * section, so it's not reachable from the default Smart preset this test runs
+ * in. The picker reads its targets from the workspace bootstrap, so an
+ * API-created scratchpad shows up once the source stream is (re)loaded.
+ */
+async function createScratchpad(page: Page): Promise<string> {
+  const workspaceId = page.url().match(/\/w\/([^/]+)/)?.[1] ?? ""
+  expect(workspaceId, "workspace id should be resolvable from the URL").not.toBe("")
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "scratchpad" },
+  })
+  await expectApiOk(response, "Create scratchpad")
+  const body = (await response.json()) as { stream: { id: string } }
+  return body.stream.id
 }
 
 test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
@@ -111,8 +129,7 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
 
     const sourceUrl = page.url()
     // Pre-create the scratchpad target so it shows up in the picker.
-    const scratchpadName = `Saved ${testId}`
-    await createScratchpad(page, scratchpadName)
+    await createScratchpad(page)
     // Hop back to the source channel.
     await page.goto(sourceUrl)
     await expect(page.getByRole("heading", { name: `#${channelName}`, level: 1 })).toBeVisible()
@@ -233,7 +250,7 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
 
       const sourceText = `secret-${testId}`
       await sendChannelMessageViaApi(page, sourceText)
-      await expect(page.getByText(sourceText, { exact: false }).first()).toBeVisible({ timeout: 5000 })
+      await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
 
       await openMessageContextMenu(page, sourceText)
       await page.getByRole("menuitem", { name: /^share message$/i }).click()
@@ -261,21 +278,34 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
       const toast = page.getByText(/expose the source to people outside the source stream/i)
       await expect(toast).toBeVisible({ timeout: 10000 })
 
-      // The pointer must NOT appear in the public timeline before confirmation.
-      // We check inside `[role='main']` so the composer's transient share node
-      // (still mounted because the send was rejected) doesn't false-positive.
-      const publishedPointer = page
+      // The real privacy contract is about the *recipient*. A rejected send
+      // still renders locally for the sender as an optimistic "Failed to send"
+      // bubble (with Retry) in their own timeline — that's a device-local UI
+      // state, not a leak. What must hold is that User B, who is in `pub` but
+      // not in the private source, never receives the pointer before User A
+      // explicitly confirms. Verify that from User B's own session.
+      const otherPointer = otherUser.page
         .getByRole("main")
         .locator("[data-type='shared-message']")
         .filter({ hasText: new RegExp(sourceText) })
-      await expect(publishedPointer).toHaveCount(0)
+      await otherUser.page.goto(`/w/${workspaceId}/s/${pubStreamId}`)
+      await expect(otherUser.page.getByRole("heading", { name: `#${pubSlug}`, level: 1 })).toBeVisible({
+        timeout: 10000,
+      })
+      await expect(otherPointer).toHaveCount(0)
 
       // ---- Confirm: click "Share anyway" → re-enqueue with the flag set.
       await page.getByRole("button", { name: /share anyway/i }).click()
 
-      // Now — and only now — the pointer should land in the public channel.
-      // For User A (a member of the source) it hydrates with the original text.
+      // Now — and only now — the pointer is delivered. User A's failed bubble
+      // settles into a delivered pointer, and User B receives it over the
+      // socket into the already-open `pub` timeline.
+      const publishedPointer = page
+        .getByRole("main")
+        .locator("[data-type='shared-message']")
+        .filter({ hasText: new RegExp(sourceText) })
       await expect(publishedPointer).toBeVisible({ timeout: 10000 })
+      await expect(otherPointer).toBeVisible({ timeout: 10000 })
 
       // The toast should be dismissed once the retry is in flight.
       await expect(toast).not.toBeVisible({ timeout: 5000 })
@@ -321,7 +351,7 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
 
       const sourceText = `do-not-leak-${testId}`
       await sendChannelMessageViaApi(page, sourceText)
-      await expect(page.getByText(sourceText, { exact: false }).first()).toBeVisible({ timeout: 5000 })
+      await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
 
       await openMessageContextMenu(page, sourceText)
       await page.getByRole("menuitem", { name: /^share message$/i }).click()

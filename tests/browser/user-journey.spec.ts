@@ -119,13 +119,11 @@ test.describe("User Journey", () => {
     // Creating a channel navigates to it - verify via main content heading
     await expect(page.getByRole("heading", { name: `#${quickSwitchChannel}`, level: 1 })).toBeVisible({ timeout: 5000 })
 
-    // Switch to All view to access the "+ New Scratchpad" button (not visible in Smart view with content)
-    await page.getByRole("button", { name: "All" }).click()
-    await expect(page.getByRole("heading", { name: "Scratchpads", level: 3 })).toBeVisible({ timeout: 5000 })
-
-    // Create a scratchpad to navigate away from the channel
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.getByText(/Type a message|No messages yet/)).toBeVisible({ timeout: 5000 })
+    // Navigate away from the channel via the Drafts quick link. Drafts is a
+    // list page with no autofocused composer, so the Cmd+K quick-switcher opens
+    // cleanly (a focused message editor can otherwise swallow the shortcut).
+    await page.getByRole("link", { name: "Drafts" }).click()
+    await expect(page.getByRole("heading", { name: "Drafts" })).toBeVisible({ timeout: 5000 })
 
     // Now test the quick switcher - open with Cmd+K (Meta+K on Mac)
     await page.keyboard.press("Meta+k")

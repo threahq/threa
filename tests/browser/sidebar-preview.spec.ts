@@ -31,12 +31,19 @@ test.describe("Sidebar Preview Behavior", () => {
     const channelName = `preview-test-${testId}`
     await createChannel(page, channelName)
 
-    // Navigate away so the channel link becomes clickable in sidebar
-    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-    await expect(page.getByRole("main").getByText(/Type a message|No messages yet/)).toBeVisible({ timeout: 5000 })
+    // Navigate away (to Drafts) so the channel link becomes a navigation
+    // target in the sidebar rather than the currently-open view. The big
+    // "+ New Scratchpad" button only exists in the empty state, so use the
+    // always-present Drafts quick link instead.
+    await page.getByRole("link", { name: "Drafts" }).click()
+    await expect(page).toHaveURL(/\/drafts/, { timeout: 5000 })
 
-    // Collapse the sidebar via topbar
+    // Collapse the sidebar via topbar, then move the mouse away: the redesign's
+    // hover-preview re-expands the sidebar while the pointer sits near the
+    // left-edge toggle, so the collapsed 6px state is only observable once the
+    // pointer leaves the magnetic zone.
     await page.getByRole("button", { name: "Collapse sidebar" }).click()
+    await moveAwayFromSidebar(page)
     await expect(sidebar).toHaveCSS("width", "6px", { timeout: 3000 })
 
     // Hover near left edge to trigger preview
@@ -64,15 +71,24 @@ test.describe("Sidebar Preview Behavior", () => {
     // Sidebar starts pinned
     await expect(sidebar).not.toHaveCSS("width", "6px")
 
-    // Collapse via topbar
+    // Collapse via topbar, then move the mouse away so the hover-preview
+    // doesn't keep the sidebar expanded while the pointer rests on the toggle.
     await page.getByRole("button", { name: "Collapse sidebar" }).click()
+    await moveAwayFromSidebar(page)
     await expect(sidebar).toHaveCSS("width", "6px", { timeout: 3000 })
 
-    // Pin via topbar
-    await page.getByRole("button", { name: "Pin sidebar" }).click()
+    // Pin from collapsed: hover the left edge to reveal the preview, then click
+    // the Pin toggle inside the revealed sidebar header. (The page-topbar copy
+    // sits under the preview's 30px "coyote-time" hover zone, which intercepts
+    // the click — and moving the pointer toward it is what opens the preview in
+    // the first place. Scope to the sidebar nav: the page topbar renders its own
+    // "Pin sidebar" copy too.)
+    await hoverToPreview(page)
     await expect(sidebar).not.toHaveCSS("width", "6px", { timeout: 3000 })
+    await sidebar.getByRole("button", { name: "Pin sidebar" }).click()
 
-    // Move mouse away - sidebar should stay open because it's pinned
+    // Move mouse away - sidebar should stay open because it's pinned (a mere
+    // preview would collapse back to 6px once the pointer leaves).
     await moveAwayFromSidebar(page)
     await expect(sidebar).not.toHaveCSS("width", "6px")
   })

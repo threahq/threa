@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
   clickReplyInThread,
   createChannel,
@@ -50,8 +50,23 @@ async function sendChannelMessageViaApi(page: Page, text: string): Promise<strin
   return body.message?.id ?? body.id ?? ""
 }
 
-async function openMessageContextMenu(page: Page, text: string): Promise<void> {
-  const row = page.getByText(text, { exact: false }).first().locator("xpath=ancestor::*[@data-message-id][1]")
+/**
+ * Locate a message row by its text within the main timeline. Scoping to
+ * `main` matters: the channel's last-message preview in the sidebar
+ * (`navigation`) also renders the message text, but it has no
+ * `data-message-id` ancestor, so an unscoped `getByText(...).first()` grabs
+ * the preview and the row lookup resolves to nothing.
+ */
+function mainMessageRow(page: Page, text: string): Locator {
+  return page.getByRole("main").locator("[data-message-id]").filter({ hasText: text }).first()
+}
+
+/** Locate a message row by its text within the open thread panel. */
+function panelMessageRow(page: Page, text: string): Locator {
+  return page.getByTestId("panel").locator("[data-message-id]").filter({ hasText: text }).first()
+}
+
+async function openRowContextMenu(row: Locator): Promise<void> {
   await row.hover()
   await row.getByRole("button", { name: /message actions/i }).click()
 }
@@ -73,27 +88,25 @@ async function setUpSharedPointer(
   const parentText = `Parent ${generateTestId()}`
   await sendChannelMessageViaApi(page, parentText)
 
-  const parentRow = page
-    .getByText(parentText, { exact: false })
-    .first()
-    .locator("xpath=ancestor::*[@data-message-id][1]")
+  const parentRow = mainMessageRow(page, parentText)
   await expect(parentRow).toBeVisible()
   await clickReplyInThread(parentRow)
-  await waitForRealThreadPanel(page)
 
+  // Threads are created lazily: the panel stays a `draft:` until the first
+  // reply is sent, so the reply must go in before we wait for the panel to
+  // settle into a real thread (canonical order in
+  // `nested-thread-navigation.spec.ts`).
   await sendPanelReply(page, opts.threadText)
+  await waitForRealThreadPanel(page)
 
   // Capture the thread-reply's message id — that's the source we'll later
   // edit / delete via the API and watch propagate to the channel pointer.
-  const threadRow = page
-    .getByText(opts.threadText, { exact: false })
-    .first()
-    .locator("xpath=ancestor::*[@data-message-id][1]")
+  const threadRow = panelMessageRow(page, opts.threadText)
   await expect(threadRow).toBeVisible()
   const threadMessageId = (await threadRow.getAttribute("data-message-id")) ?? ""
   expect(threadMessageId, "thread reply should expose data-message-id").not.toBe("")
 
-  await openMessageContextMenu(page, opts.threadText)
+  await openRowContextMenu(threadRow)
   // The default `share` entry (modal) sits as the primary in the share group;
   // share-to-root and share-to-parent ride alongside as alternatives behind
   // the chevron sub-menu (aria-label "Other share").

@@ -2,9 +2,11 @@ import { test, expect } from "@playwright/test"
 import {
   clickReplyInThread,
   createChannel,
+  expandCollapsedSidebarSections,
   generateTestId,
   loginAndCreateWorkspace,
   sendPanelReply,
+  setSmartSidebarPreset,
   waitForRealThreadPanel,
 } from "./helpers"
 
@@ -117,9 +119,13 @@ test.describe("Thread Breadcrumbs", () => {
     await expect(page.getByText(/Start a new thread/)).not.toBeVisible({ timeout: 3000 })
     await waitForRealThreadPanel(page)
 
-    // Reload to ensure workspace bootstrap reflects the new thread in sidebar
-    await page.reload()
+    // Threads only appear in the Smart preset's urgency buckets — the suite's
+    // default All preset has type sections (Channels/Scratchpads/DMs) that never
+    // include threads. Switch to Smart (reloads, so the bootstrap also reflects
+    // the new thread) and expand any collapsed bucket the thread landed in.
+    await setSmartSidebarPreset(page)
     await expect(page.getByRole("navigation", { name: "Sidebar navigation" })).toBeVisible({ timeout: 10000 })
+    await expandCollapsedSidebarSections(page)
 
     // The sidebar should show the thread with a root context suffix " · #channel-name"
     // This unique format (dot separator + channel slug) only appears on thread entries
