@@ -104,6 +104,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       db.bots.clear(),
       db.unreadState.clear(),
       db.userPreferences.clear(),
+      db.sidebarConfigs.clear(),
       db.workspaceMetadata.clear(),
     ])
   })

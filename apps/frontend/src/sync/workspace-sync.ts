@@ -1673,6 +1673,12 @@ export async function applyWorkspaceBootstrap(
   const existingStreams = await db.streams.where("workspaceId").equals(workspaceId).toArray()
   const existingByStreamId = new Map(existingStreams.map((s) => [s.id, s]))
 
+  // Effective sidebar config for the in-memory seed below. If a newer
+  // `sidebar_config:updated` landed during the fetch window we keep the local
+  // row (the IDB write is skipped) and must seed that value, not the older
+  // snapshot, so the in-memory cache doesn't briefly regress to the old preset.
+  let effectiveSidebarConfig = bootstrap.sidebarConfig
+
   await Promise.all([
     db.workspaces.put({ ...bootstrap.workspace, _cachedAt: now }),
     db.workspaceUsers.bulkPut(bootstrap.users.map((u) => ({ ...u, _cachedAt: now }))),
@@ -1761,6 +1767,8 @@ export async function applyWorkspaceBootstrap(
           config: bootstrap.sidebarConfig,
           _cachedAt: now,
         })
+      } else {
+        effectiveSidebarConfig = existing.config
       }
     }),
     db.workspaceMetadata.put({
@@ -1842,7 +1850,7 @@ export async function applyWorkspaceBootstrap(
     sidebarConfig: {
       id: workspaceId,
       workspaceId,
-      config: bootstrap.sidebarConfig,
+      config: effectiveSidebarConfig,
       _cachedAt: now,
     },
     metadata: {
@@ -1887,6 +1895,11 @@ export async function applyReconnectBootstrapBatch(
   })
 
   const membershipByStream = new Map(finalBootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
+
+  // See applyWorkspaceBootstrap: preserve a sidebar config written by a
+  // `sidebar_config:updated` event during the fetch window rather than seeding
+  // (and returning) the older snapshot.
+  let effectiveSidebarConfig = finalBootstrap.sidebarConfig
 
   await db.transaction(
     "rw",
@@ -1997,6 +2010,8 @@ export async function applyReconnectBootstrapBatch(
           config: finalBootstrap.sidebarConfig,
           _cachedAt: now,
         })
+      } else {
+        effectiveSidebarConfig = existingSidebarConfig.config
       }
 
       for (const [streamId, bootstrap] of streamBootstraps) {
@@ -2070,7 +2085,7 @@ export async function applyReconnectBootstrapBatch(
     sidebarConfig: {
       id: workspaceId,
       workspaceId,
-      config: finalBootstrap.sidebarConfig,
+      config: effectiveSidebarConfig,
       _cachedAt: now,
     },
     metadata: {
@@ -2082,6 +2097,11 @@ export async function applyReconnectBootstrapBatch(
       _cachedAt: now,
     },
   })
+
+  // The returned bootstrap is written to the bootstrap query cache by the
+  // caller; reflect the preserved local config so it doesn't carry the stale
+  // snapshot value.
+  finalBootstrap.sidebarConfig = effectiveSidebarConfig
 
   return { workspaceBootstrap: finalBootstrap, streamBootstraps }
 }

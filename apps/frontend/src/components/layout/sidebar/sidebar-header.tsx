@@ -80,6 +80,8 @@ export function SidebarHeader({ workspaceName, basePreset, onBasePresetChange, h
         <div className="flex items-center gap-2 px-3 pb-3 pt-2">
           <div className="flex gap-1 rounded-md bg-muted p-0.5">
             <button
+              type="button"
+              aria-pressed={basePreset === "smart"}
               onClick={() => onBasePresetChange("smart")}
               className={cn(
                 "rounded px-2 py-1 text-xs font-medium transition-all",
@@ -89,6 +91,8 @@ export function SidebarHeader({ workspaceName, basePreset, onBasePresetChange, h
               Smart
             </button>
             <button
+              type="button"
+              aria-pressed={basePreset === "all"}
               onClick={() => onBasePresetChange("all")}
               className={cn(
                 "rounded px-2 py-1 text-xs font-medium transition-all",

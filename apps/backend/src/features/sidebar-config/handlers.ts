@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { SidebarConfigService } from "./service"
+import { HttpError } from "../../lib/errors"
 import { SIDEBAR_SECTION_KEYS, SIDEBAR_TYPE_SECTIONS, SIDEBAR_BASE_PRESETS } from "@threa/types"
 
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
@@ -41,10 +42,7 @@ export function createSidebarConfigHandlers({ sidebarConfigService }: Dependenci
 
       const result = updateSidebarConfigSchema.safeParse(req.body)
       if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
+        throw new HttpError("Invalid sidebar config", { status: 400, code: "VALIDATION_ERROR" })
       }
 
       const sidebarConfig = await sidebarConfigService.updateConfig(workspaceId, userId, result.data)

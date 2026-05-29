@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { useCallback, useRef } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import {
@@ -22,12 +22,17 @@ import { db } from "@/db"
  */
 export function useSidebarConfig(workspaceId: string) {
   const queryClient = useQueryClient()
+  // Monotonic id so a slow earlier write can't clobber a newer choice when
+  // rapid Smart↔All toggles settle out of order — only the latest mutation's
+  // settlement is allowed to touch the cache / rollback.
+  const latestMutationIdRef = useRef(0)
   const cached = useWorkspaceSidebarConfig(workspaceId)
   const config = cached?.config ?? DEFAULT_SIDEBAR_CONFIG
 
   const mutation = useMutation({
     mutationFn: (next: SidebarConfig) => sidebarConfigApi.update(workspaceId, next),
     onMutate: async (next) => {
+      const mutationId = ++latestMutationIdRef.current
       await queryClient.cancelQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
       const previousBootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
 
@@ -38,20 +43,24 @@ export function useSidebarConfig(workspaceId: string) {
       // without waiting for the socket round-trip.
       db.sidebarConfigs.put({ id: workspaceId, workspaceId, config: next, _cachedAt: Date.now() })
 
-      return { previousBootstrap, previousConfig: cached }
+      return { previousBootstrap, previousConfig: cached, mutationId }
     },
     onError: (_err, _next, context) => {
-      if (context?.previousBootstrap) {
+      // Ignore a stale failure once a newer toggle has superseded it.
+      if (!context || context.mutationId !== latestMutationIdRef.current) return
+      if (context.previousBootstrap) {
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), context.previousBootstrap)
       }
-      if (context?.previousConfig) {
+      if (context.previousConfig) {
         db.sidebarConfigs.put(context.previousConfig)
       } else {
         db.sidebarConfigs.delete(workspaceId)
       }
       toast.error("Failed to save sidebar layout")
     },
-    onSuccess: (saved) => {
+    onSuccess: (saved, _next, context) => {
+      // Ignore a stale success that resolved after a newer toggle.
+      if (!context || context.mutationId !== latestMutationIdRef.current) return
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
         old ? { ...old, sidebarConfig: saved } : old
       )
