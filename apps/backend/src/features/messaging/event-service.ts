@@ -116,6 +116,12 @@ export interface ThreadCreatedPayload {
 export interface CreateMessageParams {
   workspaceId: string
   streamId: string
+  /**
+   * Optional server-minted message id. Used by the enclave reply path, which
+   * must know the id before sealing (the SSK envelope's AAD binds to it).
+   * Omit for normal sends — a fresh id is generated.
+   */
+  id?: string
   authorId: string
   authorType: AuthorType
   contentJson: JSONContent
@@ -372,7 +378,11 @@ export class EventService {
       const existing = await MessageRepository.findByClientMessageId(client, params.streamId, params.clientMessageId)
       if (existing) return existing
     }
-    const msgId = messageId()
+    // The enclave seals its E2E reply with the message AAD bound to a
+    // server-minted id, so the caller can pass that same id here to keep the
+    // stored row's id and the envelope's bound id identical (INV-E*). Defaults
+    // to a fresh id for every other caller.
+    const msgId = params.id ?? messageId()
     const evtId = eventId()
 
     // 0. Get stream for thread handling (metrics deferred until after conflict check)
