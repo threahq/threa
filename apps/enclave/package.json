@@ -3,11 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "start": "bun src/index.ts",
+    "build": "bun build src/index.ts --target=node --format=esm --outfile dist/index.mjs",
+    "dev": "bun build src/index.ts --target=node --format=esm --outfile dist/index.mjs --watch & node --watch dist/index.mjs",
+    "start": "node dist/index.mjs",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "bun test src/"
+    "test": "vitest run"
   },
   "dependencies": {
     "@threa/crypto": "workspace:*",
@@ -15,13 +16,15 @@
     "express": "^5",
     "pino": "^9",
     "pino-http": "^10",
-    "ulid": "^2"
+    "ulid": "^2",
+    "zod": "^4.3.5"
   },
   "devDependencies": {
     "@typescript-eslint/parser": "^8.54.0",
     "@types/express": "^5",
     "bun-types": "latest",
     "eslint": "^9.39.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.16"
   }
 }

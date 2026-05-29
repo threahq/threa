@@ -12,10 +12,14 @@ export interface EnclaveConfig {
   sourceCommitSha: string
   /** Build hash of the running image, surfaced via /attestation. */
   buildHash: string
+  /** OpenRouter API key — the enclave's only outbound LLM credential. */
+  openRouterApiKey: string
+  /** OpenRouter base URL (override for self-host; tests inject their own client). */
+  openRouterBaseUrl: string
 }
 
 export function loadEnclaveConfig(): EnclaveConfig {
-  const required = ["INTERNAL_API_KEY", "BACKEND_BASE_URL", "ENCLAVE_SELF_URL"]
+  const required = ["INTERNAL_API_KEY", "BACKEND_BASE_URL", "ENCLAVE_SELF_URL", "OPENROUTER_API_KEY"]
   const missing = required.filter((k) => !process.env[k])
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`)
@@ -29,5 +33,7 @@ export function loadEnclaveConfig(): EnclaveConfig {
     heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",
+    openRouterApiKey: process.env.OPENROUTER_API_KEY!,
+    openRouterBaseUrl: (process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1").replace(/\/$/, ""),
   }
 }

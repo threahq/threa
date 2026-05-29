@@ -195,6 +195,7 @@
         "pino": "^9",
         "pino-http": "^10",
         "ulid": "^2",
+        "zod": "^4.3.5",
       },
       "devDependencies": {
         "@types/express": "^5",
@@ -202,6 +203,7 @@
         "bun-types": "latest",
         "eslint": "^9.39.2",
         "typescript": "^5",
+        "vitest": "^4.0.16",
       },
     },
     "apps/frontend": {

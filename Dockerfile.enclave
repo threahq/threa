@@ -1,4 +1,10 @@
-FROM oven/bun:1 AS base
+# The enclave runs on Node, not Bun: it must do X25519 HPKE (decap) at runtime
+# to unwrap the per-stream key, and Bun 1.3.x lacks WebCrypto X25519 deriveBits.
+# Bun is still the bundler — `bun build --target=node` inlines the workspace TS
+# (@threa/crypto, @threa/types) into one self-contained ESM file that Node runs,
+# so the runtime stage needs no node_modules.
+
+FROM oven/bun:1 AS build
 WORKDIR /app
 
 # Copy lockfile + all workspace package.json for frozen-lockfile compatibility
@@ -19,11 +25,15 @@ COPY apps/enclave/package.json apps/enclave/
 COPY patches/ patches/
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production
 
-# Copy source
+# Copy source and bundle to a single Node-targeted ESM file.
 COPY packages/types/ packages/types/
 COPY packages/crypto/ packages/crypto/
 COPY apps/enclave/ apps/enclave/
+RUN bun build apps/enclave/src/index.ts --target=node --format=esm --outfile /app/dist/index.mjs
 
+FROM node:22-slim AS runtime
+WORKDIR /app
+COPY --from=build /app/dist/index.mjs ./index.mjs
 ENV NODE_ENV=production
 EXPOSE 3011
-CMD ["bun", "apps/enclave/src/index.ts"]
+CMD ["node", "index.mjs"]
