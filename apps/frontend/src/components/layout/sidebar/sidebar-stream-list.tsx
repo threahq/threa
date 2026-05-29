@@ -1,4 +1,4 @@
-import type { ReactNode, RefObject } from "react"
+import { Fragment, type ReactNode, type RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
@@ -80,7 +80,7 @@ export function SidebarStreamList({
   if (!hasUserStreams) {
     return (
       <>
-        {quickLinksSlot && <div className="mb-2">{quickLinksSlot}</div>}
+        {quickLinksSlot}
         <div className="px-4 py-8 text-center">
           <p className="text-sm text-muted-foreground mb-4">No streams yet</p>
           <Button variant="outline" size="sm" onClick={() => void onCreateScratchpad()} className="mr-2">
@@ -113,13 +113,11 @@ export function SidebarStreamList({
   return (
     <>
       {resolvedSections.map(({ section, items }) => {
-        // The Quick Links block renders its own link list at this position.
+        // The Quick Links block renders its own link list at this position. The
+        // slot owns its spacing (and may render null when every link is hidden),
+        // so it's not wrapped — a wrapper would leave a stray margin when empty.
         if (section.spec.kind === "quicklinks") {
-          return quickLinksSlot ? (
-            <div key={section.id} className="mb-2">
-              {quickLinksSlot}
-            </div>
-          ) : null
+          return quickLinksSlot ? <Fragment key={section.id}>{quickLinksSlot}</Fragment> : null
         }
 
         const presentation = sectionPresentation(section.spec)

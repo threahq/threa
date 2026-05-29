@@ -128,7 +128,7 @@ export function SidebarQuickLinks({
   if (visible.length === 0) return null
 
   return (
-    <div className="space-y-1">
+    <div className="mb-2 space-y-1">
       <SectionHeader
         label="Quick Links"
         state={state}

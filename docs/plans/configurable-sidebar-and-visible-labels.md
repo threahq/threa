@@ -223,8 +223,8 @@ left gone. The backend Zod schema accepts both the legacy (`enabled`) and curren
 (`visibility`) link shapes and the new `quicklinks` spec, keeping a backend-first
 rollout safe. No DB migration (the doc is a per-user JSONB blob).
 
-Tests: helper unit tests (`setQuickLinkVisibility` coercion, `cycleQuickLinkVisibility`,
-`addSectionAt`), editor component tests (nested order, tri-state controls, remove
+Tests: helper unit tests (`setQuickLinkVisibility` coercion, `addSectionAt`),
+editor component tests (nested order, tri-state controls, remove
 block, reset, drag-tray click-add), `quick-links` render tests (active-state gating),
 service tests (v1→v2 migration, dual-shape schema), and updated resolve/sync
 fixtures. Typecheck + lint + full frontend suite (2004) green.

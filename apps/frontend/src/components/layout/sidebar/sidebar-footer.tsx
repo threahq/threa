@@ -229,7 +229,7 @@ export function SidebarFooter({
 
   if (isMobile) {
     return (
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         <SidebarCreateButton actions={createActions} isMobile />
         <SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} onClick={() => setDrawerOpen(true)} />
         <SidebarActionDrawer
@@ -245,7 +245,7 @@ export function SidebarFooter({
   }
 
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <SidebarCreateButton actions={createActions} isMobile={false} />
       <SidebarActionMenu
         actions={menuActions}

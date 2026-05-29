@@ -100,7 +100,10 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
+  // The preset this layout is pristinely equal to (highlights its toggle), or
+  // null once the user has customized it — in which case Reset is available.
   const activePreset = isPristinePreset(config)
+  const isCustomized = activePreset === null
   const sectionIds = useMemo(() => config.sections.map((s) => s.id), [config.sections])
 
   // Specs the layout doesn't have yet — the Add tray's draggable/clickable chips.
@@ -162,17 +165,18 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
           <section className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <EditorGroupHeading>Preset</EditorGroupHeading>
-              <button
-                type="button"
-                // Already pristine → nothing to reset; disable so the click isn't
-                // a silent no-op (a redundant write that looks like it did nothing).
-                disabled={activePreset !== null}
+              <Button
+                variant="ghost"
+                size="sm"
+                // Enabled only once the layout has drifted from a preset; resetting
+                // a pristine layout would be a silent no-op write.
+                disabled={!isCustomized}
                 onClick={() => setBasePreset(config.basePreset)}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                className="h-auto gap-1 px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
               >
                 <RotateCcw className="h-3 w-3" />
                 Reset preset
-              </button>
+              </Button>
             </div>
             <div role="group" aria-label="Preset" className="inline-flex gap-1 rounded-md bg-muted p-0.5">
               {SIDEBAR_BASE_PRESETS.map((preset) => (
@@ -382,7 +386,7 @@ function QuickLinksSectionBody({
     <div className="rounded-b-md border border-t-0 bg-card/50 py-1.5 pl-3 pr-2">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={keys} strategy={verticalListSortingStrategy}>
-          <ul className="space-y-1 border-l border-border/50 pl-3">
+          <ul className="space-y-1 border-l border-border pl-3">
             {quickLinks.map((link) => (
               <SortableQuickLinkRow
                 key={link.key}
@@ -417,8 +421,11 @@ function SortableQuickLinkRow({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
-        isDragging && "relative z-10 shadow-md"
+        // No border/bg of its own — the enclosing Quick Links sub-card already
+        // bounds these rows; a per-row border would stack a third border layer.
+        // A dragged row lifts onto its own card so it reads while floating.
+        "flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40",
+        isDragging && "relative z-10 border bg-card shadow-md"
       )}
     >
       <DragHandle label={`Reorder ${label}`} attributes={attributes} listeners={listeners} />
@@ -451,8 +458,10 @@ function QuickLinkVisibilityControl({
   return (
     <ToggleGroup
       type="single"
-      // No size prop: the items size themselves (h-7 w-7) for the compact row, so
-      // a context size would only be a misleading value the items override.
+      // Outline so each item has its own border — the selected state reads
+      // clearly against the muted accent fill on the tinted sub-card; the items
+      // size themselves (h-8 w-8) for a comfortable tap target.
+      variant="outline"
       aria-label={`${label} visibility`}
       value={link.visibility}
       // Radix clears the value when you click the active item; ignore the empty
@@ -464,7 +473,7 @@ function QuickLinkVisibilityControl({
     >
       {/* title duplicates the aria-label as a hover tooltip — the icons (esp. the
           middle "show when active") aren't self-evident to sighted users. */}
-      <ToggleGroupItem value="show" aria-label={`Show ${label}`} title={`Show ${label}`} className="h-7 w-7 p-0">
+      <ToggleGroupItem value="show" aria-label={`Show ${label}`} title={`Show ${label}`} className="h-8 w-8 p-0">
         <Eye className="h-3.5 w-3.5" />
       </ToggleGroupItem>
       {hasActive && (
@@ -472,12 +481,12 @@ function QuickLinkVisibilityControl({
           value="active"
           aria-label={`Show ${label} when active`}
           title={`Show ${label} when active`}
-          className="h-7 w-7 p-0"
+          className="h-8 w-8 p-0"
         >
           <CircleDot className="h-3.5 w-3.5" />
         </ToggleGroupItem>
       )}
-      <ToggleGroupItem value="hidden" aria-label={`Hide ${label}`} title={`Hide ${label}`} className="h-7 w-7 p-0">
+      <ToggleGroupItem value="hidden" aria-label={`Hide ${label}`} title={`Hide ${label}`} className="h-8 w-8 p-0">
         <EyeOff className="h-3.5 w-3.5" />
       </ToggleGroupItem>
     </ToggleGroup>
@@ -597,7 +606,9 @@ function AddTrayChip({
         className={cn(
           // cursor-pointer (not grab): clicking to add is the primary action; the
           // grab cursor only appears once a drag is actually under way.
-          "flex cursor-pointer touch-none items-center gap-1 rounded-full border border-dashed bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing",
+          // active: states give a visible tap flash on touch (where :hover can't),
+          // since touch-none — needed for DnD — suppresses the native pressed style.
+          "flex cursor-pointer touch-none items-center gap-1 rounded-full border border-dashed bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing active:bg-muted active:text-foreground",
           isDragging && "opacity-50"
         )}
         {...attributes}
