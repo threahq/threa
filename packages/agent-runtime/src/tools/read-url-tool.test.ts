@@ -157,6 +157,142 @@ describe("read-url-tool", () => {
     expect(parsed.content).toBe("This is plain text content.")
   })
 
+  const jsonResponse = (data: unknown, contentType = "application/json") =>
+    mock(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": contentType }),
+        text: () => Promise.resolve(typeof data === "string" ? data : JSON.stringify(data)),
+      } as Response)
+    ) as unknown as typeof fetch
+
+  describe("JSON handling", () => {
+    it("returns small JSON in full", async () => {
+      globalThis.fetch = jsonResponse({ hello: "world", nums: [1, 2, 3] })
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/data" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.truncated).toBeUndefined()
+      expect(parsed.content).toEqual({ hello: "world", nums: [1, 2, 3] })
+    })
+
+    it("handles JSON with a +json content type suffix", async () => {
+      globalThis.fetch = jsonResponse({ ok: true }, "application/vnd.api+json")
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/data" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.content).toEqual({ ok: true })
+    })
+
+    it("summarizes large JSON with shape, preview, and a hint instead of truncating", async () => {
+      const big = {
+        data: {
+          items: Array.from({ length: 2000 }, (_, i) => ({ id: `item_${i}`, name: `Name ${i}`, score: i })),
+          total: 2000,
+        },
+      }
+      globalThis.fetch = jsonResponse(big)
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/big" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.truncated).toBe(true)
+      expect(parsed.byteSize).toBeGreaterThan(50000)
+      expect(parsed.shape.data.items).toContain("array[2000]")
+      expect(parsed.hint).toContain("select")
+      // preview keeps a few real items, not the whole array
+      expect(parsed.preview.data.items.length).toBeLessThan(10)
+      expect(parsed.preview.data.items[0]).toEqual({ id: "item_0", name: "Name 0", score: 0 })
+    })
+
+    it("drills into a subtree with a select path", async () => {
+      const big = {
+        data: {
+          items: Array.from({ length: 2000 }, (_, i) => ({ id: `item_${i}` })),
+        },
+      }
+      globalThis.fetch = jsonResponse(big)
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute(
+        { url: "https://api.example.com/big", select: ".data.items[0:2]" },
+        toolOpts
+      )
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.select).toBe(".data.items[0:2]")
+      expect(parsed.content).toEqual([{ id: "item_0" }, { id: "item_1" }])
+    })
+
+    it("returns an actionable error for a bad select path", async () => {
+      globalThis.fetch = jsonResponse({ data: { total: 5 } })
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute(
+        { url: "https://api.example.com/data", select: ".data.missing" },
+        toolOpts
+      )
+      const parsed = JSON.parse(output)
+
+      expect(parsed.error).toContain("not found")
+      expect(parsed.error).toContain("total") // surfaces the keys that do exist
+      expect(parsed.select).toBe(".data.missing")
+    })
+
+    it("errors when content declares JSON but does not parse", async () => {
+      globalThis.fetch = jsonResponse("<html>not json</html>")
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/broken" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.error).toContain("did not parse as JSON")
+    })
+
+    it("treats plain text that is actually JSON as JSON", async () => {
+      globalThis.fetch = jsonResponse('{"served":"as text/plain"}', "text/plain")
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/data" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.content).toEqual({ served: "as text/plain" })
+    })
+
+    it("matches content types case-insensitively", async () => {
+      globalThis.fetch = jsonResponse({ ok: true }, "Application/JSON; charset=UTF-8")
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://api.example.com/data" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBe("json")
+      expect(parsed.content).toEqual({ ok: true })
+    })
+
+    it("keeps real plain text as text", async () => {
+      globalThis.fetch = jsonResponse("just some prose, not json", "text/plain")
+
+      const tool = createReadUrlTool()
+      const { output } = await tool.config.execute({ url: "https://example.com/file.txt" }, toolOpts)
+      const parsed = JSON.parse(output)
+
+      expect(parsed.kind).toBeUndefined()
+      expect(parsed.content).toBe("just some prose, not json")
+    })
+  })
+
   it("should return timeout error when request takes too long", async () => {
     const abortError = new Error("The operation was aborted")
     abortError.name = "AbortError"

@@ -5,9 +5,17 @@ import { NodeHtmlMarkdown } from "node-html-markdown"
 import { AgentStepTypes } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
+import { applySelect, describeShape, structuralPreview } from "./json-inspect"
 
 const ReadUrlSchema = z.object({
-  url: z.string().url().describe("The URL of the web page to read"),
+  url: z.string().url().describe("The URL of the web page or JSON resource to read"),
+  select: z
+    .string()
+    .optional()
+    .describe(
+      "Optional path to extract from a JSON response, e.g. '.data.items[0:20]', '.results[3].name', or '.users[*].email'. " +
+        "Use this to drill into a specific part after an initial read reports that the JSON is large."
+    ),
 })
 
 export type ReadUrlInput = z.infer<typeof ReadUrlSchema>
@@ -165,7 +173,7 @@ async function fetchWithRedirectValidation(
     signal,
     headers: {
       "User-Agent": "Threa-Agent/1.0 (https://threa.app)",
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      Accept: "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.8",
     },
     redirect: "manual", // Don't follow redirects automatically
   })
@@ -197,7 +205,8 @@ export function createReadUrlTool() {
   return defineAgentTool({
     name: "read_url",
     description:
-      "Fetch and read the full content of a web page. Use this after web_search when you need more detail than the snippet provides, or when the user shares a specific URL to analyze.",
+      "Fetch and read the content of a web page or JSON resource. Use this after web_search when you need more detail than the snippet provides, or when the user shares a specific URL to analyze. " +
+      "HTML pages are returned as markdown. JSON is returned in full when small; when large, you instead get the data's `shape` (a schema sketch), a sampled `preview`, and a `hint` — then call again with `select` (e.g. '.data.items[0:20]') to drill into a specific part.",
     inputSchema: ReadUrlSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -231,25 +240,42 @@ export function createReadUrlTool() {
           }
         }
 
-        const contentType = response.headers.get("content-type") || ""
-        if (!contentType.includes("text/html") && !contentType.includes("text/plain")) {
+        // Media types are case-insensitive (RFC 9110), so normalize before matching.
+        const contentType = (response.headers.get("content-type") || "").toLowerCase()
+        const isHtml = contentType.includes("text/html")
+        const isPlain = contentType.includes("text/plain")
+        const declaresJson = /\bjson\b/.test(contentType) || contentType.includes("+json")
+
+        if (!isHtml && !isPlain && !declaresJson) {
           return {
             output: JSON.stringify({
-              error: `Unsupported content type: ${contentType}. Only HTML and plain text are supported.`,
+              error: `Unsupported content type: ${contentType}. Only HTML, plain text, and JSON are supported.`,
               url: input.url,
             }),
           }
         }
 
-        const html = await response.text()
-        const title = extractTitle(html)
+        const body = await response.text()
 
-        let content: string
-        if (contentType.includes("text/plain")) {
-          content = html
-        } else {
-          content = nhm.translate(html)
+        // JSON handling: declared JSON, an explicit drill-in select, or plain
+        // text that is actually JSON.
+        const json = tryParseJson(body, { declaresJson, hasSelect: input.select !== undefined, isPlain })
+        if ("error" in json) {
+          return {
+            output: JSON.stringify({
+              error: json.error,
+              url: input.url,
+              ...(input.select !== undefined ? { select: input.select } : {}),
+            }),
+          }
         }
+        if (json.matched) {
+          return buildJsonOutput(input.url, input.select, json.value)
+        }
+
+        // HTML / plain-text handling
+        const title = extractTitle(body)
+        let content = isPlain ? body : nhm.translate(body)
 
         if (content.length > MAX_CONTENT_LENGTH) {
           content = content.slice(0, MAX_CONTENT_LENGTH) + "\n\n[Content truncated...]"
@@ -316,4 +342,119 @@ export function createReadUrlTool() {
 function extractTitle(html: string): string {
   const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
   return titleMatch?.[1]?.trim() || "Untitled"
+}
+
+type ParseJsonResult = { matched: true; value: unknown } | { matched: false } | { error: string }
+
+/**
+ * Decide whether a response body should be handled as JSON, and parse it.
+ * JSON is wanted when the content type declares it or the caller passed a
+ * `select`; for plain text we only opt in when the body actually looks like
+ * (and parses as) JSON, otherwise it falls through to text handling.
+ */
+function tryParseJson(
+  body: string,
+  opts: { declaresJson: boolean; hasSelect: boolean; isPlain: boolean }
+): ParseJsonResult {
+  const wantsJson = opts.declaresJson || opts.hasSelect
+
+  if (!wantsJson) {
+    if (opts.isPlain) {
+      const trimmed = body.trim()
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          return { matched: true, value: JSON.parse(body) }
+        } catch {
+          return { matched: false }
+        }
+      }
+    }
+    return { matched: false }
+  }
+
+  try {
+    return { matched: true, value: JSON.parse(body) }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "parse error"
+    return {
+      error: opts.declaresJson
+        ? `Response declared a JSON content type but did not parse as JSON: ${reason}`
+        : `A 'select' was provided but the response is not valid JSON: ${reason}`,
+    }
+  }
+}
+
+/** Guidance telling the model how to drill into a large JSON value. */
+function buildJsonHint(value: unknown, select: string | undefined): string {
+  const prefix = select !== undefined ? `Subtree at '${select}'.` : "This JSON response is large."
+  const base = select ?? ""
+
+  if (Array.isArray(value)) {
+    return (
+      `${prefix} It is an array of ${value.length} items. Call read_url again with select='${base}[0:20]' ` +
+      `to read a page of items, or select='${base}[0]' for a single item. ` +
+      `See 'shape' for the structure and 'preview' for sampled values.`
+    )
+  }
+
+  if (value !== null && typeof value === "object") {
+    const keys = Object.keys(value)
+    const list = keys.slice(0, 20).join(", ") + (keys.length > 20 ? ", …" : "")
+    return (
+      `${prefix} Top-level keys: ${list}. Call read_url again with select='${base}.<key>' to drill into one. ` +
+      `See 'shape' for the structure and 'preview' for sampled values.`
+    )
+  }
+
+  return `${prefix} See 'preview' for the value.`
+}
+
+/** Build the tool output for a parsed JSON value, applying `select` and sizing. */
+function buildJsonOutput(url: string, select: string | undefined, parsed: unknown): AgentToolResult {
+  let value: unknown = parsed
+
+  if (select !== undefined) {
+    const selected = applySelect(parsed, select)
+    if ("error" in selected) {
+      return { output: JSON.stringify({ error: selected.error, url, select }) }
+    }
+    value = selected.value
+  }
+
+  if (value === undefined) {
+    return {
+      output: JSON.stringify({
+        error: "Selection resolved to no value.",
+        url,
+        ...(select !== undefined ? { select } : {}),
+      }),
+    }
+  }
+
+  // Measure the compact serialization — that is what we actually return to the
+  // model, and it matches how MAX_CONTENT_LENGTH bounds the text/markdown path.
+  const serialized = JSON.stringify(value)
+  if (serialized.length <= MAX_CONTENT_LENGTH) {
+    return {
+      output: JSON.stringify({ url, kind: "json", ...(select !== undefined ? { select } : {}), content: value }),
+    }
+  }
+
+  // Too large to return verbatim: hand back structure + a sampled preview so the
+  // model can drill in with a follow-up select instead of receiving a truncated blob.
+  const byteSize = new TextEncoder().encode(serialized).length
+  logger.debug({ url, byteSize, select }, "Large JSON summarized for read_url")
+
+  return {
+    output: JSON.stringify({
+      url,
+      kind: "json",
+      truncated: true,
+      byteSize,
+      ...(select !== undefined ? { select } : {}),
+      shape: describeShape(value),
+      preview: structuralPreview(value),
+      hint: buildJsonHint(value, select),
+    }),
+  }
 }
