@@ -11,7 +11,7 @@ import type { Memo } from "./repository"
 
 const memoSearchSchema = z.object({
   query: z.string().optional().default(""),
-  streamId: z.string().optional(),
+  anchorStreamId: z.string().optional(),
   in: z.array(z.string()).optional(),
   memoType: z.array(z.enum(MEMO_TYPES)).optional(),
   knowledgeType: z.array(z.enum(KNOWLEDGE_TYPES)).optional(),
@@ -25,41 +25,47 @@ const memoSearchSchema = z.object({
 /**
  * Resolve which streams a memo search may read from.
  *
- * The memory explorer (no `streamId`) browses everything the user can access.
- * The inline `/memo` picker passes the stream being composed in, and must be
- * scoped exactly like an agent invoked there (`computeAgentAccessSpec`): a
- * private channel sees public memos + that channel, a public channel or DM sees
- * only what is shareable into it. Without this, a memo from an unrelated private
- * stream could be surfaced — and embedded as a reference — into a stream it does
- * not belong to, leaking it (or a link to it) to that stream's audience.
+ * `anchorStreamId` is not a "memos in this stream" filter — it is the access
+ * anchor: the stream the search is being run from. The memory explorer has no
+ * anchor and browses everything the user can access. The inline `/memo` picker
+ * anchors to the stream being composed in, and must be scoped exactly like an
+ * agent invoked there (`computeAgentAccessSpec`): a private channel sees public
+ * memos + that channel, a public channel or DM sees only what is shareable into
+ * it. Without this, a memo from an unrelated private stream could be surfaced —
+ * and embedded as a reference — into a stream it does not belong to, leaking it
+ * (or a link to it) to that stream's audience.
+ *
+ * The anchor may be a thread or its root; callers pass whichever stream they are
+ * in and `computeAgentAccessSpec` resolves the root, so access is always decided
+ * from the root stream's type/visibility.
  */
 async function resolveMemoSearchScope(
   pool: Pool,
   workspaceId: string,
   userId: string,
-  streamId: string | undefined
+  anchorStreamId: string | undefined
 ): Promise<string[]> {
   const userAccessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, {
     archiveStatus: ["active", "archived"],
   })
 
-  if (!streamId) {
+  if (!anchorStreamId) {
     return userAccessibleStreamIds
   }
 
-  const stream = await StreamRepository.findById(pool, streamId)
-  if (!stream || stream.workspaceId !== workspaceId) {
+  const anchorStream = await StreamRepository.findById(pool, anchorStreamId)
+  if (!anchorStream || anchorStream.workspaceId !== workspaceId) {
     throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
   }
 
-  const accessSpec = await computeAgentAccessSpec(pool, { stream, invokingUserId: userId })
+  const accessSpec = await computeAgentAccessSpec(pool, { stream: anchorStream, invokingUserId: userId })
   const scopedStreamIds = await SearchRepository.getAccessibleStreamsForAgent(pool, accessSpec, workspaceId, {
     archiveStatus: ["active", "archived"],
   })
 
   // The access spec is derived from stream type/visibility, not membership, so
   // intersect with the user's own access: the scoped result can never exceed
-  // what the user could already see, even if they pass a stream they aren't in.
+  // what the user could already see, even if they anchor to a stream they aren't in.
   const userAccessibleSet = new Set(userAccessibleStreamIds)
   return scopedStreamIds.filter((id) => userAccessibleSet.has(id))
 }
@@ -123,10 +129,21 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         throw new HttpError("Invalid search request", { status: 400, code: "VALIDATION_ERROR" })
       }
 
-      const { query, exact, streamId, in: inStreams, memoType, knowledgeType, tags, before, after, limit } = result.data
+      const {
+        query,
+        exact,
+        anchorStreamId,
+        in: inStreams,
+        memoType,
+        knowledgeType,
+        tags,
+        before,
+        after,
+        limit,
+      } = result.data
       const normalized = normalizeSearchMode(query, exact)
 
-      const accessibleStreamIds = await resolveMemoSearchScope(pool, workspaceId, userId, streamId)
+      const accessibleStreamIds = await resolveMemoSearchScope(pool, workspaceId, userId, anchorStreamId)
 
       const results = await memoExplorerService.search({
         workspaceId,

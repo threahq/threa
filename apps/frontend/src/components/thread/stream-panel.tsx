@@ -471,7 +471,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                     placeholder="Write your reply..."
                     workspaceId={workspaceId}
                     scopeId={panelId}
-                    streamId={draftInfo.parentStreamId}
+                    memoAnchorStreamId={draftInfo.parentStreamId}
                     expanded
                     onCollapse={handleDraftCollapse}
                     autoFocus
@@ -541,7 +541,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   autoFocus={!isMobile}
                   workspaceId={workspaceId}
                   scopeId={panelId}
-                  streamId={draftInfo.parentStreamId}
+                  memoAnchorStreamId={draftInfo.parentStreamId}
                   onExpandClick={handleDraftExpand}
                   streamContext={draftStreamContext}
                   onStashDraft={stash.handleStashDraft}

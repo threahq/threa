@@ -132,6 +132,13 @@ export interface MessageComposerProps {
   contextRefs?: DraftContextRef[]
   /** Stream id; required only when `contextRefs` is non-empty so the strip can build deep-links. */
   streamId?: string
+  /**
+   * Access anchor for the `/memo` picker. Defaults to `streamId`; pass it
+   * explicitly when the composer has no real `streamId` yet (e.g. a draft thread
+   * anchors to its parent stream). May be a thread or root — the backend resolves
+   * the root.
+   */
+  memoAnchorStreamId?: string
   /** Workspace id; required only when `contextRefs` is non-empty so the strip can fetch source metadata. */
   workspaceId?: string
   fileInputRef: RefObject<HTMLInputElement | null>
@@ -229,6 +236,7 @@ export function MessageComposer({
   onRemoveAttachment,
   contextRefs,
   streamId,
+  memoAnchorStreamId = streamId,
   workspaceId,
   fileInputRef,
   onFileSelect,
@@ -508,7 +516,7 @@ export function MessageComposer({
       ariaDescribedBy={instructionsId}
       blurOnEscape
       streamContext={streamContext}
-      streamId={streamId}
+      memoAnchorStreamId={memoAnchorStreamId}
     />
   )
 
@@ -674,7 +682,7 @@ export function MessageComposer({
               blurOnEscape
               onEscapeBlur={focusExpandedShell}
               streamContext={streamContext}
-              streamId={streamId}
+              memoAnchorStreamId={memoAnchorStreamId}
               belowToolbarContent={
                 pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
                   <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">

@@ -177,11 +177,11 @@ describe("Memo Explorer E2E Tests", () => {
     expect(explorerResponse.status).toBe(200)
     expect(explorerResponse.data.results.map((result) => result.memo.id)).toContain(scratchpadMemoId)
 
-    // Composing in a public channel scopes to public content only, so the
+    // Anchoring to a public channel scopes to public content only, so the
     // private-scratchpad memo is excluded — no leak into the shared stream.
     const scopedResponse = await client.post<MemoSearchApiResponse>(`/api/workspaces/${workspace.id}/memos/search`, {
       query: `"${scopedPhrase}"`,
-      streamId: publicChannel.id,
+      anchorStreamId: publicChannel.id,
     })
     expect(scopedResponse.status).toBe(200)
     expect(scopedResponse.data.results).toHaveLength(0)

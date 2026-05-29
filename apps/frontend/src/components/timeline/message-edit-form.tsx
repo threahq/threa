@@ -228,7 +228,7 @@ export function MessageEditForm({
                 disableSelectionToolbar
                 blurOnEscape
                 onEscapeBlur={focusMobileActionBar}
-                streamId={streamId}
+                memoAnchorStreamId={streamId}
               />
             </div>
           </div>
@@ -282,7 +282,7 @@ export function MessageEditForm({
           ariaLabel="Edit message"
           ariaDescribedBy={instructionsId}
           autoFocus
-          streamId={streamId}
+          memoAnchorStreamId={streamId}
         />
       </div>
       <div className="flex items-center gap-1.5 mt-1">
