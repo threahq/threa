@@ -46,6 +46,15 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
     if (!actors.some((a) => a.kind === "enclave")) return
 
+    // Idempotency: if a reply for this trigger already exists (the job was
+    // redelivered after a prior full success), skip — don't re-invoke the
+    // enclave. This covers the common at-least-once case cheaply. The narrow
+    // window where invoke() succeeded but createMessage never committed can
+    // still re-invoke; durable invoke-tracking (a tracking table, INV-57) lands
+    // with the agent-loop/session follow-up that reworks this path.
+    const replyDedupeKey = `enclave-reply:${triggerId}`
+    if (await MessageRepository.findByClientMessageId(pool, streamId, replyDedupeKey)) return
+
     // The enclave serves Ariadne; refuse if that persona isn't e2e-capable.
     if (!isE2eCapablePersona(ARIADNE_AGENT_ID)) return
     const persona = getBuiltInAgentConfig(ARIADNE_AGENT_ID)
@@ -98,7 +107,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       // Restrict agent reach to this scratchpad; and dedupe a redelivered job so
       // a transient retry can't post Ariadne's reply twice.
       accessibleStreamIds: [streamId],
-      clientMessageId: `enclave-reply:${triggerId}`,
+      clientMessageId: replyDedupeKey,
     })
   }
 }

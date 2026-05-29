@@ -104,6 +104,21 @@ describe("buildEnclaveInvokeRequest", () => {
     expect(built!.request.wraps.every((w) => w.wrapEnc.includes("eik_fresh"))).toBe(true)
   })
 
+  it("requires the chosen EIK to open the trigger generation too (rotated-key case)", () => {
+    // Stream rotated to gen 1 after the user turn (sealed under gen 0) was stored.
+    const trigger = msg("msg_trigger", "user", "hello", 0)
+
+    // EIK wrapped only at the current gen (1) can seal the reply but can't open
+    // the gen-0 prompt → no dispatch.
+    expect(buildEnclaveInvokeRequest(inputs({ trigger, wraps: [wrap("eik_live", 1)] }))).toBeNull()
+
+    // EIK wrapped at both generations → dispatch succeeds and ships both wraps.
+    const built = buildEnclaveInvokeRequest(inputs({ trigger, wraps: [wrap("eik_live", 0), wrap("eik_live", 1)] }))
+    expect(built).not.toBeNull()
+    expect(built!.request.wraps.map((w) => w.keyGeneration).sort()).toEqual([0, 1])
+    expect(built!.request.reply.keyGeneration).toBe(1) // reply still seals under current
+  })
+
   it("maps prior messages to roles and drops non-E2E rows", () => {
     const plaintext = { id: "msg_plain", authorType: "user", ciphertext: null, envelope: null } as unknown as Message
     const built = buildEnclaveInvokeRequest(

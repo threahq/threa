@@ -52,12 +52,15 @@ export function buildEnclaveInvokeRequest(inputs: BuildInvokeInputs): BuiltEncla
 
   const enclaveWraps = wraps.filter((w) => w.recipientKind === "enclave")
   const currentGen = e2e.currentKeyGeneration
+  const triggerGen = (trigger.envelope as EnclaveStreamEnvelope).keyGeneration
+  const hasWrap = (keyId: string, generation: number) =>
+    enclaveWraps.some((w) => w.recipientKeyId === keyId && w.keyGeneration === generation)
 
-  // Pick a live EIK that can decrypt the *current* generation (has a wrap for
-  // it) — without that, it can't open the prompt or seal the reply.
-  const chosen = liveEiks.find((eik) =>
-    enclaveWraps.some((w) => w.recipientKeyId === eik.keyId && w.keyGeneration === currentGen)
-  )
+  // The chosen EIK must both *open the prompt* (its generation can lag `current`
+  // if the stream rotated after the turn was stored) and *seal the reply* (under
+  // `current`). Requiring both avoids picking a key that can do one but not the
+  // other, which would surface as a late enclave failure.
+  const chosen = liveEiks.find((eik) => hasWrap(eik.keyId, currentGen) && hasWrap(eik.keyId, triggerGen))
   if (!chosen) return null
 
   // Send every wrap addressed to the chosen EIK (all generations) so it can also
