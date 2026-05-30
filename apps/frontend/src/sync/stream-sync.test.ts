@@ -11,6 +11,7 @@ import {
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { streamKeys } from "@/hooks/use-streams"
+import { clearDecryptCache, getCachedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { BotRuntimePresenceSummary, StreamBootstrap, StreamEvent } from "@threa/types"
 
 // With fake-indexeddb loaded in test setup, Dexie works against a real
@@ -950,6 +951,153 @@ describe("registerStreamSocketHandlers — bot_runtime:presence cache patching",
 
     const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
     expect(after).toBe(before)
+
+    cleanup()
+  })
+})
+
+describe("registerStreamSocketHandlers — E2E send reconciliation seeds the decrypt cache", () => {
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.pendingMessages.clear()
+    clearDecryptCache()
+  })
+
+  it("seeds the server event id with the optimistic plaintext so it renders decrypted on arrival", async () => {
+    const streamId = "stream_e2e_echo"
+    const plaintextJson = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "secret" }] }] }
+
+    // Optimistic (self-sent) event holds the plaintext we just encrypted.
+    await db.events.put({
+      id: "temp_1",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: { messageId: "temp_1", contentMarkdown: "secret", contentJson: plaintextJson },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+    await db.pendingMessages.add({
+      clientId: "temp_1",
+      workspaceId: "ws_1",
+      streamId,
+      content: "secret",
+      contentFormat: "markdown",
+      createdAt: Date.now(),
+      retryCount: 0,
+    })
+
+    const { socket, emit } = createTestSocket()
+    const queryClient = new QueryClient()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    // Server echoes the message back as ciphertext + envelope, with clientMessageId.
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id: "evt_server",
+        streamId,
+        sequence: "1000",
+        eventType: "message_created",
+        payload: {
+          messageId: "evt_server",
+          clientMessageId: "temp_1",
+          contentMarkdown: "🔒 Encrypted",
+          contentJson: null,
+          ciphertext: "base64ciphertext",
+          envelope: { v: 2 },
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    // Optimistic row swapped for the server row, and the decrypt cache is
+    // pre-seeded so the encrypted server event never flashes "decrypting".
+    expect(await db.events.get("temp_1")).toBeUndefined()
+    expect(await db.events.get("evt_server")).toBeDefined()
+    const cached = getCachedDecryption("evt_server")
+    expect(cached?.status).toBe("decrypted")
+    expect(cached?.content?.contentMarkdown).toBe("secret")
+    expect(cached?.content?.contentJson).toEqual(plaintextJson)
+
+    cleanup()
+  })
+
+  it("does not seed when the server event is plaintext (non-E2E)", async () => {
+    const streamId = "stream_plain_echo"
+
+    await db.events.put({
+      id: "temp_2",
+      workspaceId: "ws_1",
+      streamId,
+      sequence: "999",
+      _sequenceNum: 999,
+      eventType: "message_created",
+      payload: { messageId: "temp_2", contentMarkdown: "hi", contentJson: { type: "doc", content: [] } },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+
+    const { socket, emit } = createTestSocket()
+    const queryClient = new QueryClient()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: {
+        id: "evt_plain",
+        streamId,
+        sequence: "1000",
+        eventType: "message_created",
+        payload: {
+          messageId: "evt_plain",
+          clientMessageId: "temp_2",
+          contentMarkdown: "hi",
+          contentJson: { type: "doc", content: [] },
+        },
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    // Plaintext events render straight from their payload; the cache stays empty.
+    expect(getCachedDecryption("evt_plain")).toBeUndefined()
 
     cleanup()
   })

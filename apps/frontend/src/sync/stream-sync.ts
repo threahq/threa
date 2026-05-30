@@ -9,7 +9,9 @@ import {
   type ThreadSummary,
   type WorkspaceBootstrap,
   type BotRuntimePresenceSummary,
+  type JSONContent,
 } from "@threa/types"
+import { seedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { Socket } from "socket.io-client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
@@ -477,6 +479,19 @@ function contentHasSharedMessage(contentJson: unknown): boolean {
   return false
 }
 
+/** Plaintext content carried by an optimistic (self-sent) event payload, if present. */
+function readPlaintextContent(payload: unknown): { contentMarkdown: string; contentJson: JSONContent } | null {
+  const p = payload as { contentMarkdown?: unknown; contentJson?: unknown } | undefined
+  if (!p || typeof p.contentMarkdown !== "string" || !p.contentJson) return null
+  return { contentMarkdown: p.contentMarkdown, contentJson: p.contentJson as JSONContent }
+}
+
+/** Whether a server event payload is E2E-sealed (ciphertext + envelope on the wire). */
+function isEncryptedPayload(payload: unknown): boolean {
+  const p = payload as { ciphertext?: unknown; envelope?: unknown } | undefined
+  return !!p && typeof p.ciphertext === "string" && !!p.envelope
+}
+
 export function registerStreamSocketHandlers(
   socket: Socket,
   workspaceId: string,
@@ -499,6 +514,12 @@ export function registerStreamSocketHandlers(
     }
     const now = Date.now()
 
+    // When this is the echo of a message we sent, the optimistic row still holds
+    // the plaintext we just encrypted. Capture it so we can seed the decrypt
+    // cache for the server event id below — otherwise the encrypted server event
+    // would flash "decrypting" as the optimistic row is swapped for the sent row.
+    let optimisticPlaintext: { contentMarkdown: string; contentJson: JSONContent } | null = null
+
     await db.transaction("rw", [db.events, db.pendingMessages], async () => {
       // Dedupe by event ID
       const existing = await db.events.get(newEvent.id)
@@ -510,6 +531,8 @@ export function registerStreamSocketHandlers(
 
       // Now remove the optimistic event
       if (newPayload.clientMessageId) {
+        const optimistic = await db.events.get(newPayload.clientMessageId)
+        optimisticPlaintext = readPlaintextContent(optimistic?.payload)
         await db.events.delete(newPayload.clientMessageId).catch(() => {})
         await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
       } else {
@@ -524,10 +547,18 @@ export function registerStreamSocketHandlers(
           })
           .toArray()
         if (tempEvents.length > 0) {
+          optimisticPlaintext = readPlaintextContent(tempEvents[0].payload)
           await db.events.delete(tempEvents[0].id)
         }
       }
     })
+
+    // Seed the decrypt cache so the encrypted server event renders its content
+    // immediately. Only meaningful for E2E events (the wire payload carries a
+    // ciphertext); for plaintext sends the render path ignores the cache.
+    if (optimisticPlaintext && isEncryptedPayload(newEvent.payload)) {
+      seedDecryption(newEvent.id, optimisticPlaintext)
+    }
 
     // Update sidebar preview in both TanStack cache and IDB so the sort order
     // and preview text survive cold starts (offline-first).
