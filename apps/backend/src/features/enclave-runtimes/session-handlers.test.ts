@@ -163,8 +163,13 @@ describe("createEnclaveSessionHandlers.steps", () => {
     await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
-  it("appends the sealed step (ciphertext only) and 204s", async () => {
+  it("appends the sealed step + current_step_type in one transaction and 204s", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    // Run the transaction body against a fake client so the repo spies observe
+    // the calls (INV-6: append + current_step_type are wrapped in withTransaction).
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
     const append = spyOn(AgentSessionRepository, "appendStep").mockResolvedValue({
       id: "step_a",
       sessionId: "session_1",
@@ -179,6 +184,8 @@ describe("createEnclaveSessionHandlers.steps", () => {
 
     expect(res.statusCode).toBe(204)
     expect(append).toHaveBeenCalledTimes(1)
+    // Both writes run on the same transaction client, not the bare pool.
+    expect(append.mock.calls[0]![0]).toBe(tx)
     expect(append.mock.calls[0]![1]).toMatchObject({
       id: "step_a",
       sessionId: "session_1",
@@ -186,7 +193,7 @@ describe("createEnclaveSessionHandlers.steps", () => {
       contentCiphertext: "Y3Q=", // sealed content — the server never holds plaintext (INV-E7)
       contentEnvelope: STEP_BODY.envelope,
     })
-    expect(stepType).toHaveBeenCalledWith(pool, "session_1", "thinking")
+    expect(stepType).toHaveBeenCalledWith(tx, "session_1", "thinking")
   })
 })
 
