@@ -1,5 +1,19 @@
 import type { NavigateFunction } from "react-router-dom"
-import { Brain, FileText, Hash, Paperclip, Search, FileEdit, Lock, Settings, StickyNote } from "lucide-react"
+import {
+  Bell,
+  Bookmark,
+  Brain,
+  CalendarClock,
+  FileText,
+  Hash,
+  Paperclip,
+  Search,
+  FileEdit,
+  Lock,
+  Settings,
+  StickyNote,
+  Tag,
+} from "lucide-react"
 import { toast } from "sonner"
 import type { SettingsTab } from "@threa/types"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
@@ -139,6 +153,9 @@ export const commands: Command[] = [
       setMode?.("search")
     },
   },
+  // Destination commands mirror the sidebar's Quick Links block (drafts, saved,
+  // files, scheduled, memory, labels, activity) so every standing view is
+  // reachable from the palette, in the same order.
   {
     id: "view-drafts",
     label: "View Drafts",
@@ -147,6 +164,36 @@ export const commands: Command[] = [
     action: ({ workspaceId, navigate, closeDialog }) => {
       closeDialog()
       navigate(`/w/${workspaceId}/drafts`)
+    },
+  },
+  {
+    id: "view-saved",
+    label: "View Saved",
+    icon: Bookmark,
+    keywords: ["bookmark", "bookmarks", "starred", "later", "read later"],
+    action: ({ workspaceId, navigate, closeDialog }) => {
+      closeDialog()
+      navigate(`/w/${workspaceId}/saved`)
+    },
+  },
+  {
+    id: "browse-files",
+    label: "Browse files",
+    icon: Paperclip,
+    keywords: ["attachments", "uploads", "media", "files", "explorer"],
+    action: ({ closeDialog, openExplorer }) => {
+      closeDialog()
+      openExplorer({ streamIds: [] })
+    },
+  },
+  {
+    id: "view-scheduled",
+    label: "View Scheduled",
+    icon: CalendarClock,
+    keywords: ["schedule", "later", "send later", "queued", "upcoming"],
+    action: ({ workspaceId, navigate, closeDialog }) => {
+      closeDialog()
+      navigate(`/w/${workspaceId}/scheduled`)
     },
   },
   {
@@ -160,13 +207,23 @@ export const commands: Command[] = [
     },
   },
   {
-    id: "browse-files",
-    label: "Browse files",
-    icon: Paperclip,
-    keywords: ["attachments", "uploads", "media", "files", "explorer"],
-    action: ({ closeDialog, openExplorer }) => {
+    id: "view-labels",
+    label: "View Labels",
+    icon: Tag,
+    keywords: ["tag", "tags", "categories", "organize"],
+    action: ({ workspaceId, navigate, closeDialog }) => {
       closeDialog()
-      openExplorer({ streamIds: [] })
+      navigate(`/w/${workspaceId}/labels`)
+    },
+  },
+  {
+    id: "view-activity",
+    label: "View Activity",
+    icon: Bell,
+    keywords: ["notifications", "feed", "mentions", "updates", "inbox"],
+    action: ({ workspaceId, navigate, closeDialog }) => {
+      closeDialog()
+      navigate(`/w/${workspaceId}/activity`)
     },
   },
   {

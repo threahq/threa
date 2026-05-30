@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest"
-import { commands, type Command } from "./commands"
+import { describe, it, expect, vi } from "vitest"
+import { SIDEBAR_QUICK_LINKS, type SidebarQuickLinkKey } from "@threa/types"
+import { commands, type Command, type CommandContext } from "./commands"
 
 describe("commands", () => {
   it("should have at least one command defined", () => {
@@ -68,6 +69,57 @@ describe("commands", () => {
       expect(cmd).toBeDefined()
       expect(cmd?.label).toBe("Open Memory")
       expect(cmd?.keywords).toEqual(expect.arrayContaining(["memo", "memos", "knowledge"]))
+    })
+  })
+
+  // Every standing view in the sidebar's Quick Links block must also be
+  // reachable from the palette, so the two never drift. Most links navigate to
+  // `/w/:workspaceId/<key>`; `files` is special — it opens the attachment
+  // explorer (the same ExplorerShell the /files page renders) rather than
+  // routing to the page.
+  describe("sidebar quick-link parity", () => {
+    const WORKSPACE_ID = "workspace_test"
+
+    function makeContext() {
+      const navigate = vi.fn()
+      const openExplorer = vi.fn()
+      const context = {
+        workspaceId: WORKSPACE_ID,
+        navigate,
+        closeDialog: vi.fn(),
+        createDraftScratchpad: vi.fn(async () => "draft_x"),
+        createEncryptedScratchpad: vi.fn(async () => "stream_x"),
+        openCreateChannel: vi.fn(),
+        setMode: vi.fn(),
+        requestInput: vi.fn(),
+        openSettings: vi.fn(),
+        openExplorer,
+        openStreamSettings: vi.fn(),
+        requestArchiveStream: vi.fn(),
+        openLabelPicker: vi.fn(),
+      } as unknown as CommandContext
+      return { context, navigate, openExplorer }
+    }
+
+    /** The palette destination each sidebar quick link must be reachable through. */
+    const reachability: Record<SidebarQuickLinkKey, (ctx: ReturnType<typeof makeContext>) => void> = {
+      drafts: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/drafts`),
+      saved: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/saved`),
+      files: ({ openExplorer }) => expect(openExplorer).toHaveBeenCalled(),
+      scheduled: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/scheduled`),
+      memory: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/memory`),
+      labels: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/labels`),
+      activity: ({ navigate }) => expect(navigate).toHaveBeenCalledWith(`/w/${WORKSPACE_ID}/activity`),
+    }
+
+    it.each(SIDEBAR_QUICK_LINKS)("exposes a palette command that reaches the %s quick link", (key) => {
+      // Run every command's action and assert the key's destination was hit by
+      // at least one of them.
+      const harness = makeContext()
+      for (const command of commands) {
+        command.action(harness.context)
+      }
+      reachability[key](harness)
     })
   })
 })
