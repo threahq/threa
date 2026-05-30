@@ -332,8 +332,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // `runSidebarAction` toasts on throw, so let the encrypted creator's session
   // checks propagate ("Unlock encrypted scratchpads first…") rather than
   // swallowing them here.
-  const handleCreateEncryptedScratchpad = async () => {
-    const streamId = await createEncryptedScratchpad()
+  const handleCreateEncryptedScratchpad = async (withAriadne: boolean) => {
+    const streamId = await createEncryptedScratchpad(withAriadne)
     collapseOnMobile()
     navigate(`/w/${workspaceId}/s/${streamId}`)
   }
@@ -355,8 +355,14 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       id: "new-encrypted-scratchpad",
       label: "New Encrypted Scratchpad",
       icon: Lock,
-      onSelect: handleCreateEncryptedScratchpad,
+      onSelect: () => handleCreateEncryptedScratchpad(true),
       separatorBefore: true,
+    },
+    {
+      id: "new-encrypted-quick-note",
+      label: "New Encrypted Quick Note",
+      icon: Lock,
+      onSelect: () => handleCreateEncryptedScratchpad(false),
     },
   ]
 

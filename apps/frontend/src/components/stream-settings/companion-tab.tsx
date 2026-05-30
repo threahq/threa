@@ -64,7 +64,8 @@ export function CompanionTab({ workspaceId, stream }: CompanionTabProps) {
 
       {isE2e && (
         <p className="text-xs text-muted-foreground">
-          End-to-end encrypted streams keep the companion off — responses would be plaintext.
+          Companion mode stays off on encrypted scratchpads — it would reply in plaintext. Ariadne still replies here,
+          running in the encryption enclave so your content stays end-to-end encrypted.
         </p>
       )}
     </div>
