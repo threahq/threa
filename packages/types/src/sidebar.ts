@@ -132,6 +132,36 @@ export type RawSidebarConfig = {
   quickLinks?: StoredQuickLink[]
 }
 
+/**
+ * Whether a section's spec is one the renderer knows how to present. The render
+ * path (`sectionPresentation`, `resolveSections`) assumes every spec it receives
+ * resolves to a known bucket / stream type, so a stale or malformed persisted
+ * section — an unknown smart bucket or stream type written by an older client, a
+ * label section missing its id — must be dropped on read. Otherwise one bad row
+ * takes down the whole sidebar (and the workspace layout it lives in) with a
+ * `Cannot read properties of undefined` when the presentation lookup misses.
+ *
+ * This is the read-time counterpart to the write-time `sidebarSectionSpecSchema`
+ * (backend `sidebar-config/handlers.ts`): a new spec `kind` must be added to both
+ * — and to the `SidebarSectionSpec` union above — or the backend accepts a spec
+ * the renderer silently drops here via the `default` arm.
+ */
+function isRenderableSectionSpec(spec: SidebarSectionSpec | undefined | null): spec is SidebarSectionSpec {
+  if (!spec) return false
+  switch (spec.kind) {
+    case "smart":
+      return (SIDEBAR_SECTION_KEYS as readonly string[]).includes(spec.bucket)
+    case "type":
+      return (SIDEBAR_TYPE_SECTIONS as readonly string[]).includes(spec.streamType)
+    case "label":
+      return typeof spec.labelId === "string" && spec.labelId.length > 0
+    case "quicklinks":
+      return true
+    default:
+      return false
+  }
+}
+
 /** Resolve a stored link's visibility, migrating the pre-v2 boolean and coercing invalid `active`. */
 function normalizeQuickLinkVisibility(link: StoredQuickLink): SidebarQuickLinkVisibility {
   const stored = link.visibility
@@ -172,11 +202,15 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
     if (!seen.has(key)) quickLinks.push({ key, visibility: "show" })
   }
 
-  // Drop any duplicate section ids so the document is fully idempotent — two
-  // sections sharing an id would trip React keys and the drag list's sortable
-  // ids. The write path already dedups via addSection; this guards stray data.
+  // Drop unrenderable and duplicate sections so the document is safe to render
+  // and fully idempotent. An unknown/malformed spec (stale data from an older
+  // client) would crash the presentation lookup; two sections sharing an id
+  // would trip React keys and the drag list's sortable ids. The write path
+  // already validates (Zod) + dedups via addSection; this guards stray data on
+  // every read boundary (bootstrap, IDB rehydrate, socket sync).
   const seenSectionIds = new Set<string>()
   let sections = (config.sections ?? []).filter((section) => {
+    if (!section || !isRenderableSectionSpec(section.spec)) return false
     if (seenSectionIds.has(section.id)) return false
     seenSectionIds.add(section.id)
     return true
