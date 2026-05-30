@@ -42,6 +42,8 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         rawChat: deps.rawChat,
         // Stream each reply back as the loop sends it (delivered before the loop continues).
         onMessage: (reply) => deps.callbacks.message(sessionId, reply),
+        // Stream each sealed trace step back as the loop emits it (live trace).
+        onStep: (step) => deps.callbacks.step(sessionId, step),
       },
       assignment
     )

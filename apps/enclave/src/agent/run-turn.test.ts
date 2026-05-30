@@ -8,7 +8,7 @@ import {
   sealMessage,
   wrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveSealedReply, EnclaveSessionAssignment } from "@threa/types"
+import type { EnclaveSealedReply, EnclaveSealedStep, EnclaveSessionAssignment } from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn, RawChatRequest, RawChatResult } from "../llm"
 import { InvokeError, runEnclaveTurn } from "./run-turn"
@@ -16,10 +16,16 @@ import { InvokeError, runEnclaveTurn } from "./run-turn"
 const STREAM_ID = "stream_journal"
 const GEN = 0
 
-/** Collects the replies the loop streams via onMessage. */
-function collector(): { onMessage: (r: EnclaveSealedReply) => Promise<void>; sent: EnclaveSealedReply[] } {
+/** Collects the replies and sealed trace steps the loop streams back. */
+function collector(): {
+  onMessage: (r: EnclaveSealedReply) => Promise<void>
+  onStep: (s: EnclaveSealedStep) => Promise<void>
+  sent: EnclaveSealedReply[]
+  steps: EnclaveSealedStep[]
+} {
   const sent: EnclaveSealedReply[] = []
-  return { sent, onMessage: async (r) => void sent.push(r) }
+  const steps: EnclaveSealedStep[] = []
+  return { sent, steps, onMessage: async (r) => void sent.push(r), onStep: async (s) => void steps.push(s) }
 }
 
 async function wrapSskToEnclave(keyPair: EnclaveKeyPair, ssk: Uint8Array, keyGeneration = GEN) {
@@ -92,10 +98,10 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "What's the capital of France?", "msg_user", "usr_owner")
     const chat = stubChat(textReply("Paris."))
-    const { onMessage, sent } = collector()
+    const { onMessage, onStep, sent, steps } = collector()
 
     const result = await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage },
+      { keyPair, rawChat: chat.fn, onMessage, onStep },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -122,6 +128,19 @@ describe("runEnclaveTurn", () => {
     expect(reply.envelope.keyGeneration).toBe(GEN)
     expect(result.model).toBe("anthropic/claude-sonnet-4.6")
     expect(result.usage).toEqual({ promptTokens: 11, completionTokens: 7 })
+
+    // The reply is also traced as a sealed message_sent step the same SSK opens,
+    // linked to the reply id (its content is ciphertext on the wire).
+    const messageStep = steps.find((s) => s.stepType === "message_sent")
+    expect(messageStep).toBeDefined()
+    expect(messageStep!.stepId).toMatch(/^step_/)
+    expect(messageStep!.messageId).toBe(reply.messageId)
+    const stepText = await openMessageAsString({
+      key: ssk,
+      envelope: messageStep!.envelope,
+      ciphertext: Buffer.from(messageStep!.ciphertext, "base64"),
+    })
+    expect(stepText).toBe("Paris.")
   })
 
   it("seals every message when the loop sends more than one", async () => {
@@ -130,10 +149,10 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "Give me two notes.", "msg_user", "usr_owner")
     const chat = stubChat(sendMessageReply("First.", "Second."))
-    const { onMessage, sent } = collector()
+    const { onMessage, onStep, sent } = collector()
 
     const result = await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage },
+      { keyPair, rawChat: chat.fn, onMessage, onStep },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -160,8 +179,9 @@ describe("runEnclaveTurn", () => {
     const prompt = await sealUnder(ssk, "Continue.", "msg_user", "usr_owner")
     const chat = stubChat(textReply("Sure."))
 
+    const collected = collector()
     await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage: collector().onMessage },
+      { keyPair, rawChat: chat.fn, onMessage: collected.onMessage, onStep: collected.onStep },
       baseRequest({
         wraps: [wrap],
         history: [
@@ -186,9 +206,10 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, otherSsk, 7)
     const prompt = await sealUnder(promptSsk, "hi", "msg_user", "usr_owner", GEN)
 
+    const collected = collector()
     await expect(
       runEnclaveTurn(
-        { keyPair, rawChat: stubChat(textReply("x")).fn, onMessage: collector().onMessage },
+        { keyPair, rawChat: stubChat(textReply("x")).fn, onMessage: collected.onMessage, onStep: collected.onStep },
         baseRequest({ wraps: [wrap], prompt, reply: { keyGeneration: 7, senderId: "persona_ariadne" } })
       )
     ).rejects.toBeInstanceOf(InvokeError)

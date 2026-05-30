@@ -343,6 +343,7 @@ export type {
   EnclaveSealedMessage,
   EnclaveSskWrap,
   EnclaveSealedReply,
+  EnclaveSealedStep,
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   UpdateStreamInput,

@@ -9,11 +9,18 @@ import {
   sealMessage,
   unwrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveSessionAssignment, EnclaveSessionResult, EnclaveSealedReply, EnclaveSskWrap } from "@threa/types"
+import type {
+  EnclaveSessionAssignment,
+  EnclaveSessionResult,
+  EnclaveSealedReply,
+  EnclaveSealedStep,
+  EnclaveSskWrap,
+} from "@threa/types"
 import { AgentRuntime } from "@threa/agent-runtime/runtime"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
+import { EnclaveTraceObserver } from "./trace-observer"
 
 /**
  * The agent turn, run entirely inside the enclave next to decrypted plaintext.
@@ -27,9 +34,11 @@ import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
  * the loop sends back under the current SSK. Plaintext exists only in this
  * process, for the duration of the request, and is never logged or persisted.
  *
- * The loop runs with no tools and no new-message awareness in this slice — it is
- * the faithful multi-step shell; tools, traces, durability, and mid-turn
- * reconsideration land in later slices.
+ * The loop runs with no tools and no new-message awareness in this slice, but it
+ * is fully traced: an `EnclaveTraceObserver` seals every step the loop emits
+ * (the LLM's reasoning, each reply) under the SSK and streams it back, so the
+ * owner sees Ariadne's work in real time without the server ever reading it.
+ * Tools, durability, and mid-turn reconsideration land in later slices.
  */
 
 /** Marks a caller/data fault so the Express layer can answer 400 instead of 500. */
@@ -45,13 +54,18 @@ export interface EnclaveTurnDeps {
    * rather than batched at completion. A throw here aborts the turn.
    */
   onMessage: (reply: EnclaveSealedReply) => Promise<void>
+  /**
+   * Stream a sealed trace step back as the loop emits it (thinking, message_sent).
+   * Sealed under the same SSK as replies; the backend persists ciphertext only.
+   */
+  onStep: (step: EnclaveSealedStep) => Promise<void>
 }
 
 export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage } = deps
+  const { keyPair, rawChat, onMessage, onStep } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -89,6 +103,16 @@ export async function runEnclaveTurn(
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
   const messageIds: string[] = []
 
+  // Seal every trace step under the current (reply) generation and stream it
+  // back. The backend stores ciphertext under the enclave-minted step id.
+  const traceObserver = new EnclaveTraceObserver({
+    streamId: request.streamId,
+    replySsk,
+    replyKeyGeneration: request.reply.keyGeneration,
+    senderId: request.reply.senderId,
+    sendStep: onStep,
+  })
+
   const runtime = new AgentRuntime({
     ai: createEnclaveAI(rawChat, usage),
     // The enclave AI keys off `modelString`; the opaque `model` object is only
@@ -98,6 +122,7 @@ export async function runEnclaveTurn(
     systemPrompt: request.system,
     messages,
     tools: [],
+    observers: [traceObserver],
     maxTokens: request.maxTokens,
     temperature: request.temperature,
     // Terminal action: mint each reply's id, seal it under the current SSK bound

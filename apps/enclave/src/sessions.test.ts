@@ -136,6 +136,7 @@ describe("createSessionsHandler", () => {
       message: async (sessionId, reply) => {
         streamed.push({ sessionId, reply })
       },
+      step: async () => {},
       complete: async (sessionId, result) => {
         completed = { sessionId, result }
       },
@@ -177,6 +178,7 @@ describe("createSessionsHandler", () => {
     const callbacks: BackendCallbacks = {
       heartbeat: async () => {},
       message: async () => {},
+      step: async () => {},
       complete: async () => {
         completed = true
       },
@@ -204,7 +206,7 @@ describe("createSessionsHandler", () => {
         ran = true
         return { message: { content: "x" }, model: "stub" }
       }) as RawChatFn,
-      callbacks: { heartbeat: async () => {}, message: async () => {}, complete: async () => {} },
+      callbacks: { heartbeat: async () => {}, message: async () => {}, step: async () => {}, complete: async () => {} },
       inFlight: new Set([assignment.sessionId]), // already running
     })
     const res = fakeRes()

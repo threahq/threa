@@ -9,6 +9,8 @@ interface TraceStepListProps {
   highlightMessageId: string | null
   workspaceId: string
   streamId: string
+  /** Viewer's user id, threaded to each step for decrypting sealed (enclave) content. */
+  userId?: string | null
   /**
    * Live substep history keyed by step type. Merged with each step's persisted
    * substeps inside `TraceStep` so the phase timeline shows both pre-refresh
@@ -29,6 +31,7 @@ export function TraceStepList({
   highlightMessageId,
   workspaceId,
   streamId,
+  userId,
   streamingSubsteps,
   onAbortResearch,
 }: TraceStepListProps) {
@@ -66,6 +69,7 @@ export function TraceStepList({
               step={step}
               workspaceId={workspaceId}
               streamId={streamId}
+              userId={userId}
               liveSubsteps={liveSubsteps}
               onAbortResearch={onAbortResearch}
             />

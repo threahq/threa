@@ -48,6 +48,14 @@ const MESSAGE_BODY = {
 }
 const COMPLETE_BODY = { messageIds: ["msg_a", "msg_b"], model: "anthropic/claude-sonnet-4.6" }
 
+const STEP_BODY = {
+  stepId: "step_a",
+  stepType: "thinking",
+  ciphertext: "Y3Q=",
+  envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+  durationMs: 1500,
+}
+
 afterEach(() => mock.restore())
 
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
@@ -133,6 +141,51 @@ describe("createEnclaveSessionHandlers.complete", () => {
       sentMessageIds: ["msg_a", "msg_b"],
       responseMessageId: "msg_a",
     })
+  })
+})
+
+describe("createEnclaveSessionHandlers.steps", () => {
+  it("400s an invalid body", async () => {
+    const { handlers } = makeHandlers()
+    await expect(handlers.steps(req("session_1", { bad: true }), fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("404s when the session is gone", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    const { handlers } = makeHandlers()
+    await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("409s when the session is no longer running", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    const { handlers } = makeHandlers()
+    await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
+  })
+
+  it("appends the sealed step (ciphertext only) and 204s", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    const append = spyOn(AgentSessionRepository, "appendStep").mockResolvedValue({
+      id: "step_a",
+      sessionId: "session_1",
+      stepNumber: 1,
+      stepType: "thinking",
+    } as never)
+    const stepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.steps(req("session_1", STEP_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(append).toHaveBeenCalledTimes(1)
+    expect(append.mock.calls[0]![1]).toMatchObject({
+      id: "step_a",
+      sessionId: "session_1",
+      stepType: "thinking",
+      contentCiphertext: "Y3Q=", // sealed content — the server never holds plaintext (INV-E7)
+      contentEnvelope: STEP_BODY.envelope,
+    })
+    expect(stepType).toHaveBeenCalledWith(pool, "session_1", "thinking")
   })
 })
 
