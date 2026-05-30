@@ -696,7 +696,7 @@ export async function startServer(): Promise<ServerInstance> {
     ? new EnclaveForwarder({ internalApiKey: config.internalApiKey })
     : null
   if (enclaveForwarder) {
-    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, enclaveForwarder, eventService })
+    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, enclaveForwarder })
     jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
       tier: QueueTiers.INTERACTIVE,
       fairness: QueueFairness.NONE,

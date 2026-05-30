@@ -6,7 +6,8 @@ import { registerWithBackend, revokeWithBackend } from "./register"
 import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
 import { createOpenRouterChat } from "./llm"
-import { createInvokeHandler, requireInternalKey } from "./invoke"
+import { createBackendCallbacks } from "./agent/backend-callbacks"
+import { createSessionsHandler, requireInternalKey } from "./sessions"
 
 const logger = pino({ name: "enclave" })
 
@@ -43,14 +44,17 @@ async function main() {
     })
   })
 
-  // The only content-bearing route: decrypt the forwarded turn, run the agent
-  // loop, seal each reply. OpenRouter is the enclave's sole outbound dependency.
+  // The only content-bearing route: the backend assigns a turn, we ack 202 and
+  // run the agent loop asynchronously, reporting replies back over the session
+  // callbacks. OpenRouter is the enclave's sole outbound LLM dependency.
   const rawChat = createOpenRouterChat(config)
+  const callbacks = createBackendCallbacks(config)
+  const inFlight = new Set<string>()
   app.post(
-    "/invoke",
+    "/sessions",
     requireInternalKey(config.internalApiKey),
     express.json({ limit: "4mb" }),
-    createInvokeHandler({ keyPair, rawChat })
+    createSessionsHandler({ keyPair, rawChat, callbacks, inFlight })
   )
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -66,13 +70,30 @@ async function main() {
     logger.info({ port: config.port, selfUrl: config.selfUrl }, "Enclave listening")
   })
 
+  // On a graceful signal, how long to let in-flight sessions finish before exit.
+  const SHUTDOWN_DRAIN_MS = 10_000
+
   let shuttingDown = false
   const shutdown = async (code: number) => {
     if (shuttingDown) return
     shuttingDown = true
     logger.info("Enclave shutting down")
     heartbeat.stop()
-    server.close()
+    server.close() // stop accepting new assignments; in-flight sessions run detached
+
+    // Session work outlives the HTTP request now, so on a graceful stop (e.g. a
+    // deploy) give running turns a bounded window to finish and ack rather than
+    // cutting them mid-flight. Orphan-cleanup reclaims any that don't drain in time.
+    if (code === 0 && inFlight.size > 0) {
+      const deadline = Date.now() + SHUTDOWN_DRAIN_MS
+      while (inFlight.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      if (inFlight.size > 0) {
+        logger.warn({ inFlight: inFlight.size }, "Shutting down with sessions still in flight")
+      }
+    }
+
     await revokeWithBackend(config, keyPair)
     process.exit(code)
   }

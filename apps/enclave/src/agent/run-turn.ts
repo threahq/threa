@@ -9,7 +9,7 @@ import {
   sealMessage,
   unwrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveInvokeRequest, EnclaveInvokeResponse, EnclaveSealedReply, EnclaveSskWrap } from "@threa/types"
+import type { EnclaveSessionAssignment, EnclaveSessionResult, EnclaveSealedReply, EnclaveSskWrap } from "@threa/types"
 import { AgentRuntime } from "@threa/agent-runtime/runtime"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
@@ -38,13 +38,20 @@ export class InvokeError extends Error {}
 export interface EnclaveTurnDeps {
   keyPair: EnclaveKeyPair
   rawChat: RawChatFn
+  /**
+   * Stream a sealed reply back the moment the loop sends it. Awaited inside the
+   * loop's terminal action, so the message is durably delivered *before* the loop
+   * continues — an interim "I'll look into it" lands ahead of the final answer
+   * rather than batched at completion. A throw here aborts the turn.
+   */
+  onMessage: (reply: EnclaveSealedReply) => Promise<void>
 }
 
 export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
-  request: EnclaveInvokeRequest
-): Promise<EnclaveInvokeResponse> {
-  const { keyPair, rawChat } = deps
+  request: EnclaveSessionAssignment
+): Promise<EnclaveSessionResult> {
+  const { keyPair, rawChat, onMessage } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -80,7 +87,7 @@ export async function runEnclaveTurn(
   if (!replySsk) throw new InvokeError("No SSK wrap for the reply's key generation")
 
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
-  const sealedReplies: EnclaveSealedReply[] = []
+  const messageIds: string[] = []
 
   const runtime = new AgentRuntime({
     ai: createEnclaveAI(rawChat, usage),
@@ -94,7 +101,8 @@ export async function runEnclaveTurn(
     maxTokens: request.maxTokens,
     temperature: request.temperature,
     // Terminal action: mint each reply's id, seal it under the current SSK bound
-    // to that id, and collect it. The backend stores ciphertext under this id.
+    // to that id, and stream it back now (awaited, so it's delivered before the
+    // loop moves on). The backend stores ciphertext under this id.
     sendMessage: async ({ content }) => {
       const messageId = `msg_${ulid()}`
       const sealed = await sealMessage({
@@ -107,7 +115,8 @@ export async function runEnclaveTurn(
           senderId: request.reply.senderId,
         }),
       })
-      sealedReplies.push({ messageId, ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope })
+      await onMessage({ messageId, ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope })
+      messageIds.push(messageId)
       return { messageId }
     },
   })
@@ -115,7 +124,7 @@ export async function runEnclaveTurn(
   await runtime.run()
 
   return {
-    messages: sealedReplies,
+    messageIds,
     model: request.model,
     usage: { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens },
   }

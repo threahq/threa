@@ -1,12 +1,12 @@
-import type { EnclaveInvokeRequest, EnclaveStreamEnvelope } from "@threa/types"
+import type { EnclaveSessionAssignment, EnclaveStreamEnvelope } from "@threa/types"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import type { Message } from "../../messaging"
 import type { EnclaveRuntime } from "../repository"
 
 /**
- * Builds the `/invoke` request the backend forwards to the enclave — pure, so
- * the recipient-selection and history-mapping logic is unit-testable without a
- * DB. The worker fetches the inputs and POSTs the result.
+ * Builds the session assignment the backend hands to the enclave — pure, so the
+ * recipient-selection and history-mapping logic is unit-testable without a DB.
+ * The worker fetches the inputs, creates the session row, and POSTs the result.
  *
  * The backend never decrypts: it ships ciphertext + the SSK wraps addressed to
  * the chosen live EIK, and the enclave unwraps with its private key. Returns
@@ -35,14 +35,18 @@ export interface BuildInvokeInputs {
   persona: PersonaInvokeConfig
   /** The persona id the replies are authored by + bound to in their seal AAD (Ariadne). */
   replySenderId: string
+  /** The server-created agent_sessions id the enclave drives this turn under. */
+  sessionId: string
 }
 
 export interface BuiltEnclaveInvoke {
   instanceUrl: string
-  request: EnclaveInvokeRequest
+  /** The chosen EIK's keyId — stored as the session's owning server (`server_id`). */
+  keyId: string
+  assignment: EnclaveSessionAssignment
 }
 
-export function buildEnclaveInvokeRequest(inputs: BuildInvokeInputs): BuiltEnclaveInvoke | null {
+export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltEnclaveInvoke | null {
   const { e2e, actors, liveEiks, wraps, trigger, priorMessages, persona } = inputs
 
   if (!actors.some((a) => a.kind === "enclave")) return null
@@ -75,7 +79,8 @@ export function buildEnclaveInvokeRequest(inputs: BuildInvokeInputs): BuiltEncla
       role: m.authorType === "persona" ? ("assistant" as const) : ("user" as const),
     }))
 
-  const request: EnclaveInvokeRequest = {
+  const assignment: EnclaveSessionAssignment = {
+    sessionId: inputs.sessionId,
     streamId: e2e.streamId,
     wraps: chosenWraps,
     history,
@@ -90,5 +95,5 @@ export function buildEnclaveInvokeRequest(inputs: BuildInvokeInputs): BuiltEncla
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
   }
 
-  return { instanceUrl: chosen.instanceUrl, request }
+  return { instanceUrl: chosen.instanceUrl, keyId: chosen.keyId, assignment }
 }

@@ -12,13 +12,17 @@ the Docker runtime stage is plain `node:22-slim` with no `node_modules`. This is
 the one service in the monorepo that runs on Node.
 
 It generates an Enclave Instance Key (EIK) at boot, registers it with the
-backend, heartbeats so the live set reflects liveness, and answers `/invoke`:
-the backend forwards an encrypted scratchpad turn (ciphertext + the SSK wrap
-addressed to this EIK), the enclave unwraps the SSK, opens the message(s), runs
-the same `AgentRuntime` loop the backend uses for non-E2E personas — over an
-enclave-only LLM client (OpenRouter, zero-retention, single egress) — and returns
-each reply the loop sends sealed back under the SSK. Plaintext exists only
-in-process, for the request, and is never logged.
+backend, heartbeats so the live set reflects liveness, and owns assigned
+sessions via `POST /sessions`: the backend assigns an encrypted scratchpad turn
+(ciphertext + the SSK wrap addressed to this EIK + the sessionId), the enclave
+acks 202 and runs the turn _asynchronously_ — unwrapping the SSK, opening the
+message(s), running the same `AgentRuntime` loop the backend uses for non-E2E
+personas (over an enclave-only LLM client: OpenRouter, zero-retention, single
+egress), and sealing each reply back under the SSK. While the loop runs it
+refreshes the session heartbeat and streams each sealed reply back the moment the
+loop sends it (so an interim "I'll look into it" lands ahead of the final answer),
+then acks completion. Plaintext exists only in-process, for the loop's duration,
+and is never logged.
 
 ## Trust boundary (5a)
 
@@ -33,10 +37,11 @@ What the enclave does today:
   heartbeats every 30s so the backend's live set reflects current liveness.
 - Exposes `/pubkey` (the registered EIK), `/healthz`, and `/attestation`
   (source commit + build hash) for liveness and verification.
-- Answers `POST /invoke`: unwraps the forwarded SSK with its in-memory EIK,
-  opens the turn, runs the agent loop (text + tool-calling capable; no tools and
-  no mid-turn reconsideration wired yet), and returns each reply the loop sends
-  sealed under the SSK.
+- Owns assigned sessions via `POST /sessions`: acks 202, then asynchronously
+  unwraps the SSK with its in-memory EIK, runs the agent loop (text +
+  tool-calling capable; no tools and no mid-turn reconsideration wired yet),
+  refreshes the session heartbeat while working, streams each sealed reply back
+  as the loop sends it (`.../messages`), and acks completion (`.../complete`).
 - Best-effort revokes its key on graceful shutdown; the backend's staleness
   window tombstones the row within 2 minutes regardless.
 
@@ -48,28 +53,28 @@ What the enclave does not do:
   per request — no request/response bodies and no headers, so neither the
   `Authorization` nor the `X-Internal-Api-Key` header is ever written (the
   `pino-http` `redact` paths are belt-and-braces on top of that).
-- No outbound traffic except the backend (register/heartbeat/revoke) and the
-  OpenRouter API (the LLM upstream).
+- No outbound traffic except the backend (register/heartbeat/revoke + the
+  per-session heartbeat/messages/complete callbacks) and the OpenRouter API (the LLM upstream).
 
 ## Environment
 
-| Variable                        | Required             | Purpose                                                                                              |
-| ------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------- |
-| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/invoke`.                                    |
-| `ENCLAVE_SELF_URL`              | yes                  | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`). |
-| `BACKEND_BASE_URL`              | yes                  | Regional backend base URL — target for register/heartbeat/revoke.                                    |
-| `INTERNAL_API_KEY`              | yes                  | Shared bearer secret guarding the enclave's calls to `/internal/enclave-runtimes/*`.                 |
-| `OPENROUTER_API_KEY`            | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.            |
-| `OPENROUTER_BASE_URL`           | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                               |
-| `ENCLAVE_HEARTBEAT_INTERVAL_MS` | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                      |
+| Variable                        | Required             | Purpose                                                                                                               |
+| ------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/sessions`.                                                   |
+| `ENCLAVE_SELF_URL`              | yes                  | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`).                  |
+| `BACKEND_BASE_URL`              | yes                  | Regional backend base URL — target for register/heartbeat/revoke + per-session heartbeat/messages/complete callbacks. |
+| `INTERNAL_API_KEY`              | yes                  | Shared bearer secret guarding the enclave's calls to `/internal/enclave-runtimes/*`.                                  |
+| `OPENROUTER_API_KEY`            | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                             |
+| `OPENROUTER_BASE_URL`           | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                |
+| `ENCLAVE_HEARTBEAT_INTERVAL_MS` | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                       |
 
 ## Egress allow-list (operational)
 
 In production the egress firewall should pin the enclave to exactly:
 
-- `BACKEND_BASE_URL` — for `/internal/enclave-runtimes/*` registration,
-  heartbeat, and revoke.
-- `OPENROUTER_BASE_URL` (`openrouter.ai`) — the LLM upstream for `/invoke`.
+- `BACKEND_BASE_URL` — for `/internal/enclave-runtimes/*`: registration,
+  heartbeat, revoke, and the per-session heartbeat/messages/complete callbacks.
+- `OPENROUTER_BASE_URL` (`openrouter.ai`) — the LLM upstream for `/sessions`.
 
 No other outbound traffic is required.
 

@@ -42,7 +42,11 @@ import { createPublicApiHandlers, createBotHandlers } from "./features/public-ap
 import { BotRuntimeService } from "./features/bot-runtimes"
 import { createUserApiKeyHandlers, type UserApiKeyService } from "./features/user-api-keys"
 import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from "./features/voice-transcription"
-import { createEnclaveRuntimesHandlers, type EnclaveRuntimesService } from "./features/enclave-runtimes"
+import {
+  createEnclaveRuntimesHandlers,
+  createEnclaveSessionHandlers,
+  type EnclaveRuntimesService,
+} from "./features/enclave-runtimes"
 import {
   createInternalAuthMiddleware,
   errorHandler,
@@ -265,6 +269,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/enclave-runtimes/register-key", internalAuth, enclave.registerKey)
     app.post("/internal/enclave-runtimes/heartbeat", internalAuth, enclave.heartbeat)
     app.post("/internal/enclave-runtimes/revoke", internalAuth, enclave.revoke)
+
+    // Session callbacks: a live enclave drives an assigned turn over these
+    // (liveness refresh + sealed replies on completion). Same shared-secret gate.
+    const enclaveSession = createEnclaveSessionHandlers({ pool, eventService })
+    app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
+    app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
+    app.post("/internal/enclave-runtimes/sessions/:id/complete", internalAuth, enclaveSession.complete)
   }
 
   // Global baseline rate limit

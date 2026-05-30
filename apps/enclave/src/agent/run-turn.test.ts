@@ -8,13 +8,19 @@ import {
   sealMessage,
   wrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveInvokeRequest } from "@threa/types"
+import type { EnclaveSealedReply, EnclaveSessionAssignment } from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn, RawChatRequest, RawChatResult } from "../llm"
 import { InvokeError, runEnclaveTurn } from "./run-turn"
 
 const STREAM_ID = "stream_journal"
 const GEN = 0
+
+/** Collects the replies the loop streams via onMessage. */
+function collector(): { onMessage: (r: EnclaveSealedReply) => Promise<void>; sent: EnclaveSealedReply[] } {
+  const sent: EnclaveSealedReply[] = []
+  return { sent, onMessage: async (r) => void sent.push(r) }
+}
 
 async function wrapSskToEnclave(keyPair: EnclaveKeyPair, ssk: Uint8Array, keyGeneration = GEN) {
   const wrap = await wrapStreamKey({
@@ -65,8 +71,9 @@ function sendMessageReply(...contents: string[]): RawChatResult {
   }
 }
 
-function baseRequest(over: Partial<EnclaveInvokeRequest>): EnclaveInvokeRequest {
+function baseRequest(over: Partial<EnclaveSessionAssignment>): EnclaveSessionAssignment {
   return {
+    sessionId: "session_test",
     streamId: STREAM_ID,
     wraps: [],
     history: [],
@@ -85,8 +92,12 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "What's the capital of France?", "msg_user", "usr_owner")
     const chat = stubChat(textReply("Paris."))
+    const { onMessage, sent } = collector()
 
-    const result = await runEnclaveTurn({ keyPair, rawChat: chat.fn }, baseRequest({ wraps: [wrap], prompt }))
+    const result = await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage },
+      baseRequest({ wraps: [wrap], prompt })
+    )
 
     // The model saw the system prompt then the decrypted user turn — never ciphertext —
     // and was offered the send_message tool.
@@ -96,10 +107,12 @@ describe("runEnclaveTurn", () => {
     ])
     expect(chat.seen[0]?.tools?.some((t) => t.function.name === "send_message")).toBe(true)
 
-    // Exactly one reply, sealed under the same SSK and bound to the id the enclave minted.
-    expect(result.messages).toHaveLength(1)
-    const reply = result.messages[0]!
+    // Exactly one reply, streamed via onMessage, sealed under the same SSK and
+    // bound to the id the enclave minted (also returned in messageIds).
+    expect(sent).toHaveLength(1)
+    const reply = sent[0]!
     expect(reply.messageId).toMatch(/^msg_/)
+    expect(result.messageIds).toEqual([reply.messageId])
     const replyText = await openMessageAsString({
       key: ssk,
       envelope: reply.envelope,
@@ -117,18 +130,24 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "Give me two notes.", "msg_user", "usr_owner")
     const chat = stubChat(sendMessageReply("First.", "Second."))
+    const { onMessage, sent } = collector()
 
-    const result = await runEnclaveTurn({ keyPair, rawChat: chat.fn }, baseRequest({ wraps: [wrap], prompt }))
+    const result = await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage },
+      baseRequest({ wraps: [wrap], prompt })
+    )
 
-    expect(result.messages).toHaveLength(2)
+    expect(sent).toHaveLength(2)
     const opened = await Promise.all(
-      result.messages.map((m) =>
+      sent.map((m) =>
         openMessageAsString({ key: ssk, envelope: m.envelope, ciphertext: Buffer.from(m.ciphertext, "base64") })
       )
     )
     expect(opened).toEqual(["First.", "Second."])
-    // Each reply has a distinct minted id (so each AAD binding is unique).
-    expect(new Set(result.messages.map((m) => m.messageId)).size).toBe(2)
+    // Each reply has a distinct minted id (so each AAD binding is unique), and the
+    // result reports them in send order.
+    expect(new Set(sent.map((m) => m.messageId)).size).toBe(2)
+    expect(result.messageIds).toEqual(sent.map((m) => m.messageId))
   })
 
   it("includes decryptable history with roles and skips generations it has no wrap for", async () => {
@@ -142,7 +161,7 @@ describe("runEnclaveTurn", () => {
     const chat = stubChat(textReply("Sure."))
 
     await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn },
+      { keyPair, rawChat: chat.fn, onMessage: collector().onMessage },
       baseRequest({
         wraps: [wrap],
         history: [
@@ -169,7 +188,7 @@ describe("runEnclaveTurn", () => {
 
     await expect(
       runEnclaveTurn(
-        { keyPair, rawChat: stubChat(textReply("x")).fn },
+        { keyPair, rawChat: stubChat(textReply("x")).fn, onMessage: collector().onMessage },
         baseRequest({ wraps: [wrap], prompt, reply: { keyGeneration: 7, senderId: "persona_ariadne" } })
       )
     ).rejects.toBeInstanceOf(InvokeError)
