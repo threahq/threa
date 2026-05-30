@@ -1,4 +1,4 @@
-import type { RefObject } from "react"
+import { Fragment, type ReactNode, type RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
@@ -46,6 +46,12 @@ interface SidebarStreamListProps {
    * invoking `onCreateScratchpad` directly.
    */
   scratchpadAddMenuActions?: SidebarActionItem[]
+  /**
+   * The Quick Links block, rendered at the position of the `quicklinks` section
+   * in the config. Passed in (rather than built here) because it needs the live
+   * counts/route signals the sidebar owns; `null` when the user removed the block.
+   */
+  quickLinksSlot?: ReactNode
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -64,6 +70,7 @@ export function SidebarStreamList({
   onCreateScratchpad,
   onCreateChannel,
   scratchpadAddMenuActions,
+  quickLinksSlot,
   scrollContainerRef,
 }: SidebarStreamListProps) {
   if (hasError) {
@@ -72,15 +79,18 @@ export function SidebarStreamList({
 
   if (!hasUserStreams) {
     return (
-      <div className="px-4 py-8 text-center">
-        <p className="text-sm text-muted-foreground mb-4">No streams yet</p>
-        <Button variant="outline" size="sm" onClick={() => void onCreateScratchpad()} className="mr-2">
-          + New Scratchpad
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => void onCreateChannel()}>
-          + New Channel
-        </Button>
-      </div>
+      <>
+        {quickLinksSlot}
+        <div className="px-4 py-8 text-center">
+          <p className="text-sm text-muted-foreground mb-4">No streams yet</p>
+          <Button variant="outline" size="sm" onClick={() => void onCreateScratchpad()} className="mr-2">
+            + New Scratchpad
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void onCreateChannel()}>
+            + New Channel
+          </Button>
+        </div>
+      </>
     )
   }
 
@@ -103,6 +113,13 @@ export function SidebarStreamList({
   return (
     <>
       {resolvedSections.map(({ section, items }) => {
+        // The Quick Links block renders its own link list at this position. The
+        // slot owns its spacing (and may render null when every link is hidden),
+        // so it's not wrapped — a wrapper would leave a stray margin when empty.
+        if (section.spec.kind === "quicklinks") {
+          return quickLinksSlot ? <Fragment key={section.id}>{quickLinksSlot}</Fragment> : null
+        }
+
         const presentation = sectionPresentation(section.spec)
         if (presentation.hideWhenEmpty && items.length === 0) return null
 

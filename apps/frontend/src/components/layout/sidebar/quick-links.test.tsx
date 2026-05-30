@@ -65,25 +65,53 @@ describe("SidebarQuickLinks", () => {
     expect(screen.queryByText("Threads")).not.toBeInTheDocument()
   })
 
-  it("hides links the viewer has disabled and honors the configured order", () => {
+  it("hides links the viewer has hidden and honors the configured order", () => {
     stubSidebar("open")
     renderQuickLinks({
       quickLinks: [
-        { key: "activity", enabled: true },
-        { key: "labels", enabled: false },
-        { key: "drafts", enabled: true },
+        { key: "activity", visibility: "show" },
+        { key: "labels", visibility: "hidden" },
+        { key: "drafts", visibility: "show" },
       ],
     })
 
-    // Disabled link is gone; the rest render in the order given.
+    // Hidden link is gone; the rest render in the order given.
     expect(screen.queryByText("Labels")).not.toBeInTheDocument()
     const rendered = screen.getAllByRole("link").map((l) => l.textContent)
     expect(rendered).toEqual(["Activity", "Drafts"])
   })
 
+  it("renders a 'show when active' link only when it carries a signal", () => {
+    stubSidebar("open")
+    // Drafts is "active" — hidden with no count, shown once a draft exists.
+    const { rerender } = renderQuickLinks({ quickLinks: [{ key: "drafts", visibility: "active" }], draftCount: 0 })
+    expect(screen.queryByText("Drafts")).not.toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter>
+        <SidebarQuickLinks
+          workspaceId="workspace_1"
+          quickLinks={[{ key: "drafts", visibility: "active" }]}
+          isDraftsPage={false}
+          draftCount={3}
+          isSavedPage={false}
+          savedCount={0}
+          isScheduledPage={false}
+          scheduledCount={0}
+          isActivityPage={false}
+          isMemoryPage={false}
+          isFilesPage={false}
+          isLabelsPage={false}
+          unreadActivityCount={0}
+        />
+      </MemoryRouter>
+    )
+    expect(screen.getByText("Drafts")).toBeInTheDocument()
+  })
+
   it("renders nothing when every link is hidden", () => {
     stubSidebar("open")
-    const { container } = renderQuickLinks({ quickLinks: [{ key: "drafts", enabled: false }] })
+    const { container } = renderQuickLinks({ quickLinks: [{ key: "drafts", visibility: "hidden" }] })
 
     expect(container).toBeEmptyDOMElement()
   })

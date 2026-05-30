@@ -214,6 +214,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     [sidebarConfig, processedStreams, virtualDmStreams, getUnreadCount, streamIdsByLabel]
   )
 
+  // The Quick Links block renders only when the user keeps it in their layout —
+  // removing the section from the editor takes it out of both the normal list
+  // (resolved as a positioned section) and the empty-streams state.
+  const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
+
   // Track sidebar and scroll container dimensions for position calculations
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
@@ -343,44 +348,52 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           />
         }
         body={
-          <>
-            <div className="mb-2">
-              <SidebarQuickLinks
-                workspaceId={workspaceId}
-                quickLinks={sidebarConfig.quickLinks}
-                isDraftsPage={isDraftsPage}
-                draftCount={draftCount}
-                isSavedPage={isSavedPage}
-                savedCount={savedCount}
-                isScheduledPage={isScheduledPage}
-                scheduledCount={scheduledCount}
-                isActivityPage={isActivityPage}
-                isMemoryPage={isMemoryPage}
-                isFilesPage={isFilesPage}
-                isLabelsPage={isLabelsPage}
-                unreadActivityCount={unreadActivityCount}
-              />
-            </div>
-            <SidebarStreamList
-              workspaceId={workspaceId}
-              hasError={Boolean(error)}
-              hasUserStreams={hasUserStreams}
-              activeStreamId={activeStreamId}
-              processedStreams={processedStreams}
-              resolvedSections={resolvedSections}
-              labelsById={labelsById}
-              getUnreadCount={getUnreadCount}
-              getMentionCount={getMentionCount}
-              getSectionState={getSectionState}
-              toggleSectionState={toggleSectionState}
-              onCreateScratchpad={handleCreateScratchpad}
-              onCreateChannel={handleCreateChannel}
-              scratchpadAddMenuActions={scratchpadAddMenuActions}
-              scrollContainerRef={scrollContainerRef}
-            />
-          </>
+          <SidebarStreamList
+            workspaceId={workspaceId}
+            hasError={Boolean(error)}
+            hasUserStreams={hasUserStreams}
+            activeStreamId={activeStreamId}
+            processedStreams={processedStreams}
+            resolvedSections={resolvedSections}
+            labelsById={labelsById}
+            getUnreadCount={getUnreadCount}
+            getMentionCount={getMentionCount}
+            getSectionState={getSectionState}
+            toggleSectionState={toggleSectionState}
+            onCreateScratchpad={handleCreateScratchpad}
+            onCreateChannel={handleCreateChannel}
+            scratchpadAddMenuActions={scratchpadAddMenuActions}
+            quickLinksSlot={
+              hasQuickLinksSection ? (
+                <SidebarQuickLinks
+                  workspaceId={workspaceId}
+                  quickLinks={sidebarConfig.quickLinks}
+                  isDraftsPage={isDraftsPage}
+                  draftCount={draftCount}
+                  isSavedPage={isSavedPage}
+                  savedCount={savedCount}
+                  isScheduledPage={isScheduledPage}
+                  scheduledCount={scheduledCount}
+                  isActivityPage={isActivityPage}
+                  isMemoryPage={isMemoryPage}
+                  isFilesPage={isFilesPage}
+                  isLabelsPage={isLabelsPage}
+                  unreadActivityCount={unreadActivityCount}
+                />
+              ) : undefined
+            }
+            scrollContainerRef={scrollContainerRef}
+          />
         }
-        footer={<SidebarFooter workspaceId={workspaceId} currentUser={currentUser} />}
+        footer={
+          <SidebarFooter
+            workspaceId={workspaceId}
+            currentUser={currentUser}
+            onCreateScratchpad={handleCreateScratchpad}
+            onCreateChannel={handleCreateChannel}
+            scratchpadAddMenuActions={scratchpadAddMenuActions}
+          />
+        }
       />
       <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
     </>

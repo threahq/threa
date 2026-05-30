@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG } from "@threa/types"
+import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID } from "@threa/types"
 import {
   hasLabelSection,
   labelSectionId,
@@ -7,10 +7,11 @@ import {
   sectionIdForSpec,
   hasSection,
   addSection,
+  addSectionAt,
   removeSection,
   moveSection,
   isPristinePreset,
-  toggleQuickLink,
+  setQuickLinkVisibility,
   moveQuickLink,
 } from "./sidebar-config"
 
@@ -52,6 +53,23 @@ describe("sectionIdForSpec", () => {
     expect(sectionIdForSpec({ kind: "type", streamType: "scratchpad" })).toBe("scratchpads")
     expect(sectionIdForSpec({ kind: "type", streamType: "dm" })).toBe("dms")
     expect(sectionIdForSpec({ kind: "label", labelId: "lbl_1" })).toBe(labelSectionId("lbl_1"))
+    expect(sectionIdForSpec({ kind: "quicklinks" })).toBe(QUICK_LINKS_SECTION_ID)
+  })
+})
+
+describe("addSectionAt", () => {
+  it("inserts the section at the given index, shifting the rest", () => {
+    // Drop a Pinned bucket at the front of the All preset.
+    const added = addSectionAt(ALL_SIDEBAR_CONFIG, { kind: "smart", bucket: "pinned" }, 0)
+    expect(added.sections[0]).toEqual({ id: "pinned", spec: { kind: "smart", bucket: "pinned" } })
+    expect(added.sections.slice(1)).toEqual(ALL_SIDEBAR_CONFIG.sections)
+  })
+
+  it("clamps an out-of-range index and is a no-op when already present", () => {
+    const appended = addSectionAt(ALL_SIDEBAR_CONFIG, { kind: "smart", bucket: "important" }, 999)
+    expect(appended.sections.at(-1)).toEqual({ id: "important", spec: { kind: "smart", bucket: "important" } })
+    // The quick-links block is already in the preset — re-adding changes nothing.
+    expect(addSectionAt(ALL_SIDEBAR_CONFIG, { kind: "quicklinks" }, 2)).toEqual(ALL_SIDEBAR_CONFIG)
   })
 })
 
@@ -75,17 +93,28 @@ describe("addSection / removeSection", () => {
   })
 })
 
-describe("toggleQuickLink", () => {
-  it("flips a link's visibility and leaves the rest (and order) untouched", () => {
-    const hidden = toggleQuickLink(SMART_SIDEBAR_CONFIG, "labels")
-    expect(hidden.quickLinks.find((l) => l.key === "labels")?.enabled).toBe(false)
+describe("setQuickLinkVisibility", () => {
+  it("sets a link's visibility and leaves the rest (and order) untouched", () => {
+    const hidden = setQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "labels", "hidden")
+    expect(hidden.quickLinks.find((l) => l.key === "labels")?.visibility).toBe("hidden")
     expect(hidden.quickLinks.map((l) => l.key)).toEqual(SMART_SIDEBAR_CONFIG.quickLinks.map((l) => l.key))
-    // Toggling back restores the original.
-    expect(toggleQuickLink(hidden, "labels")).toEqual(SMART_SIDEBAR_CONFIG)
+    // Setting back to "show" restores the original.
+    expect(setQuickLinkVisibility(hidden, "labels", "show")).toEqual(SMART_SIDEBAR_CONFIG)
+  })
+
+  it("allows 'active' for a link with a live signal", () => {
+    const next = setQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "drafts", "active")
+    expect(next.quickLinks.find((l) => l.key === "drafts")?.visibility).toBe("active")
+  })
+
+  it("coerces 'active' to 'show' for a link without a live signal", () => {
+    // Files has no count/badge, so "show when active" is meaningless.
+    const next = setQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "files", "active")
+    expect(next.quickLinks.find((l) => l.key === "files")?.visibility).toBe("show")
   })
 
   it("is a no-op for an unknown key", () => {
-    expect(toggleQuickLink(SMART_SIDEBAR_CONFIG, "nope" as never)).toEqual(SMART_SIDEBAR_CONFIG)
+    expect(setQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "nope" as never, "hidden")).toEqual(SMART_SIDEBAR_CONFIG)
   })
 })
 
@@ -112,9 +141,9 @@ describe("moveQuickLink", () => {
 
 describe("moveSection", () => {
   it("moves a section to another's position, shifting the rest", () => {
-    // Move "pinned" to the front (over "important").
+    // Move "pinned" over "important" (after the quick-links block the preset leads with).
     const moved = moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important")
-    expect(moved.sections.map((s) => s.id)).toEqual(["pinned", "important", "recent", "other"])
+    expect(moved.sections.map((s) => s.id)).toEqual(["quick-links", "pinned", "important", "recent", "other"])
   })
 
   it("is a no-op when ids match or are missing", () => {
@@ -132,6 +161,8 @@ describe("isPristinePreset", () => {
     // So does membership: a pinned label makes it custom.
     expect(isPristinePreset(toggleLabelSection(SMART_SIDEBAR_CONFIG, "lbl_1"))).toBeNull()
     // And so does a quick-link change, even with the sections untouched.
-    expect(isPristinePreset(toggleQuickLink(SMART_SIDEBAR_CONFIG, "drafts"))).toBeNull()
+    expect(isPristinePreset(setQuickLinkVisibility(SMART_SIDEBAR_CONFIG, "drafts", "hidden"))).toBeNull()
+    // Removing the quick-links section diverges from the preset too.
+    expect(isPristinePreset(removeSection(SMART_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID))).toBeNull()
   })
 })

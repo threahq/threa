@@ -7,8 +7,15 @@ import type {
   SidebarTypeSection,
   SidebarQuickLink,
   SidebarQuickLinkKey,
+  SidebarQuickLinkVisibility,
 } from "@threa/types"
-import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, DEFAULT_QUICK_LINKS } from "@threa/types"
+import {
+  SMART_SIDEBAR_CONFIG,
+  ALL_SIDEBAR_CONFIG,
+  DEFAULT_QUICK_LINKS,
+  QUICK_LINKS_SECTION_ID,
+  quickLinkHasActiveState,
+} from "@threa/types"
 import type { CollapseState } from "@/contexts"
 import { SMART_SECTIONS } from "./config"
 
@@ -55,6 +62,8 @@ export function sectionIdForSpec(spec: SidebarSectionSpec): string {
       return TYPE_SECTION_IDS[spec.streamType]
     case "label":
       return labelSectionId(spec.labelId)
+    case "quicklinks":
+      return QUICK_LINKS_SECTION_ID
   }
 }
 
@@ -71,6 +80,19 @@ export function hasSection(config: SidebarConfig, spec: SidebarSectionSpec): boo
 export function addSection(config: SidebarConfig, spec: SidebarSectionSpec): SidebarConfig {
   if (hasSection(config, spec)) return config
   return { ...config, sections: [...config.sections, { id: sectionIdForSpec(spec), spec }] }
+}
+
+/**
+ * Insert a section for the spec at `index` (clamped to the list bounds), the
+ * drop produced by dragging an item out of the Add tray onto a position. No-op
+ * if the spec is already present. Pure; the caller persists the result.
+ */
+export function addSectionAt(config: SidebarConfig, spec: SidebarSectionSpec, index: number): SidebarConfig {
+  if (hasSection(config, spec)) return config
+  const at = Math.max(0, Math.min(index, config.sections.length))
+  const next = [...config.sections]
+  next.splice(at, 0, { id: sectionIdForSpec(spec), spec })
+  return { ...config, sections: next }
 }
 
 /** Drop the section with the given id (no-op if absent). Pure. */
@@ -99,11 +121,11 @@ function sameSectionOrder(a: SidebarSection[], b: SidebarSection[]): boolean {
   return a.length === b.length && a.every((s, i) => sectionIdForSpec(s.spec) === sectionIdForSpec(b[i].spec))
 }
 
-/** Whether the quick links are in their default order and all enabled. */
+/** Whether the quick links are in their default order and all shown. */
 function quickLinksAreDefault(links: SidebarQuickLink[]): boolean {
   return (
     links.length === DEFAULT_QUICK_LINKS.length &&
-    links.every((link, i) => link.key === DEFAULT_QUICK_LINKS[i].key && link.enabled)
+    links.every((link, i) => link.key === DEFAULT_QUICK_LINKS[i].key && link.visibility === "show")
   )
 }
 
@@ -120,11 +142,20 @@ export function isPristinePreset(config: SidebarConfig): SidebarBasePreset | nul
   return null
 }
 
-/** Toggle a quick link's visibility. Pure; no-op for an unknown key. */
-export function toggleQuickLink(config: SidebarConfig, key: SidebarQuickLinkKey): SidebarConfig {
+/**
+ * Set a quick link's visibility. Pure; no-op for an unknown key. An `active`
+ * value on a link without a live signal is coerced to `show` (so callers can't
+ * persist a meaningless state — mirrors `normalizeSidebarConfig`).
+ */
+export function setQuickLinkVisibility(
+  config: SidebarConfig,
+  key: SidebarQuickLinkKey,
+  visibility: SidebarQuickLinkVisibility
+): SidebarConfig {
+  const next = visibility === "active" && !quickLinkHasActiveState(key) ? "show" : visibility
   return {
     ...config,
-    quickLinks: config.quickLinks.map((link) => (link.key === key ? { ...link, enabled: !link.enabled } : link)),
+    quickLinks: config.quickLinks.map((link) => (link.key === key ? { ...link, visibility: next } : link)),
   }
 }
 
@@ -211,10 +242,26 @@ const LABEL_PRESENTATION: SectionPresentation = {
   defaultCollapse: "open",
 }
 
+/**
+ * Presentation for the Quick Links block. Rendered by its own component (a list
+ * of links, not streams), so most fields are inert here; `label` names it for
+ * the editor and accessibility. Never hidden when "empty" — the quick-links
+ * component decides its own visibility from per-link state.
+ */
+const QUICK_LINKS_PRESENTATION: SectionPresentation = {
+  label: "Quick Links",
+  tiered: false,
+  compact: false,
+  showPreviewOnHover: false,
+  hideWhenEmpty: false,
+  defaultCollapse: "open",
+}
+
 /** Resolve how a section should render from its spec. */
 export function sectionPresentation(spec: SidebarSectionSpec): SectionPresentation {
   if (spec.kind === "type") return TYPE_PRESENTATION[spec.streamType]
   if (spec.kind === "label") return LABEL_PRESENTATION
+  if (spec.kind === "quicklinks") return QUICK_LINKS_PRESENTATION
 
   const config = SMART_SECTIONS[spec.bucket]
   return {

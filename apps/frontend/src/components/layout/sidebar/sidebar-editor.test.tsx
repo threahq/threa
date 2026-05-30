@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { render, screen, userEvent, spyOnExport } from "@/test"
-import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, type SidebarConfig } from "@threa/types"
+import { SMART_SIDEBAR_CONFIG, ALL_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID, type SidebarConfig } from "@threa/types"
 import * as sidebarConfigHook from "@/hooks/use-sidebar-config"
 import * as workspaceStore from "@/stores/workspace-store"
 import * as contexts from "@/contexts"
 import * as dialogModule from "@/components/ui/responsive-dialog"
-import * as dropdownModule from "@/components/ui/dropdown-menu"
 import { SidebarEditorDialog } from "./sidebar-editor"
-import { moveSection } from "./sidebar-config"
+import { moveSection, removeSection } from "./sidebar-config"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -24,7 +23,7 @@ function useConfig(config: SidebarConfig) {
   })
 }
 
-/** Render dialog + dropdown content inline so radix portals/open-state don't gate the assertions. */
+/** Render dialog content inline so the radix portal/open-state doesn't gate assertions. */
 function Passthrough({ children }: { children?: React.ReactNode }) {
   return <div>{children}</div>
 }
@@ -54,32 +53,18 @@ describe("SidebarEditorDialog", () => {
     ] as const) {
       spyOnExport(dialogModule, key).mockReturnValue(Passthrough as never)
     }
-    for (const key of ["DropdownMenu", "DropdownMenuContent", "DropdownMenuTrigger"] as const) {
-      spyOnExport(dropdownModule, key).mockReturnValue(Passthrough as never)
-    }
-    spyOnExport(dropdownModule, "DropdownMenuLabel").mockReturnValue(Passthrough as never)
-    spyOnExport(dropdownModule, "DropdownMenuSeparator").mockReturnValue((() => null) as never)
-    // A dropdown item fires onSelect on click; model it as a button so we can drive it.
-    spyOnExport(dropdownModule, "DropdownMenuItem").mockReturnValue((({
-      children,
-      onSelect,
-    }: {
-      children?: React.ReactNode
-      onSelect?: () => void
-    }) => (
-      <button type="button" onClick={onSelect}>
-        {children}
-      </button>
-    )) as never)
   })
 
-  it("lists quick links then sections, each in config order", () => {
+  it("lists the sections in config order, with the quick links nested inside the Quick Links section", () => {
     useConfig(SMART_SIDEBAR_CONFIG)
     mount()
 
     const reorderNames = screen.getAllByRole("button", { name: /^Reorder / }).map((b) => b.getAttribute("aria-label"))
     expect(reorderNames).toEqual([
-      // Quick links, default order.
+      // The Quick Links section leads the Smart preset; its nested links render
+      // inside its row (so they appear in the DOM right after it), then the
+      // sibling stream sections follow.
+      "Reorder Quick Links",
       "Reorder Drafts",
       "Reorder Saved",
       "Reorder Files",
@@ -87,7 +72,6 @@ describe("SidebarEditorDialog", () => {
       "Reorder Memory",
       "Reorder Labels",
       "Reorder Activity",
-      // Then the Smart sections.
       "Reorder Important",
       "Reorder Recent",
       "Reorder Pinned",
@@ -95,16 +79,40 @@ describe("SidebarEditorDialog", () => {
     ])
   })
 
-  it("hides a quick link via its visibility switch", async () => {
+  it("hides a quick link via its visibility control", async () => {
     useConfig(SMART_SIDEBAR_CONFIG)
     mount()
 
-    await userEvent.click(screen.getByRole("switch", { name: "Show Drafts" }))
+    await userEvent.click(screen.getByRole("radio", { name: "Hide Drafts" }))
 
     expect(setConfig).toHaveBeenCalledWith({
       ...SMART_SIDEBAR_CONFIG,
-      quickLinks: SMART_SIDEBAR_CONFIG.quickLinks.map((l) => (l.key === "drafts" ? { ...l, enabled: false } : l)),
+      quickLinks: SMART_SIDEBAR_CONFIG.quickLinks.map((l) => (l.key === "drafts" ? { ...l, visibility: "hidden" } : l)),
     })
+  })
+
+  it("sets a quick link to 'show when active'", async () => {
+    useConfig(SMART_SIDEBAR_CONFIG)
+    mount()
+
+    await userEvent.click(screen.getByRole("radio", { name: "Show Drafts when active" }))
+
+    expect(setConfig).toHaveBeenCalledWith({
+      ...SMART_SIDEBAR_CONFIG,
+      quickLinks: SMART_SIDEBAR_CONFIG.quickLinks.map((l) => (l.key === "drafts" ? { ...l, visibility: "active" } : l)),
+    })
+  })
+
+  it("offers 'show when active' only for links that carry a signal", () => {
+    useConfig(SMART_SIDEBAR_CONFIG)
+    mount()
+
+    // Drafts has a count → the active option exists.
+    expect(screen.getByRole("radio", { name: "Show Drafts when active" })).toBeInTheDocument()
+    // Files has no signal → no active option, just show/hide.
+    expect(screen.queryByRole("radio", { name: "Show Files when active" })).not.toBeInTheDocument()
+    expect(screen.getByRole("radio", { name: "Show Files" })).toBeInTheDocument()
+    expect(screen.getByRole("radio", { name: "Hide Files" })).toBeInTheDocument()
   })
 
   it("removes a section, persisting the config without it", async () => {
@@ -113,10 +121,16 @@ describe("SidebarEditorDialog", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Remove Recent" }))
 
-    expect(setConfig).toHaveBeenCalledWith({
-      ...SMART_SIDEBAR_CONFIG,
-      sections: SMART_SIDEBAR_CONFIG.sections.filter((s) => s.id !== "recent"),
-    })
+    expect(setConfig).toHaveBeenCalledWith(removeSection(SMART_SIDEBAR_CONFIG, "recent"))
+  })
+
+  it("removes the entire Quick Links block", async () => {
+    useConfig(SMART_SIDEBAR_CONFIG)
+    mount()
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove Quick Links" }))
+
+    expect(setConfig).toHaveBeenCalledWith(removeSection(SMART_SIDEBAR_CONFIG, QUICK_LINKS_SECTION_ID))
   })
 
   it("seeds from a preset and highlights the active one", async () => {
@@ -137,12 +151,29 @@ describe("SidebarEditorDialog", () => {
     expect(screen.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "false")
   })
 
-  it("adds a section that isn't already present", async () => {
-    // Start from All so the smart buckets are addable.
+  it("resets a customized layout back to its base preset", async () => {
+    // A reordered Smart layout — diverged from the preset, so Reset is enabled.
+    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))
+    mount()
+
+    await userEvent.click(screen.getByRole("button", { name: "Reset preset" }))
+
+    expect(setBasePreset).toHaveBeenCalledWith("smart")
+  })
+
+  it("disables Reset preset when the layout already matches a preset", () => {
+    useConfig(SMART_SIDEBAR_CONFIG)
+    mount()
+
+    expect(screen.getByRole("button", { name: "Reset preset" })).toBeDisabled()
+  })
+
+  it("adds a section from the Add tray by clicking it", async () => {
+    // Start from All so the smart buckets are addable in the tray.
     useConfig(ALL_SIDEBAR_CONFIG)
     mount()
 
-    await userEvent.click(screen.getByRole("button", { name: /Important/ }))
+    await userEvent.click(screen.getByRole("button", { name: "Add Important" }))
 
     expect(setConfig).toHaveBeenCalledWith({
       ...ALL_SIDEBAR_CONFIG,

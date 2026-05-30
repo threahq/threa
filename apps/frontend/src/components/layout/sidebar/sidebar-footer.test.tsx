@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { User as UserIcon } from "lucide-react"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
@@ -82,6 +83,8 @@ describe("SidebarFooter", () => {
     renderWithRouter(
       <SidebarFooter
         workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
         currentUser={{
           id: "user_1",
           workspaceId: "workspace_1",
@@ -114,6 +117,50 @@ describe("SidebarFooter", () => {
     expect(collapseOnMobile).toHaveBeenCalled()
   })
 
+  it("opens the create drawer from the New button and exposes every stream flavor", async () => {
+    const user = userEvent.setup()
+    const onCreateScratchpad = vi.fn()
+    const onCreateChannel = vi.fn()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={onCreateScratchpad}
+        onCreateChannel={onCreateChannel}
+        scratchpadAddMenuActions={[
+          { id: "new-scratchpad", label: "New Scratchpad", icon: UserIcon, onSelect: onCreateScratchpad },
+          { id: "new-quick-note", label: "New Quick Note", icon: UserIcon, onSelect: vi.fn() },
+        ]}
+        currentUser={{
+          id: "user_1",
+          workspaceId: "workspace_1",
+          workosUserId: "workos_user_1",
+          email: "kris@example.com",
+          role: "member",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en-SE",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          setupCompleted: true,
+          joinedAt: "2026-03-03T10:00:00Z",
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: "New" }))
+
+    // The provided scratchpad flavors plus the appended channel creator.
+    expect(screen.getByText("New Scratchpad")).toBeInTheDocument()
+    expect(screen.getByText("New Quick Note")).toBeInTheDocument()
+    await user.click(screen.getByText("New Channel"))
+    expect(onCreateChannel).toHaveBeenCalled()
+  })
+
   it("opens the desktop dropdown from the account row trigger", async () => {
     isMobile.value = false
     const user = userEvent.setup()
@@ -121,6 +168,8 @@ describe("SidebarFooter", () => {
     renderWithRouter(
       <SidebarFooter
         workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
         currentUser={{
           id: "user_1",
           workspaceId: "workspace_1",

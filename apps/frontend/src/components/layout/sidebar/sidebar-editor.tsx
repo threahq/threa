@@ -1,10 +1,12 @@
 import { useMemo } from "react"
-import { GripVertical, Plus, X } from "lucide-react"
+import { CircleDot, Eye, EyeOff, GripVertical, RotateCcw, X } from "lucide-react"
 import {
   DndContext,
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  useDraggable,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -23,7 +25,9 @@ import {
   type SidebarSection,
   type SidebarSectionSpec,
   type SidebarQuickLink,
+  type SidebarQuickLinkVisibility,
   type SidebarBasePreset,
+  quickLinkHasActiveState,
 } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
@@ -31,15 +35,7 @@ import { useSidebarConfig } from "@/hooks/use-sidebar-config"
 import { useWorkspaceLabels } from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks"
 import { Button } from "@/components/ui/button"
-import { Switch } from "@/components/ui/switch"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   ResponsiveDialog,
   ResponsiveDialogBody,
@@ -56,15 +52,21 @@ import {
   isPristinePreset,
   moveSection,
   addSection,
+  addSectionAt,
   removeSection,
   hasSection,
   sectionPresentation,
   sectionIdForSpec,
-  toggleQuickLink,
+  setQuickLinkVisibility,
   moveQuickLink,
 } from "./sidebar-config"
 
 const PRESET_LABELS: Record<SidebarBasePreset, string> = { smart: "Smart", all: "All" }
+
+/** Tray draggable ids are prefixed so they never collide with section sortable ids. */
+const ADD_PREFIX = "add:"
+/** Droppable id for the sections list, so a tray drop into an empty list appends. */
+const SECTIONS_DROPPABLE_ID = "sections-dropzone"
 
 interface SidebarEditorDialogProps {
   workspaceId: string
@@ -73,12 +75,14 @@ interface SidebarEditorDialogProps {
 }
 
 /**
- * The full "Customize sidebar" panel. Pick a preset to seed from, then make the
- * sidebar yours: reorder quick links and hide ones you don't use, reorder stream
- * sections, add any section the layout lacks (smart buckets, stream types,
- * pinnable labels), or remove sections. Every action persists immediately
- * through {@link useSidebarConfig} (optimistic + cross-device sync) — there is no
- * separate save step, so the live sidebar reflects each change as it's made.
+ * The full "Customize sidebar" panel. Everything is one ordered list of sections
+ * — stream buckets, stream types, pinned labels, and the Quick Links block — that
+ * you drag to reorder, drag in from the Add tray, or remove. The Quick Links
+ * section expands to reorder its links and set each one's visibility
+ * (show / show when active / hide). Pick a preset to seed from, or reset to one.
+ * Every action persists immediately through {@link useSidebarConfig} (optimistic +
+ * cross-device sync) — there is no save step, so the live sidebar reflects each
+ * change as it's made.
  */
 export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: SidebarEditorDialogProps) {
   const { config, setConfig, setBasePreset } = useSidebarConfig(workspaceId)
@@ -96,26 +100,52 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
+  // The preset this layout is pristinely equal to (highlights its toggle), or
+  // null once the user has customized it — in which case Reset is available.
   const activePreset = isPristinePreset(config)
+  const isCustomized = activePreset === null
   const sectionIds = useMemo(() => config.sections.map((s) => s.id), [config.sections])
-  const quickLinkKeys = useMemo(() => config.quickLinks.map((l) => l.key), [config.quickLinks])
 
-  const addableSmart = SIDEBAR_SECTION_KEYS.map((bucket): SidebarSectionSpec => ({ kind: "smart", bucket })).filter(
-    (spec) => !hasSection(config, spec)
-  )
-  const addableTypes = SIDEBAR_TYPE_SECTIONS.map(
-    (streamType): SidebarSectionSpec => ({ kind: "type", streamType })
-  ).filter((spec) => !hasSection(config, spec))
-  const addableLabels = labels.filter((label) => !hasSection(config, { kind: "label", labelId: label.id }))
-  const hasAddable = addableSmart.length + addableTypes.length + addableLabels.length > 0
+  // Specs the layout doesn't have yet — the Add tray's draggable/clickable chips.
+  const addableSpecs = useMemo<SidebarSectionSpec[]>(() => {
+    const specs: SidebarSectionSpec[] = []
+    if (!hasSection(config, { kind: "quicklinks" })) specs.push({ kind: "quicklinks" })
+    for (const bucket of SIDEBAR_SECTION_KEYS) {
+      const spec: SidebarSectionSpec = { kind: "smart", bucket }
+      if (!hasSection(config, spec)) specs.push(spec)
+    }
+    for (const streamType of SIDEBAR_TYPE_SECTIONS) {
+      const spec: SidebarSectionSpec = { kind: "type", streamType }
+      if (!hasSection(config, spec)) specs.push(spec)
+    }
+    for (const label of labels) {
+      const spec: SidebarSectionSpec = { kind: "label", labelId: label.id }
+      if (!hasSection(config, spec)) specs.push(spec)
+    }
+    return specs
+  }, [config, labels])
 
-  const handleSectionDragEnd = (event: DragEndEvent) => {
+  // One drop handler for the sections context: a tray chip adds a section at the
+  // drop position; a section drag reorders. Tray ids carry the ADD_PREFIX.
+  const handleSectionsDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
-    if (over && active.id !== over.id) setConfig(moveSection(config, String(active.id), String(over.id)))
-  }
-  const handleQuickLinkDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (over && active.id !== over.id) setConfig(moveQuickLink(config, String(active.id), String(over.id)))
+    if (!over) return
+    const activeId = String(active.id)
+
+    if (activeId.startsWith(ADD_PREFIX)) {
+      const specId = activeId.slice(ADD_PREFIX.length)
+      const spec = addableSpecs.find((s) => sectionIdForSpec(s) === specId)
+      if (!spec) return
+      // Dropped on the list body (empty list) → append; on a section → insert there.
+      const index =
+        String(over.id) === SECTIONS_DROPPABLE_ID
+          ? config.sections.length
+          : config.sections.findIndex((s) => s.id === String(over.id))
+      setConfig(addSectionAt(config, spec, index === -1 ? config.sections.length : index))
+      return
+    }
+
+    if (activeId !== String(over.id)) setConfig(moveSection(config, activeId, String(over.id)))
   }
 
   return (
@@ -127,13 +157,27 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
         <ResponsiveDialogHeader className="border-b px-4 py-3 sm:px-6">
           <ResponsiveDialogTitle>Customize sidebar</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
-            Start from a preset, then reorder, hide, add, or remove anything.
+            Drag to reorder, drag in from the tray to add, or remove anything — including Quick Links.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
         <ResponsiveDialogBody className="space-y-5 py-5 sm:py-6">
           <section className="space-y-2">
-            <EditorGroupHeading>Preset</EditorGroupHeading>
+            <div className="flex items-center justify-between gap-2">
+              <EditorGroupHeading>Preset</EditorGroupHeading>
+              <Button
+                variant="ghost"
+                size="sm"
+                // Enabled only once the layout has drifted from a preset; resetting
+                // a pristine layout would be a silent no-op write.
+                disabled={!isCustomized}
+                onClick={() => setBasePreset(config.basePreset)}
+                className="h-auto gap-1 px-1.5 py-0.5 text-xs font-medium text-muted-foreground"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Reset preset
+              </Button>
+            </div>
             <div role="group" aria-label="Preset" className="inline-flex gap-1 rounded-md bg-muted p-0.5">
               {SIDEBAR_BASE_PRESETS.map((preset) => (
                 <button
@@ -153,83 +197,27 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
           </section>
 
           <section className="space-y-2">
-            <EditorGroupHeading>Quick links</EditorGroupHeading>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleQuickLinkDragEnd}>
-              <SortableContext items={quickLinkKeys} strategy={verticalListSortingStrategy}>
-                <ul className="space-y-1">
-                  {config.quickLinks.map((link) => (
-                    <SortableQuickLinkRow
-                      key={link.key}
-                      link={link}
-                      reduceMotion={reduceMotion}
-                      onToggle={() => setConfig(toggleQuickLink(config, link.key))}
-                    />
-                  ))}
-                </ul>
-              </SortableContext>
-            </DndContext>
-          </section>
-
-          <section className="space-y-2">
             <EditorGroupHeading>Sections</EditorGroupHeading>
-            {config.sections.length === 0 ? (
-              <p className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">
-                No sections. Add one below or reset to a preset.
-              </p>
-            ) : (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionDragEnd}>
-                <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-                  <ul className="space-y-1">
-                    {config.sections.map((section) => (
-                      <SortableSectionRow
-                        key={section.id}
-                        section={section}
-                        labelsById={labelsById}
-                        reduceMotion={reduceMotion}
-                        onRemove={() => setConfig(removeSection(config, section.id))}
-                      />
-                    ))}
-                  </ul>
-                </SortableContext>
-              </DndContext>
-            )}
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleSectionsDragEnd}>
+              <SectionsList
+                sections={config.sections}
+                sectionIds={sectionIds}
+                labelsById={labelsById}
+                quickLinks={config.quickLinks}
+                reduceMotion={reduceMotion}
+                onRemoveSection={(id) => setConfig(removeSection(config, id))}
+                onSetQuickLinkVisibility={(key, visibility) =>
+                  setConfig(setQuickLinkVisibility(config, key, visibility))
+                }
+                onMoveQuickLink={(activeKey, overKey) => setConfig(moveQuickLink(config, activeKey, overKey))}
+              />
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="w-full gap-1.5" disabled={!hasAddable}>
-                  <Plus className="h-3.5 w-3.5" />
-                  {hasAddable ? "Add section" : "All sections added"}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
-                {addableSmart.map((spec) => {
-                  const { icon, label } = sectionPresentation(spec)
-                  return (
-                    <AddSectionItem key={sectionIdForSpec(spec)} onSelect={() => setConfig(addSection(config, spec))}>
-                      <span aria-hidden>{icon}</span>
-                      {label}
-                    </AddSectionItem>
-                  )
-                })}
-                {addableTypes.map((spec) => (
-                  <AddSectionItem key={sectionIdForSpec(spec)} onSelect={() => setConfig(addSection(config, spec))}>
-                    {sectionPresentation(spec).label}
-                  </AddSectionItem>
-                ))}
-                {addableLabels.length > 0 && (addableSmart.length > 0 || addableTypes.length > 0) && (
-                  <DropdownMenuSeparator />
-                )}
-                {addableLabels.length > 0 && <DropdownMenuLabel>Labels</DropdownMenuLabel>}
-                {addableLabels.map((label) => (
-                  <AddSectionItem
-                    key={`label:${label.id}`}
-                    onSelect={() => setConfig(addSection(config, { kind: "label", labelId: label.id }))}
-                  >
-                    <LabelChip label={label} className="pointer-events-none" />
-                  </AddSectionItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
+              <AddTray
+                specs={addableSpecs}
+                labelsById={labelsById}
+                onAdd={(spec) => setConfig(addSection(config, spec))}
+              />
+            </DndContext>
           </section>
         </ResponsiveDialogBody>
 
@@ -248,15 +236,181 @@ function EditorGroupHeading({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{children}</h3>
 }
 
-/** A reorderable quick-link row with a visibility switch. Top-level per INV-18. */
+/** The droppable, sortable list of section rows. Top-level per INV-18. */
+function SectionsList({
+  sections,
+  sectionIds,
+  labelsById,
+  quickLinks,
+  reduceMotion,
+  onRemoveSection,
+  onSetQuickLinkVisibility,
+  onMoveQuickLink,
+}: {
+  sections: SidebarSection[]
+  sectionIds: string[]
+  labelsById: Map<string, CachedLabel>
+  quickLinks: SidebarQuickLink[]
+  reduceMotion: boolean
+  onRemoveSection: (id: string) => void
+  onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
+  onMoveQuickLink: (activeKey: string, overKey: string) => void
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: SECTIONS_DROPPABLE_ID })
+
+  if (sections.length === 0) {
+    return (
+      <p
+        ref={setNodeRef}
+        className={cn(
+          "rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground",
+          isOver && "border-primary/60 bg-primary/5"
+        )}
+      >
+        Empty sidebar. Drag an item from below, or reset to a preset.
+      </p>
+    )
+  }
+
+  return (
+    <div ref={setNodeRef} className={cn("rounded-lg", isOver && "ring-2 ring-primary/40")}>
+      <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
+        <ul className="space-y-1">
+          {sections.map((section) => (
+            <SortableSectionRow
+              key={section.id}
+              section={section}
+              labelsById={labelsById}
+              quickLinks={quickLinks}
+              reduceMotion={reduceMotion}
+              onRemove={() => onRemoveSection(section.id)}
+              onSetQuickLinkVisibility={onSetQuickLinkVisibility}
+              onMoveQuickLink={onMoveQuickLink}
+            />
+          ))}
+        </ul>
+      </SortableContext>
+    </div>
+  )
+}
+
+/** A reorderable section row with a remove button. The Quick Links section also
+ *  renders its nested link editor beneath the row. Top-level per INV-18. */
+function SortableSectionRow({
+  section,
+  labelsById,
+  quickLinks,
+  reduceMotion,
+  onRemove,
+  onSetQuickLinkVisibility,
+  onMoveQuickLink,
+}: {
+  section: SidebarSection
+  labelsById: Map<string, CachedLabel>
+  quickLinks: SidebarQuickLink[]
+  reduceMotion: boolean
+  onRemove: () => void
+  onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
+  onMoveQuickLink: (activeKey: string, overKey: string) => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
+  const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
+  const name = sectionDisplayName(section, labelsById)
+  const isQuickLinks = section.spec.kind === "quicklinks"
+
+  return (
+    <li ref={setNodeRef} style={style} className={cn(isDragging && "relative z-10")}>
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
+          // When the nested links render below, square off the bottom so the row
+          // and its sub-list read as one connected group, not two stacked cards.
+          isQuickLinks && "rounded-b-none border-b-0",
+          isDragging && "shadow-md"
+        )}
+      >
+        <DragHandle label={`Reorder ${name}`} attributes={attributes} listeners={listeners} />
+        <div className="min-w-0 flex-1">
+          <SectionRowContent section={section} labelsById={labelsById} />
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`Remove ${name}`}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {isQuickLinks && (
+        <QuickLinksSectionBody
+          quickLinks={quickLinks}
+          reduceMotion={reduceMotion}
+          onSetVisibility={onSetQuickLinkVisibility}
+          onMove={onMoveQuickLink}
+        />
+      )}
+    </li>
+  )
+}
+
+/** The nested reorder/visibility editor for the quick links, indented under the
+ *  Quick Links section row. Its own DndContext so quick-link drags don't bubble
+ *  to the sections list. Top-level per INV-18. */
+function QuickLinksSectionBody({
+  quickLinks,
+  reduceMotion,
+  onSetVisibility,
+  onMove,
+}: {
+  quickLinks: SidebarQuickLink[]
+  reduceMotion: boolean
+  onSetVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
+  onMove: (activeKey: string, overKey: string) => void
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+  const keys = useMemo(() => quickLinks.map((l) => l.key), [quickLinks])
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (over && active.id !== over.id) onMove(String(active.id), String(over.id))
+  }
+
+  // Continues the section card (it squared its bottom), indenting the links so
+  // they read as sub-elements of the Quick Links block.
+  return (
+    <div className="rounded-b-md border border-t-0 bg-card/50 py-1.5 pl-3 pr-2">
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={keys} strategy={verticalListSortingStrategy}>
+          <ul className="space-y-1 border-l border-border pl-3">
+            {quickLinks.map((link) => (
+              <SortableQuickLinkRow
+                key={link.key}
+                link={link}
+                reduceMotion={reduceMotion}
+                onSetVisibility={(visibility) => onSetVisibility(link.key, visibility)}
+              />
+            ))}
+          </ul>
+        </SortableContext>
+      </DndContext>
+    </div>
+  )
+}
+
+/** A reorderable quick-link row with a tri-state visibility control. Top-level per INV-18. */
 function SortableQuickLinkRow({
   link,
   reduceMotion,
-  onToggle,
+  onSetVisibility,
 }: {
   link: SidebarQuickLink
   reduceMotion: boolean
-  onToggle: () => void
+  onSetVisibility: (visibility: SidebarQuickLinkVisibility) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: link.key })
   const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
@@ -267,63 +421,75 @@ function SortableQuickLinkRow({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
-        isDragging && "relative z-10 shadow-md"
+        // No border/bg of its own — the enclosing Quick Links sub-card already
+        // bounds these rows; a per-row border would stack a third border layer.
+        // A dragged row lifts onto its own card so it reads while floating.
+        "flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/40",
+        isDragging && "relative z-10 border bg-card shadow-md"
       )}
     >
       <DragHandle label={`Reorder ${label}`} attributes={attributes} listeners={listeners} />
       <span
         className={cn(
           "flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium",
-          !link.enabled && "text-muted-foreground"
+          link.visibility === "hidden" && "text-muted-foreground"
         )}
       >
         <Icon className="h-4 w-4 shrink-0" />
         <span className="truncate">{label}</span>
       </span>
-      <Switch checked={link.enabled} onCheckedChange={onToggle} aria-label={`Show ${label}`} />
+      <QuickLinkVisibilityControl link={link} onSetVisibility={onSetVisibility} />
     </li>
   )
 }
 
-/** A reorderable section row with a remove button. Top-level per INV-18. */
-function SortableSectionRow({
-  section,
-  labelsById,
-  reduceMotion,
-  onRemove,
+/** Show / Show-when-active / Hide segmented control. The middle state is offered
+ *  only for links that carry a live signal. Top-level per INV-18. */
+function QuickLinkVisibilityControl({
+  link,
+  onSetVisibility,
 }: {
-  section: SidebarSection
-  labelsById: Map<string, CachedLabel>
-  reduceMotion: boolean
-  onRemove: () => void
+  link: SidebarQuickLink
+  onSetVisibility: (visibility: SidebarQuickLinkVisibility) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
-  const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
-  const name = sectionDisplayName(section, labelsById)
+  const { label } = QUICK_LINK_META[link.key]
+  const hasActive = quickLinkHasActiveState(link.key)
 
   return (
-    <li
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "flex items-center gap-2 rounded-md border bg-card px-2 py-1.5",
-        isDragging && "relative z-10 shadow-md"
-      )}
+    <ToggleGroup
+      type="single"
+      // Outline so each item has its own border — the selected state reads
+      // clearly against the muted accent fill on the tinted sub-card; the items
+      // size themselves (h-8 w-8) for a comfortable tap target.
+      variant="outline"
+      aria-label={`${label} visibility`}
+      value={link.visibility}
+      // Radix clears the value when you click the active item; ignore the empty
+      // string so a link can't end up in an undefined visibility.
+      onValueChange={(value) => {
+        if (value) onSetVisibility(value as SidebarQuickLinkVisibility)
+      }}
+      className="shrink-0 gap-0.5"
     >
-      <DragHandle label={`Reorder ${name}`} attributes={attributes} listeners={listeners} />
-      <div className="min-w-0 flex-1">
-        <SectionRowContent section={section} labelsById={labelsById} />
-      </div>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`Remove ${name}`}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
-    </li>
+      {/* title duplicates the aria-label as a hover tooltip — the icons (esp. the
+          middle "show when active") aren't self-evident to sighted users. */}
+      <ToggleGroupItem value="show" aria-label={`Show ${label}`} title={`Show ${label}`} className="h-8 w-8 p-0">
+        <Eye className="h-3.5 w-3.5" />
+      </ToggleGroupItem>
+      {hasActive && (
+        <ToggleGroupItem
+          value="active"
+          aria-label={`Show ${label} when active`}
+          title={`Show ${label} when active`}
+          className="h-8 w-8 p-0"
+        >
+          <CircleDot className="h-3.5 w-3.5" />
+        </ToggleGroupItem>
+      )}
+      <ToggleGroupItem value="hidden" aria-label={`Hide ${label}`} title={`Hide ${label}`} className="h-8 w-8 p-0">
+        <EyeOff className="h-3.5 w-3.5" />
+      </ToggleGroupItem>
+    </ToggleGroup>
   )
 }
 
@@ -361,7 +527,8 @@ function SectionRowContent({ section, labelsById }: { section: SidebarSection; l
   }
   // Stream-type sections carry no emoji; mirror the live sidebar's lucide glyph
   // (BADGE_CONFIG) so a reordered "Channels"/"Scratchpads"/"DMs" row stays
-  // recognizable. Smart buckets use their emoji from sectionPresentation.
+  // recognizable. Smart buckets use their emoji from sectionPresentation; Quick
+  // Links has no emoji, just its name.
   const { label, icon } = sectionPresentation(section.spec)
   const TypeIcon = section.spec.kind === "type" ? BADGE_CONFIG[section.spec.streamType].icon : null
   return (
@@ -382,11 +549,73 @@ function sectionDisplayName(section: SidebarSection, labelsById: Map<string, Cac
   return sectionPresentation(section.spec).label
 }
 
-/** A dropdown row that adds a section; closes the menu on select. Top-level per INV-18. */
-function AddSectionItem({ children, onSelect }: { children: React.ReactNode; onSelect: () => void }) {
+/** The always-visible tray of addable sections. Each chip can be dragged onto the
+ *  list at a position, or clicked to append. Top-level per INV-18. */
+function AddTray({
+  specs,
+  labelsById,
+  onAdd,
+}: {
+  specs: SidebarSectionSpec[]
+  labelsById: Map<string, CachedLabel>
+  onAdd: (spec: SidebarSectionSpec) => void
+}) {
+  if (specs.length === 0) {
+    return <p className="pt-3 text-xs text-muted-foreground">Everything's in your sidebar.</p>
+  }
+
   return (
-    <DropdownMenuItem onSelect={onSelect} className="gap-1.5">
-      {children}
-    </DropdownMenuItem>
+    <div className="space-y-1.5 pt-3">
+      {/* Interaction-neutral label: the chips support both drag-to-position and
+          click-to-append, on either platform. */}
+      <p className="text-xs text-muted-foreground">Available to add:</p>
+      <ul className="flex flex-wrap gap-1.5">
+        {specs.map((spec) => (
+          <AddTrayChip key={sectionIdForSpec(spec)} spec={spec} labelsById={labelsById} onAdd={() => onAdd(spec)} />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+/** A draggable + clickable Add-tray chip. Top-level per INV-18. */
+function AddTrayChip({
+  spec,
+  labelsById,
+  onAdd,
+}: {
+  spec: SidebarSectionSpec
+  labelsById: Map<string, CachedLabel>
+  onAdd: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `${ADD_PREFIX}${sectionIdForSpec(spec)}`,
+  })
+  const style = transform ? { transform: CSS.Translate.toString(transform) } : undefined
+  const name = sectionDisplayName({ id: sectionIdForSpec(spec), spec }, labelsById)
+  const label = spec.kind === "label" ? labelsById.get(spec.labelId) : undefined
+
+  return (
+    <li>
+      <button
+        ref={setNodeRef}
+        type="button"
+        style={style}
+        onClick={onAdd}
+        aria-label={`Add ${name}`}
+        className={cn(
+          // cursor-pointer (not grab): clicking to add is the primary action; the
+          // grab cursor only appears once a drag is actually under way.
+          // active: states give a visible tap flash on touch (where :hover can't),
+          // since touch-none — needed for DnD — suppresses the native pressed style.
+          "flex cursor-pointer touch-none items-center gap-1 rounded-full border border-dashed bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-solid hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing active:bg-muted active:text-foreground",
+          isDragging && "opacity-50"
+        )}
+        {...attributes}
+        {...listeners}
+      >
+        {label ? <LabelChip label={label} className="pointer-events-none" /> : name}
+      </button>
+    </li>
   )
 }

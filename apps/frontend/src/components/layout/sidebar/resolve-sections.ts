@@ -57,7 +57,10 @@ function resolveItems(
 ): StreamItemData[] {
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
-  return resolveLabelSection(spec.labelId, input, exclude)
+  if (spec.kind === "label") return resolveLabelSection(spec.labelId, input, exclude)
+  // Quick links draw no streams — the block renders its own link list, so the
+  // resolved section is a positional placeholder the stream list renders specially.
+  return []
 }
 
 /** Streams carrying a label, by activity. Draws from real streams only (synthetic DM drafts can't be labeled). */

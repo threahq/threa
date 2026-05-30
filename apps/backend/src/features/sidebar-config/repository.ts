@@ -1,17 +1,19 @@
 import { sql, type Querier } from "../../db"
-import type { SidebarConfig } from "@threa/types"
+import type { SidebarConfig, RawSidebarConfig } from "@threa/types"
 
 interface SidebarConfigRow {
-  config: SidebarConfig
+  config: RawSidebarConfig
 }
 
 export const SidebarConfigRepository = {
   /**
    * Fetch the stored sidebar config for a user in a workspace.
    * Returns null when the user has never customized it — the service layer
-   * falls back to the code-defined default.
+   * falls back to the code-defined default. The row is the raw stored document
+   * (it may pre-date the current version/shape), so the service normalizes it
+   * before use; the return type reflects that.
    */
-  async find(db: Querier, workspaceId: string, userId: string): Promise<SidebarConfig | null> {
+  async find(db: Querier, workspaceId: string, userId: string): Promise<RawSidebarConfig | null> {
     const result = await db.query<SidebarConfigRow>(sql`
       SELECT config
       FROM sidebar_configs

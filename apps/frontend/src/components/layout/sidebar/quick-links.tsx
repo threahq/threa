@@ -2,6 +2,7 @@ import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag, type Lu
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
+import { QUICK_LINKS_SECTION_ID } from "@threa/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -46,7 +47,9 @@ interface QuickLinkItem {
   signalSlot: ReactNode
 }
 
-const SECTION_KEY = "quick-links"
+// Collapse-state key for the block; also its section id in the config, so the
+// editor's quick-links section and this rendered block share one stable key.
+const SECTION_KEY = QUICK_LINKS_SECTION_ID
 const DEFAULT_STATE = "open"
 
 function countSlot(count: number): ReactNode {
@@ -103,21 +106,29 @@ export function SidebarQuickLinks({
     },
   }
 
+  // A link renders when it's set to "show", or "show when active" and it
+  // currently carries a signal (a count / unread badge). "hidden" never renders.
+  const isVisible = (link: SidebarQuickLink): boolean => {
+    if (link.visibility === "show") return true
+    if (link.visibility === "active") return itemByKey[link.key].unreadCount > 0
+    return false
+  }
+  const visible = quickLinks.filter(isVisible)
+
   // Aggregate only "real" attention-worthy signals — drafts and saved counts
   // are persistent artifacts, not unread activity. The activity feed is the
   // only source of new-attention signal in the quick links today, and only when
-  // the viewer keeps it visible.
-  const activityEnabled = quickLinks.some((link) => link.key === "activity" && link.enabled)
-  const unreadAggregate = activityEnabled ? unreadActivityCount : 0
+  // the viewer actually keeps it visible.
+  const activityVisible = visible.some((link) => link.key === "activity")
+  const unreadAggregate = activityVisible ? unreadActivityCount : 0
 
   const isOpen = state === "open"
-  const visible = quickLinks.filter((link) => link.enabled)
 
   // Every link can be hidden from the editor; render nothing when none remain.
   if (visible.length === 0) return null
 
   return (
-    <div className="space-y-1">
+    <div className="mb-2 space-y-1">
       <SectionHeader
         label="Quick Links"
         state={state}

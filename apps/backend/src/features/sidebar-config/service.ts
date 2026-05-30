@@ -2,7 +2,7 @@ import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { SidebarConfigRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
-import { type SidebarConfig, DEFAULT_SIDEBAR_CONFIG, normalizeSidebarConfig } from "@threa/types"
+import { type SidebarConfig, type RawSidebarConfig, DEFAULT_SIDEBAR_CONFIG, normalizeSidebarConfig } from "@threa/types"
 
 export class SidebarConfigService {
   constructor(private pool: Pool) {}
@@ -22,7 +22,7 @@ export class SidebarConfigService {
    * Replace a user's sidebar config and broadcast to their other devices via
    * the outbox (author-scoped event).
    */
-  async updateConfig(workspaceId: string, userId: string, config: SidebarConfig): Promise<SidebarConfig> {
+  async updateConfig(workspaceId: string, userId: string, config: RawSidebarConfig): Promise<SidebarConfig> {
     const normalized = normalizeSidebarConfig(config)
     return withTransaction(this.pool, async (client) => {
       await SidebarConfigRepository.upsert(client, workspaceId, userId, normalized)
