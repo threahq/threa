@@ -5,16 +5,20 @@
  * Why: the timeline's footer spacer reserves vertical space for the floating
  * composer pill via `var(--composer-height, 0px)`. That variable is set by
  * `useComposerHeightPublish` on the nearest `[data-editor-zone]` ancestor —
- * but the ResizeObserver runs inside `useEffect`, after the first commit.
- * Until then the fallback (0px) wins, and the footer spacer grows from 0 to
- * ~80px on first paint. Inside Virtuoso's `stickToBottom` mode that growth
- * forces the list to shift content up by the same amount, which the user
- * sees as the timeline "jumping" on every hard refresh.
+ * but the composer measures in a layout effect, which runs after the first
+ * render commits. Until then the fallback (0px) would win, so Virtuoso's
+ * mount-time measurement (which precedes the composer's layout effect) sizes
+ * the footer at 0 and the spacer grows from 0 to ~80px before paint. Inside
+ * Virtuoso's `stickToBottom` mode that growth forces the list to shift content
+ * up by the same amount, which the user sees as the timeline "jumping" on
+ * every hard refresh.
  *
  * Persisting the last-known height to `localStorage` and applying it to
  * `:root` before React mounts means the first render of the spacer already
- * reserves roughly the right space. The editor-zone override that runs in
- * the composer's effect later corrects any drift without a visible jump.
+ * reserves roughly the right space. The editor-zone override that runs in the
+ * composer's layout effect later corrects any residual drift pre-paint (and
+ * notifies the timeline to re-anchor in the same frame), so there is no
+ * visible jump.
  */
 
 const STORAGE_KEY = "threa:composer-height"
