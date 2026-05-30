@@ -48,35 +48,22 @@ if ("serviceWorker" in navigator) {
   })
 }
 
-// Bulk-load persisted markdown-block + link-preview collapse state into the
-// in-memory mirror before mounting React. Synchronous consumers
-// (`useBlockCollapse`, `useLinkPreviewCollapse`) see the persisted choices on
-// their first render, eliminating the post-mount resize cascade that Virtuoso
-// otherwise compensates for by shifting sibling rows.
-//
-// We race hydration against a deadline: when IDB is healthy (the common case,
-// ~5–20ms) the await returns almost immediately; the deadline only fires when
-// `db.open()` itself is slow — cold-boot schema migrations, a contended IDB
-// connection, or a multi-thousand-row collapse table. 500ms is the headroom
-// we need to clear those cases without bailing too early; the previous 100ms
-// cap was tight enough that returning users with large collapse tables would
-// mount with an empty cache and then flip a previously-expanded long code
-// block from its default collapsed clamp to fully expanded once the persisted
-// override landed on the next render — the "mega jump" reported in prod.
-// At the deadline we mount with whatever the cache holds; `hydrateCollapseCache`
-// keeps running and `notify()` still wakes subscribers, so the cache heals
-// even if the deadline fired.
-const HYDRATION_CAP_MS = 500
+// Migrate persisted markdown-block + link-preview collapse state from the
+// legacy IndexedDB tables into the in-memory mirror — but do NOT block first
+// paint on it. The synchronous localStorage hydrate at collapse-cache import
+// time already populates the cache for anyone who has toggled a block before,
+// so the common case needs nothing from this call. `hydrateCollapseCache()`
+// only does real work — a cold `db.open()` + table read — for users whose
+// state predates the localStorage mirror, and awaiting that put an IndexedDB
+// open on the critical path ahead of first paint (including the IDB-cached
+// content render) for no benefit. It calls `notify()` when it resolves, so
+// `useSyncExternalStore` consumers re-render and collapse state heals a few ms
+// after paint for that shrinking legacy cohort, instead of stalling every
+// boot's first paint behind it.
+void hydrateCollapseCache()
 
-const waitMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function bootstrap() {
-  await Promise.race([hydrateCollapseCache(), waitMs(HYDRATION_CAP_MS)])
-  createRoot(document.getElementById("root")!).render(
-    <StrictMode>
-      <App />
-    </StrictMode>
-  )
-}
-
-void bootstrap()
+createRoot(document.getElementById("root")!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>
+)

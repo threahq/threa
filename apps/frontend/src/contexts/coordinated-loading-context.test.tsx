@@ -440,6 +440,33 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("stream-state").textContent).toBe("loading")
   })
 
+  it("keeps the topbar indicator dark for the initial background sync that overlaps the first reveal", async () => {
+    // Offline-first: a returning user reveals from IDB while the very first
+    // workspace bootstrap is still syncing in the background. That initial sync
+    // is a refresh of already-visible content, not a load, so the topbar
+    // indicator must stay dark — surfacing it made online feel slower than
+    // offline, which never syncs and so never shows it.
+    makeReadyWorkspaceState()
+    mockSyncStatuses = new Map([["workspace:workspace_1", "syncing"]])
+
+    render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+    // Revealed from IDB despite the in-flight sync...
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+
+    // ...and the indicator stays off even past the reveal delay.
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId("show-loading-indicator").textContent).toBe("false")
+  })
+
   it("shows the delayed topbar indicator while reconnect sync is in progress after initial load", async () => {
     makeReadyWorkspaceState()
 

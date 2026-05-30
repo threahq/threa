@@ -98,6 +98,21 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const loadingIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loggedSuppressedStreamErrorsRef = useRef(new Set<string>())
+  // The first bootstrap after an IDB reveal still reports "syncing" — but that
+  // is a background refresh of already-visible content, not a load. Surfacing
+  // it on the topbar indicator made online feel slower than offline (which
+  // never syncs, so never shows it). We only treat "syncing" as indicator-worthy
+  // once that initial sync has gone quiet, so a later reconnect resync still
+  // surfaces while the initial freshness pass stays silent.
+  //
+  // This is a one-way latch (false → true, never back), which is the whole
+  // point: it must STAY true across the `isAnySyncing` false→true transition a
+  // reconnect causes, so the reconnect indicator can fire. A plain
+  // `!isAnySyncing` check inline would instead suppress the reconnect indicator
+  // too (`!isAnySyncing && isAnySyncing` is always false). Reading it in render
+  // is safe precisely because it's monotone — the render that needs the latched
+  // value is driven by the reactive `isAnySyncing` flip, not by the ref write.
+  const hasSettledInitialSyncRef = useRef(false)
 
   // Prime the in-memory cache from IndexedDB on mount. If IDB has workspace
   // data from a previous session, this populates the cache so store hooks
@@ -213,7 +228,11 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   // (triggered by navigating to a new stream) should not re-trigger the
   // top-bar loading indicator. Individual stream loading is handled by
   // EventList's skeleton/loading state within the stream content area.
-  const isLoading = workspaceLoading || (!isReady && streamsLoading) || draftsLoading || (isReady && isAnySyncing)
+  const isLoading =
+    workspaceLoading ||
+    (!isReady && streamsLoading) ||
+    draftsLoading ||
+    (isReady && hasSettledInitialSyncRef.current && isAnySyncing)
 
   if (isBootstrapDebugEnabled()) {
     debugBootstrap("Coordinated loading state", {
@@ -283,6 +302,14 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       setIsReady(true)
     }
   }, [isLoading, revealReady])
+
+  // Once the content is revealed AND the initial background sync has gone quiet,
+  // any future "syncing" is a reconnect resync — that one is worth surfacing on
+  // the topbar indicator (see `isLoading`). The initial freshness pass that
+  // overlaps the first reveal is deliberately excluded so it stays silent.
+  useEffect(() => {
+    if (isReady && !isAnySyncing) hasSettledInitialSyncRef.current = true
+  }, [isReady, isAnySyncing])
 
   // Show skeleton after delay if still loading during initial load
   useEffect(() => {

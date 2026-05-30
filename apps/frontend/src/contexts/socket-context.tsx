@@ -70,6 +70,13 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
 
       const s = io(wsUrl, {
         path: "/socket.io/",
+        // Prefer a direct WebSocket so the socket skips Engine.IO's HTTP
+        // long-polling handshake (several round-trips before it upgrades). On a
+        // cold boot the workspace/stream bootstrap is gated on the socket
+        // connecting (SyncEngine.onConnect → subscribe-then-fetch), so a faster
+        // connect directly shortens time-to-fresh-data. Polling stays as a
+        // fallback for networks that block raw WebSocket.
+        transports: ["websocket", "polling"],
         withCredentials: true,
         autoConnect: true,
       })
