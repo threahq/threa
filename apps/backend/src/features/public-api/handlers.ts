@@ -475,7 +475,7 @@ export function serializeTraceStep(step: AgentSessionStep) {
     sessionId: step.sessionId,
     stepNumber: step.stepNumber,
     stepType: step.stepType,
-    content: step.content as string | undefined,
+    content: (step.content ?? undefined) as string | undefined,
     sources: step.sources ?? undefined,
     messageId: step.messageId ?? undefined,
     tokensUsed: step.tokensUsed ?? undefined,
