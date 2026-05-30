@@ -140,6 +140,11 @@ export type RawSidebarConfig = {
  * label section missing its id — must be dropped on read. Otherwise one bad row
  * takes down the whole sidebar (and the workspace layout it lives in) with a
  * `Cannot read properties of undefined` when the presentation lookup misses.
+ *
+ * This is the read-time counterpart to the write-time `sidebarSectionSpecSchema`
+ * (backend `sidebar-config/handlers.ts`): a new spec `kind` must be added to both
+ * — and to the `SidebarSectionSpec` union above — or the backend accepts a spec
+ * the renderer silently drops here via the `default` arm.
  */
 function isRenderableSectionSpec(spec: SidebarSectionSpec | undefined | null): spec is SidebarSectionSpec {
   if (!spec) return false
