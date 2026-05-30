@@ -2,6 +2,7 @@
 title: Outbox Pattern
 status: shipped
 audience: internal
+kind: subsystem
 invariants: [INV-4, INV-6, INV-7]
 entry_points:
   - packages/backend-common/src/outbox/repository.ts
@@ -13,7 +14,7 @@ public_site: false
 summary: >
   Domain writes and their real-time events commit in one transaction; a dispatcher
   fans them out to Socket.io with gap-safe, at-least-once delivery.
-related: [public/configurable-sidebar.md]
+related: [architecture/sync-engine.md]
 ---
 
 ## The gist
