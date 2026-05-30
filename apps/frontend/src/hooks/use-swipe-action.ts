@@ -13,6 +13,7 @@ interface SwipeHandlers {
   onTouchStart: (e: React.TouchEvent) => void
   onTouchEnd: () => void
   onTouchMove: (e: React.TouchEvent) => void
+  onTouchCancel: () => void
 }
 
 interface UseSwipeActionReturn {
@@ -133,10 +134,19 @@ export function useSwipeAction({
     reset()
   }, [reset])
 
+  // The browser/OS can steal an in-flight touch (system gesture navigation,
+  // scroll takeover, a second finger), in which case it fires `touchcancel`
+  // instead of `touchend`. Without this the offset would stay frozen and the
+  // message would remain visibly shifted left. Snap back without triggering
+  // the action — a cancelled gesture is not a deliberate swipe.
+  const onTouchCancel = useCallback(() => {
+    reset()
+  }, [reset])
+
   useEffect(() => reset, [reset])
 
   return {
-    handlers: { onTouchStart, onTouchEnd, onTouchMove },
+    handlers: { onTouchStart, onTouchEnd, onTouchMove, onTouchCancel },
     offset,
     isLocked,
   }

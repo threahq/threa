@@ -24,6 +24,7 @@ interface LongPressHandlers {
   onTouchStart: (e: React.TouchEvent) => void
   onTouchEnd: () => void
   onTouchMove: (e: React.TouchEvent) => void
+  onTouchCancel: () => void
   onContextMenu: (e: React.MouseEvent) => void
 }
 
@@ -101,6 +102,12 @@ export function useLongPress({
     clear()
   }, [clear])
 
+  // `touchcancel` fires (instead of `touchend`) when the browser/OS steals the
+  // gesture; clear the pending timer and pressed state so neither gets stuck.
+  const onTouchCancel = useCallback(() => {
+    clear()
+  }, [clear])
+
   const onTouchMove = useCallback(
     (e: React.TouchEvent) => {
       if (!startPos.current) return
@@ -141,7 +148,7 @@ export function useLongPress({
   )
 
   return {
-    handlers: { onTouchStart, onTouchEnd, onTouchMove, onContextMenu },
+    handlers: { onTouchStart, onTouchEnd, onTouchMove, onTouchCancel, onContextMenu },
     isPressed,
   }
 }

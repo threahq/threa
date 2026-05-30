@@ -79,4 +79,32 @@ describe("useSwipeAction", () => {
 
     target.remove()
   })
+
+  it("snaps back to 0 and does not fire onSwipe when the touch is cancelled mid-swipe", () => {
+    const onSwipe = vi.fn()
+    const { result } = renderHook(() => useSwipeAction({ onSwipe, threshold: 80 }))
+    const target = document.createElement("div")
+    document.body.appendChild(target)
+
+    act(() => {
+      result.current.handlers.onTouchStart(touchEvent(target, 200, 100))
+      result.current.handlers.onTouchMove(touchEvent(target, 110, 100))
+    })
+
+    // Mid-swipe the message is shifted left.
+    expect(result.current.offset).toBeLessThan(0)
+
+    act(() => {
+      // The browser/OS takes over the gesture and fires touchcancel
+      // instead of touchend.
+      result.current.handlers.onTouchCancel()
+    })
+
+    // Offset must reset so the message does not stay stuck shifted left.
+    expect(result.current.offset).toBe(0)
+    expect(result.current.isLocked).toBe(false)
+    expect(onSwipe).not.toHaveBeenCalled()
+
+    target.remove()
+  })
 })

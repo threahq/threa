@@ -170,6 +170,7 @@ interface MessageLayoutProps {
     onTouchStart: (e: React.TouchEvent) => void
     onTouchEnd: () => void
     onTouchMove: (e: React.TouchEvent) => void
+    onTouchCancel: () => void
     onContextMenu: (e: React.MouseEvent) => void
   }
   /** Horizontal swipe offset for mobile swipe-to-quote (px, negative = left) */
@@ -1217,6 +1218,10 @@ function SentMessageEvent({
                 onTouchMove: (e: React.TouchEvent) => {
                   longPress.handlers.onTouchMove(e)
                   swipe.handlers.onTouchMove(e)
+                },
+                onTouchCancel: () => {
+                  longPress.handlers.onTouchCancel()
+                  swipe.handlers.onTouchCancel()
                 },
                 onContextMenu: longPress.handlers.onContextMenu,
               }
