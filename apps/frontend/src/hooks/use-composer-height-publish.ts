@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useLayoutEffect, useRef } from "react"
 import { persistComposerHeight } from "@/lib/composer-height-storage"
 
 interface UseComposerHeightPublishOptions {
@@ -18,8 +18,14 @@ interface UseComposerHeightPublishOptions {
    * composer, the 200ms height transition, async encryption notice / attachment
    * chips) leaves the last message hidden behind the composer — or the list
    * parked too high — until the next reload.
+   *
+   * `opts.initial` is true only for the very first measurement of this mount,
+   * which runs inside a layout effect *before the browser paints*. The timeline
+   * uses that to correct the approximate persisted footer height synchronously
+   * (no visible jump) instead of debouncing — later, async runtime changes
+   * arrive with `initial: false`.
    */
-  onHeightChange?: (px: number) => void
+  onHeightChange?: (px: number, opts: { initial: boolean }) => void
 }
 
 /**
@@ -28,6 +34,10 @@ interface UseComposerHeightPublishOptions {
  * siblings inside the same editor zone can consume the variable (e.g.
  * plain-scroll `padding-bottom`) to reserve space for the floating composer
  * pill.
+ *
+ * The first measurement runs in a layout effect (before paint) so the variable
+ * and the timeline's bottom anchor can be corrected in the same frame the list
+ * first reveals, rather than one paint later.
  *
  * Pass `active: false` (e.g. while the expand-to-fullscreen overlay is open)
  * to disconnect the observer. The CSS variable is intentionally *not* cleared
@@ -47,7 +57,7 @@ export function useComposerHeightPublish(
   const onHeightChangeRef = useRef(onHeightChange)
   onHeightChangeRef.current = onHeightChange
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current
     if (!el || !active) return
 
@@ -68,6 +78,7 @@ export function useComposerHeightPublish(
     // seeds silently, exactly as before (no spurious snap on a clean reload).
     const rendered = Number.parseFloat(getComputedStyle(zone).getPropertyValue("--composer-height"))
     let lastPublished: number | null = Number.isFinite(rendered) ? Math.ceil(rendered) : null
+    let isInitialMeasure = true
 
     const write = (h: number) => {
       const px = Math.ceil(h)
@@ -75,11 +86,17 @@ export function useComposerHeightPublish(
       persistComposerHeight(px)
       // Notify on any change from the height the footer was last sized for —
       // including the initial measure when it differs from first paint (see the
-      // baseline note above). The timeline re-anchors to the bottom on this.
-      if (lastPublished !== null && px !== lastPublished) onHeightChangeRef.current?.(px)
+      // baseline note above). The timeline re-anchors to the bottom on this;
+      // `initial` lets it do so synchronously, pre-paint, on the first measure.
+      if (lastPublished !== null && px !== lastPublished) {
+        onHeightChangeRef.current?.(px, { initial: isInitialMeasure })
+      }
       lastPublished = px
+      isInitialMeasure = false
     }
 
+    // Runs in the layout phase, before paint: the list reveals this frame with
+    // the corrected footer already accounted for.
     write(el.getBoundingClientRect().height)
 
     const ro = new ResizeObserver((entries) => {

@@ -790,10 +790,20 @@ export function StreamContent({
   // bottom of the last message until the next reload. virtualScrollToBottom
   // self-guards on isAtBottomRef, so this is a no-op unless the user is parked
   // at the live tail (never fires during a deep-link jump or while scrolled up
-  // reading). Debounced so the snap lands once after the transition settles
-  // rather than fighting Virtuoso's reflow on every intermediate frame. The
-  // plain-scroll (thread/draft) path needs none of this: its `padding-bottom`
-  // reflows the content so the bottom row is never frozen behind the composer.
+  // reading). The plain-scroll (thread/draft) path needs none of this: its
+  // `padding-bottom` reflows the content so the bottom row is never frozen
+  // behind the composer.
+  //
+  // Two arrival paths, handled differently:
+  //  - `initial`: the composer's first measurement, fired from a layout effect
+  //    *before paint*. The list first scrolled to LAST against the approximate
+  //    persisted footer height; when the real composer differs (cold boot with
+  //    a restored draft, density/zoom change) we correct it synchronously here,
+  //    in the same frame the list reveals, so there is no visible jump.
+  //  - runtime changes: arrive async from the ResizeObserver after paint (the
+  //    200ms height transition, attachment chips settling). Debounced so the
+  //    snap lands once after the transition settles rather than fighting
+  //    Virtuoso's reflow on every intermediate frame.
   //
   // Called through a ref so the handler identity stays stable: virtualScrollToBottom
   // is rebuilt on every itemCount change, and a changing prop would re-render
@@ -802,8 +812,12 @@ export function StreamContent({
   const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
   virtualScrollToBottomRef.current = virtualScrollToBottom
   const composerResizeTimerRef = useRef<number | undefined>(undefined)
-  const handleComposerHeightChange = useCallback(() => {
+  const handleComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
     window.clearTimeout(composerResizeTimerRef.current)
+    if (opts.initial) {
+      virtualScrollToBottomRef.current()
+      return
+    }
     composerResizeTimerRef.current = window.setTimeout(() => {
       virtualScrollToBottomRef.current()
     }, 120)

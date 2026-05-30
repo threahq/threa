@@ -124,9 +124,11 @@ describe("useComposerHeightPublish", () => {
       // composer measures 80px: the spacer will shrink after mount, so the
       // virtualized list must re-anchor (last message would otherwise park too
       // high). The same drift the other direction hides the last message.
+      // This fires from a layout effect (pre-paint), flagged `initial: true` so
+      // the timeline corrects it synchronously instead of debouncing.
       render(<Harness onHeightChange={onHeightChange} zoneHeight="120px" />)
       expect(onHeightChange).toHaveBeenCalledTimes(1)
-      expect(onHeightChange).toHaveBeenLastCalledWith(80)
+      expect(onHeightChange).toHaveBeenLastCalledWith(80, { initial: true })
     } finally {
       ro.restore()
     }
@@ -142,10 +144,11 @@ describe("useComposerHeightPublish", () => {
       ro.fire(80)
       expect(onHeightChange).not.toHaveBeenCalled()
 
-      // Composer grows (e.g. multi-line draft / attachments settle).
+      // Composer grows (e.g. multi-line draft / attachments settle). Runtime
+      // changes arrive from the ResizeObserver, flagged `initial: false`.
       ro.fire(160)
       expect(onHeightChange).toHaveBeenCalledTimes(1)
-      expect(onHeightChange).toHaveBeenLastCalledWith(160)
+      expect(onHeightChange).toHaveBeenLastCalledWith(160, { initial: false })
 
       // A redundant fire at the same height must not re-notify.
       ro.fire(160)
@@ -154,7 +157,24 @@ describe("useComposerHeightPublish", () => {
       // Composer shrinks back (message sent, draft cleared).
       ro.fire(80)
       expect(onHeightChange).toHaveBeenCalledTimes(2)
-      expect(onHeightChange).toHaveBeenLastCalledWith(80)
+      expect(onHeightChange).toHaveBeenLastCalledWith(80, { initial: false })
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it("flags only the first measurement as initial, even when it drifts", () => {
+    const ro = installManualResizeObserver()
+    try {
+      const onHeightChange = vi.fn()
+      // Pre-paint initial measure drifts (120 -> 80, initial: true); then a
+      // later runtime change must NOT be flagged initial.
+      render(<Harness onHeightChange={onHeightChange} zoneHeight="120px" />)
+      expect(onHeightChange).toHaveBeenLastCalledWith(80, { initial: true })
+
+      ro.fire(160)
+      expect(onHeightChange).toHaveBeenCalledTimes(2)
+      expect(onHeightChange).toHaveBeenLastCalledWith(160, { initial: false })
     } finally {
       ro.restore()
     }

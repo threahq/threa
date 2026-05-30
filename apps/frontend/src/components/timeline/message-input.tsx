@@ -40,11 +40,14 @@ interface MessageInputProps {
   disabledReason?: string
   autoFocus?: boolean
   /**
-   * Notified when the composer's measured height changes (after the initial
-   * measure). The virtualized timeline uses this to re-anchor to the bottom so
-   * the last message isn't left covered by a composer that settled taller.
+   * Notified when the composer's measured height changes (or when the initial
+   * measurement differs from the persisted footer the list first painted with).
+   * The virtualized timeline uses this to re-anchor to the bottom so the last
+   * message isn't left covered by a composer that settled taller. `opts.initial`
+   * marks the pre-paint first measurement so the timeline can correct it
+   * synchronously instead of debouncing.
    */
-  onComposerHeightChange?: (px: number) => void
+  onComposerHeightChange?: (px: number, opts: { initial: boolean }) => void
 }
 
 function attachmentMatchKey(attachment: Pick<PendingAttachment, "filename" | "mimeType">): string {
