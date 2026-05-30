@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react"
+import { useEffect, useMemo, useSyncExternalStore } from "react"
 import type { AgentSessionStep } from "@threa/types"
 import {
   getCachedDecryption,
@@ -53,8 +53,10 @@ export function useDecryptedStepContent(
     () => undefined
   )
 
-  const sealed = readSealedStep(step)
-  const ciphertext = sealed?.ciphertext
+  // Memoize so the effect deps don't churn on every render — mirrors
+  // `useDecryptedMessageContent`'s `readEnvelopePayload` memo, giving `sealed` a
+  // stable identity it can enter the dep array with directly.
+  const sealed = useMemo(() => readSealedStep(step), [step])
   const canDecrypt = !!sealed && session.status === "unlocked" && !!session.privateKey && !!session.keyId
   const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
 
@@ -65,9 +67,7 @@ export function useDecryptedStepContent(
       { contentMarkdown: "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
       { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId }
     )
-    // `ciphertext` (a stable string) stands in for the sealed payload so the
-    // effect doesn't re-fire on every render's fresh `sealed` object.
-  }, [needsDecrypt, ciphertext, session.privateKey, session.keyId, cacheKey, workspaceId, streamId])
+  }, [needsDecrypt, sealed, session.privateKey, session.keyId, cacheKey, workspaceId, streamId])
 
   if (!sealed) return { status: "plaintext", content: step.content }
   if (!canDecrypt) return { status: "locked", content: undefined }
