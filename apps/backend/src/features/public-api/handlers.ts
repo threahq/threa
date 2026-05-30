@@ -356,7 +356,7 @@ export interface PublicApiDeps {
   streamService: StreamService
   eventService: EventService
   pool: Pool
-  io?: Server
+  io: Server
 }
 
 const SENSITIVE_VALUE_PATTERNS = [
@@ -589,7 +589,6 @@ export function createPublicApiHandlers({
     botId: string,
     presence: BotRuntimeInstance | null
   ): Promise<void> {
-    if (!io) return
     const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
     if (streamIds.length === 0) return
     // Only pi-local runtimes create scratchpad session links; skip the lookup
@@ -1004,11 +1003,11 @@ export function createPublicApiHandlers({
         return inserted
       })
       const sessionRoom = `ws:${req.workspaceId!}:agent_session:${claim.id}`
-      io?.to(sessionRoom).emit("agent_session:step:completed", {
+      io.to(sessionRoom).emit("agent_session:step:completed", {
         sessionId: claim.id,
         step: serializeTraceStep(step),
       })
-      io?.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
+      io.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
         workspaceId: req.workspaceId!,
         streamId: claim.responseStreamId,
         sessionId: claim.id,
@@ -1130,7 +1129,7 @@ export function createPublicApiHandlers({
               streamId: completed.responseStreamId,
               event: streamEvent,
             })
-            io?.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
+            io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
               sessionId: completed.id,
             })
           }
