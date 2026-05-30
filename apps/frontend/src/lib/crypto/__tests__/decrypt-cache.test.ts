@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { clearDecryptCache, getCachedDecryption, requestDecryption, subscribeToDecryption } from "../decrypt-cache"
+import {
+  clearDecryptCache,
+  getCachedDecryption,
+  requestDecryption,
+  seedDecryption,
+  subscribeToDecryption,
+} from "../decrypt-cache"
 import * as messageEnvelope from "../message-envelope"
 
 const STUB_OPTS = {
@@ -102,6 +108,36 @@ describe("decrypt-cache", () => {
     resolveDecrypt({ contentMarkdown: "secret", contentJson: { type: "doc", content: [] } })
     await pending
     expect(getCachedDecryption("evt_race")).toBeUndefined()
+  })
+
+  it("seeds known plaintext as decrypted and skips a later decrypt", async () => {
+    const decrypt = stubDecrypt({ contentMarkdown: "from-crypto", contentJson: { type: "doc", content: [] } })
+    seedDecryption("evt_seed", { contentMarkdown: "from-sender", contentJson: { type: "doc", content: [] } })
+
+    const cached = getCachedDecryption("evt_seed")
+    expect(cached?.status).toBe("decrypted")
+    expect(cached?.content?.contentMarkdown).toBe("from-sender")
+
+    // A render-time request for the same event must short-circuit on the seed.
+    await requestDecryption("evt_seed", { contentMarkdown: "ph", envelope: {} }, STUB_OPTS)
+    expect(decrypt).not.toHaveBeenCalled()
+  })
+
+  it("notifies subscribers when a seed lands", () => {
+    const listener = vi.fn()
+    subscribeToDecryption("evt_seed_sub", listener)
+    seedDecryption("evt_seed_sub", { contentMarkdown: "x", contentJson: { type: "doc", content: [] } })
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not overwrite an existing decrypted entry when seeding", async () => {
+    stubDecrypt({ contentMarkdown: "real", contentJson: { type: "doc", content: [] } })
+    await requestDecryption("evt_decrypted", { contentMarkdown: "ph", envelope: {} }, STUB_OPTS)
+    seedDecryption("evt_decrypted", {
+      contentMarkdown: "should-not-replace",
+      contentJson: { type: "doc", content: [] },
+    })
+    expect(getCachedDecryption("evt_decrypted")?.content?.contentMarkdown).toBe("real")
   })
 
   it("evicts the least recently used entry when the cache exceeds its cap", async () => {

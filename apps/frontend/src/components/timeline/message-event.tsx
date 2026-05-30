@@ -1565,10 +1565,10 @@ function applyDecryptedContent(payload: MessagePayload, decrypted: DecryptedMess
       const text = "🔒 Locked — unlock to view"
       return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
     }
-    case "pending": {
-      const text = "🔒 Decrypting…"
-      return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
-    }
+    case "pending":
+      // The row is withheld while pending (see MessageEvent), so this payload is
+      // never rendered — return it untouched rather than a placeholder.
+      return payload
     case "failed": {
       const text = "🔒 Decryption failed"
       return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
@@ -1598,6 +1598,15 @@ export function MessageEvent({
   const status = getStatus(event.id)
 
   const actorName = getActorName(event.actorId, event.actorType)
+
+  // While an E2E message is still decrypting on first paint, withhold the row
+  // entirely rather than flashing a "🔒 Decrypting…" placeholder. Decryption is
+  // near-instant local crypto, so the message appears decrypted within a frame;
+  // the wrapping `<div data-event-id>` stays mounted, so this runs the decrypt
+  // effect and reserves the row without churning list keys. Self-sent messages
+  // don't hit this branch — the send path seeds the decrypt cache with the
+  // plaintext, so their server event resolves as decrypted on arrival.
+  if (decrypted.status === "pending") return null
 
   switch (status) {
     // Pending/failed/editing rows aren't selectable (they don't have a
