@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { useRef } from "react"
+import { useRef, type CSSProperties } from "react"
 import { render } from "@testing-library/react"
 import { useComposerHeightPublish } from "./use-composer-height-publish"
 
@@ -44,11 +44,23 @@ function pinInitialHeight(px: number): () => void {
   }
 }
 
-function Harness({ onHeightChange, active = true }: { onHeightChange: (px: number) => void; active?: boolean }) {
+function Harness({
+  onHeightChange,
+  active = true,
+  zoneHeight,
+}: {
+  onHeightChange: (px: number) => void
+  active?: boolean
+  /** Pre-existing `--composer-height` on the zone, simulating the first-paint value. */
+  zoneHeight?: string
+}) {
   const ref = useRef<HTMLDivElement>(null)
   useComposerHeightPublish(ref, { active, onHeightChange })
   return (
-    <div data-editor-zone="main">
+    <div
+      data-editor-zone="main"
+      style={zoneHeight ? ({ "--composer-height": zoneHeight } as CSSProperties) : undefined}
+    >
       <div ref={ref}>composer</div>
     </div>
   )
@@ -86,6 +98,35 @@ describe("useComposerHeightPublish", () => {
       render(<Harness onHeightChange={onHeightChange} />)
       // Mount seeded the baseline at 80px; no change has happened yet.
       expect(onHeightChange).not.toHaveBeenCalled()
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it("does NOT fire on the initial measure when it matches the first-paint height", () => {
+    const ro = installManualResizeObserver()
+    try {
+      const onHeightChange = vi.fn()
+      // Footer already rendered at 80px (persisted `:root` fallback); the
+      // composer measures the same 80px (pinned in beforeEach) — seed silently.
+      render(<Harness onHeightChange={onHeightChange} zoneHeight="80px" />)
+      expect(onHeightChange).not.toHaveBeenCalled()
+    } finally {
+      ro.restore()
+    }
+  })
+
+  it("fires on the initial measure when the persisted footer height was wrong", () => {
+    const ro = installManualResizeObserver()
+    try {
+      const onHeightChange = vi.fn()
+      // Footer first painted at 120px (stale persisted value), but the actual
+      // composer measures 80px: the spacer will shrink after mount, so the
+      // virtualized list must re-anchor (last message would otherwise park too
+      // high). The same drift the other direction hides the last message.
+      render(<Harness onHeightChange={onHeightChange} zoneHeight="120px" />)
+      expect(onHeightChange).toHaveBeenCalledTimes(1)
+      expect(onHeightChange).toHaveBeenLastCalledWith(80)
     } finally {
       ro.restore()
     }
