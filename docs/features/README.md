@@ -47,10 +47,9 @@ docs/features/
 The line between the last two: if you could rewrite the implementation without touching the
 doc, it was a concept doc; if the doc names files and would drift when they move, it's an
 architecture doc. When a concept has a meaty implementation, write both and link them with
-`related:` — the concept stays lean, the subsystem carries the depth (subscribe-then-bootstrap
-
-- sync-engine are the worked example). A small pattern whose concept and implementation are
-  inseparable can stay a single architecture doc (the outbox is one).
+`related:` — the concept stays lean while the subsystem carries the depth, the way
+`subscribe-then-bootstrap` and `sync-engine` pair up here. A small pattern whose concept and
+implementation are inseparable can stay a single architecture doc, as the outbox does.
 
 When a feature has both a user-facing surface and non-obvious mechanics, write **both**
 and cross-link them with `related:`.
