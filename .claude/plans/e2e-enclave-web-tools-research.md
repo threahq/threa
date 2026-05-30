@@ -143,3 +143,18 @@ INV-48 (spy `rawChat`/namespace; no `vi.mock` of the shared runtime).
 Workspace/GitHub/Linear tools in the enclave (need backend callbacks — violates
 zero-egress). Persona-level enclave tool configuration. Streaming research
 substeps to a dedicated UI surface beyond the existing sealed-step trace.
+Temporal grounding (`currentTime`/`timezone`) for the enclave's web search — the
+assignment doesn't carry it yet; `buildEnclaveTools` already accepts it for when
+the request-builder does.
+
+## 6. As-built notes
+
+- The `general_research` TOOL wrapper moved to the package too (not just the
+  loop), since it is pure and both hosts need it — backend keeps its path via a
+  re-export shim. The loop's run-input type was renamed `GeneralResearchRunInput`
+  to avoid colliding with the tool wrapper's `{query}` input.
+- Fixed a latent bundle leak surfaced by this slice: `web-search-tool.ts` and
+  `read-url-tool.ts` imported `defineAgentTool` from the heavy `../runtime`
+  barrel (which re-exports `OtelObserver`). Harmless on the backend, but once the
+  enclave imported these tools it pulled OpenTelemetry into the bundle (0 → 49).
+  Repointed both at `../runtime/agent-tool` directly; audit back to 0.
