@@ -44,6 +44,7 @@ describe("runGeneralResearch", () => {
 
     const result = await runGeneralResearch(deps, baseInput())
 
+    // Success path: no `partial` flag, brief captured from the final text.
     expect(result.partial).toBeUndefined()
     expect(result.brief).toBe("Auth now uses WorkOS sessions; PR #412 is merged.")
   })
@@ -70,8 +71,7 @@ describe("runGeneralResearch", () => {
 
     const result = await runGeneralResearch(deps, baseInput({ signal: controller.signal }))
 
-    expect(result.partial).toBe(true)
-    expect(result.partialReason).toBe("user_abort")
+    expect(result).toMatchObject({ partial: true, partialReason: "user_abort" })
     // The loop aborts before any model call when the deadline/stop is already tripped.
     expect(generate).not.toHaveBeenCalled()
   })
@@ -81,8 +81,7 @@ describe("runGeneralResearch", () => {
 
     const result = await runGeneralResearch(deps, baseInput({ deadlineAt: Date.now() - 1 }))
 
-    expect(result.partial).toBe(true)
-    expect(result.partialReason).toBe("timeout")
+    expect(result).toMatchObject({ partial: true, partialReason: "timeout" })
   })
 
   test("forwards substeps emitted by inner tool progress to onSubstep", async () => {

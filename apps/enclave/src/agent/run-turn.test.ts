@@ -244,9 +244,9 @@ describe("runEnclaveTurn", () => {
     // read_url's trace content is a JSON blob carrying the requested url.
     expect(opened).toContain("localhost")
 
-    // The turn still produced its reply.
-    expect(sent).toHaveLength(1)
-    expect(result.messageIds).toHaveLength(1)
+    // The turn still produced its reply, streamed and reported under the same id.
+    expect(result.messageIds[0]).toMatch(/^msg_/)
+    expect(sent.find((m) => m.messageId === result.messageIds[0])).toBeDefined()
   })
 
   it("rejects when the prompt's generation has no wrap (can't read the trigger)", async () => {

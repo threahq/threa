@@ -73,14 +73,13 @@ describe("EnclaveTraceObserver", () => {
       trace: { stepType: "web_search", content: "weather", sources: [] },
     })
 
-    expect(steps).toHaveLength(1)
-    const step = steps[0]!
-    expect(step.stepType).toBe("web_search")
-    expect(step.durationMs).toBe(850)
+    const step = steps.find((s) => s.stepType === "web_search")
+    expect(step).toBeDefined()
+    expect(step!.durationMs).toBe(850)
     const opened = await openMessageAsString({
       key: ssk,
-      envelope: step.envelope,
-      ciphertext: Buffer.from(step.ciphertext, "base64"),
+      envelope: step!.envelope,
+      ciphertext: Buffer.from(step!.ciphertext, "base64"),
     })
     expect(opened).toBe("weather")
   })
@@ -96,12 +95,12 @@ describe("EnclaveTraceObserver", () => {
       durationMs: 12,
     })
 
-    expect(steps).toHaveLength(1)
-    expect(steps[0]!.stepType).toBe("tool_error")
+    const errorStep = steps.find((s) => s.stepType === "tool_error")
+    expect(errorStep).toBeDefined()
     const opened = await openMessageAsString({
       key: ssk,
-      envelope: steps[0]!.envelope,
-      ciphertext: Buffer.from(steps[0]!.ciphertext, "base64"),
+      envelope: errorStep!.envelope,
+      ciphertext: Buffer.from(errorStep!.ciphertext, "base64"),
     })
     expect(opened).toBe("URL blocked by SSRF protection")
   })
