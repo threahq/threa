@@ -131,10 +131,11 @@ self.addEventListener("fetch", (event) => {
 precacheAndRoute(self.__WB_MANIFEST)
 
 // ============================================================================
-// Push bootstrap pre-fetch — cache stream data so it's instant on notification tap
+// Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
+// (stream: IndexedDB; workspace: the Cache API entry served by the interceptor)
 // ============================================================================
 
-/** Cache name for pre-fetched bootstrap responses triggered by push or background sync. */
+/** Cache name for pre-fetched workspace bootstrap responses triggered by push or background sync. */
 const PUSH_BOOTSTRAP_CACHE = "push-bootstrap"
 
 /** Cache name used to persist pending Background Sync targets across SW restarts. */
@@ -145,9 +146,6 @@ const BOOTSTRAP_SYNC_TAG = "threa-bootstrap-refresh"
 
 /** Cache key for the persisted sync target. Last write wins; only the most recent target is replayed. */
 const PENDING_SYNC_KEY = `/_sync/${BOOTSTRAP_SYNC_TAG}`
-
-/** Regex matching stream bootstrap API paths. */
-const STREAM_BOOTSTRAP_PATH_RE = /^\/api\/workspaces\/[^/]+\/streams\/[^/]+\/bootstrap$/
 
 /** Regex matching workspace bootstrap API paths. */
 const WORKSPACE_BOOTSTRAP_PATH_RE = /^\/api\/workspaces\/[^/]+\/bootstrap$/
@@ -192,13 +190,12 @@ async function prefetchStreamBootstrap(workspaceId: string, streamId: string): P
   const response = await fetch(url, { credentials: "include" })
   if (!response.ok) return
 
-  // Clone before consuming body — Cache API and IDB write need separate copies
-  const cacheResponse = response.clone()
-  const cache = await caches.open(PUSH_BOOTSTRAP_CACHE)
-  await cache.put(url, cacheResponse)
-
-  // Write events to IndexedDB so useLiveQuery renders them instantly when the
-  // user taps the notification. Best-effort: errors are swallowed.
+  // Warm IndexedDB so useLiveQuery renders the stream instantly when the user
+  // taps the notification. We deliberately do NOT cache the response for the
+  // fetch interceptor to replay: the page's own bootstrap GET passes through to
+  // the network and applies the fresh result on top of this warm paint
+  // (stale-while-revalidate), so replaying a snapshot captured before later
+  // activity would only reintroduce staleness. Best-effort: errors are swallowed.
   try {
     const body = await response.json()
     const bootstrap = body.data ?? body
@@ -442,8 +439,20 @@ self.addEventListener("fetch", (event) => {
 })
 
 /**
- * Fetch interceptor: serve pre-fetched bootstrap responses from the push cache.
- * Entries are one-shot — deleted after being served so subsequent fetches hit the network.
+ * Fetch interceptor: serve the pre-fetched WORKSPACE bootstrap response from the
+ * push cache. Entries are one-shot — deleted after being served so subsequent
+ * fetches hit the network.
+ *
+ * Stream bootstrap is deliberately NOT served from this cache. The prefetch
+ * warms IndexedDB, so the timeline paints instantly from useLiveQuery either
+ * way; the page's own bootstrap GET is left to pass through to the network and
+ * apply the fresh result on top of that warm paint (stale-while-revalidate, in
+ * the page's own sync pipeline). Replaying a cached stream snapshot instead
+ * would (a) serve data captured before activity that landed while the tab was
+ * away — a reaction, an edit — with no revalidation, and (b) make the request
+ * service-worker-initiated, so the page's catch-up fetch never reaches the
+ * network. The workspace bootstrap has no SW-side IDB apply path, so its
+ * cache serve stays.
  *
  * Uses a regex guard (not an in-memory Set) because mobile browsers terminate
  * the SW between push receipt and notification tap — any in-memory state would
@@ -454,7 +463,7 @@ self.addEventListener("fetch", (event) => {
  */
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url)
-  if (!STREAM_BOOTSTRAP_PATH_RE.test(url.pathname) && !WORKSPACE_BOOTSTRAP_PATH_RE.test(url.pathname)) return
+  if (!WORKSPACE_BOOTSTRAP_PATH_RE.test(url.pathname)) return
 
   event.respondWith(
     (async () => {
