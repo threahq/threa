@@ -1,3 +1,19 @@
+---
+title: Subscribe-Then-Bootstrap Pattern
+status: shipped
+audience: internal
+invariants: [INV-53]
+entry_points:
+  - apps/frontend/src/hooks/use-streams.ts
+  - apps/frontend/src/hooks/use-stream-socket.ts
+  - apps/frontend/src/sync/workspace-sync.ts
+public_site: false
+summary: >
+  Every socket-room subscribe pairs with a bootstrap fetch, and bootstrap is
+  invalidated on reconnect, so no real-time event is ever silently lost.
+related: [architecture/outbox-pattern.md, public/configurable-sidebar.md]
+---
+
 # Subscribe-Then-Bootstrap Pattern (INV-53)
 
 ## The Invariant
