@@ -1,4 +1,4 @@
-import { AGENT_TOOL_NAMES, type AgentToolName } from "./constants"
+import type { AgentToolName } from "./constants"
 
 /**
  * Coarse privacy categories an agent's tools fall into, used to express a
@@ -95,6 +95,3 @@ export function isToolAllowedByPolicy(
 ): boolean {
   return isToolCategoryAllowed(allowed, TOOL_CATEGORY_BY_NAME[toolName])
 }
-
-/** Re-exported for callers that want to iterate the full tool surface by category. */
-export { AGENT_TOOL_NAMES }

@@ -1,4 +1,4 @@
-import type { ToolPrivacyCategory } from "@threa/types"
+import type { ToolPrivacyPolicy } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
@@ -25,7 +25,7 @@ export interface E2eStream {
    * stream. `null` = no restriction (default). Carried into the enclave session
    * assignment and enforced there (the server never builds the tools itself).
    */
-  allowedToolCategories: ToolPrivacyCategory[] | null
+  allowedToolCategories: ToolPrivacyPolicy
 }
 
 export interface MarkStreamE2eParams {
@@ -46,7 +46,7 @@ function mapRow(row: E2eStreamRow): E2eStream {
     ownerUserId: row.owner_user_id,
     ownerUserKeyId: row.owner_user_key_id,
     currentKeyGeneration: row.current_key_generation,
-    allowedToolCategories: (row.allowed_tool_categories as ToolPrivacyCategory[] | null) ?? null,
+    allowedToolCategories: (row.allowed_tool_categories as ToolPrivacyPolicy) ?? null,
   }
 }
 
