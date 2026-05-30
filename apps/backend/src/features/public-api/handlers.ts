@@ -460,7 +460,16 @@ export function sanitizeInvocationStepContent(content: string): string {
   }
 }
 
-function serializeTraceStep(step: AgentSessionStep) {
+/**
+ * Serialize a trace step for `agent_session:step:completed` socket emission.
+ *
+ * Shared by every runtime that streams steps back to the session room — in-flight
+ * Pi bot invocations and the E2E enclave — so the frontend handler stays
+ * source-agnostic. E2E steps carry sealed `contentCiphertext` + `contentEnvelope`
+ * in place of plaintext `content`; the server only relays the ciphertext and the
+ * browser decrypts (INV-E7).
+ */
+export function serializeTraceStep(step: AgentSessionStep) {
   return {
     id: step.id,
     sessionId: step.sessionId,
@@ -473,6 +482,8 @@ function serializeTraceStep(step: AgentSessionStep) {
     duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
     startedAt: step.startedAt.toISOString(),
     completedAt: step.completedAt?.toISOString(),
+    contentCiphertext: step.contentCiphertext ?? undefined,
+    contentEnvelope: step.contentEnvelope ?? undefined,
   }
 }
 

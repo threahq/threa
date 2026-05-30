@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
+import type { Server } from "socket.io"
 import { AuthorTypes } from "@threa/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -59,9 +60,18 @@ const STEP_BODY = {
 
 afterEach(() => mock.restore())
 
+// Fake socket server exposing the `emit` spy so step-broadcast assertions can
+// observe the relayed payload (io is required — the API process always has it).
+function fakeIo() {
+  const emit = mock((_event: string, _payload: unknown) => {})
+  const io = { to: mock((_room: string) => ({ emit })) } as unknown as Server
+  return { io, emit }
+}
+
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
   const eventService = { createMessage } as unknown as EventService
-  return { handlers: createEnclaveSessionHandlers({ pool, eventService }), createMessage }
+  const { io, emit } = fakeIo()
+  return { handlers: createEnclaveSessionHandlers({ pool, eventService, io }), createMessage, io, emit }
 }
 
 describe("createEnclaveSessionHandlers.message", () => {
@@ -163,8 +173,9 @@ describe("createEnclaveSessionHandlers.steps", () => {
     await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
-  it("appends the sealed step + current_step_type in one transaction and 204s", async () => {
+  it("appends the sealed step + current_step_type in one transaction, broadcasts it, and 204s", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     // Run the transaction body against a fake client so the repo spies observe
     // the calls (INV-6: append + current_step_type are wrapped in withTransaction).
     const tx = {} as never
@@ -175,9 +186,13 @@ describe("createEnclaveSessionHandlers.steps", () => {
       sessionId: "session_1",
       stepNumber: 1,
       stepType: "thinking",
+      contentCiphertext: "Y3Q=",
+      contentEnvelope: STEP_BODY.envelope,
+      startedAt: new Date("2026-05-30T00:00:00.000Z"),
+      completedAt: new Date("2026-05-30T00:00:01.500Z"),
     } as never)
     const stepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined)
-    const { handlers } = makeHandlers()
+    const { handlers, io, emit } = makeHandlers()
     const res = fakeRes()
 
     await handlers.steps(req("session_1", STEP_BODY), res)
@@ -194,18 +209,31 @@ describe("createEnclaveSessionHandlers.steps", () => {
       contentEnvelope: STEP_BODY.envelope,
     })
     expect(stepType).toHaveBeenCalledWith(tx, "session_1", "thinking")
+
+    // Live broadcast to the workspace-scoped session room via the canonical
+    // serializer — payload carries ciphertext + envelope only (INV-E7).
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
+    expect(emit.mock.calls[0]![0]).toBe("agent_session:step:completed")
+    const emitted = emit.mock.calls[0]![1] as { sessionId: string; step: Record<string, unknown> }
+    expect(emitted.sessionId).toBe("session_1")
+    expect(emitted.step).toMatchObject({
+      id: "step_a",
+      stepType: "thinking",
+      contentCiphertext: "Y3Q=",
+      contentEnvelope: STEP_BODY.envelope,
+    })
   })
 })
 
 describe("createEnclaveSessionHandlers.heartbeat", () => {
   it("400s without a session id", async () => {
-    const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService })
+    const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService, io: fakeIo().io })
     await expect(handlers.heartbeat(req(undefined, {}), fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
 
   it("refreshes the heartbeat and 204s", async () => {
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
-    const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService })
+    const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService, io: fakeIo().io })
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)
     expect(beat).toHaveBeenCalledWith(pool, "session_1")

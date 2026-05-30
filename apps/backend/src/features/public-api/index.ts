@@ -1,4 +1,4 @@
-export { createPublicApiHandlers, serializeBot, type PublicApiDeps } from "./handlers"
+export { createPublicApiHandlers, serializeBot, serializeTraceStep, type PublicApiDeps } from "./handlers"
 export {
   publicSearchSchema,
   listStreamsSchema,

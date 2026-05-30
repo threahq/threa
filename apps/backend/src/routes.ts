@@ -86,7 +86,7 @@ import type { PoolMonitor } from "./lib/observability"
 
 interface Dependencies {
   pool: Pool
-  io?: Server
+  io: Server
   poolMonitor: PoolMonitor
   authService: AuthService
   workspaceService: WorkspaceService

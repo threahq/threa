@@ -7,6 +7,7 @@ import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../agents"
 import { StreamRepository } from "../streams"
+import { serializeTraceStep } from "../public-api"
 import type { EventService } from "../messaging"
 
 /**
@@ -65,8 +66,8 @@ const sealedStepSchema = z.object({
 interface Dependencies {
   pool: Pool
   eventService: EventService
-  /** Optional: when present, sealed steps broadcast to the session room for live trace rendering. */
-  io?: Server
+  /** Sealed steps broadcast to the session room for live trace rendering. Always present in the API process. */
+  io: Server
 }
 
 /**
@@ -156,6 +157,10 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      // The session room is workspace-scoped; the enclave's internal-auth context
+      // carries no workspace, so resolve it from the session's stream (as /messages does).
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const step = parsed.data
       const now = Date.now()
@@ -182,32 +187,15 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
         return created
       })
 
-      // Live trace: relay the completed step to the session room. The payload
-      // carries only ciphertext + envelope; the browser decrypts. A bootstrap
-      // refetch sees the same persisted row, so refresh stays consistent.
-      if (io) {
-        const stream = await StreamRepository.findById(pool, session.streamId)
-        if (stream) {
-          io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:step:completed", {
-            sessionId: id,
-            step: {
-              id: persisted.id,
-              sessionId: persisted.sessionId,
-              stepNumber: persisted.stepNumber,
-              stepType: persisted.stepType,
-              messageId: persisted.messageId ?? undefined,
-              contentCiphertext: persisted.contentCiphertext ?? undefined,
-              contentEnvelope: persisted.contentEnvelope ?? undefined,
-              startedAt: persisted.startedAt.toISOString(),
-              completedAt: persisted.completedAt?.toISOString(),
-              duration:
-                persisted.completedAt && persisted.startedAt
-                  ? persisted.completedAt.getTime() - persisted.startedAt.getTime()
-                  : undefined,
-            },
-          })
-        }
-      }
+      // Live trace: relay the completed step to the session room using the same
+      // canonical serializer as the in-process and Pi step paths, so the
+      // frontend handler is source-agnostic. The payload carries only ciphertext
+      // + envelope (no plaintext, INV-E7); the browser decrypts. A bootstrap
+      // refetch reads the same persisted row, so refresh stays consistent.
+      io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:step:completed", {
+        sessionId: id,
+        step: serializeTraceStep(persisted),
+      })
 
       res.status(204).end()
     },
