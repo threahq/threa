@@ -304,7 +304,7 @@ async function main() {
     await ensureMinioBucket()
   }
 
-  console.log("Starting control-plane, workspace-router, backend and frontend...")
+  console.log("Starting control-plane, workspace-router, backend, enclave and frontend...")
 
   // Load .env files (worktree-specific DATABASE_URL, etc.)
   const backendEnvPath = path.join(process.cwd(), "apps/backend/.env")
@@ -314,6 +314,11 @@ async function main() {
 
   const dbBase = backendEnv.DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://threa:threa@localhost:5454/threa"
   const useStubAuth = backendEnv.USE_STUB_AUTH ?? process.env.USE_STUB_AUTH ?? "false"
+
+  // Shared internal secret. The backend mounts /internal/enclave-runtimes/* only
+  // when this is set, and the enclave must present the same value — so they
+  // resolve from one source to avoid drift.
+  const internalApiKey = backendEnv.INTERNAL_API_KEY ?? "dev-internal-key"
 
   // Derive control-plane DB URL from the backend's DATABASE_URL by appending _cp
   const cpDbUrl = dbBase.replace(/\/([^/?]+)(\?.*)?$/, "/$1_cp$2")
@@ -398,7 +403,7 @@ async function main() {
       DATABASE_URL: dbBase,
       USE_STUB_AUTH: useStubAuth,
       CONTROL_PLANE_URL: "http://localhost:3003",
-      INTERNAL_API_KEY: backendEnv.INTERNAL_API_KEY ?? "dev-internal-key",
+      INTERNAL_API_KEY: internalApiKey,
       CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
       REGION: "local",
     },
@@ -428,6 +433,37 @@ async function main() {
     stderr: "inherit",
   })
 
+  // Enclave (Ariadne E2E). It runs on Node, not Bun — Bun 1.3.x's WebCrypto
+  // lacks X25519 `deriveBits`, which the enclave needs to unwrap the per-stream
+  // key. Bun only bundles it. Build once up front so `node --watch` has a file
+  // to load, then run a rebuild-watcher beside the Node process. It registers
+  // with the backend at :3002 (not the :3001 router) using the shared key.
+  const enclaveDir = path.join(process.cwd(), "apps/enclave")
+  console.log("Building enclave bundle...")
+  await $`bun build src/index.ts --target=node --format=esm --outfile dist/index.mjs`.cwd(enclaveDir).quiet()
+
+  const enclaveBuilder = Bun.spawn(
+    ["bun", "build", "src/index.ts", "--target=node", "--format=esm", "--outfile", "dist/index.mjs", "--watch"],
+    {
+      cwd: enclaveDir,
+      stdout: "inherit",
+      stderr: "inherit",
+    }
+  )
+
+  const enclave = Bun.spawn(["node", "--watch", "dist/index.mjs"], {
+    cwd: enclaveDir,
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
+      PORT: "3011",
+      ENCLAVE_SELF_URL: "http://localhost:3011",
+      BACKEND_BASE_URL: "http://localhost:3002",
+      INTERNAL_API_KEY: internalApiKey,
+    },
+  })
+
   // Track if we're shutting down to avoid double-kill
   let isShuttingDown = false
 
@@ -444,6 +480,8 @@ async function main() {
     backofficeRouter.kill("SIGKILL")
     frontend.kill("SIGKILL")
     backoffice.kill("SIGKILL")
+    enclaveBuilder.kill("SIGKILL")
+    enclave.kill("SIGKILL")
 
     // Wait for processes to fully terminate
     await Promise.all([
@@ -453,6 +491,8 @@ async function main() {
       backofficeRouter.exited,
       frontend.exited,
       backoffice.exited,
+      enclaveBuilder.exited,
+      enclave.exited,
     ])
     process.exit(0)
   }
@@ -467,6 +507,8 @@ async function main() {
     backofficeRouter.exited,
     frontend.exited,
     backoffice.exited,
+    enclaveBuilder.exited,
+    enclave.exited,
   ])
 }
 

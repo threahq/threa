@@ -16,8 +16,6 @@ async function main() {
   const keyPair = await createEnclaveKeyPair()
   logger.info({ instanceId: keyPair.instanceId, keyId: keyPair.keyId }, "Enclave EIK generated")
 
-  await registerWithBackend(config, keyPair)
-
   const app = express()
   app.disable("x-powered-by")
   app.use(accessLog)
@@ -62,12 +60,30 @@ async function main() {
     res.status(500).json({ error: "Internal Server Error" })
   })
 
-  const heartbeat = startHeartbeat(config, keyPair, async () => {
-    await registerWithBackend(config, keyPair)
-  })
-
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port, selfUrl: config.selfUrl }, "Enclave listening")
+  })
+
+  // Initial registration is best-effort: in local/dev every service boots at
+  // once, so the backend may not be listening yet. Retry briefly, then serve
+  // regardless — the heartbeat (backend 404 → re-register) brings us into the
+  // live set once the backend is reachable, so a slow or absent backend at boot
+  // never crashes the enclave (the HTTP server is already up for liveness).
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      await registerWithBackend(config, keyPair)
+      break
+    } catch (err) {
+      if (attempt === 10) {
+        logger.warn({ err }, "Initial registration failed after retries; relying on heartbeat re-registration")
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+    }
+  }
+
+  const heartbeat = startHeartbeat(config, keyPair, async () => {
+    await registerWithBackend(config, keyPair)
   })
 
   // On a graceful signal, how long to let in-flight sessions finish before exit.
