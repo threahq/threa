@@ -11,6 +11,7 @@ const E2E: E2eStream = {
   ownerUserId: "usr_owner",
   ownerUserKeyId: "e2ek_owner",
   currentKeyGeneration: 1,
+  allowedToolCategories: null,
 }
 
 const ENCLAVE_ACTOR: E2eStreamActor = { kind: "enclave", actorId: "enclave", keyId: null }
@@ -134,5 +135,20 @@ describe("buildEnclaveSessionAssignment", () => {
       })
     )
     expect(built!.assignment.history.map((h) => h.role)).toEqual(["user", "assistant"]) // plaintext dropped
+  })
+
+  it("omits allowedToolCategories when the stream has no policy (unrestricted)", () => {
+    const built = buildEnclaveSessionAssignment(inputs())
+    expect(built!.assignment).not.toHaveProperty("allowedToolCategories")
+  })
+
+  it("carries the stream's tool-privacy policy onto the assignment", () => {
+    const built = buildEnclaveSessionAssignment(inputs({ e2e: { ...E2E, allowedToolCategories: ["web"] } }))
+    expect(built!.assignment.allowedToolCategories).toEqual(["web"])
+  })
+
+  it("ships an empty policy verbatim (no tools at all)", () => {
+    const built = buildEnclaveSessionAssignment(inputs({ e2e: { ...E2E, allowedToolCategories: [] } }))
+    expect(built!.assignment.allowedToolCategories).toEqual([])
   })
 })

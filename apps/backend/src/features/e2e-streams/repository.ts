@@ -1,3 +1,4 @@
+import type { ToolPrivacyCategory } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
@@ -8,6 +9,7 @@ interface E2eStreamRow {
   owner_user_id: string
   owner_user_key_id: string
   current_key_generation: number
+  allowed_tool_categories: string[] | null
 }
 
 export interface E2eStream {
@@ -18,6 +20,12 @@ export interface E2eStream {
   ownerUserKeyId: string
   /** SSK generation new messages currently seal under (0 for owner-only). */
   currentKeyGeneration: number
+  /**
+   * Tool-privacy policy: the tool categories the enclave agent may use in this
+   * stream. `null` = no restriction (default). Carried into the enclave session
+   * assignment and enforced there (the server never builds the tools itself).
+   */
+  allowedToolCategories: ToolPrivacyCategory[] | null
 }
 
 export interface MarkStreamE2eParams {
@@ -27,7 +35,8 @@ export interface MarkStreamE2eParams {
   ownerUserKeyId: string
 }
 
-const COLUMNS = "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, current_key_generation"
+const COLUMNS =
+  "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, current_key_generation, allowed_tool_categories"
 
 function mapRow(row: E2eStreamRow): E2eStream {
   return {
@@ -37,6 +46,7 @@ function mapRow(row: E2eStreamRow): E2eStream {
     ownerUserId: row.owner_user_id,
     ownerUserKeyId: row.owner_user_key_id,
     currentKeyGeneration: row.current_key_generation,
+    allowedToolCategories: (row.allowed_tool_categories as ToolPrivacyCategory[] | null) ?? null,
   }
 }
 

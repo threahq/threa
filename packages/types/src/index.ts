@@ -326,6 +326,14 @@ export type { BroadcastSlug } from "./slug"
 // Attachment categories (mime → category mapping for the attachment explorer)
 export { ATTACHMENT_CATEGORIES, categoryFromMime, mimePrefixesForCategory } from "./attachment-categories"
 export type { AttachmentCategory } from "./attachment-categories"
+export {
+  TOOL_PRIVACY_CATEGORIES,
+  ToolPrivacyCategories,
+  TOOL_CATEGORY_BY_NAME,
+  isToolCategoryAllowed,
+  isToolAllowedByPolicy,
+} from "./tool-privacy"
+export type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 
 // API types
 export type {

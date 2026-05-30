@@ -146,6 +146,9 @@ export async function runEnclaveTurn(
       tavilyApiKey: tools?.tavilyApiKey,
       currentTime: tools?.currentTime,
       timezone: tools?.timezone,
+      // Per-stream policy travels on the assignment, not in `deps.tools` (which
+      // is the enclave's own capability config, e.g. whether it has a Tavily key).
+      allowedCategories: request.allowedToolCategories,
     }),
     observers: [traceObserver],
     maxTokens: request.maxTokens,

@@ -6,6 +6,7 @@ import {
   type AgentTool,
 } from "@threa/agent-runtime/runtime"
 import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
+import { isToolCategoryAllowed, type ToolPrivacyCategory } from "@threa/types"
 import type { LanguageModel } from "ai"
 
 /**
@@ -33,9 +34,21 @@ export interface EnclaveToolDeps {
   /** Invocation time, used to ground recency-sensitive web searches. */
   currentTime?: string
   timezone?: string
+  /**
+   * Per-stream tool-privacy policy from the session assignment. `undefined` = no
+   * restriction (full surface). Every tool the enclave builds is in the `web`
+   * category, so when `web` is not allowed the enclave runs with no tools at all
+   * — a pure model turn that can still reply (`send_message` is never gated).
+   */
+  allowedCategories?: ToolPrivacyCategory[]
 }
 
 export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
+  // The owner's policy may forbid web egress for this scratchpad. Since the
+  // enclave's entire surface (web_search, read_url, general_research) is web,
+  // that collapses to "no tools" — honest about the privacy the stream keeps.
+  if (!isToolCategoryAllowed(deps.allowedCategories, "web")) return []
+
   // The web primitives, built fresh on demand. The top-level loop and the
   // research sub-loop each get their OWN instances (the sub-loop runs the same
   // tool defs under a separate AgentRuntime), so this is a factory, not a shared
