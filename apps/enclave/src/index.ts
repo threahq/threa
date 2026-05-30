@@ -54,7 +54,7 @@ async function main() {
     "/sessions",
     requireInternalKey(config.internalApiKey),
     express.json({ limit: "4mb" }),
-    createSessionsHandler({ keyPair, rawChat, callbacks, inFlight })
+    createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, toolConfig: { tavilyApiKey: config.tavilyApiKey } })
   )
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

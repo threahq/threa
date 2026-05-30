@@ -17,6 +17,8 @@ export interface SessionRunnerDeps {
   keyPair: EnclaveKeyPair
   rawChat: RawChatFn
   callbacks: BackendCallbacks
+  /** Web-tool config for the turn loop (Tavily key). Absent → research/read_url only. */
+  toolConfig?: { tavilyApiKey?: string }
 }
 
 /**
@@ -44,6 +46,7 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         onMessage: (reply) => deps.callbacks.message(sessionId, reply),
         // Stream each sealed trace step back as the loop emits it (live trace).
         onStep: (step) => deps.callbacks.step(sessionId, step),
+        tools: deps.toolConfig ? { tavilyApiKey: deps.toolConfig.tavilyApiKey } : undefined,
       },
       assignment
     )

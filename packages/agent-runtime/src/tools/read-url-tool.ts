@@ -4,7 +4,7 @@ import * as ipaddr from "ipaddr.js"
 import { NodeHtmlMarkdown } from "node-html-markdown"
 import { AgentStepTypes } from "@threa/types"
 import { logger } from "../logger"
-import { defineAgentTool, type AgentToolResult } from "../runtime"
+import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
 
 const ReadUrlSchema = z.object({

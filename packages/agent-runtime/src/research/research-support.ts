@@ -1,3 +1,5 @@
+import type { SourceType, TraceSource } from "@threa/types"
+
 /**
  * Compose an {@link AbortSignal} that fires when an optional parent signal aborts
  * OR a timeout elapses, whichever comes first — with leak-safe teardown.
@@ -60,4 +62,21 @@ export function composeAbortSignal(params: {
   }
 
   return { signal: controller.signal, cleanup }
+}
+
+/** Map the wider TraceSource type space onto the SourceItem type space. */
+export function normalizeSourceType(type: string): SourceType {
+  if (type === "github") return "github"
+  if (type === "web") return "web"
+  // workspace, workspace_message, workspace_memo → workspace
+  return "workspace"
+}
+
+/** Read a trimmed non-empty string field off an unknown tool input. */
+export function readStringField(input: unknown, field: string): string | undefined {
+  if (input && typeof input === "object" && field in input) {
+    const value = (input as Record<string, unknown>)[field]
+    if (typeof value === "string" && value.trim()) return value.trim()
+  }
+  return undefined
 }

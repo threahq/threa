@@ -21,6 +21,7 @@ import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
 import { EnclaveTraceObserver } from "./trace-observer"
+import { buildEnclaveTools } from "./tools"
 
 /**
  * The agent turn, run entirely inside the enclave next to decrypted plaintext.
@@ -34,11 +35,12 @@ import { EnclaveTraceObserver } from "./trace-observer"
  * the loop sends back under the current SSK. Plaintext exists only in this
  * process, for the duration of the request, and is never logged or persisted.
  *
- * The loop runs with no tools and no new-message awareness in this slice, but it
- * is fully traced: an `EnclaveTraceObserver` seals every step the loop emits
- * (the LLM's reasoning, each reply) under the SSK and streams it back, so the
- * owner sees Ariadne's work in real time without the server ever reading it.
- * Tools, durability, and mid-turn reconsideration land in later slices.
+ * The loop runs with the enclave-safe web tools (`web_search`, `read_url`, and a
+ * web-only `general_research` sub-loop) and is fully traced: an
+ * `EnclaveTraceObserver` seals every step the loop emits (the LLM's reasoning,
+ * each tool call, each reply) under the SSK and streams it back, so the owner
+ * sees Ariadne's work in real time without the server ever reading it.
+ * Durability and mid-turn reconsideration land in later slices.
  */
 
 /** Marks a caller/data fault so the Express layer can answer 400 instead of 500. */
@@ -55,17 +57,28 @@ export interface EnclaveTurnDeps {
    */
   onMessage: (reply: EnclaveSealedReply) => Promise<void>
   /**
-   * Stream a sealed trace step back as the loop emits it (thinking, message_sent).
-   * Sealed under the same SSK as replies; the backend persists ciphertext only.
+   * Stream a sealed trace step back as the loop emits it (thinking, tool calls,
+   * message_sent). Sealed under the same SSK as replies; the backend persists
+   * ciphertext only.
    */
   onStep: (step: EnclaveSealedStep) => Promise<void>
+  /**
+   * Web-tool configuration. Absent or keyless degrades gracefully: no Tavily key
+   * means no `web_search` (URL reads + research still work). Omitting `tools`
+   * entirely runs the loop with `read_url` + research only.
+   */
+  tools?: {
+    tavilyApiKey?: string
+    currentTime?: string
+    timezone?: string
+  }
 }
 
 export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStep } = deps
+  const { keyPair, rawChat, onMessage, onStep, tools } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -103,6 +116,13 @@ export async function runEnclaveTurn(
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
   const messageIds: string[] = []
 
+  // Construct the enclave AI once so the turn loop and any in-process research
+  // sub-loop accumulate token usage into the same total. The enclave AI keys off
+  // `modelString`; the opaque `model` object is only meaningful to the SDK
+  // provider we deliberately don't use.
+  const ai = createEnclaveAI(rawChat, usage)
+  const model = request.model as unknown as LanguageModel
+
   // Seal every trace step under the current (reply) generation and stream it
   // back. The backend stores ciphertext under the enclave-minted step id.
   const traceObserver = new EnclaveTraceObserver({
@@ -114,14 +134,19 @@ export async function runEnclaveTurn(
   })
 
   const runtime = new AgentRuntime({
-    ai: createEnclaveAI(rawChat, usage),
-    // The enclave AI keys off `modelString`; the opaque `model` object is only
-    // meaningful to the SDK provider we deliberately don't use.
-    model: request.model as unknown as LanguageModel,
+    ai,
+    model,
     modelString: request.model,
     systemPrompt: request.system,
     messages,
-    tools: [],
+    tools: buildEnclaveTools({
+      ai,
+      model,
+      modelString: request.model,
+      tavilyApiKey: tools?.tavilyApiKey,
+      currentTime: tools?.currentTime,
+      timezone: tools?.timezone,
+    }),
     observers: [traceObserver],
     maxTokens: request.maxTokens,
     temperature: request.temperature,

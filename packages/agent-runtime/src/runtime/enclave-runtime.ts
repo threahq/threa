@@ -13,3 +13,23 @@ export type { AgentEvent, NewMessageInfo } from "./agent-events"
 export type { AgentObserver } from "./agent-observer"
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
 export { protectToolOutputText, protectToolOutputBlocks, type MultimodalContentBlock } from "./tool-trust-boundary"
+export { mergeSourceItems } from "./agent-runtime"
+
+// Web primitives + bounded research — enclave-safe (call external services
+// directly, no backend callback, no AI provider layer / OTEL pull).
+export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "../tools/web-search-tool"
+export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "../tools/read-url-tool"
+export {
+  runGeneralResearch,
+  ResearchProgressObserver,
+  composeAbortSignal,
+  type ComposedAbortSignal,
+  type RunGeneralResearchDeps,
+  type GeneralResearchRunInput,
+  type GeneralResearchResult,
+  type GeneralResearchSubstep,
+  createGeneralResearchTool,
+  type GeneralResearchCallbacks,
+  type RunGeneralResearchOptions,
+  GENERAL_RESEARCH_TOTAL_BUDGET_MS,
+} from "../research"

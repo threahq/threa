@@ -1,7 +1,7 @@
 import { z } from "zod"
 import { AgentStepTypes } from "@threa/types"
 import { logger } from "../logger"
-import { defineAgentTool, type AgentToolResult } from "../runtime"
+import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 
 const WebSearchSchema = z.object({
   query: z.string().describe("The search query to find information on the web"),

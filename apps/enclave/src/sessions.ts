@@ -77,6 +77,8 @@ export interface SessionsDeps {
   callbacks: BackendCallbacks
   /** Session ids currently running in this process, to dedupe a redelivered assignment. */
   inFlight: Set<string>
+  /** Web-tool config for the turn loop (Tavily key). Absent → research/read_url only. */
+  toolConfig?: { tavilyApiKey?: string }
 }
 
 /** Length-safe constant-time secret comparison (avoids the throw on length mismatch). */
@@ -129,7 +131,7 @@ export function createSessionsHandler(deps: SessionsDeps) {
     // Ack first; the loop runs detached and reports back over the callbacks.
     res.status(202).end()
     void runEnclaveSession(
-      { keyPair: deps.keyPair, rawChat: deps.rawChat, callbacks: deps.callbacks },
+      { keyPair: deps.keyPair, rawChat: deps.rawChat, callbacks: deps.callbacks, toolConfig: deps.toolConfig },
       assignment
     ).finally(() => deps.inFlight.delete(assignment.sessionId))
   }

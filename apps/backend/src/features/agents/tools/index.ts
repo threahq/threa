@@ -54,7 +54,6 @@ export {
 } from "./workspace-research-tool"
 export {
   createGeneralResearchTool,
-  type GeneralResearchInput,
   type GeneralResearchCallbacks,
   type RunGeneralResearchOptions,
 } from "./general-research-tool"
