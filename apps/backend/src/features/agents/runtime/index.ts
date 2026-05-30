@@ -12,9 +12,12 @@ export {
   type AgentObserver,
   OtelObserver,
   AgentRuntime,
+  mergeSourceItems,
   type AgentRuntimeConfig,
   type AgentRuntimeResult,
   type NewMessageAwareness,
+  runGeneralResearch,
+  type GeneralResearchResult,
 } from "@threa/agent-runtime"
 
 // Backend-only observer: stays here because it writes to PostgreSQL via the

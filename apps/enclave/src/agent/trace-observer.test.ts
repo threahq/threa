@@ -60,6 +60,52 @@ describe("EnclaveTraceObserver", () => {
     expect(opened).toBe("Paris.")
   })
 
+  it("seals a completed tool call under its declared step type and content", async () => {
+    const { observer, ssk, steps } = makeObserver()
+
+    await observer.handle({
+      type: "tool:complete",
+      toolCallId: "tc_1",
+      toolName: "web_search",
+      input: { query: "weather" },
+      output: "{}",
+      durationMs: 850,
+      trace: { stepType: "web_search", content: "weather", sources: [] },
+    })
+
+    expect(steps).toHaveLength(1)
+    const step = steps[0]!
+    expect(step.stepType).toBe("web_search")
+    expect(step.durationMs).toBe(850)
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: step.envelope,
+      ciphertext: Buffer.from(step.ciphertext, "base64"),
+    })
+    expect(opened).toBe("weather")
+  })
+
+  it("seals a tool error as a tool_error step", async () => {
+    const { observer, ssk, steps } = makeObserver()
+
+    await observer.handle({
+      type: "tool:error",
+      toolCallId: "tc_1",
+      toolName: "read_url",
+      error: "URL blocked by SSRF protection",
+      durationMs: 12,
+    })
+
+    expect(steps).toHaveLength(1)
+    expect(steps[0]!.stepType).toBe("tool_error")
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: steps[0]!.envelope,
+      ciphertext: Buffer.from(steps[0]!.ciphertext, "base64"),
+    })
+    expect(opened).toBe("URL blocked by SSRF protection")
+  })
+
   it("ignores non-step lifecycle events", async () => {
     const { observer, steps } = makeObserver()
 

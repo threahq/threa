@@ -1,6 +1,6 @@
 import { describe, expect, test, mock } from "bun:test"
 import { AgentStepTypes } from "@threa/types"
-import type { GeneralResearchResult } from "../general-researcher"
+import type { GeneralResearchResult } from "./general-researcher"
 import { createGeneralResearchTool, type RunGeneralResearchOptions } from "./general-research-tool"
 
 function buildResult(overrides: Partial<GeneralResearchResult> = {}): GeneralResearchResult {

@@ -1,15 +1,16 @@
-import type { SourceItem, SourceType, TraceSource } from "@threa/types"
-import type { AgentEvent, AgentObserver } from "../runtime"
+import type { SourceItem, TraceSource } from "@threa/types"
+import type { AgentEvent } from "../runtime/agent-events"
+import type { AgentObserver } from "../runtime/agent-observer"
+import { normalizeSourceType, readStringField } from "./research-support"
 
 /**
  * Lightweight observer for the general research sub-agent's inner AgentRuntime.
  *
  * Two jobs, neither of which touches the database:
  *  1. Translate tool lifecycle events into human-readable substep text and
- *     forward it to `onSubstep`. The general_research TOOL (in the OUTER persona
- *     runtime) relays these via `onProgress`, so they flow into the persona's
- *     SessionTraceObserver and render as the research step's phase timeline —
- *     the same UX the workspace researcher gets.
+ *     forward it to `onSubstep`. The caller relays these to its own trace (the
+ *     persona's research step on the backend, the sealed trace in the enclave),
+ *     so the run renders a phase timeline.
  *  2. Accumulate citation sources as tools complete. The inner runtime only
  *     returns its merged `sources` on a clean finish; if the run is aborted
  *     (user stop / deadline) that return never happens, so we collect sources
@@ -67,14 +68,6 @@ export class ResearchProgressObserver implements AgentObserver {
   }
 }
 
-/** Map the wider TraceSource type space onto the SourceItem type space. */
-function normalizeSourceType(type: string): SourceType {
-  if (type === "github") return "github"
-  if (type === "web") return "web"
-  // workspace, workspace_message, workspace_memo → workspace
-  return "workspace"
-}
-
 /** Human-readable phase text for a tool call, used as a substep. */
 function describeToolStart(toolName: string, input: unknown): string {
   const query = readStringField(input, "query")
@@ -95,12 +88,4 @@ function describeToolStart(toolName: string, input: unknown): string {
     return query ? `Searching the workspace: "${query}"` : "Searching the workspace…"
   }
   return "Researching…"
-}
-
-function readStringField(input: unknown, field: string): string | undefined {
-  if (input && typeof input === "object" && field in input) {
-    const value = (input as Record<string, unknown>)[field]
-    if (typeof value === "string" && value.trim()) return value.trim()
-  }
-  return undefined
 }

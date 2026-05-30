@@ -77,6 +77,17 @@ function sendMessageReply(...contents: string[]): RawChatResult {
   }
 }
 
+function toolCallReply(name: string, args: Record<string, unknown>): RawChatResult {
+  return {
+    message: {
+      content: null,
+      tool_calls: [{ id: "call_tool", type: "function" as const, function: { name, arguments: JSON.stringify(args) } }],
+    },
+    model: "stub/model",
+    usage: { prompt_tokens: 5, completion_tokens: 3 },
+  }
+}
+
 function baseRequest(over: Partial<EnclaveSessionAssignment>): EnclaveSessionAssignment {
   return {
     sessionId: "session_test",
@@ -197,6 +208,45 @@ describe("runEnclaveTurn", () => {
       { role: "assistant", content: "Earlier, you greeted me." },
       { role: "user", content: "Continue." },
     ])
+  })
+
+  it("runs a tool call and seals its trace step under the SSK", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Read that page for me.", "msg_user", "usr_owner")
+    // Turn 1: the model calls read_url (SSRF guard blocks localhost before any
+    // real network egress — keeps the test hermetic). Turn 2: it answers.
+    const chat = stubChat([
+      toolCallReply("read_url", { url: "http://localhost/secret" }),
+      textReply("Couldn't read it."),
+    ])
+    const { onMessage, onStep, sent, steps } = collector()
+
+    const result = await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStep, tools: { tavilyApiKey: "tvly-test" } },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    // The model was offered the enclave web tools alongside send_message.
+    const offered = chat.seen[0]?.tools?.map((t) => t.function.name) ?? []
+    expect(offered).toEqual(expect.arrayContaining(["web_search", "read_url", "general_research", "send_message"]))
+
+    // The completed tool call was sealed as a trace step the owner's SSK opens.
+    const toolStep = steps.find((s) => s.stepType === "visit_page")
+    expect(toolStep).toBeDefined()
+    expect(toolStep!.stepId).toMatch(/^step_/)
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: toolStep!.envelope,
+      ciphertext: Buffer.from(toolStep!.ciphertext, "base64"),
+    })
+    // read_url's trace content is a JSON blob carrying the requested url.
+    expect(opened).toContain("localhost")
+
+    // The turn still produced its reply.
+    expect(sent).toHaveLength(1)
+    expect(result.messageIds).toHaveLength(1)
   })
 
   it("rejects when the prompt's generation has no wrap (can't read the trigger)", async () => {

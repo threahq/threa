@@ -10,6 +10,30 @@ export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from
 // Tools (web + internal)
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "./tools/web-search-tool"
 export { createReadUrlTool, type ReadUrlInput, type ReadUrlResult } from "./tools/read-url-tool"
+
+// Bounded research sub-agent (shared by backend personas + the enclave)
+export {
+  runGeneralResearch,
+  ResearchProgressObserver,
+  composeAbortSignal,
+  normalizeSourceType,
+  readStringField,
+  type ComposedAbortSignal,
+  type RunGeneralResearchDeps,
+  type GeneralResearchRunInput,
+  type GeneralResearchResult,
+  type GeneralResearchSubstep,
+  createGeneralResearchTool,
+  type GeneralResearchToolInput,
+  type GeneralResearchCallbacks,
+  type RunGeneralResearchOptions,
+  GENERAL_RESEARCH_MODEL_ID,
+  GENERAL_RESEARCH_TEMPERATURE,
+  GENERAL_RESEARCH_MAX_ITERATIONS,
+  GENERAL_RESEARCH_TOTAL_BUDGET_MS,
+  GENERAL_RESEARCH_MAX_BRIEF_CHARS,
+  GENERAL_RESEARCH_SYSTEM_PROMPT,
+} from "./research"
 export {
   createSendMessageTool,
   type SendMessageInput,
