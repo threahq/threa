@@ -14,25 +14,17 @@
 
 import { AgentToolNames, type AgentToolName } from "@threa/types"
 
-// Prompt + budgets are the runtime-agnostic source of truth and live in the
-// shared package so the enclave runs the identical loop (INV-33). Re-exported
-// here so existing backend importers keep their `./config` import path.
+// Prompt + budgets + the model id are the runtime-agnostic source of truth and
+// live in the shared package so the enclave runs the identical loop (INV-33).
+// Re-exported here so existing backend importers keep their `./config` path.
 export {
+  GENERAL_RESEARCH_MODEL_ID,
   GENERAL_RESEARCH_TEMPERATURE,
   GENERAL_RESEARCH_MAX_ITERATIONS,
   GENERAL_RESEARCH_TOTAL_BUDGET_MS,
   GENERAL_RESEARCH_MAX_BRIEF_CHARS,
   GENERAL_RESEARCH_SYSTEM_PROMPT,
 } from "@threa/agent-runtime"
-
-/**
- * Model for the general research loop. Sonnet (the companion's own model) is
- * the right tier here: the loop is orchestration-heavy (decide which surface to
- * query, read results, decide whether to dig further, synthesise) and benefits
- * from stronger tool-use and synthesis than the Haiku tier the workspace
- * researcher uses for its narrower structured planning.
- */
-export const GENERAL_RESEARCH_MODEL_ID = "openrouter:anthropic/claude-sonnet-4.6"
 
 /**
  * Fixed tool policy for the research sub-agent. Gated only by dependency

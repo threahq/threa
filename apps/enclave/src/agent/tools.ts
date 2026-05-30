@@ -36,6 +36,10 @@ export interface EnclaveToolDeps {
 }
 
 export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
+  // The web primitives, built fresh on demand. The top-level loop and the
+  // research sub-loop each get their OWN instances (the sub-loop runs the same
+  // tool defs under a separate AgentRuntime), so this is a factory, not a shared
+  // array — a future stateful tool then keeps per-loop state isolated by design.
   const webTools = (): AgentTool[] => {
     const tools: AgentTool[] = []
     if (deps.tavilyApiKey) {
@@ -53,13 +57,7 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
     runGeneralResearch: (query, { signal, onSubstep, deadlineAt }) =>
       runGeneralResearch(
         { ai: deps.ai, model: deps.model, modelString: deps.modelString },
-        {
-          query,
-          tools: webTools(),
-          signal,
-          deadlineAt,
-          onSubstep,
-        }
+        { query, tools: webTools(), signal, deadlineAt, onSubstep }
       ),
   })
 
