@@ -28,12 +28,19 @@ import { AttachmentPill } from "@/components/composer/attachment-pill"
 import { formatContextRefLabel } from "@/lib/context-bag/format-label"
 import { buildContextRefSourceHref } from "@/lib/context-bag/source-link"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
+import { useDecryptedStepContent } from "@/hooks/use-decrypted-step-content"
 import { StopResearchButton } from "./stop-research-button"
 
 interface TraceStepProps {
   step: AgentSessionStep
   workspaceId: string
   streamId: string
+  /**
+   * Viewer's user id, used to resolve the E2E session for decrypting sealed
+   * (enclave) step content. Null/undefined for plaintext traces — the dialog
+   * resolves it once via `useWorkspaceUserId` and threads it down.
+   */
+  userId?: string | null
   /**
    * Optional live substeps for an in-flight step (cleared on step completion).
    * Merged with any persisted substeps in `step.content` so the dialog can
@@ -50,9 +57,14 @@ interface TraceStepProps {
   onAbortResearch?: () => void
 }
 
-export function TraceStep({ step, workspaceId, streamId, liveSubsteps, onAbortResearch }: TraceStepProps) {
+export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, onAbortResearch }: TraceStepProps) {
   const config = STEP_DISPLAY_CONFIG[step.stepType]
   const Icon = config.icon
+
+  // E2E (enclave) steps carry sealed content the browser decrypts here; plaintext
+  // steps pass `step.content` straight through (status "plaintext").
+  const decrypted = useDecryptedStepContent(step, workspaceId, streamId, userId ?? null)
+  const effectiveContent = decrypted.content
 
   const isInProgress = !step.completedAt
   const duration = step.duration ? formatDuration(step.duration) : null
@@ -82,26 +94,42 @@ export function TraceStep({ step, workspaceId, streamId, liveSubsteps, onAbortRe
       <StepHeader config={config} Icon={Icon} startedAt={step.startedAt} duration={duration} rightSlot={rightSlot} />
 
       {/*
-        Render the body when there's persisted content OR when the step is
-        in-progress (so live substeps can render even before the first
-        persisted substep lands). Passing an empty string when there's no
+        Render the body when there's content OR when the step is in-progress (so
+        live substeps can render even before the first persisted substep lands).
+        For sealed steps that can't be shown yet (locked / decrypting / failed),
+        a notice stands in instead. Passing an empty string when there's no
         content lets the workspace_search case fall through to the "substeps
         only" branch via liveSubsteps.
       */}
-      {(step.content || isInProgress) && (
-        <StepContent
-          stepType={step.stepType}
-          content={step.content ?? ""}
-          messageLink={messageLink}
-          workspaceId={workspaceId}
-          liveSubsteps={liveSubsteps}
-          isInProgress={isInProgress}
-        />
+      {decrypted.status === "locked" || decrypted.status === "pending" || decrypted.status === "failed" ? (
+        <StepDecryptNotice status={decrypted.status} />
+      ) : (
+        (effectiveContent || isInProgress) && (
+          <StepContent
+            stepType={step.stepType}
+            content={effectiveContent ?? ""}
+            messageLink={messageLink}
+            workspaceId={workspaceId}
+            liveSubsteps={liveSubsteps}
+            isInProgress={isInProgress}
+          />
+        )
       )}
 
       {hasSources && <SourceList sources={step.sources!} config={config} workspaceId={workspaceId} />}
     </div>
   )
+}
+
+/** Stand-in for a sealed step's body when it can't be shown (locked / decrypting / failed). */
+const STEP_DECRYPT_NOTICE_TEXT: Record<"locked" | "pending" | "failed", string> = {
+  locked: "Unlock this scratchpad to view this step",
+  pending: "Decrypting…",
+  failed: "Couldn't decrypt this step",
+}
+
+function StepDecryptNotice({ status }: { status: "locked" | "pending" | "failed" }) {
+  return <div className="text-sm italic text-muted-foreground">{STEP_DECRYPT_NOTICE_TEXT[status]}</div>
 }
 
 interface StepHeaderProps {

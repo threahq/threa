@@ -13,6 +13,7 @@ import type {
   AuthorType,
   ScheduledMessageStatus,
   E2eKeyWrapRecipientKind,
+  AgentStepType,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent } from "./context-bag"
@@ -443,6 +444,32 @@ export interface EnclaveSealedReply {
   messageId: string
   ciphertext: string
   envelope: EnclaveStreamEnvelope
+}
+
+/**
+ * One sealed trace step the enclave produced this turn, POSTed to
+ * `POST .../sessions/:id/steps` the moment the agent loop emits it (the LLM's
+ * reasoning, each reply it sends, …). Only the step's *type*, optional reply
+ * link, and timing travel in clear; the step's content (reasoning text, message
+ * body, and — when tools land — their args/output) is sealed under the reply
+ * SSK, bound by AAD to `streamId|stepId|senderId`, so the backend persists
+ * ciphertext it can't read (INV-E7). The enclave mints each step's id (a
+ * `step_…` ULID) and the backend stores the ciphertext under it; the browser
+ * decrypts it with the stream key, exactly as it does message ciphertext.
+ */
+export interface EnclaveSealedStep {
+  stepId: string
+  stepType: AgentStepType
+  /**
+   * For message_sent/message_edited steps: the reply id this step describes.
+   * Clear — it's already a `sent_message_ids` entry and only links the trace
+   * step to its message row (the message body itself is sealed separately).
+   */
+  messageId?: string
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+  /** Wall-clock the step took, so the backend derives started/completed without a second round-trip. */
+  durationMs?: number
 }
 
 /**

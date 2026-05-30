@@ -5,6 +5,7 @@ import type { AgentSession } from "@threa/types"
 import { TraceDialog } from "./trace-dialog"
 import * as contextsModule from "@/contexts"
 import * as useAgentTraceModule from "@/hooks/use-agent-trace"
+import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
 
 let mockSessionId = "session_1"
@@ -78,6 +79,10 @@ describe("TraceDialog", () => {
     vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
+
+    // TraceDialog resolves the viewer id (for decrypting sealed enclave steps);
+    // stub it so the dialog doesn't reach for the real auth context.
+    vi.spyOn(workspacesModule, "useWorkspaceUserId").mockReturnValue("member_1")
   })
 
   it("shows superseded-by version hint for superseded sessions", () => {

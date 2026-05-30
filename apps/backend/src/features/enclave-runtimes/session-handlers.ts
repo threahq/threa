@@ -1,10 +1,13 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
+import type { Server } from "socket.io"
+import { AGENT_STEP_TYPES, AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
+import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../agents"
 import { StreamRepository } from "../streams"
+import { serializeTraceStep } from "../public-api"
 import type { EventService } from "../messaging"
 
 /**
@@ -15,6 +18,7 @@ import type { EventService } from "../messaging"
  *
  *   POST /internal/enclave-runtimes/sessions/:id/heartbeat  — liveness refresh
  *   POST /internal/enclave-runtimes/sessions/:id/messages   — one sealed reply, streamed
+ *   POST /internal/enclave-runtimes/sessions/:id/steps      — one sealed trace step, streamed
  *   POST /internal/enclave-runtimes/sessions/:id/complete   — ack (ids + metadata)
  */
 
@@ -47,9 +51,23 @@ const completeSchema = z.object({
   usage: z.object({ promptTokens: z.number().optional(), completionTokens: z.number().optional() }).optional(),
 })
 
+// One sealed trace step. `stepType` + `messageId` + timing are clear; the step's
+// content is ciphertext the server can't read (INV-E7). Same base64 validation
+// as the reply path — malformed bytes here become a permanently unreadable step.
+const sealedStepSchema = z.object({
+  stepId: z.string().min(1),
+  stepType: z.enum(AGENT_STEP_TYPES),
+  messageId: z.string().min(1).optional(),
+  ciphertext: z.base64().min(1),
+  envelope: streamEnvelopeSchema,
+  durationMs: z.number().int().min(0).optional(),
+})
+
 interface Dependencies {
   pool: Pool
   eventService: EventService
+  /** Sealed steps broadcast to the session room for live trace rendering. Always present in the API process. */
+  io: Server
 }
 
 /**
@@ -65,7 +83,7 @@ function assertRunning(session: AgentSession | null): asserts session is AgentSe
   }
 }
 
-export function createEnclaveSessionHandlers({ pool, eventService }: Dependencies) {
+export function createEnclaveSessionHandlers({ pool, eventService, io }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
@@ -117,6 +135,66 @@ export function createEnclaveSessionHandlers({ pool, eventService }: Dependencie
         // stream so a reply can't post twice (keyed by the enclave-minted id).
         accessibleStreamIds: [session.streamId],
         clientMessageId: `enclave-reply:${id}:${reply.messageId}`,
+      })
+
+      res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/sessions/:id/steps
+     * Append one sealed trace step the moment the loop emits it, so an open
+     * trace dialog renders "Ariadne is thinking…" / her reply in real time. The
+     * content is ciphertext only — the browser decrypts it with the stream key
+     * (INV-E7). Persisted via the atomic appendStep (step_number computed in the
+     * INSERT, INV-20), so concurrent step POSTs never clobber each other.
+     */
+    async steps(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = sealedStepSchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+      // The session room is workspace-scoped; the enclave's internal-auth context
+      // carries no workspace, so resolve it from the session's stream (as /messages does).
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
+      const step = parsed.data
+      const now = Date.now()
+      const startedAt = new Date(now - (step.durationMs ?? 0))
+      const completedAt = new Date(now)
+
+      // Append + current_step_type in one transaction (INV-6) so a reader never
+      // sees a new step row without the matching current_step_type. The latter
+      // is plaintext metadata (the step *kind*, no content) driving the
+      // cross-stream "Ariadne is working…" display, same as the in-process
+      // trace; it's cleared when the session completes.
+      const persisted = await withTransaction(pool, async (tx) => {
+        const created = await AgentSessionRepository.appendStep(tx, {
+          id: step.stepId,
+          sessionId: id,
+          stepType: step.stepType,
+          messageId: step.messageId,
+          contentCiphertext: step.ciphertext,
+          contentEnvelope: step.envelope,
+          startedAt,
+          completedAt,
+        })
+        await AgentSessionRepository.updateCurrentStepType(tx, id, step.stepType)
+        return created
+      })
+
+      // Live trace: relay the completed step to the session room using the same
+      // canonical serializer as the in-process and Pi step paths, so the
+      // frontend handler is source-agnostic. The payload carries only ciphertext
+      // + envelope (no plaintext, INV-E7); the browser decrypts. A bootstrap
+      // refetch reads the same persisted row, so refresh stays consistent.
+      io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:step:completed", {
+        sessionId: id,
+        step: serializeTraceStep(persisted),
       })
 
       res.status(204).end()

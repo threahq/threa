@@ -356,7 +356,7 @@ export interface PublicApiDeps {
   streamService: StreamService
   eventService: EventService
   pool: Pool
-  io?: Server
+  io: Server
 }
 
 const SENSITIVE_VALUE_PATTERNS = [
@@ -460,19 +460,30 @@ export function sanitizeInvocationStepContent(content: string): string {
   }
 }
 
-function serializeTraceStep(step: AgentSessionStep) {
+/**
+ * Serialize a trace step for `agent_session:step:completed` socket emission.
+ *
+ * Shared by every runtime that streams steps back to the session room — in-flight
+ * Pi bot invocations and the E2E enclave — so the frontend handler stays
+ * source-agnostic. E2E steps carry sealed `contentCiphertext` + `contentEnvelope`
+ * in place of plaintext `content`; the server only relays the ciphertext and the
+ * browser decrypts (INV-E7).
+ */
+export function serializeTraceStep(step: AgentSessionStep) {
   return {
     id: step.id,
     sessionId: step.sessionId,
     stepNumber: step.stepNumber,
     stepType: step.stepType,
-    content: step.content as string | undefined,
+    content: (step.content ?? undefined) as string | undefined,
     sources: step.sources ?? undefined,
     messageId: step.messageId ?? undefined,
     tokensUsed: step.tokensUsed ?? undefined,
     duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
     startedAt: step.startedAt.toISOString(),
     completedAt: step.completedAt?.toISOString(),
+    contentCiphertext: step.contentCiphertext ?? undefined,
+    contentEnvelope: step.contentEnvelope ?? undefined,
   }
 }
 
@@ -578,7 +589,6 @@ export function createPublicApiHandlers({
     botId: string,
     presence: BotRuntimeInstance | null
   ): Promise<void> {
-    if (!io) return
     const streamIds = await BotChannelAccessRepository.getGrantedStreamIds(pool, workspaceId, botId)
     if (streamIds.length === 0) return
     // Only pi-local runtimes create scratchpad session links; skip the lookup
@@ -993,11 +1003,11 @@ export function createPublicApiHandlers({
         return inserted
       })
       const sessionRoom = `ws:${req.workspaceId!}:agent_session:${claim.id}`
-      io?.to(sessionRoom).emit("agent_session:step:completed", {
+      io.to(sessionRoom).emit("agent_session:step:completed", {
         sessionId: claim.id,
         step: serializeTraceStep(step),
       })
-      io?.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
+      io.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
         workspaceId: req.workspaceId!,
         streamId: claim.responseStreamId,
         sessionId: claim.id,
@@ -1119,7 +1129,7 @@ export function createPublicApiHandlers({
               streamId: completed.responseStreamId,
               event: streamEvent,
             })
-            io?.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
+            io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
               sessionId: completed.id,
             })
           }

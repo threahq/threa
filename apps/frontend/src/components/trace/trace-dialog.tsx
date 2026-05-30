@@ -12,6 +12,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { useTrace, useSocket } from "@/contexts"
 import { useAbortResearch } from "@/hooks"
 import { useAgentTrace } from "@/hooks/use-agent-trace"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { TraceStepList } from "./trace-step-list"
 import { X } from "lucide-react"
 import { formatDuration } from "@/lib/dates"
@@ -32,6 +33,9 @@ export function TraceDialog() {
   const { sessionId, highlightMessageId, getTraceUrl, closeTraceModal } = useTrace()
   const socket = useSocket()
   const abortResearch = useAbortResearch(socket)
+  // Resolved once and threaded into the step list so each step can decrypt
+  // sealed (enclave) content via the viewer's E2E session.
+  const userId = useWorkspaceUserId(workspaceId!)
 
   const { steps, streamingSubsteps, session, relatedSessions, persona, status, isLoading, error } = useAgentTrace(
     workspaceId!,
@@ -109,6 +113,7 @@ export function TraceDialog() {
           highlightMessageId={highlightMessageId}
           workspaceId={workspaceId!}
           streamId={session?.streamId ?? ""}
+          userId={userId}
           onAbortResearch={status === "running" ? handleAbortResearch : undefined}
         />
 
@@ -244,6 +249,7 @@ function TraceBody({
   highlightMessageId,
   workspaceId,
   streamId,
+  userId,
   onAbortResearch,
 }: {
   isLoading: boolean
@@ -253,6 +259,7 @@ function TraceBody({
   highlightMessageId: string | null
   workspaceId: string
   streamId: string
+  userId: string | null
   onAbortResearch?: () => void
 }) {
   let content = (
@@ -261,6 +268,7 @@ function TraceBody({
       highlightMessageId={highlightMessageId}
       workspaceId={workspaceId}
       streamId={streamId}
+      userId={userId}
       streamingSubsteps={streamingSubsteps}
       onAbortResearch={onAbortResearch}
     />

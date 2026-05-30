@@ -88,6 +88,9 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
             stepNumber: step.stepNumber,
             stepType: step.stepType,
             content: step.content as string | undefined,
+            // E2E (enclave) steps: sealed content the browser decrypts; `content` is null for these.
+            contentCiphertext: step.contentCiphertext ?? undefined,
+            contentEnvelope: step.contentEnvelope ?? undefined,
             sources: step.sources ?? undefined,
             messageId: step.messageId ?? undefined,
             tokensUsed: step.tokensUsed ?? undefined,

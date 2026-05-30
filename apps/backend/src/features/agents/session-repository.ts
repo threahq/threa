@@ -37,6 +37,8 @@ interface StepRow {
   step_number: number
   step_type: string
   content: unknown
+  content_ciphertext: string | null
+  content_envelope: unknown | null
   sources: TraceSource[] | null
   message_id: string | null
   tokens_used: number | null
@@ -79,6 +81,9 @@ export interface AgentSessionStep {
   stepNumber: number
   stepType: StepType
   content: unknown
+  /** E2E (enclave) steps: SSK-sealed content + envelope; `content` is null for these (INV-E7). */
+  contentCiphertext: string | null
+  contentEnvelope: unknown | null
   sources: TraceSource[] | null
   messageId: string | null
   tokensUsed: number | null
@@ -125,6 +130,9 @@ export interface AppendStepParams {
   sessionId: string
   stepType: StepType
   content?: unknown
+  /** E2E (enclave) steps: SSK-sealed content + envelope persisted in lieu of plaintext `content`. */
+  contentCiphertext?: string
+  contentEnvelope?: unknown
   sources?: TraceSource[]
   messageId?: string
   tokensUsed?: number
@@ -163,6 +171,8 @@ function mapRowToStep(row: StepRow): AgentSessionStep {
     stepNumber: row.step_number,
     stepType: row.step_type as StepType,
     content: row.content,
+    contentCiphertext: row.content_ciphertext,
+    contentEnvelope: row.content_envelope,
     sources: row.sources,
     messageId: row.message_id,
     tokensUsed: row.tokens_used,
@@ -180,7 +190,8 @@ const SESSION_SELECT_FIELDS = `
 
 const STEP_SELECT_FIELDS = `
   id, session_id, step_number, step_type,
-  content, sources, message_id, tokens_used, started_at, completed_at
+  content, content_ciphertext, content_envelope,
+  sources, message_id, tokens_used, started_at, completed_at
 `
 
 export const AgentSessionRepository = {
@@ -561,7 +572,8 @@ export const AgentSessionRepository = {
       const result = await db.query<StepRow>(
         sql`
           INSERT INTO agent_session_steps (
-            id, session_id, step_number, step_type, content, sources,
+            id, session_id, step_number, step_type, content,
+            content_ciphertext, content_envelope, sources,
             message_id, tokens_used, started_at, completed_at
           )
           SELECT
@@ -570,6 +582,8 @@ export const AgentSessionRepository = {
             COALESCE(MAX(step_number), 0) + 1,
             ${params.stepType},
             ${params.content != null ? JSON.stringify(params.content) : null},
+            ${params.contentCiphertext ?? null},
+            ${params.contentEnvelope ? JSON.stringify(params.contentEnvelope) : null},
             ${params.sources ? JSON.stringify(params.sources) : null},
             ${params.messageId ?? null},
             ${params.tokensUsed ?? null},

@@ -86,7 +86,7 @@ import type { PoolMonitor } from "./lib/observability"
 
 interface Dependencies {
   pool: Pool
-  io?: Server
+  io: Server
   poolMonitor: PoolMonitor
   authService: AuthService
   workspaceService: WorkspaceService
@@ -272,9 +272,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
     // Session callbacks: a live enclave drives an assigned turn over these
     // (liveness refresh + sealed replies on completion). Same shared-secret gate.
-    const enclaveSession = createEnclaveSessionHandlers({ pool, eventService })
+    const enclaveSession = createEnclaveSessionHandlers({ pool, eventService, io: deps.io })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
     app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
+    app.post("/internal/enclave-runtimes/sessions/:id/steps", internalAuth, enclaveSession.steps)
     app.post("/internal/enclave-runtimes/sessions/:id/complete", internalAuth, enclaveSession.complete)
   }
 

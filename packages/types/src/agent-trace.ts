@@ -35,6 +35,15 @@ export interface AgentSessionStep {
   stepNumber: number
   stepType: AgentStepType
   content?: string
+  /**
+   * E2E (enclave) steps only: the step's content sealed under the stream's SSK,
+   * stored as base64 ciphertext + its envelope. When present, `content` is
+   * absent and the browser decrypts these to recover the renderable content
+   * (the same string a plaintext step would carry in `content`). The server
+   * only ever relays these bytes (INV-E7).
+   */
+  contentCiphertext?: string
+  contentEnvelope?: unknown
   sources?: TraceSource[]
   messageId?: string
   duration?: number
