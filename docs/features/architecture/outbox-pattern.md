@@ -16,78 +16,76 @@ summary: >
 related: [public/configurable-sidebar.md]
 ---
 
-## The contract
+## The gist
 
-Real-time delivery never happens through an ad-hoc publish call. A service writes its
-domain rows **and** the events describing them in the _same_ transaction; a separate
-dispatcher reads those events and fans them out. This is what makes
-[INV-4](../../../CLAUDE.md), [INV-6](../../../CLAUDE.md), and
-[INV-7](../../../CLAUDE.md) hold: if the write commits, its events are guaranteed to be
-there to deliver, and if the write rolls back, no phantom event escapes.
+When something happens that other people need to see live — a new message, a reaction —
+we don't publish it to Socket.io right after saving. Instead, in the **same transaction**
+that writes the domain row, we write a row to an `outbox` table describing what happened.
+A separate process tails that table and does the broadcasting.
 
-## Why it exists
+That's the whole idea. The reason it's worth the extra moving parts is the gap between
+"I saved the message" and "I published it": if the server dies in that gap you lose the
+event, and if you publish before the write commits you can broadcast a row that never
+actually lands. Putting the event write inside the same transaction as the domain write
+closes that gap — if the write commits, the event is there to deliver; if it rolls back,
+no phantom event escapes. The price is that delivery is now asynchronous and has to
+tolerate retries and out-of-order commits, which is what the dispatcher and cursor logic
+below are for.
 
-Without an outbox, you publish to Socket.io after committing — and a crash between commit
-and publish loses the event, while a publish before commit can broadcast a row that never
-lands. Coupling the event write to the domain write inside one transaction removes that
-window entirely. The cost is that delivery becomes asynchronous and must tolerate
-retries and out-of-order commits, which the dispatcher and cursor logic handle.
+This is also why [INV-4](../../../CLAUDE.md) says real-time delivery never goes through an
+ad-hoc publish call — everything routes through the outbox.
 
 ## How it works
 
-### Write side
+**Write side.** A service calls `OutboxRepository.insert(client, eventType, payload)`
+(or `insertMany`) using the same `Querier` as its domain write, inside a
+`withTransaction()` block. The event row and the domain mutation commit together, and a
+`NOTIFY` on the outbox channel fires at COMMIT. Real example:
+`EventService.createMessageInTransaction()` writes both `message:created` and
+`stream:activity` in the same transaction as the message row.
 
-`OutboxRepository.insert(client, eventType, payload)` (and `insertMany`) writes a row to
-the `outbox` table using the same `Querier` (`PoolClient`) as the surrounding domain
-write — see `packages/backend-common/src/outbox/repository.ts`. Because it runs inside
-`withTransaction()` (`packages/backend-common/src/db/index.ts`), the row and the domain
-mutation commit together, and the `NOTIFY` on the outbox channel is deferred to COMMIT.
+**Dispatch side.** `OutboxDispatcher` holds one LISTEN connection and registers handlers.
+When the `NOTIFY` arrives (with a ~2s fallback poll for safety) it hands the new events to
+each handler. The handlers are where the actual work happens:
 
-Example: `EventService.createMessageInTransaction()`
-(`apps/backend/src/features/messaging/event-service.ts`) writes both `message:created`
-and `stream:activity` events in the same transaction as the message row.
+- `BroadcastHandler` emits to Socket.io rooms scoped by stream, workspace, and user.
+- `ActivityFeedHandler` builds activity records and can publish further outbox events
+  downstream.
 
-### Dispatch side
+Each handler owns its own cursor, so a slow handler never blocks the others.
 
-`OutboxDispatcher` (`packages/backend-common/src/outbox/dispatcher.ts`) holds a single
-LISTEN connection (from a dedicated listen pool) and registers handlers. On `NOTIFY` —
-with a fallback poll (~2s) for safety — it invokes each registered handler. Handlers read
-new events via `OutboxRepository.fetchAfterId(...)` and act on them:
+If you only need the mental model, you can stop here. The rest is reference for when you're
+actually working on this.
 
-- `BroadcastHandler` (`apps/backend/src/lib/outbox/broadcast-handler.ts`) emits to
-  Socket.io rooms scoped by stream, workspace, and user.
-- `ActivityFeedHandler` (`apps/backend/src/features/activity/outbox-handler.ts`) builds
-  activity records and may publish further outbox events downstream.
+## Details worth knowing
 
-Each handler owns its own cursor, so handlers progress independently.
+### Ordering and the gap problem
 
-### Ordering and delivery guarantees
+Events carry a `BIGSERIAL` id. The catch: the id is allocated at INSERT but only becomes
+visible at COMMIT, so under concurrent transactions a higher id can commit before a lower
+one. A naive "process everything past my cursor" would skip the late-committing event.
 
-Events carry a `BIGSERIAL` id, allocated at INSERT but only visible at COMMIT. Under
-concurrent transactions this creates gaps: a higher id can commit before a lower one, and
-a naive cursor would skip the late-committing event. The fix lives in
-`CursorLock` (`packages/backend-common/src/outbox/cursor-lock.ts`): each listener tracks a
-base cursor (`last_processed_id`) **plus** a sliding window of recently-processed ids
-(`processed_ids`). `compact()` only advances the base cursor across a contiguous run and
-keeps recent ids in the window (default ~1s) so `fetchAfterId(..., excludeIds)` won't
-re-deliver them. Delivery is **at-least-once**; handlers should be idempotent.
+The fix lives in `CursorLock`: each listener tracks a base cursor (`last_processed_id`)
+**plus** a sliding window of recently-processed ids (`processed_ids`). `compact()` only
+advances the base cursor across a contiguous run and keeps recent ids in the window
+(default ~1s) so `fetchAfterId(..., excludeIds)` won't re-deliver them. Delivery is
+**at-least-once**, so handlers must be idempotent.
 
-Failures retry with backoff; after `maxRetries` an event is moved to
-`outbox_dead_letters`. Re-queueing a dead-lettered event means INSERTing a _new_ outbox
-row with the same `event_type` and payload — the listener cursor has already advanced past
-the original id. The full gap analysis is in
+Failures retry with backoff; after `maxRetries` an event moves to `outbox_dead_letters`.
+Re-queueing a dead-lettered event means INSERTing a _new_ outbox row with the same
+`event_type` and payload — the cursor has already advanced past the original id, so
+resurrecting the old row does nothing. The full root-cause writeup is in
 [`docs/investigations/outbox-sequence-gap.md`](../../investigations/outbox-sequence-gap.md).
 
 ### Connection pools
 
-Pool sizing (`createDatabasePools()` in `packages/backend-common/src/db/index.ts`) keeps
-LISTEN and broadcast work off the transactional path:
+Pool sizing (`createDatabasePools()`) deliberately keeps LISTEN and broadcast work off the
+transactional path, so a saturated app pool can't stall delivery:
 
 - **main** (default 30) — HTTP handlers, services, workers, queue.
-- **listen** (default 12) — long-held LISTEN connections for the dispatcher, so they
-  don't compete with transactional work for pool slots.
+- **listen** (default 12) — long-held LISTEN connections for the dispatcher.
 - **realtime** (default 8) — reserved for broadcast / push / the Socket.io postgres
-  adapter, so a saturated main pool can never delay delivery.
+  adapter.
 
 ## Invariants
 

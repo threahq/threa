@@ -115,11 +115,18 @@ predictably.
 - `## Boundaries` — what it deliberately does _not_ do (display-only, deferred bits).
 - `## Related` — optional links.
 
-**`architecture/` docs:**
+**`architecture/` docs:** write the top the way you'd explain it to a colleague at a
+whiteboard, then drop into reference depth lower down. Keep the precise details (config
+values, ordering subtleties, file paths) — just don't make them the first thing a reader
+wades through, or the mental model never lands.
 
-- `## The contract` — the one-line invariant/guarantee.
-- `## Why it exists` — the problem it solves.
-- `## How it works` — the mechanism, with cited files.
+- `## The gist` — what it is and why it's worth it, in plain prose. The mental model
+  lands here, before any mechanism.
+- `## How it works` — the core mechanism, with cited files. End with a line telling a
+  reader who only wants the model that they can stop here.
+- `## Details worth knowing` — the reference layer: edge cases, ordering subtleties,
+  config like pool sizes. Optional, but this is where precision lives once the reader has
+  the shape.
 - `## Invariants` — the INV-\* IDs it enforces.
 - `## Entry points` — canonical files to open (mirrors frontmatter).
 - `## Correct / incorrect usage` — optional, when there's a foot-gun (see
