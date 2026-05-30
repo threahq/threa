@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { AGENT_STEP_TYPES, AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
+import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../agents"
 import { StreamRepository } from "../streams"
@@ -160,21 +161,26 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
       const now = Date.now()
       const startedAt = new Date(now - (step.durationMs ?? 0))
       const completedAt = new Date(now)
-      const persisted = await AgentSessionRepository.appendStep(pool, {
-        id: step.stepId,
-        sessionId: id,
-        stepType: step.stepType,
-        messageId: step.messageId,
-        contentCiphertext: step.ciphertext,
-        contentEnvelope: step.envelope,
-        startedAt,
-        completedAt,
-      })
 
-      // current_step_type is plaintext metadata (the step *kind*, no content) —
-      // it drives the cross-stream "Ariadne is working…" display, same as the
-      // in-process trace. Cleared when the session completes.
-      await AgentSessionRepository.updateCurrentStepType(pool, id, step.stepType)
+      // Append + current_step_type in one transaction (INV-6) so a reader never
+      // sees a new step row without the matching current_step_type. The latter
+      // is plaintext metadata (the step *kind*, no content) driving the
+      // cross-stream "Ariadne is working…" display, same as the in-process
+      // trace; it's cleared when the session completes.
+      const persisted = await withTransaction(pool, async (tx) => {
+        const created = await AgentSessionRepository.appendStep(tx, {
+          id: step.stepId,
+          sessionId: id,
+          stepType: step.stepType,
+          messageId: step.messageId,
+          contentCiphertext: step.ciphertext,
+          contentEnvelope: step.envelope,
+          startedAt,
+          completedAt,
+        })
+        await AgentSessionRepository.updateCurrentStepType(tx, id, step.stepType)
+        return created
+      })
 
       // Live trace: relay the completed step to the session room. The payload
       // carries only ciphertext + envelope; the browser decrypts. A bootstrap
