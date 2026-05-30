@@ -9,6 +9,7 @@ import {
   useWorkspaceFromStore,
   useWorkspaceMetadata,
   useWorkspacePersonas,
+  useWorkspaceSidebarConfig,
   useWorkspaceStreamMemberships,
   useWorkspaceStreams,
   useWorkspaceUnreadState,
@@ -147,9 +148,19 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const idbBots = useWorkspaceBots(workspaceId)
   const idbUnreadState = useWorkspaceUnreadState(workspaceId)
   const idbMetadata = useWorkspaceMetadata(workspaceId)
+  // The sidebar config gates the reveal alongside the other workspace entities:
+  // without it the gate could open before the persisted layout resolved, and the
+  // sidebar would render its DEFAULT fallback for a frame before popping to the
+  // user's real layout. A row always exists after the first bootstrap (the server
+  // seeds the default), so this only ever waits on a genuinely-unloaded config.
+  const idbSidebarConfig = useWorkspaceSidebarConfig(workspaceId)
   const streamById = useMemo(() => new Map(idbStreams.map((stream) => [stream.id, stream])), [idbStreams])
   const workspaceDataReady =
-    hasSeededWorkspaceCache(workspaceId) && !!idbWorkspace && idbUnreadState !== undefined && idbMetadata !== undefined
+    hasSeededWorkspaceCache(workspaceId) &&
+    !!idbWorkspace &&
+    idbUnreadState !== undefined &&
+    idbMetadata !== undefined &&
+    idbSidebarConfig !== undefined
   const draftDataReady = primedDraftWorkspaceId === workspaceId && hasSeededDraftCache(workspaceId)
   const streamQueryStates = useMemo(
     () =>
@@ -230,6 +241,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       botCount: idbBots.length,
       hasUnreadState: idbUnreadState !== undefined,
       hasMetadata: idbMetadata !== undefined,
+      hasSidebarConfig: idbSidebarConfig !== undefined,
       workspaceLoading,
       streamsLoading,
       draftsLoading,

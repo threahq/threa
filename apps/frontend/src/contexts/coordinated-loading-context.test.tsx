@@ -38,6 +38,7 @@ let mockPersonas: Array<{ id: string }> = []
 let mockBots: Array<{ id: string }> = []
 let mockUnreadState: { id: string } | undefined
 let mockMetadata: { id: string } | undefined
+let mockSidebarConfig: { id: string } | undefined
 let mockHasSeededDraftCache = false
 let mockSyncStatuses = new Map<string, string>()
 let mockSyncErrors = new Map<string, { status: number | null; error: Error }>()
@@ -93,6 +94,9 @@ function installSpies() {
   vi.spyOn(workspaceStoreModule, "useWorkspaceMetadata").mockImplementation(
     () => mockMetadata as ReturnType<typeof workspaceStoreModule.useWorkspaceMetadata>
   )
+  vi.spyOn(workspaceStoreModule, "useWorkspaceSidebarConfig").mockImplementation(
+    () => mockSidebarConfig as ReturnType<typeof workspaceStoreModule.useWorkspaceSidebarConfig>
+  )
   vi.spyOn(draftStoreModule, "seedDraftCacheFromIdb").mockImplementation(async () => undefined)
   vi.spyOn(draftStoreModule, "hasSeededDraftCache").mockImplementation(() => mockHasSeededDraftCache)
   vi.spyOn(loadingComponentsModule, "StreamContentSkeleton").mockImplementation(() => (
@@ -129,6 +133,7 @@ function makeReadyWorkspaceState() {
   mockStreams = [{ id: "stream_1" }]
   mockUnreadState = { id: "workspace_1" }
   mockMetadata = { id: "workspace_1" }
+  mockSidebarConfig = { id: "workspace_1" }
 }
 
 describe("CoordinatedLoadingProvider", () => {
@@ -149,6 +154,7 @@ describe("CoordinatedLoadingProvider", () => {
     mockBots = []
     mockUnreadState = undefined
     mockMetadata = undefined
+    mockSidebarConfig = undefined
     mockHasSeededDraftCache = false
     mockSyncStatuses = new Map()
     mockSyncErrors = new Map()
@@ -202,6 +208,7 @@ describe("CoordinatedLoadingProvider", () => {
     mockStreams = [{ id: "stream_1" }]
     mockUnreadState = { id: "workspace_1" }
     mockMetadata = { id: "workspace_1" }
+    mockSidebarConfig = { id: "workspace_1" }
 
     render(
       <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
@@ -231,6 +238,36 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("phase").textContent).toBe("loading")
 
     mockMetadata = { id: "workspace_1" }
+    rerender(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("waits for the sidebar config before becoming ready (no default-layout flash)", async () => {
+    // Regression: the sidebar renders its DEFAULT layout when no config is
+    // resolved, so revealing before the persisted config loaded flashed the
+    // default sections for a frame before popping to the user's real layout.
+    makeReadyWorkspaceState()
+    mockSidebarConfig = undefined
+    mockSeedCacheFromIdbResult = true
+
+    const { rerender } = render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("loading")
+
+    mockSidebarConfig = { id: "workspace_1" }
     rerender(
       <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
         <TestConsumer />
@@ -496,6 +533,7 @@ describe("CoordinatedLoadingGate", () => {
     mockStreams = []
     mockUnreadState = undefined
     mockMetadata = undefined
+    mockSidebarConfig = undefined
     installSpies()
   })
 
@@ -566,6 +604,7 @@ describe("MainContentGate", () => {
     mockStreams = []
     mockUnreadState = undefined
     mockMetadata = undefined
+    mockSidebarConfig = undefined
     installSpies()
   })
 
