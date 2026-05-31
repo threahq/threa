@@ -63,6 +63,22 @@ describe("runSwRecovery", () => {
     expect(sessionStorage.getItem("sw-recovery-attempts")).toBe("2")
   })
 
+  it("stamps the last-attempt time so the watchdog's reset can be cooldown-gated", async () => {
+    const now = 1_700_000_000_000
+    vi.spyOn(Date, "now").mockReturnValue(now)
+    await runSwRecovery()
+    // The index.html CSS watchdog reads this stamp and refuses to clear the
+    // shared counter while it's recent — that's what stops a broken-chunk
+    // reload loop from zeroing the counter and never reaching the cap.
+    expect(sessionStorage.getItem("sw-recovery-last")).toBe(String(now))
+  })
+
+  it("force: true does not stamp the last-attempt time", async () => {
+    const result = await runSwRecovery({ force: true })
+    expect(result).toBe(true)
+    expect(sessionStorage.getItem("sw-recovery-last")).toBeNull()
+  })
+
   it("force: true bypasses the cap and does not touch the counter", async () => {
     sessionStorage.setItem("sw-recovery-attempts", "2")
     const result = await runSwRecovery({ force: true })

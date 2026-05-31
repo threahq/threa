@@ -8,9 +8,17 @@
  * The sessionStorage counter is shared (same key) so both paths together
  * can only reload at most MAX_ATTEMPTS times before falling through to the
  * normal error UI — otherwise a persistent failure could loop forever.
+ *
+ * Every increment also stamps LAST_ATTEMPT_KEY with the current time. The
+ * index.html watchdog only clears the counter on a healthy load when that
+ * stamp is older than its reset cooldown — so a broken JS chunk (CSS still
+ * loads fine!) can't keep zeroing the counter on every reload and loop past
+ * the cap. The cooldown lives in index.html (it can't import this module);
+ * keep the two in sync.
  */
 
 const ATTEMPTS_KEY = "sw-recovery-attempts"
+const LAST_ATTEMPT_KEY = "sw-recovery-last"
 const MAX_ATTEMPTS = 2
 
 /**
@@ -48,6 +56,7 @@ export async function runSwRecovery(options?: { force?: boolean }): Promise<bool
     const attempts = Number.parseInt(sessionStorage.getItem(ATTEMPTS_KEY) ?? "0", 10)
     if (attempts >= MAX_ATTEMPTS) return false
     sessionStorage.setItem(ATTEMPTS_KEY, String(attempts + 1))
+    sessionStorage.setItem(LAST_ATTEMPT_KEY, String(Date.now()))
   }
 
   const tasks: Promise<unknown>[] = []
