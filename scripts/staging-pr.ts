@@ -261,20 +261,74 @@ async function updateWorkspaceSlug(dbName: string, branchName: string): Promise<
 
 const RAILWAY_API = "https://backboard.railway.com/graphql/v2"
 
+// Railway's API gateway intermittently answers with a non-JSON body (an HTML
+// 5xx page, an empty 502/504, or a rate-limit notice) instead of a GraphQL
+// envelope. The old code called `res.json()` blind, so those turned into an
+// opaque "SyntaxError: Failed to parse JSON" with no status or body — which
+// took down PR staging deploys with no way to tell a transient blip from a real
+// rejection. Read the body as text, surface the HTTP status + a snippet on
+// failure, and retry transient failures (network error, 5xx, non-JSON). Every
+// caller here is idempotent (serviceCreate is existence-guarded; instance
+// update and variable upsert are upserts), so retrying is safe.
+const RAILWAY_GQL_MAX_ATTEMPTS = 3
+
 async function railwayGql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
-  const res = await fetch(RAILWAY_API, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${RAILWAY_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
-  })
-  const json = (await res.json()) as { data?: unknown; errors?: { message: string }[] }
-  if (json.errors?.length) {
-    throw new Error(`Railway API error: ${json.errors[0].message}`)
+  let lastError: Error | undefined
+  for (let attempt = 1; attempt <= RAILWAY_GQL_MAX_ATTEMPTS; attempt++) {
+    let res: Response
+    let text: string
+    try {
+      res = await fetch(RAILWAY_API, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${RAILWAY_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query, variables }),
+      })
+      text = await res.text()
+    } catch (err) {
+      // Network-level failure (DNS, connection reset, timeout) — transient.
+      lastError = new Error(`Railway API network error: ${err instanceof Error ? err.message : String(err)}`)
+      if (attempt < RAILWAY_GQL_MAX_ATTEMPTS) {
+        await Bun.sleep(1000 * attempt)
+        continue
+      }
+      throw lastError
+    }
+
+    // Non-2xx: retry 5xx (gateway/transient), fail fast on 4xx (real rejection).
+    if (!res.ok) {
+      const snippet = text.slice(0, 500)
+      lastError = new Error(`Railway API HTTP ${res.status}: ${snippet}`)
+      if (res.status >= 500 && attempt < RAILWAY_GQL_MAX_ATTEMPTS) {
+        await Bun.sleep(1000 * attempt)
+        continue
+      }
+      throw lastError
+    }
+
+    let json: { data?: unknown; errors?: { message: string }[] }
+    try {
+      json = JSON.parse(text) as { data?: unknown; errors?: { message: string }[] }
+    } catch {
+      // 2xx but not JSON — almost always a gateway page slipped through. Retry.
+      lastError = new Error(`Railway API returned non-JSON (HTTP ${res.status}): ${text.slice(0, 500)}`)
+      if (attempt < RAILWAY_GQL_MAX_ATTEMPTS) {
+        await Bun.sleep(1000 * attempt)
+        continue
+      }
+      throw lastError
+    }
+
+    // A GraphQL `errors` array is a deterministic rejection — don't retry it.
+    if (json.errors?.length) {
+      throw new Error(`Railway API error: ${json.errors[0].message}`)
+    }
+    return json.data
   }
-  return json.data
+  // Unreachable: the loop either returns or throws on the final attempt.
+  throw lastError ?? new Error("Railway API request failed")
 }
 
 async function getEnvironmentId(): Promise<string> {
