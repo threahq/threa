@@ -587,14 +587,16 @@ function MessageInputComponent({
   )
 
   if (disabled && disabledReason) {
+    // Use the same floating shell as the live composer so the banner anchors to
+    // the bottom and publishes its height to `--composer-height` (via selfRef).
+    // A plain in-flow div lands at the top of the absolutely-positioned stream
+    // area and overlaps the first messages instead.
     return (
-      <div className="border-t">
-        <div className="p-6 mx-auto max-w-[800px] w-full min-w-0">
-          <div className="flex items-center justify-center py-3 px-4 rounded-md bg-muted/50">
-            <p className="text-sm text-muted-foreground text-center">{disabledReason}</p>
-          </div>
+      <FloatingComposerShell ref={selfRef} data-message-composer-root>
+        <div className="flex items-center justify-center py-3 px-4 rounded-md bg-muted/50">
+          <p className="text-sm text-muted-foreground text-center">{disabledReason}</p>
         </div>
-      </div>
+      </FloatingComposerShell>
     )
   }
 
