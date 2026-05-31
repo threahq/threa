@@ -474,7 +474,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "uploadAttachment",
     summary: "Upload an attachment",
     description:
-      "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message.",
+      "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message. For end-to-end-encrypted scratchpads, encrypt the bytes client-side and set field `e2e=true` — the server then stores opaque ciphertext, skips scanning/processing, and keeps no real filename or mime type.",
     tags: ["Attachments"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.ATTACHMENTS_WRITE],
     parameters: [workspaceIdParam],

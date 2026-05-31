@@ -5,7 +5,14 @@ import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
-import { AttachmentService } from "./service"
+import {
+  AttachmentService,
+  buildUploadParams,
+  parseE2eUploadFlag,
+  E2E_PLACEHOLDER_FILENAME,
+  E2E_PLACEHOLDER_MIME_TYPE,
+  type UploadedFileFacts,
+} from "./service"
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
@@ -386,5 +393,49 @@ describe("AttachmentService", () => {
 
       expect(result).toBeNull()
     })
+  })
+})
+
+// The single chokepoint both upload entry points (first-party + public API)
+// delegate to, so the "E2E ⇒ no real metadata on the server" rule is proven
+// once for both paths.
+describe("buildUploadParams", () => {
+  const file: UploadedFileFacts = {
+    id: "attach_1",
+    workspaceId: "ws_1",
+    uploadedBy: "usr_1",
+    filename: "Q3-layoffs.xlsx",
+    mimeType: "application/vnd.ms-excel",
+    sizeBytes: 2048,
+    storagePath: "ws_1/attach_1/Q3-layoffs.xlsx",
+  }
+
+  it("keeps real metadata and leaves e2e off for a normal upload", () => {
+    expect(buildUploadParams(file, false)).toEqual({ ...file, e2e: false })
+  })
+
+  it("replaces the real filename/mime with placeholders for an E2E upload", () => {
+    const params = buildUploadParams(file, true)
+    expect(params).toEqual({
+      ...file,
+      filename: E2E_PLACEHOLDER_FILENAME,
+      mimeType: E2E_PLACEHOLDER_MIME_TYPE,
+      e2e: true,
+    })
+    // The real name must never survive onto the params the server persists.
+    expect(params.filename).not.toBe(file.filename)
+    expect(params.mimeType).not.toBe(file.mimeType)
+    // Ciphertext size is the one fact that can't be hidden — it's the S3 object.
+    expect(params.sizeBytes).toBe(2048)
+  })
+})
+
+describe("parseE2eUploadFlag", () => {
+  it("reads the multipart string flag and defaults to false", () => {
+    expect(parseE2eUploadFlag({ e2e: "true" })).toBe(true)
+    expect(parseE2eUploadFlag({ e2e: true })).toBe(true)
+    expect(parseE2eUploadFlag({ e2e: "false" })).toBe(false)
+    expect(parseE2eUploadFlag({})).toBe(false)
+    expect(parseE2eUploadFlag(undefined)).toBe(false)
   })
 })
