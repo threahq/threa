@@ -67,8 +67,13 @@ function PullIndicator({ distance, progress, pulling, refreshing, mode }: PullIn
  * out as a glow rather than a hard bar. Shared by the desktop edge strip and the
  * mobile left-edge hint. The `position`/`height` fractions are measured against
  * the sidebar in `useUrgencyTracking`, so both surfaces render the same column.
+ *
+ * `opacityScale` dims the whole column for surfaces that need a gentler hint.
+ * On mobile the strip bleeds rightward into the content area (the sidebar is
+ * off-screen), so a full-strength glow reads as aggressive; scaling it down
+ * keeps it a subtle "worth a glance" cue rather than a demand for attention.
  */
-function UrgencyGlowBlocks({ blocks }: { blocks: Map<string, UrgencyBlock> }) {
+function UrgencyGlowBlocks({ blocks, opacityScale = 1 }: { blocks: Map<string, UrgencyBlock>; opacityScale?: number }) {
   return (
     <>
       {Array.from(blocks.entries()).map(([streamId, block]) => {
@@ -85,7 +90,7 @@ function UrgencyGlowBlocks({ blocks }: { blocks: Map<string, UrgencyBlock> }) {
               height: `${Math.max(expandedHeight * 100, 4)}%`,
               backgroundColor: block.color,
               filter: "blur(12px)",
-              opacity: block.opacity,
+              opacity: block.opacity * opacityScale,
             }}
           />
         )
@@ -281,7 +286,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               style={{ clipPath: "inset(-50px -50px -50px 0)" }}
               aria-hidden="true"
             >
-              <UrgencyGlowBlocks blocks={urgencyBlocks} />
+              <UrgencyGlowBlocks blocks={urgencyBlocks} opacityScale={0.3} />
             </div>
           )}
 
