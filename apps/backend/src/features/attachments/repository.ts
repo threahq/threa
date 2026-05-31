@@ -1,6 +1,7 @@
 import { sql, type Querier } from "../../db"
 import {
   AttachmentSafetyStatuses,
+  SHAREABLE_SAFETY_STATUSES,
   ProcessingStatuses,
   Visibilities,
   mimePrefixesForCategory,
@@ -249,12 +250,14 @@ export const AttachmentRepository = {
   ): Promise<number> {
     if (attachmentIds.length === 0) return 0
     // Link only shareable attachments: scanned-clean OR E2E ciphertext (which is
-    // unscannable but is the owner's own bytes). Mirrors isAttachmentSafeForSharing.
+    // unscannable but is the owner's own bytes). Reads the same allowlist as the
+    // `isAttachmentSafeForSharing` predicate so this race-safe filter (INV-20)
+    // and the service-layer gate can't drift (INV-33).
     const result = await client.query(sql`
       UPDATE attachments
       SET message_id = ${messageId}, stream_id = ${streamId}
       WHERE id = ANY(${attachmentIds}) AND message_id IS NULL
-        AND safety_status = ANY(${[AttachmentSafetyStatuses.CLEAN, AttachmentSafetyStatuses.E2E_UNSCANNED]})
+        AND safety_status = ANY(${[...SHAREABLE_SAFETY_STATUSES]})
     `)
     return result.rowCount ?? 0
   },

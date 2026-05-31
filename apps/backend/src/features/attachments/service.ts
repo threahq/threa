@@ -1,3 +1,4 @@
+import { z } from "zod"
 import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -72,10 +73,17 @@ export function buildUploadParams(file: UploadedFileFacts, e2e: boolean): Create
   }
 }
 
-/** Parse the multipart `e2e` flag (form fields arrive as strings). */
+/**
+ * Parse the multipart `e2e` flag. Form fields arrive as the string `"true"`;
+ * JSON callers may send a real boolean. Anything else (absent/other) is false.
+ */
+const e2eUploadFlagSchema = z
+  .object({ e2e: z.union([z.literal("true"), z.boolean()]).optional() })
+  .transform((body) => body.e2e === "true" || body.e2e === true)
+
 export function parseE2eUploadFlag(body: unknown): boolean {
-  const value = (body as { e2e?: unknown } | undefined)?.e2e
-  return value === "true" || value === true
+  const parsed = e2eUploadFlagSchema.safeParse(body)
+  return parsed.success ? parsed.data : false
 }
 
 export type CreateAttachmentForUploadResult =
