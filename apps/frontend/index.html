@@ -153,11 +153,21 @@
             }
           }
           if (hasStyles) {
-            // Styles loaded successfully — reset counter so future breaks can recover
-            sessionStorage.removeItem("sw-recovery-attempts")
+            // Styles loaded — but a broken JS chunk loads CSS fine too, so
+            // "hasStyles" is NOT proof the last recovery worked. Only clear the
+            // counter when the last attempt is old enough that the app has
+            // clearly been healthy since; otherwise a chunk-error reload loop
+            // would keep zeroing this and never reach the cap that surfaces the
+            // escape UI. Cooldown mirrors the note in src/lib/sw-recovery.ts.
+            var last = parseInt(sessionStorage.getItem("sw-recovery-last") || "0", 10)
+            if (!last || Date.now() - last > 60000) {
+              sessionStorage.removeItem("sw-recovery-attempts")
+              sessionStorage.removeItem("sw-recovery-last")
+            }
             return
           }
           sessionStorage.setItem("sw-recovery-attempts", String(attempts + 1))
+          sessionStorage.setItem("sw-recovery-last", String(Date.now()))
           var tasks = []
           if (navigator.serviceWorker) {
             tasks.push(
