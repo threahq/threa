@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { StreamTypes, Visibilities, type StreamWithPreview } from "@threa/types"
-import { categorizeStream } from "./utils"
+import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threa/types"
+import { calculateUrgency, categorizeStream } from "./utils"
 
 function makeStream(overrides: Partial<StreamWithPreview> = {}): StreamWithPreview {
   return {
@@ -24,6 +24,40 @@ function makeStream(overrides: Partial<StreamWithPreview> = {}): StreamWithPrevi
     ...overrides,
   }
 }
+
+describe("calculateUrgency", () => {
+  function streamWith(authorType: AuthorType | null) {
+    return { lastMessagePreview: authorType ? { authorType } : null }
+  }
+
+  it("returns quiet when muted regardless of unread/mentions", () => {
+    expect(calculateUrgency(streamWith("user"), 5, 3, true)).toBe("quiet")
+  })
+
+  it("prioritizes mentions ahead of any author signal", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.PERSONA), 2, 1, false)).toBe("mentions")
+  })
+
+  it("returns ai for unread persona activity", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.PERSONA), 1, 0, false)).toBe("ai")
+  })
+
+  it("returns bot for unread bot activity", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.BOT), 1, 0, false)).toBe("bot")
+  })
+
+  it("returns activity for unread human activity", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.USER), 1, 0, false)).toBe("activity")
+  })
+
+  it("returns activity for unread with no cached preview author", () => {
+    expect(calculateUrgency(streamWith(null), 1, 0, false)).toBe("activity")
+  })
+
+  it("returns quiet with no unread and no mentions", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.BOT), 0, 0, false)).toBe("quiet")
+  })
+})
 
 describe("categorizeStream", () => {
   beforeEach(() => {

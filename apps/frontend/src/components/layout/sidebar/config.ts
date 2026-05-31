@@ -2,10 +2,11 @@ import { FileEdit, Hash, User, type LucideIcon } from "lucide-react"
 import type { SectionKey, SortType, UrgencyLevel } from "./types"
 
 export const URGENCY_COLORS: Record<UrgencyLevel, string> = {
-  mentions: "hsl(0 90% 55%)", // Vibrant red
-  activity: "hsl(210 100% 55%)", // Bright blue
+  mentions: "hsl(0 90% 55%)", // Vibrant red — someone mentioned you
+  ai: "hsl(45 100% 50%)", // Bright gold/amber — AI persona activity
+  bot: "hsl(145 63% 45%)", // Green — bot / integration activity
+  activity: "hsl(210 100% 55%)", // Bright blue — other unread activity
   quiet: "transparent", // Hidden when no activity
-  ai: "hsl(45 100% 50%)", // Bright gold/amber
 }
 
 interface BadgeConfig {

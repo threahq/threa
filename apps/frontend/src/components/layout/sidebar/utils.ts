@@ -20,11 +20,12 @@ export function calculateUrgency(
 
   if (mentionCount > 0) return "mentions"
 
-  if (stream.lastMessagePreview?.authorType === AuthorTypes.PERSONA && unreadCount > 0) {
-    return "ai"
+  if (unreadCount > 0) {
+    const authorType = stream.lastMessagePreview?.authorType
+    if (authorType === AuthorTypes.PERSONA) return "ai"
+    if (authorType === AuthorTypes.BOT) return "bot"
+    return "activity"
   }
-
-  if (unreadCount > 0) return "activity"
 
   return "quiet"
 }
