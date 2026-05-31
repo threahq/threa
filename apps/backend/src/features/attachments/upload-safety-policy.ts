@@ -1,4 +1,4 @@
-import { AttachmentSafetyStatuses, type AttachmentSafetyStatus } from "@threa/types"
+import { AttachmentSafetyStatuses, SHAREABLE_SAFETY_STATUSES, type AttachmentSafetyStatus } from "@threa/types"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { logger } from "../../lib/logger"
 
@@ -34,8 +34,10 @@ const SCAN_HEAD_BYTES = 8 * 1024
 const MALWARE_SIGNATURES = ["EICAR-STANDARD-ANTIVIRUS-TEST-FILE", "X5O!P%@AP"] as const
 
 export function isAttachmentSafeForSharing(safetyStatus: AttachmentSafetyStatus): boolean {
-  // E2E ciphertext is unscannable but it's the owner's own bytes — downloadable.
-  return safetyStatus === AttachmentSafetyStatuses.CLEAN || safetyStatus === AttachmentSafetyStatuses.E2E_UNSCANNED
+  // Scanned-clean or E2E ciphertext (unscannable but the owner's own bytes).
+  // SHAREABLE_SAFETY_STATUSES is the single source of truth this and the
+  // race-safe `attachToMessage` SQL filter both read from (INV-33).
+  return (SHAREABLE_SAFETY_STATUSES as readonly AttachmentSafetyStatus[]).includes(safetyStatus)
 }
 
 export function safetyStatusBlockReason(safetyStatus: AttachmentSafetyStatus): string {

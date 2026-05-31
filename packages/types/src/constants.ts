@@ -200,6 +200,17 @@ export const AttachmentSafetyStatuses = {
   E2E_UNSCANNED: "e2e_unscanned",
 } as const satisfies Record<string, AttachmentSafetyStatus>
 
+/**
+ * Safety statuses that may bind/download as a message attachment: scanned-clean
+ * or E2E ciphertext (unscannable, but the owner's own bytes). Single source of
+ * truth so the `isAttachmentSafeForSharing` predicate and the race-safe
+ * `attachToMessage` SQL filter can't drift (INV-33).
+ */
+export const SHAREABLE_SAFETY_STATUSES = [
+  AttachmentSafetyStatuses.CLEAN,
+  AttachmentSafetyStatuses.E2E_UNSCANNED,
+] as const satisfies readonly AttachmentSafetyStatus[]
+
 // Video transcode job status
 export const VIDEO_TRANSCODE_STATUSES = ["pending", "submitted", "completed", "failed"] as const
 export type VideoTranscodeStatus = (typeof VIDEO_TRANSCODE_STATUSES)[number]

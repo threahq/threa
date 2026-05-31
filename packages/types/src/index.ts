@@ -52,6 +52,7 @@ export {
   ATTACHMENT_SAFETY_STATUSES,
   type AttachmentSafetyStatus,
   AttachmentSafetyStatuses,
+  SHAREABLE_SAFETY_STATUSES,
   VIDEO_TRANSCODE_STATUSES,
   type VideoTranscodeStatus,
   VideoTranscodeStatuses,

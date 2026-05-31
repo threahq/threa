@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { AttachmentSafetyStatuses } from "@threa/types"
+import { ATTACHMENT_SAFETY_STATUSES, AttachmentSafetyStatuses, SHAREABLE_SAFETY_STATUSES } from "@threa/types"
 import { createMalwareScanner, isAttachmentSafeForSharing, safetyStatusBlockReason } from "./upload-safety-policy"
 
 describe("attachment sharing safety", () => {
@@ -9,6 +9,14 @@ describe("attachment sharing safety", () => {
     expect(isAttachmentSafeForSharing(AttachmentSafetyStatuses.E2E_UNSCANNED)).toBe(true)
     expect(isAttachmentSafeForSharing(AttachmentSafetyStatuses.PENDING_SCAN)).toBe(false)
     expect(isAttachmentSafeForSharing(AttachmentSafetyStatuses.QUARANTINED)).toBe(false)
+  })
+
+  it("predicate agrees with SHAREABLE_SAFETY_STATUSES for every status", () => {
+    // The predicate and the race-safe attachToMessage SQL both read this one
+    // allowlist; adding a status to only one place breaks this (INV-33).
+    for (const status of ATTACHMENT_SAFETY_STATUSES) {
+      expect(isAttachmentSafeForSharing(status)).toBe((SHAREABLE_SAFETY_STATUSES as readonly string[]).includes(status))
+    }
   })
 
   it("returns status-specific block reasons", () => {
