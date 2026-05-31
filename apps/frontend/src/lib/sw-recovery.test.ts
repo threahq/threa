@@ -47,6 +47,7 @@ describe("runSwRecovery", () => {
   afterEach(() => {
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
     sessionStorage.clear()
+    vi.restoreAllMocks()
   })
 
   it("returns false without reloading once the per-session cap is reached", async () => {
