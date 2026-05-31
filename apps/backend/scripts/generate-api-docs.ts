@@ -127,11 +127,6 @@ function buildSpec() {
               required: ["file"],
               properties: {
                 file: { type: "string", format: "binary" },
-                e2e: {
-                  type: "boolean",
-                  description:
-                    "Set true when the file bytes are client-side encrypted (E2E scratchpad). The server stores them opaquely, skips malware scanning and processing, and keeps no real filename/mime — those ride encrypted in the message's attachmentRefs.",
-                },
               },
             },
           },
