@@ -13,8 +13,9 @@
  * index.html watchdog only clears the counter on a healthy load when that
  * stamp is older than its reset cooldown — so a broken JS chunk (CSS still
  * loads fine!) can't keep zeroing the counter on every reload and loop past
- * the cap. The cooldown lives in index.html (it can't import this module);
- * keep the two in sync.
+ * the cap. The reset cooldown (60s) is enforced in index.html, which owns the
+ * only read of the stamp — it can't import this module, so keep the two in
+ * sync.
  */
 
 const ATTEMPTS_KEY = "sw-recovery-attempts"
