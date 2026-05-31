@@ -10,6 +10,7 @@ import {
   AttachmentRepository,
   AttachmentReferenceRepository,
   isAttachmentReadableViaShareOrReference,
+  isAttachmentSafeForSharing,
   toAttachmentSummary,
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
@@ -21,7 +22,6 @@ import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
 import { OperationLeaseRepository } from "../../lib/operation-leases"
 import {
-  AttachmentSafetyStatuses,
   AuthorTypes,
   CompanionModes,
   StreamTypes,
@@ -417,8 +417,10 @@ export class EventService {
         if (a.workspaceId !== params.workspaceId) {
           throw new Error("Invalid attachment IDs: must belong to this workspace")
         }
-        if (a.safetyStatus !== AttachmentSafetyStatuses.CLEAN) {
-          throw new Error("Invalid attachment IDs: must be malware-scan clean")
+        // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
+        // bytes). Single source of truth with the download path.
+        if (!isAttachmentSafeForSharing(a.safetyStatus)) {
+          throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
         }
         if (a.messageId === null) {
           attachmentsToAttach.push(a.id)
@@ -772,8 +774,10 @@ export class EventService {
       if (a.workspaceId !== params.workspaceId) {
         throw new Error("Invalid attachment IDs: must belong to this workspace")
       }
-      if (a.safetyStatus !== AttachmentSafetyStatuses.CLEAN) {
-        throw new Error("Invalid attachment IDs: must be malware-scan clean")
+      // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
+      // bytes). Single source of truth with the download path.
+      if (!isAttachmentSafeForSharing(a.safetyStatus)) {
+        throw new Error("Invalid attachment IDs: must be malware-scan clean or E2E-encrypted")
       }
       if (a.messageId === null) {
         // Fresh uploads aren't supported on edit — they'd need `attachToMessage`

@@ -501,7 +501,7 @@
         "operationId": "uploadAttachment",
         "summary": "Upload an attachment",
         "tags": ["Attachments"],
-        "description": "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message.",
+        "description": "Upload a file as multipart/form-data using field `file`. Include the returned attachment id in message markdown as `attachment:<id>` to attach it to a message. For end-to-end-encrypted scratchpads, encrypt the bytes client-side and set field `e2e=true` — the server then stores opaque ciphertext, skips scanning/processing, and keeps no real filename or mime type.",
         "security": [{ "apiKey": ["attachments:write"] }],
         "parameters": [
           {
@@ -519,7 +519,13 @@
               "schema": {
                 "type": "object",
                 "required": ["file"],
-                "properties": { "file": { "type": "string", "format": "binary" } }
+                "properties": {
+                  "file": { "type": "string", "format": "binary" },
+                  "e2e": {
+                    "type": "boolean",
+                    "description": "Set true when the file bytes are client-side encrypted (E2E scratchpad). The server stores them opaquely, skips malware scanning and processing, and keeps no real filename/mime — those ride encrypted in the message's attachmentRefs."
+                  }
+                }
               }
             }
           }

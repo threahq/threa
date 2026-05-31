@@ -44,6 +44,40 @@ export interface CreateAttachmentParams {
 export const E2E_PLACEHOLDER_FILENAME = "encrypted"
 export const E2E_PLACEHOLDER_MIME_TYPE = "application/octet-stream"
 
+/** The raw facts an upload entry point knows after multer streams a file to S3. */
+export interface UploadedFileFacts {
+  id: string
+  workspaceId: string
+  uploadedBy: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  storagePath: string
+}
+
+/**
+ * Derive the create params from an uploaded file and the caller's E2E intent —
+ * the single chokepoint every upload entry point (first-party + public API)
+ * routes through, so the threat-model rule "E2E ⇒ the server keeps no real
+ * filename/mime" can't drift between them. For E2E we overwrite the client's
+ * metadata with placeholders by construction; the real values ride encrypted in
+ * the message's attachmentRefs.
+ */
+export function buildUploadParams(file: UploadedFileFacts, e2e: boolean): CreateAttachmentParams {
+  return {
+    ...file,
+    filename: e2e ? E2E_PLACEHOLDER_FILENAME : file.filename,
+    mimeType: e2e ? E2E_PLACEHOLDER_MIME_TYPE : file.mimeType,
+    e2e,
+  }
+}
+
+/** Parse the multipart `e2e` flag (form fields arrive as strings). */
+export function parseE2eUploadFlag(body: unknown): boolean {
+  const value = (body as { e2e?: unknown } | undefined)?.e2e
+  return value === "true" || value === true
+}
+
 export type CreateAttachmentForUploadResult =
   | { status: "created"; attachment: Attachment }
   | { status: "blocked"; reason: string }

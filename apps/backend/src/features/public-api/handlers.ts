@@ -21,6 +21,8 @@ import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type Memo
 import {
   AttachmentExtractionRepository,
   AttachmentRepository,
+  buildUploadParams,
+  parseE2eUploadFlag,
   type Attachment,
   type AttachmentExtraction,
   type AttachmentWithExtraction,
@@ -683,15 +685,23 @@ export function createPublicApiHandlers({
         throw new HttpError("Attachment id was not generated", { status: 500, code: "INTERNAL_ERROR" })
       }
 
-      const uploadResult = await attachmentService.createForUpload({
-        id: attachmentId,
-        workspaceId,
-        uploadedBy,
-        filename: file.originalname,
-        mimeType: file.mimetype,
-        sizeBytes: file.size,
-        storagePath: file.key,
-      })
+      // E2E upload (Pi remote / CLI agents like claws): bytes are client-side
+      // ciphertext. buildUploadParams forces placeholder metadata; the real
+      // filename/mime ride encrypted in the message's attachmentRefs.
+      const uploadResult = await attachmentService.createForUpload(
+        buildUploadParams(
+          {
+            id: attachmentId,
+            workspaceId,
+            uploadedBy,
+            filename: file.originalname,
+            mimeType: file.mimetype,
+            sizeBytes: file.size,
+            storagePath: file.key,
+          },
+          parseE2eUploadFlag(req.body)
+        )
+      )
 
       if (uploadResult.status === "cleanup_failed") {
         throw new HttpError("Attachment quarantined and cleanup failed", { status: 500, code: "INTERNAL_ERROR" })

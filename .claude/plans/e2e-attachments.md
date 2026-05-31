@@ -64,8 +64,17 @@ No key/iv columns — by design.
 - `safetyStatusBlockReason`: add the `e2e_unscanned` case → `""` (no block). The
   exhaustive switch forces us to handle it (good).
 
-### Service / handler (`service.ts`, `handlers.ts`, `repository.ts`)
-- Upload handler reads a multipart field `e2e` (boolean). When set:
+### Service / handler (`service.ts`, `handlers.ts`, `repository.ts`, public API)
+- **Both upload entry points carry E2E** — the first-party `/attachments`
+  handler AND the public-api `POST /api/v1/workspaces/:id/attachments` (the path
+  the Pi remote and CLI agents like claws use). They share one chokepoint:
+  - `parseE2eUploadFlag(req.body)` reads the multipart `e2e` flag (string).
+  - `buildUploadParams(file, e2e)` is the single place the threat-model rule
+    "E2E ⇒ the server keeps no real filename/mime" lives, so the two handlers
+    can't drift. A security property must not be copy-pasted.
+  - The public-API OpenAPI multipart body documents the optional `e2e` field
+    (regenerated spec, checked in CI).
+- When `e2e` is set:
   - **Server forces placeholders** — `filename = "encrypted"`,
     `mimeType = "application/octet-stream"` (don't trust/keep the client's real
     name even if sent; minimize by construction).
@@ -86,11 +95,19 @@ not an escalation. (Solo/owner-only scratchpads today mean no cross-user serving
 of an unscanned blob; if multi-reader E2E ships, harden by refusing cross-user
 download of `e2e_unscanned`. Noted, not built — INV-36.)
 
+### Send-path gate (`messaging/event-service.ts`)
+Creating/editing a message validates each attachment is shareable. Both gates
+now call `isAttachmentSafeForSharing` (clean ∪ e2e_unscanned) instead of an
+inline `=== CLEAN`, so an E2E attachment can bind to its message.
+
 ### Tests
 - safety-policy: `e2e_unscanned` is shareable + no block reason.
 - service: E2E upload skips scan, emits no outbox event, persists
   `e2e_only/processing=skipped/safety=e2e_unscanned`, stores placeholder
   filename/mime; non-E2E unchanged (scan runs, event emitted).
+- `buildUploadParams` / `parseE2eUploadFlag`: the shared chokepoint forces
+  placeholders for E2E and keeps real metadata otherwise (one proof covers both
+  the first-party and public-API handlers).
 - repository: `e2e_only` round-trips snake↔camel.
 
 ---
