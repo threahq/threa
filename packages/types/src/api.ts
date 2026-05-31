@@ -36,6 +36,7 @@ import type {
 } from "./domain"
 import type { UserPreferences } from "./preferences"
 import type { SidebarConfig } from "./sidebar"
+import type { ToolPrivacyCategory } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
 
 // ============================================================================
@@ -493,6 +494,14 @@ export interface EnclaveSessionAssignment {
   temperature?: number
   maxTokens?: number
   reply: { keyGeneration: number; senderId: string }
+  /**
+   * Per-stream tool-privacy policy: the tool categories the enclave may use this
+   * turn. Omitted means no restriction (today's behavior). Present (even `[]`)
+   * restricts the agent to exactly those categories — the enclave currently only
+   * builds web tools, so in practice this gates whether web egress is allowed at
+   * all. `messaging` (replies) is always allowed regardless.
+   */
+  allowedToolCategories?: ToolPrivacyCategory[]
 }
 
 /**

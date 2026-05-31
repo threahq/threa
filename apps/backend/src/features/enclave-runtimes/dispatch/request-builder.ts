@@ -92,6 +92,10 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
     model: persona.model.replace(/^openrouter:/, ""),
     ...(persona.temperature !== null ? { temperature: persona.temperature } : {}),
     ...(persona.maxTokens !== null ? { maxTokens: persona.maxTokens } : {}),
+    // Per-stream tool-privacy policy: ship it so the enclave gates its tools.
+    // NULL = unrestricted → omit the field (the enclave then builds its full
+    // web surface, today's behavior).
+    ...(e2e.allowedToolCategories ? { allowedToolCategories: e2e.allowedToolCategories } : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
   }
 
