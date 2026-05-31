@@ -185,13 +185,19 @@ export const ProcessingStatuses = {
 } as const satisfies Record<string, ProcessingStatus>
 
 // Attachment malware safety status
-export const ATTACHMENT_SAFETY_STATUSES = ["pending_scan", "clean", "quarantined"] as const
+export const ATTACHMENT_SAFETY_STATUSES = ["pending_scan", "clean", "quarantined", "e2e_unscanned"] as const
 export type AttachmentSafetyStatus = (typeof ATTACHMENT_SAFETY_STATUSES)[number]
 
 export const AttachmentSafetyStatuses = {
   PENDING_SCAN: "pending_scan",
   CLEAN: "clean",
   QUARANTINED: "quarantined",
+  /**
+   * E2E attachment: the bytes in S3 are client-side ciphertext, so the malware
+   * scanner can't read them. We don't scan and say so — never a faked `clean`.
+   * Download is allowed (it's the owner's own ciphertext); processors skip.
+   */
+  E2E_UNSCANNED: "e2e_unscanned",
 } as const satisfies Record<string, AttachmentSafetyStatus>
 
 // Video transcode job status

@@ -21,6 +21,7 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
     storagePath: "k",
     processingStatus: "completed",
     safetyStatus: AttachmentSafetyStatuses.CLEAN,
+    e2eOnly: false,
     thumbnailStoragePath: null,
     width: null,
     height: null,
@@ -43,6 +44,7 @@ function createService() {
   return {
     service: new AttachmentService({} as any, storage, malwareScanner),
     storage,
+    malwareScanner,
   }
 }
 
@@ -136,8 +138,9 @@ describe("AttachmentService", () => {
       sizeBytes: params.sizeBytes,
       storageProvider: "s3",
       storagePath: params.storagePath,
-      processingStatus: "pending",
-      safetyStatus: AttachmentSafetyStatuses.PENDING_SCAN,
+      processingStatus: params.processingStatus ?? "pending",
+      safetyStatus: params.safetyStatus ?? AttachmentSafetyStatuses.PENDING_SCAN,
+      e2eOnly: params.e2eOnly ?? false,
       thumbnailStoragePath: null,
       width: null,
       height: null,
@@ -189,6 +192,75 @@ describe("AttachmentService", () => {
       })
     )
     expect(attachment.sizeBytes).toBe(4096)
+  })
+
+  describe("E2E uploads", () => {
+    function spyInsertEcho() {
+      return spyOn(AttachmentRepository, "insert").mockImplementation(async (_client, params) => ({
+        id: params.id,
+        workspaceId: params.workspaceId,
+        streamId: null,
+        messageId: null,
+        uploadedBy: params.uploadedBy,
+        filename: params.filename,
+        mimeType: params.mimeType,
+        sizeBytes: params.sizeBytes,
+        storageProvider: "s3",
+        storagePath: params.storagePath,
+        processingStatus: params.processingStatus ?? "pending",
+        safetyStatus: params.safetyStatus ?? AttachmentSafetyStatuses.PENDING_SCAN,
+        e2eOnly: params.e2eOnly ?? false,
+        thumbnailStoragePath: null,
+        width: null,
+        height: null,
+        createdAt: new Date(),
+      }))
+    }
+
+    it("skips the malware scan, emits no processor event, and persists e2e_unscanned + skipped", async () => {
+      spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, callback: (client: any) => Promise<any>) =>
+        callback({})) as any)
+      const insertSpy = spyInsertEcho()
+      const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const { service, malwareScanner } = createService()
+
+      const attachment = await service.create({
+        id: "attach_e2e",
+        workspaceId: "ws_1",
+        uploadedBy: "usr_1",
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 2048,
+        storagePath: "ws_1/attach_e2e/encrypted",
+        e2e: true,
+      })
+
+      // The scanner never runs on ciphertext, and no processor work is dispatched.
+      expect(malwareScanner.scan).not.toHaveBeenCalled()
+      expect(outboxSpy).not.toHaveBeenCalled()
+
+      expect(insertSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          e2eOnly: true,
+          safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+          processingStatus: "skipped",
+        })
+      )
+      expect(attachment).toMatchObject({
+        e2eOnly: true,
+        safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        processingStatus: "skipped",
+      })
+    })
+
+    it("treats an E2E upload as shareable (download allowed despite never being scanned)", async () => {
+      const { service } = createService()
+      expect(
+        service.getSharingBlockReason(makeAttachment({ safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED }))
+      ).toBeNull()
+    })
   })
 
   it("fails loudly when storage cannot determine the object size", async () => {

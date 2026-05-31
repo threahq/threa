@@ -32,7 +32,17 @@ export interface CreateAttachmentParams {
   mimeType: string
   sizeBytes: number
   storagePath: string
+  /**
+   * The bytes in S3 are client-side ciphertext. Skips the malware scan (it can't
+   * read ciphertext) and emits no processor work; the row is marked
+   * `e2e_unscanned` + `skipped`. Caller passes placeholder filename/mime.
+   */
+  e2e?: boolean
 }
+
+/** Server-forced metadata for E2E uploads — the real values ride encrypted. */
+export const E2E_PLACEHOLDER_FILENAME = "encrypted"
+export const E2E_PLACEHOLDER_MIME_TYPE = "application/octet-stream"
 
 export type CreateAttachmentForUploadResult =
   | { status: "created"; attachment: Attachment }
@@ -57,6 +67,26 @@ export class AttachmentService {
       Number.isFinite(params.sizeBytes) && params.sizeBytes > 0
         ? params.sizeBytes
         : await this.storage.getObjectSize(params.storagePath)
+
+    // E2E: the bytes are ciphertext the scanner can't read and processors can't
+    // parse. Insert as unscanned + skipped and emit no `attachment:uploaded`
+    // event — no caption/extract/transcode/embedding work is dispatched.
+    if (params.e2e) {
+      return withTransaction(this.pool, async (client) =>
+        AttachmentRepository.insert(client, {
+          id: params.id,
+          workspaceId: params.workspaceId,
+          uploadedBy: params.uploadedBy,
+          filename: params.filename,
+          mimeType: params.mimeType,
+          sizeBytes,
+          storagePath: params.storagePath,
+          safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+          processingStatus: ProcessingStatuses.SKIPPED,
+          e2eOnly: true,
+        })
+      )
+    }
 
     const attachment = await withTransaction(this.pool, async (client) => {
       return AttachmentRepository.insert(client, {

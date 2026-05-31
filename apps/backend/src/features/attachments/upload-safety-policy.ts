@@ -34,7 +34,8 @@ const SCAN_HEAD_BYTES = 8 * 1024
 const MALWARE_SIGNATURES = ["EICAR-STANDARD-ANTIVIRUS-TEST-FILE", "X5O!P%@AP"] as const
 
 export function isAttachmentSafeForSharing(safetyStatus: AttachmentSafetyStatus): boolean {
-  return safetyStatus === AttachmentSafetyStatuses.CLEAN
+  // E2E ciphertext is unscannable but it's the owner's own bytes — downloadable.
+  return safetyStatus === AttachmentSafetyStatuses.CLEAN || safetyStatus === AttachmentSafetyStatuses.E2E_UNSCANNED
 }
 
 export function safetyStatusBlockReason(safetyStatus: AttachmentSafetyStatus): string {
@@ -44,6 +45,7 @@ export function safetyStatusBlockReason(safetyStatus: AttachmentSafetyStatus): s
     case AttachmentSafetyStatuses.QUARANTINED:
       return "Attachment is quarantined due to malware scan"
     case AttachmentSafetyStatuses.CLEAN:
+    case AttachmentSafetyStatuses.E2E_UNSCANNED:
       return ""
   }
 }

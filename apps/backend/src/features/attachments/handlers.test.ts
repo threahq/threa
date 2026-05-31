@@ -119,6 +119,76 @@ describe("attachment handlers safety gating", () => {
     })
   })
 
+  it("forces placeholder metadata and flags e2e when the upload is E2E", async () => {
+    const createForUpload = mock(() =>
+      Promise.resolve({ status: "created", attachment: buildAttachment(AttachmentSafetyStatuses.E2E_UNSCANNED) })
+    )
+    const attachmentService = { createForUpload } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.upload(
+      {
+        user: { id: "usr_1" },
+        workspaceId: "ws_1",
+        attachmentId: "attach_e2e",
+        body: { e2e: "true" },
+        file: {
+          key: "ws_1/attach_e2e/encrypted",
+          originalname: "Q3-layoffs.xlsx", // real name must NOT reach the row
+          mimetype: "application/vnd.ms-excel",
+          size: 2048,
+        },
+      } as any,
+      res
+    )
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(createForUpload).toHaveBeenCalledWith(
+      expect.objectContaining({
+        e2e: true,
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 2048,
+      })
+    )
+  })
+
+  it("keeps real metadata and does not flag e2e for a normal upload", async () => {
+    const createForUpload = mock(() =>
+      Promise.resolve({ status: "created", attachment: buildAttachment(AttachmentSafetyStatuses.CLEAN) })
+    )
+    const attachmentService = { createForUpload } as any
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage: {} as any,
+      pool: {} as any,
+    })
+    const res = createResponse()
+
+    await handlers.upload(
+      {
+        user: { id: "usr_1" },
+        workspaceId: "ws_1",
+        attachmentId: "attach_1",
+        body: {},
+        file: { key: "ws_1/attach_1/photo.png", originalname: "photo.png", mimetype: "image/png", size: 100 },
+      } as any,
+      res
+    )
+
+    expect(res.status).toHaveBeenCalledWith(201)
+    expect(createForUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ e2e: false, filename: "photo.png", mimeType: "image/png" })
+    )
+  })
+
   it("blocks download URL while malware scan is pending", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.PENDING_SCAN))),
@@ -329,6 +399,7 @@ function buildSearchRow(overrides: Partial<AttachmentSearchRow> = {}): Attachmen
     storagePath: "ws_1/attach_a/logo.png",
     processingStatus: "completed",
     safetyStatus: AttachmentSafetyStatuses.CLEAN,
+    e2eOnly: false,
     thumbnailStoragePath: null,
     width: null,
     height: null,
