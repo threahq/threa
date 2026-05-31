@@ -156,6 +156,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     workspaceId,
     draftKey,
     scopeId: draftInfo?.parentMessageId ?? "",
+    e2eEnabled: stream?.e2eEnabled === true,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves

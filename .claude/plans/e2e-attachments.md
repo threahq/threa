@@ -112,17 +112,57 @@ inline `=== CLEAN`, so an E2E attachment can bind to its message.
 
 ---
 
-## Slice B — frontend crypto + viewer (next slice, NOT here)
-- `packages/crypto`: `encryptBytes`/`decryptBytes` (raw-bytes AES-GCM, distinct
-  from message AAD binding) if `sealMessage` isn't a clean fit for file bytes.
-- Upload: in an E2E stream, gen key+iv, encrypt bytes, PUT ciphertext via the
-  existing presigned flow with `e2e=true`; stash `{key,iv,filename,mime,size}`
-  for the send.
-- Send: serialize `attachmentRefs` into the SSK-sealed payload.
-- Viewer (`attachment-list.tsx`): for `e2e_only` attachments, read the ref from
-  the decrypted message, fetch ciphertext, decrypt in-browser, render (images,
-  pdf.js, text; video plays raw). Previews/sidebar/notifications show the
-  "Encrypted" placeholder (INV-60 strip already covers text).
+## Slice B1 — frontend produce path (this slice)
+
+Make encrypted attachments real: encrypt + upload, ride in the sealed payload,
+bind to the message. No viewer yet — the sender's timeline shows the
+placeholder-named chip until B2 lands.
+
+- `lib/crypto/attachment-crypto.ts`: `encryptAttachmentBytes(bytes)` mints a
+  fresh single-use 32-byte key and seals the bytes with the existing
+  `sealMessage` AES-256-GCM primitive (no parallel raw-bytes path — INV-35),
+  returning ciphertext + base64 key/iv. `AttachmentRef` type. An in-memory
+  ref cache (`rememberAttachmentRef`/`getAttachmentRef`/`clearAttachmentRefCache`)
+  bridges upload time (key minted) to send time (key sealed); it holds key
+  material so it's cleared on lock/account-switch alongside the SSK + decrypt
+  caches, and is never persisted.
+- Payload format (`message-envelope.ts`): no-attachment messages still seal the
+  bare markdown string (byte-identical to existing rows); with attachments the
+  payload becomes a versioned `{__e2ePayload, contentMarkdown, attachmentRefs}`
+  wrapper. `parseSealedPayload` strips it on decrypt and is read-compatible with
+  every message already written (anything that isn't our marker is markdown).
+- Upload (`api/attachments.ts` + `use-attachments.ts`): in an E2E stream, read
+  the file bytes, encrypt, upload the ciphertext with `e2e=true` (server forces
+  placeholders — Slice A), keep the real filename/mime/size locally, and
+  remember the ref. One `uploadOne` chokepoint covers file-picker + paste/drop.
+  `useDraftComposer({ e2eEnabled })` carries the flag from `stream.e2eEnabled`.
+- Send (`use-stream-or-draft.ts` + `use-message-queue.ts`): the old "attachments
+  aren't supported" throw is gone; the send resolves each id's ref, seals them
+  into `attachmentRefs`, and the drain forwards `attachmentIds` so the opaque
+  rows bind. A reload that drops the in-memory key fails loud ("re-attach").
+- Contract: `CreateMessageInputE2e.attachmentIds`; the messaging handler's E2E
+  branch passes them to `createMessage`, which binds via the same
+  workspace + `isAttachmentSafeForSharing` gate the plaintext path uses.
+- Scope: existing E2E streams. First-message-of-a-brand-new-E2E-draft with an
+  attachment is deferred (the backend INV-E1 gate fails such a mismatch loud, so
+  it can't leak plaintext). Out of scope, not built (INV-36).
+
+### B1 tests
+- `attachment-crypto`: encrypt → the ref's key/iv decrypt the bytes back; fresh
+  key per file; ref cache remember/read/clear.
+- `message-envelope`: `parseSealedPayload` (bare markdown passthrough incl. a
+  string starting with `{`, wrapper extraction); sealing with `attachmentRefs`
+  still opens to clean markdown (refs stay sealed, JSON never leaks to render).
+- backend `event-service`: a fresh `e2e_unscanned` attachment binds to an E2E
+  (ciphertext) message via `createMessage`.
+
+## Slice B2 — viewer (next slice, NOT here)
+- Surface `e2eOnly` + the decrypted `attachmentRefs` to the timeline; for
+  `e2e_only` attachments fetch ciphertext, decrypt in-browser, render (images,
+  pdf.js, text; video plays raw). `useDecryptedMessageContent` already strips
+  the wrapper — B2 extends it to also return the refs.
+- Previews/sidebar/notifications keep showing the "Encrypted" placeholder
+  (INV-60 strip already covers the zero-width-space body).
 
 ## Slice C — Pi-remote-with-files (later)
 Enclave/Pi produces/consumes `attachmentRefs` so an agent can attach or read an

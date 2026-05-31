@@ -14,6 +14,7 @@ import {
   type StreamEnvelope,
 } from "@threa/crypto"
 import { resolveStreamKey } from "./stream-key-cache"
+import type { AttachmentRef } from "./attachment-crypto"
 
 // The placeholder text the backend stores in `contentMarkdown` / `contentJson`
 // for E2E messages is the single source of truth in @threa/types so the
@@ -30,6 +31,63 @@ export interface SealStreamMessageInput {
   /** 32-byte SSK for `keyGeneration` — held in memory by the stream-key cache. */
   ssk: Uint8Array
   keyGeneration: number
+  /**
+   * E2E attachments to seal into the payload. Their per-attachment key/iv and
+   * real filename/mime/size ride here (inside the SSK ciphertext), never on the
+   * wire — the server only holds opaque bytes and a placeholder row.
+   */
+  attachmentRefs?: AttachmentRef[]
+}
+
+/**
+ * The structured E2E message payload. Messages with no attachments seal the
+ * bare markdown string (byte-identical to every E2E message already written),
+ * so this wrapper only appears once attachments ride along. The `__e2ePayload`
+ * marker + version lets the decrypt path tell a wrapper apart from a user's
+ * markdown that merely happens to start with `{` — the same structurally-
+ * disjoint discrimination the backend's envelope union uses.
+ */
+interface E2eSealedPayload {
+  __e2ePayload: typeof E2E_PAYLOAD_VERSION
+  contentMarkdown: string
+  attachmentRefs: AttachmentRef[]
+}
+
+const E2E_PAYLOAD_VERSION = 1
+
+/** Build the bytes to seal: bare markdown, or the wrapper when refs ride along. */
+function serializeSealedPayload(contentMarkdown: string, attachmentRefs?: AttachmentRef[]): string {
+  if (!attachmentRefs || attachmentRefs.length === 0) return contentMarkdown
+  return JSON.stringify({
+    __e2ePayload: E2E_PAYLOAD_VERSION,
+    contentMarkdown,
+    attachmentRefs,
+  } satisfies E2eSealedPayload)
+}
+
+export interface ParsedSealedPayload {
+  contentMarkdown: string
+  attachmentRefs: AttachmentRef[]
+}
+
+/**
+ * Inverse of `serializeSealedPayload`. A decrypted string is either the bare
+ * markdown body (the legacy/no-attachment shape) or the versioned wrapper;
+ * anything that doesn't parse as our wrapper is treated as raw markdown so old
+ * messages keep opening unchanged.
+ */
+export function parseSealedPayload(raw: string): ParsedSealedPayload {
+  if (raw.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(raw) as Partial<E2eSealedPayload>
+      if (parsed.__e2ePayload === E2E_PAYLOAD_VERSION && typeof parsed.contentMarkdown === "string") {
+        return { contentMarkdown: parsed.contentMarkdown, attachmentRefs: parsed.attachmentRefs ?? [] }
+      }
+    } catch {
+      // Not our wrapper — fall through and treat the whole string as markdown.
+    }
+  }
+  return { contentMarkdown: raw, attachmentRefs: [] }
 }
 
 export interface SealStreamMessageResult {
@@ -55,7 +113,7 @@ export async function sealStreamMessage(input: SealStreamMessageInput): Promise<
   const { envelope, ciphertext } = await sealMessage({
     key: input.ssk,
     keyGeneration: input.keyGeneration,
-    payload: input.contentMarkdown,
+    payload: serializeSealedPayload(input.contentMarkdown, input.attachmentRefs),
     aad,
   })
   return { ciphertext: bytesToBase64(ciphertext), envelope, e2eVersion: STREAM_ENVELOPE_VERSION }
@@ -174,12 +232,16 @@ async function tryOpenStreamMessage(
       privateKey: opts.privateKey,
     })
     if (!ssk) return null
-    const markdown = await openMessageAsString({
+    const raw = await openMessageAsString({
       key: ssk,
       envelope: env,
       ciphertext: base64ToBytes(payload.ciphertext),
     })
-    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown) }
+    // The decrypted bytes are either the bare markdown body or the versioned
+    // wrapper carrying attachmentRefs; strip the wrapper so callers always see
+    // the real markdown. (Surfacing the refs to the viewer lands in Slice B2.)
+    const { contentMarkdown } = parseSealedPayload(raw)
+    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown) }
   } catch {
     return null
   }

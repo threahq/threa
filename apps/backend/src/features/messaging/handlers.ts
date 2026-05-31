@@ -120,6 +120,10 @@ const createMessageE2eToStreamSchema = z.object({
   ciphertext: z.string().min(1, "ciphertext is required").max(MAX_E2E_CIPHERTEXT_BASE64_BYTES),
   envelope: e2eEnvelopeSchema,
   e2eVersion: z.number().int().positive(),
+  // Opaque (`e2e_only`) attachment rows to bind to this message. The per-file
+  // keys + real metadata ride sealed inside `ciphertext`; only the ids cross
+  // the wire so the rows can be attached to the message.
+  attachmentIds: z.array(z.string()).optional(),
   clientMessageId: z.string().min(1).optional(),
 })
 
@@ -295,10 +299,12 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       }
 
       if ("ciphertext" in data) {
-        // E2E messages are opaque: no slash-command parsing, no attachment
-        // gating, no markdown normalization. The projection stores a fixed
-        // placeholder so plaintext consumers (search, summary, outbox) can
-        // short-circuit on `isE2eStream` without crashing on null content.
+        // E2E messages are opaque: no slash-command parsing, no markdown
+        // normalization. The projection stores a fixed placeholder so plaintext
+        // consumers (search, summary, outbox) can short-circuit on `isE2eStream`
+        // without crashing on null content. Attachments still bind: the rows are
+        // `e2e_only` ciphertext (no real content to gate on), and the same
+        // workspace + shareable check the plaintext path runs covers them.
         const message = await eventService.createMessage({
           workspaceId,
           streamId,
@@ -309,6 +315,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
           ciphertext: Buffer.from(data.ciphertext, "base64"),
           envelope: data.envelope,
           e2eVersion: data.e2eVersion,
+          attachmentIds: data.attachmentIds && data.attachmentIds.length > 0 ? data.attachmentIds : undefined,
           clientMessageId: data.clientMessageId,
         })
         return res.status(201).json({ message: serializeMessage(message) })
