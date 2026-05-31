@@ -156,6 +156,17 @@ placeholder-named chip until B2 lands.
 - backend `event-service`: a fresh `e2e_unscanned` attachment binds to an E2E
   (ciphertext) message via `createMessage`.
 
+### B1 review follow-ups (post-review hardening)
+- **One allowlist for shareable statuses (INV-33).** `SHAREABLE_SAFETY_STATUSES`
+  (in `@threa/types`) is the single source both `isAttachmentSafeForSharing` and
+  the race-safe `attachToMessage` SQL filter read from — previously each
+  hand-listed `{clean, e2e_unscanned}`, so a future shareable status would pass
+  the service gate then silently bind zero rows. A test pins the predicate to the
+  constant across every status.
+- **Zod-validate the upload flag (INV-55).** `parseE2eUploadFlag` parses `body`
+  via a Zod schema instead of a manual cast + equality, matching the sibling
+  attachment handlers. Behavior unchanged (`"true"`/`true` → true, else false).
+
 ## Slice B2 — viewer (next slice, NOT here)
 - Surface `e2eOnly` + the decrypted `attachmentRefs` to the timeline; for
   `e2e_only` attachments fetch ciphertext, decrypt in-browser, render (images,
