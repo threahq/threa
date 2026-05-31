@@ -22,9 +22,15 @@ are deliberately **later slices**. This slice lands the mechanism and proves it
 with unit tests, defaulting to today's behavior (no restriction) so it's a pure
 no-op until a policy is actually set.
 
-- **Categories, not raw tool lists.** A coarse privacy category per tool
+- **Categories, not raw tool lists.** Coarse privacy categories
   (`web` / `workspace` / `github` / `linear`, plus always-allowed `messaging`).
   The owner picks categories, not a 33-tool checkbox.
+- **Tools carry a *set* of categories, not one.** A tool is permitted when the
+  policy allows ANY of its categories. GitHub *reads* are public-web-class egress
+  (a structured `read_url`), so they carry both `github` and `web`: granting
+  `web` implicitly unlocks the richer GitHub context, while granting only
+  `github` does NOT grant raw web. Linear has no unauthenticated public surface,
+  so it stays `linear`-only. The asymmetry is deliberate.
 - **Per-stream storage on `e2e_streams`** (`allowed_tool_categories TEXT[]`,
   NULL = no restriction). The dispatch worker already loads this row.
 - **Carried in `EnclaveSessionAssignment`** (`allowedToolCategories?`), omitted
@@ -39,11 +45,13 @@ no-op until a policy is actually set.
 ### `packages/types` (shared source of truth, INV-33)
 - New module `tool-privacy.ts`:
   - `TOOL_PRIVACY_CATEGORIES` / `ToolPrivacyCategory` / `ToolPrivacyCategories`
-  - `TOOL_CATEGORY_BY_NAME: Record<AgentToolName, ToolPrivacyCategory>` —
-    exhaustive via `satisfies`, so a new tool fails to compile until categorized.
+  - `TOOL_CATEGORIES_BY_NAME: Record<AgentToolName, readonly ToolPrivacyCategory[]>`
+    — each tool carries a *set* of categories, exhaustive via `satisfies`, so a
+    new tool fails to compile until categorized.
   - `isToolCategoryAllowed(allowed, category)` — `null/undefined` ⇒ all allowed;
     `messaging` is always allowed regardless of the list.
-  - `isToolAllowedByPolicy(allowed, toolName)` — convenience over the map.
+  - `isToolAllowedByPolicy(allowed, toolName)` — allowed when the policy permits
+    ANY of the tool's categories (so `web` reaches GitHub reads).
 - `tool-privacy.test.ts` (`bun:test`): every tool name maps to a valid category;
   helper semantics (null = all, `[]` = messaging-only, explicit subset).
 - `EnclaveSessionAssignment.allowedToolCategories?: ToolPrivacyCategory[]`.

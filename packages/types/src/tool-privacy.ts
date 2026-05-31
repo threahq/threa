@@ -27,50 +27,64 @@ export const ToolPrivacyCategories = {
 } as const satisfies Record<string, ToolPrivacyCategory>
 
 /**
- * Every agent tool's privacy category. Exhaustive via `satisfies` over
- * `AgentToolName`: a newly added tool fails to compile here until it is
- * categorized, so the privacy gate can never silently miss a tool.
+ * Every agent tool's privacy categories. A tool is *one of some* categories, not
+ * exactly one: a policy allowing ANY of a tool's categories permits the tool
+ * (see `isToolAllowedByPolicy`).
+ *
+ * This is what lets `web` subsume GitHub *reads*: a public GitHub read is a
+ * better-structured `read_url` against data already reachable over the open web,
+ * so the GitHub read tools carry both `github` and `web`. Granting `web` then
+ * implicitly grants the richer GitHub context, while granting only `github` does
+ * NOT grant raw web — the asymmetry is deliberate. Linear has no public,
+ * unauthenticated surface, so its tools stay `linear`-only.
+ *
+ * Exhaustive via `satisfies` over `AgentToolName`: a newly added tool fails to
+ * compile here until it is categorized, so the privacy gate can never silently
+ * miss a tool.
  */
-export const TOOL_CATEGORY_BY_NAME = {
-  send_message: "messaging",
+export const TOOL_CATEGORIES_BY_NAME = {
+  send_message: ["messaging"],
 
-  web_search: "web",
-  read_url: "web",
-  general_research: "web",
+  web_search: ["web"],
+  read_url: ["web"],
+  general_research: ["web"],
 
-  search_messages: "workspace",
-  search_streams: "workspace",
-  search_users: "workspace",
-  get_stream_messages: "workspace",
-  search_attachments: "workspace",
-  get_attachment: "workspace",
-  load_attachment: "workspace",
-  load_pdf_section: "workspace",
-  load_file_section: "workspace",
-  load_excel_section: "workspace",
-  describe_memo: "workspace",
+  search_messages: ["workspace"],
+  search_streams: ["workspace"],
+  search_users: ["workspace"],
+  get_stream_messages: ["workspace"],
+  search_attachments: ["workspace"],
+  get_attachment: ["workspace"],
+  load_attachment: ["workspace"],
+  load_pdf_section: ["workspace"],
+  load_file_section: ["workspace"],
+  load_excel_section: ["workspace"],
+  describe_memo: ["workspace"],
 
-  github_list_repos: "github",
-  github_list_branches: "github",
-  github_list_commits: "github",
-  github_get_commit: "github",
-  github_list_pull_requests: "github",
-  github_get_pull_request: "github",
-  github_list_pr_files: "github",
-  github_get_file_contents: "github",
-  github_search_code: "github",
-  github_list_workflow_runs: "github",
-  github_get_workflow_run: "github",
-  github_list_releases: "github",
-  github_get_release: "github",
-  github_search_issues: "github",
-  github_get_issue: "github",
+  // GitHub reads are public-web-class egress (a structured read_url), so they
+  // ride the `web` grant as well as `github`.
+  github_list_repos: ["github", "web"],
+  github_list_branches: ["github", "web"],
+  github_list_commits: ["github", "web"],
+  github_get_commit: ["github", "web"],
+  github_list_pull_requests: ["github", "web"],
+  github_get_pull_request: ["github", "web"],
+  github_list_pr_files: ["github", "web"],
+  github_get_file_contents: ["github", "web"],
+  github_search_code: ["github", "web"],
+  github_list_workflow_runs: ["github", "web"],
+  github_get_workflow_run: ["github", "web"],
+  github_list_releases: ["github", "web"],
+  github_get_release: ["github", "web"],
+  github_search_issues: ["github", "web"],
+  github_get_issue: ["github", "web"],
 
-  linear_list_issues: "linear",
-  linear_get_issue: "linear",
-  linear_list_projects: "linear",
-  linear_get_project: "linear",
-} as const satisfies Record<AgentToolName, ToolPrivacyCategory>
+  // Linear has no unauthenticated public surface — it never rides `web`.
+  linear_list_issues: ["linear"],
+  linear_get_issue: ["linear"],
+  linear_list_projects: ["linear"],
+  linear_get_project: ["linear"],
+} as const satisfies Record<AgentToolName, readonly ToolPrivacyCategory[]>
 
 /**
  * A tool-privacy policy is the set of allowed categories. `null`/`undefined`
@@ -89,9 +103,18 @@ export function isToolCategoryAllowed(
   return allowed.includes(category)
 }
 
+/**
+ * A tool is permitted when the policy allows ANY of its categories — so a
+ * `web`-only policy still reaches the GitHub read tools (tagged `github` + `web`)
+ * without granting raw `github`/`linear` access. `messaging` is always allowed;
+ * a `null`/`undefined` policy allows everything.
+ */
 export function isToolAllowedByPolicy(
   allowed: ToolPrivacyCategory[] | null | undefined,
   toolName: AgentToolName
 ): boolean {
-  return isToolCategoryAllowed(allowed, TOOL_CATEGORY_BY_NAME[toolName])
+  const categories: readonly ToolPrivacyCategory[] = TOOL_CATEGORIES_BY_NAME[toolName]
+  if (categories.includes("messaging")) return true
+  if (allowed === null || allowed === undefined) return true
+  return categories.some((category) => allowed.includes(category))
 }

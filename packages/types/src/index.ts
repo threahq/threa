@@ -329,7 +329,7 @@ export type { AttachmentCategory } from "./attachment-categories"
 export {
   TOOL_PRIVACY_CATEGORIES,
   ToolPrivacyCategories,
-  TOOL_CATEGORY_BY_NAME,
+  TOOL_CATEGORIES_BY_NAME,
   isToolCategoryAllowed,
   isToolAllowedByPolicy,
 } from "./tool-privacy"

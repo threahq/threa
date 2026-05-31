@@ -1,23 +1,41 @@
 import { describe, test, expect } from "bun:test"
 import { AGENT_TOOL_NAMES } from "./constants"
 import {
-  TOOL_CATEGORY_BY_NAME,
+  TOOL_CATEGORIES_BY_NAME,
   TOOL_PRIVACY_CATEGORIES,
+  type ToolPrivacyCategory,
   isToolAllowedByPolicy,
   isToolCategoryAllowed,
 } from "./tool-privacy"
 
-describe("TOOL_CATEGORY_BY_NAME", () => {
-  test("maps every agent tool to a valid category", () => {
+/** Widen the `as const` tuple so `.toContain` on an arbitrary category typechecks. */
+function categoriesOf(name: keyof typeof TOOL_CATEGORIES_BY_NAME): readonly ToolPrivacyCategory[] {
+  return TOOL_CATEGORIES_BY_NAME[name]
+}
+
+describe("TOOL_CATEGORIES_BY_NAME", () => {
+  test("maps every agent tool to a non-empty set of valid categories", () => {
     for (const name of AGENT_TOOL_NAMES) {
-      const category = TOOL_CATEGORY_BY_NAME[name]
-      expect(TOOL_PRIVACY_CATEGORIES).toContain(category)
+      const categories = categoriesOf(name)
+      expect(categories.length).toBeGreaterThan(0)
+      for (const category of categories) expect(TOOL_PRIVACY_CATEGORIES).toContain(category)
     }
   })
 
-  test("send_message is the only messaging tool", () => {
-    const messaging = AGENT_TOOL_NAMES.filter((n) => TOOL_CATEGORY_BY_NAME[n] === "messaging")
+  test("send_message is the only messaging tool, and messaging never mixes with other categories", () => {
+    const messaging = AGENT_TOOL_NAMES.filter((n) => categoriesOf(n).includes("messaging"))
     expect(messaging).toEqual(["send_message"])
+    expect(categoriesOf("send_message")).toEqual(["messaging"])
+  })
+
+  test("GitHub reads ride the web grant; Linear stays auth-locked", () => {
+    const github = AGENT_TOOL_NAMES.filter((n) => categoriesOf(n).includes("github"))
+    expect(github.length).toBeGreaterThan(0)
+    for (const name of github) expect(categoriesOf(name)).toContain("web")
+
+    const linear = AGENT_TOOL_NAMES.filter((n) => categoriesOf(n).includes("linear"))
+    expect(linear.length).toBeGreaterThan(0)
+    for (const name of linear) expect(categoriesOf(name)).not.toContain("web")
   })
 })
 
@@ -46,9 +64,16 @@ describe("isToolAllowedByPolicy", () => {
     expect(isToolAllowedByPolicy([], "general_research")).toBe(false)
   })
 
-  test("a web-only policy gates workspace and github tools", () => {
+  test("a web policy reaches GitHub reads (shared category) but not raw github/linear/workspace", () => {
     expect(isToolAllowedByPolicy(["web"], "read_url")).toBe(true)
-    expect(isToolAllowedByPolicy(["web"], "search_messages")).toBe(false)
-    expect(isToolAllowedByPolicy(["web"], "github_get_issue")).toBe(false)
+    expect(isToolAllowedByPolicy(["web"], "github_get_issue")).toBe(true) // github read rides web
+    expect(isToolAllowedByPolicy(["web"], "linear_get_issue")).toBe(false) // linear is auth-locked
+    expect(isToolAllowedByPolicy(["web"], "search_messages")).toBe(false) // workspace is private
+  })
+
+  test("a github-only policy does NOT grant raw web (the asymmetry)", () => {
+    expect(isToolAllowedByPolicy(["github"], "github_get_issue")).toBe(true)
+    expect(isToolAllowedByPolicy(["github"], "web_search")).toBe(false)
+    expect(isToolAllowedByPolicy(["github"], "read_url")).toBe(false)
   })
 })
