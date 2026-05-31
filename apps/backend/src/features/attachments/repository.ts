@@ -25,6 +25,7 @@ interface AttachmentRow {
   storage_path: string
   processing_status: string
   safety_status: string
+  e2e_only: boolean
   thumbnail_storage_path: string | null
   width: number | null
   height: number | null
@@ -45,6 +46,12 @@ export interface Attachment {
   storagePath: string
   processingStatus: ProcessingStatus
   safetyStatus: AttachmentSafetyStatus
+  /**
+   * True when the S3 bytes are client-side ciphertext (E2E scratchpad). The
+   * server never holds the key or the real filename/mime — those ride in the
+   * SSK-sealed message payload. Gates scan + processor skip.
+   */
+  e2eOnly: boolean
   /** S3 key of the resized WebP thumbnail (images only; null until the worker runs) */
   thumbnailStoragePath: string | null
   /** Orientation-corrected intrinsic pixel dimensions (images only; null otherwise) */
@@ -64,6 +71,8 @@ export interface InsertAttachmentParams {
   storagePath: string
   storageProvider?: StorageProvider
   safetyStatus?: AttachmentSafetyStatus
+  processingStatus?: ProcessingStatus
+  e2eOnly?: boolean
 }
 
 // Row type for attachments with extraction joined
@@ -96,6 +105,7 @@ function mapRowToAttachment(row: AttachmentRow): Attachment {
     storagePath: row.storage_path,
     processingStatus: row.processing_status as ProcessingStatus,
     safetyStatus: row.safety_status as AttachmentSafetyStatus,
+    e2eOnly: row.e2e_only,
     thumbnailStoragePath: row.thumbnail_storage_path ?? null,
     width: row.width ?? null,
     height: row.height ?? null,
@@ -119,7 +129,7 @@ function mapRowToAttachmentWithExtraction(row: AttachmentWithExtractionRow): Att
 const SELECT_FIELDS = `
   id, workspace_id, stream_id, message_id, uploaded_by,
   filename, mime_type, size_bytes,
-  storage_provider, storage_path, processing_status, safety_status,
+  storage_provider, storage_path, processing_status, safety_status, e2e_only,
   thumbnail_storage_path, width, height,
   created_at
 `
@@ -184,7 +194,7 @@ export const AttachmentRepository = {
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
-        a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
         a.created_at,
         e.content_type AS extraction_content_type,
@@ -210,7 +220,7 @@ export const AttachmentRepository = {
       INSERT INTO attachments (
         id, workspace_id, stream_id, uploaded_by,
         filename, mime_type, size_bytes,
-        storage_provider, storage_path, safety_status
+        storage_provider, storage_path, safety_status, processing_status, e2e_only
       )
       VALUES (
         ${params.id},
@@ -222,7 +232,9 @@ export const AttachmentRepository = {
         ${params.sizeBytes},
         ${params.storageProvider ?? "s3"},
         ${params.storagePath},
-        ${params.safetyStatus ?? AttachmentSafetyStatuses.PENDING_SCAN}
+        ${params.safetyStatus ?? AttachmentSafetyStatuses.PENDING_SCAN},
+        ${params.processingStatus ?? ProcessingStatuses.PENDING},
+        ${params.e2eOnly ?? false}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -236,10 +248,13 @@ export const AttachmentRepository = {
     streamId: string
   ): Promise<number> {
     if (attachmentIds.length === 0) return 0
+    // Link only shareable attachments: scanned-clean OR E2E ciphertext (which is
+    // unscannable but is the owner's own bytes). Mirrors isAttachmentSafeForSharing.
     const result = await client.query(sql`
       UPDATE attachments
       SET message_id = ${messageId}, stream_id = ${streamId}
-      WHERE id = ANY(${attachmentIds}) AND message_id IS NULL AND safety_status = ${AttachmentSafetyStatuses.CLEAN}
+      WHERE id = ANY(${attachmentIds}) AND message_id IS NULL
+        AND safety_status = ANY(${[AttachmentSafetyStatuses.CLEAN, AttachmentSafetyStatuses.E2E_UNSCANNED]})
     `)
     return result.rowCount ?? 0
   },
@@ -394,7 +409,8 @@ export const AttachmentRepository = {
         SELECT
           a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
           a.filename, a.mime_type, a.size_bytes,
-          a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+          a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
+          a.thumbnail_storage_path, a.width, a.height,
           a.created_at,
           e.content_type AS extraction_content_type,
           e.summary AS extraction_summary,
@@ -420,7 +436,7 @@ export const AttachmentRepository = {
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
-        a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
         a.created_at,
         e.content_type AS extraction_content_type,
@@ -529,7 +545,7 @@ export const AttachmentRepository = {
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
-        a.storage_provider, a.storage_path, a.processing_status, a.safety_status,
+        a.storage_provider, a.storage_path, a.processing_status, a.safety_status, a.e2e_only,
         a.thumbnail_storage_path, a.width, a.height,
         a.created_at,
         e.content_type AS extraction_content_type,

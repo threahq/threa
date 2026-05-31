@@ -20,6 +20,7 @@ function buildAttachment(overrides: Partial<Attachment> = {}): Attachment {
     storagePath: "ws_1/attach_1/photo.png",
     processingStatus: "completed",
     safetyStatus: "clean",
+    e2eOnly: false,
     thumbnailStoragePath: null,
     width: null,
     height: null,
