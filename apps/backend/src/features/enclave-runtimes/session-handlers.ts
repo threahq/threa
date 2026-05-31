@@ -4,9 +4,11 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { AGENT_STEP_TYPES, AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
 import { withTransaction } from "../../db"
+import { eventId } from "../../lib/id"
+import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
-import { AgentSessionRepository, SessionStatuses, type AgentSession } from "../agents"
-import { StreamRepository } from "../streams"
+import { AgentSessionRepository, SessionStatuses, getBuiltInAgentConfig, type AgentSession } from "../agents"
+import { StreamRepository, StreamEventRepository } from "../streams"
 import { serializeTraceStep } from "../public-api"
 import type { EventService } from "../messaging"
 
@@ -197,6 +199,24 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
         step: serializeTraceStep(persisted),
       })
 
+      // Also drive the inline stream-view trace (`useAgentActivity`), which
+      // subscribes to the *stream* room, not the session room. Mirror the
+      // in-process `agent_session:progress` payload so the "Ariadne is …"
+      // indicator reflects the current step type. Plaintext-free: step *type*
+      // only, never content. The enclave seals append-only (no step:started),
+      // so this advances on each completed step rather than mid-step.
+      const personaName = getBuiltInAgentConfig(session.personaId)?.name ?? "Ariadne"
+      io.to(`ws:${stream.workspaceId}:stream:${session.streamId}`).emit("agent_session:progress", {
+        workspaceId: stream.workspaceId,
+        streamId: session.streamId,
+        sessionId: id,
+        triggerMessageId: session.triggerMessageId,
+        personaName,
+        stepCount: persisted.stepNumber,
+        messageCount: 0,
+        currentStepType: persisted.stepType,
+      })
+
       res.status(204).end()
     },
 
@@ -226,6 +246,37 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
         responseMessageId: messageIds[0] ?? null,
         sentMessageIds: messageIds,
       })
+
+      // Clear the inline stream-view trace: emit the same agent_session:completed
+      // lifecycle event the in-process path emits so `useAgentActivity` drops the
+      // "Ariadne is working…" indicator (and the persisted event keeps a refresh
+      // consistent). Plaintext-free: counts + timing only.
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (stream) {
+        const steps = await AgentSessionRepository.findStepsBySession(pool, id)
+        const completedAt = new Date()
+        await withTransaction(pool, async (tx) => {
+          const completedEvent = await StreamEventRepository.insert(tx, {
+            id: eventId(),
+            streamId: session.streamId,
+            eventType: "agent_session:completed",
+            payload: {
+              sessionId: id,
+              stepCount: steps.length,
+              messageCount: messageIds.length,
+              duration: completedAt.getTime() - session.createdAt.getTime(),
+              completedAt: completedAt.toISOString(),
+            },
+            actorId: session.personaId,
+            actorType: "persona",
+          })
+          await OutboxRepository.insert(tx, "agent_session:completed", {
+            workspaceId: stream.workspaceId,
+            streamId: session.streamId,
+            event: completedEvent,
+          })
+        })
+      }
 
       res.status(204).end()
     },

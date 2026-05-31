@@ -6,7 +6,8 @@ import { AuthorTypes } from "@threa/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
-import { StreamRepository } from "../streams"
+import { StreamRepository, StreamEventRepository } from "../streams"
+import { OutboxRepository } from "../../lib/outbox"
 import type { EventService } from "../messaging"
 import { createEnclaveSessionHandlers } from "./session-handlers"
 
@@ -41,6 +42,7 @@ const SESSION = {
   personaId: "persona_ariadne",
   status: SessionStatuses.RUNNING,
   lastSeenSequence: null,
+  createdAt: new Date("2026-05-30T00:00:00.000Z"),
 } as unknown as Awaited<ReturnType<typeof AgentSessionRepository.findById>>
 
 const MESSAGE_BODY = {
@@ -137,9 +139,16 @@ describe("createEnclaveSessionHandlers.complete", () => {
     await expect(handlers.complete(req("session_1", COMPLETE_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
-  it("records the sent ids and completes the session (without writing messages)", async () => {
+  it("records the sent ids, completes the session, and emits agent_session:completed", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     const complete = spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
     const { handlers, createMessage } = makeHandlers()
     const res = fakeRes()
 
@@ -152,6 +161,14 @@ describe("createEnclaveSessionHandlers.complete", () => {
       sentMessageIds: ["msg_a", "msg_b"],
       responseMessageId: "msg_a",
     })
+    // The completed lifecycle event is what clears the inline stream-view trace
+    // (useAgentActivity) — emitted via a stream event + outbox, like in-process.
+    expect(insertEvent.mock.calls[0]![1]).toMatchObject({
+      streamId: "stream_1",
+      eventType: "agent_session:completed",
+      payload: { sessionId: "session_1", messageCount: 2 },
+    })
+    expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:completed")
   })
 })
 
@@ -221,6 +238,16 @@ describe("createEnclaveSessionHandlers.steps", () => {
       stepType: "thinking",
       contentCiphertext: "Y3Q=",
       contentEnvelope: STEP_BODY.envelope,
+    })
+
+    // Also drives the inline stream-view trace (useAgentActivity), which listens
+    // on the *stream* room — a plaintext progress event carrying step type only.
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:stream:stream_1")
+    const progress = emit.mock.calls.find((c) => c[0] === "agent_session:progress")
+    expect(progress?.[1]).toMatchObject({
+      sessionId: "session_1",
+      streamId: "stream_1",
+      currentStepType: "thinking",
     })
   })
 })

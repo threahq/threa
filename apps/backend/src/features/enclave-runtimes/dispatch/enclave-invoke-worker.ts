@@ -1,6 +1,9 @@
 import type { Pool } from "pg"
-import { sessionId as newSessionId } from "../../../lib/id"
+import { sessionId as newSessionId, eventId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
+import { withTransaction } from "../../../db"
+import { OutboxRepository } from "../../../lib/outbox"
+import { StreamEventRepository } from "../../streams"
 import type { EnclaveInvokeJobData, JobHandler } from "../../../lib/queue/job-queue"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
 import { MessageRepository } from "../../messaging"
@@ -100,6 +103,31 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       initialSequence: 0n,
     })
     if (!session) return
+
+    // Surface the turn in the stream view. The enclave path otherwise emits only
+    // sealed `agent_session:step:completed` to the session room (the trace
+    // dialog) — nothing the inline `useAgentActivity` surface subscribes to. Emit
+    // the same `agent_session:started` lifecycle event the in-process companion
+    // emits so the scratchpad shows "Ariadne is working…" and the trace becomes
+    // reachable. Plaintext-free: the payload carries only ids + the persona name.
+    await withTransaction(pool, async (tx) => {
+      const startedEvent = await StreamEventRepository.insert(tx, {
+        id: eventId(),
+        streamId,
+        eventType: "agent_session:started",
+        payload: {
+          sessionId: sid,
+          personaId: ARIADNE_AGENT_ID,
+          personaName: persona.name,
+          triggerMessageId: triggerId,
+          rerunContext: null,
+          startedAt: session.createdAt.toISOString(),
+        },
+        actorId: ARIADNE_AGENT_ID,
+        actorType: "persona",
+      })
+      await OutboxRepository.insert(tx, "agent_session:started", { workspaceId, streamId, event: startedEvent })
+    })
 
     try {
       await enclaveForwarder.assignSession(built.instanceUrl, built.assignment)
