@@ -81,7 +81,11 @@ export function parseSealedPayload(raw: string): ParsedSealedPayload {
     try {
       const parsed = JSON.parse(raw) as Partial<E2eSealedPayload>
       if (parsed.__e2ePayload === E2E_PAYLOAD_VERSION && typeof parsed.contentMarkdown === "string") {
-        return { contentMarkdown: parsed.contentMarkdown, attachmentRefs: parsed.attachmentRefs ?? [] }
+        // attachmentRefs comes from decrypted text we authored, but guard the
+        // shape anyway so a malformed wrapper degrades to "no attachments"
+        // rather than handing a non-array to the timeline.
+        const attachmentRefs = Array.isArray(parsed.attachmentRefs) ? parsed.attachmentRefs : []
+        return { contentMarkdown: parsed.contentMarkdown, attachmentRefs }
       }
     } catch {
       // Not our wrapper — fall through and treat the whole string as markdown.

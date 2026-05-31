@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses } from "@threa/types"
+import { AttachmentSafetyStatuses, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 import { EventService } from "./event-service"
 import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
@@ -113,14 +113,20 @@ describe("EventService attachment safety checks", () => {
       authorId: "usr_1",
       authorType: "user",
       contentJson: { type: "doc", content: [] },
-      contentMarkdown: "​",
+      contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
       ciphertext: Buffer.from("opaque-bytes"),
       envelope: { v: 2, keyGeneration: 0, iv: "AAAA", aad: "AAAA" },
       e2eVersion: 2,
       attachmentIds: ["attach_e2e"],
     })
 
-    expect(AttachmentRepository.attachToMessage).toHaveBeenCalled()
+    // Bind the fresh e2e_unscanned row to this message: (client, ids, msgId, streamId).
+    expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      ["attach_e2e"],
+      expect.stringMatching(/^msg_/),
+      "stream_1"
+    )
   })
 
   it("allows re-referencing an attachment the author can already read and skips re-attach", async () => {

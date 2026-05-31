@@ -119,8 +119,12 @@ export class AttachmentService {
           id: params.id,
           workspaceId: params.workspaceId,
           uploadedBy: params.uploadedBy,
-          filename: params.filename,
-          mimeType: params.mimeType,
+          // Force placeholders at the persistence boundary too, not only in
+          // buildUploadParams — the threat-model rule "server keeps no real
+          // filename/mime for E2E" then holds even for a caller that reaches
+          // create() without going through that helper.
+          filename: E2E_PLACEHOLDER_FILENAME,
+          mimeType: E2E_PLACEHOLDER_MIME_TYPE,
           sizeBytes,
           storagePath: params.storagePath,
           safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,

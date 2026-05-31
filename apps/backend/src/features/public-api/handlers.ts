@@ -685,9 +685,20 @@ export function createPublicApiHandlers({
         throw new HttpError("Attachment id was not generated", { status: 500, code: "INTERNAL_ERROR" })
       }
 
-      // E2E upload (Pi remote / CLI agents like claws): bytes are client-side
-      // ciphertext. buildUploadParams forces placeholder metadata; the real
-      // filename/mime ride encrypted in the message's attachmentRefs.
+      // E2E uploads are rejected here until the public API has a ciphertext
+      // message-write path to bind them to. The first-party web client uploads
+      // E2E attachments (sealing the per-file key into the message payload),
+      // but the public-API sendMessage/updateMessage only accept plaintext, so
+      // an accepted E2E row here could never be referenced by a matching
+      // message. Pi/CLI agents get this flag back in the Pi-remote-with-files
+      // slice (`.claude/plans/e2e-attachments.md`).
+      if (parseE2eUploadFlag(req.body)) {
+        throw new HttpError("E2E attachment uploads are not supported on the public API yet", {
+          status: 400,
+          code: "E2E_UPLOAD_UNSUPPORTED",
+        })
+      }
+
       const uploadResult = await attachmentService.createForUpload(
         buildUploadParams(
           {
@@ -699,7 +710,7 @@ export function createPublicApiHandlers({
             sizeBytes: file.size,
             storagePath: file.key,
           },
-          parseE2eUploadFlag(req.body)
+          false
         )
       )
 

@@ -244,4 +244,9 @@ describe("parseSealedPayload", () => {
     const wrapper = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "see attached", attachmentRefs: refs })
     expect(parseSealedPayload(wrapper)).toEqual({ contentMarkdown: "see attached", attachmentRefs: refs })
   })
+
+  it("falls back to no refs when a wrapper's attachmentRefs is not an array", () => {
+    const malformed = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "body", attachmentRefs: "oops" })
+    expect(parseSealedPayload(malformed)).toEqual({ contentMarkdown: "body", attachmentRefs: [] })
+  })
 })
