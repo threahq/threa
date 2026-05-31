@@ -1,6 +1,6 @@
 import type { StreamWithPreview, SidebarSectionKey } from "@threa/types"
 
-export type UrgencyLevel = "mentions" | "activity" | "quiet" | "ai"
+export type UrgencyLevel = "mentions" | "ai" | "bot" | "activity" | "quiet"
 
 /** Sorting strategies for sidebar sections */
 export type SortType = "activity" | "importance" | "alphabetic_active_first"

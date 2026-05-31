@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback } from "react"
 import { RefreshCw } from "lucide-react"
-import { useSidebar, useCoordinatedLoading } from "@/contexts"
+import { useSidebar, useCoordinatedLoading, type UrgencyBlock } from "@/contexts"
 import { useResizeDrag, useVisualViewport, useSidebarSwipe, usePullToRefresh } from "@/hooks"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { TopbarLoadingIndicator } from "./topbar-loading-indicator"
@@ -57,6 +57,39 @@ function PullIndicator({ distance, progress, pulling, refreshing, mode }: PullIn
       >
         {config.label}
       </span>
+    </>
+  )
+}
+
+/**
+ * Soft, position-matched urgency glow blocks. Each block is a single blurred
+ * bar sized to its stream row (expanded 150% and centered) so the color diffuses
+ * out as a glow rather than a hard bar. Shared by the desktop edge strip and the
+ * mobile left-edge hint. The `position`/`height` fractions are measured against
+ * the sidebar in `useUrgencyTracking`, so both surfaces render the same column.
+ */
+function UrgencyGlowBlocks({ blocks }: { blocks: Map<string, UrgencyBlock> }) {
+  return (
+    <>
+      {Array.from(blocks.entries()).map(([streamId, block]) => {
+        const expandedHeight = block.height * 1.5
+        const centeredTop = block.position - block.height * 0.25
+        return (
+          <div
+            key={streamId}
+            className="absolute transition-opacity duration-300"
+            style={{
+              left: "-4px",
+              width: "14px",
+              top: `${centeredTop * 100}%`,
+              height: `${Math.max(expandedHeight * 100, 4)}%`,
+              backgroundColor: block.color,
+              filter: "blur(12px)",
+              opacity: block.opacity,
+            }}
+          />
+        )
+      })}
     </>
   )
 }
@@ -238,6 +271,20 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             />
           )}
 
+          {/* Mobile urgency glow - the sidebar itself is off-screen, so this is the
+               only at-a-glance hint that there's something worth opening it for.
+               Sits below the backdrop (z-30) so it's covered once the drawer opens,
+               and bleeds rightward into content (left edge clipped at the screen edge). */}
+          {isMobile && !isOpen && (
+            <div
+              className="fixed left-0 top-0 z-20 h-full w-[6px] pointer-events-none"
+              style={{ clipPath: "inset(-50px -50px -50px 0)" }}
+              aria-hidden="true"
+            >
+              <UrgencyGlowBlocks blocks={urgencyBlocks} />
+            </div>
+          )}
+
           {/* Sidebar wrapper - handles positioning */}
           <div
             className={cn(
@@ -265,25 +312,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
                 {/* Grey baseline - always visible */}
                 <div className="absolute inset-0" style={{ backgroundColor: "hsl(var(--muted-foreground) / 0.3)" }} />
                 {/* Activity blocks - single blurred bar per stream, 150% height centered */}
-                {Array.from(urgencyBlocks.entries()).map(([streamId, block]) => {
-                  const expandedHeight = block.height * 1.5
-                  const centeredTop = block.position - block.height * 0.25
-                  return (
-                    <div
-                      key={streamId}
-                      className="absolute transition-opacity duration-300"
-                      style={{
-                        left: "-4px",
-                        width: "14px",
-                        top: `${centeredTop * 100}%`,
-                        height: `${Math.max(expandedHeight * 100, 4)}%`,
-                        backgroundColor: block.color,
-                        filter: "blur(12px)",
-                        opacity: block.opacity,
-                      }}
-                    />
-                  )
-                })}
+                <UrgencyGlowBlocks blocks={urgencyBlocks} />
               </div>
             )}
 
@@ -315,7 +344,11 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               className={cn(
                 "relative flex h-full flex-col border-r bg-background overflow-hidden z-40",
                 // Positioning - preview is absolute, or always absolute on mobile
-                (isPreview || isMobile) && "absolute left-0 top-0 shadow-[4px_0_24px_hsl(var(--foreground)/0.08)]",
+                (isPreview || isMobile) && "absolute left-0 top-0",
+                // Depth shadow only when the drawer is actually showing — on mobile the
+                // closed drawer is off-screen and its right-edge shadow would otherwise
+                // bleed onto the screen's left edge as a meaningless grey glow.
+                (isPreview || (isMobile && isOpen)) && "shadow-[4px_0_24px_hsl(var(--foreground)/0.08)]",
                 // Mobile: transform-based positioning (GPU-composited, swipe-compatible)
                 isMobile && sidebarTransform,
                 // Transitions - disable during resize/swipe for smooth dragging

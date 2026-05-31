@@ -50,8 +50,14 @@ interface SidebarProps {
 
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { phase } = useCoordinatedLoading()
-  const { getSectionState, toggleSectionState, setSidebarHeight, setScrollContainerOffset, collapseOnMobile } =
-    useSidebar()
+  const {
+    getSectionState,
+    toggleSectionState,
+    setSidebarHeight,
+    setScrollContainerOffset,
+    bumpScrollVersion,
+    collapseOnMobile,
+  } = useSidebar()
   const { config: sidebarConfig } = useSidebarConfig(workspaceId)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
@@ -228,15 +234,20 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     const sidebar = sidebarRef.current
     if (!container || !sidebar) return
 
+    // The element that actually scrolls is Radix's viewport, not the padded
+    // content div — measure the header offset and listen for scroll on it.
+    const viewport = container.closest<HTMLElement>("[data-radix-scroll-area-viewport]")
+    const offsetRef = viewport ?? container
+
     const updateDimensions = () => {
       // Get sidebar total height
       setSidebarHeight(sidebar.offsetHeight)
 
-      // Calculate scroll container offset from sidebar top
-      // This accounts for header + quick links sections
-      const containerRect = container.getBoundingClientRect()
+      // Offset from sidebar top to the scroll viewport top (the header region).
+      // Scroll-independent, so glow blocks can add their own scroll delta on top.
+      const refRect = offsetRef.getBoundingClientRect()
       const sidebarRect = sidebar.getBoundingClientRect()
-      setScrollContainerOffset(containerRect.top - sidebarRect.top)
+      setScrollContainerOffset(refRect.top - sidebarRect.top)
     }
 
     // Initial measurement
@@ -247,8 +258,24 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     observer.observe(container)
     observer.observe(sidebar)
 
-    return () => observer.disconnect()
-  }, [setSidebarHeight, setScrollContainerOffset])
+    // Re-measure glow positions as the list scrolls so blocks stay flush with
+    // their rows. rAF-coalesced to one update per frame.
+    let frame = 0
+    const handleScroll = () => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        bumpScrollVersion()
+      })
+    }
+    viewport?.addEventListener("scroll", handleScroll, { passive: true })
+
+    return () => {
+      observer.disconnect()
+      viewport?.removeEventListener("scroll", handleScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [setSidebarHeight, setScrollContainerOffset, bumpScrollVersion])
 
   // During initial coordinated loading, show skeleton
   if (phase !== "ready") {

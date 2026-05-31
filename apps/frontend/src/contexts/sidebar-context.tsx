@@ -73,8 +73,10 @@ interface SidebarContextValue {
   urgencyBlocks: Map<string, UrgencyBlock>
   /** Total height of sidebar (for position calculations) */
   sidebarHeight: number
-  /** Offset from sidebar top to scroll container top (header) */
+  /** Offset from sidebar top to scroll viewport top (header) */
   scrollContainerOffset: number
+  /** Monotonic counter bumped on sidebar scroll so position-tracked glow blocks re-measure */
+  scrollVersion: number
   /** Show preview state on hover (only from collapsed) */
   showPreview: () => void
   /** Hide preview state after delay */
@@ -106,6 +108,8 @@ interface SidebarContextValue {
   setSidebarHeight: (height: number) => void
   /** Set scroll container offset from sidebar top */
   setScrollContainerOffset: (offset: number) => void
+  /** Bump `scrollVersion` to trigger re-measurement of glow block positions */
+  bumpScrollVersion: () => void
   /** Notify that a menu inside the sidebar opened/closed (prevents collapse while open) */
   setMenuOpen: (open: boolean) => void
 }
@@ -210,6 +214,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
   const [urgencyBlocks, setUrgencyBlocks] = useState<Map<string, UrgencyBlock>>(new Map())
   const [sidebarHeight, setSidebarHeight] = useState(0)
   const [scrollContainerOffset, setScrollContainerOffset] = useState(0)
+  const [scrollVersion, setScrollVersion] = useState(0)
   const hideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fadeOutTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
   const menuOpenCountRef = useRef(0)
@@ -456,6 +461,8 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     }
   }, [])
 
+  const bumpScrollVersion = useCallback(() => setScrollVersion((v) => v + 1), [])
+
   // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
@@ -481,6 +488,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         urgencyBlocks,
         sidebarHeight,
         scrollContainerOffset,
+        scrollVersion,
         showPreview,
         hidePreview,
         togglePinned,
@@ -495,6 +503,7 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
         setUrgencyBlock,
         setSidebarHeight,
         setScrollContainerOffset,
+        bumpScrollVersion,
         setMenuOpen,
       }}
     >

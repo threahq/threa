@@ -7,8 +7,8 @@ import { streamLabel } from "@/lib/streams"
 /** Sort modes used by stream pickers (quick switcher, share modal, share picker). */
 export type StreamSortMode = "recency" | "alphabetical"
 
-/** Urgency priority for sorting: mentions > ai > activity > quiet (lower wins). */
-export const URGENCY_ORDER: Record<UrgencyLevel, number> = { mentions: 0, ai: 1, activity: 2, quiet: 3 }
+/** Urgency priority for sorting: mentions > ai > activity > bot > quiet (lower wins). */
+export const URGENCY_ORDER: Record<UrgencyLevel, number> = { mentions: 0, ai: 1, activity: 2, bot: 3, quiet: 4 }
 
 /** Minimal shape pickers need for sorting — name lookup + activity time. */
 export type SortableStream = Pick<Stream, "id" | "type" | "createdAt"> & {
