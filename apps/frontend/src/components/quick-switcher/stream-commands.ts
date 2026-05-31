@@ -4,21 +4,12 @@ import type { Command } from "./commands"
 /**
  * Commands that act on the stream currently in view. `use-command-items` only
  * surfaces these when `CommandContext.currentStreamId` is set, so the guard in
- * each action is belt-and-suspenders. Ordering mirrors the approved palette
- * layout (archive first, labels last). Real streams archive (reversible);
- * draft scratchpads are deleted via `draftStreamCommands` instead.
+ * each action is belt-and-suspenders. Archive is destructive, so it sits last
+ * to keep it away from the default-focused top of the palette where users could
+ * trigger it by accident. Real streams archive (reversible); draft scratchpads
+ * are deleted via `draftStreamCommands` instead.
  */
 export const streamCommands: Command[] = [
-  {
-    id: "stream-archive",
-    label: "Archive this stream",
-    icon: Archive,
-    keywords: ["hide", "remove", "close", "current stream"],
-    action: ({ currentStreamId, requestArchiveStream }) => {
-      if (!currentStreamId) return
-      requestArchiveStream(currentStreamId)
-    },
-  },
   {
     id: "stream-settings",
     label: "Open stream settings",
@@ -48,6 +39,16 @@ export const streamCommands: Command[] = [
     action: ({ currentStreamId, openLabelPicker }) => {
       if (!currentStreamId) return
       openLabelPicker(currentStreamId)
+    },
+  },
+  {
+    id: "stream-archive",
+    label: "Archive this stream",
+    icon: Archive,
+    keywords: ["hide", "remove", "close", "current stream"],
+    action: ({ currentStreamId, requestArchiveStream }) => {
+      if (!currentStreamId) return
+      requestArchiveStream(currentStreamId)
     },
   },
 ]
