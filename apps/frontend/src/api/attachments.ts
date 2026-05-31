@@ -54,9 +54,13 @@ export const attachmentsApi = {
    * File is uploaded to workspace-level; streamId is set when attached to a message.
    * Uses multipart form data instead of JSON.
    */
-  async upload(workspaceId: string, file: File): Promise<Attachment> {
+  async upload(workspaceId: string, file: File, options?: { e2e?: boolean }): Promise<Attachment> {
     const formData = new FormData()
     formData.append("file", file)
+    // E2E: `file` is already client-side ciphertext. The flag tells the server
+    // to store it opaquely — skip scanning/processing and keep no real
+    // filename/mime (the real metadata rides in the message's attachmentRefs).
+    if (options?.e2e) formData.append("e2e", "true")
 
     const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/attachments`, {
       method: "POST",

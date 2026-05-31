@@ -299,6 +299,12 @@ export interface CreateMessageInputE2e {
   envelope: unknown
   /** Envelope protocol version — backend rejects unknown values loudly. */
   e2eVersion: number
+  /**
+   * E2E attachment ids to bind to this message. The bytes are opaque ciphertext
+   * (`e2e_only` rows); their per-file keys + real metadata ride sealed inside
+   * the message payload, never here. Omitted when the message has no files.
+   */
+  attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
 }

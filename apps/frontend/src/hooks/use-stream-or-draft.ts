@@ -7,6 +7,7 @@ import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { sealStreamMessage } from "@/lib/crypto/message-envelope"
 import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
+import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -578,15 +579,23 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       const e2eEnabled = baseStream?.e2eEnabled === true
       let e2eFields: Awaited<ReturnType<typeof sealStreamMessage>> | undefined
       if (e2eEnabled) {
-        if (input.attachmentIds && input.attachmentIds.length > 0) {
-          // Phase-1 MVP doesn't support encrypted attachments. Fail loud at
-          // enqueue rather than silently dropping the ids in the drain loop
-          // (which would show the optimistic chip and then never deliver).
-          throw new Error("Attachments aren't supported in encrypted scratchpads yet")
-        }
         const session = getE2eSessionState(workspaceId, currentUserId)
         if (session.status !== "unlocked" || !session.privateKey || !session.keyId) {
           throw new Error("Unlock encrypted scratchpads before sending")
+        }
+        // Resolve each attachment's per-file key/iv (minted at upload) and seal
+        // them into the payload as `attachmentRefs`. The key lives only in
+        // memory by design, so a reload between upload and send drops it — fail
+        // loud rather than ship a row the owner can never decrypt.
+        let attachmentRefs: AttachmentRef[] | undefined
+        if (input.attachmentIds && input.attachmentIds.length > 0) {
+          attachmentRefs = input.attachmentIds.map((id) => {
+            const ref = getAttachmentRef(id)
+            if (!ref) {
+              throw new Error("Re-attach the file before sending — its encryption key was lost on reload")
+            }
+            return ref
+          })
         }
         // Seal under the stream's symmetric key (SSK, v2). The SSK is resolved
         // from the stream's wraps and unwrapped with the viewer's UIK — a
@@ -607,6 +616,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           senderId: currentUserId,
           ssk: streamKey.key,
           keyGeneration: streamKey.keyGeneration,
+          attachmentRefs,
         })
       }
 

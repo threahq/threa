@@ -226,7 +226,12 @@ function MessageInputComponent({
   // through their root channel for access grants — handled inside the hook.
   const streamContext = useMentionStreamContext(workspaceId, stream)
 
-  const composer = useDraftComposer({ workspaceId, draftKey, scopeId: streamId })
+  const composer = useDraftComposer({
+    workspaceId,
+    draftKey,
+    scopeId: streamId,
+    e2eEnabled: stream?.e2eEnabled === true,
+  })
   const quoteReplyCtx = useQuoteReply()
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
