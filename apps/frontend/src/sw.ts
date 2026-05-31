@@ -46,6 +46,19 @@ interface ExtendedNotificationOptions extends NotificationOptions {
 // and most desktop browsers ignore it and fall back to the OS default.
 const THREA_VIBRATION_PATTERN = [30, 10, 100]
 
+// Avatar images are versioned and immutable (URL is
+// `.../avatar/<timestamp>.<size>.webp`), but the API response carries
+// `Vary: Origin` from the credentialed CORS layer, which defeats the browser's
+// HTTP cache — so avatars re-fetch from the network on *every* load and visibly
+// pop in after the page paints (the "christmas tree" flash, made obvious once
+// first paint stopped waiting on hydration). Serve them CacheFirst from a
+// dedicated CacheStorage bucket: the first load fetches + stores, every
+// subsequent load is an instant local hit with zero network. Safe because the
+// URL changes whenever the avatar changes, so a cached entry is never stale.
+const AVATAR_CACHE = "threa-avatars-v1"
+const AVATAR_PATH_RE = /^\/api\/workspaces\/[^/]+\/(?:users|bots)\/[^/]+\/avatar\//
+const AVATAR_CACHE_MAX_ENTRIES = 300
+
 // Activate new service worker immediately so users get fresh code
 // without needing to close all tabs.
 self.addEventListener("install", () => self.skipWaiting())
@@ -55,7 +68,7 @@ self.addEventListener("activate", (event) => {
       // Clean stale caches from previous SW versions. Keep only the current
       // workbox precache, push-bootstrap, and share-target caches. Without this,
       // old precache buckets linger and can serve stale HTML/CSS after an update.
-      const currentCaches = new Set([PUSH_BOOTSTRAP_CACHE, SHARE_TARGET_CACHE, PENDING_SYNC_CACHE])
+      const currentCaches = new Set([PUSH_BOOTSTRAP_CACHE, SHARE_TARGET_CACHE, PENDING_SYNC_CACHE, AVATAR_CACHE])
       const allCaches = await caches.keys()
       await Promise.all(
         allCaches
@@ -129,6 +142,46 @@ self.addEventListener("fetch", (event) => {
 // Vite content-hashes these filenames so they're immutable). Navigation
 // requests are intercepted by the listener above before reaching this.
 precacheAndRoute(self.__WB_MANIFEST)
+
+// Bound the avatar cache so it can't grow without limit. `cache.keys()`
+// preserves insertion order, so the oldest entries are evicted first (FIFO).
+async function trimAvatarCache(cache: Cache): Promise<void> {
+  const keys = await cache.keys()
+  if (keys.length <= AVATAR_CACHE_MAX_ENTRIES) return
+  await Promise.all(keys.slice(0, keys.length - AVATAR_CACHE_MAX_ENTRIES).map((key) => cache.delete(key)))
+}
+
+// CacheFirst for avatar images (see AVATAR_CACHE rationale above). Coexists with
+// the other fetch listeners: this one only calls respondWith for avatar GETs and
+// is inert for everything else, and the navigation/bootstrap listeners never
+// match avatar URLs (they bail on `/api/*` or a non-matching path).
+self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET") return
+  const url = new URL(event.request.url)
+  if (url.origin !== self.location.origin || !AVATAR_PATH_RE.test(url.pathname)) return
+
+  event.respondWith(
+    (async () => {
+      const cache = await caches.open(AVATAR_CACHE)
+      const cached = await cache.match(event.request, { ignoreVary: true })
+      if (cached) return cached
+
+      const response = await fetch(event.request)
+      // Only store a complete, same-origin 200 — never partials, errors, or
+      // opaque cross-origin responses (which can't be read back reliably).
+      if (response.status === 200 && response.type === "basic") {
+        const copy = response.clone()
+        event.waitUntil(
+          cache
+            .put(event.request, copy)
+            .then(() => trimAvatarCache(cache))
+            .catch(() => {})
+        )
+      }
+      return response
+    })()
+  )
+})
 
 // ============================================================================
 // Push bootstrap pre-fetch — warm stream data so it's instant on notification tap
