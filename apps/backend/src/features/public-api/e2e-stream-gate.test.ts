@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
-import { createPublicApiHandlers } from "./handlers"
+import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { E2eStreamsRepository } from "../e2e-streams"
+import type { EventService } from "../messaging"
+import type { StreamService } from "../streams"
 
 // The public API has no ciphertext message-write path, so plaintext sends/edits
 // into an E2E stream must be rejected before any insert (mirrors the first-party
@@ -14,27 +16,35 @@ function createResponse(): Response {
   return res
 }
 
-function createHandlers(overrides: { eventService?: unknown } = {}) {
-  const eventService = overrides.eventService ?? {
+// Only eventService + streamService are exercised by the E2E-stream gate; the
+// rest of the factory's deps are unused here. Typing the fixture as PublicApiDeps
+// (rather than `as never`) means a real shape change to the factory contract —
+// a renamed or removed dep — fails this test at compile time.
+function createHandlers(overrides: Partial<PublicApiDeps> = {}): ReturnType<typeof createPublicApiHandlers> {
+  const eventService = {
     createMessage: mock(() => Promise.resolve({ id: "msg_new" })),
     editMessage: mock(() => Promise.resolve({ id: "msg_new" })),
     getMessageById: mock(() =>
       Promise.resolve({ id: "msg_1", streamId: "stream_1", authorId: "usr_1", deletedAt: null })
     ),
-  }
+  } as unknown as EventService
   const streamService = {
     tryAccess: mock(() => Promise.resolve({ id: "stream_1" })),
-  }
-  return createPublicApiHandlers({
+  } as unknown as StreamService
+
+  const deps: PublicApiDeps = {
     eventService,
     streamService,
-    botRuntimeService: {},
-    memoExplorerService: {},
-    botChannelService: {},
-    io: {},
-    pool: {},
-    personaService: {},
-  } as never)
+    searchService: {} as PublicApiDeps["searchService"],
+    memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+    attachmentService: {} as PublicApiDeps["attachmentService"],
+    botChannelService: {} as PublicApiDeps["botChannelService"],
+    botRuntimeService: {} as PublicApiDeps["botRuntimeService"],
+    pool: {} as PublicApiDeps["pool"],
+    io: {} as PublicApiDeps["io"],
+    ...overrides,
+  }
+  return createPublicApiHandlers(deps)
 }
 
 function userRequest(extra: Partial<Request> = {}): Request {
@@ -57,7 +67,7 @@ describe("public API E2E-stream plaintext gate", () => {
     const isE2e = spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
     const createMessage = mock(() => Promise.resolve({ id: "msg_new" }))
     const handlers = createHandlers({
-      eventService: { createMessage, getMessageById: mock(() => Promise.resolve(null)) },
+      eventService: { createMessage, getMessageById: mock(() => Promise.resolve(null)) } as unknown as EventService,
     })
 
     await expect(handlers.sendMessage(userRequest(), createResponse())).rejects.toMatchObject({
@@ -78,7 +88,7 @@ describe("public API E2E-stream plaintext gate", () => {
         getMessageById: mock(() =>
           Promise.resolve({ id: "msg_1", streamId: "stream_1", authorId: "usr_1", deletedAt: null })
         ),
-      },
+      } as unknown as EventService,
     })
 
     await expect(handlers.updateMessage(userRequest(), createResponse())).rejects.toMatchObject({
@@ -106,7 +116,7 @@ describe("public API E2E-stream plaintext gate", () => {
       })
     )
     const handlers = createHandlers({
-      eventService: { createMessage, getMessageById: mock(() => Promise.resolve(null)) },
+      eventService: { createMessage, getMessageById: mock(() => Promise.resolve(null)) } as unknown as EventService,
     })
 
     await handlers.sendMessage(userRequest(), createResponse())
