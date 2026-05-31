@@ -461,6 +461,10 @@ async function main() {
       ENCLAVE_SELF_URL: "http://localhost:3011",
       BACKEND_BASE_URL: "http://localhost:3002",
       INTERNAL_API_KEY: internalApiKey,
+      // Dev only: persist the EIK across `node --watch` restarts so a code
+      // change doesn't mint a fresh key and silently break every E2E stream's
+      // wraps. Prod never sets this — the key stays ephemeral.
+      ENCLAVE_KEY_PERSIST_PATH: path.join(enclaveDir, ".enclave-key.dev.json"),
     },
   })
 
