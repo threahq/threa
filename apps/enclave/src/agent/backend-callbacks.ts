@@ -2,6 +2,7 @@ import {
   INTERNAL_API_KEY_HEADER,
   type EnclaveSealedReply,
   type EnclaveSealedStep,
+  type EnclaveSealedStepStart,
   type EnclaveSealedSubstep,
   type EnclaveSessionResult,
 } from "@threa/types"
@@ -19,7 +20,9 @@ export interface BackendCallbacks {
   heartbeat(sessionId: string): Promise<void>
   /** Stream one sealed reply back the moment the loop sends it (written + broadcast now). */
   message(sessionId: string, reply: EnclaveSealedReply): Promise<void>
-  /** Stream one sealed trace step back the moment the loop emits it (persisted + broadcast now). */
+  /** Open one in-flight sealed trace step the moment the loop starts it (persisted + broadcast now). */
+  stepStarted(sessionId: string, step: EnclaveSealedStepStart): Promise<void>
+  /** Finalize one sealed trace step in place the moment it completes (persisted + broadcast now). */
   step(sessionId: string, step: EnclaveSealedStep): Promise<void>
   /** Stream one sealed substep — ephemeral mid-run phase text (broadcast only, not persisted). */
   substep(sessionId: string, substep: EnclaveSealedSubstep): Promise<void>
@@ -57,6 +60,16 @@ export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks 
         signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session message failed: ${res.status}`)
+    },
+
+    async stepStarted(sessionId, step) {
+      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/steps/started`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(step),
+        signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session step:started failed: ${res.status}`)
     },
 
     async step(sessionId, step) {

@@ -1,6 +1,11 @@
 import { ulid } from "ulid"
 import { buildMessageAad, bytesToBase64, sealMessage } from "@threa/crypto"
-import { AgentStepTypes, type EnclaveSealedStep, type EnclaveSealedSubstep } from "@threa/types"
+import {
+  AgentStepTypes,
+  type EnclaveSealedStep,
+  type EnclaveSealedStepStart,
+  type EnclaveSealedSubstep,
+} from "@threa/types"
 import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
 
 /**
@@ -15,12 +20,15 @@ import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
  * ids). Plaintext exists only here, for the duration of the loop, and is never
  * logged or persisted in the clear.
  *
- * This mirrors the backend `SessionTraceObserver`'s event→step mapping for the
- * events the enclave loop emits: the LLM's reasoning (`thinking`), each completed
- * tool call (`tool:complete` → its trace step type, e.g. web_search / visit_page
- * / research) or failure (`tool:error`), and each reply (`message:sent`). The
- * enclave seals append-only, so it maps the *terminal* tool events (not the
- * tool:start/progress lifecycle the backend uses for in-place step updates).
+ * This mirrors the backend `SessionTraceObserver`'s event→step lifecycle exactly
+ * — only the sink differs (seal + POST instead of DB + socket). Every step opens
+ * with a `step:started` (so a refresh / open trace dialog sees the in-flight step
+ * and hangs its live substeps under it) and closes with the finalized step:
+ * - `thinking` / `message:sent`: started + finalized back-to-back (content known up front)
+ * - `tool:start` → `tool:progress`* → `tool:complete`/`tool:error`: the real
+ *   in-flight window — started carries no content (the result isn't known yet),
+ *   substeps stream the phase text, and the finalize seals the tool's result.
+ * Hidden tools (trace.hidden) are skipped entirely (OTEL-only), same as the backend.
  */
 export interface EnclaveTraceObserverDeps {
   streamId: string
@@ -29,45 +37,112 @@ export interface EnclaveTraceObserverDeps {
   replyKeyGeneration: number
   /** Ariadne's sender id, bound into each step's seal AAD. */
   senderId: string
-  /** Deliver one sealed step to the backend the moment it's produced (awaited, so steps land in order). */
+  /** Open an in-flight step the moment the loop starts it (awaited, so it lands before the finalize). */
+  sendStepStarted: (step: EnclaveSealedStepStart) => Promise<void>
+  /** Finalize a step in place once it completes (awaited, so steps land in order). */
   sendStep: (step: EnclaveSealedStep) => Promise<void>
   /** Deliver one sealed substep — ephemeral mid-run phase text (e.g. research progress). */
   sendSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
 }
 
 export class EnclaveTraceObserver implements AgentObserver {
+  /** Maps an in-flight tool call to the step id minted at tool:start, so completion finalizes the same row. */
+  private readonly stepIdByToolCallId = new Map<string, string>()
+  /** Tool calls hidden at tool:start — distinguishes "hidden, skip" from "unknown, synthesize error step". */
+  private readonly hiddenToolCallIds = new Set<string>()
+
   constructor(private readonly deps: EnclaveTraceObserverDeps) {}
 
   async handle(event: AgentEvent): Promise<void> {
-    // Mid-run phase text (e.g. the research sub-agent's "Searching the web: …").
-    // It's derived from the encrypted prompt, so seal it under the SSK exactly
-    // like a step and relay it ephemerally — the owner's browser decrypts it for
-    // the live "Ariadne is …" indicator. Never persisted.
-    if (event.type === "tool:progress") {
-      const text = event.substep?.trim()
-      if (text) {
-        const sealed = await this.seal(text)
-        await this.deps.sendSubstep({
-          stepType: event.stepType,
-          ciphertext: sealed.ciphertext,
-          envelope: sealed.envelope,
-        })
+    switch (event.type) {
+      case "thinking": {
+        // Content is known up front: open + finalize the same step back-to-back,
+        // mirroring the backend's startStep(content) → complete().
+        const stepId = mintStepId()
+        const sealed = await this.seal(event.content)
+        await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.THINKING, ...sealed })
+        await this.deps.sendStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed, durationMs: event.durationMs })
+        return
       }
-      return
+
+      case "tool:start": {
+        // Hidden tools are recorded in OTEL but never surface in the trace.
+        if (event.hidden) {
+          this.hiddenToolCallIds.add(event.toolCallId)
+          return
+        }
+        // Open the in-flight step with no content (the result isn't known yet);
+        // cache the minted id so tool:complete/tool:error finalizes the same row.
+        const stepId = mintStepId()
+        this.stepIdByToolCallId.set(event.toolCallId, stepId)
+        await this.deps.sendStepStarted({ stepId, stepType: event.stepType })
+        return
+      }
+
+      case "tool:progress": {
+        // Mid-run phase text (e.g. the research sub-agent's "Searching the web: …").
+        // Derived from the encrypted prompt, so seal it under the SSK like a step
+        // and relay it ephemerally — the owner's browser decrypts it for the live
+        // "Ariadne is …" indicator and the in-flight step's substep timeline.
+        const text = event.substep?.trim()
+        if (text) {
+          const sealed = await this.seal(text)
+          await this.deps.sendSubstep({ stepType: event.stepType, ...sealed })
+        }
+        return
+      }
+
+      case "tool:complete": {
+        const stepId = this.stepIdByToolCallId.get(event.toolCallId)
+        if (!stepId) return // hidden tool — no step row was opened
+        this.stepIdByToolCallId.delete(event.toolCallId)
+        const sealed = await this.seal(event.trace.content)
+        await this.deps.sendStep({ stepId, stepType: event.trace.stepType, ...sealed, durationMs: event.durationMs })
+        return
+      }
+
+      case "tool:error": {
+        const content = `${event.toolName} failed: ${event.error}`
+        const sealed = await this.seal(content)
+        const cachedId = this.stepIdByToolCallId.get(event.toolCallId)
+        if (cachedId) {
+          // Finalize the in-flight step with the error.
+          this.stepIdByToolCallId.delete(event.toolCallId)
+          await this.deps.sendStep({
+            stepId: cachedId,
+            stepType: AgentStepTypes.TOOL_ERROR,
+            ...sealed,
+            durationMs: event.durationMs,
+          })
+        } else if (!this.hiddenToolCallIds.has(event.toolCallId)) {
+          // Unknown tool: the runtime emits tool:error with no preceding tool:start.
+          // Synthesize a started + finalized error step so it's still visible.
+          const stepId = mintStepId()
+          await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.TOOL_ERROR, ...sealed })
+          await this.deps.sendStep({
+            stepId,
+            stepType: AgentStepTypes.TOOL_ERROR,
+            ...sealed,
+            durationMs: event.durationMs,
+          })
+        }
+        this.hiddenToolCallIds.delete(event.toolCallId)
+        return
+      }
+
+      case "message:sent": {
+        const stepId = mintStepId()
+        const sealed = await this.seal(event.content)
+        await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
+        await this.deps.sendStep({
+          stepId,
+          stepType: AgentStepTypes.MESSAGE_SENT,
+          messageId: event.messageId,
+          ...sealed,
+        })
+        return
+      }
     }
-
-    const descriptor = toStepDescriptor(event)
-    if (!descriptor) return
-
-    const sealed = await this.seal(descriptor.content)
-    await this.deps.sendStep({
-      stepId: `step_${ulid()}`,
-      stepType: descriptor.stepType,
-      messageId: descriptor.messageId,
-      ciphertext: sealed.ciphertext,
-      envelope: sealed.envelope,
-      durationMs: descriptor.durationMs,
-    })
   }
 
   /** Seal one plaintext trace string under the reply SSK, AAD-bound to a fresh id. */
@@ -76,34 +151,12 @@ export class EnclaveTraceObserver implements AgentObserver {
       key: this.deps.replySsk,
       keyGeneration: this.deps.replyKeyGeneration,
       payload: content,
-      aad: buildMessageAad({ streamId: this.deps.streamId, messageId: `step_${ulid()}`, senderId: this.deps.senderId }),
+      aad: buildMessageAad({ streamId: this.deps.streamId, messageId: mintStepId(), senderId: this.deps.senderId }),
     })
     return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
   }
 }
 
-interface StepDescriptor {
-  stepType: EnclaveSealedStep["stepType"]
-  /** The renderable step content — the same string a plaintext step persists in `content`. */
-  content: string
-  messageId?: string
-  durationMs?: number
-}
-
-/** Map a runtime event to the sealed step it produces, or null for non-step events. */
-function toStepDescriptor(event: AgentEvent): StepDescriptor | null {
-  switch (event.type) {
-    case "thinking":
-      return { stepType: AgentStepTypes.THINKING, content: event.content, durationMs: event.durationMs }
-    case "tool:complete":
-      // The tool declares its own step type + rendered content (e.g. the search
-      // query, the page title, the research brief). Seal that verbatim.
-      return { stepType: event.trace.stepType, content: event.trace.content, durationMs: event.durationMs }
-    case "tool:error":
-      return { stepType: AgentStepTypes.TOOL_ERROR, content: event.error, durationMs: event.durationMs }
-    case "message:sent":
-      return { stepType: AgentStepTypes.MESSAGE_SENT, content: event.content, messageId: event.messageId }
-    default:
-      return null
-  }
+function mintStepId(): string {
+  return `step_${ulid()}`
 }

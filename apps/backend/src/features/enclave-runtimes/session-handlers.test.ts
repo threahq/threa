@@ -60,6 +60,13 @@ const STEP_BODY = {
   durationMs: 1500,
 }
 
+// A tool's step:start — no content yet (the result isn't known), so ciphertext +
+// envelope are absent. Only stepType + stepId travel.
+const STEP_START_BODY = {
+  stepId: "step_b",
+  stepType: "web_search",
+}
+
 afterEach(() => mock.restore())
 
 // Fake socket server exposing the `emit` spy so step-broadcast assertions can
@@ -172,6 +179,68 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 })
 
+describe("createEnclaveSessionHandlers.stepStarted", () => {
+  it("400s an invalid body", async () => {
+    const { handlers } = makeHandlers()
+    await expect(handlers.stepStarted(req("session_1", { bad: true }), fakeRes())).rejects.toMatchObject({
+      status: 400,
+    })
+  })
+
+  it("404s when the session is gone", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    const { handlers } = makeHandlers()
+    await expect(handlers.stepStarted(req("session_1", STEP_START_BODY), fakeRes())).rejects.toMatchObject({
+      status: 404,
+    })
+  })
+
+  it("409s when the session is no longer running", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    const { handlers } = makeHandlers()
+    await expect(handlers.stepStarted(req("session_1", STEP_START_BODY), fakeRes())).rejects.toMatchObject({
+      status: 409,
+    })
+  })
+
+  it("opens an in-flight row (no completedAt) + current_step_type in one tx, broadcasts step:started + progress", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const append = spyOn(AgentSessionRepository, "appendStep").mockResolvedValue({
+      id: "step_b",
+      sessionId: "session_1",
+      stepNumber: 2,
+      stepType: "web_search",
+      contentCiphertext: null,
+      contentEnvelope: null,
+      startedAt: new Date("2026-05-30T00:00:00.000Z"),
+      completedAt: null,
+    } as never)
+    const stepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined)
+    const { handlers, io, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.stepStarted(req("session_1", STEP_START_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    // The row is opened in-progress — no completedAt — so the dialog renders it live.
+    expect(append.mock.calls[0]![0]).toBe(tx)
+    expect(append.mock.calls[0]![1]).toMatchObject({ id: "step_b", stepType: "web_search" })
+    expect((append.mock.calls[0]![1] as { completedAt?: Date }).completedAt).toBeUndefined()
+    expect(stepType).toHaveBeenCalledWith(tx, "session_1", "web_search")
+
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:step:started")).toBe(true)
+    // Inline indicator advances at step *start* (mirrors in-process startStep).
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:stream:stream_1")
+    const progress = emit.mock.calls.find((c) => c[0] === "agent_session:progress")
+    expect(progress?.[1]).toMatchObject({ sessionId: "session_1", currentStepType: "web_search" })
+  })
+})
+
 describe("createEnclaveSessionHandlers.steps", () => {
   it("400s an invalid body", async () => {
     const { handlers } = makeHandlers()
@@ -190,11 +259,49 @@ describe("createEnclaveSessionHandlers.steps", () => {
     await expect(handlers.steps(req("session_1", STEP_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
   })
 
-  it("appends the sealed step + current_step_type in one transaction, broadcasts it, and 204s", async () => {
+  it("finalizes the in-flight step in place (sealed content + completedAt), broadcasts step:completed, and 204s", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
-    // Run the transaction body against a fake client so the repo spies observe
-    // the calls (INV-6: append + current_step_type are wrapped in withTransaction).
+    const update = spyOn(AgentSessionRepository, "updateStep").mockResolvedValue({
+      id: "step_a",
+      sessionId: "session_1",
+      stepNumber: 1,
+      stepType: "thinking",
+      contentCiphertext: "Y3Q=",
+      contentEnvelope: STEP_BODY.envelope,
+      startedAt: new Date("2026-05-30T00:00:00.000Z"),
+      completedAt: new Date("2026-05-30T00:00:01.500Z"),
+    } as never)
+    const append = spyOn(AgentSessionRepository, "appendStep")
+    const { handlers, io, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.steps(req("session_1", STEP_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    // Updates the existing row in place — no insert on the happy path.
+    expect(append).not.toHaveBeenCalled()
+    expect(update.mock.calls[0]![0]).toBe(pool) // single query → bare pool (INV-30)
+    expect(update.mock.calls[0]![1]).toBe("step_a")
+    expect(update.mock.calls[0]![2]).toMatchObject({
+      contentCiphertext: "Y3Q=", // sealed content — the server never holds plaintext (INV-E7)
+      contentEnvelope: STEP_BODY.envelope,
+    })
+    expect((update.mock.calls[0]![2] as { completedAt?: Date }).completedAt).toBeInstanceOf(Date)
+
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
+    expect(emit.mock.calls[0]![0]).toBe("agent_session:step:completed")
+    const emitted = emit.mock.calls[0]![1] as { sessionId: string; step: Record<string, unknown> }
+    expect(emitted.step).toMatchObject({ id: "step_a", stepType: "thinking", contentCiphertext: "Y3Q=" })
+    // No progress on the happy path — the indicator already advanced at step:started.
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:progress")).toBe(false)
+  })
+
+  it("falls back to a completed insert + progress when the start POST was dropped", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    // No in-flight row to finalize.
+    spyOn(AgentSessionRepository, "updateStep").mockResolvedValue(null)
     const tx = {} as never
     spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
       fn(tx)) as never)
@@ -209,46 +316,18 @@ describe("createEnclaveSessionHandlers.steps", () => {
       completedAt: new Date("2026-05-30T00:00:01.500Z"),
     } as never)
     const stepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(undefined)
-    const { handlers, io, emit } = makeHandlers()
+    const { handlers, emit } = makeHandlers()
     const res = fakeRes()
 
     await handlers.steps(req("session_1", STEP_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(append).toHaveBeenCalledTimes(1)
-    // Both writes run on the same transaction client, not the bare pool.
+    // Inserts a completed row + advances current_step_type so the trace still lands.
     expect(append.mock.calls[0]![0]).toBe(tx)
-    expect(append.mock.calls[0]![1]).toMatchObject({
-      id: "step_a",
-      sessionId: "session_1",
-      stepType: "thinking",
-      contentCiphertext: "Y3Q=", // sealed content — the server never holds plaintext (INV-E7)
-      contentEnvelope: STEP_BODY.envelope,
-    })
+    expect(append.mock.calls[0]![1]).toMatchObject({ id: "step_a", contentCiphertext: "Y3Q=" })
     expect(stepType).toHaveBeenCalledWith(tx, "session_1", "thinking")
-
-    // Live broadcast to the workspace-scoped session room via the canonical
-    // serializer — payload carries ciphertext + envelope only (INV-E7).
-    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
-    expect(emit.mock.calls[0]![0]).toBe("agent_session:step:completed")
-    const emitted = emit.mock.calls[0]![1] as { sessionId: string; step: Record<string, unknown> }
-    expect(emitted.sessionId).toBe("session_1")
-    expect(emitted.step).toMatchObject({
-      id: "step_a",
-      stepType: "thinking",
-      contentCiphertext: "Y3Q=",
-      contentEnvelope: STEP_BODY.envelope,
-    })
-
-    // Also drives the inline stream-view trace (useAgentActivity), which listens
-    // on the *stream* room — a plaintext progress event carrying step type only.
-    expect(io.to).toHaveBeenCalledWith("ws:ws_1:stream:stream_1")
-    const progress = emit.mock.calls.find((c) => c[0] === "agent_session:progress")
-    expect(progress?.[1]).toMatchObject({
-      sessionId: "session_1",
-      streamId: "stream_1",
-      currentStepType: "thinking",
-    })
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:step:completed")).toBe(true)
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:progress")).toBe(true)
   })
 })
 

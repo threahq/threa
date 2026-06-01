@@ -475,6 +475,26 @@ export interface EnclaveSealedStep {
 }
 
 /**
+ * One sealed trace step *start* — emitted the moment the agent loop opens a step
+ * (the LLM's reasoning, a tool call, a reply), mirroring the unencrypted runtime's
+ * `tool:start`/`startStep`. It lets an open trace dialog render the in-flight step
+ * (and hang its live substeps under it) before completion, exactly as it does for
+ * non-E2E personas. `stepType` + `stepId` travel in clear; content is sealed under
+ * the reply SSK when it's already known (reasoning/reply text) and absent for tools
+ * whose result isn't known yet. A matching `EnclaveSealedStep` finalizes the same
+ * `stepId` in place when the step completes.
+ */
+export interface EnclaveSealedStepStart {
+  stepId: string
+  stepType: AgentStepType
+  /** For message_sent steps: the reply id this step describes (clear, same as the finalize). */
+  messageId?: string
+  /** Sealed content when known at start (reasoning/reply); absent for tools (no result yet). */
+  ciphertext?: string
+  envelope?: EnclaveStreamEnvelope
+}
+
+/**
  * One sealed *substep* — the ephemeral mid-run phase text a tool emits (e.g. the
  * research sub-agent's "Searching the web: …" / "Reading …"). Because that text
  * is derived from the user's encrypted prompt it is sealed under the SSK exactly

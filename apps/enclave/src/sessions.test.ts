@@ -136,6 +136,7 @@ describe("createSessionsHandler", () => {
       message: async (sessionId, reply) => {
         streamed.push({ sessionId, reply })
       },
+      stepStarted: async () => {},
       step: async () => {},
       substep: async () => {},
       complete: async (sessionId, result) => {
@@ -179,6 +180,7 @@ describe("createSessionsHandler", () => {
     const callbacks: BackendCallbacks = {
       heartbeat: async () => {},
       message: async () => {},
+      stepStarted: async () => {},
       step: async () => {},
       substep: async () => {},
       complete: async () => {
@@ -211,6 +213,7 @@ describe("createSessionsHandler", () => {
       callbacks: {
         heartbeat: async () => {},
         message: async () => {},
+        stepStarted: async () => {},
         step: async () => {},
         substep: async () => {},
         complete: async () => {},

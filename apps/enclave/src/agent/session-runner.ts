@@ -44,7 +44,9 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         rawChat: deps.rawChat,
         // Stream each reply back as the loop sends it (delivered before the loop continues).
         onMessage: (reply) => deps.callbacks.message(sessionId, reply),
-        // Stream each sealed trace step back as the loop emits it (live trace).
+        // Open each in-flight step as the loop starts it, then finalize it on
+        // completion — the same lifecycle the non-E2E runtime emits (live trace).
+        onStepStarted: (step) => deps.callbacks.stepStarted(sessionId, step),
         onStep: (step) => deps.callbacks.step(sessionId, step),
         onSubstep: (substep) => deps.callbacks.substep(sessionId, substep),
         tools: deps.toolConfig ? { tavilyApiKey: deps.toolConfig.tavilyApiKey } : undefined,

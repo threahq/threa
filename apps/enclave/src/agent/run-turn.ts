@@ -14,6 +14,7 @@ import type {
   EnclaveSessionResult,
   EnclaveSealedReply,
   EnclaveSealedStep,
+  EnclaveSealedStepStart,
   EnclaveSealedSubstep,
   EnclaveSskWrap,
 } from "@threa/types"
@@ -58,9 +59,15 @@ export interface EnclaveTurnDeps {
    */
   onMessage: (reply: EnclaveSealedReply) => Promise<void>
   /**
-   * Stream a sealed trace step back as the loop emits it (thinking, tool calls,
-   * message_sent). Sealed under the same SSK as replies; the backend persists
-   * ciphertext only.
+   * Open a sealed in-flight step the moment the loop starts it (tool:start, and
+   * the leading edge of thinking/message_sent). Lets an open trace dialog render
+   * the in-progress step before it finishes, mirroring the non-E2E runtime.
+   */
+  onStepStarted: (step: EnclaveSealedStepStart) => Promise<void>
+  /**
+   * Finalize a sealed trace step in place when it completes (thinking, tool
+   * calls, message_sent). Sealed under the same SSK as replies; the backend
+   * persists ciphertext only.
    */
   onStep: (step: EnclaveSealedStep) => Promise<void>
   /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
@@ -81,7 +88,7 @@ export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStep, onSubstep, tools } = deps
+  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, tools } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -133,6 +140,7 @@ export async function runEnclaveTurn(
     replySsk,
     replyKeyGeneration: request.reply.keyGeneration,
     senderId: request.reply.senderId,
+    sendStepStarted: onStepStarted,
     sendStep: onStep,
     sendSubstep: onSubstep,
   })

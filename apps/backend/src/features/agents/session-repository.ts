@@ -652,6 +652,9 @@ export const AgentSessionRepository = {
     stepId: string,
     params: {
       content?: unknown
+      /** E2E (enclave) finalize: SSK-sealed content + envelope set in place on the in-flight row. */
+      contentCiphertext?: string
+      contentEnvelope?: unknown
       sources?: TraceSource[]
       messageId?: string
       completedAt?: Date
@@ -662,6 +665,8 @@ export const AgentSessionRepository = {
         UPDATE agent_session_steps
         SET
           content = COALESCE(${params.content != null ? JSON.stringify(params.content) : null}, content),
+          content_ciphertext = COALESCE(${params.contentCiphertext ?? null}, content_ciphertext),
+          content_envelope = COALESCE(${params.contentEnvelope ? JSON.stringify(params.contentEnvelope) : null}, content_envelope),
           sources = COALESCE(${params.sources ? JSON.stringify(params.sources) : null}, sources),
           message_id = COALESCE(${params.messageId ?? null}, message_id),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
