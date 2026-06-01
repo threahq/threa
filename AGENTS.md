@@ -17,7 +17,7 @@ Use this bridge file so Codex can reuse existing Claude assets with minimal dupl
 
 ## Code Review Feedback
 
-Automated reviewers (Greptile, CodeRabbit) are configured with project-specific rules derived from `CLAUDE.md` invariants. Their feedback reflects project standards and must be treated with the same rigor as human review comments.
+CodeRabbit is configured with project-specific rules (`.coderabbit.yaml`) derived from `CLAUDE.md` invariants. Its feedback reflects project standards and must be treated with the same rigor as human review comments.
 
 **Do not dismiss review comments based on perceived severity.** A comment labeled "suggestion", "improvement", or "non-blocking" by a reviewer may still identify a real bug, regression, or spec violation. Evaluate each comment on its technical merit, not its severity label.
 

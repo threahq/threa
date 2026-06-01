@@ -1,0 +1,155 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration for Threa.
+# Architecture, invariants, and the full app inventory live in CLAUDE.md and
+# docs/system-overview.md (registered as code guidelines below). Treat those as
+# the source of truth — do not duplicate a frozen description of them here.
+
+language: "en-US"
+early_access: true
+
+reviews:
+  # Thorough, detailed feedback — the point of review here is to catch invariant
+  # violations before human review. Calibration (what NOT to flag) lives in the
+  # path_instructions below. Switch to "chill" if review volume is too high.
+  profile: "assertive"
+  request_changes_workflow: false
+
+  # Walkthrough / summary presentation (lean output — no diagrams, effort
+  # estimates, issue cross-linking, label/reviewer suggestions, poem, or fortune).
+  high_level_summary: true
+  high_level_summary_in_walkthrough: true
+  review_details: true
+  review_status: true
+  commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  poem: false
+
+  path_filters:
+    - "!**/*.generated.*"
+    - "!**/node_modules/**"
+    - "!**/package-lock.json"
+    - "!**/bun.lock"
+    - "!**/bun.lockb"
+    - "!dist/**"
+    - "!dev-dist/**"
+    - "!**/.env*"
+    - "!test-results/**"
+    - "!playwright-report/**"
+    - "!**/*.log"
+
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Architecture, invariants, and the full app inventory live in CLAUDE.md and
+        docs/system-overview.md. Treat those as the source of truth.
+
+        What NOT to flag:
+        - Pre-existing issues not introduced by this PR
+        - Issues that TypeScript compilation or ESLint would catch (types, imports, lint)
+        - Stylistic preferences without a concrete rule violation in CLAUDE.md
+        - Theoretical risks or hypothetical edge cases without evidence of exploitability
+        - General best-practice suggestions that don't map to a specific project rule
+
+        Security calibration:
+        - React JSX is safe from XSS unless dangerouslySetInnerHTML is used
+        - ULIDs/UUIDs are cryptographically unguessable — do not flag as enumeration risks
+        - Environment variables are trusted — do not flag as hardcoded secrets
+        - DoS, rate limiting, log spoofing, regex complexity, missing audit logs, and
+          outdated dependency warnings are out of scope
+
+        Plan adherence:
+        If plan files exist in .claude/plans/, check that PR changes align with the plan.
+        Flag missing corresponding changes: API change without frontend/backoffice update,
+        type change without usage update, schema change without migration.
+    - path: "**/migrations/**"
+      instructions: |
+        No foreign key constraints in migrations. Referential integrity is enforced in
+        application code, not PostgreSQL schema. (INV-1)
+        No DB enums. Use TEXT columns and validate in application code. (INV-3)
+        Migrations are append-only. Never edit or delete existing migration files. Only
+        add new ones. (INV-17)
+    - path: "apps/backend/src/**"
+      instructions: |
+        Real-time event delivery must go through the outbox pattern. Do not publish events
+        directly via socket.io emit or Redis pub/sub outside of the outbox dispatcher. (INV-4)
+        All AI/LLM usage must go through the project AI wrapper (createAI), not raw SDK
+        imports from @anthropic-ai/sdk or openai. (INV-28)
+        Do not keep database connections open during slow AI or network calls. Release the
+        connection first, then do the slow work. (INV-41)
+        Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
+        advisory locks, or transactions with row locks for write paths. (INV-20)
+        Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
+        dedicated client. (INV-30)
+        Validate API inputs (body, query, params) with Zod schemas, not manual typeof
+        checks. (INV-55)
+    - path: "apps/frontend/src/**/*.tsx"
+      instructions: |
+        Do not define React components inside other React components. Extract to separate
+        functions or files. (INV-18)
+    - path: "apps/backoffice/src/**/*.tsx"
+      instructions: |
+        Do not define React components inside other React components. Extract to separate
+        functions or files. (INV-18)
+    - path: "apps/control-plane/src/**"
+      instructions: |
+        Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
+        advisory locks, or transactions with row locks for write paths. (INV-20)
+        Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
+        dedicated client. (INV-30)
+        Validate API inputs (body, query, params) with Zod schemas, not manual typeof
+        checks. (INV-55)
+    - path: "packages/backend-common/src/**"
+      instructions: |
+        Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
+        advisory locks, or transactions with row locks for write paths. (INV-20)
+        Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
+        dedicated client. (INV-30)
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    # Review PRs targeting any base branch, not just the default — covers the
+    # stacked-PR workflow.
+    base_branches:
+      - ".*"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  tools:
+    # ESLint runs in CI and pre-commit; let CodeRabbit focus on what lint can't catch.
+    eslint:
+      enabled: false
+    # PII detection.
+    presidio:
+      enabled: true
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+      - "AGENTS.md"
+      - "docs/system-overview.md"
+      - "docs/deployment.md"
+      - "docs/model-reference.md"
