@@ -1202,7 +1202,7 @@ Before opening each next PR:
 gh pr view <previous-pr> --json statusCheckRollup,reviewDecision,url
 ```
 
-Then inspect comments/check failures. Treat every CodeRabbit/Greptile finding as one of:
+Then inspect comments/check failures. Treat every CodeRabbit finding as one of:
 
 - **Accept**: fix in the current/top PR if it affects shared code,
 - **Acknowledge**: real but intentionally deferred to a later stacked PR,

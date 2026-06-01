@@ -661,7 +661,7 @@ export class WorkspaceAgent {
    *
    * Takes explicit `signal` + `deadlineAt` rather than a `WorkspaceAgentInput` so
    * callers can't accidentally drop the deadline by casting a partial object
-   * (Greptile caught exactly this bug — see PR #333).
+   * (this exact bug was caught in review — see PR #333).
    */
   private makePerCallSignal(
     params: { signal: AbortSignal | undefined; deadlineAt: number | undefined },
@@ -670,7 +670,7 @@ export class WorkspaceAgent {
     const { signal: parentSignal, deadlineAt } = params
     const remainingBudget = deadlineAt !== undefined ? Math.max(0, deadlineAt - Date.now()) : Infinity
     // Clamp the per-call cap to the remaining total budget so a late call can't
-    // outlive the deadline (Greptile caught exactly this bug — see PR #333).
+    // outlive the deadline (this exact bug was caught in review — see PR #333).
     return composeAbortSignal({
       parent: parentSignal,
       timeoutMs: Math.min(perCallMs, remainingBudget),

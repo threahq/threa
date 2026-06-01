@@ -15,7 +15,7 @@ Systematically triage, address, and respond to every review comment on a pull re
 2. **Acknowledged** — the feedback is valid but out of scope for this PR; respond explaining why and what follow-up is planned
 3. **Disputed** — the feedback is incorrect or conflicts with project rules; respond with a concrete explanation referencing the relevant invariant or rationale
 
-Never silently skip a comment. Never dismiss a comment just because it is non-blocking, a suggestion, or an improvement rather than a bug. Automated reviewers (Greptile, CodeRabbit) are configured with project-specific rules — their feedback reflects project standards and should be treated with the same rigor as human review comments.
+Never silently skip a comment. Never dismiss a comment just because it is non-blocking, a suggestion, or an improvement rather than a bug. CodeRabbit is configured with project-specific rules — its feedback reflects project standards and should be treated with the same rigor as human review comments.
 
 ## Instructions
 
@@ -77,7 +77,7 @@ For EVERY unresolved comment (and resolved comments with new replies), create a 
 | # | Source | File:Line | Issue Summary | Disposition | Action |
 |---|--------|-----------|---------------|-------------|--------|
 
-Fill in Source (greptile-apps[bot], coderabbitai[bot], human username), the file and line, a one-sentence summary of the issue, and leave Disposition/Action blank.
+Fill in Source (coderabbitai[bot], human username), the file and line, a one-sentence summary of the issue, and leave Disposition/Action blank.
 
 Present this table to the user and ask for confirmation before proceeding. The user may override dispositions or skip specific comments.
 

@@ -1,12 +1,12 @@
 ---
 name: sync-plan
-description: Ensure a committed plan file exists and reflects the current branch state. Use before creating a PR to give Greptile accurate plan context for adherence checking.
+description: Ensure a committed plan file exists and reflects the current branch state. Use before creating a PR to give CodeRabbit accurate plan context for adherence checking.
 allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(gh pr view:*), Read, Write, Edit, Glob, Grep, Agent, Skill(find-plan)
 ---
 
 # Sync Plan
 
-Produces or updates a committed plan file at `.claude/plans/<branch>.md` that accurately reflects the current branch state. This gives Greptile (and future reviewers) a clear spec to check plan adherence against.
+Produces or updates a committed plan file at `.claude/plans/<branch>.md` that accurately reflects the current branch state. This gives CodeRabbit (and future reviewers) a clear spec to check plan adherence against.
 
 ## When to Use
 
@@ -116,7 +116,7 @@ Write `.claude/plans/<branch-slug>.md` with this structure:
 
 ## What's NOT Included
 
-[Explicitly call out things that are out of scope or deferred. This helps Greptile avoid false positives on "missing" changes.]
+[Explicitly call out things that are out of scope or deferred. This helps CodeRabbit avoid false positives on "missing" changes.]
 
 ## Status
 
@@ -129,10 +129,10 @@ Write `.claude/plans/<branch-slug>.md` with this structure:
 
 - **Describe what IS, not what was planned.** This file reflects the actual implementation, not the original aspirations.
 - **Use session context for the WHY.** The diff shows what changed; the find-plan output explains why. Design decisions and course corrections from conversations are the most valuable parts for reviewers.
-- **Be specific about file paths.** Greptile needs concrete references to match against the diff.
+- **Be specific about file paths.** CodeRabbit needs concrete references to match against the diff.
 - **Call out design decisions explicitly.** These are the things a reviewer would question — answer them preemptively.
 - **Include "Design Evolution" when the approach changed.** If find-plan reveals course corrections, document the original → final approach and why. This prevents reviewers from questioning intentional pivots.
-- **Include "What's NOT Included".** This prevents Greptile from flagging intentional omissions as missing changes.
+- **Include "What's NOT Included".** This prevents CodeRabbit from flagging intentional omissions as missing changes.
 - **Keep it concise.** This is a review aid, not a design doc. Target 100-300 lines.
 
 ## Step 5: Diff and Confirm
@@ -157,7 +157,7 @@ Sections:
 - Status: [x completed, y pending]
 ```
 
-Ask the user to confirm before committing: "Does this look right? I'll commit it so Greptile can reference it during review."
+Ask the user to confirm before committing: "Does this look right? I'll commit it so CodeRabbit can reference it during review."
 
 ## Step 6: Commit the Plan
 
@@ -171,6 +171,6 @@ After committing, tell the user the full path to the plan file so they can revie
 ## Important Notes
 
 - **Do NOT invent requirements.** The plan should reflect what was actually built, derived from the diff and commits. If something is unclear, ask.
-- **Do NOT include session history or side quests.** This file is for Greptile, not for archaeology. Only include what's relevant to the current PR.
+- **Do NOT include session history or side quests.** This file is for CodeRabbit, not for archaeology. Only include what's relevant to the current PR.
 - **Preserve existing plans when updating.** Don't discard the user's original plan structure — update it to match reality.
 - **One plan per branch.** If the branch has sub-features, they go in sections, not separate files.

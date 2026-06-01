@@ -116,8 +116,8 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
     expect(result.substeps[0]?.text).toBe(onSubstep.mock.calls[0]?.[0])
   })
 
-  test("makePerCallSignal clamps per-call timeout to remaining deadline (Greptile regression)", async () => {
-    // Regression for PR #333 Greptile finding: planRetrieval/evaluateResults were
+  test("makePerCallSignal clamps per-call timeout to remaining deadline (PR #333 regression)", async () => {
+    // Regression for PR #333 review finding: planRetrieval/evaluateResults were
     // casting { signal } as WorkspaceAgentInput, dropping deadlineAt and letting the
     // full per-call cap apply even when the total budget was nearly exhausted.
     const agent = buildAgent()

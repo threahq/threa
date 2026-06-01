@@ -29,7 +29,7 @@ Read this before asking the user anything.
 
 **Prove you looked.** When you do ask, name what you already searched — file paths, grep patterns, docs read — so the user can redirect you instead of repeating the search. An unjustified clarifying question is worse than silence.
 
-**Follow instructions verbatim.** When CLAUDE.md, a skill, or the user says "always use X", "never do Y", or "use the /foo skill for Z", that is a binding constraint, not a suggestion. Re-read the relevant rule before acting in its domain — especially invariants (INV-*), the Greptile rule, and skill invocation rules.
+**Follow instructions verbatim.** When CLAUDE.md, a skill, or the user says "always use X", "never do Y", or "use the /foo skill for Z", that is a binding constraint, not a suggestion. Re-read the relevant rule before acting in its domain — especially invariants (INV-*), the automated-review rule, and skill invocation rules.
 
 **Read before editing.** Before changing a module, read it and its neighbors. Backend features colocate (INV-51) — handler, service, repo, worker, config, tests all sit in the same folder, so the answer is usually one directory away.
 
@@ -59,9 +59,9 @@ Never ship unexecuted tests. Run:
 - `bun run test:e2e` for E2E coverage
 - `bun run test` for unit/integration coverage
 
-### Greptile Reviews
+### Automated Reviews
 
-When asked to check Greptile comments, review feedback, confidence score, or anything Greptile-related, **always use the `/review-greptile` skill**. Never manually call the fetch script or GitHub API for Greptile data — the skill handles fetching, staleness detection, triage, and thread responses.
+CodeRabbit reviews PRs automatically using the project rules in `.coderabbit.yaml` (derived from these invariants). When asked to check review comments, address review feedback, or respond to CodeRabbit, **always use the `/respond-to-pr-review` skill** — it handles triage and thread responses. Treat CodeRabbit findings with the same rigor as human review comments.
 
 If tests fail, fix them or explicitly isolate the failure in a separate follow-up change.
 
