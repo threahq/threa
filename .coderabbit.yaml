@@ -6,6 +6,7 @@
 # the source of truth — do not duplicate a frozen description of them here.
 
 language: "en-US"
+early_access: true
 
 reviews:
   # Thorough, detailed feedback — the point of review here is to catch invariant
@@ -13,13 +14,24 @@ reviews:
   # path_instructions below. Switch to "chill" if review volume is too high.
   profile: "assertive"
   request_changes_workflow: false
+
+  # Walkthrough / summary presentation (lean output — no diagrams, effort
+  # estimates, issue cross-linking, label/reviewer suggestions, poem, or fortune).
   high_level_summary: true
-  poem: false
+  high_level_summary_in_walkthrough: true
+  review_details: true
   review_status: true
   commit_status: true
   collapse_walkthrough: true
   changed_files_summary: true
-  sequence_diagrams: true
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  assess_linked_issues: false
+  related_issues: false
+  suggested_labels: false
+  suggested_reviewers: false
+  in_progress_fortune: false
+  poem: false
 
   path_filters:
     - "!**/*.generated.*"
@@ -108,9 +120,31 @@ reviews:
     enabled: true
     auto_incremental_review: true
     drafts: false
+    # Review PRs targeting any base branch, not just the default — covers the
+    # stacked-PR workflow.
+    base_branches:
+      - ".*"
     ignore_usernames:
       - "dependabot[bot]"
       - "renovate[bot]"
+
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  tools:
+    # ESLint runs in CI and pre-commit; let CodeRabbit focus on what lint can't catch.
+    eslint:
+      enabled: false
+    # PII detection.
+    presidio:
+      enabled: true
 
 knowledge_base:
   code_guidelines:
