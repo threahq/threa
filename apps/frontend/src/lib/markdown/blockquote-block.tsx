@@ -7,8 +7,10 @@ import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
 import {
   InsideCollapsibleBlockProvider,
+  QuoteNestingDepthProvider,
   useIsInsideCollapsibleBlock,
   useMarkdownBlockContext,
+  useQuoteNestingDepth,
 } from "./markdown-block-context"
 import { extractBlockText } from "./extract-block-text"
 
@@ -25,6 +27,7 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
 
   const messageContext = useMarkdownBlockContext()
   const nested = useIsInsideCollapsibleBlock()
+  const depth = useQuoteNestingDepth()
   // Whether folding is even possible here is a synchronous fact (is there a
   // message to persist against, and are we the outermost block?). Branching
   // the DOM on this — not on the async measurement — keeps the measured node
@@ -53,8 +56,15 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
   // swaps with the foldable structure mid-life.
   if (!foldable) {
     return (
-      <blockquote className="my-2 border-l-2 border-primary/50 pl-4 text-muted-foreground italic">
-        {children}
+      <blockquote
+        className={cn(
+          "border-l-2 border-primary/50 text-muted-foreground italic",
+          // Nested quotes use a tighter inset so depth doesn't march the text
+          // off the right edge on mobile; top-level keeps the roomier pl-4.
+          depth > 0 ? "my-1.5 pl-3" : "my-2 pl-4"
+        )}
+      >
+        <QuoteNestingDepthProvider>{children}</QuoteNestingDepthProvider>
       </blockquote>
     )
   }
@@ -103,7 +113,7 @@ export function BlockquoteBlock({ children }: BlockquoteBlockProps) {
             style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
             onClick={bodyExpandable ? toggle : undefined}
           >
-            {children}
+            <QuoteNestingDepthProvider>{children}</QuoteNestingDepthProvider>
           </div>
           {collapsed && (
             <div

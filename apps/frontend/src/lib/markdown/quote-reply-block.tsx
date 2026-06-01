@@ -10,7 +10,11 @@ import { cn } from "@/lib/utils"
 import { usePreferencesOptional } from "@/contexts/preferences-context"
 import { useBlockCollapse } from "./use-block-collapse"
 import { useMeasuredLineCount } from "./use-measured-line-count"
-import { InsideCollapsibleBlockProvider } from "./markdown-block-context"
+import {
+  InsideCollapsibleBlockProvider,
+  QuoteNestingDepthProvider,
+  useQuoteNestingDepth,
+} from "./markdown-block-context"
 import { extractBlockText } from "./extract-block-text"
 
 interface QuoteReplyBlockProps {
@@ -37,6 +41,12 @@ export function QuoteReplyBlock({
   children,
 }: QuoteReplyBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
+
+  // Depth 0 is the outermost quote in a message and keeps the full card. Nested
+  // quotes render as a compact left-rail so box chrome and padding don't
+  // compound into an unreadable staircase on mobile.
+  const depth = useQuoteNestingDepth()
+  const isRail = depth > 0
 
   const quotedText = useMemo(() => extractBlockText(children), [children])
 
@@ -73,53 +83,80 @@ export function QuoteReplyBlock({
   const collapsedMaxHeight =
     collapsed && measured.lineHeightPx !== null ? (threshold + 0.5) * measured.lineHeightPx : undefined
 
+  const header = (
+    <div className="flex items-center gap-1.5">
+      <QuoteAuthor
+        workspaceId={workspaceId}
+        authorName={authorName}
+        authorId={authorId}
+        actorType={actorType as AuthorType}
+      />
+      {canToggle && (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={!collapsed}
+          aria-label={collapseLabel}
+          title={collapseLabel}
+          className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-foreground"
+        >
+          {collapsed ? (
+            <ChevronRight className="h-3 w-3" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="h-3 w-3" aria-hidden="true" />
+          )}
+        </button>
+      )}
+    </div>
+  )
+
+  const body = (
+    <Link
+      to={url}
+      className="relative mt-0.5 block text-muted-foreground no-underline transition-colors hover:text-foreground"
+    >
+      <div
+        ref={bodyRef}
+        className={cn("[&_p]:mb-0", collapsed && "overflow-hidden")}
+        style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
+      >
+        <QuoteNestingDepthProvider>{children}</QuoteNestingDepthProvider>
+      </div>
+      {collapsed && (
+        <div
+          aria-hidden="true"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent",
+            // Fade into whatever sits behind: the card's muted fill, or the
+            // message background for the nested rail (no fill of its own).
+            isRail ? "to-background" : "to-muted/30"
+          )}
+        />
+      )}
+    </Link>
+  )
+
+  // Nested quotes drop the card and the leading Quote glyph for a thin
+  // primary-accent rail (the same vocabulary as a plain blockquote), so each
+  // level adds ~14px of inset instead of a full bordered box.
+  if (isRail) {
+    return (
+      <InsideCollapsibleBlockProvider active={canToggle}>
+        <div className="my-1.5 min-w-0 border-l-2 border-primary/40 pl-3 text-sm">
+          {header}
+          {body}
+        </div>
+      </InsideCollapsibleBlockProvider>
+    )
+  }
+
   return (
     <InsideCollapsibleBlockProvider active={canToggle}>
       <div className="my-2 flex items-start gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm">
         <Quote className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <QuoteAuthor
-              workspaceId={workspaceId}
-              authorName={authorName}
-              authorId={authorId}
-              actorType={actorType as AuthorType}
-            />
-            {canToggle && (
-              <button
-                type="button"
-                onClick={toggle}
-                aria-expanded={!collapsed}
-                aria-label={collapseLabel}
-                title={collapseLabel}
-                className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-primary/10 hover:text-foreground"
-              >
-                {collapsed ? (
-                  <ChevronRight className="h-3 w-3" aria-hidden="true" />
-                ) : (
-                  <ChevronDown className="h-3 w-3" aria-hidden="true" />
-                )}
-              </button>
-            )}
-          </div>
-          <Link
-            to={url}
-            className="relative mt-0.5 block text-muted-foreground no-underline transition-colors hover:text-foreground"
-          >
-            <div
-              ref={bodyRef}
-              className={cn("[&_p]:mb-0", collapsed && "overflow-hidden")}
-              style={collapsedMaxHeight !== undefined ? { maxHeight: collapsedMaxHeight } : undefined}
-            >
-              {children}
-            </div>
-            {collapsed && (
-              <div
-                aria-hidden="true"
-                className="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-b from-transparent to-muted/30"
-              />
-            )}
-          </Link>
+          {header}
+          {body}
         </div>
       </div>
     </InsideCollapsibleBlockProvider>
