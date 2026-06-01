@@ -65,6 +65,15 @@ const sealedStepSchema = z.object({
   durationMs: z.number().int().min(0).optional(),
 })
 
+// One sealed substep — ephemeral mid-run phase text (e.g. research progress).
+// `stepType` is clear metadata; the text is ciphertext (derived from encrypted
+// content, INV-E7). Broadcast only, never persisted.
+const sealedSubstepSchema = z.object({
+  stepType: z.enum(AGENT_STEP_TYPES),
+  ciphertext: z.base64().min(1),
+  envelope: streamEnvelopeSchema,
+})
+
 interface Dependencies {
   pool: Pool
   eventService: EventService
@@ -216,6 +225,43 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
         messageCount: 0,
         currentStepType: persisted.stepType,
       })
+
+      res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/sessions/:id/substeps
+     * Relay one sealed substep — ephemeral mid-run phase text (e.g. the research
+     * sub-agent's "Searching the web: …"). Broadcast-only (no DB): the text is
+     * ciphertext the browser decrypts (INV-E7); only `stepType` is clear. Emitted
+     * to both the stream room (inline "Ariadne is …" indicator) and the session
+     * room (trace dialog), mirroring the in-process `emitSubstep` fan-out.
+     */
+    async substep(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = sealedSubstepSchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
+      const sub = parsed.data
+      const payload = {
+        workspaceId: stream.workspaceId,
+        streamId: session.streamId,
+        sessionId: id,
+        triggerMessageId: session.triggerMessageId,
+        stepType: sub.stepType,
+        ciphertext: sub.ciphertext,
+        envelope: sub.envelope,
+        updatedAt: new Date().toISOString(),
+      }
+      io.to(`ws:${stream.workspaceId}:stream:${session.streamId}`).emit("agent_session:substep", payload)
+      io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:substep", payload)
 
       res.status(204).end()
     },

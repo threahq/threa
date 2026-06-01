@@ -137,6 +137,7 @@ describe("createSessionsHandler", () => {
         streamed.push({ sessionId, reply })
       },
       step: async () => {},
+      substep: async () => {},
       complete: async (sessionId, result) => {
         completed = { sessionId, result }
       },
@@ -179,6 +180,7 @@ describe("createSessionsHandler", () => {
       heartbeat: async () => {},
       message: async () => {},
       step: async () => {},
+      substep: async () => {},
       complete: async () => {
         completed = true
       },
@@ -206,7 +208,13 @@ describe("createSessionsHandler", () => {
         ran = true
         return { message: { content: "x" }, model: "stub" }
       }) as RawChatFn,
-      callbacks: { heartbeat: async () => {}, message: async () => {}, step: async () => {}, complete: async () => {} },
+      callbacks: {
+        heartbeat: async () => {},
+        message: async () => {},
+        step: async () => {},
+        substep: async () => {},
+        complete: async () => {},
+      },
       inFlight: new Set([assignment.sessionId]), // already running
     })
     const res = fakeRes()

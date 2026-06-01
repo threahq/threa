@@ -2,6 +2,7 @@ import {
   INTERNAL_API_KEY_HEADER,
   type EnclaveSealedReply,
   type EnclaveSealedStep,
+  type EnclaveSealedSubstep,
   type EnclaveSessionResult,
 } from "@threa/types"
 import type { EnclaveConfig } from "../config"
@@ -20,6 +21,8 @@ export interface BackendCallbacks {
   message(sessionId: string, reply: EnclaveSealedReply): Promise<void>
   /** Stream one sealed trace step back the moment the loop emits it (persisted + broadcast now). */
   step(sessionId: string, step: EnclaveSealedStep): Promise<void>
+  /** Stream one sealed substep — ephemeral mid-run phase text (broadcast only, not persisted). */
+  substep(sessionId: string, substep: EnclaveSealedSubstep): Promise<void>
   /** Mark the session complete once the loop finishes (replies already streamed). */
   complete(sessionId: string, result: EnclaveSessionResult): Promise<void>
 }
@@ -64,6 +67,16 @@ export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks 
         signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session step failed: ${res.status}`)
+    },
+
+    async substep(sessionId, substep) {
+      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/substeps`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(substep),
+        signal: AbortSignal.timeout(STEP_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session substep failed: ${res.status}`)
     },
 
     async complete(sessionId, result) {

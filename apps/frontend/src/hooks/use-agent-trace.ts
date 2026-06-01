@@ -4,6 +4,9 @@ import { useSocket } from "@/contexts"
 import { agentSessionsApi } from "@/api"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { joinRoomWithAck } from "@/lib/socket-room"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
+import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
 import type {
   AgentSessionStep,
   AgentSession,
@@ -60,6 +63,7 @@ interface UseAgentTraceResult {
  */
 export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentTraceResult {
   const socket = useSocket()
+  const userId = useWorkspaceUserId(workspaceId)
 
   // Real-time state accumulated from socket events
   const [realtimeSteps, setRealtimeSteps] = useState<Map<string, AgentSessionStep>>(new Map())
@@ -148,20 +152,41 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
   // Substep: ephemeral phase text from a long-running tool. We accumulate per
   // step type so the trace dialog can render an inline timeline of phases for the
   // currently in-flight step. Cleared on step completion (handleStepCompleted).
+  const appendSubstep = useCallback((stepType: AgentStepType, text: string, at: string) => {
+    setStreamingSubsteps((prev) => {
+      const list = prev[stepType] ?? []
+      // Dedupe consecutive identical substeps (the backend may emit the same phase twice on retry)
+      if (list.length > 0 && list[list.length - 1]?.text === text) return prev
+      return { ...prev, [stepType]: [...list, { text, at }] }
+    })
+  }, [])
+
   const handleSubstep = useCallback(
     (payload: AgentSessionSubstepPayload) => {
-      if (payload?.sessionId !== sessionId || !payload.stepType || !payload.substep) return
-      setStreamingSubsteps((prev) => {
-        const list = prev[payload.stepType] ?? []
-        // Dedupe consecutive identical substeps (the backend may emit the same phase twice on retry)
-        if (list.length > 0 && list[list.length - 1]?.text === payload.substep) return prev
-        return {
-          ...prev,
-          [payload.stepType]: [...list, { text: payload.substep, at: payload.updatedAt }],
-        }
-      })
+      if (payload?.sessionId !== sessionId || !payload.stepType) return
+      // Plaintext (non-E2E) substep.
+      if (typeof payload.substep === "string" && payload.substep) {
+        appendSubstep(payload.stepType, payload.substep, payload.updatedAt)
+        return
+      }
+      // E2E: the phase text is sealed under the stream key (it's derived from the
+      // encrypted prompt). Decrypt it the same way message/step content is, then
+      // apply. Silently skip if the session isn't unlocked.
+      if (typeof payload.ciphertext === "string" && payload.envelope) {
+        const session = getE2eSessionState(workspaceId, userId ?? "")
+        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return
+        void tryDecryptMessagePayload(
+          { contentMarkdown: "", ciphertext: payload.ciphertext, envelope: payload.envelope },
+          { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId: payload.streamId }
+        )
+          .then((decrypted) => {
+            if (decrypted?.contentMarkdown)
+              appendSubstep(payload.stepType, decrypted.contentMarkdown, payload.updatedAt)
+          })
+          .catch(() => {})
+      }
     },
-    [sessionId]
+    [sessionId, workspaceId, userId, appendSubstep]
   )
 
   const handleCompleted = useCallback(

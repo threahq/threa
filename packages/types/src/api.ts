@@ -475,6 +475,20 @@ export interface EnclaveSealedStep {
 }
 
 /**
+ * One sealed *substep* — the ephemeral mid-run phase text a tool emits (e.g. the
+ * research sub-agent's "Searching the web: …" / "Reading …"). Because that text
+ * is derived from the user's encrypted prompt it is sealed under the SSK exactly
+ * like a step; the backend relays the ciphertext and the owner's browser
+ * decrypts it. Never persisted — it drives the live "Ariadne is …" indicator.
+ */
+export interface EnclaveSealedSubstep {
+  /** The step type this substep belongs to (clear metadata, same as steps). */
+  stepType: AgentStepType
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+}
+
+/**
  * The work the backend assigns to a live enclave via `POST /sessions`. The
  * backend never decrypts: it ships ciphertext + the wraps addressed to that EIK
  * plus the `sessionId` it created the `agent_sessions` row under. The enclave

@@ -1,6 +1,6 @@
 import { ulid } from "ulid"
 import { buildMessageAad, bytesToBase64, sealMessage } from "@threa/crypto"
-import { AgentStepTypes, type EnclaveSealedStep } from "@threa/types"
+import { AgentStepTypes, type EnclaveSealedStep, type EnclaveSealedSubstep } from "@threa/types"
 import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
 
 /**
@@ -31,31 +31,54 @@ export interface EnclaveTraceObserverDeps {
   senderId: string
   /** Deliver one sealed step to the backend the moment it's produced (awaited, so steps land in order). */
   sendStep: (step: EnclaveSealedStep) => Promise<void>
+  /** Deliver one sealed substep — ephemeral mid-run phase text (e.g. research progress). */
+  sendSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
 }
 
 export class EnclaveTraceObserver implements AgentObserver {
   constructor(private readonly deps: EnclaveTraceObserverDeps) {}
 
   async handle(event: AgentEvent): Promise<void> {
+    // Mid-run phase text (e.g. the research sub-agent's "Searching the web: …").
+    // It's derived from the encrypted prompt, so seal it under the SSK exactly
+    // like a step and relay it ephemerally — the owner's browser decrypts it for
+    // the live "Ariadne is …" indicator. Never persisted.
+    if (event.type === "tool:progress") {
+      const text = event.substep?.trim()
+      if (text) {
+        const sealed = await this.seal(text)
+        await this.deps.sendSubstep({
+          stepType: event.stepType,
+          ciphertext: sealed.ciphertext,
+          envelope: sealed.envelope,
+        })
+      }
+      return
+    }
+
     const descriptor = toStepDescriptor(event)
     if (!descriptor) return
 
-    const stepId = `step_${ulid()}`
-    const sealed = await sealMessage({
-      key: this.deps.replySsk,
-      keyGeneration: this.deps.replyKeyGeneration,
-      payload: descriptor.content,
-      aad: buildMessageAad({ streamId: this.deps.streamId, messageId: stepId, senderId: this.deps.senderId }),
-    })
-
+    const sealed = await this.seal(descriptor.content)
     await this.deps.sendStep({
-      stepId,
+      stepId: `step_${ulid()}`,
       stepType: descriptor.stepType,
       messageId: descriptor.messageId,
-      ciphertext: bytesToBase64(sealed.ciphertext),
+      ciphertext: sealed.ciphertext,
       envelope: sealed.envelope,
       durationMs: descriptor.durationMs,
     })
+  }
+
+  /** Seal one plaintext trace string under the reply SSK, AAD-bound to a fresh id. */
+  private async seal(content: string): Promise<{ ciphertext: string; envelope: EnclaveSealedStep["envelope"] }> {
+    const sealed = await sealMessage({
+      key: this.deps.replySsk,
+      keyGeneration: this.deps.replyKeyGeneration,
+      payload: content,
+      aad: buildMessageAad({ streamId: this.deps.streamId, messageId: `step_${ulid()}`, senderId: this.deps.senderId }),
+    })
+    return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
   }
 }
 

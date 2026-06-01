@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest"
 import { generateStreamKey, openMessageAsString } from "@threa/crypto"
-import type { EnclaveSealedStep } from "@threa/types"
+import type { EnclaveSealedStep, EnclaveSealedSubstep } from "@threa/types"
 import { EnclaveTraceObserver } from "./trace-observer"
 
 const STREAM_ID = "stream_x"
 const GEN = 2
 const SENDER = "persona_ariadne"
 
-function makeObserver(): { observer: EnclaveTraceObserver; ssk: Uint8Array; steps: EnclaveSealedStep[] } {
+function makeObserver(): {
+  observer: EnclaveTraceObserver
+  ssk: Uint8Array
+  steps: EnclaveSealedStep[]
+  substeps: EnclaveSealedSubstep[]
+} {
   const ssk = generateStreamKey()
   const steps: EnclaveSealedStep[] = []
+  const substeps: EnclaveSealedSubstep[] = []
   const observer = new EnclaveTraceObserver({
     streamId: STREAM_ID,
     replySsk: ssk,
@@ -18,8 +24,11 @@ function makeObserver(): { observer: EnclaveTraceObserver; ssk: Uint8Array; step
     sendStep: async (step) => {
       steps.push(step)
     },
+    sendSubstep: async (substep) => {
+      substeps.push(substep)
+    },
   })
-  return { observer, ssk, steps }
+  return { observer, ssk, steps, substeps }
 }
 
 describe("EnclaveTraceObserver", () => {
@@ -58,6 +67,30 @@ describe("EnclaveTraceObserver", () => {
       ciphertext: Buffer.from(step.ciphertext, "base64"),
     })
     expect(opened).toBe("Paris.")
+  })
+
+  it("seals a tool:progress substep under the SSK and forwards it without a step row", async () => {
+    const { observer, ssk, steps, substeps } = makeObserver()
+
+    await observer.handle({
+      type: "tool:progress",
+      toolCallId: "tc_1",
+      toolName: "general_research",
+      stepType: "research",
+      substep: 'Searching the web: "weather in paris"',
+    })
+
+    expect(steps).toHaveLength(0) // ephemeral phase text — never a persisted step
+    expect(substeps).toHaveLength(1)
+    const sub = substeps[0]!
+    expect(sub.stepType).toBe("research")
+    // The phase text is sealed (it's derived from the encrypted prompt).
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: sub.envelope,
+      ciphertext: Buffer.from(sub.ciphertext, "base64"),
+    })
+    expect(opened).toBe('Searching the web: "weather in paris"')
   })
 
   it("seals a completed tool call under its declared step type and content", async () => {

@@ -13,6 +13,8 @@ import type {
   AgentActivityEndedPayload,
 } from "@threa/types"
 import { getStepInlineLabel } from "@/lib/step-config"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
+import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
 
 export interface MessageAgentActivity {
   sessionId: string
@@ -54,7 +56,12 @@ interface ProgressEntry {
  * The activity_started event fires immediately when the session begins (no step yet),
  * progress events update the step type, and activity_ended cleans up.
  */
-export function useAgentActivity(events: StreamEvent[], socket: Socket | null): Map<string, MessageAgentActivity> {
+export function useAgentActivity(
+  events: StreamEvent[],
+  socket: Socket | null,
+  workspaceId: string,
+  userId: string | null
+): Map<string, MessageAgentActivity> {
   // Track live activity from socket: sessionId → { triggerMessageId, personaName, currentStepType }
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
 
@@ -168,20 +175,41 @@ export function useAgentActivity(events: StreamEvent[], socket: Socket | null): 
     })
   }, [])
 
-  // Substep: ephemeral phase text from a long-running tool. Only updates the entry
-  // for the matching session — does NOT touch step counts or step type.
-  const handleSubstep = useCallback((payload: AgentSessionSubstepPayload) => {
+  const applySubstep = useCallback((sessionId: string, text: string) => {
     setProgressBySession((prev) => {
-      const existing = prev.get(payload.sessionId)
+      const existing = prev.get(sessionId)
       if (!existing) return prev
       const next = new Map(prev)
-      next.set(payload.sessionId, {
-        ...existing,
-        substep: payload.substep,
-      })
+      next.set(sessionId, { ...existing, substep: text })
       return next
     })
   }, [])
+
+  // Substep: ephemeral phase text from a long-running tool. Only updates the entry
+  // for the matching session — does NOT touch step counts or step type. For E2E
+  // (enclave) sessions the text is sealed under the stream key, so decrypt it the
+  // same way message/step content is before applying.
+  const handleSubstep = useCallback(
+    (payload: AgentSessionSubstepPayload) => {
+      if (typeof payload.substep === "string" && payload.substep) {
+        applySubstep(payload.sessionId, payload.substep)
+        return
+      }
+      if (typeof payload.ciphertext === "string" && payload.envelope) {
+        const session = getE2eSessionState(workspaceId, userId ?? "")
+        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return
+        void tryDecryptMessagePayload(
+          { contentMarkdown: "", ciphertext: payload.ciphertext, envelope: payload.envelope },
+          { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId: payload.streamId }
+        )
+          .then((decrypted) => {
+            if (decrypted?.contentMarkdown) applySubstep(payload.sessionId, decrypted.contentMarkdown)
+          })
+          .catch(() => {})
+      }
+    },
+    [workspaceId, userId, applySubstep]
+  )
 
   // Activity ended: session completed/failed, remove from map
   const handleActivityEnded = useCallback((payload: AgentActivityEndedPayload) => {

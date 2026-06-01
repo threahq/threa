@@ -14,6 +14,7 @@ import type {
   EnclaveSessionResult,
   EnclaveSealedReply,
   EnclaveSealedStep,
+  EnclaveSealedSubstep,
   EnclaveSskWrap,
 } from "@threa/types"
 import { AgentRuntime } from "@threa/agent-runtime/runtime"
@@ -62,6 +63,8 @@ export interface EnclaveTurnDeps {
    * ciphertext only.
    */
   onStep: (step: EnclaveSealedStep) => Promise<void>
+  /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
+  onSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
   /**
    * Web-tool configuration. Absent or keyless degrades gracefully: no Tavily key
    * means no `web_search` (URL reads + research still work). Omitting `tools`
@@ -78,7 +81,7 @@ export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStep, tools } = deps
+  const { keyPair, rawChat, onMessage, onStep, onSubstep, tools } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -131,6 +134,7 @@ export async function runEnclaveTurn(
     replyKeyGeneration: request.reply.keyGeneration,
     senderId: request.reply.senderId,
     sendStep: onStep,
+    sendSubstep: onSubstep,
   })
 
   const runtime = new AgentRuntime({

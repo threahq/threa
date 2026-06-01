@@ -8,7 +8,12 @@ import {
   sealMessage,
   wrapStreamKey,
 } from "@threa/crypto"
-import type { EnclaveSealedReply, EnclaveSealedStep, EnclaveSessionAssignment } from "@threa/types"
+import type {
+  EnclaveSealedReply,
+  EnclaveSealedStep,
+  EnclaveSealedSubstep,
+  EnclaveSessionAssignment,
+} from "@threa/types"
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "../keystore"
 import type { RawChatFn, RawChatRequest, RawChatResult } from "../llm"
 import { InvokeError, runEnclaveTurn } from "./run-turn"
@@ -16,16 +21,26 @@ import { InvokeError, runEnclaveTurn } from "./run-turn"
 const STREAM_ID = "stream_journal"
 const GEN = 0
 
-/** Collects the replies and sealed trace steps the loop streams back. */
+/** Collects the replies and sealed trace steps/substeps the loop streams back. */
 function collector(): {
   onMessage: (r: EnclaveSealedReply) => Promise<void>
   onStep: (s: EnclaveSealedStep) => Promise<void>
+  onSubstep: (s: EnclaveSealedSubstep) => Promise<void>
   sent: EnclaveSealedReply[]
   steps: EnclaveSealedStep[]
+  substeps: EnclaveSealedSubstep[]
 } {
   const sent: EnclaveSealedReply[] = []
   const steps: EnclaveSealedStep[] = []
-  return { sent, steps, onMessage: async (r) => void sent.push(r), onStep: async (s) => void steps.push(s) }
+  const substeps: EnclaveSealedSubstep[] = []
+  return {
+    sent,
+    steps,
+    substeps,
+    onMessage: async (r) => void sent.push(r),
+    onStep: async (s) => void steps.push(s),
+    onSubstep: async (s) => void substeps.push(s),
+  }
 }
 
 async function wrapSskToEnclave(keyPair: EnclaveKeyPair, ssk: Uint8Array, keyGeneration = GEN) {
@@ -109,10 +124,10 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "What's the capital of France?", "msg_user", "usr_owner")
     const chat = stubChat(textReply("Paris."))
-    const { onMessage, onStep, sent, steps } = collector()
+    const { onMessage, onStep, onSubstep, sent, steps } = collector()
 
     const result = await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage, onStep },
+      { keyPair, rawChat: chat.fn, onMessage, onStep, onSubstep },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -160,10 +175,10 @@ describe("runEnclaveTurn", () => {
     const wrap = await wrapSskToEnclave(keyPair, ssk)
     const prompt = await sealUnder(ssk, "Give me two notes.", "msg_user", "usr_owner")
     const chat = stubChat(sendMessageReply("First.", "Second."))
-    const { onMessage, onStep, sent } = collector()
+    const { onMessage, onStep, onSubstep, sent } = collector()
 
     const result = await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage, onStep },
+      { keyPair, rawChat: chat.fn, onMessage, onStep, onSubstep },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -192,7 +207,13 @@ describe("runEnclaveTurn", () => {
 
     const collected = collector()
     await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage: collected.onMessage, onStep: collected.onStep },
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage: collected.onMessage,
+        onStep: collected.onStep,
+        onSubstep: collected.onSubstep,
+      },
       baseRequest({
         wraps: [wrap],
         history: [
@@ -221,10 +242,10 @@ describe("runEnclaveTurn", () => {
       toolCallReply("read_url", { url: "http://localhost/secret" }),
       textReply("Couldn't read it."),
     ])
-    const { onMessage, onStep, sent, steps } = collector()
+    const { onMessage, onStep, onSubstep, sent, steps } = collector()
 
     const result = await runEnclaveTurn(
-      { keyPair, rawChat: chat.fn, onMessage, onStep, tools: { tavilyApiKey: "tvly-test" } },
+      { keyPair, rawChat: chat.fn, onMessage, onStep, onSubstep, tools: { tavilyApiKey: "tvly-test" } },
       baseRequest({ wraps: [wrap], prompt })
     )
 
@@ -259,7 +280,13 @@ describe("runEnclaveTurn", () => {
     const collected = collector()
     await expect(
       runEnclaveTurn(
-        { keyPair, rawChat: stubChat(textReply("x")).fn, onMessage: collected.onMessage, onStep: collected.onStep },
+        {
+          keyPair,
+          rawChat: stubChat(textReply("x")).fn,
+          onMessage: collected.onMessage,
+          onStep: collected.onStep,
+          onSubstep: collected.onSubstep,
+        },
         baseRequest({ wraps: [wrap], prompt, reply: { keyGeneration: 7, senderId: "persona_ariadne" } })
       )
     ).rejects.toBeInstanceOf(InvokeError)

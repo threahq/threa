@@ -48,7 +48,9 @@ describe("useAgentActivity", () => {
             startedAt: "2026-05-25T00:00:00.000Z",
           }),
         ],
-        null
+        null,
+        "ws_test",
+        "usr_test"
       )
     )
 
@@ -77,7 +79,9 @@ describe("useAgentActivity", () => {
             startedAt: "2026-05-25T00:00:00.000Z",
           }),
         ],
-        socket
+        socket,
+        "ws_test",
+        "usr_test"
       )
     )
 
