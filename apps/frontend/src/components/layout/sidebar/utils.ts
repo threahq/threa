@@ -9,12 +9,13 @@ interface StreamWithOptionalPreview {
   lastMessagePreview?: { authorType: AuthorType } | null
 }
 
-/** Calculate urgency level for a stream based on unread and mention state */
+/** Calculate urgency level for a stream based on unread, mention, and activity state */
 export function calculateUrgency(
   stream: StreamWithOptionalPreview,
   unreadCount: number,
   mentionCount: number,
-  isMuted: boolean
+  isMuted: boolean,
+  activityCount = 0
 ): UrgencyLevel {
   if (isMuted) return "quiet"
 
@@ -26,6 +27,13 @@ export function calculateUrgency(
     if (authorType === AuthorTypes.BOT) return "bot"
     return "activity"
   }
+
+  // A notification reached the always-joined per-user room (activity:created)
+  // but the per-stream stream:activity that drives unreadCount was missed — e.g.
+  // before the stream-room join lands, or while it's briefly disconnected. Light
+  // the stream so the sidebar never stays quiet for something the Activity feed
+  // is already showing.
+  if (activityCount > 0) return "activity"
 
   return "quiet"
 }

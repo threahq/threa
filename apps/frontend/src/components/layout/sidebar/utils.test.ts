@@ -57,6 +57,25 @@ describe("calculateUrgency", () => {
   it("returns quiet with no unread and no mentions", () => {
     expect(calculateUrgency(streamWith(AuthorTypes.BOT), 0, 0, false)).toBe("quiet")
   })
+
+  it("surfaces activity when a notification landed but unread was missed", () => {
+    // activity:created bumped activityCount via the user room, but the per-stream
+    // stream:activity that drives unreadCount never arrived — the sidebar should
+    // still light up to match the Activity feed.
+    expect(calculateUrgency(streamWith("user"), 0, 0, false, 2)).toBe("activity")
+  })
+
+  it("prefers mentions over the activity fallback", () => {
+    expect(calculateUrgency(streamWith("user"), 0, 1, false, 2)).toBe("mentions")
+  })
+
+  it("prefers unread author-typed urgency over the activity fallback", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.PERSONA), 1, 0, false, 2)).toBe("ai")
+  })
+
+  it("stays quiet when muted even with pending activity", () => {
+    expect(calculateUrgency(streamWith("user"), 0, 0, true, 2)).toBe("quiet")
+  })
 })
 
 describe("categorizeStream", () => {

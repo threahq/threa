@@ -364,16 +364,10 @@ export class SyncEngine {
       this.lastWorkspaceError = null
       syncStatus.set(`workspace:${workspaceId}`, "synced")
 
-      // Subscribe all member streams
-      const memberStreamIds = bootstrap.streamMemberships.map((sm) => sm.streamId)
       // Subscribe all member streams: join rooms + register socket handlers.
       // On reconnect, cleanupStreamHandlers() already cleared the old handlers,
       // so these are fresh registrations.
-      for (const streamId of memberStreamIds) {
-        if (!this.subscribedStreams.has(streamId)) {
-          await this.ensureStreamSubscription(streamId)
-        }
-      }
+      await this.subscribeMemberStreams(bootstrap.streamMemberships.map((sm) => sm.streamId))
     } catch (error) {
       this.lastWorkspaceError = error
       const hasCachedData = (await db.workspaces.get(workspaceId)) !== undefined
@@ -384,7 +378,14 @@ export class SyncEngine {
         }
       }
 
-      if (!hasCachedData) {
+      if (hasCachedData) {
+        // The fresh bootstrap failed but cached data is already on screen. Join
+        // the member-stream rooms from the cached membership list anyway, so
+        // `stream:activity` — which carries the sidebar unread bump *and* the
+        // last-message preview that powers hover-to-preview — keeps flowing and
+        // self-heals, instead of going dark until the user opens each stream.
+        await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
+      } else {
         // Propagate to TanStack so coordinated-loading shows the error
         queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), undefined)
       }
@@ -429,6 +430,28 @@ export class SyncEngine {
     return Array.from(
       new Set(streamIds.filter((streamId) => !streamId.startsWith("draft_") && !streamId.startsWith("draft:")))
     )
+  }
+
+  /**
+   * Join rooms + register socket handlers for a set of member streams.
+   * Idempotent per stream — skips ones already subscribed. Runs on every
+   * bootstrap (success path and the cache-only failure path) so `stream:activity`
+   * reaches every stream the user belongs to, not just the ones they opened this
+   * session. Without it the sidebar unread badge and hover-to-preview only update
+   * for streams whose room the user has explicitly joined.
+   */
+  private async subscribeMemberStreams(streamIds: string[]): Promise<void> {
+    for (const streamId of streamIds) {
+      if (!this.subscribedStreams.has(streamId)) {
+        await this.ensureStreamSubscription(streamId)
+      }
+    }
+  }
+
+  /** Member stream ids from the offline cache, for the bootstrap-failure path. */
+  private async cachedMemberStreamIds(): Promise<string[]> {
+    const memberships = await db.streamMemberships.where("workspaceId").equals(this.deps.workspaceId).toArray()
+    return memberships.map((membership) => membership.streamId)
   }
 
   private async ensureStreamSubscription(streamId: string, options?: { awaitJoin?: boolean }): Promise<void> {

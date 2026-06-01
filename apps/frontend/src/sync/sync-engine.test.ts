@@ -453,4 +453,71 @@ describe("SyncEngine.handlePageResume", () => {
       expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", undefined)
     })
   })
+
+  it("joins every member-stream room after a successful bootstrap", async () => {
+    const deps = makeDeps()
+    const bootstrap = makeWorkspaceBootstrap()
+    bootstrap.streamMemberships = [
+      {
+        streamId: "stream_7",
+        memberId: "user_1",
+        pinned: false,
+        pinnedAt: null,
+        notificationLevel: null,
+        lastReadEventId: null,
+        lastReadAt: null,
+        joinedAt: new Date().toISOString(),
+      },
+    ]
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(bootstrap)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+
+    await vi.waitFor(() => {
+      const joinedRooms = socket.emittedEvents.filter((event) => event.event === "join").map((event) => event.args[0])
+      expect(joinedRooms).toContain("ws:ws_1:stream:stream_7")
+    })
+  })
+
+  it("joins member-stream rooms from the cache when the fresh bootstrap fails", async () => {
+    // Regression: a slow/failed first bootstrap must not leave the user in zero
+    // stream rooms. Without the cache fallback, stream:activity (sidebar unread +
+    // hover preview) only flows for streams opened this session.
+    const now = new Date().toISOString()
+    await db.workspaces.put({
+      id: "ws_1",
+      name: "Test",
+      slug: "test",
+      createdAt: now,
+      updatedAt: now,
+      _cachedAt: Date.now(),
+    })
+    await db.streamMemberships.put({
+      id: "ws_1:stream_42",
+      workspaceId: "ws_1",
+      streamId: "stream_42",
+      memberId: "user_1",
+      pinned: false,
+      pinnedAt: null,
+      notificationLevel: null,
+      lastReadEventId: null,
+      lastReadAt: null,
+      joinedAt: now,
+      _cachedAt: Date.now(),
+    })
+
+    const deps = makeDeps()
+    deps.workspaceService.bootstrap.mockRejectedValueOnce(new Error("network down"))
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+
+    await vi.waitFor(() => {
+      const joinedRooms = socket.emittedEvents.filter((event) => event.event === "join").map((event) => event.args[0])
+      expect(joinedRooms).toContain("ws:ws_1:stream:stream_42")
+    })
+  })
 })
