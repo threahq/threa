@@ -85,6 +85,12 @@ reviews:
         imports from @anthropic-ai/sdk or openai. (INV-28)
         Do not keep database connections open during slow AI or network calls. Release the
         connection first, then do the slow work. (INV-41)
+        Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
+        advisory locks, or transactions with row locks for write paths. (INV-20)
+        Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
+        dedicated client. (INV-30)
+        Validate API inputs (body, query, params) with Zod schemas, not manual typeof
+        checks. (INV-55)
     - path: "apps/frontend/src/**/*.tsx"
       instructions: |
         Do not define React components inside other React components. Extract to separate
@@ -93,14 +99,6 @@ reviews:
       instructions: |
         Do not define React components inside other React components. Extract to separate
         functions or files. (INV-18)
-    - path: "apps/backend/src/**"
-      instructions: |
-        Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
-        advisory locks, or transactions with row locks for write paths. (INV-20)
-        Avoid withClient for single-query paths. Pass pool directly instead of acquiring a
-        dedicated client. (INV-30)
-        Validate API inputs (body, query, params) with Zod schemas, not manual typeof
-        checks. (INV-55)
     - path: "apps/control-plane/src/**"
       instructions: |
         Never do select-then-update without locking or concurrency control. Use ON CONFLICT,
