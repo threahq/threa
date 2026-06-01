@@ -140,6 +140,22 @@ describe("categorizeStream", () => {
     expect(categorizeStream(stream, 1, "activity")).toBe("recent")
   })
 
+  it("promotes activity-only streams to 'recent' even when the cached preview is stale", () => {
+    // A notification arrived via the always-joined user room (urgency "activity")
+    // before the per-stream stream:activity bumped the unread count. The sidebar
+    // row glows, so it must not sink into "other" just because its last cached
+    // message is older than 7 days.
+    const stream = makeStream({
+      lastMessagePreview: {
+        authorId: "user_2",
+        authorType: "user",
+        content: "hello",
+        createdAt: "2026-03-01T12:00:00Z", // >7 days ago
+      },
+    })
+    expect(categorizeStream(stream, 0, "activity")).toBe("recent")
+  })
+
   it("puts streams with no preview and no unread in 'other'", () => {
     const stream = makeStream({ lastMessagePreview: null })
     expect(categorizeStream(stream, 0, "quiet")).toBe("other")

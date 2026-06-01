@@ -382,8 +382,12 @@ export class SyncEngine {
         // The fresh bootstrap failed but cached data is already on screen. Join
         // the member-stream rooms from the cached membership list anyway, so
         // `stream:activity` — which carries the sidebar unread bump *and* the
-        // last-message preview that powers hover-to-preview — keeps flowing and
-        // self-heals, instead of going dark until the user opens each stream.
+        // last-message preview that powers hover-to-preview — keeps flowing onto
+        // the cached rows instead of going dark until the user opens each stream.
+        // This mirrors the success-path subscription (member rooms only ever
+        // carry sidebar-level deltas; the per-stream bootstrap fetch happens on
+        // navigation). The next successful bootstrap re-applies authoritative
+        // counts/previews, closing any gap (INV-53).
         await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
       } else {
         // Propagate to TanStack so coordinated-loading shows the error

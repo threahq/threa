@@ -49,12 +49,14 @@ export function categorizeStream(stream: StreamWithPreview, unreadCount: number,
     return "important"
   }
 
-  // Any stream with unread activity stays in Recent regardless of age or
-  // whether a preview has been cached yet. An active chat should never sink
-  // into "Everything else" while the user is still catching up. Muted streams
+  // A stream the user is still catching up on stays in Recent regardless of age
+  // or whether a preview has been cached yet — it should never sink into
+  // "Everything else". This covers unread messages and activity-only streams: a
+  // notification can arrive via the always-joined user room (urgency "activity")
+  // before the per-stream stream:activity bumps the unread count. Muted streams
   // (urgency "quiet") are excluded — muting is an explicit deprioritization
   // signal, so unread messages in a muted stream should not resurface.
-  if (unreadCount > 0 && urgency !== "quiet") {
+  if (urgency !== "quiet" && (unreadCount > 0 || urgency === "activity")) {
     return "recent"
   }
 
