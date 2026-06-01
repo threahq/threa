@@ -259,6 +259,28 @@ export function SidebarFooter({
   )
 }
 
+// Shared face for the create control. A gold "thread" chip carries the emphasis
+// (per the design system, --primary is the single accent that signals primary
+// actions), the label sits left-aligned so the control reads as a sidebar row
+// rather than a form button, and the trailing chevron telegraphs the upward
+// menu — rhyming with the account row beneath it. The whole face reacts to the
+// trigger's `data-state` so hover and open share one warm treatment; both the
+// Radix desktop trigger and the manual mobile button expose that attribute.
+function SidebarCreateButtonFace() {
+  return (
+    <>
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary transition-colors group-hover/new:bg-primary/25 group-data-[state=open]/new:bg-primary/25">
+        <Plus className="h-4 w-4" />
+      </span>
+      <span className="flex-1 text-left font-medium">New</span>
+      <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/new:rotate-180" />
+    </>
+  )
+}
+
+const CREATE_BUTTON_CLASS =
+  "group/new w-full justify-start gap-2.5 px-2.5 bg-primary/[0.04] hover:bg-primary/10 hover:text-foreground data-[state=open]:bg-primary/10 data-[state=open]:text-foreground"
+
 /**
  * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
  * every stream flavor (scratchpad variants + channel). Uses a bottom drawer on
@@ -272,15 +294,15 @@ function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem
     return (
       <>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="w-full gap-2"
+          className={CREATE_BUTTON_CLASS}
+          data-state={open ? "open" : "closed"}
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen(true)}
         >
-          <Plus className="h-4 w-4" />
-          New
+          <SidebarCreateButtonFace />
         </Button>
         <SidebarActionDrawer
           open={open}
@@ -293,9 +315,6 @@ function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem
     )
   }
 
-  // Outline (not filled) so it sits with the ghost account row beneath it rather
-  // than reading as a floating action bar — the app reserves filled primary for
-  // content-area CTAs. Radix wires aria-haspopup/expanded on the trigger.
   return (
     <SidebarActionMenu
       actions={actions}
@@ -304,9 +323,8 @@ function SidebarCreateButton({ actions, isMobile }: { actions: SidebarActionItem
       align="start"
       contentClassName="w-56"
       trigger={
-        <Button variant="outline" size="sm" className="w-full gap-2">
-          <Plus className="h-4 w-4" />
-          New
+        <Button variant="ghost" size="sm" className={CREATE_BUTTON_CLASS}>
+          <SidebarCreateButtonFace />
         </Button>
       }
     />
