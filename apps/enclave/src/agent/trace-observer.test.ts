@@ -115,9 +115,16 @@ describe("EnclaveTraceObserver", () => {
     expect(await open(ssk, done)).toBe("weather")
   })
 
-  it("seals a tool:progress substep under the SSK and forwards it without a step row", async () => {
+  it("seals each tool:progress phase and persists a running snapshot onto the in-flight step", async () => {
     const { observer, ssk, started, steps, substeps } = makeObserver()
 
+    await observer.handle({
+      type: "tool:start",
+      toolCallId: "tc_1",
+      toolName: "general_research",
+      stepType: "research",
+      input: {},
+    })
     await observer.handle({
       type: "tool:progress",
       toolCallId: "tc_1",
@@ -125,14 +132,51 @@ describe("EnclaveTraceObserver", () => {
       stepType: "research",
       substep: 'Searching the web: "weather in paris"',
     })
+    await observer.handle({
+      type: "tool:progress",
+      toolCallId: "tc_1",
+      toolName: "general_research",
+      stepType: "research",
+      substep: "Reading https://example.com",
+    })
 
-    expect(started).toHaveLength(0)
-    expect(steps).toHaveLength(0) // ephemeral phase text — never a persisted step
+    expect(started).toHaveLength(1) // the step:started — substeps don't open new rows
+    expect(steps).toHaveLength(0) // not finalized yet
+    expect(substeps).toHaveLength(2)
+
+    // Each broadcast carries the single new phase, sealed, bound to the in-flight step.
+    const second = substeps[1]!
+    expect(second.stepType).toBe("research")
+    expect(second.stepId).toBe(started[0]!.stepId)
+    expect(await open(ssk, second)).toBe("Reading https://example.com")
+
+    // …and the running snapshot — the full { substeps } list — sealed for refresh
+    // recovery. It accumulates: the 2nd snapshot holds both phases in order.
+    const snapshot = JSON.parse(
+      await open(ssk, { ciphertext: second.snapshotCiphertext, envelope: second.snapshotEnvelope })
+    ) as { substeps: Array<{ text: string; at: string }> }
+    expect(snapshot.substeps.map((s) => s.text)).toEqual([
+      'Searching the web: "weather in paris"',
+      "Reading https://example.com",
+    ])
+    expect(snapshot.substeps.every((s) => typeof s.at === "string")).toBe(true)
+  })
+
+  it("broadcasts a substep without a snapshot when no step was opened (hidden tool)", async () => {
+    const { observer, ssk, substeps } = makeObserver()
+
+    await observer.handle({
+      type: "tool:progress",
+      toolCallId: "tc_hidden",
+      toolName: "general_research",
+      stepType: "research",
+      substep: "phase",
+    })
+
     expect(substeps).toHaveLength(1)
-    const sub = substeps[0]!
-    expect(sub.stepType).toBe("research")
-    // The phase text is sealed (it's derived from the encrypted prompt).
-    expect(await open(ssk, sub)).toBe('Searching the web: "weather in paris"')
+    expect(substeps[0]!.stepId).toBeUndefined()
+    expect(substeps[0]!.snapshotCiphertext).toBeUndefined()
+    expect(await open(ssk, substeps[0]!)).toBe("phase")
   })
 
   it("drops a tool:complete with no matching tool:start (hidden tool)", async () => {

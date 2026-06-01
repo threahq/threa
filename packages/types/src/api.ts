@@ -504,8 +504,24 @@ export interface EnclaveSealedStepStart {
 export interface EnclaveSealedSubstep {
   /** The step type this substep belongs to (clear metadata, same as steps). */
   stepType: AgentStepType
+  /** The single new phase text, sealed — drives the live "Ariadne is …" indicator (ephemeral). */
   ciphertext: string
   envelope: EnclaveStreamEnvelope
+  /**
+   * The in-flight step this substep belongs to. Present once the step has been
+   * opened (tool:start); lets the backend persist the running snapshot onto that
+   * row so a refresh / opening the trace mid-run replays the phases so far —
+   * mirroring the unencrypted `ActiveStep.updateSubsteps`.
+   */
+  stepId?: string
+  /**
+   * The running `{ substeps: [{ text, at }] }` snapshot, sealed as a JSON string
+   * exactly like a step's content. Persisted (not just broadcast) onto the step
+   * row so the trace recovers the full phase timeline on refresh; the owner's
+   * browser decrypts it the same way it decrypts step content (INV-E7).
+   */
+  snapshotCiphertext?: string
+  snapshotEnvelope?: EnclaveStreamEnvelope
 }
 
 /**

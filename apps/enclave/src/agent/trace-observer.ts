@@ -48,6 +48,8 @@ export interface EnclaveTraceObserverDeps {
 export class EnclaveTraceObserver implements AgentObserver {
   /** Maps an in-flight tool call to the step id minted at tool:start, so completion finalizes the same row. */
   private readonly stepIdByToolCallId = new Map<string, string>()
+  /** Running substep log per in-flight tool call — sealed and persisted on each progress so a refresh replays it. */
+  private readonly substepsByToolCallId = new Map<string, Array<{ text: string; at: string }>>()
   /** Tool calls hidden at tool:start — distinguishes "hidden, skip" from "unknown, synthesize error step". */
   private readonly hiddenToolCallIds = new Set<string>()
 
@@ -75,20 +77,35 @@ export class EnclaveTraceObserver implements AgentObserver {
         // cache the minted id so tool:complete/tool:error finalizes the same row.
         const stepId = mintStepId()
         this.stepIdByToolCallId.set(event.toolCallId, stepId)
+        this.substepsByToolCallId.set(event.toolCallId, [])
         await this.deps.sendStepStarted({ stepId, stepType: event.stepType })
         return
       }
 
       case "tool:progress": {
         // Mid-run phase text (e.g. the research sub-agent's "Searching the web: …").
-        // Derived from the encrypted prompt, so seal it under the SSK like a step
-        // and relay it ephemerally — the owner's browser decrypts it for the live
-        // "Ariadne is …" indicator and the in-flight step's substep timeline.
+        // Derived from the encrypted prompt, so seal it under the SSK like a step.
+        // Two sealed payloads travel in one POST, mirroring the unencrypted
+        // observer's emitSubstep + updateSubsteps: the single new phase (ephemeral,
+        // drives the live "Ariadne is …" indicator) and the running snapshot
+        // (persisted onto the step row so a refresh / open mid-run replays it).
         const text = event.substep?.trim()
-        if (text) {
-          const sealed = await this.seal(text)
-          await this.deps.sendSubstep({ stepType: event.stepType, ...sealed })
+        if (!text) return
+        const sealed = await this.seal(text)
+        const stepId = this.stepIdByToolCallId.get(event.toolCallId)
+        const log = this.substepsByToolCallId.get(event.toolCallId)
+        let snapshot: { ciphertext: string; envelope: EnclaveSealedStep["envelope"] } | undefined
+        if (stepId && log) {
+          log.push({ text, at: new Date().toISOString() })
+          snapshot = await this.seal(JSON.stringify({ substeps: [...log] }))
         }
+        await this.deps.sendSubstep({
+          stepType: event.stepType,
+          ...sealed,
+          stepId,
+          snapshotCiphertext: snapshot?.ciphertext,
+          snapshotEnvelope: snapshot?.envelope,
+        })
         return
       }
 
@@ -96,6 +113,7 @@ export class EnclaveTraceObserver implements AgentObserver {
         const stepId = this.stepIdByToolCallId.get(event.toolCallId)
         if (!stepId) return // hidden tool — no step row was opened
         this.stepIdByToolCallId.delete(event.toolCallId)
+        this.substepsByToolCallId.delete(event.toolCallId)
         const sealed = await this.seal(event.trace.content)
         await this.deps.sendStep({ stepId, stepType: event.trace.stepType, ...sealed, durationMs: event.durationMs })
         return
@@ -108,6 +126,7 @@ export class EnclaveTraceObserver implements AgentObserver {
         if (cachedId) {
           // Finalize the in-flight step with the error.
           this.stepIdByToolCallId.delete(event.toolCallId)
+          this.substepsByToolCallId.delete(event.toolCallId)
           await this.deps.sendStep({
             stepId: cachedId,
             stepType: AgentStepTypes.TOOL_ERROR,

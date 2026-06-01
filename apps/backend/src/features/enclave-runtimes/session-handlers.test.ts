@@ -331,6 +331,58 @@ describe("createEnclaveSessionHandlers.steps", () => {
   })
 })
 
+describe("createEnclaveSessionHandlers.substep", () => {
+  const SUBSTEP_BODY = {
+    stepType: "research",
+    ciphertext: "Y3Q=",
+    envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+  }
+  const SUBSTEP_WITH_SNAPSHOT = {
+    ...SUBSTEP_BODY,
+    stepId: "step_a",
+    snapshotCiphertext: "c25hcA==",
+    snapshotEnvelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+  }
+
+  it("broadcasts the sealed phase to the stream + session rooms without persisting (no snapshot)", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const update = spyOn(AgentSessionRepository, "updateStep")
+    const { handlers, io, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.substep(req("session_1", SUBSTEP_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(update).not.toHaveBeenCalled() // broadcast-only — no step row to persist onto
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:stream:stream_1")
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
+    expect(emit.mock.calls.every((c) => c[0] === "agent_session:substep")).toBe(true)
+    expect((emit.mock.calls[0]![1] as { ciphertext: string }).ciphertext).toBe("Y3Q=")
+  })
+
+  it("persists the running snapshot onto the in-flight step (sealed, no completion) when one travels", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const update = spyOn(AgentSessionRepository, "updateStep").mockResolvedValue(null)
+    const { handlers, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.substep(req("session_1", SUBSTEP_WITH_SNAPSHOT), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(update.mock.calls[0]![1]).toBe("step_a")
+    expect(update.mock.calls[0]![2]).toMatchObject({
+      contentCiphertext: "c25hcA==",
+      contentEnvelope: SUBSTEP_WITH_SNAPSHOT.snapshotEnvelope,
+    })
+    // No completedAt — the step stays in-flight; the snapshot only seeds refresh recovery.
+    expect((update.mock.calls[0]![2] as { completedAt?: Date }).completedAt).toBeUndefined()
+    // Still broadcasts the live phase.
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:substep")).toBe(true)
+  })
+})
+
 describe("createEnclaveSessionHandlers.heartbeat", () => {
   it("400s without a session id", async () => {
     const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService, io: fakeIo().io })

@@ -83,6 +83,11 @@ const sealedSubstepSchema = z.object({
   stepType: z.enum(AGENT_STEP_TYPES),
   ciphertext: z.base64().min(1),
   envelope: streamEnvelopeSchema,
+  // The in-flight step + running snapshot: when present, the snapshot is
+  // persisted onto the step row so a refresh / open mid-run replays the phases.
+  stepId: z.string().min(1).optional(),
+  snapshotCiphertext: z.base64().min(1).optional(),
+  snapshotEnvelope: streamEnvelopeSchema.optional(),
 })
 
 interface Dependencies {
@@ -316,11 +321,14 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
 
     /**
      * POST /internal/enclave-runtimes/sessions/:id/substeps
-     * Relay one sealed substep — ephemeral mid-run phase text (e.g. the research
-     * sub-agent's "Searching the web: …"). Broadcast-only (no DB): the text is
-     * ciphertext the browser decrypts (INV-E7); only `stepType` is clear. Emitted
-     * to both the stream room (inline "Ariadne is …" indicator) and the session
-     * room (trace dialog), mirroring the in-process `emitSubstep` fan-out.
+     * Relay one sealed substep — mid-run phase text (e.g. the research sub-agent's
+     * "Searching the web: …"). The single new phase is broadcast ephemerally to
+     * both the stream room (inline "Ariadne is …" indicator) and the session room
+     * (trace dialog), mirroring the in-process `emitSubstep` fan-out. When a
+     * `stepId` + running `snapshotCiphertext` travel, the snapshot is *also*
+     * persisted onto the in-flight step row (no completion) so a refresh / opening
+     * the trace mid-run replays the phases so far — mirroring `updateSubsteps`.
+     * Everything is ciphertext the browser decrypts (INV-E7); only `stepType` is clear.
      */
     async substep(req: Request, res: Response) {
       const id = req.params.id
@@ -335,6 +343,18 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
       const sub = parsed.data
+
+      // Persist the running snapshot onto the in-flight step row (sealed, no
+      // completion) so a bootstrap refetch recovers the phase timeline. The
+      // browser decrypts step.content → { substeps } exactly as for a finalized
+      // step. Skipped when the step row isn't known yet (broadcast-only).
+      if (sub.stepId && sub.snapshotCiphertext && sub.snapshotEnvelope) {
+        await AgentSessionRepository.updateStep(pool, sub.stepId, {
+          contentCiphertext: sub.snapshotCiphertext,
+          contentEnvelope: sub.snapshotEnvelope,
+        })
+      }
+
       const payload = {
         workspaceId: stream.workspaceId,
         streamId: session.streamId,
