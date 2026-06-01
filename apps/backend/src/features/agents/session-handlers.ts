@@ -1,6 +1,5 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { withClient } from "../../db"
 import { AgentSessionRepository } from "./session-repository"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { StreamMemberRepository } from "../streams"
@@ -25,18 +24,22 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
       const workspaceId = req.workspaceId!
       const { sessionId } = req.params
 
-      const result = await withClient(pool, async (db) => {
-        const session = await AgentSessionRepository.findById(db, sessionId)
+      // Independent reads — run against the pool (a connection per query) rather
+      // than one withClient client, which cannot execute concurrent queries: the
+      // Promise.all below would fire five queries on a single client (pg warns
+      // today and pg@9 will throw). No transaction is needed; these are reads.
+      const result = await (async () => {
+        const session = await AgentSessionRepository.findById(pool, sessionId)
         if (!session) {
           return { error: "Session not found", status: 404 }
         }
 
         const [stream, membership, persona, bot, steps] = await Promise.all([
-          StreamRepository.findById(db, session.streamId),
-          StreamMemberRepository.findByStreamAndMember(db, session.streamId, userId),
-          PersonaRepository.findById(db, session.personaId, workspaceId),
-          BotRepository.findById(db, workspaceId, session.personaId),
-          AgentSessionRepository.findStepsBySession(db, sessionId),
+          StreamRepository.findById(pool, session.streamId),
+          StreamMemberRepository.findByStreamAndMember(pool, session.streamId, userId),
+          PersonaRepository.findById(pool, session.personaId, workspaceId),
+          BotRepository.findById(pool, workspaceId, session.personaId),
+          AgentSessionRepository.findStepsBySession(pool, sessionId),
         ])
 
         if (!stream || stream.workspaceId !== workspaceId) {
@@ -56,11 +59,11 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         }
 
         const relatedSessions = (
-          await AgentSessionRepository.listByTriggerMessage(db, session.triggerMessageId)
+          await AgentSessionRepository.listByTriggerMessage(pool, session.triggerMessageId)
         ).filter((relatedSession) => relatedSession.streamId === session.streamId)
         const sessionIds = [...new Set([session.id, ...relatedSessions.map((relatedSession) => relatedSession.id)])]
         const rerunContextBySessionId = await StreamEventRepository.listRerunContextBySessionIds(
-          db,
+          pool,
           session.streamId,
           sessionIds
         )
@@ -104,7 +107,7 @@ export function createAgentSessionHandlers({ pool }: Dependencies) {
         }
 
         return { data: response }
-      })
+      })()
 
       if (result.error) {
         return res.status(result.status).json({ error: result.error })
