@@ -79,6 +79,8 @@ describe("buildEnclaveSessionAssignment", () => {
       assignment: {
         sessionId: "session_test",
         model: "anthropic/claude-sonnet-4.6", // openrouter: prefix stripped
+        // The full system prompt is assembled upstream (buildEnclaveSystemPrompt)
+        // and passed through here verbatim as persona.systemPrompt.
         system: "You are Ariadne.",
         temperature: 0.7,
         reply: { keyGeneration: 1, senderId: "persona_ariadne" },

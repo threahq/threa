@@ -88,6 +88,8 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
       ciphertext: trigger.ciphertext.toString("base64"),
       envelope: trigger.envelope as EnclaveStreamEnvelope,
     },
+    // The worker assembles the full system prompt via the shared
+    // `buildEnclaveSystemPrompt` and passes it through here as `systemPrompt`.
     system: persona.systemPrompt,
     model: persona.model.replace(/^openrouter:/, ""),
     ...(persona.temperature !== null ? { temperature: persona.temperature } : {}),
