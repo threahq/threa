@@ -61,6 +61,26 @@ export function useIsInsideCollapsibleBlock(): boolean {
 }
 
 /**
+ * Tracks how deeply quoted content is nested (quote-reply or blockquote inside
+ * another). Depth 0 is the outermost quote in a message; anything deeper is a
+ * nested quote. Rendering uses this to keep only the outermost quote as a full
+ * card and render nested quotes as a lightweight left-rail, so repeated box
+ * chrome and padding don't compound — which got unreadable on mobile past two
+ * levels. The provider reads the parent depth and increments, so callers just
+ * wrap their children without threading a number through.
+ */
+const QuoteNestingDepthContext = createContext<number>(0)
+
+export function QuoteNestingDepthProvider({ children }: { children: ReactNode }) {
+  const parentDepth = useContext(QuoteNestingDepthContext)
+  return <QuoteNestingDepthContext.Provider value={parentDepth + 1}>{children}</QuoteNestingDepthContext.Provider>
+}
+
+export function useQuoteNestingDepth(): number {
+  return useContext(QuoteNestingDepthContext)
+}
+
+/**
  * DJB2 hash of `namespace\0content`. Namespacing keeps the hash spaces of
  * different block kinds (and of different code-block languages) disjoint so
  * identical content doesn't alias across them. Not cryptographic.

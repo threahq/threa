@@ -153,6 +153,42 @@ describe("QuoteReplyBlock collapse behavior", () => {
     expect(row?.kind).toBe("quote-reply")
   })
 
+  it("renders the outermost quote reply as a card and nested replies as a compact rail", () => {
+    renderQuoteReply(
+      <QuoteReplyBlock
+        authorName="Alex"
+        authorId="user_alex"
+        actorType="user"
+        streamId="stream_src"
+        messageId="msg_src"
+      >
+        <p>Outer reply text.</p>
+        <QuoteReplyBlock
+          authorName="Bea"
+          authorId="user_bea"
+          actorType="user"
+          streamId="stream_inner"
+          messageId="msg_inner"
+        >
+          <p>Inner reply text.</p>
+        </QuoteReplyBlock>
+      </QuoteReplyBlock>,
+      "msg_nested_card"
+    )
+
+    // Both quoted bodies and authors survive the nesting.
+    expect(screen.getByText("Outer reply text.")).toBeInTheDocument()
+    expect(screen.getByText("Inner reply text.")).toBeInTheDocument()
+    expect(screen.getByText("Bea")).toBeInTheDocument()
+
+    // Only the outermost card carries the leading Quote glyph; the nested rail
+    // drops it so the heavy card chrome doesn't repeat at every level.
+    expect(document.querySelectorAll(".lucide-quote")).toHaveLength(1)
+
+    // The single card fill belongs to the outer block; the nested rail has none.
+    expect(document.querySelectorAll(".bg-muted\\/30")).toHaveLength(1)
+  })
+
   it("only the outer quote-reply folds when a blockquote is nested inside it", () => {
     // Outer is long enough to be collapsible, so it owns the only fold toggle
     // and suppresses the nested blockquote's chrome.
