@@ -1,0 +1,1439 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Threa — Public Site Concepts v9</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* ---------- TOKENS (from apps/frontend/src/index.css) ---------- */
+      :root {
+        --gold: 38 65% 50%;
+        --gold-soft: 38 65% 62%;
+        --gold-dim: 38 28% 38%;
+        --paper: 33 28% 95%;
+        --paper-warm: 33 22% 91%;
+        --paper-sunk: 33 18% 86%;
+        --ink: 28 18% 12%;
+        --ink-soft: 28 14% 24%;
+        --night: 222 25% 8%;
+        --night-soft: 222 18% 14%;
+        --night-elevated: 222 14% 12%;
+        --line: 28 12% 78%;
+        --line-night: 222 14% 22%;
+        --muted: 28 8% 46%;
+        --muted-night: 222 10% 58%;
+
+        --font-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+        --font-body: "Space Grotesk", system-ui, -apple-system, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+        --pad-x: 56px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        /* doc canvas is slightly sunk so concept shells (paper) read as
+       elevated without needing borders */
+        background: hsl(var(--paper-sunk));
+        color: hsl(var(--ink));
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* ---------- DOC CHROME ---------- */
+      .doc-header {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 56px 48px 24px;
+      }
+      .doc-header h1 {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin: 0 0 10px;
+      }
+      .doc-header p {
+        font-size: 15px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.55;
+        margin: 0;
+        max-width: 800px;
+      }
+      .concept-frame {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 36px 48px 96px;
+      }
+      .concept-meta {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        margin: 0 0 16px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .concept-meta strong {
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+      .concept-notes {
+        font-size: 13.5px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.6;
+        margin: 18px 0 0;
+        max-width: 800px;
+      }
+      .concept-notes em {
+        font-style: normal;
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+
+      /* ---------- SHARED PRIMITIVES ---------- */
+      .wordmark {
+        font-family: var(--font-display) !important;
+        font-weight: 300 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        font-style: normal !important;
+      }
+      .nav-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .brand svg {
+        width: 22px;
+        height: 22px;
+      }
+      .brand .wordmark {
+        font-size: 12px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 28px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .nav-links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .h-display {
+        font-family: var(--font-display);
+        font-weight: 300;
+        font-size: clamp(36px, 4.4vw, 54px);
+        line-height: 1.05;
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+      .h-display .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .lede {
+        font-size: 16px;
+        line-height: 1.55;
+        margin: 22px 0 32px;
+        max-width: 480px;
+      }
+      .cta {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 10px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        padding: 12px 20px;
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: 13.5px;
+        text-decoration: none;
+        border-radius: 2px;
+      }
+      .cta::after {
+        content: "→";
+        font-family: var(--font-display);
+        font-weight: 400;
+      }
+      .quiet {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+
+      /* ---------- OPEN TIMELINE (borderless, like the app's chat view) ---------- */
+      /* No card, no header strip — just messages on the canvas. */
+
+      .tl {
+        display: flex;
+        flex-direction: column;
+      }
+      .tl-caption {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin-bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .tl-caption .hash {
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+      .tl-row {
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 14px;
+        padding: 8px 0;
+        position: relative;
+      }
+      .tl-row.persona {
+        /* gold gradient + inset stripe, but rendered openly on canvas */
+        background: linear-gradient(90deg, hsl(var(--gold) / 0.08) 0%, hsl(var(--gold) / 0) 75%);
+        box-shadow: inset 3px 0 0 hsl(var(--gold));
+        padding-left: 14px;
+        padding-right: 8px;
+        margin-left: -14px;
+        border-radius: 2px;
+      }
+      .tl-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: 12.5px;
+        flex-shrink: 0;
+      }
+      .tl-avatar.av-kr {
+        background: hsl(28 30% 86%);
+        color: hsl(28 30% 26%);
+      }
+      .tl-avatar.av-sm {
+        background: hsl(200 35% 84%);
+        color: hsl(200 40% 28%);
+      }
+      .tl-avatar.av-mw {
+        background: hsl(140 25% 82%);
+        color: hsl(140 35% 26%);
+      }
+      .tl-avatar.av-pb {
+        background: hsl(20 35% 84%);
+        color: hsl(20 40% 28%);
+      }
+      .tl-avatar.av-ariadne {
+        background: hsl(var(--gold) / 0.16);
+        color: hsl(var(--gold));
+      }
+      .tl-avatar.av-ariadne svg {
+        width: 22px;
+        height: 22px;
+      }
+
+      .tl-body {
+        min-width: 0;
+      }
+      .tl-head-line {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin-bottom: 2px;
+      }
+      .tl-name {
+        font-weight: 600;
+        font-size: 14.5px;
+        color: hsl(var(--ink));
+      }
+      .tl-row.persona .tl-name {
+        color: hsl(var(--gold-dim));
+      }
+      .tl-time {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        color: hsl(var(--muted));
+        font-weight: 400;
+      }
+      .tl-text {
+        font-size: 14.5px;
+        line-height: 1.5;
+        color: hsl(var(--ink));
+      }
+      .tl-text + .tl-text {
+        margin-top: 2px;
+      }
+
+      .mention {
+        display: inline-block;
+        background: hsl(var(--gold) / 0.13);
+        color: hsl(var(--gold-dim));
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-weight: 500;
+      }
+      .ref-pill {
+        /* like the /frontend-design pill in the reference — soft canvas chip */
+        display: inline-block;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--line));
+        color: hsl(var(--ink-soft));
+        padding: 0px 8px;
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        font-weight: 400;
+      }
+
+      /* ---------- DARK MODE FOR THE OPEN TIMELINE ---------- */
+      .tl-dark .tl-name {
+        color: hsl(var(--paper));
+      }
+      .tl-dark .tl-row.persona .tl-name {
+        color: hsl(var(--gold-soft));
+      }
+      .tl-dark .tl-text {
+        color: hsl(var(--paper) / 0.92);
+      }
+      .tl-dark .tl-time {
+        color: hsl(var(--muted-night));
+      }
+      .tl-dark .tl-caption {
+        color: hsl(var(--muted-night));
+      }
+      .tl-dark .tl-caption .hash {
+        color: hsl(var(--paper));
+      }
+      .tl-dark .tl-avatar.av-kr {
+        background: hsl(28 12% 22%);
+        color: hsl(28 22% 80%);
+      }
+      .tl-dark .tl-avatar.av-sm {
+        background: hsl(200 18% 22%);
+        color: hsl(200 30% 82%);
+      }
+      .tl-dark .tl-row.persona {
+        background: linear-gradient(90deg, hsl(var(--gold) / 0.12) 0%, hsl(var(--gold) / 0) 75%);
+      }
+      .tl-dark .mention {
+        color: hsl(var(--gold-soft));
+        background: hsl(var(--gold) / 0.18);
+      }
+      .tl-dark .ref-pill {
+        background: hsl(var(--night-soft));
+        border-color: hsl(var(--line-night));
+        color: hsl(var(--paper) / 0.85);
+      }
+
+      /* ============================================================
+     CONCEPT 01 — SPINE OPEN (light)
+     ============================================================ */
+      .c1-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        min-height: 640px;
+      }
+      .c1-left {
+        padding: 44px var(--pad-x) 48px;
+        display: flex;
+        flex-direction: column;
+        gap: 36px;
+      }
+      .c1-left .nav-row {
+        color: hsl(var(--muted));
+      }
+      .c1-left .nav-row .brand {
+        color: hsl(var(--ink));
+      }
+      .c1-left .nav-row .brand svg {
+        color: hsl(var(--gold));
+      }
+      .c1-headline-block .actions {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 4px;
+      }
+      .c1-tl-inset {
+        margin-top: auto;
+        max-width: 600px;
+      }
+
+      .c1-spine {
+        position: relative;
+        border-left: 1px solid hsl(var(--line));
+        padding: 60px 24px;
+        display: grid;
+        grid-template-rows: auto auto auto;
+        align-content: space-between;
+        justify-items: center;
+      }
+      .c1-spine .thread {
+        position: absolute;
+        top: 60px;
+        bottom: 60px;
+        left: 50%;
+        width: 1px;
+        background: linear-gradient(
+          180deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.55) 18%,
+          hsl(var(--gold) / 0.55) 82%,
+          hsl(var(--gold) / 0) 100%
+        );
+        transform: translateX(-0.5px);
+      }
+      .c1-station {
+        position: relative;
+        z-index: 2;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .c1-station .glyph {
+        width: 44px;
+        height: 44px;
+        background: hsl(var(--paper));
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+      }
+      .c1-station .glyph svg {
+        width: 26px;
+        height: 26px;
+        color: hsl(var(--gold));
+      }
+      .c1-station .glyph.large svg {
+        width: 38px;
+        height: 38px;
+      }
+      .c1-station .name {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+      .c1-station .sub {
+        font-family: var(--font-display);
+        font-size: 12px;
+        color: hsl(var(--muted));
+        line-height: 1.4;
+        margin-top: 6px;
+        max-width: 160px;
+      }
+
+      /* ============================================================
+     CONCEPT 02 — SPINE OPEN + BASELINE (light)
+     Adds a quiet horizontal thread running across the bottom of
+     the hero as a baseline trace, never crossing copy.
+     ============================================================ */
+      .c2-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        position: relative;
+        min-height: 640px;
+      }
+      .c2-baseline {
+        position: absolute;
+        left: var(--pad-x);
+        right: var(--pad-x);
+        bottom: 30px;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.55) 30%,
+          hsl(var(--gold) / 0.55) 70%,
+          hsl(var(--gold) / 0) 100%
+        );
+        z-index: 2;
+        pointer-events: none;
+      }
+      .c2-baseline-labels {
+        position: absolute;
+        left: var(--pad-x);
+        right: var(--pad-x);
+        bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        z-index: 2;
+        pointer-events: none;
+      }
+      .c2-left {
+        padding: 44px var(--pad-x) 60px;
+        display: flex;
+        flex-direction: column;
+        gap: 36px;
+      }
+      .c2-left .nav-row {
+        color: hsl(var(--muted));
+      }
+      .c2-left .nav-row .brand {
+        color: hsl(var(--ink));
+      }
+      .c2-left .nav-row .brand svg {
+        color: hsl(var(--gold));
+      }
+      .c2-left .actions {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 4px;
+      }
+      .c2-tl-inset {
+        margin-top: auto;
+        max-width: 600px;
+      }
+      .c2-spine {
+        position: relative;
+        border-left: 1px solid hsl(var(--line));
+        padding: 60px 24px;
+        display: grid;
+        grid-template-rows: auto auto auto;
+        align-content: space-between;
+        justify-items: center;
+      }
+      .c2-spine .thread {
+        position: absolute;
+        top: 60px;
+        bottom: 60px;
+        left: 50%;
+        width: 1px;
+        background: linear-gradient(
+          180deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.55) 18%,
+          hsl(var(--gold) / 0.55) 82%,
+          hsl(var(--gold) / 0) 100%
+        );
+        transform: translateX(-0.5px);
+      }
+      .c2-station {
+        position: relative;
+        z-index: 2;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .c2-station .glyph {
+        width: 44px;
+        height: 44px;
+        background: hsl(var(--paper));
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+      }
+      .c2-station .glyph svg {
+        width: 26px;
+        height: 26px;
+        color: hsl(var(--gold));
+      }
+      .c2-station .glyph.large svg {
+        width: 38px;
+        height: 38px;
+      }
+      .c2-station .name {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+
+      /* ============================================================
+     CONCEPT 03 — TAPE BASELINE (light)
+     Thread runs as a baseline beneath both columns. Never
+     crosses any copy.
+     ============================================================ */
+      .c3-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+      .c3-inner {
+        padding: 44px var(--pad-x) 36px;
+      }
+      .c3-inner .nav-row {
+        margin-bottom: 56px;
+        color: hsl(var(--muted));
+      }
+      .c3-inner .nav-row .brand {
+        color: hsl(var(--ink));
+      }
+      .c3-inner .nav-row .brand svg {
+        color: hsl(var(--gold));
+      }
+      .c3-stage {
+        display: grid;
+        grid-template-columns: 1fr 1.05fr;
+        gap: 56px;
+        align-items: start;
+      }
+      .c3-stage h1 {
+        margin-bottom: 24px;
+      }
+      .c3-stage .actions {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 8px;
+      }
+      .c3-tape {
+        position: relative;
+        margin-top: 56px;
+        padding: 0 var(--pad-x);
+        height: 28px;
+      }
+      .c3-tape .line {
+        position: absolute;
+        top: 10px;
+        left: var(--pad-x);
+        right: var(--pad-x);
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.55) 30%,
+          hsl(var(--gold) / 0.55) 70%,
+          hsl(var(--gold) / 0) 100%
+        );
+      }
+      .c3-tape .labels {
+        position: absolute;
+        top: 16px;
+        left: var(--pad-x);
+        right: var(--pad-x);
+        display: flex;
+        justify-content: space-between;
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .c3-bottom-pad {
+        padding: 0 var(--pad-x) 36px;
+      }
+
+      /* ============================================================
+     CONCEPT 04 — TAPE ANCHORED (light)
+     Horizontal thread terminates at Ariadne's row left edge —
+     the inset gold stripe is its continuation.
+     ============================================================ */
+      .c4-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+      .c4-inner {
+        padding: 44px var(--pad-x) 56px;
+        position: relative;
+      }
+      .c4-inner .nav-row {
+        margin-bottom: 56px;
+        color: hsl(var(--muted));
+      }
+      .c4-inner .nav-row .brand {
+        color: hsl(var(--ink));
+      }
+      .c4-inner .nav-row .brand svg {
+        color: hsl(var(--gold));
+      }
+      .c4-stage {
+        display: grid;
+        grid-template-columns: 1fr 1.1fr;
+        gap: 80px;
+        align-items: start;
+        position: relative;
+        overflow: hidden;
+      }
+      .c4-stage h1 {
+        margin-bottom: 24px;
+      }
+      .c4-stage .actions {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 8px;
+      }
+      .c4-right .tl-row.persona {
+        position: relative;
+      }
+      .c4-right .tl-row.persona::before {
+        /* horizontal thread arrives from the left, terminating at the row */
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 100%;
+        width: 800px;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.18) 50%,
+          hsl(var(--gold) / 0.6) 88%,
+          hsl(var(--gold)) 100%
+        );
+        transform: translateY(-0.5px);
+        pointer-events: none;
+      }
+      .c4-right .tl-row.persona::after {
+        /* small "held" tick label sitting above the line */
+        content: "/ held";
+        position: absolute;
+        top: calc(50% + 4px);
+        right: calc(100% + 12px);
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-dim));
+        pointer-events: none;
+      }
+
+      /* ============================================================
+     CONCEPT 05 — SPINE OPEN, DARK
+     ============================================================ */
+      .c5-shell {
+        background: hsl(var(--night));
+        color: hsl(var(--paper));
+        border-radius: 4px;
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        min-height: 640px;
+      }
+      .c5-left {
+        padding: 44px var(--pad-x) 48px;
+        display: flex;
+        flex-direction: column;
+        gap: 36px;
+      }
+      .c5-left .nav-row {
+        color: hsl(var(--muted-night));
+      }
+      .c5-left .nav-row .brand {
+        color: hsl(var(--paper));
+      }
+      .c5-left .nav-row .brand svg {
+        color: hsl(var(--gold-soft));
+      }
+      .c5-left h1 {
+        color: hsl(var(--paper));
+      }
+      .c5-left h1 .accent {
+        color: hsl(var(--gold-soft));
+      }
+      .c5-left .lede {
+        color: hsl(var(--paper) / 0.72);
+      }
+      .c5-left .cta {
+        background: hsl(var(--gold));
+        color: hsl(var(--night));
+      }
+      .c5-left .quiet {
+        color: hsl(var(--muted-night));
+      }
+      .c5-left .actions {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 4px;
+      }
+      .c5-tl-inset {
+        margin-top: auto;
+        max-width: 600px;
+      }
+
+      .c5-spine {
+        position: relative;
+        border-left: 1px solid hsl(var(--line-night));
+        padding: 60px 24px;
+        background: hsl(var(--night-soft));
+        display: grid;
+        grid-template-rows: auto auto auto;
+        align-content: space-between;
+        justify-items: center;
+      }
+      .c5-spine .thread {
+        position: absolute;
+        top: 60px;
+        bottom: 60px;
+        left: 50%;
+        width: 1px;
+        background: linear-gradient(
+          180deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.6) 18%,
+          hsl(var(--gold) / 0.6) 82%,
+          hsl(var(--gold) / 0) 100%
+        );
+        transform: translateX(-0.5px);
+      }
+      .c5-station {
+        position: relative;
+        z-index: 2;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      .c5-station .glyph {
+        width: 44px;
+        height: 44px;
+        background: hsl(var(--night-soft));
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 12px;
+      }
+      .c5-station .glyph svg {
+        width: 26px;
+        height: 26px;
+        color: hsl(var(--gold-soft));
+      }
+      .c5-station .glyph.large svg {
+        width: 38px;
+        height: 38px;
+      }
+      .c5-station .name {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--paper));
+        font-weight: 500;
+      }
+      .c5-station .sub {
+        font-family: var(--font-display);
+        font-size: 12px;
+        color: hsl(var(--muted-night));
+        line-height: 1.4;
+        margin-top: 6px;
+        max-width: 160px;
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="threa-mark" viewBox="0 0 100 100">
+          <path
+            d="M 50 24 C 64 30, 72 42, 72 50 C 72 58, 64 70, 50 76 C 36 70, 28 58, 28 50 C 28 42, 36 30, 50 24 Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+          />
+          <path
+            d="M 50 14 C 47 26, 46 38, 50 50 C 54 62, 53 74, 50 86"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="ariadne-icon" viewBox="0 0 100 100">
+          <path
+            d="M 50 18 C 28 18, 20 35, 28 48 C 36 61, 50 55, 50 50 C 50 45, 64 39, 72 48 C 80 57, 72 70, 50 82 C 28 70, 20 57, 28 48"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="dot-mark" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="2.4" fill="currentColor" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header class="doc-header">
+      <h1>Threa · Public site concepts · v9</h1>
+      <p>
+        Tightening on Spine + Tape. Timelines are now borderless, open on the page the way the real app's chat view
+        renders — round avatars, no card chrome, no channel header. The horizontal thread no longer crosses any copy: in
+        03 it sits as a baseline beneath both columns; in 04 it arrives from the left and terminates at Ariadne's row,
+        where her gold inset stripe takes over. Outer shell borders dropped; the doc canvas is slightly sunk so each
+        shell reads as elevated.
+      </p>
+    </header>
+
+    <!-- ============================================================
+     01 — SPINE OPEN
+     ============================================================ -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>01</strong>
+        <span>Spine Open</span>
+        <span>· light · borderless timeline</span>
+      </div>
+      <div class="c1-shell">
+        <div class="c1-left">
+          <div class="nav-row">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div class="c1-headline-block">
+            <h1 class="h-display">
+              Workplace chat<br />
+              with a <span class="accent">memory</span>.
+            </h1>
+            <p class="lede">
+              Channels, DMs, threads — the chat shape your team already uses. Threa holds the decisions and context
+              behind every message, so the past stays useful.
+            </p>
+            <div class="actions">
+              <a class="cta" href="#">Join the waitlist</a>
+              <span class="quiet">/ vetted access · early 2026</span>
+            </div>
+          </div>
+          <div class="c1-tl-inset">
+            <div class="tl">
+              <div class="tl-caption">
+                <span>a moment from</span>
+                <span class="hash">#api-v3</span>
+                <span>· today</span>
+              </div>
+              <div class="tl-row">
+                <div class="tl-avatar av-sm">SM</div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Sara Møller</span>
+                    <span class="tl-time">Friday 10:14</span>
+                  </div>
+                  <div class="tl-text">Why did we pause the auth refactor back in March? I'm picking it up again.</div>
+                </div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-avatar av-kr">KR</div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Kris</span>
+                    <span class="tl-time">Friday 10:15</span>
+                  </div>
+                  <div class="tl-text"><span class="mention">@ariadne</span> what was the reason?</div>
+                </div>
+              </div>
+              <div class="tl-row persona">
+                <div class="tl-avatar av-ariadne">
+                  <svg><use href="#ariadne-icon" /></svg>
+                </div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Ariadne</span>
+                    <span class="tl-time">Friday 10:15</span>
+                  </div>
+                  <div class="tl-text">
+                    Sara raised a token-rotation concern in the design review — you agreed to hold until she'd reviewed
+                    the boundary model.
+                  </div>
+                  <div class="tl-text">Thread is in <span class="ref-pill">#api-v3</span> · Mar 12.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="c1-spine">
+          <div class="thread"></div>
+          <div class="c1-station">
+            <div class="glyph">
+              <svg><use href="#dot-mark" /></svg>
+            </div>
+            <div class="name">Capture</div>
+            <div class="sub">Chat, threads, decisions.</div>
+          </div>
+          <div class="c1-station">
+            <div class="glyph large">
+              <svg><use href="#threa-mark" /></svg>
+            </div>
+            <div class="name">Hold</div>
+            <div class="sub">Memory builds quietly behind every conversation.</div>
+          </div>
+          <div class="c1-station">
+            <div class="glyph">
+              <svg><use href="#dot-mark" /></svg>
+            </div>
+            <div class="name">Return</div>
+            <div class="sub">Ask Ariadne. It's already there.</div>
+          </div>
+        </aside>
+      </div>
+      <p class="concept-notes">
+        <em>What's new:</em> timeline lost its card wrapper and channel header strip; messages now sit openly on the
+        canvas like the real chat view (round avatars, bold name, mono timestamp, soft chip for the channel reference).
+        Outer concept border dropped — the slightly-sunk doc canvas does the elevation work without an explicit line.
+      </p>
+    </section>
+
+    <!-- ============================================================
+     02 — SPINE OPEN + BASELINE
+     ============================================================ -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>02</strong>
+        <span>Spine Open + Baseline</span>
+        <span>· light · quiet horizontal trace</span>
+      </div>
+      <div class="c2-shell">
+        <div class="c2-left">
+          <div class="nav-row">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div>
+            <h1 class="h-display">
+              A team chat<br />
+              that <span class="accent">remembers</span>.
+            </h1>
+            <p class="lede">
+              Channels, threads, DMs — the chat your team already knows how to use. Plus a quiet memory of every
+              decision and the reasoning behind it.
+            </p>
+            <div class="actions">
+              <a class="cta" href="#">Join the waitlist</a>
+              <span class="quiet">/ vetted · spring 2026</span>
+            </div>
+          </div>
+          <div class="c2-tl-inset">
+            <div class="tl">
+              <div class="tl-caption">
+                <span>a moment from</span>
+                <span class="hash">#launch-q2</span>
+                <span>· today</span>
+              </div>
+              <div class="tl-row">
+                <div class="tl-avatar av-mw">MW</div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Maya Wells</span>
+                    <span class="tl-time">Friday 14:02</span>
+                  </div>
+                  <div class="tl-text">Did we ever decide what the cutoff was for "shipping by Friday"?</div>
+                </div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-avatar av-kr">KR</div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Kris</span>
+                    <span class="tl-time">Friday 14:03</span>
+                  </div>
+                  <div class="tl-text"><span class="mention">@ariadne</span> do we have a decision recorded?</div>
+                </div>
+              </div>
+              <div class="tl-row persona">
+                <div class="tl-avatar av-ariadne">
+                  <svg><use href="#ariadne-icon" /></svg>
+                </div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Ariadne</span>
+                    <span class="tl-time">Friday 14:03</span>
+                  </div>
+                  <div class="tl-text">
+                    Yes — Apr 18 in <span class="ref-pill">#launch-q2</span>. "Cutoff is EOD Thursday so QA has Friday
+                    morning." Maya proposed it; Sara confirmed.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="c2-spine">
+          <div class="thread"></div>
+          <div class="c2-station">
+            <div class="glyph">
+              <svg><use href="#dot-mark" /></svg>
+            </div>
+            <div class="name">Capture</div>
+          </div>
+          <div class="c2-station">
+            <div class="glyph large">
+              <svg><use href="#threa-mark" /></svg>
+            </div>
+            <div class="name">Hold</div>
+          </div>
+          <div class="c2-station">
+            <div class="glyph">
+              <svg><use href="#dot-mark" /></svg>
+            </div>
+            <div class="name">Return</div>
+          </div>
+        </aside>
+        <div class="c2-baseline"></div>
+        <div class="c2-baseline-labels">
+          <span>/ what passes through</span>
+          <span>/ what's held</span>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's new:</em> same Spine shell as 01, with a quiet horizontal thread running as a baseline at the very
+        bottom of the hero. Two small mono labels anchor it (<code style="font-family: var(--font-mono)"
+          >/ what passes through</code
+        >
+        → <code style="font-family: var(--font-mono)">/ what's held</code>). Decorative, never over text, gives the
+        spine a horizontal companion without the busy "tape across the band" feel.
+      </p>
+    </section>
+
+    <!-- ============================================================
+     03 — TAPE BASELINE
+     ============================================================ -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>03</strong>
+        <span>Tape Baseline</span>
+        <span>· light · thread below everything</span>
+      </div>
+      <div class="c3-shell">
+        <div class="c3-inner">
+          <div class="nav-row">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div class="c3-stage">
+            <div>
+              <h1 class="h-display">
+                Workplace chat<br />
+                built to <span class="accent">remember</span>.
+              </h1>
+              <p class="lede">
+                Channels, threads, DMs — the shape teams already know. Threa keeps the small things — decisions,
+                context, the reasoning behind every call — so the past stays useful when you need it.
+              </p>
+              <div class="actions">
+                <a class="cta" href="#">Join the waitlist</a>
+                <span class="quiet">/ vetted access</span>
+              </div>
+            </div>
+            <div>
+              <div class="tl">
+                <div class="tl-caption">
+                  <span>a moment from</span>
+                  <span class="hash">#family</span>
+                </div>
+                <div class="tl-row">
+                  <div class="tl-avatar av-kr">KR</div>
+                  <div class="tl-body">
+                    <div class="tl-head-line">
+                      <span class="tl-name">Kris</span>
+                      <span class="tl-time">Tuesday 19:41</span>
+                    </div>
+                    <div class="tl-text"><span class="mention">@ariadne</span> what was Maya's allergy again?</div>
+                  </div>
+                </div>
+                <div class="tl-row persona">
+                  <div class="tl-avatar av-ariadne">
+                    <svg><use href="#ariadne-icon" /></svg>
+                  </div>
+                  <div class="tl-body">
+                    <div class="tl-head-line">
+                      <span class="tl-name">Ariadne</span>
+                      <span class="tl-time">Tuesday 19:41</span>
+                    </div>
+                    <div class="tl-text">
+                      Peanuts. You noted it 11 days ago while planning the November party — swap the satay for the
+                      noodle salad.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="c3-tape">
+          <div class="line"></div>
+          <div class="labels">
+            <span>/ what passes through</span>
+            <span>/ what's held</span>
+          </div>
+        </div>
+        <div class="c3-bottom-pad"></div>
+      </div>
+      <p class="concept-notes">
+        <em>What's fixed from v8/03:</em> the thread no longer crosses any text. It now lives as a horizontal baseline
+        below both columns, with the labels under it (mono, muted). Tape DNA is intact — the "in / held" motion — but
+        the line is read, not obscured.
+      </p>
+    </section>
+
+    <!-- ============================================================
+     04 — TAPE ANCHORED
+     ============================================================ -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>04</strong>
+        <span>Tape Anchored</span>
+        <span>· light · thread terminates at Ariadne</span>
+      </div>
+      <div class="c4-shell">
+        <div class="c4-inner">
+          <div class="nav-row">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div class="c4-stage">
+            <div>
+              <h1 class="h-display">
+                Team chat that<br />
+                <span class="accent">holds the why</span>.
+              </h1>
+              <p class="lede">
+                A workplace chat — channels, threads, DMs — built with memory at its core. Decisions and the reasoning
+                behind them stay with the conversation, surfaced when they matter again.
+              </p>
+              <div class="actions">
+                <a class="cta" href="#">Join the waitlist</a>
+                <span class="quiet">/ vetted · early 2026</span>
+              </div>
+            </div>
+            <div class="c4-right">
+              <div class="tl">
+                <div class="tl-caption">
+                  <span>a moment from</span>
+                  <span class="hash">#api-v3</span>
+                </div>
+                <div class="tl-row">
+                  <div class="tl-avatar av-sm">SM</div>
+                  <div class="tl-body">
+                    <div class="tl-head-line">
+                      <span class="tl-name">Sara Møller</span>
+                      <span class="tl-time">Friday 10:14</span>
+                    </div>
+                    <div class="tl-text">
+                      Picking the auth refactor back up — does anyone remember why we paused it?
+                    </div>
+                  </div>
+                </div>
+                <div class="tl-row">
+                  <div class="tl-avatar av-kr">KR</div>
+                  <div class="tl-body">
+                    <div class="tl-head-line">
+                      <span class="tl-name">Kris</span>
+                      <span class="tl-time">Friday 10:15</span>
+                    </div>
+                    <div class="tl-text"><span class="mention">@ariadne</span> what was the reason?</div>
+                  </div>
+                </div>
+                <div class="tl-row persona">
+                  <div class="tl-avatar av-ariadne">
+                    <svg><use href="#ariadne-icon" /></svg>
+                  </div>
+                  <div class="tl-body">
+                    <div class="tl-head-line">
+                      <span class="tl-name">Ariadne</span>
+                      <span class="tl-time">Friday 10:15</span>
+                    </div>
+                    <div class="tl-text">
+                      Sara raised a token-rotation concern in the Mar 12 design review — you agreed to hold until she'd
+                      looked at the boundary model.
+                    </div>
+                    <div class="tl-text">Thread is in <span class="ref-pill">#api-v3</span>.</div>
+                  </div>
+                </div>
+                <div class="tl-row">
+                  <div class="tl-avatar av-sm">SM</div>
+                  <div class="tl-body">
+                    <div class="tl-head-line">
+                      <span class="tl-name">Sara Møller</span>
+                      <span class="tl-time">Friday 10:16</span>
+                    </div>
+                    <div class="tl-text">Perfect, thanks. I'll re-open the thread.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's fixed:</em> horizontal thread is rendered as a pseudo-element of the persona row that extends left,
+        so it geometrically can't cross any other row's text. It fades in from the left edge of the stage, brightens,
+        and lands at Ariadne's row — where her gold inset stripe takes over and carries the gold down through her
+        avatar. Tiny mono label
+        <code style="font-family: var(--font-mono)">/ held</code>
+        sits above the line.
+      </p>
+    </section>
+
+    <!-- ============================================================
+     05 — SPINE OPEN, DARK
+     ============================================================ -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>05</strong>
+        <span>Spine Open — dark</span>
+        <span>· same as 01, themed dark</span>
+      </div>
+      <div class="c5-shell">
+        <div class="c5-left">
+          <div class="nav-row">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div class="c5-headline-block">
+            <h1 class="h-display">
+              Workplace chat<br />
+              with a <span class="accent">memory</span>.
+            </h1>
+            <p class="lede">
+              Channels, DMs, threads — the chat shape your team already uses. Threa holds the decisions and context
+              behind every message, so the past stays useful.
+            </p>
+            <div class="actions">
+              <a class="cta" href="#">Join the waitlist</a>
+              <span class="quiet">/ vetted access · early 2026</span>
+            </div>
+          </div>
+          <div class="c5-tl-inset">
+            <div class="tl tl-dark">
+              <div class="tl-caption">
+                <span>a moment from</span>
+                <span class="hash">#api-v3</span>
+                <span>· today</span>
+              </div>
+              <div class="tl-row">
+                <div class="tl-avatar av-sm">SM</div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Sara Møller</span>
+                    <span class="tl-time">Friday 10:14</span>
+                  </div>
+                  <div class="tl-text">Why did we pause the auth refactor back in March? I'm picking it up again.</div>
+                </div>
+              </div>
+              <div class="tl-row">
+                <div class="tl-avatar av-kr">KR</div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Kris</span>
+                    <span class="tl-time">Friday 10:15</span>
+                  </div>
+                  <div class="tl-text"><span class="mention">@ariadne</span> what was the reason?</div>
+                </div>
+              </div>
+              <div class="tl-row persona">
+                <div class="tl-avatar av-ariadne">
+                  <svg><use href="#ariadne-icon" /></svg>
+                </div>
+                <div class="tl-body">
+                  <div class="tl-head-line">
+                    <span class="tl-name">Ariadne</span>
+                    <span class="tl-time">Friday 10:15</span>
+                  </div>
+                  <div class="tl-text">
+                    Sara raised a token-rotation concern in the design review — you agreed to hold until she'd reviewed
+                    the boundary model.
+                  </div>
+                  <div class="tl-text">Thread is in <span class="ref-pill">#api-v3</span> · Mar 12.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="c5-spine">
+          <div class="thread"></div>
+          <div class="c5-station">
+            <div class="glyph">
+              <svg><use href="#dot-mark" /></svg>
+            </div>
+            <div class="name">Capture</div>
+            <div class="sub">Chat, threads, decisions.</div>
+          </div>
+          <div class="c5-station">
+            <div class="glyph large">
+              <svg><use href="#threa-mark" /></svg>
+            </div>
+            <div class="name">Hold</div>
+            <div class="sub">Memory builds quietly behind every conversation.</div>
+          </div>
+          <div class="c5-station">
+            <div class="glyph">
+              <svg><use href="#dot-mark" /></svg>
+            </div>
+            <div class="name">Return</div>
+            <div class="sub">Ask Ariadne. It's already there.</div>
+          </div>
+        </aside>
+      </div>
+      <p class="concept-notes">
+        <em>Why:</em> same Spine Open as 01, themed dark. Persona row gradient still reads, name color stays gold-soft,
+        mention pill brightens for contrast. No layout changes — the whole surface remaps via tokens.
+      </p>
+    </section>
+  </body>
+</html>

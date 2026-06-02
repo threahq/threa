@@ -1,0 +1,182 @@
+---
+/*
+ * One operation in the API reference, rendered from the OpenAPI spec we ship.
+ * Method + path header, description, path/query parameters, request body, the
+ * success response shape, status codes, and a runnable curl whose credentials
+ * come from the one Credentials panel (top right). No embedded widget.
+ */
+import CodeBlock from "./CodeBlock.astro"
+import SchemaTable from "./SchemaTable.astro"
+import {
+  buildSchemaTree,
+  jsonSchemaOf,
+  exampleBody,
+  typeLabel,
+  constraintNote,
+  type JsonSchema,
+  type SchemaNode,
+} from "../lib/openapi"
+
+interface Parameter {
+  name: string
+  in: "path" | "query" | "header"
+  required?: boolean
+  description?: string
+  schema?: JsonSchema
+}
+interface Response {
+  description?: string
+  content?: Record<string, { schema?: JsonSchema }>
+}
+interface Operation {
+  operationId?: string
+  summary?: string
+  description?: string
+  parameters?: Parameter[]
+  requestBody?: { required?: boolean; content?: Record<string, { schema?: JsonSchema }> }
+  responses?: Record<string, Response>
+  security?: Array<Record<string, string[]>>
+}
+interface RunConfig {
+  method: string
+  path: string
+  body?: string
+  multipart?: boolean
+}
+interface Props {
+  method: string
+  path: string
+  anchor: string
+  op: Operation
+  run?: RunConfig
+}
+const { method, path, anchor, op, run } = Astro.props
+const verb = method.toUpperCase()
+
+// Required scopes come straight from the spec's per-operation security. An empty
+// list means a valid key of any scope works (e.g. /me).
+const scopes = Array.from(
+  new Set((op.security ?? []).flatMap((req) => Object.values(req).flat())),
+)
+
+const params = op.parameters ?? []
+// workspaceId is on every endpoint and explained once in the Base URL section;
+// showing it on all 26 operations is noise, so the per-op table omits it.
+const pathParams = params.filter((p) => p.in === "path" && p.name !== "workspaceId")
+const queryParams = params.filter((p) => p.in === "query")
+
+const bodySchema = jsonSchemaOf(op.requestBody?.content)
+const bodyNodes: SchemaNode[] = buildSchemaTree(bodySchema)
+
+// Success response shape (first 2xx), rendered as a property tree.
+const responseEntries = Object.entries(op.responses ?? {})
+const successCode = responseEntries.find(([c]) => c.startsWith("2"))?.[0]
+const successSchema = successCode
+  ? jsonSchemaOf(op.responses?.[successCode]?.content)
+  : undefined
+const successNodes: SchemaNode[] = buildSchemaTree(successSchema)
+
+const paramNode = (p: Parameter): SchemaNode => ({
+  name: p.name,
+  type: typeLabel(p.schema),
+  required: Boolean(p.required),
+  description: p.description,
+  note: constraintNote(p.schema),
+  children: [],
+})
+
+// Example curl. workspaceId becomes a live token; other path ids become
+// editable placeholders (e.g. {streamId} -> STREAM_ID).
+function tokenizePath(p: string): string {
+  return p
+    .replaceAll("{workspaceId}", "{{workspaceId}}")
+    .replace(/\{(\w+)\}/g, (_, k: string) => k.replace(/Id$/, "").toUpperCase() + "_ID")
+}
+function exampleQueryValue(p: Parameter): string {
+  const s = p.schema
+  if (s?.enum && s.enum.length) return String(s.enum[0])
+  if (s?.default !== undefined) return String(s.default)
+  if (s?.type === "integer" || s?.type === "number") return String(s.minimum ?? 1)
+  return p.name.toUpperCase()
+}
+const requiredQuery = queryParams.filter((p) => p.required)
+const queryString = requiredQuery.length
+  ? "?" + requiredQuery.map((p) => `${p.name}=${exampleQueryValue(p)}`).join("&")
+  : ""
+
+// For runnable endpoints, build the example from the exact Run config so the
+// copyable curl matches what Run sends (and is valid). Otherwise derive it from
+// the schema, with editable placeholders for path ids the reader must supply.
+const exampleUrl = run ? run.path : `{{baseUrl}}${tokenizePath(path)}${queryString}`
+const exampleBodyStr = run?.body
+  ? JSON.stringify(JSON.parse(run.body), null, 2)
+  : bodySchema
+    ? JSON.stringify(exampleBody(bodySchema), null, 2)
+    : null
+
+let curl: string
+if (method === "get") {
+  curl = `curl "${exampleUrl}" \\\n  -H "Authorization: Bearer {{apiKey}}"`
+} else {
+  curl = `curl -X ${verb} ${exampleUrl} \\\n  -H "Authorization: Bearer {{apiKey}}"`
+  if (exampleBodyStr) {
+    curl += ` \\\n  -H "Content-Type: application/json" \\\n  -d '${exampleBodyStr}'`
+  }
+}
+---
+
+<section class="api-op" id={anchor}>
+  <div class="api-op-head">
+    <span class={`api-method m-${method}`}>{verb}</span>
+    <code class="api-path">{path}</code>
+  </div>
+  {op.summary && <h3 class="api-op-title">{op.summary}</h3>}
+  {op.description && <p class="api-op-desc">{op.description}</p>}
+
+  <p class="api-scopes">
+    <span class="api-scopes-label">Scope</span>
+    {scopes.length > 0 ? (
+      scopes.map((s) => <code class="api-scope">{s}</code>)
+    ) : (
+      <span class="api-scope-none">none — any valid key</span>
+    )}
+  </p>
+
+  {pathParams.length > 0 && (
+    <>
+      <h4 class="api-sub">Path parameters</h4>
+      <SchemaTable nodes={pathParams.map(paramNode)} />
+    </>
+  )}
+
+  {queryParams.length > 0 && (
+    <>
+      <h4 class="api-sub">Query parameters</h4>
+      <SchemaTable nodes={queryParams.map(paramNode)} />
+    </>
+  )}
+
+  {bodyNodes.length > 0 && (
+    <>
+      <h4 class="api-sub">Request body</h4>
+      <SchemaTable nodes={bodyNodes} />
+    </>
+  )}
+
+  <h4 class="api-sub">Example</h4>
+  <CodeBlock lang="bash" label={`${verb} ${path.replace("/api/v1/workspaces/{workspaceId}", "")}`} code={curl} run={run} />
+
+  {successNodes.length > 0 && (
+    <>
+      <h4 class="api-sub">Response {successCode}</h4>
+      <SchemaTable nodes={successNodes} />
+    </>
+  )}
+
+  <h4 class="api-sub">Status codes</h4>
+  <ul class="api-status">
+    {responseEntries.map(([code, r]) => (
+      <li><code>{code}</code> {r.description}</li>
+    ))}
+  </ul>
+</section>

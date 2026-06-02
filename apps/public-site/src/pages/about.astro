@@ -1,0 +1,279 @@
+---
+import Layout from "../layouts/Layout.astro"
+import SvgDefs from "../components/SvgDefs.astro"
+---
+
+<Layout
+  title="About · Threa"
+  description="Threa began as a side project, out of curiosity and frustration with workplace chat: how much more you can do with what a conversation already holds, and whether a tool like this has to lock you in. Built by Kristoffer Remback, in the open."
+>
+  <SvgDefs />
+
+  <!-- ============================================================
+       HERO — premise stated plainly. Two columns so the masthead
+       doesn't hug the left margin: headline left, framing right.
+       ============================================================ -->
+  <div class="frame">
+    <div class="hero-shell">
+      <div class="hero-inner">
+        <div class="nav-row">
+          <div class="brand">
+            <svg><use href="#threa-mark" /></svg>
+            <span class="wordmark">Threa</span>
+          </div>
+          <nav class="nav-links">
+            <a href="/">Product</a>
+            <a href="/developers">Developer</a>
+            <a href="/about" aria-current="page">About</a>
+          </nav>
+        </div>
+
+        <div class="about-hero">
+          <h1 class="h-display">
+            Threa came out of<br />
+            <span class="accent">curiosity</span>, and a bit<br />
+            of frustration.
+          </h1>
+          <p class="lede">
+            My day job is software engineering, where I spend a lot of time in
+            tools that are <em>fine</em> but never great. The little frustrations
+            add up, and eventually my curiosity got out of hand. Meet Threa.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       01 · THE ORIGIN. Three strands of curiosity and frustration in
+       open columns, no cards. Mono gold labels carry the structure.
+       ============================================================ -->
+  <div class="frame warm">
+    <div class="memo-shell">
+      <div class="section-meta">
+        <span>Why this exists in the first place</span>
+      </div>
+      <h2>What I kept running into.</h2>
+      <p class="lede about-why-lede">
+        Three of them stuck around long enough that I did something about them.
+      </p>
+
+      <div class="about-duo">
+        <div class="about-q">
+          <span class="about-qnum">What gets lost</span>
+          <h3>What did we say again?</h3>
+          <p>
+            Years of decisions and the reasoning behind them pile up in a
+            workplace chat, and almost none of it resurfaces. My memory runs on
+            gist: I'll remember that we discussed something, sometimes why,
+            rarely the exact wording or where we said it, though I'll know it was
+            Kate who said it. I was curious whether a chat app could surface that
+            context when it helps, instead of just
+            holding it, and whether doing it well was even affordable. I assumed
+            it would be too expensive to bother with. So far it hasn't been.
+          </p>
+        </div>
+        <div class="about-q">
+          <span class="about-qnum">On your own terms</span>
+          <h3>Tools are supposed to be yours.</h3>
+          <p>
+            Most tools want to be the platform you can't afford to leave, and
+            they all insist on shipping their own AI agent. I rarely want it: it
+            runs a cheaper model on thinner context and can't see past its own
+            walls. Yours can. Threa has an assistant too, Ariadne, and I want her
+            to be genuinely great, but she's only ever great inside the room,
+            where the shared context lives. For your own work you'd rather bring
+            your own agent, so Threa connects to it instead of replacing it.
+          </p>
+        </div>
+        <div class="about-q">
+          <span class="about-qnum">The chat part too</span>
+          <h3>Chat could be so much nicer.</h3>
+          <p>
+            Nested threading, quoting, replying to one message in a busy room,
+            formatting that behaves. None of it sells a platform, which is
+            probably why it keeps getting skipped, but it all adds up over a day
+            spent in chat. After years of putting up with the basics done badly,
+            I think we deserve nice things.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       MEET THE TEAM. Short, playful, first-person. It's one person.
+       ============================================================ -->
+  <div class="frame">
+    <div class="memo-shell is-centerpiece">
+      <div class="section-meta">
+        <span>Meet the team</span>
+      </div>
+      <h2>I'm the team.</h2>
+      <p class="lede">
+        Hi, I'm Kristoffer. People have paid me to build software for over ten
+        years now. During parental leave I started tinkering on Threa to keep
+        myself from going insane, and I'm not sure it worked: here I am, up late
+        after my wife has gone to bed, talking to an agent about who I am and why
+        I'm building this.
+      </p>
+      <div class="about-links">
+        <a href="https://github.com/kristofferremback" rel="me noopener" target="_blank">GitHub</a>
+        <a href="https://www.linkedin.com/in/kristofferremback/" rel="me noopener" target="_blank">LinkedIn</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       HOW IT'S BUILT. Left-aligned process notes: the tools
+       philosophy, then building with agents. Public repo CTAs.
+       ============================================================ -->
+  <div class="frame warm">
+    <div class="memo-shell">
+      <div class="section-meta">
+        <span>How it's built</span>
+      </div>
+      <h2>Built the way I want tools to work.</h2>
+      <p class="lede about-built-lede">
+        Good at its job, composable with everything else, and easy to step away
+        from. Threa is built that way on purpose. The door stays open, so if you
+        stay it's because you want to, not because leaving would cost you.
+      </p>
+      <p class="lede about-built-lede">
+        It has also been my way into building with AI agents. Most of Threa is
+        written by directing them, but the thinking stays mine, and that matters
+        more than ever. They're a good way to chase a curiosity, and you can get
+        genuinely decent software out of them as long as you do the thinking
+        yourself. Seeing where they shine and where they fall short has been half
+        the fun. It's a work in progress, on what I think is a good trajectory.
+        The repo is public, so have a look.
+      </p>
+      <div class="about-cta-row">
+        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source <span class="arr">→</span></a>
+        <a class="os-cta" href="/developers/feature-requests">Request a feature <span class="arr">→</span></a>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       CLOSE
+       ============================================================ -->
+  <div class="frame">
+    <div class="memo-shell is-centerpiece about-close">
+      <h2>Early, and <span class="accent">built in the open</span>.</h2>
+      <p class="lede">
+        Threa is early, and there's plenty left to build. Join the waitlist, or
+        follow along in the public repo.
+      </p>
+      <div class="actions">
+        <a class="cta" href="/#waitlist">Join the waitlist</a>
+        <span class="quiet">/ early 2026</span>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="brand" style="gap:10px;">
+      <svg style="width:18px;height:18px;color:hsl(var(--gold));"><use href="#threa-mark" /></svg>
+      <span class="wordmark" style="font-size:11px;">Threa</span>
+      <span style="color:hsl(var(--muted));text-transform:none;letter-spacing:0;font-family:var(--font-display);font-size:12px;margin-left:6px;">· 2026</span>
+    </div>
+    <div class="ln">
+      <a href="/">Product</a>
+      <a href="/developers">Developer</a>
+      <a href="/about">About</a>
+    </div>
+  </footer>
+
+  <style>
+    /* Two-column masthead: headline and framing sit side by side. */
+    .about-hero {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 56px;
+      align-items: end;
+    }
+    .about-hero .lede { max-width: 460px; font-size: 18px; margin: 0 0 6px; }
+
+    /* Constrain the intro line so it doesn't run the full shell width. */
+    .about-why-lede { max-width: 620px; font-size: 17px; margin: 0 0 4px; }
+
+    /* The strands: open columns, no card chrome. A hairline rule and a mono
+       label give structure without boxing them in. */
+    .about-duo {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 40px;
+      margin-top: 24px;
+    }
+    .about-q { border-top: 1px solid hsl(var(--line)); padding-top: 20px; }
+    .about-qnum {
+      display: block;
+      margin-bottom: 12px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: hsl(var(--gold));
+    }
+    .about-q h3 {
+      margin: 0 0 10px;
+      font-family: var(--font-display);
+      font-weight: 500;
+      font-size: 19px;
+      line-height: 1.3;
+      letter-spacing: -0.01em;
+      color: hsl(var(--ink));
+    }
+    .about-q p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.6;
+      color: hsl(var(--ink-soft));
+    }
+
+    /* Centered profile links under the bio. Quiet mono, gold underline. */
+    .about-links {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 26px;
+    }
+    .about-links a {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: hsl(var(--gold-dim));
+      text-decoration: none;
+      border-bottom: 1px solid hsl(var(--gold) / 0.35);
+      padding-bottom: 2px;
+    }
+    .about-links a:hover { border-bottom-color: hsl(var(--gold)); color: hsl(var(--ink)); }
+
+    /* Section 03 reads as personal process notes: left-aligned prose with a
+       readable measure, and its "get involved" links sit under it. */
+    .about-built-lede { max-width: 640px; font-size: 17px; }
+    .about-built-lede + .about-built-lede { margin-top: 16px; }
+    .about-cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px 28px;
+      margin-top: 24px;
+    }
+    .about-cta-row .os-cta { margin-top: 0; }
+    .about-close .actions {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px 18px;
+      margin-top: 8px;
+    }
+
+    @media (max-width: 880px) {
+      .about-hero { grid-template-columns: 1fr; gap: 24px; align-items: start; }
+      .about-duo { grid-template-columns: 1fr; gap: 28px; }
+    }
+  </style>
+</Layout>

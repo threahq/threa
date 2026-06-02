@@ -1,0 +1,2651 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Threa — Tape Anchored, deep-dive · v10</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* ---------- TOKENS ---------- */
+      :root {
+        /* Tokens tuned to the real app (apps/frontend/src/index.css):
+       brighter, lower-saturation warm-neutral canvas, hue ~30-40.
+       Gold === --primary exactly. paper/sunk keep a small lightness
+       delta so section cards still read as elevated over the page. */
+        --gold: 38 65% 50%; /* === app --primary */
+        --gold-soft: 38 65% 62%;
+        --gold-dim: 38 28% 38%;
+        --paper: 40 22% 98%; /* app --card / --background */
+        --paper-warm: 38 16% 94%; /* app --muted / --secondary */
+        --paper-sunk: 40 14% 93%; /* page canvas, just below cards */
+        --ink: 30 10% 12%; /* === app --foreground */
+        --ink-soft: 30 9% 26%;
+        --night: 222 25% 8%;
+        --night-soft: 222 18% 14%;
+        --line: 35 15% 88%; /* === app --border */
+        --muted: 30 8% 45%; /* === app --muted-foreground */
+        --emerald: 142 64% 38%;
+        --emerald-soft: 142 60% 92%;
+
+        --font-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+        --font-body: "Space Grotesk", system-ui, -apple-system, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+        --pad-x: 56px;
+
+        /* total animation cycle for the chat widget */
+        --cycle: 22s;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: hsl(var(--paper-sunk));
+        color: hsl(var(--ink));
+        font-family: var(--font-body);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      /* ---------- DOC CHROME ---------- */
+      .doc-header {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 56px 48px 24px;
+      }
+      .doc-header h1 {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin: 0 0 10px;
+      }
+      .doc-header p {
+        font-size: 15px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.55;
+        margin: 0;
+        max-width: 800px;
+      }
+      .frame {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 24px 48px 96px;
+      }
+      .section-meta {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        margin: 0 0 16px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .section-meta strong {
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+      .section-notes {
+        font-size: 13.5px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.6;
+        margin: 18px 0 0;
+        max-width: 800px;
+      }
+      .section-notes em {
+        font-style: normal;
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+
+      /* ---------- SHARED PRIMITIVES ---------- */
+      .wordmark {
+        font-family: var(--font-display) !important;
+        font-weight: 300 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        font-style: normal !important;
+      }
+      .nav-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .brand svg {
+        width: 22px;
+        height: 22px;
+      }
+      .brand .wordmark {
+        font-size: 12px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 28px;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .nav-links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .h-display {
+        font-family: var(--font-display);
+        font-weight: 300;
+        font-size: clamp(36px, 4.4vw, 54px);
+        line-height: 1.05;
+        letter-spacing: -0.02em;
+        margin: 0;
+      }
+      .h-display .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .lede {
+        font-size: 16px;
+        line-height: 1.55;
+        margin: 22px 0 32px;
+        max-width: 480px;
+      }
+      .cta {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 10px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        padding: 12px 20px;
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: 13.5px;
+        text-decoration: none;
+        border-radius: 2px;
+      }
+      .cta::after {
+        content: "→";
+        font-family: var(--font-display);
+        font-weight: 400;
+      }
+      .quiet {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+
+      /* ---------- OPEN TIMELINE ----------
+     Anchored to the real chat view in apps/frontend/src/components/timeline:
+     - Rows render at full opacity from frame 1; "new" is signalled by
+       a 2s background-color flash from gold/0.3 → transparent (= the
+       `animate-highlight-flash` keyframes in
+       apps/frontend/tailwind.config.js).
+     - Persona rows always carry the gold inset stripe + soft gradient
+       (= ACTOR_ROW_THEME.persona.rowAccent in
+       apps/frontend/src/components/timeline/message-event.tsx). The
+       highlight flash layers ON TOP of the gradient.
+     - Continuations, hover toolbar, swipe-to-quote: out of scope for the
+       marketing widget. */
+      .tl {
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        /* No outline, no card — the conversation lives directly in the warm
+       paper of the hero. The panel still bounds the scroll region and
+       hosts the floating composer, but visually it dissolves into the
+       page. */
+        height: clamp(560px, 68vh, 640px);
+        overflow: hidden;
+        padding: 0 4px;
+      }
+      /* Editorial chapter line — keys to the page's mono-cap meta voice
+     instead of a Slack-style channel chrome. Channel name slightly
+     heavier; the "thread · friday" tail sits quiet next to it. */
+      .tl-caption {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 0 8px 18px;
+        flex-shrink: 0;
+      }
+      .tl-caption .hash {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--ink));
+      }
+      .tl-caption .meta {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        font-weight: 400;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      /* Message list — top-anchored. New messages stack downward from the top
+     until they reach the composer overlay. When content overflows, the
+     pin-scroll script keeps the LATEST message visible just under the
+     composer (older messages scroll off the top). */
+      .tl-messages {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+        scroll-behavior: smooth;
+        /* padding-bottom reserves space so the latest row (and its reactions
+       row, which appears UNDER the message body) clears the composer
+       overlay when scrolled to bottom. Composer sits at bottom: 28px
+       and stands ~84px tall = 112px from the bottom — add a buffer so
+       the reaction pills don't tuck under the composer card. */
+        padding-bottom: 128px;
+        /* Hide the scrollbar — the marketing widget reads as a conversation
+       in the page, and a visible scrollbar breaks that illusion. */
+        scrollbar-width: none;
+        /* Soft dissolve at top and bottom — without a panel border, scrolled
+       messages would hard-clip at the invisible edges. The mask makes
+       them fade gently into the paper instead. The composer (opaque,
+       z-index 2) is unaffected. */
+        -webkit-mask-image: linear-gradient(
+          to bottom,
+          transparent 0,
+          black 14px,
+          black calc(100% - 22px),
+          transparent 100%
+        );
+        mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 22px), transparent 100%);
+      }
+      .tl-messages::-webkit-scrollbar {
+        display: none;
+      }
+      /* Prevent flex from compressing message rows to fit. Their own
+     `collapse-*` animations control whether they're visible (max-height
+     animates 0 → natural). */
+      .tl-messages > .tl-row,
+      .tl-messages > .trace-card {
+        flex-shrink: 0;
+      }
+
+      .tl-row {
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 14px;
+        padding: 8px 12px 8px 12px;
+        margin: 0;
+        position: relative;
+        border-radius: 2px;
+        background-color: hsl(var(--gold) / 0); /* highlight target */
+      }
+      /* Rows that animate in start invisible. Maya is static (already in the
+     channel at page load); Jordan, Alex, and Ariadne fade in on their
+     own beats. */
+      .tl-row.pop-jordan,
+      .tl-row.pop-alex,
+      .tl-row.pop-ariadne {
+        opacity: 0;
+      }
+      .tl-row.persona {
+        /* Persona accent — present from the moment the row exists. */
+        background-image: linear-gradient(90deg, hsl(var(--gold) / 0.06) 0%, hsl(var(--gold) / 0) 75%);
+        box-shadow: inset 3px 0 0 hsl(var(--gold));
+      }
+
+      .tl-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-body);
+        font-weight: 600;
+        font-size: 12.5px;
+        letter-spacing: 0.01em;
+        flex-shrink: 0;
+      }
+      .tl-avatar.av-alex {
+        background: hsl(28 30% 86%);
+        color: hsl(28 30% 26%);
+      }
+      .tl-avatar.av-jordan {
+        background: hsl(200 35% 84%);
+        color: hsl(200 40% 28%);
+      }
+      .tl-avatar.av-maya {
+        background: hsl(20 35% 84%);
+        color: hsl(20 40% 28%);
+      }
+      .tl-avatar.av-ariadne {
+        background: hsl(var(--gold) / 0.16);
+        color: hsl(var(--gold));
+      }
+      .tl-avatar.av-ariadne svg {
+        width: 22px;
+        height: 22px;
+      }
+
+      .tl-body {
+        min-width: 0;
+      }
+      .tl-head-line {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 1px;
+      }
+      .tl-name {
+        font-weight: 600;
+        font-size: 14px;
+        color: hsl(var(--ink));
+      }
+      .tl-row.persona .tl-name {
+        color: hsl(var(--gold));
+      }
+      .tl-time {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: hsl(var(--muted));
+        font-weight: 400;
+      }
+      .tl-text {
+        font-size: 14.5px;
+        line-height: 1.5;
+        color: hsl(var(--ink));
+      }
+      .tl-text + .tl-text {
+        margin-top: 2px;
+      }
+
+      .mention {
+        display: inline-block;
+        background: hsl(var(--gold) / 0.13);
+        color: hsl(var(--gold));
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-weight: 500;
+      }
+      .ref-pill {
+        display: inline-block;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--line));
+        color: hsl(var(--ink-soft));
+        padding: 0 8px;
+        border-radius: 4px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+      }
+
+      /* ---------- COMPOSER ----------
+     Matches the real MessageComposer in
+     apps/frontend/src/components/composer/message-composer.tsx:
+     `rounded-[16px] border border-input bg-card`, p-3 gap-2, editor on top
+     and action bar at the bottom; send button is a 30×30 rounded-md with
+     an ArrowUp icon that becomes primary-coloured when content is present. */
+      .composer {
+        /* The only chrome in the panel — a quiet floating card. Opaque so
+       messages tuck under cleanly, soft border + soft drop shadow so it
+       reads as a card without competing with the editorial paper. The
+       left/right offsets match .tl's horizontal padding so the composer
+       aligns with the message list, not with the panel border. */
+        position: absolute;
+        left: 4px;
+        right: 4px;
+        bottom: 28px;
+        z-index: 2;
+        border: 1px solid hsl(28 14% 88%);
+        background: hsl(var(--paper));
+        border-radius: 14px;
+        padding: 12px 14px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        box-shadow:
+          0 1px 0 hsl(33 28% 97%) inset,
+          0 8px 24px -14px hsl(28 30% 22% / 0.18),
+          0 2px 6px -2px hsl(28 30% 22% / 0.06);
+      }
+      .composer-editor {
+        position: relative;
+        min-height: 26px;
+        padding: 2px 0 0;
+        font-size: 14px;
+        line-height: 1.55;
+        color: hsl(var(--ink));
+        display: flex;
+        align-items: center;
+      }
+      /* Mention pill snaps in as a unit — that's how the real composer's
+     `@ariadne` autocomplete commits (one Enter keystroke, pill appears
+     whole). */
+      .composer-mention-wrap {
+        display: inline-flex;
+        overflow: hidden;
+        max-width: 0;
+        flex-shrink: 0;
+      }
+      .composer-mention-wrap .mention {
+        flex: 0 0 auto;
+      }
+      /* Real input — the browser draws and blinks the caret natively, so we
+     get a proper text cursor at the right position without any DOM
+     trickery. Pre-armed with focus on cycle start (via JS) so the caret
+     is visible from the first frame. */
+      .composer-input {
+        flex: 1 1 auto;
+        min-width: 0;
+        border: 0;
+        outline: none;
+        background: transparent;
+        padding: 0;
+        margin: 0;
+        font: inherit;
+        color: hsl(var(--ink));
+        caret-color: hsl(var(--ink));
+        /* Demo-only: don't intercept clicks/keyboard so the marketing page
+       stays interactive. We focus it programmatically to keep the caret
+       blinking; users can still click through to anything underneath. */
+        pointer-events: none;
+        user-select: none;
+      }
+      .composer-input::placeholder {
+        color: hsl(var(--muted));
+        opacity: 1;
+      }
+      .composer-input::-webkit-input-placeholder {
+        color: hsl(var(--muted));
+      }
+      /* When the mention pill is in, hide the placeholder so it doesn't
+     read as "@ariadneMessage #api-v3" — toggled by the JS driver. */
+      .composer-editor.has-mention .composer-input::placeholder {
+        opacity: 0;
+      }
+      /* Action bar: hint on the left, icon row + send on the right. Mirrors
+     `message-composer.tsx`: ghost h-7 (28×30) buttons with `gap-1`,
+     muted hint flex-1 on the left, send pinned right as the only solid. */
+      .composer-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+      }
+      .composer-hint {
+        font-size: 11px;
+        color: hsl(var(--muted));
+        user-select: none;
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        padding-left: 4px;
+      }
+      .composer-actions {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+      }
+      /* Individual control button — ghost by default. Real product uses
+     h-7 w-7 (28×28) icon buttons with hover bg-accent. */
+      .cb {
+        width: 28px;
+        height: 28px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        color: hsl(var(--ink-soft));
+        border: none;
+        padding: 0;
+        cursor: default;
+        flex-shrink: 0;
+        opacity: 0.78;
+      }
+      .cb svg {
+        width: 16px;
+        height: 16px;
+        stroke-width: 1.85;
+      }
+      /* Maximize uses the smaller h-3.5 w-3.5 icon in the real component. */
+      .cb-maximize svg {
+        width: 14px;
+        height: 14px;
+      }
+      .cb-aa {
+        font-family: var(--font-body);
+        font-weight: 700;
+        font-size: 13px;
+        line-height: 1;
+        letter-spacing: -0.015em;
+        color: hsl(var(--ink-soft));
+      }
+      .cb-emoji span {
+        font-size: 14px;
+        line-height: 1;
+      }
+      /* Send button mirrors the real `rounded-md` h-[30px] w-[30px] primary
+     ArrowUp button — disabled-looking until content arms it. Arms to
+     solid gold (matches the `Button` default-variant on `canSubmit`). */
+      .composer-send {
+        width: 30px;
+        height: 30px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: hsl(28 18% 88%);
+        color: hsl(28 12% 60%);
+        border: none;
+        margin-left: 4px;
+        flex-shrink: 0;
+        transition: none;
+      }
+      .composer-send svg {
+        width: 16px;
+        height: 16px;
+        stroke-width: 2;
+      }
+      /* Footer hint sits OUTSIDE the composer — `flex justify-end px-1 pt-1`
+     mirrors the real component (text-[10px] muted opacity-60). Plain
+     text, no kbd boxes. */
+      .composer-hint-foot {
+        position: absolute;
+        left: 4px;
+        right: 4px;
+        bottom: 6px;
+        z-index: 2;
+        font-family: var(--font-body);
+        font-size: 10.5px;
+        letter-spacing: 0.01em;
+        color: hsl(var(--muted));
+        opacity: 0.6;
+        text-align: right;
+        user-select: none;
+      }
+
+      /* ---------- TRACE CARD (single card; running ↔ completed in place) ----------
+     Matches the AgentSessionEvent card in
+     apps/frontend/src/components/timeline/agent-session-event.tsx:
+     - rounded-[10px], `flex items-center gap-3 px-3.5 py-2.5`
+     - border `hsl(var(--border))`, bg `hsl(var(--muted) / 0.5)`
+     - left: 20×20 circle, primary/0.15 + Loader2 spin (running) or
+       emerald/0.15 + Check (completed)
+     - main: title (font-medium) + subtitle (text-[11px] muted) — the
+       same card transitions in place when the session completes. */
+      .trace-card {
+        /* Spans the full row width (avatar column to body right), matching
+       the real product's session-card layout — it's a "conversation
+       event", not a body-column reply. */
+        margin: 10px 0 4px;
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        gap: 12px;
+        align-items: center;
+        background: hsl(28 8% 92%);
+        border: 1px solid hsl(var(--line));
+        border-radius: 10px;
+        padding: 10px 14px;
+        opacity: 0;
+        text-decoration: none;
+        color: inherit;
+      }
+      .trace-time {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: hsl(var(--muted));
+        align-self: center;
+        white-space: nowrap;
+      }
+      .trace-icon-slot {
+        position: relative;
+        width: 20px;
+        height: 20px;
+      }
+      .trace-icon {
+        position: absolute;
+        inset: 0;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .trace-icon svg {
+        width: 12px;
+        height: 12px;
+      }
+      .trace-icon-running {
+        background: hsl(var(--gold) / 0.16);
+        color: hsl(var(--gold));
+      }
+      .trace-icon-running svg {
+        animation: spin 1.4s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .trace-icon-done {
+        background: hsl(var(--emerald) / 0.16);
+        color: hsl(var(--emerald));
+        opacity: 0;
+      }
+
+      .trace-main {
+        position: relative;
+        min-height: 32px;
+      }
+      .trace-row {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 2px;
+      }
+      .trace-title {
+        font-size: 13px;
+        font-weight: 500;
+        color: hsl(var(--ink));
+        line-height: 1.2;
+      }
+      .trace-sub {
+        font-size: 11px;
+        color: hsl(var(--muted));
+        line-height: 1.3;
+      }
+      .trace-sub .num {
+        font-variant-numeric: tabular-nums;
+      }
+      .trace-row-done {
+        opacity: 0;
+      }
+
+      /* Step counter ticks during the running phase. Spacing is intentionally
+     irregular — agents don't pace themselves evenly: a couple of quick
+     lookups, a long pause for reasoning, then a quick wrap-up. */
+      .trace-step-count::before {
+        content: "0";
+        animation: count-steps var(--cycle) linear 1 forwards;
+      }
+      @keyframes count-steps {
+        0%,
+        51.9% {
+          content: "0";
+        }
+        52% {
+          content: "1";
+        } /* +0.1 — quick pull */
+        53.5% {
+          content: "2";
+        } /* +1.5 — another fast lookup */
+        58% {
+          content: "3";
+        } /* +4.5 — pause to reason */
+        62.5% {
+          content: "4";
+        } /* +4.5 — second pass */
+        66%,
+        100% {
+          content: "5";
+        } /* +3.5 — wrap up */
+      }
+
+      /* ---------- QUOTE CARD (inside Ariadne's reply) ---------- */
+      .quote-card {
+        margin-top: 10px;
+        background: hsl(var(--paper));
+        border: 1px solid hsl(var(--line));
+        border-radius: 8px;
+        padding: 12px 14px 12px 16px;
+        position: relative;
+      }
+      .quote-card .qm {
+        position: absolute;
+        top: 11px;
+        left: 12px;
+        width: 12px;
+        height: 12px;
+        color: hsl(var(--muted) / 0.7);
+      }
+      .quote-card .qm svg {
+        width: 100%;
+        height: 100%;
+      }
+      .quote-card .q-author {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 20px;
+        margin-bottom: 6px;
+      }
+      .quote-card .q-avatar {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        font-size: 9px;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: var(--font-display);
+      }
+      .quote-card .q-name {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: hsl(var(--ink));
+      }
+      .quote-card .q-time {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        color: hsl(var(--muted));
+      }
+      .quote-card .q-body {
+        padding-left: 20px;
+        font-size: 13px;
+        line-height: 1.5;
+        color: hsl(var(--ink-soft));
+      }
+
+      /* ---------- REACTIONS ----------
+     Matches the ReactionPill in
+     apps/frontend/src/components/timeline/message-reactions.tsx:
+     min-h-[26px] rounded-full, transparent border, primary/0.05 bg,
+     emoji + tabular-nums count. No slide animation on insert — they
+     just appear. */
+      .reactions {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+      .rxn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        min-height: 26px;
+        background: hsl(var(--gold) / 0.05);
+        border: 1px solid transparent;
+        border-radius: 999px;
+        padding: 0 9px 0 7px;
+        color: hsl(var(--muted));
+        opacity: 0;
+      }
+      .rxn .em {
+        font-size: 13px;
+        line-height: 1;
+      }
+      .rxn .num {
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* ---------- ANIMATION TIMELINE — cycle 22s, run-once ----------
+     Phases (% of cycle / wall-clock seconds @ 22s):
+        0    /  0.0s   Maya is already in the channel (static)
+       19    /  4.2s   Jordan row enters (highlight 2s)
+       30    /  6.6s   Composer starts typing @ariadne
+       36    /  7.9s   Composer typing complete
+       49    / 10.8s   Send fires → composer clears, Alex row enters
+       51    / 11.2s   Trace card appears (running)
+       68    / 15.0s   Trace card transitions in place to completed
+       71    / 15.6s   Ariadne row enters; thread arrives from the left
+       81/83/85       Reactions 1/2/3 pop in
+       100            Stage holds the final filled state (no restart)
+
+     Each row uses a `pop-*` opacity animation (linear, instant jump) and
+     a `flash-*` background-color animation (ease-out 2s window). The
+     two are independent so the highlight can outlast the pop. All
+     animations are `1 forwards` so the scene plays once and holds. */
+
+      /* Maya is static (already in the channel). Jordan recalls vaguely a
+     few seconds later. Alex arrives after sending. Ariadne after the
+     trace completes. Each non-static row gets a brief highlight flash
+     when it enters. Rows occupy real height from page load so scroll
+     behaves naturally — no max-height tricks. */
+      .pop-jordan {
+        animation:
+          pop-jordan var(--cycle) linear 1 forwards,
+          flash-jordan var(--cycle) ease-out 1 forwards;
+      }
+      .pop-alex {
+        animation:
+          pop-alex var(--cycle) linear 1 forwards,
+          flash-alex var(--cycle) ease-out 1 forwards;
+      }
+      .pop-ariadne {
+        animation:
+          pop-ariadne var(--cycle) linear 1 forwards,
+          flash-ariadne var(--cycle) ease-out 1 forwards;
+      }
+
+      @keyframes pop-jordan {
+        0%,
+        18.9% {
+          opacity: 0;
+        }
+        19%,
+        100% {
+          opacity: 1;
+        }
+      }
+      @keyframes pop-alex {
+        0%,
+        48.9% {
+          opacity: 0;
+        }
+        49%,
+        100% {
+          opacity: 1;
+        }
+      }
+      @keyframes pop-ariadne {
+        0%,
+        70.9% {
+          opacity: 0;
+        }
+        71%,
+        100% {
+          opacity: 1;
+        }
+      }
+
+      /* highlight-flash background = real `animate-highlight-flash` 2s ease-out
+     from hsl(primary/0.3) to transparent. 2s ≈ 9% of the 22s cycle. */
+      @keyframes flash-jordan {
+        0%,
+        18.9% {
+          background-color: hsl(var(--gold) / 0);
+        }
+        19% {
+          background-color: hsl(var(--gold) / 0.3);
+        }
+        28%,
+        100% {
+          background-color: hsl(var(--gold) / 0);
+        }
+      }
+      @keyframes flash-alex {
+        0%,
+        48.9% {
+          background-color: hsl(var(--gold) / 0);
+        }
+        49% {
+          background-color: hsl(var(--gold) / 0.3);
+        }
+        58%,
+        100% {
+          background-color: hsl(var(--gold) / 0);
+        }
+      }
+      @keyframes flash-ariadne {
+        0%,
+        70.9% {
+          background-color: hsl(var(--gold) / 0);
+        }
+        71% {
+          background-color: hsl(var(--gold) / 0.3);
+        }
+        80%,
+        100% {
+          background-color: hsl(var(--gold) / 0);
+        }
+      }
+
+      /* Composer typing:
+       30%   — mention pill snaps in as a unit (steps(1) instant jump)
+       30-47% — " do you know?" types out (driven by JS so the caret can
+                follow the visible glyphs naturally)
+       49%   — send fires → both clear */
+      .composer-mention-wrap {
+        animation: pop-mention var(--cycle) steps(1) 1 forwards;
+      }
+      @keyframes pop-mention {
+        0%,
+        29.9% {
+          max-width: 0;
+        }
+        30%,
+        48.9% {
+          max-width: 100px;
+        }
+        49%,
+        100% {
+          max-width: 0;
+        }
+      }
+
+      /* Send button arms (primary gold) while content is typed, then returns
+     to the idle ghost state after send. */
+      .composer-send {
+        animation: send-arm var(--cycle) steps(1) 1 forwards;
+      }
+      @keyframes send-arm {
+        0%,
+        29.9% {
+          background: hsl(28 18% 88%);
+          color: hsl(28 12% 60%);
+        }
+        30%,
+        48.9% {
+          /* Soft tan/cream — matches the real product's armed send button. */
+          background: hsl(38 45% 78%);
+          color: hsl(28 24% 28%);
+        }
+        49%,
+        100% {
+          background: hsl(28 18% 88%);
+          color: hsl(28 12% 60%);
+        }
+      }
+
+      /* Trace card: appears at 51% and holds. Pairs opacity with a collapse
+     animation so the card reserves no vertical space before it enters. */
+      .trace-card {
+        animation: trace-life var(--cycle) linear 1 forwards;
+      }
+      @keyframes trace-life {
+        0%,
+        50.9% {
+          opacity: 0;
+        }
+        51%,
+        100% {
+          opacity: 1;
+        }
+      }
+
+      /* In-place state swap at 68% (running → completed). */
+      .trace-icon-running {
+        animation: trace-running var(--cycle) steps(1) 1 forwards;
+      }
+      .trace-icon-done {
+        animation: trace-done var(--cycle) steps(1) 1 forwards;
+      }
+      .trace-row-running {
+        animation: trace-running var(--cycle) steps(1) 1 forwards;
+      }
+      .trace-row-done {
+        animation: trace-done var(--cycle) steps(1) 1 forwards;
+      }
+      @keyframes trace-running {
+        0%,
+        68% {
+          opacity: 1;
+        }
+        68.1%,
+        100% {
+          opacity: 0;
+        }
+      }
+      @keyframes trace-done {
+        0%,
+        68% {
+          opacity: 0;
+        }
+        68.1%,
+        100% {
+          opacity: 1;
+        }
+      }
+
+      /* Reactions: no fade-up; instant pop, then hold. */
+      .rxn-1 {
+        animation: rxn-1 var(--cycle) linear 1 forwards;
+      }
+      .rxn-2 {
+        animation: rxn-2 var(--cycle) linear 1 forwards;
+      }
+      .rxn-3 {
+        animation: rxn-3 var(--cycle) linear 1 forwards;
+      }
+      @keyframes rxn-1 {
+        0%,
+        80.9% {
+          opacity: 0;
+        }
+        81%,
+        100% {
+          opacity: 1;
+        }
+      }
+      @keyframes rxn-2 {
+        0%,
+        82.9% {
+          opacity: 0;
+        }
+        83%,
+        100% {
+          opacity: 1;
+        }
+      }
+      @keyframes rxn-3 {
+        0%,
+        84.9% {
+          opacity: 0;
+        }
+        85%,
+        100% {
+          opacity: 1;
+        }
+      }
+
+      /* ---------- HERO (Tape Anchored) ---------- */
+      .hero-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+      .hero-inner {
+        padding: 44px var(--pad-x) 56px;
+        position: relative;
+      }
+      .hero-inner .nav-row {
+        margin-bottom: 56px;
+        color: hsl(var(--muted));
+      }
+      .hero-inner .nav-row .brand {
+        color: hsl(var(--ink));
+      }
+      .hero-inner .nav-row .brand svg {
+        color: hsl(var(--gold));
+      }
+      .hero-stage {
+        display: grid;
+        grid-template-columns: 0.95fr 1.1fr;
+        gap: 80px;
+        align-items: start;
+        position: relative;
+        overflow: hidden;
+      }
+      .hero-stage h1 {
+        margin-bottom: 24px;
+      }
+      .hero-stage .actions {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        margin-top: 8px;
+      }
+      /* Tape Anchored thread — comes in from the left and terminates at
+     Ariadne's row. The persona row already uses background-color for
+     the highlight-flash, so the thread lives on ::after (a pseudo-
+     element whose only job is to draw the line + tick label). */
+      .hero-right .tl-row.persona::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        right: 100%;
+        width: 800px;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.18) 50%,
+          hsl(var(--gold) / 0.6) 88%,
+          hsl(var(--gold)) 100%
+        );
+        transform: translateY(-0.5px);
+        pointer-events: none;
+        opacity: 0;
+        animation: thread-life var(--cycle) linear 1 forwards;
+      }
+      @keyframes thread-life {
+        0%,
+        71% {
+          opacity: 0;
+        }
+        73%,
+        100% {
+          opacity: 1;
+        }
+      }
+
+      /* ---------- MEMO GRAPH ---------- */
+      .memo-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        padding: 64px var(--pad-x) 80px;
+        margin-top: 24px;
+        position: relative;
+        overflow: hidden;
+      }
+      .memo-shell h2 {
+        font-family: var(--font-display);
+        font-weight: 300;
+        font-size: clamp(28px, 3.4vw, 40px);
+        line-height: 1.1;
+        letter-spacing: -0.015em;
+        margin: 0 0 14px;
+        max-width: 720px;
+      }
+      .memo-shell h2 .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .memo-shell .lede {
+        max-width: 580px;
+        margin-bottom: 56px;
+      }
+
+      /* ---------- THREE-PART MEMORY FLOW ---------- */
+      .memory-flow {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 32px;
+        align-items: start;
+        position: relative;
+      }
+
+      .memory-col {
+        min-width: 0;
+        position: relative;
+      }
+      /* Small right-arrow connectors between panels. Sits in the column gap and
+     points into the following column. Surrounding noise messages in Panel 1
+     do the work of "this slice was picked out"; the arrow just signals flow. */
+      .memory-col + .memory-col::before {
+        content: "";
+        position: absolute;
+        left: -26px;
+        top: 220px;
+        width: 22px;
+        height: 12px;
+        background: no-repeat center/contain
+          url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12' fill='none' stroke='hsl(38 65%25 50%25 / 0.75)' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M 1 6 L 21 6 M 21 6 L 16 2 M 21 6 L 16 10'/></svg>");
+        pointer-events: none;
+        opacity: 0;
+        animation: arrow-fade-in 0.3s ease-out 0.5s forwards;
+      }
+      .memory-col + .memory-col + .memory-col::before {
+        animation-delay: 0.85s;
+      }
+      @keyframes arrow-fade-in {
+        to {
+          opacity: 1;
+        }
+      }
+      .memory-step {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        background: hsl(var(--paper));
+        padding: 4px 10px 4px 0;
+        display: inline-block;
+        position: relative;
+        z-index: 1;
+        margin-bottom: 12px;
+      }
+      .memory-col h3.memory-heading {
+        font-family: var(--font-display);
+        font-weight: 400;
+        font-size: 18px;
+        line-height: 1.3;
+        color: hsl(var(--ink));
+        margin: 0 0 18px;
+        letter-spacing: -0.005em;
+      }
+      .memory-card {
+        background: hsl(var(--paper));
+        border: 1px solid hsl(var(--line));
+        border-radius: 6px;
+        padding: 18px;
+        box-shadow: 0 1px 0 hsl(var(--ink) / 0.03);
+      }
+      .memory-caption {
+        margin: 14px 2px 0;
+        font-size: 12.5px;
+        line-height: 1.55;
+        color: hsl(var(--muted));
+        max-width: 320px;
+      }
+
+      /* Part 1 — Capture: 5 messages, three of them lifted via opacity/weight. */
+      .capture-list {
+        position: relative;
+        padding: 6px 0;
+      }
+
+      .capture-row {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        gap: 10px;
+        padding: 6px 0 6px 4px;
+        align-items: start;
+        transition: opacity 0.3s ease-out;
+      }
+      .capture-row.is-noise {
+        opacity: 0.42;
+      }
+      .capture-row .c-avatar {
+        width: 24px;
+        height: 24px;
+        border-radius: 5px;
+        display: grid;
+        place-items: center;
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+      }
+      .capture-row .c-avatar.av-maya {
+        background: hsl(20 35% 84%);
+        color: hsl(20 40% 28%);
+      }
+      .capture-row .c-avatar.av-jordan {
+        background: hsl(200 35% 84%);
+        color: hsl(200 40% 28%);
+      }
+      .capture-row .c-avatar.av-sam {
+        background: hsl(28 30% 86%);
+        color: hsl(28 30% 26%);
+      }
+      .capture-row .c-body {
+        min-width: 0;
+      }
+      .capture-row .c-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 1px;
+      }
+      .capture-row .c-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: hsl(var(--ink));
+      }
+      .capture-row .c-time {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: hsl(var(--muted));
+      }
+      .capture-row .c-text {
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: hsl(var(--ink-soft));
+      }
+      .capture-row.is-selected .c-text {
+        color: hsl(var(--ink));
+      }
+
+      /* Part 2 — Hold: a decision memo with structured fields */
+      .decision-memo {
+        border-color: hsl(var(--gold) / 0.55);
+        background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 70%);
+        padding: 18px 18px 16px;
+      }
+      .decision-memo .dm-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 8px;
+      }
+      .decision-memo .dm-kicker .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: hsl(var(--gold));
+      }
+      .decision-memo .dm-title {
+        font-family: var(--font-display);
+        font-weight: 500;
+        font-size: 16px;
+        line-height: 1.3;
+        color: hsl(var(--ink));
+        letter-spacing: -0.005em;
+        margin-bottom: 14px;
+      }
+      .decision-memo .dm-field {
+        padding-top: 10px;
+        border-top: 1px solid hsl(var(--line) / 0.7);
+      }
+      .decision-memo .dm-field + .dm-field {
+        margin-top: 10px;
+      }
+      .decision-memo .dm-label {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin-bottom: 4px;
+      }
+      .decision-memo .dm-body {
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: hsl(var(--ink-soft));
+      }
+      .decision-memo .dm-source {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: hsl(var(--ink-soft));
+      }
+      .decision-memo .dm-source .ref-pill {
+        font-size: 10.5px;
+      }
+
+      /* Part 3 — Return: mini-stream where Ariadne lifts the memo */
+      .recall-meta {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin-bottom: 12px;
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+      }
+      .recall-meta .hash {
+        color: hsl(var(--gold));
+      }
+      .recall-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .recall-row {
+        display: grid;
+        grid-template-columns: 24px 1fr;
+        gap: 10px;
+        align-items: start;
+      }
+      .recall-row .r-avatar {
+        width: 24px;
+        height: 24px;
+        border-radius: 5px;
+        display: grid;
+        place-items: center;
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        font-weight: 600;
+      }
+      .recall-row .r-avatar.av-maya {
+        background: hsl(20 35% 84%);
+        color: hsl(20 40% 28%);
+      }
+      .recall-row .r-avatar.av-ariadne {
+        background: hsl(var(--gold) / 0.18);
+        color: hsl(var(--gold));
+      }
+      .recall-row .r-avatar.av-ariadne svg {
+        width: 16px;
+        height: 16px;
+      }
+      .recall-row .r-head {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-bottom: 2px;
+      }
+      .recall-row .r-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: hsl(var(--ink));
+      }
+      .recall-row.persona .r-name {
+        color: hsl(var(--gold));
+      }
+      .recall-row .r-time {
+        font-family: var(--font-mono);
+        font-size: 10px;
+        color: hsl(var(--muted));
+      }
+      .recall-row .r-text {
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: hsl(var(--ink-soft));
+      }
+      .recall-memo-card {
+        margin-top: 8px;
+        border: 1px solid hsl(var(--gold) / 0.45);
+        background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 70%);
+        border-radius: 5px;
+        padding: 10px 12px;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+      .recall-memo-card .rmc-icon {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        background: hsl(var(--gold) / 0.18);
+        color: hsl(var(--gold));
+        display: grid;
+        place-items: center;
+      }
+      .recall-memo-card .rmc-icon svg {
+        width: 13px;
+        height: 13px;
+      }
+      .recall-memo-card .rmc-body {
+        min-width: 0;
+      }
+      .recall-memo-card .rmc-kicker {
+        font-family: var(--font-mono);
+        font-size: 9px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 1px;
+      }
+      .recall-memo-card .rmc-title {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: hsl(var(--ink));
+        line-height: 1.3;
+      }
+      .recall-memo-card .rmc-meta {
+        font-family: var(--font-mono);
+        font-size: 9.5px;
+        color: hsl(var(--muted));
+        letter-spacing: 0.1em;
+        white-space: nowrap;
+      }
+
+      @media (max-width: 880px) {
+        .memory-flow {
+          grid-template-columns: 1fr;
+          gap: 36px;
+        }
+        .memory-flow::before,
+        .memory-flow::after {
+          display: none;
+        }
+      }
+
+      /* ---------- OPEN SOURCE SECTION ---------- */
+      .os-tenets {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 28px;
+        margin: 32px 0 28px;
+      }
+      .os-tenet {
+        min-width: 0;
+      }
+      .os-tenet h4 {
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin: 0 0 8px;
+        font-weight: 500;
+      }
+      .os-tenet p {
+        margin: 0;
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: hsl(var(--ink-soft));
+        max-width: 320px;
+      }
+
+      .os-terminal {
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--line));
+        border-radius: 6px;
+        padding: 18px 22px;
+        font-family: var(--font-mono);
+        font-size: 12.5px;
+        line-height: 1.8;
+        color: hsl(var(--ink-soft));
+        margin-top: 4px;
+        overflow-x: auto;
+      }
+      .os-terminal .row {
+        display: block;
+        white-space: pre;
+      }
+      .os-terminal .prompt {
+        color: hsl(var(--gold));
+        margin-right: 10px;
+        user-select: none;
+      }
+      .os-terminal .cmd {
+        color: hsl(var(--ink));
+      }
+      .os-terminal .arg {
+        color: hsl(var(--ink-soft));
+      }
+      .os-terminal .out {
+        color: hsl(var(--muted));
+        padding-left: 20px;
+        display: block;
+      }
+      .os-terminal .cmt {
+        color: hsl(var(--muted));
+        font-style: italic;
+        padding-left: 4px;
+      }
+
+      .os-cta {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 22px;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        text-decoration: none;
+        border-bottom: 1px solid hsl(var(--gold) / 0.4);
+        padding-bottom: 2px;
+      }
+      .os-cta:hover {
+        border-bottom-color: hsl(var(--gold));
+      }
+      .os-cta .arr {
+        transition: transform 0.2s ease-out;
+      }
+      .os-cta:hover .arr {
+        transform: translateX(3px);
+      }
+
+      @media (max-width: 880px) {
+        .os-tenets {
+          grid-template-columns: 1fr;
+          gap: 22px;
+        }
+        .os-terminal {
+          font-size: 11.5px;
+        }
+      }
+
+      /* ---------- BRING YOUR OWN AGENT SECTION ---------- */
+      /* Reuses .os-tenets / .os-tenet / .os-cta from the section above
+     so the visual rhythm stays consistent. Unique pieces: a display
+     pull-quote and a thin "works today with" agent strip. */
+      .byo-quote {
+        margin: 8px 0 18px;
+        padding: 28px 30px;
+        background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 80%);
+        border-left: 2px solid hsl(var(--gold));
+        border-radius: 0 6px 6px 0;
+        font-family: var(--font-display);
+        font-size: clamp(20px, 2.2vw, 26px);
+        line-height: 1.35;
+        letter-spacing: -0.005em;
+        font-weight: 300;
+        font-style: italic;
+        color: hsl(var(--ink));
+        max-width: 720px;
+      }
+      .byo-quote .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+        font-style: normal;
+      }
+      .byo-agents {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+        margin: 16px 0 4px;
+        font-family: var(--font-mono);
+        font-size: 10.5px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .byo-agents .label {
+        color: hsl(var(--ink-soft));
+        margin-right: 4px;
+      }
+      .byo-agents .chip {
+        padding: 4px 12px;
+        border: 1px solid hsl(var(--line));
+        border-radius: 18px;
+        background: hsl(var(--paper));
+        color: hsl(var(--ink-soft));
+      }
+      .byo-agents .chip.next {
+        color: hsl(var(--gold));
+        border-color: hsl(var(--gold) / 0.45);
+        background: hsl(var(--gold) / 0.06);
+      }
+
+      @media (max-width: 880px) {
+        .byo-quote {
+          padding: 22px 24px;
+        }
+      }
+
+      /* ---------- WAITLIST CTA STRIP ---------- */
+      .cta-shell {
+        background: hsl(var(--paper));
+        border-radius: 4px;
+        padding: 56px var(--pad-x);
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .cta-shell h3 {
+        font-family: var(--font-display);
+        font-weight: 300;
+        font-size: clamp(26px, 2.8vw, 34px);
+        line-height: 1.15;
+        letter-spacing: -0.015em;
+        margin: 0;
+      }
+      .cta-shell h3 .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .cta-shell .form-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+      .cta-shell input {
+        flex: 1;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--line));
+        border-radius: 2px;
+        padding: 12px 14px;
+        font-family: var(--font-display);
+        font-size: 14.5px;
+        color: hsl(var(--ink));
+        outline: none;
+      }
+      .cta-shell input::placeholder {
+        color: hsl(var(--muted));
+      }
+      .cta-shell .quiet {
+        margin-top: 12px;
+        display: block;
+      }
+
+      .footer {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 32px 48px 56px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: hsl(var(--muted));
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .footer a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .footer .ln {
+        display: flex;
+        gap: 24px;
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="threa-mark" viewBox="0 0 100 100">
+          <path
+            d="M 50 24 C 64 30, 72 42, 72 50 C 72 58, 64 70, 50 76 C 36 70, 28 58, 28 50 C 28 42, 36 30, 50 24 Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+          />
+          <path
+            d="M 50 14 C 47 26, 46 38, 50 50 C 54 62, 53 74, 50 86"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="ariadne-icon" viewBox="0 0 100 100">
+          <path
+            d="M 50 18 C 28 18, 20 35, 28 48 C 36 61, 50 55, 50 50 C 50 45, 64 39, 72 48 C 80 57, 72 70, 50 82 C 28 70, 20 57, 28 48"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="quote-icon" viewBox="0 0 24 24">
+          <path
+            d="M 6 8 L 6 14 C 6 16 4 17 4 17 L 5 18 C 8 17 10 15 10 11 L 10 8 Z M 15 8 L 15 14 C 15 16 13 17 13 17 L 14 18 C 17 17 19 15 19 11 L 19 8 Z"
+            fill="currentColor"
+          />
+        </symbol>
+        <symbol id="check-icon" viewBox="0 0 24 24">
+          <path
+            d="M 5 12 L 10 17 L 19 7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.4"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="spinner-icon" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.25" />
+          <path
+            d="M 12 4 A 8 8 0 0 1 20 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <!-- composer action-bar icons (Lucide-style) -->
+        <symbol id="icon-maximize" viewBox="0 0 24 24">
+          <polyline
+            points="15 3 21 3 21 9"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <polyline
+            points="9 21 3 21 3 15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+        </symbol>
+        <symbol id="icon-at" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2" />
+          <path
+            d="M 16 8 V 13 A 3 3 0 0 0 22 13 V 12 A 10 10 0 1 0 18.08 19.94"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="icon-slash" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" />
+          <line
+            x1="4.93"
+            y1="4.93"
+            x2="19.07"
+            y2="19.07"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="icon-paperclip" viewBox="0 0 24 24">
+          <path
+            d="M 21.44 11.05 L 12.25 20.24 A 6 6 0 0 1 3.76 11.75 L 12.33 3.18 A 4 4 0 0 1 17.99 8.84 L 9.41 17.41 A 2 2 0 0 1 6.58 14.58 L 15.07 6.1"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="icon-mic" viewBox="0 0 24 24">
+          <rect x="9" y="2" width="6" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="2" />
+          <path
+            d="M 19 10 V 12 A 7 7 0 0 1 5 12 V 10 M 12 19 V 23"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <!-- FileEdit (Lucide) — stashed-drafts trigger in the real composer. -->
+        <symbol id="icon-fileedit" viewBox="0 0 24 24">
+          <path
+            d="M 4 13.5 V 4 A 2 2 0 0 1 6 2 H 14.5 L 20 7.5 V 20 A 2 2 0 0 1 18 22 H 12.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <polyline
+            points="14 2 14 8 20 8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M 10.42 12.61 A 2.1 2.1 0 1 1 13.39 15.58 L 7.95 21 L 4 22 L 4.99 18.05 L 10.42 12.61 Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <!-- CalendarClock (Lucide) — scheduled-messages trigger. -->
+        <symbol id="icon-calendarclock" viewBox="0 0 24 24">
+          <path
+            d="M 21 7.5 V 6 A 2 2 0 0 0 19 4 H 5 A 2 2 0 0 0 3 6 V 20 A 2 2 0 0 0 5 22 H 8.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path d="M 16 2 V 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <path d="M 8 2 V 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <path d="M 3 10 H 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <circle cx="16" cy="16" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+          <path
+            d="M 17.5 17.5 L 16 16.25 V 14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header class="doc-header">
+      <h1>Threa · Tape Anchored · deep dive · v10.1</h1>
+      <p>
+        Single-concept doc, narrowed to Tape Anchored. The chat widget now mirrors the real product: messages don't
+        float in — they appear and flash gold for 2s (the
+        <code style="font-family: var(--font-mono); font-size: 13px">animate-highlight-flash</code> behaviour from
+        <code style="font-family: var(--font-mono); font-size: 13px">tailwind.config.js</code>);
+        <code style="font-family: var(--font-mono); font-size: 13px">@ariadne&nbsp;do&nbsp;you&nbsp;know?</code>
+        is typed inside the composer, not inline; the send button arms, fires, and Alex's row drops into the timeline;
+        the session trace is a single card that transitions in place (<em style="font-style: normal; font-weight: 500"
+          >Ariadne is working… · 0 → 5 steps</em
+        >
+        → <em style="font-style: normal; font-weight: 500">Session complete · 5 steps · 3.7s</em>); Ariadne replies with
+        a quote-card reference and reactions just appear. Below the hero: a memo graph showing what gets extracted and
+        held after the conversation. Copy is filler — you'll write the real thing.
+      </p>
+    </header>
+
+    <!-- ============================================================
+     HERO — Tape Anchored, animated
+     ============================================================ -->
+    <div class="frame">
+      <div class="hero-shell">
+        <div class="hero-inner">
+          <div class="nav-row">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="nav-links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div class="hero-stage">
+            <div>
+              <h1 class="h-display">
+                Team chat that<br />
+                <span class="accent">holds the why</span>.
+              </h1>
+              <p class="lede">
+                A workplace chat — channels, threads, DMs — built with memory at its core. Every decision and the
+                reasoning behind it stays with the conversation, surfaced when it matters again.
+              </p>
+              <div class="actions">
+                <a class="cta" href="#waitlist">Join the waitlist</a>
+                <span class="quiet">/ vetted · early 2026</span>
+              </div>
+            </div>
+            <div class="hero-right">
+              <div class="tl">
+                <div class="tl-caption">
+                  <span class="hash">#api-v3</span>
+                  <span class="meta">/ Friday · 5 messages</span>
+                </div>
+
+                <!-- Top-anchored message list — messages stack downward and the
+                 composer (positioned absolutely below) overlays the bottom,
+                 so the latest message slides UNDER the composer. The
+                 inline pin-scroll script keeps the bottom in view as new
+                 rows expand. -->
+                <div class="tl-messages">
+                  <!-- 1: Maya raises the question (static, already in the channel) -->
+                  <div class="tl-row">
+                    <div class="tl-avatar av-maya">MR</div>
+                    <div class="tl-body">
+                      <div class="tl-head-line">
+                        <span class="tl-name">Maya Reyes</span>
+                        <span class="tl-time" data-time="maya">Friday 14:03</span>
+                      </div>
+                      <div class="tl-text">
+                        Picking the auth refactor back up next sprint — anyone remember why we paused it in March?
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 2: Jordan recalls vaguely — enters at 19% with a 2s gold flash -->
+                  <div class="tl-row pop-jordan">
+                    <div class="tl-avatar av-jordan">JL</div>
+                    <div class="tl-body">
+                      <div class="tl-head-line">
+                        <span class="tl-name">Jordan Lee</span>
+                        <span class="tl-time" data-time="jordan">Friday 14:04</span>
+                      </div>
+                      <div class="tl-text">I'm pretty sure there were open concerns but I can't find the thread.</div>
+                    </div>
+                  </div>
+
+                  <!-- 3: Alex's message — sent from the composer below. Row
+                 enters at 49% at the same moment the composer clears. -->
+                  <div class="tl-row pop-alex">
+                    <div class="tl-avatar av-alex">AP</div>
+                    <div class="tl-body">
+                      <div class="tl-head-line">
+                        <span class="tl-name">Alex Park</span>
+                        <span class="tl-time" data-time="alex">Friday 14:05</span>
+                      </div>
+                      <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+                    </div>
+                  </div>
+
+                  <!-- 4: Trace card — running ↔ completed in place
+                 (matches AgentSessionEvent.tsx structure exactly). -->
+                  <a class="trace-card" href="#">
+                    <div class="trace-icon-slot">
+                      <div class="trace-icon trace-icon-running" aria-hidden="true">
+                        <svg><use href="#spinner-icon" /></svg>
+                      </div>
+                      <div class="trace-icon trace-icon-done" aria-hidden="true">
+                        <svg><use href="#check-icon" /></svg>
+                      </div>
+                    </div>
+                    <div class="trace-main">
+                      <div class="trace-row trace-row-running">
+                        <div class="trace-title">Ariadne is working…</div>
+                        <div class="trace-sub">
+                          <span class="num"><span class="trace-step-count"></span></span> of 5 steps
+                        </div>
+                      </div>
+                      <div class="trace-row trace-row-done">
+                        <div class="trace-title">Session complete</div>
+                        <div class="trace-sub">5 steps · 3.7s</div>
+                      </div>
+                    </div>
+                    <div class="trace-time" data-time-short="ariadne">14:05</div>
+                  </a>
+
+                  <!-- 5: Ariadne replies with quote card -->
+                  <div class="tl-row persona pop-ariadne">
+                    <div class="tl-avatar av-ariadne">
+                      <svg><use href="#ariadne-icon" /></svg>
+                    </div>
+                    <div class="tl-body">
+                      <div class="tl-head-line">
+                        <span class="tl-name">Ariadne</span>
+                        <span class="tl-time" data-time="ariadne">Friday 14:05</span>
+                      </div>
+                      <div class="tl-text">
+                        You held the refactor for Jordan's review of the token-rotation model. Their concern from Mar
+                        12:
+                      </div>
+
+                      <div class="quote-card">
+                        <div class="qm" aria-hidden="true">
+                          <svg><use href="#quote-icon" /></svg>
+                        </div>
+                        <div class="q-author">
+                          <div class="q-avatar av-jordan">JL</div>
+                          <div class="q-name">Jordan Lee</div>
+                          <div class="q-time">Mar 12 · 11:42</div>
+                        </div>
+                        <div class="q-body">
+                          "Hold on — I'm not comfortable changing the auth boundary without working through the
+                          token-rotation flow first. Can we pause this until I've reviewed the design?"
+                        </div>
+                      </div>
+
+                      <div class="tl-text" style="margin-top: 8px">
+                        Original thread in <span class="ref-pill">#api-v3</span>.
+                      </div>
+
+                      <div class="reactions">
+                        <span class="rxn rxn-1"><span class="em">👍</span><span class="num">3</span></span>
+                        <span class="rxn rxn-2"><span class="em">🙏</span><span class="num">2</span></span>
+                        <span class="rxn rxn-3"><span class="em">💡</span><span class="num">1</span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <!-- /.tl-messages -->
+
+                <!-- Composer — types @ariadne, fires send, then waits. Mirrors the
+                 real MessageComposer (apps/frontend/src/components/composer):
+                 hint on the left, icon action row + gold send on the right,
+                 keyboard shortcut hint sits OUTSIDE below. -->
+                <div class="composer" aria-label="Message composer">
+                  <div class="composer-editor">
+                    <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@ariadne</span></span>
+                    <input
+                      class="composer-input"
+                      type="text"
+                      autocomplete="off"
+                      spellcheck="false"
+                      readonly
+                      tabindex="-1"
+                      inputmode="none"
+                      placeholder="Message #api-v3"
+                      aria-label="Message"
+                      data-trail=" do you know?"
+                    />
+                  </div>
+                  <div class="composer-bar">
+                    <span class="composer-hint">Select text to format</span>
+                    <div class="composer-actions">
+                      <button type="button" class="cb cb-maximize" aria-label="Expand">
+                        <svg><use href="#icon-maximize" /></svg>
+                      </button>
+                      <button type="button" class="cb cb-aa" aria-label="Formatting">Aa</button>
+                      <button type="button" class="cb cb-emoji" aria-label="Emoji"><span>😊</span></button>
+                      <button type="button" class="cb" aria-label="Mention">
+                        <svg><use href="#icon-at" /></svg>
+                      </button>
+                      <button type="button" class="cb" aria-label="Command">
+                        <svg><use href="#icon-slash" /></svg>
+                      </button>
+                      <button type="button" class="cb" aria-label="Attach">
+                        <svg><use href="#icon-paperclip" /></svg>
+                      </button>
+                      <button type="button" class="cb" aria-label="Voice">
+                        <svg><use href="#icon-mic" /></svg>
+                      </button>
+                      <button type="button" class="cb" aria-label="Drafts">
+                        <svg><use href="#icon-fileedit" /></svg>
+                      </button>
+                      <button type="button" class="cb" aria-label="Schedule">
+                        <svg><use href="#icon-calendarclock" /></svg>
+                      </button>
+                      <div class="composer-send" aria-label="Send">
+                        <svg viewBox="0 0 24 24">
+                          <path
+                            d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="section-notes">
+        <em>Anchored to the real components:</em>
+        rows = <code style="font-family: var(--font-mono)">message-event.tsx</code> (instant insert + 2s gold flash,
+        persona stripe always present), composer =
+        <code style="font-family: var(--font-mono)">message-composer.tsx</code> (16px-rounded card, ArrowUp send button
+        arms when content is typed), trace =
+        <code style="font-family: var(--font-mono)">agent-session-event.tsx</code> (single card, running → completed in
+        place: spinner → green check, counts ticking 0→5), reactions =
+        <code style="font-family: var(--font-mono)">message-reactions.tsx</code>
+        (rounded-full pills, instant insert).
+        <em>Cycle:</em> 22s — Maya · Jordan (delayed) · composer-types · send · trace (working → complete) · Ariadne
+        with thread &amp; quote · reactions. Stage fades to empty at 94–100% so the loop boundary is invisible.
+      </p>
+    </div>
+
+    <!-- ============================================================
+     MEMORY FLOW — capture · hold · return
+     Mirrors the real mechanic: extract a decision from the
+     conversation, hold it as a memo, return it when the topic
+     comes back. No invented graph relations.
+     ============================================================ -->
+    <div class="frame" style="padding-top: 0">
+      <div class="section-meta">
+        <strong>02</strong>
+        <span>How memory works</span>
+        <span>· capture · hold · return</span>
+      </div>
+      <div class="memo-shell">
+        <h2>Conversation becomes <span class="accent">memory</span>.</h2>
+        <p class="lede">
+          Threa reads the conversation, lifts the segment that carries a decision, and holds it as a memo — paraphrased
+          and sourced — so it can come back when the topic does.
+        </p>
+
+        <div class="memory-flow">
+          <!-- ============ 01 · CAPTURE ============ -->
+          <div class="memory-col">
+            <div class="memory-step">01 / Capture</div>
+            <h3 class="memory-heading">A decision, lifted from the noise.</h3>
+
+            <div
+              class="memory-card capture-list"
+              aria-label="Five-message slice; the three middle messages carry the decision."
+            >
+              <!-- 1: unrelated chatter -->
+              <div class="capture-row is-noise">
+                <div class="c-avatar av-sam">SP</div>
+                <div class="c-body">
+                  <div class="c-head">
+                    <span class="c-name">Sam Patel</span>
+                    <span class="c-time">Mar 12 · 11:38</span>
+                  </div>
+                  <div class="c-text">Lunch order — pasta or pizza, last call.</div>
+                </div>
+              </div>
+
+              <!-- 2: selected — Jordan asks to pause -->
+              <div class="capture-row is-selected">
+                <div class="c-avatar av-jordan">JL</div>
+                <div class="c-body">
+                  <div class="c-head">
+                    <span class="c-name">Jordan Lee</span>
+                    <span class="c-time">Mar 12 · 11:42</span>
+                  </div>
+                  <div class="c-text">
+                    Hold on — I'm not comfortable changing the auth boundary without working through the token-rotation
+                    flow first. Can we pause this until I've reviewed the design?
+                  </div>
+                </div>
+              </div>
+
+              <!-- 3: selected — Maya agrees -->
+              <div class="capture-row is-selected">
+                <div class="c-avatar av-maya">MR</div>
+                <div class="c-body">
+                  <div class="c-head">
+                    <span class="c-name">Maya Reyes</span>
+                    <span class="c-time">Mar 12 · 11:44</span>
+                  </div>
+                  <div class="c-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
+                </div>
+              </div>
+
+              <!-- 4: selected — Jordan names the next step -->
+              <div class="capture-row is-selected">
+                <div class="c-avatar av-jordan">JL</div>
+                <div class="c-body">
+                  <div class="c-head">
+                    <span class="c-name">Jordan Lee</span>
+                    <span class="c-time">Mar 12 · 11:46</span>
+                  </div>
+                  <div class="c-text">
+                    A walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of
+                    the 18th.
+                  </div>
+                </div>
+              </div>
+
+              <!-- 5: unrelated chatter -->
+              <div class="capture-row is-noise">
+                <div class="c-avatar av-sam">SP</div>
+                <div class="c-body">
+                  <div class="c-head">
+                    <span class="c-name">Sam Patel</span>
+                    <span class="c-time">Mar 12 · 11:47</span>
+                  </div>
+                  <div class="c-text">Pizza it is, ordering now.</div>
+                </div>
+              </div>
+            </div>
+
+            <p class="memory-caption">
+              The middle three messages carry the call and its reason. Threa lifts that segment out and leaves the rest
+              of the channel alone.
+            </p>
+          </div>
+
+          <!-- ============ 02 · HOLD ============ -->
+          <div class="memory-col">
+            <div class="memory-step">02 / Hold</div>
+            <h3 class="memory-heading">A memo, not a transcript.</h3>
+
+            <div class="memory-card decision-memo">
+              <div class="dm-kicker"><span class="dot"></span> Decision · Mar 12</div>
+              <div class="dm-title">Auth refactor held pending token-rotation review.</div>
+
+              <div class="dm-field">
+                <div class="dm-label">Why</div>
+                <div class="dm-body">
+                  Jordan asked to pause the v3 auth boundary until the rotation flow has been walked through. The
+                  concern was migrating existing sessions without a forced re-auth wave.
+                </div>
+              </div>
+
+              <div class="dm-field">
+                <div class="dm-label">Next</div>
+                <div class="dm-body">Design walkthrough with Jordan, week of Apr 18.</div>
+              </div>
+
+              <div class="dm-field">
+                <div class="dm-label">Source</div>
+                <div class="dm-body dm-source">
+                  3 messages · <span class="ref-pill">#api-v3</span> · Jordan Lee · Maya Reyes
+                </div>
+              </div>
+            </div>
+
+            <p class="memory-caption">
+              Stored as one paraphrased artifact that points back to the messages it came from. It can be opened,
+              linked, edited.
+            </p>
+          </div>
+
+          <!-- ============ 03 · RETURN ============ -->
+          <div class="memory-col is-return">
+            <div class="memory-step">03 / Return</div>
+            <h3 class="memory-heading">Back when the topic comes back.</h3>
+
+            <div class="memory-card">
+              <div class="recall-meta">
+                <span class="hash">#sprint-planning</span>
+                <span>/ May 7 · two months later</span>
+              </div>
+
+              <div class="recall-list">
+                <div class="recall-row">
+                  <div class="r-avatar av-maya">MR</div>
+                  <div class="r-body">
+                    <div class="r-head">
+                      <span class="r-name">Maya Reyes</span>
+                      <span class="r-time">May 7 · 09:12</span>
+                    </div>
+                    <div class="r-text">We're picking auth back up this sprint — what was the hold on, again?</div>
+                  </div>
+                </div>
+
+                <div class="recall-row persona">
+                  <div class="r-avatar av-ariadne">
+                    <svg><use href="#ariadne-icon" /></svg>
+                  </div>
+                  <div class="r-body">
+                    <div class="r-head">
+                      <span class="r-name">Ariadne</span>
+                      <span class="r-time">May 7 · 09:12</span>
+                    </div>
+                    <div class="r-text">
+                      You paused v3 in March pending Jordan's review of the rotation flow. Wei flagged a related
+                      mobile-session concern in April that didn't make the original hold — worth folding in before the
+                      walkthrough.
+                    </div>
+
+                    <a class="recall-memo-card" href="#">
+                      <div class="rmc-icon">
+                        <svg><use href="#quote-icon" /></svg>
+                      </div>
+                      <div class="rmc-body">
+                        <div class="rmc-kicker">Memo · Decision</div>
+                        <div class="rmc-title">Auth refactor held pending token-rotation review</div>
+                      </div>
+                      <div class="rmc-meta">Mar 12</div>
+                    </a>
+
+                    <a class="recall-memo-card" href="#">
+                      <div class="rmc-icon">
+                        <svg><use href="#quote-icon" /></svg>
+                      </div>
+                      <div class="rmc-body">
+                        <div class="rmc-kicker">Memo · Concern · #mobile-platform</div>
+                        <div class="rmc-title">Session migration needs device-bound refresh handling</div>
+                      </div>
+                      <div class="rmc-meta">Apr 02</div>
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <p class="memory-caption">
+              When the question comes back, the memo comes back with it — carried in by Ariadne or surfaced by a search.
+            </p>
+          </div>
+        </div>
+      </div>
+      <p class="section-notes">
+        <em>What's shown here is the real mechanic, not a metaphor.</em>
+        Threa extracts decision-bearing segments from a conversation (boundary extraction in the backend), holds each as
+        a memo that points back to its source messages, and surfaces it when a related question returns. There's no
+        persistent graph of "related memos" on day one — relations live implicitly through the source-message links and
+        Ariadne's retrieval. Copy and timestamps are illustrative; the components mirror the real composer / message /
+        persona rendering above.
+      </p>
+    </div>
+
+    <!-- ============================================================
+     OPEN SOURCE — built in the open, forkable, self-hostable
+     Inspiration: t3.chat, Cal.com, Plausible, Supabase — leading
+     with openness as a feature, not a footnote. Tone is
+     dev-credible (real commands, real claims) without star-count
+     theatre we don't have yet on day one.
+     ============================================================ -->
+    <div class="frame" id="open-source" style="padding-top: 0">
+      <div class="section-meta">
+        <strong>03</strong>
+        <span>Open source</span>
+        <span>· fork · host · audit</span>
+      </div>
+      <div class="memo-shell">
+        <h2>Open source. <span class="accent">Your knowledge stays yours.</span></h2>
+        <p class="lede">
+          Threa is built in the open. Read the code, fork it, run it on your own infra. The memory you build belongs to
+          you — not to a vendor that can change its terms.
+        </p>
+
+        <div class="os-tenets">
+          <div class="os-tenet">
+            <h4>Public source</h4>
+            <p>
+              Frontend, backend, control-plane, infra. All of it on GitHub — including the wrong turns and the design
+              explorations.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Self-hostable</h4>
+            <p>
+              Run it on your own hardware. The same stack we deploy is the stack you'd run — same code, same migrations,
+              same defaults.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Built in the open</h4>
+            <p>Roadmap, design notes, decisions, retros — public. Open source the process, not just the artifact.</p>
+          </div>
+        </div>
+
+        <div class="os-terminal" aria-label="Example commands to run Threa locally.">
+          <span class="row"
+            ><span class="prompt">$</span><span class="cmd">git clone</span>
+            <span class="arg">github.com/threa/threa.git</span></span
+          >
+          <span class="row"
+            ><span class="prompt">$</span><span class="cmd">cd</span> <span class="arg">threa</span>
+            <span class="cmd">&amp;&amp;</span> <span class="cmd">bun install</span></span
+          >
+          <span class="row"><span class="prompt">$</span><span class="cmd">bun run dev</span></span>
+          <span class="out">→ http://localhost:5173</span>
+          <span class="row"><span class="cmt"># your data, your infra, your call.</span></span>
+        </div>
+
+        <a class="os-cta" href="#">Browse the source <span class="arr">→</span></a>
+      </div>
+      <p class="section-notes">
+        <em>Repo URL is a placeholder for this exploration.</em>
+        The real org, license, and self-host guide land with the first public tag. Day one ships the code, a Docker
+        Compose for the dependencies, and a step-by-step bring-up doc — not a half-baked "coming soon" page.
+      </p>
+    </div>
+
+    <!-- ============================================================
+     BRING YOUR OWN AGENT — data portability + BYO agent
+     The contrarian beat: every other platform is racing to lock
+     you into their built-in agent. Threa ships a good one
+     (Ariadne) AND makes it trivial to walk your memory over to
+     the agent you already pay for. The starter-motor framing is
+     the headline idea.
+     ============================================================ -->
+    <div class="frame" id="byo-agent" style="padding-top: 0">
+      <div class="section-meta">
+        <strong>04</strong>
+        <span>Bring your own agent</span>
+        <span>· export · open · yours</span>
+      </div>
+      <div class="memo-shell">
+        <h2>Your data. Your agent. <span class="accent">Yours to take.</span></h2>
+        <p class="lede">
+          Threa ships Ariadne — fast, contextual, useful from day one. But your real leverage is the agent you already
+          pay for. Bring your Claude, your Cursor, your custom stack. Threa's job is to make sure the memory it builds
+          for you is something <em>you</em> can pick up and carry — clean enough to feed straight to whatever agent you
+          want.
+        </p>
+
+        <div class="os-tenets">
+          <div class="os-tenet">
+            <h4>Data, exportable</h4>
+            <p>
+              Memos as JSON. Messages as markdown. Streams as transcripts. Export from the UI or the API — no
+              CSV-purgatory, no support tickets, no proprietary lock-in.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Agent-agnostic</h4>
+            <p>
+              An open read API over your workspace. Point whatever agent you trust at it — they see the same memory
+              Ariadne does, with the same source links and timestamps.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Yours, not ours</h4>
+            <p>
+              We don't train on your data. We don't sell it. We don't borrow it. Your workspace is private to you and
+              the agents you wire up — that's the whole point.
+            </p>
+          </div>
+        </div>
+
+        <blockquote class="byo-quote">
+          The built-in agent is the starter motor.
+          <span class="accent">Yours is the engine.</span>
+        </blockquote>
+
+        <div class="byo-agents" aria-label="Agents that work with Threa today.">
+          <span class="label">Works with</span>
+          <span class="chip">Claude Desktop</span>
+          <span class="chip">Cursor</span>
+          <span class="chip">your custom stack</span>
+          <span class="chip next">whatever comes next</span>
+        </div>
+
+        <a class="os-cta" href="#">Read the data docs <span class="arr">→</span></a>
+      </div>
+      <p class="section-notes">
+        <em>Why both?</em> The built-in agent is for zero-config, day-one usefulness — most teams want something working
+        before they wire up an external stack. The open data plane is for day-two, when your own agent, your own
+        prompts, and your own tools start to out-leverage anything we could ship inside the walled garden. We don't pick
+        one. We ship both.
+      </p>
+    </div>
+
+    <!-- ============================================================
+     WAITLIST CTA
+     ============================================================ -->
+    <div class="frame" id="waitlist" style="padding-top: 0">
+      <div class="cta-shell">
+        <div>
+          <h3>Workplace chat that <span class="accent">remembers</span>.<br />Get on the list.</h3>
+        </div>
+        <div>
+          <div class="form-row">
+            <input type="email" placeholder="you@yourdomain.com" />
+            <a class="cta" href="#">Join the waitlist</a>
+          </div>
+          <span class="quiet">/ vetted access · early 2026 · no spam</span>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <div class="brand" style="gap: 10px">
+        <svg style="width: 18px; height: 18px; color: hsl(var(--gold))"><use href="#threa-mark" /></svg>
+        <span class="wordmark" style="font-size: 11px">Threa</span>
+        <span
+          style="
+            color: hsl(var(--muted));
+            text-transform: none;
+            letter-spacing: 0;
+            font-family: var(--font-display);
+            font-size: 12px;
+            margin-left: 6px;
+          "
+          >· 2026</span
+        >
+      </div>
+      <div class="ln">
+        <a>Product</a>
+        <a>Developer</a>
+        <a>About</a>
+        <a>Privacy</a>
+      </div>
+    </footer>
+
+    <script>
+      /* Auto-scroll on each beat so newly-faded-in rows come into view. The
+     list is naturally scrollable; once the user interacts (wheel, touch,
+     keyboard) we surrender the scroll and never fight them. */
+      ;(function () {
+        const tlm = document.querySelector(".tl-messages")
+        if (!tlm) return
+
+        /* ---- local time stamps ----
+       Replace the hardcoded weekday/HH:mm with the user's actual local
+       day and a now-anchored cadence: 4/2/0 minutes ago, with Alex and
+       Ariadne both at "now" (Ariadne's reply follows immediately on send).
+       Day name is computed per stamp so messages that cross midnight
+       still read correctly. */
+        const now = new Date()
+        const dayOf = (d) => d.toLocaleDateString(undefined, { weekday: "long" })
+        const pad = (n) => String(n).padStart(2, "0")
+        const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+        const ago = (mins) => new Date(now.getTime() - mins * 60_000)
+        const stamps = {
+          maya: ago(4),
+          jordan: ago(2),
+          alex: ago(0),
+          ariadne: now,
+        }
+        document.querySelectorAll("[data-time]").forEach((el) => {
+          const d = stamps[el.dataset.time] || now
+          el.textContent = `${dayOf(d)} ${hhmm(d)}`
+        })
+        document.querySelectorAll("[data-time-short]").forEach((el) => {
+          const d = stamps[el.dataset.timeShort] || now
+          el.textContent = hhmm(d)
+        })
+        const cap = document.querySelector(".tl-caption .meta")
+        if (cap) cap.textContent = `/ ${dayOf(now)} · 5 messages`
+
+        if (matchMedia("(prefers-reduced-motion: reduce)").matches) return
+
+        const cycle = 22_000
+        const start = performance.now()
+
+        /* ---- composer typewriter ----
+       Real <input>, driven by JS — value changes trigger the browser's
+       native caret which sits at the correct end-of-text position and
+       blinks the same way it does anywhere else in the OS. Faster than a
+       fake caret: ~100ms/char so it reads as confident, casual typing
+       rather than a slow demo loop. */
+        const editor = document.querySelector(".composer-editor")
+        const input = document.querySelector(".composer-input")
+        const trailText = input?.dataset.trail ?? ""
+        /* 30% — mention pill snaps in, typing begins
+       36% — finished typing " do you know?" (~85ms/char)
+       49% — send fires, input clears, mention pill collapses */
+        const mentionInPct = 30,
+          typeStartPct = 30,
+          typeEndPct = 36,
+          clearPct = 49
+        let lastChars = -1
+        let focused = false
+        const updateInput = (t) => {
+          if (!input || !editor) return
+          const pct = (t / cycle) * 100
+          const mentionIn = pct >= mentionInPct && pct < clearPct
+          editor.classList.toggle("has-mention", mentionIn)
+          let chars
+          if (pct < typeStartPct) chars = 0
+          else if (pct < typeEndPct) {
+            const p = (pct - typeStartPct) / (typeEndPct - typeStartPct)
+            chars = Math.floor(p * trailText.length)
+          } else if (pct < clearPct) chars = trailText.length
+          else chars = 0
+          if (chars !== lastChars) {
+            input.value = trailText.slice(0, chars)
+            lastChars = chars
+          }
+          /* Focus once on first frame so the browser-drawn caret is visible
+         in the empty input from the start of the loop. */
+          if (!focused) {
+            try {
+              input.focus({ preventScroll: true })
+            } catch {
+              input.focus()
+            }
+            focused = true
+          }
+        }
+        const tick = (now) => {
+          const t = now - start
+          updateInput(t)
+          if (t < cycle) requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+
+        /* ---- beat-based auto-scroll ----
+       Each beat scrolls the bottom of the latest revealed row into view.
+       If the user has manually scrolled, the auto-scroll backs off. */
+        let userScrolled = false
+        const surrender = () => {
+          userScrolled = true
+        }
+        tlm.addEventListener("wheel", surrender, { passive: true })
+        tlm.addEventListener("touchstart", surrender, { passive: true })
+        tlm.addEventListener("keydown", surrender)
+
+        const scrollToBottom = () => {
+          if (userScrolled) return
+          tlm.scrollTo({ top: tlm.scrollHeight - tlm.clientHeight, behavior: "smooth" })
+        }
+
+        /* Beat times (percent of cycle, +small lag so opacity has resolved). */
+        const beats = [49.5, 51.5, 71.5, 85.5]
+        beats.forEach((p) => setTimeout(scrollToBottom, (p * cycle) / 100))
+      })()
+    </script>
+  </body>
+</html>

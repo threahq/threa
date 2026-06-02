@@ -1,0 +1,78 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+---
+
+<DocsLayout title="Feature requests · Threa Developers" current="feature-requests">
+  <p class="eyebrow">Feature requests</p>
+  <h1>Something <span class="accent">missing</span>?</h1>
+  <p class="lead">
+    The API is small on purpose and grows in the open. If there's an endpoint,
+    scope, or integration you need, file it. Threa is public source, so requests
+    go to the issue tracker.
+  </p>
+
+  <p>
+    The form below opens a prefilled issue on the public repo for you to review
+    and submit. You can also browse what's already been requested before adding
+    yours.
+  </p>
+
+  <form class="fr-form" id="fr-form">
+    <div class="row">
+      <label for="fr-title">One-line summary</label>
+      <input id="fr-title" type="text" required placeholder="e.g. Bulk export endpoint for memos" />
+    </div>
+    <div class="row">
+      <label for="fr-area">Area</label>
+      <select id="fr-area">
+        <option>Public API</option>
+        <option>Bot runtime / agents</option>
+        <option>Memos &amp; search</option>
+        <option>Auth &amp; keys</option>
+        <option>MCP server</option>
+        <option>Other</option>
+      </select>
+    </div>
+    <div class="row">
+      <label for="fr-use">What are you trying to do?</label>
+      <textarea id="fr-use" placeholder="The task, not the solution. What's the workflow this would unblock?"></textarea>
+    </div>
+    <button type="submit" class="cta">Open a GitHub issue</button>
+  </form>
+
+  <p style="margin-top:18px;">
+    Prefer to look first?
+    <a class="link" href="https://github.com/threahq/threa/issues">Browse open issues</a>
+    on <code>threahq/threa</code>.
+  </p>
+
+  <div class="note">
+    <strong>Already requested</strong>
+    A bulk export endpoint, an MCP server, and outbound webhooks come up most
+    often. A thumbs-up on an existing issue helps us order the queue.
+  </div>
+
+  <script is:inline>
+    (function () {
+      const form = document.getElementById("fr-form")
+      if (!form) return
+      form.addEventListener("submit", function (e) {
+        e.preventDefault()
+        const title = (document.getElementById("fr-title")).value.trim()
+        const area = (document.getElementById("fr-area")).value
+        const use = (document.getElementById("fr-use")).value.trim()
+        if (!title) return
+        const body =
+          "**Area:** " + area + "\n\n" +
+          "**What I'm trying to do**\n" + (use || "_(describe the workflow)_") + "\n\n" +
+          "---\n_Filed from the developer docs._"
+        const url =
+          "https://github.com/threahq/threa/issues/new" +
+          "?title=" + encodeURIComponent(title) +
+          "&body=" + encodeURIComponent(body) +
+          "&labels=" + encodeURIComponent("enhancement")
+        window.open(url, "_blank", "noopener")
+      })
+    })()
+  </script>
+</DocsLayout>

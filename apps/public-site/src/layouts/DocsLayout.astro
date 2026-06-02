@@ -1,0 +1,194 @@
+---
+import "../styles/global.css"
+import "../styles/docs.css"
+import SvgDefs from "../components/SvgDefs.astro"
+
+interface Props {
+  title?: string
+  description?: string
+  current?: string
+  sections?: { id: string; label: string; group?: string }[]
+}
+const {
+  title = "Threa Developers",
+  description = "Build on Threa: a public REST API over your workspace covering messages, streams, memos, search, and a bot runtime for connecting your own agent.",
+  current = "",
+  sections = [],
+} = Astro.props
+
+const nav = [
+  {
+    group: "Get started",
+    items: [
+      { slug: "overview", label: "Overview", href: "/developers" },
+      { slug: "authentication", label: "Authentication", href: "/developers/authentication" },
+    ],
+  },
+  {
+    group: "Reference",
+    items: [
+      { slug: "reference", label: "API reference", href: "/developers/reference" },
+      { slug: "operations", label: "Operations", href: "/developers/operations" },
+    ],
+  },
+  {
+    group: "Guides",
+    items: [{ slug: "recipes", label: "Recipes", href: "/developers/recipes" }],
+  },
+  {
+    group: "Community",
+    items: [{ slug: "feature-requests", label: "Feature requests", href: "/developers/feature-requests" }],
+  },
+]
+
+// When a page's sections carry group labels (the API reference groups by tag),
+// render them as collapsible groups so a long list doesn't bury the rest of the
+// nav. Pages without groups (short lists) render flat.
+const subnavHasGroups = sections.some((s) => s.group)
+const subnavGroups: { group: string; items: typeof sections }[] = []
+for (const s of sections) {
+  const key = s.group ?? ""
+  const last = subnavGroups[subnavGroups.length - 1]
+  if (last && last.group === key) last.items.push(s)
+  else subnavGroups.push({ group: key, items: [s] })
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap"
+      rel="stylesheet"
+    />
+    <title>{title}</title>
+  </head>
+  <body class="docs">
+    <SvgDefs />
+
+    <header class="docs-nav">
+      <a class="brand" href="/developers" style="text-decoration:none;">
+        <svg><use href="#threa-mark" /></svg>
+        <span class="wordmark">Threa</span>
+        <span class="tag">Developers</span>
+      </a>
+      <div class="docs-nav-right">
+        <nav class="docs-nav-links">
+          <a href="/developers/reference">Reference</a>
+          <a href="/developers/recipes">Recipes</a>
+          <a href="/openapi.json">OpenAPI</a>
+          <a class="home" href="/">↩ threa.io</a>
+        </nav>
+        <button type="button" class="pg-toggle" id="pg-toggle" aria-expanded="false" aria-controls="pg-panel">
+          <span class="pg-dot" id="pg-dot" data-state="idle"></span>
+          <span id="pg-toggle-label">Credentials</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Credentials: set once, kept in this browser. Every code sample
+         substitutes your real values into the {{tokens}}; runnable ones call
+         the API. Tucked into a popover so it isn't always on screen. -->
+    <div class="pg-panel" id="pg-panel" role="dialog" aria-label="Your API credentials" hidden>
+      <div class="pg-panel-head">
+        <span class="pg-bar-title">Credentials</span>
+        <span class="pg-status" id="pg-status" data-state="idle">Not connected</span>
+      </div>
+      <div class="pg-fields">
+        <div class="pg-field">
+          <label for="pg-baseurl">Base URL</label>
+          <div class="pg-field-input">
+            <input id="pg-baseurl" type="text" spellcheck="false" autocomplete="off" placeholder="https://app.threa.io" />
+          </div>
+        </div>
+        <div class="pg-field">
+          <label for="pg-workspace">Workspace ID</label>
+          <div class="pg-field-input">
+            <input id="pg-workspace" type="text" spellcheck="false" autocomplete="off" placeholder="ws_…" />
+          </div>
+        </div>
+        <div class="pg-field">
+          <label for="pg-apikey">API key</label>
+          <div class="pg-field-input">
+            <input id="pg-apikey" type="password" spellcheck="false" autocomplete="off" placeholder="threa_uk_…" />
+            <button type="button" class="pg-reveal" id="pg-reveal">Show</button>
+          </div>
+        </div>
+      </div>
+      <div class="pg-bar-foot">
+        <p class="pg-bar-note">
+          Kept in this browser. Sent only on requests you run, to the base URL
+          above. Defaults to production.
+        </p>
+        <button type="button" class="pg-clear" id="pg-clear">Clear</button>
+      </div>
+    </div>
+
+    <div class="docs-shell">
+      <aside class="docs-side">
+        {nav.map((g) => (
+          <div class="docs-side-group">
+            <h4>{g.group}</h4>
+            {g.items.map((it) => (
+              <>
+                <a href={it.href} class={it.slug === current ? "current" : ""}>{it.label}</a>
+                {it.slug === current && sections.length > 0 && (
+                  subnavHasGroups ? (
+                    <div class="docs-side-sub" data-collapsible>
+                      {subnavGroups.map((g, gi) => (
+                        <details class="dss-group" open={gi === 0}>
+                          <summary class="dss-group-head">
+                            <svg class="dss-chevron" width="9" height="9" viewBox="0 0 16 16" aria-hidden="true">
+                              <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <span>{g.group}</span>
+                          </summary>
+                          <div class="dss-group-items">
+                            {g.items.map((s) => (
+                              <a href={`#${s.id}`} data-section={s.id}>{s.label}</a>
+                            ))}
+                          </div>
+                        </details>
+                      ))}
+                    </div>
+                  ) : (
+                    <div class="docs-side-sub">
+                      {sections.map((s) => (
+                        <a href={`#${s.id}`} data-section={s.id}>{s.label}</a>
+                      ))}
+                    </div>
+                  )
+                )}
+              </>
+            ))}
+          </div>
+        ))}
+      </aside>
+
+      <main class="docs-main">
+        <article class="docs-article">
+          <slot />
+        </article>
+
+        <footer class="docs-foot">
+          <span>Threa · Developers</span>
+          <span>
+            <a href="/developers/feature-requests">Request a feature</a>
+            &nbsp;·&nbsp;
+            <a href="/">threa.io</a>
+          </span>
+        </footer>
+      </main>
+    </div>
+
+    <script>
+      import "../scripts/playground.ts"
+    </script>
+  </body>
+</html>

@@ -1,0 +1,125 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+
+const scopes = [
+  ["messages:read", "Read messages in streams you can access"],
+  ["messages:write", "Send, edit, and delete messages your key created"],
+  ["messages:search", "Search messages across the workspace"],
+  ["streams:read", "List and read streams and their members"],
+  ["users:read", "List and search workspace users"],
+  ["memos:read", "Search memos and read their source messages"],
+  ["attachments:read", "Search attachments and read extracted text"],
+  ["attachments:write", "Upload attachments"],
+  ["bot-runtime:read", "Read bot runtime presence and sessions"],
+  ["bot-runtime:write", "Heartbeat a runtime and link sessions"],
+  ["bot-invocations:read", "Read pending and claimed invocations"],
+  ["bot-invocations:write", "Claim, step, complete, and fail invocations"],
+]
+---
+
+<DocsLayout title="Authentication · Threa Developers" current="authentication">
+  <p class="eyebrow">Authentication</p>
+  <h1>Keys and <span class="accent">scopes</span>.</h1>
+  <p class="lead">
+    Every request carries a bearer token. The prefix decides whether you act as
+    a person or as a bot, and the scopes on the key decide what you're allowed to
+    touch. You create keys in the app and copy them once.
+  </p>
+
+  <h2>The header</h2>
+  <p>Send the key as a bearer token on every request:</p>
+  <CodeBlock
+    lang="bash"
+    label="authorization"
+    code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+    run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me" }}
+  />
+  <p>
+    <code>GET /me</code> takes no scope and returns the identity behind the key,
+    either a <code>user</code> or a <code>bot</code> principal. It's the quickest
+    way to confirm a key is live and pointed at the right workspace.
+  </p>
+
+  <h2>Three kinds of key</h2>
+  <p>
+    Two are bots with their own identity in the workspace; you grant them access
+    and add them where they should take part. Both use the same
+    <code>threa_bk_</code> prefix, and what differs is whether the bot is yours or
+    the workspace's. The third carries your own identity and access.
+  </p>
+  <div class="keytype-grid">
+    <div class="keytype">
+      <h3>Personal bot key <span class="prefix">threa_bk_</span></h3>
+      <p>
+        A bot you own, with its own identity in the workspace: your local Pi, an
+        OpenClaw, an agent on your laptop. You add it to the streams it should see,
+        and it acts as itself, not as you.
+      </p>
+      <div class="use"><strong>Use it when</strong>you're running your own agent and want it to show up as its own participant.</div>
+    </div>
+    <div class="keytype">
+      <h3>Workspace bot key <span class="prefix">threa_bk_</span></h3>
+      <p>
+        A shared bot, created by an admin, that belongs to the workspace rather than
+        a person: a GitHub notifier, a CI poster, an integration. It has its own
+        identity and is added to the streams it posts in.
+      </p>
+      <div class="use"><strong>Use it when</strong>a tool or service should read and post as a named workspace bot, independent of any one member.</div>
+    </div>
+    <div class="keytype">
+      <h3>Personal access key <span class="prefix">threa_uk_</span></h3>
+      <p>
+        Carries your identity and your access, so it can never do more than you can;
+        if your role narrows later, so does the key. Messages it sends are
+        attributed to you, flagged as sent via the API.
+      </p>
+      <div class="use"><strong>Use it when</strong>you're automating your own actions: exports, scripts, or a personal agent reading your workspace as you.</div>
+    </div>
+  </div>
+
+  <h2>Creating a key</h2>
+  <p>
+    A <strong>personal access key</strong> is created under
+    <strong>Settings → API keys</strong>: name it, pick scopes, and copy the
+    <code>threa_uk_…</code> value once (up to 25 per person).
+  </p>
+  <p>
+    A <strong>bot key</strong> is created from a bot's own settings. Make the bot
+    first (a personal bot in your settings, or a shared bot if you're an admin),
+    then mint a <code>threa_bk_…</code> key on it (up to 25 per bot), give it the
+    scopes it needs, and add the bot to the streams it should see.
+  </p>
+  <p>
+    Keep scopes as narrow as the job allows. You can edit them later, and a narrow
+    key fails safe. The table below lists what each one unlocks.
+  </p>
+
+  <h2>Scopes</h2>
+  <p>These are the scopes a key can carry. Workspace-admin powers (managing members, creating shared bots, owning the workspace) are deliberately not grantable to API keys.</p>
+  <table class="docs-table">
+    <thead><tr><th>Scope</th><th>Grants</th></tr></thead>
+    <tbody>
+      {scopes.map(([s, d]) => (
+        <tr><td><span class="scope-chip">{s}</span></td><td>{d}</td></tr>
+      ))}
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>How keys are stored</strong>
+    Only a hash of the key is kept server-side, looked up by a short prefix and
+    compared in constant time. Threa cannot show you a key again after creation,
+    and a revoked key stops working immediately.
+  </div>
+
+  <h2>What a missing scope looks like</h2>
+  <p>
+    A valid key missing the required scope returns <code>404</code>, the same
+    response as a resource that isn't there, so the API never confirms something
+    exists to a caller that can't access it. A missing or invalid key returns
+    <code>401</code>. See <a class="link" href="/developers/operations">Operations</a>
+    for the full error shape.
+  </p>
+</DocsLayout>

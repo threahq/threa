@@ -1,0 +1,2608 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Threa — Public Site Concepts v5 (Filmstrip × Needle, tighter)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300..700;1,300..700&family=EB+Garamond:ital,wght@0,400..800;1,400..800&family=Hanken+Grotesk:wght@300..700&family=IBM+Plex+Mono:wght@300..600&family=IBM+Plex+Sans:wght@200..700&family=Manrope:wght@200..700&family=Plus+Jakarta+Sans:wght@200..700&family=Source+Serif+4:opsz,wght@8..60,300..700&family=Spectral:ital,wght@0,300..700;1,300..700&family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --gold: 38 65% 50%;
+        --gold-bright: 38 80% 60%;
+        --gold-soft: 38 60% 88%;
+        --paper: 33 28% 95%;
+        --paper-warm: 35 35% 92%;
+        --ink: 28 18% 12%;
+        --ink-soft: 28 14% 22%;
+        --muted: 28 10% 45%;
+        --hairline: 28 12% 78%;
+        --night: 222 25% 8%;
+        --night-soft: 222 18% 14%;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "IBM Plex Sans", system-ui, sans-serif;
+        background: hsl(28 14% 96%);
+        color: hsl(var(--ink));
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Per DESIGN.md: wordmark = light weight, uppercase, tracking 0.15em, never italic */
+      .wordmark {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 300;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        font-style: normal !important;
+      }
+
+      .doc-topbar {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: hsl(28 14% 96% / 0.92);
+        backdrop-filter: saturate(120%) blur(8px);
+        border-bottom: 1px solid hsl(var(--hairline));
+        padding: 12px 28px;
+        display: flex;
+        align-items: center;
+        gap: 24px;
+        font-size: 13px;
+      }
+      .doc-topbar .title {
+        font-family: "Fraunces", serif;
+        font-style: italic;
+        font-weight: 500;
+        font-size: 16px;
+      }
+      .doc-topbar nav {
+        display: flex;
+        gap: 18px;
+        margin-left: auto;
+      }
+      .doc-topbar nav a {
+        color: hsl(var(--muted));
+        text-decoration: none;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .doc-topbar nav a:hover {
+        color: hsl(var(--ink));
+      }
+
+      .doc-intro {
+        max-width: 780px;
+        margin: 64px auto 32px;
+        padding: 0 28px;
+      }
+      .doc-intro .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin-bottom: 18px;
+      }
+      .doc-intro h1 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 300;
+        font-size: 42px;
+        line-height: 1.1;
+        letter-spacing: -0.03em;
+        margin: 0 0 20px;
+      }
+      .doc-intro h1 .accent {
+        color: hsl(var(--gold));
+        font-weight: 400;
+      }
+      .doc-intro p {
+        font-size: 16px;
+        line-height: 1.65;
+        color: hsl(var(--ink-soft));
+        max-width: 640px;
+      }
+      .doc-intro .notes {
+        margin-top: 24px;
+        padding: 18px 22px;
+        border-left: 2px solid hsl(var(--gold));
+        background: hsl(38 50% 96%);
+        font-size: 14px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.6;
+      }
+      .doc-intro .notes strong {
+        display: block;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin-bottom: 8px;
+        font-weight: 500;
+      }
+
+      .concept {
+        max-width: 1280px;
+        margin: 80px auto;
+        padding: 0 28px;
+      }
+      .concept-meta {
+        display: grid;
+        grid-template-columns: 80px 1fr auto;
+        gap: 24px;
+        align-items: baseline;
+        padding-bottom: 18px;
+        border-bottom: 1px solid hsl(var(--hairline));
+        margin-bottom: 28px;
+      }
+      .concept-meta .num {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        color: hsl(var(--muted));
+      }
+      .concept-meta h2 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 400;
+        font-size: 30px;
+        letter-spacing: -0.025em;
+        margin: 0;
+      }
+      .concept-meta .tag {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+
+      .mock-frame {
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow:
+          0 1px 0 hsl(var(--hairline)),
+          0 24px 48px -24px hsl(28 18% 12% / 0.18),
+          0 8px 24px -16px hsl(28 18% 12% / 0.1);
+        background: hsl(var(--paper));
+        position: relative;
+      }
+
+      .commentary {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: 1.3fr 1fr;
+        gap: 32px;
+        padding: 20px 24px;
+        background: hsl(33 22% 98%);
+        border: 1px solid hsl(var(--hairline));
+        border-radius: 6px;
+      }
+      .commentary h4 {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin: 0 0 10px;
+        font-weight: 500;
+      }
+      .commentary p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+      .commentary .typeface {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px dashed hsl(var(--hairline));
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        color: hsl(var(--muted));
+        letter-spacing: 0.04em;
+      }
+      .pros-cons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        font-size: 13px;
+      }
+      .pros-cons > div {
+        padding: 12px 14px;
+        border-radius: 4px;
+      }
+      .pros-cons .sings {
+        background: hsl(38 50% 94%);
+        border-left: 2px solid hsl(var(--gold));
+      }
+      .pros-cons .pauses {
+        background: hsl(28 10% 95%);
+        border-left: 2px solid hsl(var(--muted));
+      }
+      .pros-cons strong {
+        display: block;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 9px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin-bottom: 6px;
+        font-weight: 500;
+      }
+      .pros-cons ul {
+        margin: 0;
+        padding-left: 14px;
+        color: hsl(var(--ink-soft));
+      }
+      .pros-cons li {
+        margin-bottom: 4px;
+        line-height: 1.5;
+      }
+
+      .doc-footer {
+        max-width: 760px;
+        margin: 120px auto 80px;
+        padding: 32px 28px;
+        border-top: 1px solid hsl(var(--hairline));
+        font-size: 14px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.65;
+      }
+      .doc-footer h3 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 400;
+        font-size: 22px;
+        margin: 0 0 12px;
+      }
+
+      @media (max-width: 1080px) {
+        .commentary {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 720px) {
+        .pros-cons {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ════════════════════════════════════════════════
+       01 — Tight Filmstrip
+       Plex Sans throughout. Engineering-considered.
+       Dark band sized to content, no wasted space.
+       ════════════════════════════════════════════════ */
+      .c1-shell {
+        background: hsl(var(--paper));
+        color: hsl(var(--ink));
+        font-family: "IBM Plex Sans", sans-serif;
+      }
+      .c1-nav {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        padding: 22px 48px;
+        font-size: 14px;
+      }
+      .c1-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c1-nav .brand svg {
+        width: 26px;
+        height: 26px;
+        color: hsl(var(--gold));
+      }
+      .c1-nav .brand .wm {
+        font-size: 13px;
+        font-weight: 400;
+      }
+      .c1-nav .links {
+        display: flex;
+        gap: 26px;
+        margin-left: 32px;
+        color: hsl(var(--muted));
+        font-size: 14px;
+      }
+      .c1-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .c1-nav .cta {
+        margin-left: auto;
+        padding: 8px 16px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: 500;
+        text-decoration: none;
+      }
+
+      .c1-strip {
+        background: hsl(var(--night));
+        color: hsl(38 28% 92%);
+        padding: 56px 48px;
+        position: relative;
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .c1-strip::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse 60% 80% at 100% 50%, hsl(var(--gold) / 0.1), transparent 65%);
+        pointer-events: none;
+      }
+      .c1-strip .ribbon {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 2px;
+        z-index: 0;
+      }
+      .c1-strip .ribbon::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          to right,
+          transparent,
+          hsl(var(--gold) / 0.4) 30%,
+          hsl(var(--gold-bright) / 0.8) 60%,
+          hsl(var(--gold) / 0.4) 80%,
+          transparent
+        );
+      }
+      .c1-strip .copy {
+        position: relative;
+        z-index: 2;
+      }
+      .c1-strip .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-bright));
+        margin-bottom: 22px;
+      }
+      .c1-strip h1 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 200;
+        font-size: 64px;
+        line-height: 1.02;
+        letter-spacing: -0.045em;
+        margin: 0 0 22px;
+      }
+      .c1-strip h1 .accent {
+        color: hsl(var(--gold-bright));
+        font-weight: 300;
+      }
+      .c1-strip .lede {
+        font-size: 17px;
+        line-height: 1.55;
+        color: hsl(38 16% 78%);
+        max-width: 460px;
+        margin: 0 0 28px;
+        font-weight: 300;
+      }
+      .c1-strip .ctas {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .c1-strip .ctas .primary {
+        padding: 12px 22px;
+        background: hsl(var(--gold-bright));
+        color: hsl(var(--night));
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .c1-strip .ctas .ghost {
+        color: hsl(38 22% 84%);
+        text-decoration: none;
+        font-size: 14px;
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.04em;
+      }
+      .c1-strip .ctas .ghost::after {
+        content: " ↗";
+        opacity: 0.7;
+      }
+
+      .c1-strip .display {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 32px;
+      }
+      .c1-strip .display .mark {
+        width: 140px;
+        height: 140px;
+        color: hsl(var(--gold-bright));
+        opacity: 0.95;
+      }
+      .c1-strip .display .annot {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      .c1-strip .display .annot .row {
+        display: grid;
+        grid-template-columns: 14px 1fr;
+        gap: 12px;
+        align-items: baseline;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: hsl(38 18% 74%);
+      }
+      .c1-strip .display .annot .row .tick {
+        width: 14px;
+        height: 1px;
+        background: hsl(var(--gold-bright));
+      }
+      .c1-strip .display .annot .row .label {
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .c1-strip .display .annot .row .val {
+        color: hsl(38 28% 92%);
+        letter-spacing: 0.02em;
+        text-transform: none;
+        font-size: 13px;
+      }
+
+      .c1-body {
+        padding: 56px 48px 64px;
+      }
+      .c1-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 36px;
+      }
+      .c1-row .item .lab {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 12px;
+      }
+      .c1-row .item h3 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 400;
+        font-size: 22px;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+      }
+      .c1-row .item p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+
+      .c1-cta {
+        margin-top: 48px;
+        padding-top: 32px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        gap: 32px;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .c1-cta .text h3 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 400;
+        font-size: 20px;
+        margin: 0 0 4px;
+        letter-spacing: -0.02em;
+      }
+      .c1-cta .text p {
+        margin: 0;
+        font-size: 13px;
+        color: hsl(var(--ink-soft));
+      }
+      .c1-cta form {
+        display: flex;
+        gap: 8px;
+      }
+      .c1-cta input {
+        padding: 11px 14px;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--hairline));
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 14px;
+        min-width: 260px;
+        outline: none;
+      }
+      .c1-cta button {
+        padding: 11px 20px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border: none;
+        border-radius: 4px;
+        font-family: inherit;
+        font-weight: 500;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .c1-foot {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: hsl(var(--muted));
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.06em;
+      }
+
+      /* ════════════════════════════════════════════════
+       02 — Filmstrip with Artifact
+       EB Garamond + Manrope. Bookish + warm.
+       Dark band, copy left, a "kept thing" tile right.
+       ════════════════════════════════════════════════ */
+      .c2-shell {
+        background: hsl(var(--paper));
+        color: hsl(var(--ink));
+        font-family: "Manrope", sans-serif;
+      }
+      .c2-nav {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        padding: 22px 48px;
+        font-size: 14px;
+      }
+      .c2-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c2-nav .brand svg {
+        width: 28px;
+        height: 28px;
+        color: hsl(var(--gold));
+      }
+      .c2-nav .brand .wm {
+        font-family: "Manrope", sans-serif;
+        font-weight: 400;
+        font-size: 13px;
+      }
+      .c2-nav .links {
+        display: flex;
+        gap: 26px;
+        margin-left: 32px;
+        color: hsl(var(--muted));
+      }
+      .c2-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .c2-nav .cta {
+        margin-left: auto;
+        padding: 9px 18px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border-radius: 999px;
+        font-size: 13px;
+        text-decoration: none;
+      }
+
+      .c2-strip {
+        background: hsl(var(--night));
+        color: hsl(38 28% 92%);
+        padding: 48px 56px;
+        position: relative;
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1.2fr 0.9fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .c2-strip .ribbon {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 1;
+      }
+      .c2-strip .ribbon svg {
+        width: 100%;
+        height: 100%;
+      }
+      .c2-strip .ribbon .glow {
+        fill: none;
+        stroke: hsl(var(--gold) / 0.16);
+        stroke-width: 12;
+        stroke-linecap: round;
+      }
+      .c2-strip .ribbon .stroke {
+        fill: none;
+        stroke: hsl(var(--gold));
+        stroke-width: 1.4;
+        stroke-linecap: round;
+      }
+      .c2-strip .ribbon .dash {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 0.9;
+        stroke-dasharray: 5 10;
+        animation: c2-flow 14s linear infinite;
+      }
+      @keyframes c2-flow {
+        from {
+          stroke-dashoffset: 0;
+        }
+        to {
+          stroke-dashoffset: -240;
+        }
+      }
+
+      .c2-strip .copy {
+        position: relative;
+        z-index: 2;
+      }
+      .c2-strip .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-bright));
+        margin-bottom: 24px;
+      }
+      .c2-strip h1 {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 64px;
+        line-height: 1.02;
+        letter-spacing: -0.015em;
+        margin: 0 0 22px;
+        color: hsl(38 32% 95%);
+      }
+      .c2-strip h1 .accent {
+        color: hsl(var(--gold-bright));
+      }
+      .c2-strip .lede {
+        font-size: 17px;
+        line-height: 1.55;
+        color: hsl(38 16% 78%);
+        max-width: 440px;
+        margin: 0 0 28px;
+      }
+      .c2-strip .ctas {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+      }
+      .c2-strip .ctas .primary {
+        padding: 13px 24px;
+        background: hsl(var(--gold-bright));
+        color: hsl(var(--night));
+        border-radius: 999px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .c2-strip .ctas .ghost {
+        color: hsl(38 22% 82%);
+        text-decoration: none;
+        font-size: 14px;
+        border-bottom: 1px solid hsl(38 25% 40%);
+        padding-bottom: 3px;
+      }
+
+      /* The "artifact" — a small kept moment shown as a card */
+      .c2-artifact {
+        position: relative;
+        z-index: 2;
+        background: hsl(var(--night-soft));
+        border: 1px solid hsl(38 25% 30% / 0.5);
+        border-radius: 10px;
+        padding: 22px 22px 24px;
+        box-shadow: 0 16px 40px -20px hsl(var(--night) / 0.6);
+      }
+      .c2-artifact .head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-bright));
+        margin-bottom: 16px;
+      }
+      .c2-artifact .head .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: hsl(var(--gold-bright));
+        animation: c2-blink 2.6s ease-in-out infinite;
+      }
+      @keyframes c2-blink {
+        0%,
+        100% {
+          opacity: 0.45;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .c2-artifact .what {
+        font-family: "EB Garamond", serif;
+        font-weight: 400;
+        font-size: 22px;
+        line-height: 1.3;
+        color: hsl(38 30% 94%);
+        margin-bottom: 16px;
+      }
+      .c2-artifact .meta {
+        display: flex;
+        gap: 16px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(38 14% 64%);
+        padding-top: 14px;
+        border-top: 1px solid hsl(38 18% 28% / 0.5);
+      }
+      .c2-artifact .meta span:first-child {
+        color: hsl(var(--gold-bright));
+      }
+
+      .c2-body {
+        padding: 56px 56px 64px;
+      }
+      .c2-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 36px;
+      }
+      .c2-row .item .lab {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 14px;
+      }
+      .c2-row .item h3 {
+        font-family: "EB Garamond", serif;
+        font-weight: 500;
+        font-size: 24px;
+        line-height: 1.2;
+        letter-spacing: -0.005em;
+        margin: 0 0 8px;
+      }
+      .c2-row .item p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+      .c2-cta {
+        margin-top: 48px;
+        padding-top: 28px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        gap: 32px;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .c2-cta .text h3 {
+        font-family: "EB Garamond", serif;
+        font-weight: 500;
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+      .c2-cta .text p {
+        margin: 0;
+        font-size: 13px;
+        color: hsl(var(--ink-soft));
+      }
+      .c2-cta form {
+        display: flex;
+        gap: 8px;
+      }
+      .c2-cta input {
+        padding: 12px 16px;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--hairline));
+        border-radius: 999px;
+        font-family: inherit;
+        font-size: 14px;
+        min-width: 260px;
+        outline: none;
+      }
+      .c2-cta button {
+        padding: 12px 22px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border: none;
+        border-radius: 999px;
+        font-family: inherit;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .c2-foot {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: hsl(var(--muted));
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.06em;
+      }
+
+      /* ════════════════════════════════════════════════
+       03 — Pass-Through Needle
+       Cormorant Garamond + Hanken Grotesk.
+       Clear directional flow: enters left, kept right.
+       ════════════════════════════════════════════════ */
+      .c3-shell {
+        background: hsl(var(--paper));
+        color: hsl(var(--ink));
+        font-family: "Hanken Grotesk", sans-serif;
+        padding: 22px 48px 72px;
+      }
+      .c3-nav {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        font-size: 14px;
+      }
+      .c3-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c3-nav .brand svg {
+        width: 28px;
+        height: 28px;
+        color: hsl(var(--gold));
+      }
+      .c3-nav .brand .wm {
+        font-family: "Hanken Grotesk", sans-serif;
+        font-weight: 400;
+        font-size: 13px;
+      }
+      .c3-nav .links {
+        display: flex;
+        gap: 26px;
+        margin-left: 32px;
+        color: hsl(var(--muted));
+      }
+      .c3-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .c3-nav .cta {
+        margin-left: auto;
+        padding: 9px 18px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border-radius: 4px;
+        font-size: 13px;
+        text-decoration: none;
+      }
+
+      .c3-hero {
+        position: relative;
+        padding: 48px 0 32px;
+      }
+      .c3-stage {
+        position: relative;
+        height: 360px;
+        margin: 32px 0 36px;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items: center;
+        gap: 0;
+      }
+      /* Three columns: incoming → vesica → outgoing */
+      .c3-stage .leg {
+        position: relative;
+        height: 100%;
+        display: flex;
+        align-items: center;
+      }
+      .c3-stage .leg svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      .c3-stage .leg.left svg .ribbon-glow {
+        fill: none;
+        stroke: hsl(var(--gold) / 0.18);
+        stroke-width: 16;
+        stroke-linecap: round;
+      }
+      .c3-stage .leg.left svg .ribbon-line {
+        fill: none;
+        stroke: hsl(var(--gold) / 0.7);
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        opacity: 0.9;
+      }
+      .c3-stage .leg.left svg .ribbon-dash {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 1;
+        stroke-dasharray: 4 8;
+        stroke-linecap: round;
+        animation: c3-flow-in 6s linear infinite;
+      }
+      @keyframes c3-flow-in {
+        from {
+          stroke-dashoffset: 0;
+        }
+        to {
+          stroke-dashoffset: -160;
+        }
+      }
+      .c3-stage .leg.right svg .ribbon-glow {
+        fill: none;
+        stroke: hsl(var(--gold) / 0.28);
+        stroke-width: 20;
+        stroke-linecap: round;
+        animation: c3-glow-out 4s ease-in-out infinite;
+      }
+      @keyframes c3-glow-out {
+        0%,
+        100% {
+          opacity: 0.6;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .c3-stage .leg.right svg .ribbon-line {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+      .c3-stage .leg.right svg .ribbon-dash {
+        fill: none;
+        stroke: hsl(38 95% 70%);
+        stroke-width: 1.2;
+        stroke-dasharray: 3 6;
+        stroke-linecap: round;
+        animation: c3-flow-out 6s linear infinite;
+      }
+      @keyframes c3-flow-out {
+        from {
+          stroke-dashoffset: 0;
+        }
+        to {
+          stroke-dashoffset: -160;
+        }
+      }
+
+      .c3-stage .needle {
+        width: 220px;
+        height: 320px;
+        color: hsl(var(--ink));
+        position: relative;
+      }
+      .c3-stage .needle svg {
+        width: 100%;
+        height: 100%;
+      }
+      .c3-stage .needle .vesica {
+        fill: none;
+        stroke: hsl(var(--ink));
+        stroke-width: 2;
+      }
+      .c3-stage .needle .thread {
+        fill: none;
+        stroke: hsl(var(--gold));
+        stroke-width: 2.4;
+        stroke-linecap: round;
+      }
+      .c3-stage .needle .thread-hi {
+        fill: none;
+        stroke: hsl(38 90% 65%);
+        stroke-width: 1.4;
+        stroke-linecap: round;
+        stroke-dasharray: 3 6;
+        animation: c3-flow-thru 6s linear infinite;
+      }
+      @keyframes c3-flow-thru {
+        from {
+          stroke-dashoffset: 0;
+        }
+        to {
+          stroke-dashoffset: -160;
+        }
+      }
+
+      .c3-stage .label {
+        position: absolute;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .c3-stage .label .word {
+        display: block;
+        font-family: "Cormorant Garamond", serif;
+        font-style: italic;
+        font-weight: 400;
+        font-size: 22px;
+        letter-spacing: 0.01em;
+        text-transform: none;
+        color: hsl(var(--ink));
+        margin-top: 6px;
+      }
+      .c3-stage .label.left-label {
+        top: calc(50% + 28px);
+        left: 12%;
+      }
+      .c3-stage .label.right-label {
+        top: calc(50% + 28px);
+        right: 8%;
+        text-align: right;
+      }
+
+      .c3-hero .copy {
+        max-width: 760px;
+        margin: 0 auto;
+        text-align: center;
+      }
+      .c3-hero .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 22px;
+      }
+      .c3-hero h1 {
+        font-family: "Cormorant Garamond", serif;
+        font-weight: 400;
+        font-size: 72px;
+        line-height: 1;
+        letter-spacing: -0.01em;
+        margin: 0 0 22px;
+      }
+      .c3-hero h1 .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .c3-hero .lede {
+        font-size: 17px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        max-width: 540px;
+        margin: 0 auto 28px;
+      }
+      .c3-hero .ctas {
+        display: inline-flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .c3-hero .ctas .primary {
+        padding: 13px 24px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .c3-hero .ctas .ghost {
+        color: hsl(var(--ink-soft));
+        text-decoration: none;
+        font-size: 14px;
+        border-bottom: 1px solid hsl(var(--ink-soft));
+        padding-bottom: 3px;
+      }
+
+      .c3-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 36px;
+        padding: 48px 0;
+        border-top: 1px solid hsl(var(--hairline));
+        border-bottom: 1px solid hsl(var(--hairline));
+        margin-top: 24px;
+      }
+      .c3-row .item .lab {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 14px;
+      }
+      .c3-row .item h3 {
+        font-family: "Cormorant Garamond", serif;
+        font-weight: 500;
+        font-size: 24px;
+        letter-spacing: -0.005em;
+        margin: 0 0 8px;
+      }
+      .c3-row .item p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+      .c3-cta {
+        margin-top: 36px;
+        text-align: center;
+      }
+      .c3-cta h3 {
+        font-family: "Cormorant Garamond", serif;
+        font-weight: 400;
+        font-size: 28px;
+        letter-spacing: -0.005em;
+        margin: 0 0 20px;
+      }
+      .c3-cta form {
+        display: inline-flex;
+        gap: 8px;
+      }
+      .c3-cta input {
+        padding: 12px 18px;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--hairline));
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 14px;
+        min-width: 280px;
+        outline: none;
+      }
+      .c3-cta button {
+        padding: 12px 22px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border: none;
+        border-radius: 4px;
+        font-family: inherit;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .c3-foot {
+        margin-top: 48px;
+        padding-top: 16px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: hsl(var(--muted));
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.06em;
+      }
+
+      /* ════════════════════════════════════════════════
+       04 — Needle in a Frame
+       Spectral + IBM Plex Sans. Editorial-engineering.
+       Filmstrip × Needle hybrid: dark band holds the needle.
+       ════════════════════════════════════════════════ */
+      .c4-shell {
+        background: hsl(var(--paper));
+        color: hsl(var(--ink));
+        font-family: "IBM Plex Sans", sans-serif;
+      }
+      .c4-nav {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        padding: 22px 48px;
+        font-size: 14px;
+      }
+      .c4-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c4-nav .brand svg {
+        width: 28px;
+        height: 28px;
+        color: hsl(var(--gold));
+      }
+      .c4-nav .brand .wm {
+        font-size: 13px;
+        font-weight: 400;
+      }
+      .c4-nav .links {
+        display: flex;
+        gap: 26px;
+        margin-left: 32px;
+        color: hsl(var(--muted));
+      }
+      .c4-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .c4-nav .cta {
+        margin-left: auto;
+        padding: 9px 18px;
+        border: 1px solid hsl(var(--ink));
+        color: hsl(var(--ink));
+        border-radius: 4px;
+        font-size: 13px;
+        text-decoration: none;
+      }
+
+      .c4-strip {
+        background: hsl(var(--night));
+        color: hsl(38 28% 92%);
+        padding: 56px 48px;
+        position: relative;
+        overflow: hidden;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 36px;
+        align-items: center;
+      }
+      .c4-strip .copy {
+        position: relative;
+        z-index: 2;
+      }
+      .c4-strip .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-bright));
+        margin-bottom: 24px;
+      }
+      .c4-strip h1 {
+        font-family: "Spectral", serif;
+        font-weight: 400;
+        font-size: 56px;
+        line-height: 1.05;
+        letter-spacing: -0.015em;
+        margin: 0 0 22px;
+        color: hsl(38 32% 95%);
+      }
+      .c4-strip h1 .accent {
+        color: hsl(var(--gold-bright));
+        font-weight: 500;
+      }
+      .c4-strip .lede {
+        font-size: 16px;
+        line-height: 1.6;
+        color: hsl(38 16% 78%);
+        max-width: 420px;
+        margin: 0 0 24px;
+      }
+      .c4-strip .ctas {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .c4-strip .ctas .primary {
+        padding: 11px 20px;
+        background: hsl(var(--gold-bright));
+        color: hsl(var(--night));
+        border-radius: 4px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .c4-strip .ctas .ghost {
+        color: hsl(38 22% 82%);
+        text-decoration: none;
+        font-size: 14px;
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.06em;
+      }
+
+      .c4-strip .needle-stage {
+        position: relative;
+        z-index: 2;
+        width: 220px;
+        height: 280px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .c4-strip .needle-stage svg {
+        width: 100%;
+        height: 100%;
+      }
+      .c4-strip .needle-stage .vesica {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 2;
+      }
+      .c4-strip .needle-stage .thread {
+        fill: none;
+        stroke: hsl(38 95% 70%);
+        stroke-width: 2.6;
+        stroke-linecap: round;
+      }
+      .c4-strip .needle-stage .thread-pulse {
+        fill: none;
+        stroke: hsl(38 100% 80%);
+        stroke-width: 1.4;
+        stroke-linecap: round;
+        stroke-dasharray: 3 7;
+        animation: c4-flow 5s linear infinite;
+      }
+      @keyframes c4-flow {
+        from {
+          stroke-dashoffset: 0;
+        }
+        to {
+          stroke-dashoffset: -140;
+        }
+      }
+
+      .c4-strip .stats {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+      .c4-strip .stats .stat {
+        display: grid;
+        grid-template-columns: 6px 1fr;
+        gap: 12px;
+        align-items: baseline;
+      }
+      .c4-strip .stats .stat .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: hsl(var(--gold-bright));
+        margin-top: 6px;
+      }
+      .c4-strip .stats .stat .label {
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(38 16% 70%);
+        font-size: 10px;
+      }
+      .c4-strip .stats .stat .text {
+        font-family: "Spectral", serif;
+        font-style: italic;
+        font-weight: 400;
+        font-size: 18px;
+        color: hsl(38 30% 92%);
+        letter-spacing: 0.005em;
+        line-height: 1.3;
+        margin-top: 4px;
+        text-transform: none;
+      }
+
+      .c4-body {
+        padding: 48px 48px 64px;
+      }
+      .c4-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 36px;
+        padding-bottom: 36px;
+        border-bottom: 1px solid hsl(var(--hairline));
+      }
+      .c4-row .item .lab {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 14px;
+      }
+      .c4-row .item h3 {
+        font-family: "Spectral", serif;
+        font-weight: 500;
+        font-size: 22px;
+        letter-spacing: -0.005em;
+        margin: 0 0 8px;
+      }
+      .c4-row .item p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+      .c4-cta {
+        margin-top: 36px;
+        display: flex;
+        gap: 32px;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .c4-cta .text h3 {
+        font-family: "Spectral", serif;
+        font-weight: 500;
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+      .c4-cta .text p {
+        margin: 0;
+        font-size: 13px;
+        color: hsl(var(--ink-soft));
+      }
+      .c4-cta form {
+        display: flex;
+        gap: 8px;
+      }
+      .c4-cta input {
+        padding: 12px 16px;
+        background: hsl(var(--paper-warm));
+        border: 1px solid hsl(var(--hairline));
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 14px;
+        min-width: 260px;
+        outline: none;
+      }
+      .c4-cta button {
+        padding: 12px 22px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border: none;
+        border-radius: 4px;
+        font-family: inherit;
+        font-weight: 600;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .c4-foot {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: hsl(var(--muted));
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.06em;
+      }
+
+      /* ════════════════════════════════════════════════
+       05 — Vertical Threading
+       Source Serif 4 + Plus Jakarta Sans.
+       Tall dark column on right; ribbon threads vertically.
+       ════════════════════════════════════════════════ */
+      .c5-shell {
+        background: hsl(var(--paper));
+        color: hsl(var(--ink));
+        font-family: "Plus Jakarta Sans", sans-serif;
+        padding: 22px 48px 72px;
+      }
+      .c5-nav {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        font-size: 14px;
+      }
+      .c5-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c5-nav .brand svg {
+        width: 28px;
+        height: 28px;
+        color: hsl(var(--gold));
+      }
+      .c5-nav .brand .wm {
+        font-family: "Plus Jakarta Sans", sans-serif;
+        font-weight: 500;
+        font-size: 13px;
+      }
+      .c5-nav .links {
+        display: flex;
+        gap: 26px;
+        margin-left: 32px;
+        color: hsl(var(--muted));
+      }
+      .c5-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .c5-nav .cta {
+        margin-left: auto;
+        padding: 9px 18px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border-radius: 999px;
+        font-size: 13px;
+        text-decoration: none;
+      }
+
+      .c5-hero {
+        display: grid;
+        grid-template-columns: 1.4fr 0.6fr;
+        gap: 48px;
+        padding: 48px 0 0;
+        min-height: 520px;
+      }
+      .c5-hero .copy {
+        padding: 24px 0;
+      }
+      .c5-hero .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 24px;
+      }
+      .c5-hero h1 {
+        font-family: "Source Serif 4", serif;
+        font-weight: 400;
+        font-size: 72px;
+        line-height: 1;
+        letter-spacing: -0.025em;
+        margin: 0 0 24px;
+      }
+      .c5-hero h1 .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .c5-hero .lede {
+        font-size: 17px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        max-width: 480px;
+        margin: 0 0 32px;
+      }
+      .c5-hero .ctas {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .c5-hero .ctas .primary {
+        padding: 13px 22px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border-radius: 999px;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .c5-hero .ctas .ghost {
+        color: hsl(var(--ink-soft));
+        text-decoration: none;
+        font-size: 14px;
+        border-bottom: 1px solid hsl(var(--ink-soft));
+        padding-bottom: 3px;
+      }
+      .c5-pillar {
+        background: hsl(var(--night));
+        border-radius: 14px;
+        padding: 32px 28px;
+        position: relative;
+        overflow: hidden;
+        color: hsl(38 28% 92%);
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 24px 60px -28px hsl(var(--night) / 0.5);
+      }
+      .c5-pillar::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse 60% 40% at 50% 80%, hsl(var(--gold) / 0.12), transparent 70%);
+        pointer-events: none;
+      }
+      .c5-pillar .head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(38 16% 70%);
+        position: relative;
+        z-index: 2;
+      }
+      .c5-pillar .head .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: hsl(var(--gold));
+        animation: c5-blink 2.4s ease-in-out infinite;
+      }
+      @keyframes c5-blink {
+        0%,
+        100% {
+          opacity: 0.4;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+      .c5-pillar .needle {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        z-index: 2;
+        margin: 16px 0;
+      }
+      .c5-pillar .needle svg {
+        width: 100%;
+        max-width: 200px;
+        height: auto;
+      }
+      .c5-pillar .needle .vesica {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 1.6;
+      }
+      .c5-pillar .needle .thread {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+      .c5-pillar .needle .ribbon-up {
+        fill: none;
+        stroke: hsl(var(--gold) / 0.7);
+        stroke-width: 1.4;
+        stroke-linecap: round;
+      }
+      .c5-pillar .needle .ribbon-down {
+        fill: none;
+        stroke: hsl(var(--gold-bright));
+        stroke-width: 2.2;
+        stroke-linecap: round;
+      }
+      .c5-pillar .needle .ribbon-dash {
+        fill: none;
+        stroke: hsl(38 95% 75%);
+        stroke-width: 1;
+        stroke-dasharray: 3 6;
+        animation: c5-flow 7s linear infinite;
+      }
+      @keyframes c5-flow {
+        from {
+          stroke-dashoffset: 0;
+        }
+        to {
+          stroke-dashoffset: -160;
+        }
+      }
+      .c5-pillar .caption {
+        position: relative;
+        z-index: 2;
+        text-align: center;
+        padding-top: 16px;
+        border-top: 1px solid hsl(38 18% 28% / 0.5);
+      }
+      .c5-pillar .caption .label {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-bright));
+        margin-bottom: 6px;
+      }
+      .c5-pillar .caption .what {
+        font-family: "Source Serif 4", serif;
+        font-weight: 400;
+        font-size: 18px;
+        color: hsl(38 30% 92%);
+        line-height: 1.3;
+      }
+
+      .c5-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 36px;
+        padding: 56px 0 36px;
+        border-top: 1px solid hsl(var(--hairline));
+        margin-top: 24px;
+      }
+      .c5-row .item .lab {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold));
+        margin-bottom: 14px;
+      }
+      .c5-row .item h3 {
+        font-family: "Source Serif 4", serif;
+        font-weight: 500;
+        font-size: 22px;
+        letter-spacing: -0.01em;
+        margin: 0 0 8px;
+      }
+      .c5-row .item p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+      .c5-cta {
+        margin-top: 24px;
+        padding: 28px 32px;
+        background: hsl(var(--paper-warm));
+        border-radius: 12px;
+        display: flex;
+        gap: 32px;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .c5-cta .text h3 {
+        font-family: "Source Serif 4", serif;
+        font-weight: 500;
+        font-size: 22px;
+        margin: 0 0 4px;
+      }
+      .c5-cta .text p {
+        margin: 0;
+        font-size: 13px;
+        color: hsl(var(--ink-soft));
+      }
+      .c5-cta form {
+        display: flex;
+        gap: 8px;
+      }
+      .c5-cta input {
+        padding: 12px 16px;
+        background: hsl(var(--paper));
+        border: 1px solid hsl(var(--hairline));
+        border-radius: 999px;
+        font-family: inherit;
+        font-size: 14px;
+        min-width: 260px;
+        outline: none;
+      }
+      .c5-cta button {
+        padding: 12px 22px;
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        border: none;
+        border-radius: 999px;
+        font-family: inherit;
+        font-weight: 500;
+        font-size: 14px;
+        cursor: pointer;
+      }
+      .c5-foot {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid hsl(var(--hairline));
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        color: hsl(var(--muted));
+        font-family: "IBM Plex Mono", monospace;
+        letter-spacing: 0.06em;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Reusable SVG sprite — correct Threa mark -->
+    <svg style="position: absolute; width: 0; height: 0" aria-hidden="true">
+      <defs>
+        <symbol id="threa-mark" viewBox="0 0 100 100">
+          <path
+            d="M 50 24 C 64 30, 72 42, 72 50 C 72 58, 64 70, 50 76 C 36 70, 28 58, 28 50 C 28 42, 36 30, 50 24 Z"
+            stroke="currentColor"
+            stroke-width="3"
+            fill="none"
+          />
+          <path
+            d="M 50 14 C 47 26, 46 38, 50 50 C 54 62, 53 74, 50 86"
+            stroke="currentColor"
+            stroke-width="3.5"
+            stroke-linecap="round"
+            fill="none"
+          />
+        </symbol>
+      </defs>
+    </svg>
+
+    <!-- Doc topbar -->
+    <header class="doc-topbar">
+      <span class="title">Threa — Public Site Concepts v5</span>
+      <span
+        style="
+          color: hsl(var(--muted));
+          font-family: &quot;IBM Plex Mono&quot;, monospace;
+          font-size: 11px;
+          letter-spacing: 0.1em;
+        "
+        >FILMSTRIP × NEEDLE · TIGHTER</span
+      >
+      <nav>
+        <a href="#c1">01 Tight Filmstrip</a>
+        <a href="#c2">02 With Artifact</a>
+        <a href="#c3">03 Pass-Through</a>
+        <a href="#c4">04 Framed Needle</a>
+        <a href="#c5">05 Vertical</a>
+      </nav>
+    </header>
+
+    <!-- Intro -->
+    <section class="doc-intro">
+      <div class="kicker">Iteration · v5 · 2026-05-24</div>
+      <h1>
+        Tightening Filmstrip, clarifying the needle's flow, and pulling typography off the
+        <span class="accent">AI-startup</span> default.
+      </h1>
+      <p>
+        Three shifts: (1) the dark band is sized to the content, no empty headroom above the headline; (2) the
+        pass-through is visually explicit &mdash; ribbon enters left, threads through the vesica, exits right, with a
+        brighter, "kept" segment on the way out; (3) typography moves off the Newsreader-italic-accent default. Each
+        concept commits to a different pairing so we can read which voice fits Threa best.
+      </p>
+      <div class="notes">
+        <strong>Copy posture</strong>
+        No comparisons to other tools on the home page. The pitch is what Threa does &mdash; conversations leave a
+        trace, decisions surface when they matter, the half-formed has a place to live. The mechanism (AI) shows up
+        later in the page or not at all on the front door.
+      </div>
+    </section>
+
+    <!-- ════════════════════════════════════════════════
+       01 — Tight Filmstrip
+       ════════════════════════════════════════════════ -->
+    <section class="concept" id="c1">
+      <header class="concept-meta">
+        <div class="num">01 / 05</div>
+        <h2>Tight Filmstrip</h2>
+        <div class="tag">IBM Plex Sans · Engineering-considered</div>
+      </header>
+
+      <div class="mock-frame">
+        <div class="c1-shell">
+          <nav class="c1-nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg><span class="wm wordmark">Threa</span>
+            </div>
+            <div class="links">
+              <a href="#">Product</a>
+              <a href="#">About</a>
+              <a href="#">Developers</a>
+            </div>
+            <a href="#" class="cta">Join the list</a>
+          </nav>
+
+          <div class="c1-strip">
+            <div class="copy">
+              <div class="kicker">A WORKSPACE FOR THINKING</div>
+              <h1>Hold onto<br />what gets <span class="accent">said</span>.</h1>
+              <p class="lede">
+                Threa is a quieter place for chat, notes, and the decisions that come out of them &mdash; built for one
+                person's thinking first, ready when the team arrives.
+              </p>
+              <div class="ctas">
+                <a href="#" class="primary">Request access</a>
+                <a href="#" class="ghost">How it works</a>
+              </div>
+            </div>
+
+            <div class="display" aria-hidden="true">
+              <div class="mark">
+                <svg viewBox="0 0 100 100"><use href="#threa-mark" /></svg>
+              </div>
+              <div class="annot">
+                <div class="row">
+                  <span class="tick"></span>
+                  <div>
+                    <div class="label">capture</div>
+                    <div class="val">drafts &amp; fragments</div>
+                  </div>
+                </div>
+                <div class="row">
+                  <span class="tick"></span>
+                  <div>
+                    <div class="label">hold</div>
+                    <div class="val">decisions &amp; definitions</div>
+                  </div>
+                </div>
+                <div class="row">
+                  <span class="tick"></span>
+                  <div>
+                    <div class="label">return</div>
+                    <div class="val">surfaces when relevant</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="ribbon" aria-hidden="true"></div>
+          </div>
+
+          <div class="c1-body">
+            <div class="c1-row">
+              <div class="item">
+                <div class="lab">CAPTURE</div>
+                <h3>Somewhere for the half-formed.</h3>
+                <p>
+                  Drafts, fragments, voice notes. A private home for thinking-in-progress &mdash; no audience until you
+                  choose one.
+                </p>
+              </div>
+              <div class="item">
+                <div class="lab">HOLD</div>
+                <h3>Decisions, kept.</h3>
+                <p>What you decided and what you defined are pulled out of the chat and held where you'll find them.</p>
+              </div>
+              <div class="item">
+                <div class="lab">RETURN</div>
+                <h3>Surfaced when it matters.</h3>
+                <p>
+                  The work you did three weeks ago comes back to you when it's relevant &mdash; without you searching.
+                </p>
+              </div>
+            </div>
+
+            <div class="c1-cta">
+              <div class="text">
+                <h3>Vetted access. No charging yet.</h3>
+                <p>Leave a line. We open the door for the right people while we shape the product.</p>
+              </div>
+              <form onsubmit="event.preventDefault()">
+                <input type="email" placeholder="you@where-you-think.com" />
+                <button type="submit">Request</button>
+              </form>
+            </div>
+
+            <div class="c1-foot">
+              <div>THREA · STOCKHOLM</div>
+              <div>2026</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="commentary">
+        <div>
+          <h4>Direction</h4>
+          <p>
+            Filmstrip, slimmed down to a band sized to the content &mdash; no decorative headroom. Copy on the left
+            fills the band, brand mark plus a small annotated key on the right. The "ribbon" is a single luminous edge
+            at the bottom of the band: less SVG curve, more like a line of stage light. Plex Sans throughout reads
+            engineered without tipping into "AI-startup serif italic".
+          </p>
+          <div class="typeface">Display + body: IBM Plex Sans · Meta: IBM Plex Mono</div>
+        </div>
+        <div class="pros-cons">
+          <div class="sings">
+            <strong>Where it sings</strong>
+            <ul>
+              <li>No wasted vertical space &mdash; reads immediately</li>
+              <li>Sans-only restores "made by engineers" feel</li>
+              <li>The annotated key earns its place by being legible</li>
+            </ul>
+          </div>
+          <div class="pauses">
+            <strong>Where it hesitates</strong>
+            <ul>
+              <li>Without serif, hero risks reading utilitarian / cold</li>
+              <li>Annotated key competes with the headline for attention</li>
+              <li>Plex Sans is a strong choice but used by IBM &mdash; could feel borrowed</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ════════════════════════════════════════════════
+       02 — Filmstrip with Artifact
+       ════════════════════════════════════════════════ -->
+    <section class="concept" id="c2">
+      <header class="concept-meta">
+        <div class="num">02 / 05</div>
+        <h2>Filmstrip with Artifact</h2>
+        <div class="tag">EB Garamond + Manrope · Bookish-warm</div>
+      </header>
+
+      <div class="mock-frame">
+        <div class="c2-shell">
+          <nav class="c2-nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg><span class="wm wordmark">Threa</span>
+            </div>
+            <div class="links">
+              <a href="#">Product</a>
+              <a href="#">About</a>
+              <a href="#">Developers</a>
+            </div>
+            <a href="#" class="cta">Join the list</a>
+          </nav>
+
+          <div class="c2-strip">
+            <div class="ribbon" aria-hidden="true">
+              <svg viewBox="0 0 1200 360" preserveAspectRatio="none">
+                <path class="glow" d="M -40 260 C 220 180, 480 340, 760 220 C 940 140, 1080 260, 1240 200" />
+                <path class="stroke" d="M -40 260 C 220 180, 480 340, 760 220 C 940 140, 1080 260, 1240 200" />
+                <path class="dash" d="M -40 260 C 220 180, 480 340, 760 220 C 940 140, 1080 260, 1240 200" />
+              </svg>
+            </div>
+
+            <div class="copy">
+              <div class="kicker">A WORKSPACE FOR THINKING</div>
+              <h1>What you decided,<br /><span class="accent">remembered</span>.</h1>
+              <p class="lede">
+                Threa holds onto what mattered &mdash; the decisions and definitions that come out of your chat and
+                notes, kept where they'll find you again.
+              </p>
+              <div class="ctas">
+                <a href="#" class="primary">Request access</a>
+                <a href="#" class="ghost">How it works</a>
+              </div>
+            </div>
+
+            <div class="c2-artifact">
+              <div class="head">
+                <span>Kept · decision</span>
+                <span style="display: flex; align-items: center; gap: 6px"><span class="dot"></span> Threaded</span>
+              </div>
+              <div class="what">
+                "V1 stays simple &mdash; Postgres only for the regional store; queue layer deferred until fan-out
+                grows."
+              </div>
+              <div class="meta">
+                <span>From a chat</span>
+                <span>·</span>
+                <span>3 weeks ago</span>
+                <span>·</span>
+                <span>Surfaces on /architecture</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="c2-body">
+            <div class="c2-row">
+              <div class="item">
+                <div class="lab">CAPTURE</div>
+                <h3>Somewhere for the half-formed.</h3>
+                <p>Drafts and fragments live in a private place &mdash; the audience comes when you choose it.</p>
+              </div>
+              <div class="item">
+                <div class="lab">HOLD</div>
+                <h3>Decisions, kept.</h3>
+                <p>What you decided is pulled out of the conversation and held where you'll find it.</p>
+              </div>
+              <div class="item">
+                <div class="lab">RETURN</div>
+                <h3>Surfaced when it matters.</h3>
+                <p>Work you already did comes back to you when it's relevant again &mdash; without you searching.</p>
+              </div>
+            </div>
+
+            <div class="c2-cta">
+              <div class="text">
+                <h3>Vetted access. No charging yet.</h3>
+                <p>Leave a line. We open the door for the right people while we shape the product.</p>
+              </div>
+              <form onsubmit="event.preventDefault()">
+                <input type="email" placeholder="you@where-you-think.com" />
+                <button type="submit">Request</button>
+              </form>
+            </div>
+
+            <div class="c2-foot">
+              <div>THREA · STOCKHOLM</div>
+              <div>2026</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="commentary">
+        <div>
+          <h4>Direction</h4>
+          <p>
+            Filmstrip with a small artefact card on the right side of the dark band &mdash; one concrete &ldquo;kept
+            thing&rdquo; (a decision) shown as a tile, with provenance. The artefact does the work of a screenshot but
+            in a more honest way: it shows what gets held, not how the UI looks. EB Garamond carries the headlines with
+            a true book feel; Manrope grounds the body in warmer modern sans.
+          </p>
+          <div class="typeface">Display: EB Garamond · Body: Manrope · Meta: IBM Plex Mono</div>
+        </div>
+        <div class="pros-cons">
+          <div class="sings">
+            <strong>Where it sings</strong>
+            <ul>
+              <li>Concrete artefact anchors the abstract claim</li>
+              <li>EB Garamond reads bookish, not editorial-AI</li>
+              <li>The "kept" card scales beautifully into a recurring page motif</li>
+            </ul>
+          </div>
+          <div class="pauses">
+            <strong>Where it hesitates</strong>
+            <ul>
+              <li>The kept-card has to be tuned to feel like content, not chrome</li>
+              <li>Two columns inside the band leaves less room for the headline</li>
+              <li>Risk of "fake testimonial" feel if the example reads too curated</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ════════════════════════════════════════════════
+       03 — Pass-Through Needle
+       ════════════════════════════════════════════════ -->
+    <section class="concept" id="c3">
+      <header class="concept-meta">
+        <div class="num">03 / 05</div>
+        <h2>Pass-Through Needle</h2>
+        <div class="tag">Cormorant + Hanken Grotesk · Literary-neutral</div>
+      </header>
+
+      <div class="mock-frame">
+        <div class="c3-shell">
+          <nav class="c3-nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg><span class="wm wordmark">Threa</span>
+            </div>
+            <div class="links">
+              <a href="#">Product</a>
+              <a href="#">About</a>
+              <a href="#">Developers</a>
+            </div>
+            <a href="#" class="cta">Join the list</a>
+          </nav>
+
+          <div class="c3-hero">
+            <div class="c3-stage" aria-hidden="true">
+              <!-- Left leg: thin "loose" ribbon entering -->
+              <div class="leg left">
+                <svg viewBox="0 0 480 360" preserveAspectRatio="none">
+                  <path class="ribbon-glow" d="M 0 200 C 120 160, 220 240, 460 180" />
+                  <path class="ribbon-line" d="M 0 200 C 120 160, 220 240, 460 180" />
+                  <path class="ribbon-dash" d="M 0 200 C 120 160, 220 240, 460 180" />
+                </svg>
+              </div>
+
+              <!-- Center: vesica with S-curve thread -->
+              <div class="needle">
+                <svg viewBox="0 0 100 140">
+                  <!-- vesica, scaled vertically -->
+                  <path
+                    class="vesica"
+                    d="M 50 30 C 70 38, 80 56, 80 70 C 80 84, 70 102, 50 110 C 30 102, 20 84, 20 70 C 20 56, 30 38, 50 30 Z"
+                  />
+                  <!-- thread continues from outside, through, and out -->
+                  <path class="thread" d="M -20 70 C 20 60, 30 50, 50 70 C 70 90, 80 80, 120 70" />
+                  <path class="thread-hi" d="M -20 70 C 20 60, 30 50, 50 70 C 70 90, 80 80, 120 70" />
+                </svg>
+              </div>
+
+              <!-- Right leg: brighter, glowing "kept" ribbon exiting -->
+              <div class="leg right">
+                <svg viewBox="0 0 480 360" preserveAspectRatio="none">
+                  <path class="ribbon-glow" d="M 20 180 C 200 220, 280 140, 480 200" />
+                  <path class="ribbon-line" d="M 20 180 C 200 220, 280 140, 480 200" />
+                  <path class="ribbon-dash" d="M 20 180 C 200 220, 280 140, 480 200" />
+                </svg>
+              </div>
+
+              <div class="label left-label">
+                spoken &middot; written &middot; drafted
+                <span class="word">in</span>
+              </div>
+              <div class="label right-label">
+                kept &middot; threaded &middot; returns
+                <span class="word">held</span>
+              </div>
+            </div>
+
+            <div class="copy">
+              <div class="kicker">A WORKSPACE FOR THINKING</div>
+              <h1>Threaded <span class="accent">thinking</span>. Nothing slips away.</h1>
+              <p class="lede">
+                Chat, notes, and the decisions between them &mdash; pulled out of the noise and held where you'll find
+                them again. One person at first; one team in time.
+              </p>
+              <div class="ctas">
+                <a href="#" class="primary">Request access</a>
+                <a href="#" class="ghost">How it works</a>
+              </div>
+            </div>
+          </div>
+
+          <div class="c3-row">
+            <div class="item">
+              <div class="lab">CAPTURE</div>
+              <h3>Somewhere for the half-formed.</h3>
+              <p>Drafts and fragments live in a private place &mdash; an audience only when you want one.</p>
+            </div>
+            <div class="item">
+              <div class="lab">HOLD</div>
+              <h3>Decisions, kept.</h3>
+              <p>What you decided is pulled out of the conversation and held where you'll find it.</p>
+            </div>
+            <div class="item">
+              <div class="lab">RETURN</div>
+              <h3>Surfaced when it matters.</h3>
+              <p>Work you already did comes back to you when it becomes relevant again.</p>
+            </div>
+          </div>
+
+          <div class="c3-cta">
+            <h3>Vetted access. Leave a line.</h3>
+            <form onsubmit="event.preventDefault()">
+              <input type="email" placeholder="you@where-you-think.com" />
+              <button type="submit">Request</button>
+            </form>
+          </div>
+
+          <div class="c3-foot">
+            <div>THREA · STOCKHOLM</div>
+            <div>2026</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="commentary">
+        <div>
+          <h4>Direction</h4>
+          <p>
+            The vesica sits dead centre on a light page, with a clearly directional thread running through it &mdash;
+            thinner and faded on the way in, brighter and glowing on the way out. Small mono labels underline the
+            journey: &ldquo;in&rdquo; on the left, &ldquo;held&rdquo; on the right. The transformation is the metaphor
+            and it reads in one beat. Cormorant Garamond gives a literary headline; Hanken keeps the body modern but not
+            Inter.
+          </p>
+          <div class="typeface">Display: Cormorant Garamond · Body: Hanken Grotesk · Meta: IBM Plex Mono</div>
+        </div>
+        <div class="pros-cons">
+          <div class="sings">
+            <strong>Where it sings</strong>
+            <ul>
+              <li>Threading flow is explicit &mdash; in / through / kept</li>
+              <li>Brand mark is the whole picture, no decoration around it</li>
+              <li>Cormorant + Hanken reads bookish, not editorial-AI</li>
+            </ul>
+          </div>
+          <div class="pauses">
+            <strong>Where it hesitates</strong>
+            <ul>
+              <li>Two animated legs ask careful tuning to feel "one line"</li>
+              <li>Labels could moralise; copy must stay restrained</li>
+              <li>Hero is conceptual &mdash; About / Dev need a different anchor</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ════════════════════════════════════════════════
+       04 — Needle in a Frame
+       ════════════════════════════════════════════════ -->
+    <section class="concept" id="c4">
+      <header class="concept-meta">
+        <div class="num">04 / 05</div>
+        <h2>Needle in a Frame</h2>
+        <div class="tag">Spectral + IBM Plex Sans · Editorial-engineering</div>
+      </header>
+
+      <div class="mock-frame">
+        <div class="c4-shell">
+          <nav class="c4-nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg><span class="wm wordmark">Threa</span>
+            </div>
+            <div class="links">
+              <a href="#">Product</a>
+              <a href="#">About</a>
+              <a href="#">Developers</a>
+            </div>
+            <a href="#" class="cta">Join the list</a>
+          </nav>
+
+          <div class="c4-strip">
+            <div class="copy">
+              <div class="kicker">A WORKSPACE FOR THINKING</div>
+              <h1>Chat, notes, and the <span class="accent">thread</span> between them.</h1>
+              <p class="lede">
+                A quieter place for what you write and what you say &mdash; held where it'll find you again.
+              </p>
+              <div class="ctas">
+                <a href="#" class="primary">Request access</a>
+                <a href="#" class="ghost">How it works ↗</a>
+              </div>
+            </div>
+
+            <div class="needle-stage" aria-hidden="true">
+              <svg viewBox="0 0 100 140">
+                <path
+                  class="vesica"
+                  d="M 50 30 C 70 38, 80 56, 80 70 C 80 84, 70 102, 50 110 C 30 102, 20 84, 20 70 C 20 56, 30 38, 50 30 Z"
+                />
+                <path class="thread" d="M -20 70 C 20 60, 30 50, 50 70 C 70 90, 80 80, 120 70" />
+                <path class="thread-pulse" d="M -20 70 C 20 60, 30 50, 50 70 C 70 90, 80 80, 120 70" />
+              </svg>
+            </div>
+
+            <div class="stats">
+              <div class="stat">
+                <span class="dot"></span>
+                <div>
+                  <div class="label">capture</div>
+                  <div class="text">Somewhere for the half-formed.</div>
+                </div>
+              </div>
+              <div class="stat">
+                <span class="dot"></span>
+                <div>
+                  <div class="label">hold</div>
+                  <div class="text">Decisions don't dissolve.</div>
+                </div>
+              </div>
+              <div class="stat">
+                <span class="dot"></span>
+                <div>
+                  <div class="label">return</div>
+                  <div class="text">Surfaced when it matters.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="c4-body">
+            <div class="c4-row">
+              <div class="item">
+                <div class="lab">A · CAPTURE</div>
+                <h3>Drafts &amp; fragments.</h3>
+                <p>A private place for thinking before it's ready &mdash; no audience until you choose one.</p>
+              </div>
+              <div class="item">
+                <div class="lab">B · HOLD</div>
+                <h3>What you decided.</h3>
+                <p>Pulled out of the conversation and held where you'll find it next time.</p>
+              </div>
+              <div class="item">
+                <div class="lab">C · RETURN</div>
+                <h3>What's relevant now.</h3>
+                <p>Work you already did surfaces when it matches what you're working on now.</p>
+              </div>
+            </div>
+            <div class="c4-cta">
+              <div class="text">
+                <h3>Vetted access. No charging yet.</h3>
+                <p>Leave an email and a sentence. We open the door for the right people.</p>
+              </div>
+              <form onsubmit="event.preventDefault()">
+                <input type="email" placeholder="you@where-you-think.com" />
+                <button type="submit">Request</button>
+              </form>
+            </div>
+            <div class="c4-foot">
+              <div>THREA · STOCKHOLM</div>
+              <div>2026</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="commentary">
+        <div>
+          <h4>Direction</h4>
+          <p>
+            Filmstrip × Needle hybrid: the dark band holds the needle in the centre with copy on the left and a stitched
+            stat-key on the right. Three columns in one band, each earning its place &mdash; copy, mark, summary. The
+            horizontal layout keeps the dark area tight to the content. Spectral carries the headlines (editorial
+            without tipping AI), Plex Sans keeps the structure considered.
+          </p>
+          <div class="typeface">Display: Spectral · Body: IBM Plex Sans · Meta: IBM Plex Mono</div>
+        </div>
+        <div class="pros-cons">
+          <div class="sings">
+            <strong>Where it sings</strong>
+            <ul>
+              <li>Three columns means no element wastes vertical space</li>
+              <li>Stat-key earns its slot with concrete labels</li>
+              <li>Spectral + Plex Sans is a less-common pairing &mdash; feels intentional</li>
+            </ul>
+          </div>
+          <div class="pauses">
+            <strong>Where it hesitates</strong>
+            <ul>
+              <li>Three columns risk getting cramped on a 1280-wide hero</li>
+              <li>Stat-key edges close to a feature list</li>
+              <li>Mobile needs a clean stacking story</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- ════════════════════════════════════════════════
+       05 — Vertical Threading
+       ════════════════════════════════════════════════ -->
+    <section class="concept" id="c5">
+      <header class="concept-meta">
+        <div class="num">05 / 05</div>
+        <h2>Vertical Threading</h2>
+        <div class="tag">Source Serif 4 + Plus Jakarta Sans · Academic-warm</div>
+      </header>
+
+      <div class="mock-frame">
+        <div class="c5-shell">
+          <nav class="c5-nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg><span class="wm wordmark">Threa</span>
+            </div>
+            <div class="links">
+              <a href="#">Product</a>
+              <a href="#">About</a>
+              <a href="#">Developers</a>
+            </div>
+            <a href="#" class="cta">Join the list</a>
+          </nav>
+
+          <div class="c5-hero">
+            <div class="copy">
+              <div class="kicker">A WORKSPACE FOR THINKING</div>
+              <h1>A quieter place to <span class="accent">think</span>, and to hold onto what you decide.</h1>
+              <p class="lede">
+                Chat, notes, and the thread between them. Decisions and definitions get pulled out of the conversation
+                and kept where you'll find them again &mdash; built for one person first, ready for teams in time.
+              </p>
+              <div class="ctas">
+                <a href="#" class="primary">Request access</a>
+                <a href="#" class="ghost">How it works ↗</a>
+              </div>
+            </div>
+
+            <div class="c5-pillar" aria-hidden="true">
+              <div class="head">
+                <span>display · no. 05</span>
+                <span style="display: flex; align-items: center; gap: 6px"><span class="dot"></span> Threaded</span>
+              </div>
+
+              <div class="needle">
+                <svg viewBox="0 0 100 320">
+                  <!-- ribbon entering from top -->
+                  <path class="ribbon-up" d="M 50 0 C 40 30, 60 60, 50 90" />
+                  <path class="ribbon-dash" d="M 50 0 C 40 30, 60 60, 50 90" />
+                  <!-- vesica in the middle, scaled & centered vertically -->
+                  <path
+                    class="vesica"
+                    d="M 50 100 C 70 108, 80 126, 80 140 C 80 154, 70 172, 50 180 C 30 172, 20 154, 20 140 C 20 126, 30 108, 50 100 Z"
+                  />
+                  <!-- thread through vesica -->
+                  <path class="thread" d="M 50 90 C 40 110, 60 130, 50 140 C 40 150, 60 170, 50 190" />
+                  <!-- ribbon exiting brighter, bottom -->
+                  <path class="ribbon-down" d="M 50 190 C 60 220, 40 250, 50 320" />
+                  <path class="ribbon-dash" d="M 50 190 C 60 220, 40 250, 50 320" />
+                </svg>
+              </div>
+
+              <div class="caption">
+                <div class="label">held in memory</div>
+                <div class="what">"V1 stays simple."</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="c5-row">
+            <div class="item">
+              <div class="lab">CAPTURE</div>
+              <h3>Drafts and fragments.</h3>
+              <p>A private place for thinking before it's ready &mdash; no audience until you choose one.</p>
+            </div>
+            <div class="item">
+              <div class="lab">HOLD</div>
+              <h3>Decisions, kept.</h3>
+              <p>What you decided is pulled out of the conversation and held where you'll find it.</p>
+            </div>
+            <div class="item">
+              <div class="lab">RETURN</div>
+              <h3>Surfaced when it matters.</h3>
+              <p>Work you already did comes back to you when it's relevant again.</p>
+            </div>
+          </div>
+
+          <div class="c5-cta">
+            <div class="text">
+              <h3>Vetted access. No charging yet.</h3>
+              <p>Leave a line. We open the door for the right people while we shape the product.</p>
+            </div>
+            <form onsubmit="event.preventDefault()">
+              <input type="email" placeholder="you@where-you-think.com" />
+              <button type="submit">Request</button>
+            </form>
+          </div>
+
+          <div class="c5-foot">
+            <div>THREA · STOCKHOLM</div>
+            <div>2026 · A STUDIO FOR THINKING</div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="commentary">
+        <div>
+          <h4>Direction</h4>
+          <p>
+            The dark element is rotated vertical &mdash; a tall pillar on the right of the hero, holding the brand mark
+            with a ribbon threading top-to-bottom through it. Copy occupies the cream side, breathing wide. The pillar's
+            footer shows a single &ldquo;held&rdquo; line that proves the metaphor without committing to a screenshot.
+            Source Serif 4 is the academic-considered headline; Plus Jakarta keeps the body warm.
+          </p>
+          <div class="typeface">Display: Source Serif 4 · Body: Plus Jakarta Sans · Meta: IBM Plex Mono</div>
+        </div>
+        <div class="pros-cons">
+          <div class="sings">
+            <strong>Where it sings</strong>
+            <ul>
+              <li>Vertical pillar reads as a "thing on display", not a stripe</li>
+              <li>Lots of breathing room for the headline without giant padding</li>
+              <li>Source Serif 4 is genuinely less common than Newsreader / Fraunces</li>
+            </ul>
+          </div>
+          <div class="pauses">
+            <strong>Where it hesitates</strong>
+            <ul>
+              <li>Vertical layout fights mobile harder than horizontal</li>
+              <li>Pillar can read as a card / phone mockup if not styled carefully</li>
+              <li>Two distinct columns split the eye &mdash; needs a strong copy/visual relationship</li>
+            </ul>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- Next steps -->
+    <section class="doc-footer">
+      <h3>Where to from here</h3>
+      <p>
+        Five tighter blends. Tell me which voice (typography) lands and which threading layout reads cleanest &mdash; or
+        mix-and-match across concepts (e.g. "01's tightness with 03's flow"). Once one wins, I'll adapt it into
+        <strong>About</strong> (longer-form why, contact form) and <strong>Developer</strong> (API reference, examples,
+        recipes), then port the static doc into a real framework with live tokens from the product.
+      </p>
+      <p style="margin-top: 18px">Worth deciding while looking:</p>
+      <ul style="font-size: 14px; line-height: 1.7; color: hsl(var(--ink-soft)); padding-left: 18px">
+        <li>All-sans (01) vs. serif headline (02, 03, 04, 05)?</li>
+        <li>Concrete artefact (02) vs. abstract metaphor (01, 03, 04, 05)?</li>
+        <li>Horizontal band (01, 02, 04) vs. centered stage (03) vs. vertical pillar (05)?</li>
+        <li>Should the threading have a "before / after" reading like 03 explicitly invites?</li>
+      </ul>
+    </section>
+  </body>
+</html>

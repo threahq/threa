@@ -1,0 +1,35 @@
+---
+/*
+ * Renders a schema property tree (see lib/openapi.buildSchemaTree). Each property
+ * shows its name, type, required flag, constraints, and description; nested
+ * objects and array items render in an indented block with a left guide line, so
+ * the payload's shape is visible. Recurses via Astro.self for nesting.
+ */
+import type { SchemaNode } from "../lib/openapi"
+
+interface Props {
+  nodes: SchemaNode[]
+}
+const { nodes } = Astro.props
+---
+
+{nodes.length > 0 && (
+  <div class="api-props">
+    {nodes.map((n) => (
+      <div class="api-prop">
+        <div class="api-prop-head">
+          <code class="api-prop-name">{n.name}</code>
+          <span class="api-prop-type">{n.type}</span>
+          {n.required && <span class="api-req">required</span>}
+        </div>
+        {n.note && <div class="api-prop-note">{n.note}</div>}
+        {n.description && <p class="api-prop-desc">{n.description}</p>}
+        {n.children.length > 0 && (
+          <div class="api-nest">
+            <Astro.self nodes={n.children} />
+          </div>
+        )}
+      </div>
+    ))}
+  </div>
+)}

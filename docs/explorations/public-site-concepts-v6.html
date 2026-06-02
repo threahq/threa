@@ -1,0 +1,1233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Threa — Public Site Concepts v6</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@200;300;400;500;600&family=IBM+Plex+Mono:wght@300;400;500&family=DM+Serif+Display&family=Inter+Tight:wght@300;400;500;600&family=Plus+Jakarta+Sans:wght@300;400;500;600&family=Mona+Sans:wght@200;300;400;500;600&family=JetBrains+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        --gold: 38 65% 50%;
+        --gold-soft: 38 65% 62%;
+        --gold-dim: 38 28% 38%;
+        --paper: 33 28% 95%;
+        --paper-warm: 33 24% 90%;
+        --ink: 28 18% 12%;
+        --ink-soft: 28 14% 24%;
+        --night: 222 25% 8%;
+        --night-soft: 222 18% 14%;
+        --line: 28 12% 78%;
+        --line-night: 222 14% 22%;
+        --muted: 28 8% 46%;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: hsl(var(--paper));
+        color: hsl(var(--ink));
+        font-family: "Inter Tight", sans-serif;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+
+      .doc-header {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 56px 48px 24px;
+      }
+      .doc-header h1 {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+        margin: 0 0 8px;
+      }
+      .doc-header p {
+        font-family: "Inter Tight", sans-serif;
+        font-size: 15px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.5;
+        margin: 0;
+        max-width: 720px;
+      }
+
+      .concept-frame {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 36px 48px 96px;
+      }
+      .concept-meta {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        margin: 0 0 16px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .concept-meta strong {
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+      .concept-notes {
+        font-family: "Inter Tight", sans-serif;
+        font-size: 13.5px;
+        color: hsl(var(--ink-soft));
+        line-height: 1.55;
+        margin: 18px 0 0;
+        max-width: 760px;
+      }
+      .concept-notes em {
+        font-style: normal;
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+
+      /* shared wordmark */
+      .wordmark {
+        font-family: "Inter Tight", sans-serif !important;
+        font-weight: 300 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        font-style: normal !important;
+      }
+
+      /* ============================================================
+     CONCEPT 01 — SEQUENCE (Tight Filmstrip + inline artifact rail)
+     IBM Plex Sans + IBM Plex Mono
+     ============================================================ */
+      .c1-shell {
+        font-family: "IBM Plex Sans", sans-serif;
+        color: hsl(var(--paper));
+      }
+      .c1-strip {
+        background: hsl(var(--night));
+        padding: 52px 56px 56px;
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 56px;
+        align-items: end;
+        border-radius: 2px;
+      }
+      .c1-strip .nav {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 36px;
+        color: hsl(var(--paper) / 0.7);
+      }
+      .c1-strip .nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c1-strip .nav .brand svg {
+        width: 22px;
+        height: 22px;
+        color: hsl(var(--gold-soft));
+      }
+      .c1-strip .nav .brand .wordmark {
+        color: hsl(var(--paper));
+        font-size: 12px;
+      }
+      .c1-strip .nav .links {
+        display: flex;
+        gap: 28px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      .c1-strip .nav .links a {
+        color: hsl(var(--paper) / 0.7);
+        text-decoration: none;
+      }
+      .c1-strip h1 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 200;
+        font-size: clamp(40px, 5vw, 64px);
+        line-height: 1.04;
+        letter-spacing: -0.015em;
+        margin: 0;
+        color: hsl(var(--paper));
+      }
+      .c1-strip h1 .accent {
+        color: hsl(var(--gold-soft));
+        font-weight: 400;
+      }
+      .c1-strip .lede {
+        color: hsl(var(--paper) / 0.7);
+        font-size: 16px;
+        line-height: 1.55;
+        margin: 22px 0 28px;
+        max-width: 460px;
+      }
+      .c1-strip .cta {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 10px;
+        background: hsl(var(--gold));
+        color: hsl(var(--night));
+        padding: 12px 18px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        text-decoration: none;
+        font-weight: 500;
+      }
+      .c1-strip .cta::after {
+        content: "→";
+        font-family: "IBM Plex Sans";
+      }
+      .c1-strip .mark-side {
+        position: relative;
+        align-self: stretch;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding-bottom: 6px;
+      }
+      .c1-strip .mark-side svg {
+        width: 220px;
+        height: 220px;
+        color: hsl(var(--gold-soft));
+        opacity: 0.86;
+      }
+      .c1-strip .mark-side .label {
+        position: absolute;
+        top: 12px;
+        right: 6px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--paper) / 0.55);
+      }
+      /* artifact rail beneath the strip */
+      .c1-rail {
+        margin-top: -1px;
+        padding: 0 56px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: hsl(var(--paper-warm));
+        border-bottom: 1px solid hsl(var(--line));
+      }
+      .c1-chip {
+        background: hsl(var(--paper));
+        padding: 18px 20px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .c1-chip .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-dim));
+      }
+      .c1-chip .body {
+        color: hsl(var(--ink));
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .c1-chip .meta {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10.5px;
+        letter-spacing: 0.06em;
+        color: hsl(var(--muted));
+        margin-top: 4px;
+      }
+
+      /* ============================================================
+     CONCEPT 02 — LEDGER (Artifact-led, very editorial)
+     DM Serif Display + Inter Tight
+     ============================================================ */
+      .c2-shell {
+        background: hsl(var(--paper-warm));
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .c2-top {
+        background: hsl(var(--night));
+        color: hsl(var(--paper));
+        padding: 44px 56px 36px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .c2-top .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: hsl(var(--paper));
+      }
+      .c2-top .brand svg {
+        width: 22px;
+        height: 22px;
+        color: hsl(var(--gold-soft));
+      }
+      .c2-top .brand .wordmark {
+        font-size: 12px;
+      }
+      .c2-top .nav {
+        display: flex;
+        gap: 28px;
+        font-family: "Inter Tight";
+        font-size: 13px;
+        color: hsl(var(--paper) / 0.7);
+      }
+      .c2-top .nav a {
+        color: inherit;
+        text-decoration: none;
+      }
+      .c2-body {
+        padding: 64px 56px 56px;
+        display: grid;
+        grid-template-columns: 1.05fr 1fr;
+        gap: 64px;
+        align-items: center;
+      }
+      .c2-body h1 {
+        font-family: "DM Serif Display", serif;
+        font-weight: 400;
+        font-size: clamp(44px, 5.4vw, 72px);
+        line-height: 1.02;
+        letter-spacing: -0.015em;
+        color: hsl(var(--ink));
+        margin: 0 0 24px;
+      }
+      .c2-body h1 .accent {
+        color: hsl(var(--gold));
+        font-style: italic;
+      }
+      .c2-body .lede {
+        font-family: "Inter Tight", sans-serif;
+        color: hsl(var(--ink-soft));
+        font-size: 16.5px;
+        line-height: 1.55;
+        max-width: 460px;
+        margin: 0 0 32px;
+      }
+      .c2-body .cta-row {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+      }
+      .c2-body .cta {
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        padding: 13px 20px;
+        font-family: "Inter Tight";
+        font-size: 13.5px;
+        font-weight: 500;
+        text-decoration: none;
+        border-radius: 2px;
+      }
+      .c2-body .quiet {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      /* artifact card */
+      .c2-artifact {
+        background: hsl(var(--paper));
+        border: 1px solid hsl(var(--line));
+        padding: 28px 30px 26px;
+        position: relative;
+        box-shadow:
+          0 30px 60px -40px hsl(var(--ink) / 0.25),
+          0 2px 6px -3px hsl(var(--ink) / 0.08);
+      }
+      .c2-artifact::before {
+        content: "";
+        position: absolute;
+        top: -1px;
+        left: -1px;
+        bottom: -1px;
+        width: 3px;
+        background: hsl(var(--gold));
+      }
+      .c2-artifact .kicker {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10.5px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-dim));
+        margin-bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .c2-artifact .kicker svg {
+        width: 14px;
+        height: 14px;
+        color: hsl(var(--gold));
+      }
+      .c2-artifact h3 {
+        font-family: "DM Serif Display", serif;
+        font-weight: 400;
+        font-size: 22px;
+        line-height: 1.2;
+        margin: 0 0 14px;
+        color: hsl(var(--ink));
+      }
+      .c2-artifact p {
+        font-family: "Inter Tight", sans-serif;
+        font-size: 14.5px;
+        line-height: 1.6;
+        color: hsl(var(--ink-soft));
+        margin: 0;
+      }
+      .c2-artifact .footer {
+        margin-top: 22px;
+        padding-top: 16px;
+        border-top: 1px dashed hsl(var(--line));
+        display: flex;
+        justify-content: space-between;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10.5px;
+        letter-spacing: 0.1em;
+        color: hsl(var(--muted));
+      }
+
+      /* ============================================================
+     CONCEPT 03 — SPINE (Vertical threading, tightened)
+     Mona Sans + JetBrains Mono
+     ============================================================ */
+      .c3-shell {
+        background: hsl(var(--paper));
+        font-family: "Mona Sans", sans-serif;
+        border: 1px solid hsl(var(--line));
+        border-radius: 2px;
+      }
+      .c3-grid {
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        min-height: 580px;
+      }
+      .c3-left {
+        padding: 48px 56px 56px;
+        display: flex;
+        flex-direction: column;
+      }
+      .c3-left .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 72px;
+      }
+      .c3-left .nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c3-left .nav .brand svg {
+        width: 22px;
+        height: 22px;
+        color: hsl(var(--gold));
+      }
+      .c3-left .nav .brand .wordmark {
+        font-size: 12px;
+        color: hsl(var(--ink));
+      }
+      .c3-left .nav .links {
+        display: flex;
+        gap: 26px;
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      .c3-left .nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .c3-left h1 {
+        font-family: "Mona Sans", sans-serif;
+        font-weight: 300;
+        font-stretch: 90%;
+        font-size: clamp(38px, 4.6vw, 56px);
+        line-height: 1.06;
+        letter-spacing: -0.018em;
+        color: hsl(var(--ink));
+        margin: 0;
+        max-width: 540px;
+      }
+      .c3-left h1 .accent {
+        color: hsl(var(--gold));
+        font-weight: 500;
+      }
+      .c3-left .lede {
+        color: hsl(var(--ink-soft));
+        font-size: 16px;
+        line-height: 1.55;
+        margin: 22px 0 32px;
+        max-width: 480px;
+      }
+      .c3-left .actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-top: auto;
+      }
+      .c3-left .cta {
+        background: hsl(var(--ink));
+        color: hsl(var(--paper));
+        padding: 12px 20px;
+        font-family: "Mona Sans";
+        font-weight: 500;
+        font-size: 13.5px;
+        text-decoration: none;
+        border-radius: 2px;
+      }
+      .c3-left .quiet {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--muted));
+      }
+      /* the spine */
+      .c3-spine {
+        position: relative;
+        border-left: 1px solid hsl(var(--line));
+        padding: 48px 32px 56px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      .c3-spine .spine-line {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 1px;
+        background: linear-gradient(
+          180deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.5) 20%,
+          hsl(var(--gold) / 0.5) 80%,
+          hsl(var(--gold) / 0) 100%
+        );
+        transform: translateX(-0.5px);
+      }
+      .c3-station {
+        position: relative;
+        text-align: center;
+        z-index: 2;
+      }
+      .c3-station svg {
+        width: 42px;
+        height: 42px;
+        color: hsl(var(--gold));
+        background: hsl(var(--paper));
+        border-radius: 50%;
+        padding: 2px;
+        display: block;
+        margin: 0 auto 10px;
+      }
+      .c3-station .name {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10.5px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--ink));
+        font-weight: 500;
+      }
+      .c3-station .sub {
+        font-family: "Mona Sans", sans-serif;
+        font-size: 11.5px;
+        color: hsl(var(--muted));
+        margin-top: 4px;
+        line-height: 1.4;
+      }
+
+      /* ============================================================
+     CONCEPT 04 — APERTURE (vesica as window with peek)
+     Instrument Serif + Instrument Sans
+     ============================================================ */
+      .c4-shell {
+        background: hsl(var(--night));
+        color: hsl(var(--paper));
+        font-family: "Instrument Sans", sans-serif;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .c4-nav {
+        padding: 32px 56px 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: hsl(var(--paper) / 0.8);
+      }
+      .c4-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c4-nav .brand svg {
+        width: 22px;
+        height: 22px;
+        color: hsl(var(--gold-soft));
+      }
+      .c4-nav .brand .wordmark {
+        font-size: 12px;
+        color: hsl(var(--paper));
+      }
+      .c4-nav .links {
+        display: flex;
+        gap: 28px;
+        font-family: "Instrument Sans";
+        font-size: 13.5px;
+      }
+      .c4-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .c4-stage {
+        padding: 64px 56px 72px;
+        display: grid;
+        grid-template-columns: 1.05fr 1.2fr;
+        gap: 48px;
+        align-items: center;
+      }
+      .c4-stage h1 {
+        font-family: "Instrument Serif", serif;
+        font-weight: 400;
+        font-size: clamp(46px, 5.6vw, 76px);
+        line-height: 1;
+        letter-spacing: -0.01em;
+        margin: 0;
+      }
+      .c4-stage h1 .accent {
+        color: hsl(var(--gold-soft));
+        font-style: italic;
+      }
+      .c4-stage .lede {
+        font-family: "Instrument Sans";
+        color: hsl(var(--paper) / 0.7);
+        font-size: 16.5px;
+        line-height: 1.6;
+        margin: 26px 0 32px;
+        max-width: 440px;
+      }
+      .c4-stage .cta-row {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+      }
+      .c4-stage .cta {
+        background: hsl(var(--gold));
+        color: hsl(var(--night));
+        padding: 12px 20px;
+        text-decoration: none;
+        font-weight: 500;
+        font-size: 13.5px;
+        border-radius: 2px;
+      }
+      .c4-stage .quiet {
+        font-family: "Instrument Sans";
+        font-size: 12.5px;
+        color: hsl(var(--paper) / 0.55);
+      }
+
+      /* aperture composition */
+      .c4-aperture {
+        position: relative;
+        aspect-ratio: 1 / 1;
+        max-width: 480px;
+        margin: 0 auto;
+      }
+      .c4-aperture .ring {
+        position: absolute;
+        inset: 0;
+        color: hsl(var(--gold-soft) / 0.35);
+      }
+      .c4-aperture .ring svg {
+        width: 100%;
+        height: 100%;
+      }
+      .c4-aperture .ring.r2 {
+        transform: scale(0.86);
+        color: hsl(var(--gold-soft) / 0.22);
+      }
+      .c4-aperture .ring.r3 {
+        transform: scale(0.72);
+        color: hsl(var(--gold-soft) / 0.14);
+      }
+      .c4-aperture .vesica {
+        position: absolute;
+        inset: 14%;
+        color: hsl(var(--gold-soft));
+      }
+      .c4-aperture .vesica svg {
+        width: 100%;
+        height: 100%;
+      }
+      .c4-peek {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 56%;
+        background: hsl(var(--night-soft) / 0.94);
+        border: 1px solid hsl(var(--gold-soft) / 0.35);
+        padding: 16px 18px 18px;
+        backdrop-filter: blur(4px);
+      }
+      .c4-peek .kicker {
+        font-family: "Instrument Sans";
+        font-size: 10.5px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--gold-soft));
+        margin-bottom: 8px;
+      }
+      .c4-peek .body {
+        font-family: "Instrument Serif", serif;
+        font-style: italic;
+        font-size: 14.5px;
+        line-height: 1.45;
+        color: hsl(var(--paper));
+      }
+      .c4-peek .meta {
+        margin-top: 12px;
+        padding-top: 10px;
+        border-top: 1px solid hsl(var(--paper) / 0.1);
+        font-family: "Instrument Sans";
+        font-size: 11px;
+        color: hsl(var(--paper) / 0.55);
+        letter-spacing: 0.04em;
+      }
+
+      /* ============================================================
+     CONCEPT 05 — TAPE (Horizontal thread through filmstrip)
+     IBM Plex Sans + IBM Plex Mono — sister to 01 but with the
+     thread running across the band as the visual through-line.
+     ============================================================ */
+      .c5-shell {
+        background: hsl(var(--night));
+        color: hsl(var(--paper));
+        font-family: "IBM Plex Sans", sans-serif;
+        border-radius: 2px;
+        overflow: hidden;
+        position: relative;
+      }
+      .c5-tape {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 56%;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          hsl(var(--gold) / 0) 0%,
+          hsl(var(--gold) / 0.16) 8%,
+          hsl(var(--gold) / 0.5) 50%,
+          hsl(var(--gold) / 0.92) 92%,
+          hsl(var(--gold)) 100%
+        );
+        z-index: 1;
+      }
+      .c5-tape::before,
+      .c5-tape::after {
+        content: "";
+        position: absolute;
+        top: -3px;
+        width: 1px;
+        height: 7px;
+        background: hsl(var(--gold) / 0.55);
+      }
+      .c5-tape::before {
+        left: 22%;
+      }
+      .c5-tape::after {
+        left: 78%;
+      }
+
+      .c5-vesica {
+        position: absolute;
+        left: 50%;
+        top: 56%;
+        transform: translate(-50%, -50%);
+        width: 110px;
+        height: 110px;
+        color: hsl(var(--gold-soft));
+        z-index: 2;
+        background: hsl(var(--night));
+        border-radius: 50%;
+        padding: 4px;
+      }
+      .c5-vesica svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .c5-inner {
+        position: relative;
+        z-index: 3;
+        padding: 44px 56px 80px;
+      }
+      .c5-nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 56px;
+      }
+      .c5-nav .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .c5-nav .brand svg {
+        width: 22px;
+        height: 22px;
+        color: hsl(var(--gold-soft));
+      }
+      .c5-nav .brand .wordmark {
+        color: hsl(var(--paper));
+        font-size: 12px;
+      }
+      .c5-nav .links {
+        display: flex;
+        gap: 28px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--paper) / 0.7);
+      }
+      .c5-nav .links a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .c5-body {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 56px;
+        align-items: end;
+        min-height: 360px;
+      }
+      .c5-body h1 {
+        font-family: "IBM Plex Sans", sans-serif;
+        font-weight: 200;
+        font-size: clamp(42px, 5.2vw, 66px);
+        line-height: 1.02;
+        letter-spacing: -0.015em;
+        margin: 0;
+      }
+      .c5-body h1 .accent {
+        color: hsl(var(--gold-soft));
+        font-weight: 400;
+      }
+      .c5-body .right {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        text-align: right;
+        gap: 22px;
+      }
+      .c5-body .lede {
+        color: hsl(var(--paper) / 0.72);
+        font-size: 15.5px;
+        line-height: 1.55;
+        max-width: 360px;
+      }
+      .c5-body .cta-row {
+        display: flex;
+        gap: 14px;
+        align-items: center;
+      }
+      .c5-body .cta {
+        background: hsl(var(--gold));
+        color: hsl(var(--night));
+        padding: 12px 20px;
+        text-decoration: none;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        font-weight: 500;
+      }
+      .c5-body .quiet {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: hsl(var(--paper) / 0.5);
+      }
+      .c5-tick-labels {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(56% + 10px);
+        display: flex;
+        justify-content: space-between;
+        padding: 0 calc(56px + 4%);
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: hsl(var(--paper) / 0.45);
+        z-index: 2;
+        pointer-events: none;
+      }
+      .c5-tick-labels span:nth-child(2) {
+        color: hsl(var(--gold-soft) / 0.7);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- shared brand mark, viewBox 0 0 100 100 -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <defs>
+        <symbol id="threa-mark" viewBox="0 0 100 100">
+          <path
+            d="M 50 24 C 64 30, 72 42, 72 50 C 72 58, 64 70, 50 76 C 36 70, 28 58, 28 50 C 28 42, 36 30, 50 24 Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+          />
+          <path
+            d="M 50 14 C 47 26, 46 38, 50 50 C 54 62, 53 74, 50 86"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="dot-mark" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3" fill="currentColor" />
+        </symbol>
+      </defs>
+    </svg>
+
+    <header class="doc-header">
+      <h1>Threa · Public site concepts · v6</h1>
+      <p>
+        Iterating on Tight Filmstrip (01), Filmstrip with Artifact (02), and Vertical Threading (05). Five new
+        directions that tighten the dense band, lean further into concrete artifacts as the visual subject, and try to
+        give the vertical-thread idea a less clumsy shape. Each concept declares its type pairing so we can decide on
+        voice while picking layout.
+      </p>
+    </header>
+
+    <!-- =================== CONCEPT 01 — SEQUENCE =================== -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>01</strong>
+        <span>Sequence</span>
+        <span>· IBM Plex Sans + Plex Mono</span>
+        <span>· extends Tight Filmstrip</span>
+      </div>
+      <div class="c1-shell">
+        <div class="c1-strip">
+          <div class="nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="links">
+              <a>Product</a>
+              <a>Developer</a>
+              <a>About</a>
+            </nav>
+          </div>
+          <div class="copy">
+            <h1>
+              A place for what<br />
+              you'd rather not <span class="accent">lose</span>.
+            </h1>
+            <p class="lede">
+              Threa is a quiet workspace for the small things that matter — half-formed plans, decisions you made on a
+              Tuesday, the reasons behind them. Capture them once. Find them when they matter.
+            </p>
+            <a class="cta" href="#">Join the waitlist</a>
+          </div>
+          <div class="mark-side">
+            <span class="label">/ thread · mark</span>
+            <svg><use href="#threa-mark" /></svg>
+          </div>
+        </div>
+        <div class="c1-rail">
+          <div class="c1-chip">
+            <span class="kicker">Kept</span>
+            <span class="body"
+              >Decided to delay the auth refactor — Sara's concern about token rotation needs more thought.</span
+            >
+            <span class="meta">2 weeks ago · returned today</span>
+          </div>
+          <div class="c1-chip">
+            <span class="kicker">Held</span>
+            <span class="body">Maya is allergic to peanuts; party menu needs a swap.</span>
+            <span class="meta">family · returned 11 days later</span>
+          </div>
+          <div class="c1-chip">
+            <span class="kicker">Returned</span>
+            <span class="body">The "shipping by Friday" promise — surfaced when planning the next sprint.</span>
+            <span class="meta">project: launch · auto-surfaced</span>
+          </div>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's new:</em> the dark band stays tight (no headroom), and the artifact idea comes back as an inline
+        three-card rail below the strip rather than a featured quote — concrete evidence of what Threa keeps, without
+        preachy copy. Plex Sans is unchanged from v5/01 because it sat right; the rail uses Plex Mono kickers and short
+        labels to feel like a ledger, not marketing.
+      </p>
+    </section>
+
+    <!-- =================== CONCEPT 02 — LEDGER =================== -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>02</strong>
+        <span>Ledger</span>
+        <span>· DM Serif Display + Inter Tight</span>
+        <span>· artifact-led</span>
+      </div>
+      <div class="c2-shell">
+        <div class="c2-top">
+          <div class="brand">
+            <svg><use href="#threa-mark" /></svg>
+            <span class="wordmark">Threa</span>
+          </div>
+          <nav class="nav"><a>Product</a><a>Developer</a><a>About</a></nav>
+        </div>
+        <div class="c2-body">
+          <div>
+            <h1>What you keep,<br />you can <span class="accent">return to</span>.</h1>
+            <p class="lede">
+              Most of the work happens in small moments — a decision, a reminder, a half-thought you'll want again next
+              month. Threa is the place that holds them and brings them back.
+            </p>
+            <div class="cta-row">
+              <a class="cta" href="#">Join the waitlist</a>
+              <span class="quiet">/ early access · spring 2026</span>
+            </div>
+          </div>
+          <div class="c2-artifact">
+            <div class="kicker">
+              <svg><use href="#dot-mark" /></svg>
+              A decision from two weeks ago
+            </div>
+            <h3>Hold off on the auth refactor until Sara is back.</h3>
+            <p>
+              The token-rotation question is genuinely unresolved, and shipping without her review would force a second
+              pass we don't have time for. Revisit when she's reviewing the design doc on the 11th.
+            </p>
+            <div class="footer">
+              <span>kept · project / api-v3</span>
+              <span>returned today</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's new:</em> artifact is the hero, not a sidebar. Headline pulls in tight; the artifact card on the
+        right shows a specific kept decision so the reader instantly understands what Threa <em>does</em>
+        (not what it claims). DM Serif Display gives the headline a confident, bookish weight without the
+        Newsreader-italic tic; Inter Tight handles body cleanly.
+      </p>
+    </section>
+
+    <!-- =================== CONCEPT 03 — SPINE =================== -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>03</strong>
+        <span>Spine</span>
+        <span>· Mona Sans + JetBrains Mono</span>
+        <span>· refines Vertical Threading</span>
+      </div>
+      <div class="c3-shell">
+        <div class="c3-grid">
+          <div class="c3-left">
+            <div class="nav">
+              <div class="brand">
+                <svg><use href="#threa-mark" /></svg>
+                <span class="wordmark">Threa</span>
+              </div>
+              <nav class="links">
+                <a>Product</a>
+                <a>Developer</a>
+                <a>About</a>
+              </nav>
+            </div>
+            <div>
+              <h1>Capture the small thing. <span class="accent">Find it</span> when it counts.</h1>
+              <p class="lede">
+                A workspace for the things you'd otherwise forget you decided. Notes, threads, and quiet decisions, held
+                together so the past stays useful.
+              </p>
+              <div class="actions">
+                <a class="cta" href="#">Join the waitlist</a>
+                <span class="quiet">/ vetted · early 2026</span>
+              </div>
+            </div>
+          </div>
+          <aside class="c3-spine">
+            <div class="spine-line"></div>
+            <div class="c3-station">
+              <svg><use href="#dot-mark" /></svg>
+              <div class="name">Capture</div>
+              <div class="sub">A note, a chat, a decision.</div>
+            </div>
+            <div class="c3-station">
+              <svg><use href="#threa-mark" /></svg>
+              <div class="name">Hold</div>
+              <div class="sub">Memory builds in the background.</div>
+            </div>
+            <div class="c3-station">
+              <svg><use href="#dot-mark" /></svg>
+              <div class="name">Return</div>
+              <div class="sub">Brought back when it matters.</div>
+            </div>
+          </aside>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's fixed from v5/05:</em> the thread is now a hairline inside a narrow right-column (220px) instead of a
+        full pillar — less decorative weight, more typographic restraint. Three small stations label the flow with mono
+        captions (capture / hold / return), which fixes the readability problem the loose vertical version had. Mona
+        Sans gives the headline a slightly condensed, modern silhouette.
+      </p>
+    </section>
+
+    <!-- =================== CONCEPT 04 — APERTURE =================== -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>04</strong>
+        <span>Aperture</span>
+        <span>· Instrument Serif + Instrument Sans</span>
+        <span>· vesica as window</span>
+      </div>
+      <div class="c4-shell">
+        <div class="c4-nav">
+          <div class="brand">
+            <svg><use href="#threa-mark" /></svg>
+            <span class="wordmark">Threa</span>
+          </div>
+          <nav class="links"><a>Product</a><a>Developer</a><a>About</a></nav>
+        </div>
+        <div class="c4-stage">
+          <div>
+            <h1>Small things,<br /><span class="accent">held carefully</span>.</h1>
+            <p class="lede">
+              A workspace for the half-thoughts and quiet decisions that usually disappear. Capture once. Threa keeps
+              them in view when it matters again.
+            </p>
+            <div class="cta-row">
+              <a class="cta" href="#">Join the waitlist</a>
+              <span class="quiet">vetted access · spring 2026</span>
+            </div>
+          </div>
+          <div class="c4-aperture">
+            <div class="ring r3">
+              <svg viewBox="0 0 100 100"><use href="#threa-mark" /></svg>
+            </div>
+            <div class="ring r2">
+              <svg viewBox="0 0 100 100"><use href="#threa-mark" /></svg>
+            </div>
+            <div class="ring">
+              <svg viewBox="0 0 100 100"><use href="#threa-mark" /></svg>
+            </div>
+            <div class="vesica">
+              <svg viewBox="0 0 100 100"><use href="#threa-mark" /></svg>
+            </div>
+            <div class="c4-peek">
+              <div class="kicker">held · 11 days</div>
+              <div class="body">"Maya is allergic to peanuts — swap the satay for the noodle salad."</div>
+              <div class="meta">family / party-planning · returned today</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's new:</em> the brand mark becomes a literal aperture — a held artifact peeks through the vesica, so
+        "what's held" is shown, not described. Instrument Serif has a narrow, slightly editorial silhouette that avoids
+        the Newsreader feel; Instrument Sans pairs naturally without being Inter-adjacent.
+      </p>
+    </section>
+
+    <!-- =================== CONCEPT 05 — TAPE =================== -->
+    <section class="concept-frame">
+      <div class="concept-meta">
+        <strong>05</strong>
+        <span>Tape</span>
+        <span>· IBM Plex Sans + Plex Mono</span>
+        <span>· filmstrip with horizontal thread</span>
+      </div>
+      <div class="c5-shell">
+        <div class="c5-tape"></div>
+        <div class="c5-vesica">
+          <svg viewBox="0 0 100 100"><use href="#threa-mark" /></svg>
+        </div>
+        <div class="c5-tick-labels">
+          <span>in</span>
+          <span>held</span>
+          <span>out</span>
+        </div>
+        <div class="c5-inner">
+          <div class="c5-nav">
+            <div class="brand">
+              <svg><use href="#threa-mark" /></svg>
+              <span class="wordmark">Threa</span>
+            </div>
+            <nav class="links"><a>Product</a><a>Developer</a><a>About</a></nav>
+          </div>
+          <div class="c5-body">
+            <h1>
+              A workspace<br />
+              for the things<br />
+              you'd rather <span class="accent">keep</span>.
+            </h1>
+            <div class="right">
+              <p class="lede">
+                Capture once — a decision, a note, a thought you'll want next month. Threa holds them and brings them
+                back at the right moment.
+              </p>
+              <div class="cta-row">
+                <span class="quiet">/ vetted access</span>
+                <a class="cta" href="#">Join waitlist →</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="concept-notes">
+        <em>What's new:</em> sister concept to 01, but the thread is the visual subject — a fine horizontal line runs
+        across the band, dim on the left and bright on the right, passing through the vesica. Tick labels (<code
+          style="font-family: &quot;IBM Plex Mono&quot;, monospace"
+          >in / held / out</code
+        >) make the direction explicit. Same density as 01; the thread does the storytelling work.
+      </p>
+    </section>
+  </body>
+</html>

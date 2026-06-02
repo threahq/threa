@@ -1,0 +1,2019 @@
+/*
+ * Threa public site — global styles.
+ * Ported from docs/explorations/public-site-concepts-v10.html.
+ * Tokens mirror apps/frontend/src/index.css (the real app theme):
+ * warm-neutral paper canvas, gold (=== --primary) as the thread.
+ */
+
+/* ---------- TOKENS ---------- */
+:root {
+  /* Tokens tuned to the real app (apps/frontend/src/index.css):
+       brighter, lower-saturation warm-neutral canvas, hue ~30-40.
+       Gold === --primary exactly. paper/sunk keep a small lightness
+       delta so section cards still read as elevated over the page. */
+  --gold: 38 65% 50%; /* === app --primary */
+  --gold-soft: 38 65% 62%;
+  --gold-dim: 38 28% 38%;
+  --paper: 40 22% 98%; /* app --card / --background */
+  --paper-warm: 38 16% 94%; /* app --muted / --secondary */
+  --paper-sunk: 40 14% 93%; /* page canvas, just below cards */
+  --ink: 30 10% 12%; /* === app --foreground */
+  --ink-soft: 30 9% 26%;
+  --night: 222 25% 8%;
+  --night-soft: 222 18% 14%;
+  --line: 35 15% 88%; /* === app --border */
+  --muted: 30 8% 45%; /* === app --muted-foreground */
+  --emerald: 142 64% 38%;
+  --emerald-soft: 142 60% 92%;
+
+  --font-display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  --font-body: "Space Grotesk", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --pad-x: 56px;
+
+  /* total animation cycle for the chat widget */
+  --cycle: 22s;
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  background: hsl(var(--paper-warm));
+  color: hsl(var(--ink));
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ---------- PAGE FRAME (seamless bands) ----------
+     Each section is a full-bleed band that touches its neighbours with no
+     gap; the tint alternates paper / paper-warm so the page reads as one
+     continuous striped surface instead of disjointed floating sheets. The
+     inner shell (.hero-shell / .memo-shell / .cta-shell) re-constrains the
+     content to the 1240px column and owns the vertical rhythm. */
+.frame {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  background: hsl(var(--paper));
+}
+.frame.warm {
+  background: hsl(var(--paper-warm));
+}
+.section-meta {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  margin: 0 0 16px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+.section-meta strong {
+  color: hsl(var(--ink));
+  font-weight: 500;
+}
+
+/* ---------- SHARED PRIMITIVES ---------- */
+.wordmark {
+  font-family: var(--font-display) !important;
+  font-weight: 300 !important;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-style: normal !important;
+}
+.nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.brand svg {
+  width: 22px;
+  height: 22px;
+}
+.brand .wordmark {
+  font-size: 12px;
+}
+.nav-links {
+  display: flex;
+  gap: 28px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.nav-links a {
+  color: inherit;
+  text-decoration: none;
+}
+.h-display {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(36px, 4.4vw, 54px);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+.h-display .accent {
+  color: hsl(var(--gold));
+  font-weight: 500;
+}
+.lede {
+  font-size: 16px;
+  line-height: 1.55;
+  margin: 22px 0 32px;
+  max-width: 480px;
+}
+.cta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  background: hsl(var(--ink));
+  color: hsl(var(--paper));
+  padding: 12px 20px;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 13.5px;
+  text-decoration: none;
+  border-radius: 2px;
+  border: none;
+  cursor: pointer;
+}
+.cta::after {
+  content: "→";
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+.quiet {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+
+/* ---------- OPEN TIMELINE ----------
+     Anchored to the real chat view in apps/frontend/src/components/timeline:
+     - Rows render at full opacity from frame 1; "new" is signalled by
+       a 2s background-color flash from gold/0.3 → transparent (= the
+       `animate-highlight-flash` keyframes in
+       apps/frontend/tailwind.config.js).
+     - Persona rows always carry the gold inset stripe + soft gradient
+       (= ACTOR_ROW_THEME.persona.rowAccent in
+       apps/frontend/src/components/timeline/message-event.tsx). The
+       highlight flash layers ON TOP of the gradient.
+     - Continuations, hover toolbar, swipe-to-quote: out of scope for the
+       marketing widget. */
+.tl {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  /* No outline, no card — the conversation lives directly in the warm
+       paper of the hero. The panel still bounds the scroll region and
+       hosts the floating composer, but visually it dissolves into the
+       page. */
+  height: clamp(560px, 68vh, 640px);
+  overflow: hidden;
+  padding: 0 4px;
+}
+/* Editorial chapter line — keys to the page's mono-cap meta voice
+     instead of a Slack-style channel chrome. Channel name slightly
+     heavier; the "thread · friday" tail sits quiet next to it. */
+.tl-caption {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 0 8px 18px;
+  flex-shrink: 0;
+}
+.tl-caption .hash {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: hsl(var(--ink));
+}
+.tl-caption .meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+/* Message list — top-anchored, like the real app. With a few messages
+     they sit at the TOP and grow downward (the un-arrived rows are
+     collapsed to zero height, so the region isn't scrollable yet). Once
+     the conversation overflows the frame, the pin-scroll script keeps the
+     LATEST message visible at the bottom and older rows scroll off the top
+     — so it fills from the top, then fills from the bottom once full. */
+.tl-messages {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-behavior: smooth;
+  /* padding-bottom reserves space so the latest row (and its reaction
+       pills, which sit under the message body) clears the floating
+       composer when scrolled to bottom. Composer = bottom:28px + ~86px
+       tall ≈ 114px from the list bottom; this leaves a comfortable ~36px
+       gap above it so the last message reads as fully in view, not tucked
+       under the card. */
+  padding-bottom: 150px;
+  /* Hide the scrollbar — the marketing widget reads as a conversation
+       in the page, and a visible scrollbar breaks that illusion. */
+  scrollbar-width: none;
+  /* Soft dissolve at top and bottom — without a panel border, scrolled
+       messages would hard-clip at the invisible edges. The mask makes
+       them fade gently into the paper instead. The composer (opaque,
+       z-index 2) is unaffected. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, black 14px, black calc(100% - 22px), transparent 100%);
+}
+.tl-messages::-webkit-scrollbar {
+  display: none;
+}
+/* Prevent flex from compressing message rows to fit. Their own
+     pop animations control whether they're visible (max-height + opacity
+     animate 0 → natural on each beat). */
+.tl-messages > .tl-row,
+.tl-messages > .trace-card {
+  flex-shrink: 0;
+}
+
+.tl-row {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 14px;
+  padding: 8px 12px 8px 12px;
+  margin: 0;
+  position: relative;
+  border-radius: 2px;
+  background-color: hsl(var(--gold) / 0); /* highlight target */
+}
+/* Rows that animate in start invisible AND collapsed (zero height), so
+     they reserve no space until their beat — the timeline only grows tall
+     enough to scroll once messages have actually arrived. Maya is static
+     (already in the channel at page load). */
+.tl-row.pop-jordan,
+.tl-row.pop-alex,
+.tl-row.pop-ariadne {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  overflow: hidden;
+}
+.tl-row.persona {
+  /* Persona accent — present from the moment the row exists. */
+  background-image: linear-gradient(90deg, hsl(var(--gold) / 0.06) 0%, hsl(var(--gold) / 0) 75%);
+  box-shadow: inset 3px 0 0 hsl(var(--gold));
+}
+
+.tl-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  flex-shrink: 0;
+}
+.tl-avatar.av-alex {
+  background: hsl(28 30% 86%);
+  color: hsl(28 30% 26%);
+}
+.tl-avatar.av-jordan {
+  background: hsl(200 35% 84%);
+  color: hsl(200 40% 28%);
+}
+.tl-avatar.av-maya {
+  background: hsl(20 35% 84%);
+  color: hsl(20 40% 28%);
+}
+.tl-avatar.av-ariadne {
+  background: hsl(var(--gold) / 0.16);
+  color: hsl(var(--gold));
+}
+.tl-avatar.av-ariadne svg {
+  width: 22px;
+  height: 22px;
+}
+
+.tl-body {
+  min-width: 0;
+}
+.tl-head-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+.tl-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: hsl(var(--ink));
+}
+.tl-row.persona .tl-name {
+  color: hsl(var(--gold));
+}
+.tl-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: hsl(var(--muted));
+  font-weight: 400;
+}
+.tl-text {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: hsl(var(--ink));
+}
+.tl-text + .tl-text {
+  margin-top: 2px;
+}
+
+.mention {
+  display: inline-block;
+  background: hsl(var(--gold) / 0.13);
+  color: hsl(var(--gold));
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+.ref-pill {
+  display: inline-block;
+  background: hsl(var(--paper-warm));
+  border: 1px solid hsl(var(--line));
+  color: hsl(var(--ink-soft));
+  padding: 0 8px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+/* ---------- COMPOSER ----------
+     Matches the real MessageComposer in
+     apps/frontend/src/components/composer/message-composer.tsx:
+     `rounded-[16px] border border-input bg-card`, p-3 gap-2, editor on top
+     and action bar at the bottom; send button is a 30×30 rounded-md with
+     an ArrowUp icon that becomes primary-coloured when content is present. */
+.composer {
+  /* The only chrome in the panel — a quiet floating card. Opaque so
+       messages tuck under cleanly, soft border + soft drop shadow so it
+       reads as a card without competing with the editorial paper. The
+       left/right offsets match .tl's horizontal padding so the composer
+       aligns with the message list, not with the panel border. */
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 28px;
+  z-index: 2;
+  border: 1px solid hsl(28 14% 88%);
+  background: hsl(var(--paper));
+  border-radius: 14px;
+  padding: 12px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow:
+    0 1px 0 hsl(33 28% 97%) inset,
+    0 8px 24px -14px hsl(28 30% 22% / 0.18),
+    0 2px 6px -2px hsl(28 30% 22% / 0.06);
+}
+.composer-editor {
+  position: relative;
+  min-height: 26px;
+  padding: 2px 0 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: hsl(var(--ink));
+  display: flex;
+  align-items: center;
+}
+/* Mention pill snaps in as a unit — that's how the real composer's
+     `@ariadne` autocomplete commits (one Enter keystroke, pill appears
+     whole). */
+.composer-mention-wrap {
+  display: inline-flex;
+  overflow: hidden;
+  max-width: 0;
+  flex-shrink: 0;
+}
+.composer-mention-wrap .mention {
+  flex: 0 0 auto;
+}
+/* Real input — the browser draws and blinks the caret natively, so we
+     get a proper text cursor at the right position without any DOM
+     trickery. Pre-armed with focus on cycle start (via JS) so the caret
+     is visible from the first frame. */
+.composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: hsl(var(--ink));
+  caret-color: hsl(var(--ink));
+  /* Demo-only: don't intercept clicks/keyboard so the marketing page
+       stays interactive. We focus it programmatically to keep the caret
+       blinking; users can still click through to anything underneath. */
+  pointer-events: none;
+  user-select: none;
+}
+.composer-input::placeholder {
+  color: hsl(var(--muted));
+  opacity: 1;
+}
+.composer-input::-webkit-input-placeholder {
+  color: hsl(var(--muted));
+}
+/* When the mention pill is in, hide the placeholder so it doesn't
+     read as "@ariadneMessage #api-v3" — toggled by the JS driver. */
+.composer-editor.has-mention .composer-input::placeholder {
+  opacity: 0;
+}
+/* Action bar: hint on the left, icon row + send on the right. Mirrors
+     `message-composer.tsx`: ghost h-7 (28×30) buttons with `gap-1`,
+     muted hint flex-1 on the left, send pinned right as the only solid. */
+.composer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.composer-hint {
+  font-size: 11px;
+  color: hsl(var(--muted));
+  user-select: none;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 4px;
+}
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Individual control button — ghost by default. Real product uses
+     h-7 w-7 (28×28) icon buttons with hover bg-accent. */
+.cb {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: hsl(var(--ink-soft));
+  border: none;
+  padding: 0;
+  cursor: default;
+  flex-shrink: 0;
+}
+.cb svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2;
+}
+/* Maximize uses the smaller h-3.5 w-3.5 icon in the real component. */
+.cb-maximize svg {
+  width: 14px;
+  height: 14px;
+}
+.cb-aa {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -0.015em;
+  color: hsl(var(--ink-soft));
+}
+.cb-emoji span {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* Hover tooltips on composer controls. Absolutely positioned above the
+     button (no layout shift, INV-21), fading in on hover. Mirrors the
+     app's side="top" tooltips. */
+.cb[data-tip]::after,
+.composer-send[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: hsl(var(--ink));
+  color: hsl(var(--paper));
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px -6px hsl(var(--ink) / 0.4);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  z-index: 20;
+}
+.cb[data-tip]::before,
+.composer-send[data-tip]::before {
+  content: "";
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: hsl(var(--ink));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease-out;
+  z-index: 20;
+}
+.cb[data-tip]:hover::after,
+.cb[data-tip]:hover::before,
+.composer-send[data-tip]:hover::after,
+.composer-send[data-tip]:hover::before {
+  opacity: 1;
+}
+/* Send button mirrors the real `rounded-md` h-[30px] w-[30px] primary
+     ArrowUp button — disabled-looking until content arms it. Arms to
+     solid gold (matches the `Button` default-variant on `canSubmit`). */
+.composer-send {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(38 50% 75%);
+  color: hsl(42 55% 97%);
+  border: none;
+  margin-left: 4px;
+  flex-shrink: 0;
+  transition: none;
+}
+.composer-send svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+/* Footer hint sits OUTSIDE the composer — `flex justify-end px-1 pt-1`
+     mirrors the real component (text-[10px] muted opacity-60). Plain
+     text, no kbd boxes. */
+.composer-hint-foot {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 6px;
+  z-index: 2;
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+  color: hsl(var(--muted));
+  opacity: 0.6;
+  text-align: right;
+  user-select: none;
+}
+
+/* ---------- TRACE CARD (single card; running ↔ completed in place) ----------
+     Matches the AgentSessionEvent card in
+     apps/frontend/src/components/timeline/agent-session-event.tsx:
+     - rounded-[10px], `flex items-center gap-3 px-3.5 py-2.5`
+     - border `hsl(var(--border))`, bg `hsl(var(--muted) / 0.5)`
+     - left: 20×20 circle, primary/0.15 + Loader2 spin (running) or
+       emerald/0.15 + Check (completed)
+     - main: title (font-medium) + subtitle (text-[11px] muted) — the
+       same card transitions in place when the session completes. */
+.trace-card {
+  /* Spans the full row width (avatar column to body right), matching
+       the real product's session-card layout — it's a "conversation
+       event", not a body-column reply. */
+  /* Collapsed until its beat (51%) — reserves no vertical space before
+       it enters, so it doesn't pad the scroll height early. */
+  margin: 0;
+  display: grid;
+  grid-template-columns: 24px 1fr auto;
+  gap: 12px;
+  align-items: center;
+  background: hsl(28 8% 92%);
+  border: 1px solid hsl(var(--line));
+  border-width: 0;
+  border-radius: 10px;
+  padding: 0 14px;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+}
+.trace-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: hsl(var(--muted));
+  align-self: center;
+  white-space: nowrap;
+}
+.trace-icon-slot {
+  position: relative;
+  width: 20px;
+  height: 20px;
+}
+.trace-icon {
+  position: absolute;
+  inset: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.trace-icon svg {
+  width: 12px;
+  height: 12px;
+}
+.trace-icon-running {
+  background: hsl(var(--gold) / 0.16);
+  color: hsl(var(--gold));
+}
+.trace-icon-running svg {
+  animation: spin 1.4s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.trace-icon-done {
+  background: hsl(var(--emerald) / 0.16);
+  color: hsl(var(--emerald));
+  opacity: 0;
+}
+
+.trace-main {
+  position: relative;
+  min-height: 32px;
+}
+.trace-row {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.trace-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--ink));
+  line-height: 1.2;
+}
+.trace-sub {
+  font-size: 11px;
+  color: hsl(var(--muted));
+  line-height: 1.3;
+}
+.trace-sub .num {
+  font-variant-numeric: tabular-nums;
+}
+.trace-row-done {
+  opacity: 0;
+}
+
+/* Step counter ticks during the running phase. Spacing is intentionally
+     irregular — agents don't pace themselves evenly: a couple of quick
+     lookups, a long pause for reasoning, then a quick wrap-up. */
+.trace-step-count::before {
+  content: "0";
+  animation: count-steps var(--cycle) linear 1 forwards;
+}
+@keyframes count-steps {
+  0%,
+  51.9% {
+    content: "0";
+  }
+  52% {
+    content: "1";
+  } /* +0.1 — quick pull */
+  53.5% {
+    content: "2";
+  } /* +1.5 — another fast lookup */
+  58% {
+    content: "3";
+  } /* +4.5 — pause to reason */
+  62.5% {
+    content: "4";
+  } /* +4.5 — second pass */
+  66%,
+  100% {
+    content: "5";
+  } /* +3.5 — wrap up */
+}
+
+/* ---------- QUOTE CARD (inside Ariadne's reply) ---------- */
+.quote-card {
+  margin-top: 10px;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 8px;
+  padding: 12px 14px 12px 16px;
+  position: relative;
+}
+.quote-card .qm {
+  position: absolute;
+  top: 11px;
+  left: 12px;
+  width: 12px;
+  height: 12px;
+  color: hsl(var(--muted) / 0.7);
+}
+.quote-card .qm svg {
+  width: 100%;
+  height: 100%;
+}
+.quote-card .q-author {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 20px;
+  margin-bottom: 6px;
+}
+.quote-card .q-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+}
+.quote-card .q-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: hsl(var(--ink));
+}
+.quote-card .q-time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: hsl(var(--muted));
+}
+.quote-card .q-body {
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: hsl(var(--ink-soft));
+}
+
+/* ---------- REACTIONS ----------
+     Matches the ReactionPill in
+     apps/frontend/src/components/timeline/message-reactions.tsx:
+     min-h-[26px] rounded-full, transparent border, primary/0.05 bg,
+     emoji + tabular-nums count. No slide animation on insert — they
+     just appear. */
+.reactions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.rxn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  background: hsl(var(--gold) / 0.05);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 0 9px 0 7px;
+  color: hsl(var(--muted));
+  opacity: 0;
+}
+.rxn .em {
+  font-size: 13px;
+  line-height: 1;
+}
+.rxn .num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- ANIMATION TIMELINE — cycle 22s, run-once ----------
+     Phases (% of cycle / wall-clock seconds @ 22s):
+        0    /  0.0s   Maya is already in the channel (static)
+       19    /  4.2s   Jordan row enters (highlight 2s)
+       30    /  6.6s   Composer starts typing @ariadne
+       36    /  7.9s   Composer typing complete
+       49    / 10.8s   Send fires → composer clears, Alex row enters
+       51    / 11.2s   Trace card appears (running)
+       68    / 15.0s   Trace card transitions in place to completed
+       71    / 15.6s   Ariadne row enters; thread arrives from the left
+       81/83/85       Reactions 1/2/3 pop in
+       100            Stage holds the final filled state (no restart)
+
+     Each row uses a `pop-*` opacity animation (linear, instant jump) and
+     a `flash-*` background-color animation (ease-out 2s window). The
+     two are independent so the highlight can outlast the pop. All
+     animations are `1 forwards` so the scene plays once and holds. */
+
+/* Maya is static (already in the channel). Jordan recalls vaguely a
+     few seconds later. Alex arrives after sending. Ariadne after the
+     trace completes. Each non-static row gets a brief highlight flash
+     when it enters. Rows occupy real height from page load so scroll
+     behaves naturally — no max-height tricks. */
+.pop-jordan {
+  animation:
+    pop-jordan var(--cycle) linear 1 forwards,
+    flash-jordan var(--cycle) ease-out 1 forwards;
+}
+.pop-alex {
+  animation:
+    pop-alex var(--cycle) linear 1 forwards,
+    flash-alex var(--cycle) ease-out 1 forwards;
+}
+.pop-ariadne {
+  animation:
+    pop-ariadne var(--cycle) linear 1 forwards,
+    flash-ariadne var(--cycle) ease-out 1 forwards;
+}
+
+@keyframes pop-jordan {
+  0%,
+  18.9% {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  19%,
+  100% {
+    opacity: 1;
+    max-height: 400px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+@keyframes pop-alex {
+  0%,
+  48.9% {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  49%,
+  100% {
+    opacity: 1;
+    max-height: 400px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+@keyframes pop-ariadne {
+  0%,
+  70.9% {
+    opacity: 0;
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  71%,
+  100% {
+    opacity: 1;
+    max-height: 400px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+}
+
+/* highlight-flash background = real `animate-highlight-flash` 2s ease-out
+     from hsl(primary/0.3) to transparent. 2s ≈ 9% of the 22s cycle. */
+@keyframes flash-jordan {
+  0%,
+  18.9% {
+    background-color: hsl(var(--gold) / 0);
+  }
+  19% {
+    background-color: hsl(var(--gold) / 0.3);
+  }
+  28%,
+  100% {
+    background-color: hsl(var(--gold) / 0);
+  }
+}
+@keyframes flash-alex {
+  0%,
+  48.9% {
+    background-color: hsl(var(--gold) / 0);
+  }
+  49% {
+    background-color: hsl(var(--gold) / 0.3);
+  }
+  58%,
+  100% {
+    background-color: hsl(var(--gold) / 0);
+  }
+}
+@keyframes flash-ariadne {
+  0%,
+  70.9% {
+    background-color: hsl(var(--gold) / 0);
+  }
+  71% {
+    background-color: hsl(var(--gold) / 0.3);
+  }
+  80%,
+  100% {
+    background-color: hsl(var(--gold) / 0);
+  }
+}
+
+/* Composer typing:
+       30%   — mention pill snaps in as a unit (steps(1) instant jump)
+       30-47% — " do you know?" types out (driven by JS so the caret can
+                follow the visible glyphs naturally)
+       49%   — send fires → both clear */
+.composer-mention-wrap {
+  animation: pop-mention var(--cycle) steps(1) 1 forwards;
+}
+@keyframes pop-mention {
+  0%,
+  29.9% {
+    max-width: 0;
+  }
+  30%,
+  48.9% {
+    max-width: 100px;
+  }
+  49%,
+  100% {
+    max-width: 0;
+  }
+}
+
+/* Send button arms (primary gold) while content is typed, then returns
+     to the idle ghost state after send. */
+.composer-send {
+  animation: send-arm var(--cycle) steps(1) 1 forwards;
+}
+@keyframes send-arm {
+  /* Idle/disabled = faded gold (the real product's disabled primary
+       button), arms to full gold while content is typed. */
+  0%,
+  29.9% {
+    background: hsl(38 50% 75%);
+    color: hsl(42 55% 97%);
+  }
+  30%,
+  48.9% {
+    background: hsl(38 62% 53%);
+    color: hsl(42 40% 98%);
+  }
+  49%,
+  100% {
+    background: hsl(38 50% 75%);
+    color: hsl(42 55% 97%);
+  }
+}
+
+/* Trace card: appears at 51% and holds. Pairs opacity with a collapse
+     animation so the card reserves no vertical space before it enters. */
+.trace-card {
+  animation: trace-life var(--cycle) linear 1 forwards;
+}
+@keyframes trace-life {
+  0%,
+  50.9% {
+    opacity: 0;
+    max-height: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-width: 0;
+  }
+  51%,
+  100% {
+    opacity: 1;
+    max-height: 120px;
+    margin-top: 10px;
+    margin-bottom: 4px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+    border-width: 1px;
+  }
+}
+
+/* In-place state swap at 68% (running → completed). */
+.trace-icon-running {
+  animation: trace-running var(--cycle) steps(1) 1 forwards;
+}
+.trace-icon-done {
+  animation: trace-done var(--cycle) steps(1) 1 forwards;
+}
+.trace-row-running {
+  animation: trace-running var(--cycle) steps(1) 1 forwards;
+}
+.trace-row-done {
+  animation: trace-done var(--cycle) steps(1) 1 forwards;
+}
+@keyframes trace-running {
+  0%,
+  68% {
+    opacity: 1;
+  }
+  68.1%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes trace-done {
+  0%,
+  68% {
+    opacity: 0;
+  }
+  68.1%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Reactions: no fade-up; instant pop, then hold. */
+.rxn-1 {
+  animation: rxn-1 var(--cycle) linear 1 forwards;
+}
+.rxn-2 {
+  animation: rxn-2 var(--cycle) linear 1 forwards;
+}
+.rxn-3 {
+  animation: rxn-3 var(--cycle) linear 1 forwards;
+}
+@keyframes rxn-1 {
+  0%,
+  80.9% {
+    opacity: 0;
+  }
+  81%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes rxn-2 {
+  0%,
+  82.9% {
+    opacity: 0;
+  }
+  83%,
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes rxn-3 {
+  0%,
+  84.9% {
+    opacity: 0;
+  }
+  85%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* ---------- HERO (Tape Anchored) ---------- */
+.hero-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  overflow: hidden;
+  position: relative;
+}
+.hero-inner {
+  padding: 64px var(--pad-x) 72px;
+  position: relative;
+}
+.hero-inner .nav-row {
+  margin-bottom: 56px;
+  color: hsl(var(--muted));
+}
+.hero-inner .nav-row .brand {
+  color: hsl(var(--ink));
+}
+.hero-inner .nav-row .brand svg {
+  color: hsl(var(--gold));
+}
+.hero-stage {
+  display: grid;
+  grid-template-columns: 0.95fr 1.1fr;
+  gap: 80px;
+  align-items: start;
+  position: relative;
+  overflow: hidden;
+}
+.hero-stage h1 {
+  margin-bottom: 24px;
+}
+.hero-stage .actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 8px;
+}
+/* Tape Anchored thread — comes in from the left and terminates at
+     Ariadne's row. The persona row already uses background-color for
+     the highlight-flash, so the thread lives on ::after (a pseudo-
+     element whose only job is to draw the line + tick label). */
+.hero-right .tl-row.persona::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 800px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    hsl(var(--gold) / 0) 0%,
+    hsl(var(--gold) / 0.18) 50%,
+    hsl(var(--gold) / 0.6) 88%,
+    hsl(var(--gold)) 100%
+  );
+  transform: translateY(-0.5px);
+  pointer-events: none;
+  opacity: 0;
+  animation: thread-life var(--cycle) linear 1 forwards;
+}
+@keyframes thread-life {
+  0%,
+  71% {
+    opacity: 0;
+  }
+  73%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* ---------- SECTION SHELL ---------- */
+.memo-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 80px var(--pad-x);
+  position: relative;
+  overflow: hidden;
+}
+.memo-shell h2 {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(28px, 3.4vw, 40px);
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  margin: 0 0 14px;
+  max-width: 720px;
+}
+.memo-shell h2 .accent {
+  color: hsl(var(--gold));
+  font-weight: 500;
+}
+.memo-shell .lede {
+  max-width: 580px;
+  margin-bottom: 56px;
+}
+
+/* ---------- THREE-PART MEMORY FLOW ---------- */
+.memory-flow {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 32px;
+  align-items: start;
+  position: relative;
+}
+
+.memory-col {
+  min-width: 0;
+  position: relative;
+}
+/* Small right-arrow connectors between panels. Sits in the column gap and
+     points into the following column. Surrounding noise messages in Panel 1
+     do the work of "this slice was picked out"; the arrow just signals flow. */
+.memory-col + .memory-col::before {
+  content: "";
+  position: absolute;
+  left: -26px;
+  top: 220px;
+  width: 22px;
+  height: 12px;
+  background: no-repeat center/contain
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 12' fill='none' stroke='hsl(38 65%25 50%25 / 0.75)' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'><path d='M 1 6 L 21 6 M 21 6 L 16 2 M 21 6 L 16 10'/></svg>");
+  pointer-events: none;
+  opacity: 0;
+  animation: arrow-fade-in 0.3s ease-out 0.5s forwards;
+}
+.memory-col + .memory-col + .memory-col::before {
+  animation-delay: 0.85s;
+}
+@keyframes arrow-fade-in {
+  to {
+    opacity: 1;
+  }
+}
+.memory-step {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: hsl(var(--gold));
+  display: inline-block;
+  margin-bottom: 12px;
+}
+.memory-col h3.memory-heading {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 18px;
+  line-height: 1.3;
+  color: hsl(var(--ink));
+  margin: 0 0 8px;
+  letter-spacing: -0.005em;
+}
+/* Short "why this step matters" line under each heading. Sits at a
+     consistent position across all three columns (the headings are one
+     line each), so the explanations align instead of floating at the
+     mismatched bottoms of columns with different content heights. */
+.memory-why {
+  margin: 0 0 20px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: hsl(var(--ink-soft));
+}
+/* The ONE card in this section — reserved for the memo, the only thing
+     that actually persists. The loose messages (capture) and the recall
+     chat are open on the band; this is the artifact, so it gets the box,
+     a gold edge, and a little lift. */
+.memory-card {
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-left: 2px solid hsl(var(--gold));
+  border-radius: 6px;
+  padding: 20px;
+  box-shadow: 0 6px 20px -10px hsl(var(--ink) / 0.18);
+}
+
+/* Part 1 — Capture: 5 messages, three of them lifted via opacity/weight. */
+.capture-list {
+  position: relative;
+  padding: 6px 0;
+}
+
+.capture-row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  padding: 6px 0 6px 4px;
+  align-items: start;
+  transition: opacity 0.3s ease-out;
+}
+.capture-row.is-noise {
+  opacity: 0.42;
+}
+.capture-row .c-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.capture-row .c-avatar.av-maya {
+  background: hsl(20 35% 84%);
+  color: hsl(20 40% 28%);
+}
+.capture-row .c-avatar.av-jordan {
+  background: hsl(200 35% 84%);
+  color: hsl(200 40% 28%);
+}
+.capture-row .c-avatar.av-sam {
+  background: hsl(28 30% 86%);
+  color: hsl(28 30% 26%);
+}
+.capture-row .c-body {
+  min-width: 0;
+}
+.capture-row .c-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+.capture-row .c-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--ink));
+}
+.capture-row .c-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: hsl(var(--muted));
+}
+.capture-row .c-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: hsl(var(--ink-soft));
+}
+.capture-row.is-selected .c-text {
+  color: hsl(var(--ink));
+}
+
+/* Part 2 — Hold: a decision memo with structured fields */
+.decision-memo {
+  border-color: hsl(var(--gold) / 0.55);
+  background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 70%);
+  padding: 18px 18px 16px;
+}
+.decision-memo .dm-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: hsl(var(--gold));
+  margin-bottom: 8px;
+}
+.decision-memo .dm-kicker .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: hsl(var(--gold));
+}
+.decision-memo .dm-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 16px;
+  line-height: 1.3;
+  color: hsl(var(--ink));
+  letter-spacing: -0.005em;
+  margin-bottom: 14px;
+}
+.decision-memo .dm-field {
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--line) / 0.7);
+}
+.decision-memo .dm-field + .dm-field {
+  margin-top: 10px;
+}
+.decision-memo .dm-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+  margin-bottom: 4px;
+}
+.decision-memo .dm-body {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: hsl(var(--ink-soft));
+}
+.decision-memo .dm-source {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: hsl(var(--ink-soft));
+}
+.decision-memo .dm-source .ref-pill {
+  font-size: 10.5px;
+}
+
+/* Part 3 — Return: mini-stream where Ariadne lifts the memo */
+.recall-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+  margin-bottom: 12px;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+.recall-meta .hash {
+  color: hsl(var(--gold));
+}
+.recall-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.recall-row {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+.recall-row .r-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.recall-row .r-avatar.av-maya {
+  background: hsl(20 35% 84%);
+  color: hsl(20 40% 28%);
+}
+.recall-row .r-avatar.av-ariadne {
+  background: hsl(var(--gold) / 0.18);
+  color: hsl(var(--gold));
+}
+.recall-row .r-avatar.av-ariadne svg {
+  width: 16px;
+  height: 16px;
+}
+.recall-row .r-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.recall-row .r-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: hsl(var(--ink));
+}
+.recall-row.persona .r-name {
+  color: hsl(var(--gold));
+}
+.recall-row .r-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: hsl(var(--muted));
+}
+.recall-row .r-text {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: hsl(var(--ink-soft));
+}
+/* Memo embed card — mirrors the app's in-message memo embed
+     (apps/frontend/src/lib/markdown/memo-embed-block.tsx +
+     components/memo-embed/card-body.tsx): neutral paper card with a 2px
+     gold left edge, a type icon, a lowercase type label + #tags eyebrow,
+     a 2-line title, and a trailing date. */
+.recall-memo-card {
+  margin-top: 8px;
+  border: 1px solid hsl(var(--line));
+  border-left: 2px solid hsl(var(--gold) / 0.7);
+  background: hsl(var(--paper));
+  border-radius: 6px;
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: 16px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  text-decoration: none;
+}
+.recall-memo-card .rmc-icon {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: hsl(var(--gold));
+}
+.recall-memo-card .rmc-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.recall-memo-card .rmc-body {
+  min-width: 0;
+}
+.recall-memo-card .rmc-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  margin-bottom: 2px;
+  min-width: 0;
+}
+.recall-memo-card .rmc-kicker .k-type {
+  color: hsl(var(--gold) / 0.9);
+  font-weight: 500;
+}
+.recall-memo-card .rmc-kicker .k-tag {
+  color: hsl(var(--muted));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.recall-memo-card .rmc-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(var(--ink));
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.recall-memo-card .rmc-meta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: hsl(var(--muted));
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+@media (max-width: 880px) {
+  .memory-flow {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+  .memory-flow::before,
+  .memory-flow::after {
+    display: none;
+  }
+}
+
+/* ---------- OPEN SOURCE SECTION ---------- */
+.os-tenets {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 28px;
+  margin: 32px 0 28px;
+}
+.os-tenet {
+  min-width: 0;
+}
+.os-tenet h4 {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: hsl(var(--gold));
+  margin: 0 0 8px;
+  font-weight: 500;
+}
+.os-tenet p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: hsl(var(--ink-soft));
+  max-width: 320px;
+}
+
+.os-terminal {
+  background: hsl(var(--paper-warm));
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  padding: 18px 22px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: hsl(var(--ink-soft));
+  margin-top: 4px;
+  overflow-x: auto;
+}
+.os-terminal .row {
+  display: block;
+  white-space: pre;
+}
+.os-terminal .prompt {
+  color: hsl(var(--gold));
+  margin-right: 10px;
+  user-select: none;
+}
+.os-terminal .cmd {
+  color: hsl(var(--ink));
+}
+.os-terminal .arg {
+  color: hsl(var(--ink-soft));
+}
+.os-terminal .out {
+  color: hsl(var(--muted));
+  padding-left: 20px;
+  display: block;
+}
+.os-terminal .cmt {
+  color: hsl(var(--muted));
+  font-style: italic;
+  padding-left: 4px;
+}
+
+/* patch.md — the "customize Threa by describing the change to your own
+     agent" example. Open source + bring-your-own-agent in one card. */
+.patch-example {
+  margin: 14px 0 0;
+  border: 1px solid hsl(var(--line));
+  border-radius: 6px;
+  overflow: hidden;
+  background: hsl(var(--paper));
+}
+.patch-example figcaption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: hsl(var(--paper-warm));
+  border-bottom: 1px solid hsl(var(--line));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.patch-example .file {
+  color: hsl(var(--gold));
+}
+.patch-example .hint {
+  color: hsl(var(--muted));
+}
+/* patch.md body — rendered as raw markdown source in mono, the way it
+     looks in an editor: literal #, -, and `backticks`, with the heading
+     tinted gold. */
+.patch-example .patch-body {
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: hsl(var(--ink-soft));
+}
+.patch-example .patch-body .ln {
+  display: block;
+  white-space: pre-wrap;
+}
+.patch-example .patch-body .md-h {
+  color: hsl(var(--gold));
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.patch-example .patch-body .md-p {
+  margin-bottom: 8px;
+}
+.patch-example .patch-body .md-li {
+  color: hsl(var(--ink-soft));
+}
+.patch-example .patch-run {
+  padding: 11px 14px 13px;
+  border-top: 1px dashed hsl(var(--line));
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: hsl(var(--ink-soft));
+  white-space: pre;
+  overflow-x: auto;
+}
+.patch-example .patch-run .prompt {
+  color: hsl(var(--gold));
+  margin-right: 10px;
+}
+.patch-example .patch-run .cmd {
+  color: hsl(var(--ink));
+}
+.patch-example .patch-run .arg {
+  color: hsl(var(--muted));
+}
+
+.os-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: hsl(var(--gold));
+  text-decoration: none;
+  border-bottom: 1px solid hsl(var(--gold) / 0.4);
+  padding-bottom: 2px;
+}
+.os-cta:hover {
+  border-bottom-color: hsl(var(--gold));
+}
+.os-cta .arr {
+  transition: transform 0.2s ease-out;
+}
+.os-cta:hover .arr {
+  transform: translateX(3px);
+}
+
+@media (max-width: 880px) {
+  .os-tenets {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+  .os-terminal {
+    font-size: 11.5px;
+  }
+}
+
+/* ---------- BRING YOUR OWN AGENT SECTION ---------- */
+/* Reuses .os-tenets / .os-tenet / .os-cta from the section above
+     so the visual rhythm stays consistent. Unique pieces: a display
+     pull-quote and a thin "works today with" agent strip. */
+.byo-quote {
+  margin: 8px 0 18px;
+  padding: 28px 30px;
+  background: linear-gradient(180deg, hsl(var(--gold) / 0.05), hsl(var(--paper)) 80%);
+  border-left: 2px solid hsl(var(--gold));
+  border-radius: 0 6px 6px 0;
+  font-family: var(--font-display);
+  font-size: clamp(20px, 2.2vw, 26px);
+  line-height: 1.35;
+  letter-spacing: -0.005em;
+  font-weight: 300;
+  font-style: italic;
+  color: hsl(var(--ink));
+  max-width: 720px;
+}
+.byo-quote .accent {
+  color: hsl(var(--gold));
+  font-weight: 500;
+  font-style: normal;
+}
+/* "Bring your own ___" with the agent name rotating through a vertical
+     reel. One clip window shows a single word; the track slides up by one
+     line each beat. The trailing word duplicates the first so the loop can
+     snap back invisibly. */
+.byo-agents {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 4px;
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(20px, 2.3vw, 28px);
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: hsl(var(--ink-soft));
+}
+.byo-lead {
+  white-space: nowrap;
+}
+.byo-clip {
+  display: inline-block;
+  overflow: hidden;
+  height: 1.3em;
+}
+.byo-track {
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+.byo-word {
+  display: flex;
+  align-items: center;
+  height: 1.3em;
+  white-space: nowrap;
+  color: hsl(var(--gold));
+  font-weight: 500;
+}
+@media (prefers-reduced-motion: reduce) {
+  .byo-track {
+    transition: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .byo-quote {
+    padding: 22px 24px;
+  }
+}
+
+/* ---------- WAITLIST CTA STRIP ---------- */
+.cta-shell {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 80px var(--pad-x);
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 48px;
+  align-items: center;
+}
+.cta-shell h3 {
+  font-family: var(--font-display);
+  font-weight: 300;
+  font-size: clamp(26px, 2.8vw, 34px);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin: 0;
+}
+.cta-shell h3 .accent {
+  color: hsl(var(--gold));
+  font-weight: 500;
+}
+.cta-shell .form-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.cta-shell input {
+  flex: 1;
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--line));
+  border-radius: 2px;
+  padding: 12px 14px;
+  font-family: var(--font-display);
+  font-size: 14.5px;
+  color: hsl(var(--ink));
+  outline: none;
+}
+.cta-shell input::placeholder {
+  color: hsl(var(--muted));
+}
+.cta-shell .quiet {
+  margin-top: 12px;
+  display: block;
+}
+
+.footer {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 32px 48px 56px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: hsl(var(--muted));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.footer a {
+  color: inherit;
+  text-decoration: none;
+}
+.footer .ln {
+  display: flex;
+  gap: 24px;
+}
+
+/* ---------- FEATURE BANDS (alternating zig-zag) ---------- */
+/* Sections 03/04 render as a two-column band: the section's signature
+     visual on one side, the copy (eyebrow + heading + lede + tenets + cta)
+     on the other. .media-left / .media-right flip which side the visual
+     sits on, so the page zig-zags instead of hugging the left margin. The
+     memory section (02) stays full-bleed as the centerpiece with a centered
+     intro. */
+.feature-band {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 56px;
+  align-items: center;
+}
+.feature-band .band-copy,
+.feature-band .band-media {
+  min-width: 0;
+}
+.feature-band.media-left .band-media {
+  order: 1;
+}
+.feature-band.media-left .band-copy {
+  order: 2;
+}
+
+/* In a band the eyebrow sits inside the copy column and the tenets stack
+     vertically — no room for the 3-up grid at half width. */
+.feature-band .section-meta {
+  margin-bottom: 14px;
+}
+.feature-band .band-copy .os-tenets {
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin: 22px 0 26px;
+}
+.feature-band .band-copy .os-tenet p {
+  max-width: none;
+}
+.feature-band .band-copy .lede {
+  max-width: none;
+  margin-bottom: 4px;
+}
+.feature-band .os-terminal {
+  margin: 0;
+}
+.feature-band .byo-quote {
+  margin: 0 0 18px;
+}
+
+/* Centerpiece intro (memory section): centered eyebrow, heading, lede. */
+.memo-shell.is-centerpiece {
+  text-align: center;
+}
+.memo-shell.is-centerpiece .section-meta {
+  justify-content: center;
+}
+.memo-shell.is-centerpiece h2 {
+  max-width: 760px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.memo-shell.is-centerpiece .lede {
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.memo-shell.is-centerpiece .memory-flow {
+  text-align: left;
+}
+
+@media (max-width: 880px) {
+  .feature-band {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+  .feature-band.media-left .band-media,
+  .feature-band.media-left .band-copy {
+    order: initial;
+  }
+}
+
+/* ---------- "MISSING FROM SLACK" FEATURE GRID (section 05) ---------- */
+.missing-grid {
+  list-style: none;
+  margin: 32px 0 26px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 26px 32px;
+}
+.missing-item {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.missing-item .check {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: hsl(var(--gold) / 0.14);
+  color: hsl(var(--gold));
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+}
+.missing-item .check svg {
+  width: 13px;
+  height: 13px;
+}
+.missing-item h4 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 15px;
+  color: hsl(var(--ink));
+  margin: 0 0 4px;
+  letter-spacing: -0.005em;
+}
+.missing-item p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: hsl(var(--ink-soft));
+}
+.missing-sign {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: hsl(var(--muted));
+  margin: 0;
+}
+@media (max-width: 880px) {
+  .missing-grid {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}

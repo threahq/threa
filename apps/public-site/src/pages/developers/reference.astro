@@ -1,0 +1,134 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import ApiEndpoint from "../../components/ApiEndpoint.astro"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+
+// The reference is rendered from the OpenAPI spec we ship (public/openapi.json),
+// read at build time. The spec is the single source — endpoints, parameters,
+// and schemas can't drift from it — but the rendering is the site's own, so it
+// lives in the same sidebar and chrome as every other page. No embedded widget.
+const specPath = fileURLToPath(new URL("../../../public/openapi.json", import.meta.url))
+const spec = JSON.parse(readFileSync(specPath, "utf8"))
+
+const WORKSPACE_PREFIX = "/api/v1/workspaces/{workspaceId}"
+
+// Tag order and descriptions. The spec declares only the first five; the bot and
+// identity tags are described here so the reference reads in a sensible order.
+const TAG_ORDER = [
+  "Identity",
+  "Streams",
+  "Messages",
+  "Memos",
+  "Attachments",
+  "Users",
+  "Bot runtimes",
+  "Bot invocations",
+]
+const declared: Record<string, string> = Object.fromEntries(
+  (spec.tags ?? []).map((t: { name: string; description?: string }) => [t.name, t.description ?? ""]),
+)
+const TAG_DESC: Record<string, string> = {
+  Identity: "Confirm who a key belongs to and list the bots you own.",
+  Streams: declared.Streams,
+  Messages: declared.Messages,
+  Memos: declared.Memos,
+  Attachments: declared.Attachments,
+  Users: declared.Users,
+  "Bot runtimes": "Register a runtime and keep its presence alive so it can be assigned work.",
+  "Bot invocations": "Claim, renew, step through, complete, or fail the work a bot is summoned to do.",
+}
+
+// Runnable, read-only endpoints that need only workspace scope (no real resource
+// id). Everything else shows a copyable curl without a Run button, so the docs
+// never fire a state-changing call.
+const RUNS: Record<string, { method: string; path: string; body?: string }> = {
+  getMe: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/me` },
+  listMyBots: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/me/bots` },
+  listStreams: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/streams?type=channel&limit=20` },
+  listUsers: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/users?limit=20` },
+  searchMessages: {
+    method: "POST",
+    path: `{{baseUrl}}${WORKSPACE_PREFIX}/messages/search`,
+    body: JSON.stringify({ query: "auth", semantic: true, exact: false, limit: 5 }),
+  },
+  searchMemos: {
+    method: "POST",
+    path: `{{baseUrl}}${WORKSPACE_PREFIX}/memos/search`,
+    body: JSON.stringify({ query: "auth", limit: 5 }),
+  },
+  searchAttachments: {
+    method: "POST",
+    path: `{{baseUrl}}${WORKSPACE_PREFIX}/attachments/search`,
+    body: JSON.stringify({ query: "auth", limit: 5 }),
+  },
+}
+
+interface RawOp {
+  operationId?: string
+  tags?: string[]
+  summary?: string
+}
+const ops: { path: string; method: string; op: RawOp; tag: string; anchor: string }[] = []
+for (const [path, item] of Object.entries(spec.paths as Record<string, Record<string, RawOp>>)) {
+  for (const method of Object.keys(item)) {
+    const op = item[method]
+    ops.push({
+      path,
+      method,
+      op,
+      tag: op.tags?.[0] ?? "Other",
+      anchor: op.operationId ?? `${method}-${path}`,
+    })
+  }
+}
+
+const groups = TAG_ORDER.map((tag) => ({
+  tag,
+  slug: tag.toLowerCase().replace(/\s+/g, "-"),
+  desc: TAG_DESC[tag],
+  ops: ops.filter((o) => o.tag === tag),
+})).filter((g) => g.ops.length > 0)
+
+const shortPath = (p: string) => p.replace(WORKSPACE_PREFIX, "") || "/"
+const sections = groups.flatMap((g) =>
+  g.ops.map((o) => ({
+    id: o.anchor,
+    label: `${o.method.toUpperCase()} ${shortPath(o.path)}`,
+    group: g.tag,
+  })),
+)
+---
+
+<DocsLayout title="API reference · Threa Developers" current="reference" sections={sections}>
+  <p class="eyebrow">Reference</p>
+  <h1>API <span class="accent">reference</span>.</h1>
+  <p class="lead">
+    Every endpoint, generated from the <a class="link" href="/openapi.json">OpenAPI spec</a>
+    we ship. Set your workspace ID and key in the Credentials panel (top right) and
+    the read-only examples run against your own workspace as you read.
+  </p>
+  <p>
+    The base is <code>https://app.threa.io</code>, versioned under <code>/api/v1</code>
+    and scoped to a workspace: <code>/api/v1/workspaces/&#123;workspaceId&#125;/…</code>.
+    Every request authenticates with <code>Authorization: Bearer &lt;key&gt;</code>.
+    Error shapes, paging, idempotency, and rate limits live in
+    <a class="link" href="/developers/operations">Operations</a>.
+  </p>
+
+  {groups.map((g) => (
+    <section class="api-group">
+      <h2 id={g.slug}>{g.tag}</h2>
+      {g.desc && <p class="api-group-desc">{g.desc}</p>}
+      {g.ops.map((o) => (
+        <ApiEndpoint
+          method={o.method}
+          path={o.path}
+          anchor={o.anchor}
+          op={o.op}
+          run={o.op.operationId ? RUNS[o.op.operationId] : undefined}
+        />
+      ))}
+    </section>
+  ))}
+</DocsLayout>

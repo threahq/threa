@@ -22,6 +22,7 @@ COPY apps/backoffice/package.json apps/backoffice/
 COPY apps/backoffice-router/package.json apps/backoffice-router/
 COPY apps/db-read-proxy/package.json apps/db-read-proxy/
 COPY apps/enclave/package.json apps/enclave/
+COPY apps/public-site/package.json apps/public-site/
 COPY patches/ patches/
 RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --production
 
