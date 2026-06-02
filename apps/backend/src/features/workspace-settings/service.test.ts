@@ -3,6 +3,7 @@ import type { PoolClient } from "pg"
 import { DEFAULT_WORK_SCHEDULE, type WorkSchedule } from "@threa/types"
 import { WorkspaceSettingsService } from "./service"
 import { WorkspaceSettingsRepository } from "./repository"
+import { OutboxRepository } from "../../lib/outbox"
 import * as dbModule from "../../db"
 
 const WORKSPACE_ID = "ws_1"
@@ -51,13 +52,14 @@ describe("WorkspaceSettingsService.getSettings", () => {
 describe("WorkspaceSettingsService.updateSettings", () => {
   afterEach(() => mock.restore())
 
-  it("stores a non-default schedule as an override", async () => {
+  it("stores a non-default schedule as an override and broadcasts it", async () => {
     setupTransaction()
     const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
     const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([
       { key: "defaultWorkSchedule", value: CUSTOM_SCHEDULE },
     ])
+    const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     const service = new WorkspaceSettingsService({} as any)
 
     const settings = await service.updateSettings(WORKSPACE_ID, { defaultWorkSchedule: CUSTOM_SCHEDULE })
@@ -65,6 +67,8 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     expect(setOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "defaultWorkSchedule", CUSTOM_SCHEDULE)
     expect(deleteOverride).not.toHaveBeenCalled()
     expect(settings.defaultWorkSchedule).toEqual(CUSTOM_SCHEDULE)
+    // Workspace-scoped broadcast so every member's bootstrap cache converges.
+    expect(insert).toHaveBeenCalledWith({}, "workspace_settings:updated", { workspaceId: WORKSPACE_ID, settings })
   })
 
   it("clears the override when set back to the default", async () => {
@@ -72,6 +76,7 @@ describe("WorkspaceSettingsService.updateSettings", () => {
     const setOverride = spyOn(WorkspaceSettingsRepository, "setOverride").mockResolvedValue()
     const deleteOverride = spyOn(WorkspaceSettingsRepository, "deleteOverride").mockResolvedValue()
     spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     const service = new WorkspaceSettingsService({} as any)
 
     await service.updateSettings(WORKSPACE_ID, { defaultWorkSchedule: DEFAULT_WORK_SCHEDULE })

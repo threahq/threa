@@ -1,6 +1,7 @@
 import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { WorkspaceSettingsRepository } from "./repository"
+import { OutboxRepository } from "../../lib/outbox"
 import { type WorkspaceSettings, type UpdateWorkspaceSettingsInput, DEFAULT_WORKSPACE_SETTINGS } from "@threa/types"
 
 /** Merge sparse overrides onto code defaults to produce full settings. */
@@ -61,7 +62,14 @@ export class WorkspaceSettingsService {
       }
 
       const overrides = await WorkspaceSettingsRepository.findOverrides(client, workspaceId)
-      return mergeOverrides(workspaceId, overrides)
+      const settings = mergeOverrides(workspaceId, overrides)
+
+      // Broadcast to the workspace room so every member's bootstrap cache (and
+      // thus schedule-aware presets) picks up the new default without waiting
+      // for a reconnect. Written in the same transaction as the override (INV-7).
+      await OutboxRepository.insert(client, "workspace_settings:updated", { workspaceId, settings })
+
+      return settings
     })
   }
 }

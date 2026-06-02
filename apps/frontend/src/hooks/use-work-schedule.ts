@@ -5,6 +5,17 @@ import { usePreferencesOptional } from "@/contexts"
 import { resolveWorkSchedule } from "@/lib/work-schedule"
 
 /**
+ * The working schedule that should drive schedule-aware presets for the current
+ * viewer: their personal override (IDB-backed, offline-safe) layered over the
+ * workspace default. Falls back to Mon–Fri 09:00 when neither is available.
+ */
+export function useEffectiveWorkSchedule(workspaceId: string): WorkSchedule {
+  const userSchedule = usePreferencesOptional()?.preferences?.workSchedule ?? null
+  const workspaceDefault = useWorkspaceDefaultWorkSchedule(workspaceId)
+  return resolveWorkSchedule(userSchedule, workspaceDefault)
+}
+
+/**
  * The workspace-wide default working schedule (read from the bootstrap cache via
  * the cache-only observer pattern). Falls back to Mon–Fri 09:00 when absent.
  * Used by settings surfaces that need the default independently of any personal
@@ -20,25 +31,4 @@ export function useWorkspaceDefaultWorkSchedule(workspaceId: string): WorkSchedu
     select: (bootstrap) => bootstrap?.workspaceSettings?.defaultWorkSchedule ?? null,
   })
   return data ?? DEFAULT_WORK_SCHEDULE
-}
-
-/**
- * The working schedule that should drive schedule-aware presets for the current
- * viewer: their personal override (IDB-backed, offline-safe) layered over the
- * workspace default (read from the bootstrap cache via the cache-only observer
- * pattern). Falls back to Mon–Fri 09:00 when neither is available.
- */
-export function useEffectiveWorkSchedule(workspaceId: string): WorkSchedule {
-  const queryClient = useQueryClient()
-  const userSchedule = usePreferencesOptional()?.preferences?.workSchedule ?? null
-
-  const { data: workspaceDefault } = useQuery({
-    queryKey: workspaceKeys.bootstrap(workspaceId),
-    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
-    enabled: false,
-    staleTime: Infinity,
-    select: (bootstrap) => bootstrap?.workspaceSettings?.defaultWorkSchedule ?? null,
-  })
-
-  return resolveWorkSchedule(userSchedule, workspaceDefault)
 }

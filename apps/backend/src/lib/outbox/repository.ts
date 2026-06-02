@@ -8,6 +8,7 @@ import type {
   StreamEvent as WireStreamEvent,
   UserPreferences,
   SidebarConfig,
+  WorkspaceSettings,
   LastMessagePreview,
   Bot as WireBot,
   BotInvocationCapability,
@@ -59,6 +60,7 @@ export type OutboxEventType =
   | "agent_session:deleted"
   | "user_preferences:updated"
   | "sidebar_config:updated"
+  | "workspace_settings:updated"
   | "budget:alert"
   | "stream:member_joined"
   | "stream:member_added"
@@ -429,6 +431,12 @@ export interface SidebarConfigUpdatedOutboxPayload extends WorkspaceScopedPayloa
   sidebarConfig: SidebarConfig
 }
 
+// Workspace settings event payload (workspace-scoped - every member inherits
+// the default, so the broadcast falls through to the workspace room).
+export interface WorkspaceSettingsUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  settings: WorkspaceSettings
+}
+
 // Invitation event payloads
 export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
   invitationId: string
@@ -682,6 +690,7 @@ export interface OutboxEventPayloadMap {
   "agent_session:deleted": AgentSessionDeletedOutboxPayload
   "user_preferences:updated": UserPreferencesUpdatedOutboxPayload
   "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
+  "workspace_settings:updated": WorkspaceSettingsUpdatedOutboxPayload
   "budget:alert": BudgetAlertOutboxPayload
   "invitation:sent": InvitationSentOutboxPayload
   "invitation:link-created": InvitationLinkCreatedOutboxPayload

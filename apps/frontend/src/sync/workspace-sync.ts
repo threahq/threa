@@ -15,6 +15,7 @@ import type {
   StreamMember,
   UserPreferences,
   SidebarConfig,
+  WorkspaceSettings,
   LastMessagePreview,
   ActivityCreatedPayload,
   SavedUpsertedPayload,
@@ -124,6 +125,11 @@ interface SidebarConfigUpdatedPayload {
   workspaceId: string
   authorId: string
   sidebarConfig: SidebarConfig
+}
+
+interface WorkspaceSettingsUpdatedPayload {
+  workspaceId: string
+  settings: WorkspaceSettings
 }
 
 // ============================================================================
@@ -1191,6 +1197,18 @@ export function registerWorkspaceSocketHandlers(
     })
   }
 
+  // Handle workspace settings updated (an admin changed the workspace default
+  // schedule). Workspace-scoped, so every member receives it. Lives only in the
+  // bootstrap query cache — no IDB table — matching how it's read.
+  const handleWorkspaceSettingsUpdated = (payload: WorkspaceSettingsUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+      if (!old) return old
+      return { ...old, workspaceSettings: payload.settings }
+    })
+  }
+
   // Handle bot created
   const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
@@ -1592,6 +1610,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:member_removed", handleStreamMemberRemoved)
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
+  socket.on("workspace_settings:updated", handleWorkspaceSettingsUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
@@ -1630,6 +1649,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:member_removed", handleStreamMemberRemoved)
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
+    socket.off("workspace_settings:updated", handleWorkspaceSettingsUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)
