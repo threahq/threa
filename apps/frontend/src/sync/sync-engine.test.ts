@@ -6,6 +6,7 @@ import { SyncStatusStore } from "./sync-status"
 import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
+  DEFAULT_WORKSPACE_SETTINGS,
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
@@ -116,6 +117,12 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       ...DEFAULT_USER_PREFERENCES,
       workspaceId: "ws_1",
       userId: "user_1",
+      createdAt: now,
+      updatedAt: now,
+    },
+    workspaceSettings: {
+      ...DEFAULT_WORKSPACE_SETTINGS,
+      workspaceId: "ws_1",
       createdAt: now,
       updatedAt: now,
     },

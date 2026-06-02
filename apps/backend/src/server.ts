@@ -74,6 +74,7 @@ import {
   StubBoundaryExtractor,
 } from "./features/conversations"
 import { UserPreferencesService } from "./features/user-preferences"
+import { WorkspaceSettingsService } from "./features/workspace-settings"
 import { SidebarConfigService } from "./features/sidebar-config"
 import { UserE2eKeysService } from "./features/user-e2e-keys"
 import { createS3Storage } from "./lib/storage/s3-client"
@@ -264,6 +265,7 @@ export async function startServer(): Promise<ServerInstance> {
     : new StreamNamingService(pool, ai, configResolver, messageFormatter)
   const conversationService = new ConversationService(pool)
   const userPreferencesService = new UserPreferencesService(pool)
+  const workspaceSettingsService = new WorkspaceSettingsService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
 
@@ -556,6 +558,7 @@ export async function startServer(): Promise<ServerInstance> {
     memoExplorerService,
     conversationService,
     userPreferencesService,
+    workspaceSettingsService,
     sidebarConfigService,
     userE2eKeysService,
     invitationService,

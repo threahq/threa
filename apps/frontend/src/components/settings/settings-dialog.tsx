@@ -14,6 +14,7 @@ import { AISettings } from "./ai-settings"
 import { ProfileSettings } from "./profile-settings"
 import { AppearanceSettings } from "./appearance-settings"
 import { DateTimeSettings } from "./datetime-settings"
+import { ScheduleSettings } from "./schedule-settings"
 import { NotificationsSettings } from "./notifications-settings"
 import { KeyboardSettings } from "./keyboard-settings"
 import { AccessibilitySettings } from "./accessibility-settings"
@@ -23,6 +24,7 @@ const TAB_CONFIG: Record<SettingsTab, { label: string; description: string }> = 
   ai: { label: "AI", description: "Scratchpad behavior, guidance, and voice dictation" },
   appearance: { label: "Appearance", description: "Theme and message density" },
   datetime: { label: "Date & Time", description: "Timezone and formatting" },
+  schedule: { label: "Working hours", description: "Working week and shifts" },
   notifications: { label: "Notifications", description: "Alerts and push behavior" },
   keyboard: { label: "Keyboard", description: "Shortcuts and send behavior" },
   accessibility: { label: "Accessibility", description: "Motion, contrast, and fonts" },
@@ -55,7 +57,7 @@ export function SettingsDialog() {
         <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
           <ResponsiveDialogTitle>Settings</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="sr-only">
-            Manage your profile, AI preferences, notifications, and accessibility settings.
+            Manage your profile, AI preferences, working hours, notifications, and accessibility settings.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 
@@ -85,6 +87,9 @@ export function SettingsDialog() {
               </TabsContent>
               <TabsContent value="datetime" className="mt-0">
                 <DateTimeSettings />
+              </TabsContent>
+              <TabsContent value="schedule" className="mt-0">
+                <ScheduleSettings />
               </TabsContent>
               <TabsContent value="notifications" className="mt-0">
                 <NotificationsSettings />

@@ -35,6 +35,7 @@ import type {
   Bot,
 } from "./domain"
 import type { UserPreferences } from "./preferences"
+import type { WorkspaceSettings } from "./workspace-settings"
 import type { SidebarConfig } from "./sidebar"
 import type { ToolPrivacyCategory } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
@@ -770,6 +771,8 @@ export interface WorkspaceBootstrap {
    * older tokens. Frontend uses this to gate UI affordances.
    */
   viewerPermissions: WorkspacePermissionSlug[]
+  /** Workspace-wide settings (e.g. the default working schedule members inherit). */
+  workspaceSettings: WorkspaceSettings
 }
 
 // ============================================================================

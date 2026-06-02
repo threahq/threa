@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { useSaveMessage, useUpdateSaved } from "@/hooks/use-saved"
 import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
+import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 
@@ -33,6 +34,7 @@ export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId
   // Browser-local timezone — never use `preferences.timezone` in the UI
   // because native pickers always operate in device-local.
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const workSchedule = useEffectiveWorkSchedule(workspaceId)
   const saveMutation = useSaveMessage(workspaceId)
   const updateMutation = useUpdateSaved(workspaceId)
   const [mode, setMode] = useState<"presets" | "custom">("presets")
@@ -134,7 +136,7 @@ export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId
               {REMINDER_PRESETS.map((preset) => (
                 <SheetMenuButton
                   key={preset.label}
-                  onClick={() => setReminder(computeRemindAt(preset, new Date(), timezone))}
+                  onClick={() => setReminder(computeRemindAt(preset, new Date(), timezone, workSchedule))}
                 >
                   <Bell className="h-4 w-4 text-muted-foreground" />
                   {preset.label}

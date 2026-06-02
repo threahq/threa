@@ -1,3 +1,5 @@
+import type { WorkSchedule } from "./work-schedule"
+
 // =============================================================================
 // User Preferences Types
 // Workspace-scoped preferences that sync across devices
@@ -149,6 +151,7 @@ export const SETTINGS_TAB_OPTIONS = [
   "ai",
   "appearance",
   "datetime",
+  "schedule",
   "notifications",
   "keyboard",
   "accessibility",
@@ -224,6 +227,13 @@ export interface UserPreferences {
   voicePolishLevel: VoicePolishLevel
   keyboardShortcuts: KeyboardShortcuts
   accessibility: AccessibilityPreferences
+  /**
+   * The user's personal working week + working hours. `null` means "inherit the
+   * workspace default" — only a user who deliberately diverges from the
+   * workspace stores an override. Resolve the effective schedule with
+   * user.workSchedule ?? workspaceSettings.defaultWorkSchedule ?? DEFAULT_WORK_SCHEDULE.
+   */
+  workSchedule: WorkSchedule | null
   createdAt: string
   updatedAt: string
 }
@@ -249,6 +259,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   voicePolishLevel: "opinionated",
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
+  workSchedule: null,
 }
 
 // =============================================================================
@@ -276,6 +287,7 @@ export interface UpdateUserPreferencesInput {
   voicePolishLevel?: VoicePolishLevel
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
+  workSchedule?: WorkSchedule | null
 }
 
 // =============================================================================

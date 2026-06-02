@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { useSaveMessage, useUpdateSaved, useDeleteSaved } from "@/hooks/use-saved"
 import { ReminderBadge } from "@/components/saved/reminder-badge"
 import { REMINDER_PRESETS, computeRemindAt } from "@/lib/reminder-presets"
+import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 
 interface ReminderPopoverContentProps {
   workspaceId: string
@@ -19,6 +20,7 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
   // here. Native pickers operate in device-local; any drift would silently
   // shift saved reminders by the device-vs-preference offset.
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const workSchedule = useEffectiveWorkSchedule(workspaceId)
   const saveMutation = useSaveMessage(workspaceId)
   const updateMutation = useUpdateSaved(workspaceId)
   const deleteMutation = useDeleteSaved(workspaceId)
@@ -114,7 +116,7 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
         {REMINDER_PRESETS.map((preset) => (
           <PopoverMenuButton
             key={preset.label}
-            onClick={() => setReminder(computeRemindAt(preset, new Date(), timezone))}
+            onClick={() => setReminder(computeRemindAt(preset, new Date(), timezone, workSchedule))}
           >
             <Bell className="h-3.5 w-3.5" />
             {preset.label}

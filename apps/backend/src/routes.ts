@@ -22,6 +22,7 @@ import { createEmojiHandlers } from "./features/emoji"
 import { createConversationHandlers } from "./features/conversations"
 import { CommandAvailabilityService, createCommandHandlers } from "./features/commands"
 import { createUserPreferencesHandlers } from "./features/user-preferences"
+import { createWorkspaceSettingsHandlers } from "./features/workspace-settings"
 import { createSidebarConfigHandlers } from "./features/sidebar-config"
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
 import { createAIUsageHandlers } from "./features/ai-usage"
@@ -73,6 +74,7 @@ import type { S3Config } from "./lib/env"
 import type { StorageProvider } from "./lib/storage/s3-client"
 import type { CommandRegistry } from "./features/commands"
 import type { UserPreferencesService } from "./features/user-preferences"
+import type { WorkspaceSettingsService } from "./features/workspace-settings"
 import type { SidebarConfigService } from "./features/sidebar-config"
 import type { UserE2eKeysService } from "./features/user-e2e-keys"
 import type { AvatarService } from "./features/workspaces"
@@ -97,6 +99,7 @@ interface Dependencies {
   memoExplorerService: MemoExplorerService
   conversationService: ConversationService
   userPreferencesService: UserPreferencesService
+  workspaceSettingsService: WorkspaceSettingsService
   sidebarConfigService: SidebarConfigService
   userE2eKeysService: UserE2eKeysService
   invitationService: InvitationService
@@ -143,6 +146,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     memoExplorerService,
     conversationService,
     userPreferencesService,
+    workspaceSettingsService,
     sidebarConfigService,
     userE2eKeysService,
     invitationService,
@@ -195,6 +199,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     workspaceService,
     streamService,
     userPreferencesService,
+    workspaceSettingsService,
     sidebarConfigService,
     invitationService,
     activityService,
@@ -227,6 +232,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const conversation = createConversationHandlers({ conversationService, streamService })
   const command = createCommandHandlers({ pool, commandAvailabilityService, botRuntimeService })
   const preferences = createUserPreferencesHandlers({ userPreferencesService })
+  const workspaceSettings = createWorkspaceSettingsHandlers({ workspaceSettingsService })
   const sidebarConfig = createSidebarConfigHandlers({ sidebarConfigService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
   const aiUsage = createAIUsageHandlers({ pool })
@@ -318,6 +324,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // User preferences
   app.get("/api/workspaces/:workspaceId/preferences", ...authed, preferences.get)
   app.patch("/api/workspaces/:workspaceId/preferences", ...authed, preferences.update)
+
+  // Workspace settings (workspace-wide defaults; writes are admin-only)
+  app.get("/api/workspaces/:workspaceId/workspace-settings", ...authed, workspaceSettings.get)
+  app.patch(
+    "/api/workspaces/:workspaceId/workspace-settings",
+    ...authed,
+    requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+    workspaceSettings.update
+  )
 
   // Sidebar config (per-user, per-workspace layout)
   app.get("/api/workspaces/:workspaceId/sidebar-config", ...authed, sidebarConfig.get)

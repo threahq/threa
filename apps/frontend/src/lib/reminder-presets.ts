@@ -1,25 +1,37 @@
 /**
  * Shared reminder-preset logic for the desktop hover popover, mobile sheet,
  * and Saved-view row popover. Preset math is timezone-aware via
- * `Intl.DateTimeFormat` so "Tomorrow 9am" means the user's local morning, not
- * the browser's.
+ * `Intl.DateTimeFormat` so "Tomorrow morning" means the user's local morning,
+ * not the browser's.
+ *
+ * Calendar presets resolve against the viewer's {@link WorkSchedule}: "morning"
+ * is the start of work (replacing the old hardcoded 09:00) and "next week"
+ * lands on the first working day of the next working week (replacing the old
+ * hardcoded Monday — a Sun–Thu schedule resolves to Sunday).
  */
+import {
+  type WorkSchedule,
+  type Weekday,
+  DEFAULT_WORK_SCHEDULE,
+  startOfWorkForDay,
+  firstWorkingWeekday,
+} from "@threa/types"
 
 /**
  * Tagged union so "duration" presets (minutes from now) and "calendar" presets
- * (next Monday at 9am) don't share a field. Adding a new calendar kind is a
- * new tag, not a new magic number.
+ * (next week at start of work) don't share a field. Adding a new calendar kind
+ * is a new tag, not a new magic number.
  */
 export type ReminderPreset =
   | { label: string; kind: "duration"; minutes: number }
-  | { label: string; kind: "calendar"; calendar: "tomorrow-9am" | "next-monday-9am" }
+  | { label: string; kind: "calendar"; calendar: "tomorrow-start" | "next-week-start" }
 
 export const REMINDER_PRESETS: ReminderPreset[] = [
   { label: "In 15 minutes", kind: "duration", minutes: 15 },
   { label: "In 1 hour", kind: "duration", minutes: 60 },
   { label: "In 3 hours", kind: "duration", minutes: 180 },
-  { label: "Tomorrow 9am", kind: "calendar", calendar: "tomorrow-9am" },
-  { label: "Next Monday 9am", kind: "calendar", calendar: "next-monday-9am" },
+  { label: "Tomorrow morning", kind: "calendar", calendar: "tomorrow-start" },
+  { label: "Next week", kind: "calendar", calendar: "next-week-start" },
 ]
 
 /** Resolve calendar parts (y/m/d + weekday index) as the user's timezone sees them. */
@@ -79,25 +91,57 @@ function buildZonedDate(timezone: string, y: number, m: number, d: number, hours
   return candidate
 }
 
-function nextMondayAt9(now: Date, timezone: string): Date {
+type CalendarDay = { y: number; m: number; d: number; weekday: number }
+
+/**
+ * Advance a zoned calendar date by whole days using civil-date arithmetic.
+ * Adding fixed 24h chunks of milliseconds is wrong across DST transitions (a
+ * fall-back day is 25h long, so `now + 24h` can read as the same local day);
+ * incrementing the calendar `d` field instead always moves a whole day.
+ */
+function shiftCalendarDay(day: CalendarDay, delta: number): CalendarDay {
+  const shifted = new Date(Date.UTC(day.y, day.m, day.d + delta))
+  return {
+    y: shifted.getUTCFullYear(),
+    m: shifted.getUTCMonth(),
+    d: shifted.getUTCDate(),
+    weekday: (((day.weekday + delta) % 7) + 7) % 7,
+  }
+}
+
+/** Build the start-of-work instant for a given local calendar day + weekday. */
+function startOfWorkInstant(timezone: string, schedule: WorkSchedule, day: CalendarDay): Date {
+  const minutes = startOfWorkForDay(schedule, day.weekday as Weekday)
+  return buildZonedDate(timezone, day.y, day.m, day.d, Math.floor(minutes / 60), minutes % 60)
+}
+
+function nextWeekStart(now: Date, timezone: string, schedule: WorkSchedule): Date {
   const today = calendarInZone(now, timezone)
-  // Always skip to the next Monday — if today is Monday, jump a full week so
-  // "Next Monday 9am" never resolves to earlier today.
-  const daysUntilMonday = today.weekday === 1 ? 7 : (1 - today.weekday + 7) % 7 || 7
-  const target = calendarInZone(new Date(now.getTime() + daysUntilMonday * 24 * 60 * 60_000), timezone)
-  return buildZonedDate(timezone, target.y, target.m, target.d, 9, 0)
+  // First working day of the week (Mon–Fri → Monday, Sun–Thu → Sunday). Empty
+  // schedules fall back to Monday.
+  const startWeekday = firstWorkingWeekday(schedule) ?? 1
+  // Always skip into next week — if today already is the week-start day, jump a
+  // full week so "Next week" never resolves to earlier today.
+  const daysUntil = today.weekday === startWeekday ? 7 : (startWeekday - today.weekday + 7) % 7 || 7
+  return startOfWorkInstant(timezone, schedule, shiftCalendarDay(today, daysUntil))
 }
 
-function tomorrowAt9(now: Date, timezone: string): Date {
-  const tomorrow = calendarInZone(new Date(now.getTime() + 24 * 60 * 60_000), timezone)
-  return buildZonedDate(timezone, tomorrow.y, tomorrow.m, tomorrow.d, 9, 0)
+function tomorrowStart(now: Date, timezone: string, schedule: WorkSchedule): Date {
+  return startOfWorkInstant(timezone, schedule, shiftCalendarDay(calendarInZone(now, timezone), 1))
 }
 
-export function computeRemindAt(preset: ReminderPreset, now: Date, timezone: string): Date {
+export function computeRemindAt(
+  preset: ReminderPreset,
+  now: Date,
+  timezone: string,
+  schedule: WorkSchedule = DEFAULT_WORK_SCHEDULE
+): Date {
   switch (preset.kind) {
     case "duration":
       return new Date(now.getTime() + preset.minutes * 60_000)
     case "calendar":
-      return preset.calendar === "tomorrow-9am" ? tomorrowAt9(now, timezone) : nextMondayAt9(now, timezone)
+      return preset.calendar === "tomorrow-start"
+        ? tomorrowStart(now, timezone, schedule)
+        : nextWeekStart(now, timezone, schedule)
   }
 }

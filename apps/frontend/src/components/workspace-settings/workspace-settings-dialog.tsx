@@ -14,12 +14,14 @@ import { UsersTab } from "./users-tab"
 import { ApiKeysTab } from "./api-keys-tab"
 import { BotsTab } from "./bots-tab"
 import { IntegrationsTab } from "./integrations-tab"
+import { ScheduleTab } from "./schedule-tab"
 
-const ALL_TABS = ["general", "users", "integrations", "bots", "api-keys"] as const
+const ALL_TABS = ["general", "schedule", "users", "integrations", "bots", "api-keys"] as const
 type WorkspaceSettingsTab = (typeof ALL_TABS)[number]
 
 const TAB_CONFIG: Record<WorkspaceSettingsTab, { label: string; description: string }> = {
   general: { label: "General", description: "Workspace identity and region" },
+  schedule: { label: "Working hours", description: "Default working week and shifts" },
   users: { label: "Users", description: "Members and pending invites" },
   integrations: { label: "Integrations", description: "Shared third-party connections" },
   bots: { label: "Bots", description: "Workspace automation accounts" },
@@ -86,6 +88,9 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
             <div data-slot="settings-content" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.content}>
               <TabsContent value="general" className="mt-0">
                 <GeneralTab workspaceId={workspaceId} />
+              </TabsContent>
+              <TabsContent value="schedule" className="mt-0">
+                <ScheduleTab workspaceId={workspaceId} />
               </TabsContent>
               <TabsContent value="users" className="mt-0">
                 <UsersTab workspaceId={workspaceId} />

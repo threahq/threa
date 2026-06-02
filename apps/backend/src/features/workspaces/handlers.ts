@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import type { WorkspaceService } from "./service"
 import type { StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
+import type { WorkspaceSettingsService } from "../workspace-settings"
 import type { SidebarConfigService } from "../sidebar-config"
 import type { InvitationService } from "../invitations"
 import type { ActivityService } from "../activity"
@@ -50,6 +51,7 @@ interface Dependencies {
   workspaceService: WorkspaceService
   streamService: StreamService
   userPreferencesService: UserPreferencesService
+  workspaceSettingsService: WorkspaceSettingsService
   sidebarConfigService: SidebarConfigService
   invitationService: InvitationService
   activityService?: ActivityService
@@ -65,6 +67,7 @@ export function createWorkspaceHandlers({
   workspaceService,
   streamService,
   userPreferencesService,
+  workspaceSettingsService,
   sidebarConfigService,
   invitationService,
   activityService,
@@ -140,6 +143,7 @@ export function createWorkspaceHandlers({
         bots,
         emojiWeights,
         userPreferences,
+        workspaceSettings,
         sidebarConfig,
         dmPeers,
         labels,
@@ -153,6 +157,7 @@ export function createWorkspaceHandlers({
         BotRepository.listVisibleTo(pool, workspaceId, userId),
         workspaceService.getEmojiWeights(workspaceId, userId),
         userPreferencesService.getPreferences(workspaceId, userId),
+        workspaceSettingsService.getSettings(workspaceId),
         sidebarConfigService.getConfig(workspaceId, userId),
         streamService.listDmPeers(workspaceId, userId),
         labelService.listVisibleTo(workspaceId, userId),
@@ -240,6 +245,7 @@ export function createWorkspaceHandlers({
           mutedStreamIds,
           dmPeers,
           userPreferences,
+          workspaceSettings,
           sidebarConfig,
           labels,
           labelMemberships,

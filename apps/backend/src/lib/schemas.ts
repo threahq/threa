@@ -6,6 +6,7 @@ import {
   CONTENT_FORMATS,
   AUTHOR_TYPES,
   NOTIFICATION_LEVELS,
+  parseHHMM,
 } from "@threa/types"
 
 export const streamTypeSchema = z.enum(STREAM_TYPES)
@@ -14,6 +15,30 @@ export const companionModeSchema = z.enum(COMPANION_MODES)
 export const contentFormatSchema = z.enum(CONTENT_FORMATS)
 export const authorTypeSchema = z.enum(AUTHOR_TYPES)
 export const notificationLevelSchema = z.enum(NOTIFICATION_LEVELS)
+
+// Working schedule — shared by user-preferences (per-user override) and
+// workspace-settings (workspace default) so both validate identically (INV-35).
+// A shift is a wall-clock "HH:MM" range that must not end before it starts.
+const hhmmSchema = z.string().refine((v) => parseHHMM(v) !== null, "Must be HH:MM (24h)")
+const shiftIntervalSchema = z
+  .object({ start: hhmmSchema, end: hhmmSchema })
+  .refine((s) => parseHHMM(s.end)! > parseHHMM(s.start)!, { message: "Shift end must be after start" })
+
+// Every weekday key (0–6) maps to an array of shifts; empty array = day off.
+// Cap shifts per day so a client can't store an unbounded blob. Keys are listed
+// explicitly so the inferred output matches Record<Weekday, ShiftInterval[]>.
+const dayShiftsSchema = z.array(shiftIntervalSchema).max(6)
+export const workScheduleSchema = z.object({
+  days: z.object({
+    0: dayShiftsSchema,
+    1: dayShiftsSchema,
+    2: dayShiftsSchema,
+    3: dayShiftsSchema,
+    4: dayShiftsSchema,
+    5: dayShiftsSchema,
+    6: dayShiftsSchema,
+  }),
+})
 
 // BIK registration — a runtime's per-session X25519 public key (base64, 32
 // bytes) and the short id used as `recipient_key_id` when a stream's SSK is

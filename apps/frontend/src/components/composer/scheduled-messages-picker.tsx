@@ -14,6 +14,8 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
 import { usePreferencesOptional } from "@/contexts"
 import { REMINDER_PRESETS, computeRemindAt, type ReminderPreset } from "@/lib/reminder-presets"
+import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
+import type { WorkSchedule } from "@threa/types"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import { ScheduledEditDialog } from "@/components/scheduled/scheduled-edit-dialog"
@@ -94,6 +96,10 @@ export function ScheduledMessagesPicker({
   // domain model and frequently null on accounts that haven't completed the
   // setup wizard, which silently disabled the alt-tz split for those users.
   const prefTimezone = usePreferencesOptional()?.preferences?.timezone ?? null
+  // Calendar presets ("Tomorrow morning", "Next week") resolve against the
+  // viewer's working schedule — start of work replaces 9am, working-week start
+  // replaces Monday.
+  const workSchedule = useEffectiveWorkSchedule(workspaceId)
 
   const count = items.length
   // Re-anchor relative-time labels each time the popover opens.
@@ -125,7 +131,7 @@ export function ScheduledMessagesPicker({
 
   const handlePreset = (preset: ReminderPreset, overrideTz?: string) => {
     // Default to device-local; pref-tz is opt-in via the split-button dropdown.
-    const when = computeRemindAt(preset, new Date(), overrideTz ?? timezone)
+    const when = computeRemindAt(preset, new Date(), overrideTz ?? timezone, workSchedule)
     onSchedule(when)
     setOpen(false)
     resetToList()
@@ -216,6 +222,7 @@ export function ScheduledMessagesPicker({
             <PickingMode
               timezone={timezone}
               prefTimezone={prefTimezone}
+              workSchedule={workSchedule}
               showCustom={showCustom}
               customDate={customDate}
               customTime={customTime}
@@ -352,6 +359,7 @@ function ListMode({
 interface PickingModeProps {
   timezone: string
   prefTimezone: string | null
+  workSchedule: WorkSchedule
   showCustom: boolean
   customDate: string
   customTime: string
@@ -368,6 +376,7 @@ interface PickingModeProps {
 function PickingMode({
   timezone,
   prefTimezone,
+  workSchedule,
   showCustom,
   customDate,
   customTime,
@@ -401,6 +410,7 @@ function PickingMode({
               preset={preset}
               timezone={timezone}
               prefTimezone={prefTimezone}
+              workSchedule={workSchedule}
               onPreset={onPreset}
             />
           ))}
@@ -442,6 +452,7 @@ interface PresetRowProps {
   preset: ReminderPreset
   timezone: string
   prefTimezone: string | null
+  workSchedule: WorkSchedule
   onPreset: (preset: ReminderPreset, overrideTz?: string) => void
 }
 
@@ -462,16 +473,19 @@ interface PresetRowProps {
  * Duration presets ("In 15 minutes") are timezone-invariant, so the split
  * never appears for them.
  */
-function PresetRow({ preset, timezone, prefTimezone, onPreset }: PresetRowProps) {
+function PresetRow({ preset, timezone, prefTimezone, workSchedule, onPreset }: PresetRowProps) {
   const now = useMemo(() => new Date(), [])
-  const localDate = useMemo(() => computeRemindAt(preset, now, timezone), [preset, now, timezone])
+  const localDate = useMemo(
+    () => computeRemindAt(preset, now, timezone, workSchedule),
+    [preset, now, timezone, workSchedule]
+  )
   // Calendar presets only — duration presets resolve to the same instant in
   // every timezone.
   const prefDate = useMemo(() => {
     if (preset.kind !== "calendar") return null
     if (!prefTimezone || prefTimezone === timezone) return null
-    return computeRemindAt(preset, now, prefTimezone)
-  }, [preset, now, timezone, prefTimezone])
+    return computeRemindAt(preset, now, prefTimezone, workSchedule)
+  }, [preset, now, timezone, prefTimezone, workSchedule])
   // Even with different tz strings the offsets can match at the resolved
   // wall-clock (e.g. London ↔ Lisbon at certain times of year). Don't show
   // the split when both options would fire at the same moment.
