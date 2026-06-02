@@ -1,7 +1,12 @@
 import type { NextFunction, Request, Response } from "express"
 import { timingSafeEqual } from "node:crypto"
 import { z } from "zod"
-import { INTERNAL_API_KEY_HEADER, type EnclaveSessionAssignment } from "@threa/types"
+import {
+  AUTHOR_TYPES,
+  INTERNAL_API_KEY_HEADER,
+  TOOL_PRIVACY_CATEGORIES,
+  type EnclaveSessionAssignment,
+} from "@threa/types"
 import type { EnclaveKeyPair } from "./keystore"
 import type { RawChatFn } from "./llm"
 import type { BackendCallbacks } from "./agent/backend-callbacks"
@@ -69,6 +74,26 @@ export const sessionAssignmentSchema = z.object({
     keyGeneration: z.number().int().min(0),
     senderId: z.string().min(1),
   }),
+  /**
+   * Per-stream tool-privacy policy. MUST be in the schema: Zod strips unknown
+   * keys, so omitting it here silently drops the policy and the enclave runs its
+   * full web surface regardless of the stream's setting. Optional → unrestricted.
+   */
+  allowedToolCategories: z.array(z.enum(TOOL_PRIVACY_CATEGORIES)).optional(),
+  /**
+   * Non-secret trigger metadata for the "Triggered by" CONTEXT trace step. Same
+   * reason it must be declared: an unschema'd field never reaches `run-turn`, so
+   * the context step would silently never render. The body is the decrypted
+   * prompt, sealed enclave-side.
+   */
+  trigger: z
+    .object({
+      messageId: z.string().min(1),
+      authorName: z.string(),
+      authorType: z.enum(AUTHOR_TYPES),
+      createdAt: z.string().min(1),
+    })
+    .optional(),
 })
 
 export interface SessionsDeps {
@@ -77,6 +102,8 @@ export interface SessionsDeps {
   callbacks: BackendCallbacks
   /** Session ids currently running in this process, to dedupe a redelivered assignment. */
   inFlight: Set<string>
+  /** Per-session cancel controllers so `/sessions/:id/cancel` can abort a turn's research. */
+  aborts: Map<string, AbortController>
   /** Web-tool config for the turn loop (Tavily key). Absent → research/read_url only. */
   toolConfig?: { tavilyApiKey?: string }
 }
@@ -131,8 +158,29 @@ export function createSessionsHandler(deps: SessionsDeps) {
     // Ack first; the loop runs detached and reports back over the callbacks.
     res.status(202).end()
     void runEnclaveSession(
-      { keyPair: deps.keyPair, rawChat: deps.rawChat, callbacks: deps.callbacks, toolConfig: deps.toolConfig },
+      {
+        keyPair: deps.keyPair,
+        rawChat: deps.rawChat,
+        callbacks: deps.callbacks,
+        toolConfig: deps.toolConfig,
+        aborts: deps.aborts,
+      },
       assignment
     ).finally(() => deps.inFlight.delete(assignment.sessionId))
+  }
+}
+
+/**
+ * Express adapter for `POST /sessions/:id/cancel` — the backend forwards a user's
+ * "Stop research" here. Gracefully aborts the in-flight turn's long-running tools
+ * (the web research sub-loop returns partial findings and the turn still replies);
+ * it does NOT kill the session. 202 whether or not a turn was found (idempotent —
+ * the turn may have already finished). Gated by `requireInternalKey` upstream.
+ */
+export function createCancelHandler(deps: { aborts: Map<string, AbortController> }) {
+  return (req: Request, res: Response): void => {
+    const sessionId = req.params.id
+    if (sessionId) deps.aborts.get(sessionId)?.abort()
+    res.status(202).end()
   }
 }

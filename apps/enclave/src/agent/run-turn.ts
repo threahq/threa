@@ -73,6 +73,13 @@ export interface EnclaveTurnDeps {
   /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
   onSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
   /**
+   * Cooperative cancellation for long-running tools (research). Wired to the
+   * runtime's `toolSignalProvider`, so the user's "Stop research" aborts the web
+   * sub-loop gracefully — it returns partial findings and the turn still replies,
+   * exactly like the in-process `SessionAbortRegistry` path. Omitted → no cancel.
+   */
+  abortSignal?: AbortSignal
+  /**
    * Web-tool configuration. Absent or keyless degrades gracefully: no Tavily key
    * means no `web_search` (URL reads + research still work). Omitting `tools`
    * entirely runs the loop with `read_url` + research only.
@@ -88,7 +95,7 @@ export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, tools } = deps
+  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, tools, abortSignal } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -165,6 +172,10 @@ export async function runEnclaveTurn(
     observers: [traceObserver],
     maxTokens: request.maxTokens,
     temperature: request.temperature,
+    // Hand long-running tools (research) the session's cancel signal so a user
+    // "Stop research" aborts the web sub-loop gracefully (partial findings, the
+    // turn still replies) — the enclave mirror of the in-process abort registry.
+    ...(abortSignal ? { toolSignalProvider: () => abortSignal } : {}),
     // Terminal action: mint each reply's id, seal it under the current SSK bound
     // to that id, and stream it back now (awaited, so it's delivered before the
     // loop moves on). The backend stores ciphertext under this id.

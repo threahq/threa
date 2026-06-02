@@ -7,7 +7,7 @@ import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
 import { createOpenRouterChat } from "./llm"
 import { createBackendCallbacks } from "./agent/backend-callbacks"
-import { createSessionsHandler, requireInternalKey } from "./sessions"
+import { createCancelHandler, createSessionsHandler, requireInternalKey } from "./sessions"
 
 const logger = pino({ name: "enclave" })
 
@@ -48,12 +48,24 @@ async function main() {
   const rawChat = createOpenRouterChat(config)
   const callbacks = createBackendCallbacks(config)
   const inFlight = new Set<string>()
+  const aborts = new Map<string, AbortController>()
   app.post(
     "/sessions",
     requireInternalKey(config.internalApiKey),
     express.json({ limit: "4mb" }),
-    createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, toolConfig: { tavilyApiKey: config.tavilyApiKey } })
+    createSessionsHandler({
+      keyPair,
+      rawChat,
+      callbacks,
+      inFlight,
+      aborts,
+      toolConfig: { tavilyApiKey: config.tavilyApiKey },
+    })
   )
+
+  // Graceful "Stop research": the backend forwards a user abort here. No body —
+  // the session id is in the path; the key gate is enough (same secret as /sessions).
+  app.post("/sessions/:id/cancel", requireInternalKey(config.internalApiKey), createCancelHandler({ aborts }))
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, "Enclave request failed")

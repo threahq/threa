@@ -19,6 +19,12 @@ export interface SessionRunnerDeps {
   callbacks: BackendCallbacks
   /** Web-tool config for the turn loop (Tavily key). Absent → research/read_url only. */
   toolConfig?: { tavilyApiKey?: string }
+  /**
+   * Per-session cancel controllers, keyed by sessionId. The runner registers one
+   * for the turn so the `/sessions/:id/cancel` endpoint can abort it (graceful
+   * "Stop research"); it's removed when the turn ends.
+   */
+  aborts?: Map<string, AbortController>
 }
 
 /**
@@ -37,6 +43,11 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     })
   }, HEARTBEAT_INTERVAL_MS)
 
+  // Register a cancel controller so `/sessions/:id/cancel` can gracefully abort
+  // this turn's long-running tools (research). Removed in `finally`.
+  const abortController = new AbortController()
+  deps.aborts?.set(sessionId, abortController)
+
   try {
     const result = await runEnclaveTurn(
       {
@@ -50,6 +61,7 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         onStep: (step) => deps.callbacks.step(sessionId, step),
         onSubstep: (substep) => deps.callbacks.substep(sessionId, substep),
         tools: deps.toolConfig ? { tavilyApiKey: deps.toolConfig.tavilyApiKey } : undefined,
+        abortSignal: abortController.signal,
       },
       assignment
     )
@@ -64,5 +76,6 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     logger.error({ errorName, sessionId }, "Enclave session failed")
   } finally {
     clearInterval(heartbeat)
+    deps.aborts?.delete(sessionId)
   }
 }

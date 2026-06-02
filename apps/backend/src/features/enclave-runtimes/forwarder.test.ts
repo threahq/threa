@@ -72,3 +72,37 @@ describe("EnclaveForwarder.assignSession", () => {
     expect((err as EnclaveForwardError).message).not.toContain(ASSIGNMENT.streamId)
   })
 })
+
+describe("EnclaveForwarder.cancelSession", () => {
+  it("POSTs to <instanceUrl>/sessions/:id/cancel with the key and returns true on 202", async () => {
+    const captured: { url?: string; method?: string; headers?: Record<string, string> } = {}
+    globalThis.fetch = mock(async (url: string | URL | Request, init?: RequestInit) => {
+      captured.url = String(url)
+      captured.method = init?.method
+      captured.headers = (init?.headers ?? {}) as Record<string, string>
+      return new Response(null, { status: 202 })
+    }) as unknown as typeof fetch
+
+    const forwarder = new EnclaveForwarder({ internalApiKey: "shared-secret" })
+    const ok = await forwarder.cancelSession("https://enclave-1.internal/", "session_1")
+
+    expect(ok).toBe(true)
+    expect(captured.url).toBe("https://enclave-1.internal/sessions/session_1/cancel")
+    expect(captured.method).toBe("POST")
+    expect(captured.headers?.[INTERNAL_API_KEY_HEADER]).toBe("shared-secret")
+  })
+
+  it("returns false (not throw) on a non-202 — the turn may have already finished", async () => {
+    globalThis.fetch = mock(async () => new Response(null, { status: 404 })) as unknown as typeof fetch
+    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    expect(await forwarder.cancelSession("https://enclave-1.internal", "session_1")).toBe(false)
+  })
+
+  it("returns false (not throw) on a network failure", async () => {
+    globalThis.fetch = mock(async () => {
+      throw new Error("ECONNREFUSED")
+    }) as unknown as typeof fetch
+    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    expect(await forwarder.cancelSession("https://enclave-1.internal", "session_1")).toBe(false)
+  })
+})

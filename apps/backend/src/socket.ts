@@ -8,6 +8,8 @@ import type { PushService } from "./features/push"
 import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
+import { EnclaveRuntimesRepository } from "./features/enclave-runtimes"
+import type { EnclaveForwarder } from "./features/enclave-runtimes"
 import { UserRepository } from "./features/workspaces"
 import { HttpError } from "./lib/errors"
 import { logger } from "./lib/logger"
@@ -55,8 +57,10 @@ interface Dependencies {
   streamService: StreamService
   pushService: PushService
   userSocketRegistry: UserSocketRegistry
-  /** Registry for graceful tool cancellation (e.g. workspace_research). */
+  /** Registry for graceful tool cancellation (e.g. workspace_research) — in-process sessions. */
   sessionAbortRegistry: SessionAbortRegistry
+  /** Forwards a graceful cancel to the enclave that owns an E2E session. Null when no internal key. */
+  enclaveForwarder?: EnclaveForwarder
 }
 
 /**
@@ -70,7 +74,8 @@ function deriveDeviceKey(userAgent: string | undefined): string {
 }
 
 export function registerSocketHandlers(io: Server, deps: Dependencies) {
-  const { pool, authService, streamService, pushService, userSocketRegistry, sessionAbortRegistry } = deps
+  const { pool, authService, streamService, pushService, userSocketRegistry, sessionAbortRegistry, enclaveForwarder } =
+    deps
 
   // ===========================================================================
   // Authentication middleware (shared with the voice namespace — see lib/socket-auth)
@@ -324,7 +329,16 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
             callback?.({ ok: false, error: "Not authorized" })
             return
           }
-          const aborted = sessionAbortRegistry.abort(sessionId, "user_abort")
+          // Route the abort by ownership: an E2E turn runs in the enclave (its
+          // server_id is that EIK), so forward the cancel there; an in-process
+          // turn lives in this server's abort registry. Both are graceful —
+          // research returns partial findings and the turn still replies.
+          const owningEnclave = session.serverId
+            ? await EnclaveRuntimesRepository.findByKeyId(pool, session.serverId)
+            : null
+          const aborted = owningEnclave
+            ? ((await enclaveForwarder?.cancelSession(owningEnclave.instanceUrl, sessionId)) ?? false)
+            : sessionAbortRegistry.abort(sessionId, "user_abort")
           wsMessagesTotal.inc({
             workspace_id: workspaceIdFromPayload,
             direction: "received",

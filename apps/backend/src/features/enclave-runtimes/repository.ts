@@ -107,6 +107,21 @@ export const EnclaveRuntimesRepository = {
   },
 
   /**
+   * Resolve one (non-revoked) runtime by its EIK key id — used to find the
+   * instance owning a session (its `server_id` is the EIK) so an abort can be
+   * forwarded there. Returns null if revoked or unknown.
+   */
+  async findByKeyId(db: Querier, keyId: string): Promise<EnclaveRuntime | null> {
+    const result = await db.query<EnclaveRuntimeRow>(sql`
+      SELECT ${sql.raw(COLUMNS)}
+      FROM enclave_runtimes
+      WHERE key_id = ${keyId} AND revoked_at IS NULL
+      LIMIT 1
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
    * Mark a key revoked. Idempotent: running this against an already-revoked
    * row keeps the original `revoked_at` timestamp.
    */

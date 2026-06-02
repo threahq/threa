@@ -18,7 +18,7 @@ import {
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "./keystore"
 import type { BackendCallbacks } from "./agent/backend-callbacks"
 import type { RawChatFn } from "./llm"
-import { createSessionsHandler, requireInternalKey } from "./sessions"
+import { createCancelHandler, createSessionsHandler, requireInternalKey } from "./sessions"
 
 const STREAM_ID = "stream_x"
 const GEN = 0
@@ -117,6 +117,7 @@ describe("createSessionsHandler", () => {
       }) as unknown as RawChatFn,
       callbacks: {} as BackendCallbacks,
       inFlight: new Set(),
+      aborts: new Map(),
     })
     const res = fakeRes()
     handler({ body: { not: "valid" } } as unknown as Request, res)
@@ -144,7 +145,7 @@ describe("createSessionsHandler", () => {
       },
     }
     const inFlight = new Set<string>()
-    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight })
+    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, aborts: new Map() })
 
     const res = fakeRes()
     handler({ body: assignment } as unknown as Request, res)
@@ -188,7 +189,7 @@ describe("createSessionsHandler", () => {
       },
     }
     const inFlight = new Set<string>()
-    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight })
+    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, aborts: new Map() })
 
     const res = fakeRes()
     handler({ body: assignment } as unknown as Request, res)
@@ -219,10 +220,34 @@ describe("createSessionsHandler", () => {
         complete: async () => {},
       },
       inFlight: new Set([assignment.sessionId]), // already running
+      aborts: new Map(),
     })
     const res = fakeRes()
     handler({ body: assignment } as unknown as Request, res)
     expect(res.statusCode).toBe(202)
     expect(ran).toBe(false)
+  })
+})
+
+describe("createCancelHandler", () => {
+  it("aborts the registered controller for a known session", () => {
+    const controller = new AbortController()
+    const aborts = new Map([["session_1", controller]])
+    const handler = createCancelHandler({ aborts })
+    const res = fakeRes()
+
+    handler({ params: { id: "session_1" } } as unknown as Request, res)
+
+    expect(controller.signal.aborted).toBe(true)
+    expect(res.statusCode).toBe(202)
+  })
+
+  it("202s idempotently for an unknown session (turn already finished)", () => {
+    const handler = createCancelHandler({ aborts: new Map() })
+    const res = fakeRes()
+
+    handler({ params: { id: "session_gone" } } as unknown as Request, res)
+
+    expect(res.statusCode).toBe(202)
   })
 })
