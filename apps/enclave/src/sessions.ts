@@ -177,10 +177,16 @@ export function createSessionsHandler(deps: SessionsDeps) {
  * it does NOT kill the session. 202 whether or not a turn was found (idempotent —
  * the turn may have already finished). Gated by `requireInternalKey` upstream.
  */
+const cancelParamsSchema = z.object({ id: z.string().min(1) })
+
 export function createCancelHandler(deps: { aborts: Map<string, AbortController> }) {
   return (req: Request, res: Response): void => {
-    const sessionId = req.params.id
-    if (sessionId) deps.aborts.get(sessionId)?.abort()
+    const parsed = cancelParamsSchema.safeParse(req.params)
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid session id" })
+      return
+    }
+    deps.aborts.get(parsed.data.id)?.abort()
     res.status(202).end()
   }
 }

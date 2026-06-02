@@ -202,6 +202,26 @@ describe("createEnclaveSessionHandlers.complete", () => {
     expect(insertEvent).not.toHaveBeenCalled() // no double-emit
     expect(emit).not.toHaveBeenCalled()
   })
+
+  it("still completes the session durably when the stream is gone, skipping broadcast", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    const complete = spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue(null) // stream deleted mid-turn
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const insertEvent = spyOn(StreamEventRepository, "insert")
+    const { handlers, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.complete(req("session_1", COMPLETE_BODY), res)
+
+    // The session is still marked COMPLETED (durable); only the broadcast is skipped.
+    expect(res.statusCode).toBe(204)
+    expect(complete).toHaveBeenCalledTimes(1)
+    expect(insertEvent).not.toHaveBeenCalled()
+    expect(emit).not.toHaveBeenCalled()
+  })
 })
 
 describe("createEnclaveSessionHandlers.stepStarted", () => {

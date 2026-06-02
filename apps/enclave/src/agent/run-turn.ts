@@ -9,6 +9,7 @@ import {
   sealMessage,
   unwrapStreamKey,
 } from "@threa/crypto"
+import { AgentToolNames } from "@threa/types"
 import type {
   EnclaveSessionAssignment,
   EnclaveSessionResult,
@@ -172,10 +173,16 @@ export async function runEnclaveTurn(
     observers: [traceObserver],
     maxTokens: request.maxTokens,
     temperature: request.temperature,
-    // Hand long-running tools (research) the session's cancel signal so a user
-    // "Stop research" aborts the web sub-loop gracefully (partial findings, the
-    // turn still replies) — the enclave mirror of the in-process abort registry.
-    ...(abortSignal ? { toolSignalProvider: () => abortSignal } : {}),
+    // Hand ONLY the long-running research sub-loop the session's cancel signal so
+    // a user "Stop research" aborts it gracefully (partial findings, the turn
+    // still replies). Gated by tool name exactly like the in-process path, so a
+    // short/uninterruptible tool never receives an already-aborted signal.
+    ...(abortSignal
+      ? {
+          toolSignalProvider: (_toolCallId: string, toolName: string) =>
+            toolName === AgentToolNames.GENERAL_RESEARCH ? abortSignal : undefined,
+        }
+      : {}),
     // Terminal action: mint each reply's id, seal it under the current SSK bound
     // to that id, and stream it back now (awaited, so it's delivered before the
     // loop moves on). The backend stores ciphertext under this id.

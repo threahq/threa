@@ -411,6 +411,11 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
           sentMessageIds: messageIds,
         })
         if (!completed) return false // raced to a terminal state under us
+        // Broadcast needs the workspace (room addressing). A missing stream is an
+        // edge (deleted mid-turn): the session is still marked COMPLETED durably,
+        // but the lifecycle event/outbox are skipped — same tradeoff the orphan
+        // cleanup makes for a streamless reclaim. An open dialog on a now-deleted
+        // stream then reconciles on its next bootstrap rather than live.
         if (stream) {
           const steps = await AgentSessionRepository.findStepsBySession(tx, id)
           const completedEvent = await StreamEventRepository.insert(tx, {

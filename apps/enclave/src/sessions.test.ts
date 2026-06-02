@@ -251,3 +251,12 @@ describe("createCancelHandler", () => {
     expect(res.statusCode).toBe(202)
   })
 })
+
+describe("createCancelHandler validation", () => {
+  it("400s when the session id param is missing (INV-55 Zod validation)", () => {
+    const handler = createCancelHandler({ aborts: new Map() })
+    const res = fakeRes()
+    handler({ params: {} } as unknown as Request, res)
+    expect(res.statusCode).toBe(400)
+  })
+})
