@@ -156,7 +156,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
       fn(tx)) as never)
     const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers, createMessage } = makeHandlers()
+    const { handlers, createMessage, io, emit } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
@@ -164,6 +164,9 @@ describe("createEnclaveSessionHandlers.complete", () => {
     expect(res.statusCode).toBe(204)
     expect(createMessage).not.toHaveBeenCalled() // replies were already streamed via /messages
     expect(complete).toHaveBeenCalledTimes(1)
+    // Completion + event are one atomic transaction (INV-7): completeSession runs
+    // on the tx client, not the bare pool.
+    expect(complete.mock.calls[0]![0]).toBe(tx)
     expect(complete.mock.calls[0]![2]).toMatchObject({
       sentMessageIds: ["msg_a", "msg_b"],
       responseMessageId: "msg_a",
@@ -176,6 +179,28 @@ describe("createEnclaveSessionHandlers.complete", () => {
       payload: { sessionId: "session_1", messageCount: 2 },
     })
     expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:completed")
+    // And a live-open trace dialog (session room) is transitioned to completed.
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:completed")).toBe(true)
+  })
+
+  it("does not emit the completed event when the session raced to a terminal state", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    // Won by another redelivery between assertRunning and the transaction.
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const insertEvent = spyOn(StreamEventRepository, "insert")
+    const { handlers, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.complete(req("session_1", COMPLETE_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(insertEvent).not.toHaveBeenCalled() // no double-emit
+    expect(emit).not.toHaveBeenCalled()
   })
 })
 

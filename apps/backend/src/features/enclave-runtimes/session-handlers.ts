@@ -392,21 +392,27 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
       assertRunning(session)
 
       const messageIds = parsed.data.messageIds
-      await AgentSessionRepository.completeSession(pool, id, {
-        lastSeenSequence: session.lastSeenSequence ?? 0n,
-        responseMessageId: messageIds[0] ?? null,
-        sentMessageIds: messageIds,
-      })
-
-      // Clear the inline stream-view trace: emit the same agent_session:completed
-      // lifecycle event the in-process path emits so `useAgentActivity` drops the
-      // "Ariadne is working…" indicator (and the persisted event keeps a refresh
-      // consistent). Plaintext-free: counts + timing only.
+      // Resolve the workspace from the stream (the internal-auth context carries
+      // none) so we can address the workspace-scoped rooms, as the other callbacks do.
       const stream = await StreamRepository.findById(pool, session.streamId)
-      if (stream) {
-        const steps = await AgentSessionRepository.findStepsBySession(pool, id)
-        const completedAt = new Date()
-        await withTransaction(pool, async (tx) => {
+      const completedAt = new Date()
+
+      // Complete the session AND emit the `agent_session:completed` lifecycle event
+      // in ONE transaction (INV-7): the status flip and the event the UI needs to
+      // drop the "Ariadne is working…" indicator must never diverge. Without the
+      // single transaction a crash between them strands a COMPLETED session with no
+      // event — and orphan-cleanup only recovers RUNNING sessions, so it would hang
+      // forever. Gated on winning the RUNNING→COMPLETED transition so a redelivery
+      // that raced doesn't double-emit. Plaintext-free: counts + timing only.
+      const committed = await withTransaction(pool, async (tx) => {
+        const completed = await AgentSessionRepository.completeSession(tx, id, {
+          lastSeenSequence: session.lastSeenSequence ?? 0n,
+          responseMessageId: messageIds[0] ?? null,
+          sentMessageIds: messageIds,
+        })
+        if (!completed) return false // raced to a terminal state under us
+        if (stream) {
+          const steps = await AgentSessionRepository.findStepsBySession(tx, id)
           const completedEvent = await StreamEventRepository.insert(tx, {
             id: eventId(),
             streamId: session.streamId,
@@ -426,7 +432,15 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
             streamId: session.streamId,
             event: completedEvent,
           })
-        })
+        }
+        return true
+      })
+
+      // Live-update an open trace dialog (session room) the way the in-process
+      // `trace.notifyCompleted()` does — the outbox broadcast only reaches the
+      // stream room, so the dialog wouldn't otherwise transition until a refetch.
+      if (committed && stream) {
+        io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:completed", { sessionId: id })
       }
 
       res.status(204).end()

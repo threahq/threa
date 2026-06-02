@@ -17,8 +17,9 @@ import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
  * Each step's content is sealed under the *reply* SSK (the current generation),
  * bound by AAD to `streamId|stepId|senderId` — the same message-AAD scheme,
  * with the enclave-minted `step_…` id in the id slot (no collision with `msg_…`
- * ids). Plaintext exists only here, for the duration of the loop, and is never
- * logged or persisted in the clear.
+ * ids) so the server can't shuffle a step's ciphertext onto a different row.
+ * Plaintext exists only here, for the duration of the loop, and is never logged
+ * or persisted in the clear.
  *
  * This mirrors the backend `SessionTraceObserver`'s event→step lifecycle exactly
  * — only the sink differs (seal + POST instead of DB + socket). Every step opens
@@ -59,9 +60,10 @@ export class EnclaveTraceObserver implements AgentObserver {
     switch (event.type) {
       case "thinking": {
         // Content is known up front: open + finalize the same step back-to-back,
-        // mirroring the backend's startStep(content) → complete().
+        // mirroring the backend's startStep(content) → complete(). One seal,
+        // AAD-bound to this step's id, reused for both the start and the finalize.
         const stepId = mintStepId()
-        const sealed = await this.seal(event.content)
+        const sealed = await this.seal(event.content, stepId)
         await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.THINKING, ...sealed })
         await this.deps.sendStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed, durationMs: event.durationMs })
         return
@@ -91,13 +93,15 @@ export class EnclaveTraceObserver implements AgentObserver {
         // (persisted onto the step row so a refresh / open mid-run replays it).
         const text = event.substep?.trim()
         if (!text) return
-        const sealed = await this.seal(text)
         const stepId = this.stepIdByToolCallId.get(event.toolCallId)
+        // Bind the seal AAD to the in-flight step (fall back to a fresh id only when
+        // there's no opened step to bind to — a hidden/never-started tool).
+        const sealed = await this.seal(text, stepId ?? mintStepId())
         const log = this.substepsByToolCallId.get(event.toolCallId)
         let snapshot: { ciphertext: string; envelope: EnclaveSealedStep["envelope"] } | undefined
         if (stepId && log) {
           log.push({ text, at: new Date().toISOString() })
-          snapshot = await this.seal(JSON.stringify({ substeps: [...log] }))
+          snapshot = await this.seal(JSON.stringify({ substeps: [...log] }), stepId)
         }
         await this.deps.sendSubstep({
           stepType: event.stepType,
@@ -111,22 +115,25 @@ export class EnclaveTraceObserver implements AgentObserver {
 
       case "tool:complete": {
         const stepId = this.stepIdByToolCallId.get(event.toolCallId)
-        if (!stepId) return // hidden tool — no step row was opened
+        // Clear all per-tool-call state up front (matches SessionTraceObserver,
+        // which deletes the hidden marker on complete too) so nothing leaks.
         this.stepIdByToolCallId.delete(event.toolCallId)
         this.substepsByToolCallId.delete(event.toolCallId)
-        const sealed = await this.seal(event.trace.content)
+        this.hiddenToolCallIds.delete(event.toolCallId)
+        if (!stepId) return // hidden tool — no step row was opened
+        const sealed = await this.seal(event.trace.content, stepId)
         await this.deps.sendStep({ stepId, stepType: event.trace.stepType, ...sealed, durationMs: event.durationMs })
         return
       }
 
       case "tool:error": {
         const content = `${event.toolName} failed: ${event.error}`
-        const sealed = await this.seal(content)
         const cachedId = this.stepIdByToolCallId.get(event.toolCallId)
         if (cachedId) {
           // Finalize the in-flight step with the error.
           this.stepIdByToolCallId.delete(event.toolCallId)
           this.substepsByToolCallId.delete(event.toolCallId)
+          const sealed = await this.seal(content, cachedId)
           await this.deps.sendStep({
             stepId: cachedId,
             stepType: AgentStepTypes.TOOL_ERROR,
@@ -137,6 +144,7 @@ export class EnclaveTraceObserver implements AgentObserver {
           // Unknown tool: the runtime emits tool:error with no preceding tool:start.
           // Synthesize a started + finalized error step so it's still visible.
           const stepId = mintStepId()
+          const sealed = await this.seal(content, stepId)
           await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.TOOL_ERROR, ...sealed })
           await this.deps.sendStep({
             stepId,
@@ -151,7 +159,7 @@ export class EnclaveTraceObserver implements AgentObserver {
 
       case "message:sent": {
         const stepId = mintStepId()
-        const sealed = await this.seal(event.content)
+        const sealed = await this.seal(event.content, stepId)
         await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
         await this.deps.sendStep({
           stepId,
@@ -164,13 +172,20 @@ export class EnclaveTraceObserver implements AgentObserver {
     }
   }
 
-  /** Seal one plaintext trace string under the reply SSK, AAD-bound to a fresh id. */
-  private async seal(content: string): Promise<{ ciphertext: string; envelope: EnclaveSealedStep["envelope"] }> {
+  /**
+   * Seal one plaintext trace string under the reply SSK, AAD-bound to the step's
+   * id (`streamId|stepId|senderId`) so the ciphertext can't be moved onto another
+   * step row undetected — the same anti-shuffle binding messages use.
+   */
+  private async seal(
+    content: string,
+    stepId: string
+  ): Promise<{ ciphertext: string; envelope: EnclaveSealedStep["envelope"] }> {
     const sealed = await sealMessage({
       key: this.deps.replySsk,
       keyGeneration: this.deps.replyKeyGeneration,
       payload: content,
-      aad: buildMessageAad({ streamId: this.deps.streamId, messageId: mintStepId(), senderId: this.deps.senderId }),
+      aad: buildMessageAad({ streamId: this.deps.streamId, messageId: stepId, senderId: this.deps.senderId }),
     })
     return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
   }
