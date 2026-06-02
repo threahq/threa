@@ -67,17 +67,6 @@ import {
 
 const PRESET_LABELS: Record<SidebarBasePreset, string> = { smart: "Smart", all: "All" }
 
-/**
- * Disable dnd-kit's post-reorder FLIP animation on these rows. That animation
- * (`useDerivedTransform`) is the only code path that gives a sortable item a
- * non-1 `scaleY`, derived from `initialRect.height / currentRect.height`. With
- * variable-height rows — the Quick Links row is tall because it nests its whole
- * link editor — that ratio is wrong, so a dragged row visibly stretches when it
- * passes the oversized neighbor. The live drag-shuffle (the sorting strategy's
- * translation) is unaffected; we only lose the settle animation after a drop.
- */
-const noLayoutAnimation = () => false
-
 /** Tray draggable ids are prefixed so they never collide with section sortable ids. */
 const ADD_PREFIX = "add:"
 /** Droppable id for the sections list, so a tray drop into an empty list appends. */
@@ -338,11 +327,10 @@ function SortableSectionRow({
   onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
   onMoveQuickLink: (activeKey: string, overKey: string) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: section.id,
-    animateLayoutChanges: noLayoutAnimation,
-  })
-  const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
+  // Translate only, never scale: dnd-kit scales the dragged element to its drop
+  // target's size, which stretches a normal row to the tall Quick Links row.
+  const style = { transform: CSS.Translate.toString(transform), transition: reduceMotion ? undefined : transition }
   const name = sectionDisplayName(section, labelsById)
   const isQuickLinks = section.spec.kind === "quicklinks"
 
@@ -440,11 +428,9 @@ function SortableQuickLinkRow({
   reduceMotion: boolean
   onSetVisibility: (visibility: SidebarQuickLinkVisibility) => void
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: link.key,
-    animateLayoutChanges: noLayoutAnimation,
-  })
-  const style = { transform: CSS.Transform.toString(transform), transition: reduceMotion ? undefined : transition }
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: link.key })
+  // Translate only, never scale — see SortableSectionRow.
+  const style = { transform: CSS.Translate.toString(transform), transition: reduceMotion ? undefined : transition }
   const { label, icon: Icon } = QUICK_LINK_META[link.key]
 
   return (
