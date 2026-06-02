@@ -1059,7 +1059,7 @@ export async function startServer(): Promise<ServerInstance> {
   await outboxDispatcher.start()
   outboxRetentionWorker.start()
 
-  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main)
+  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
   const pushSessionCleanup = createPushSessionCleanup(pushService)
