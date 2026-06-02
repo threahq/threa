@@ -22,7 +22,9 @@ const DAY_END = 23 * 60 + 59
  * end > start — which the backend requires.
  */
 function makeShift(startMin: number): ShiftInterval {
-  const start = Math.min(Math.max(startMin, 0), DAY_END - 60)
+  // Cap start at the last minute before midnight so a new shift never lands
+  // before the one it follows; end is clamped to midnight, so start < end holds.
+  const start = Math.min(Math.max(startMin, 0), DAY_END - 1)
   const end = Math.min(start + 8 * 60, DAY_END)
   return { start: minutesToHHMM(start), end: minutesToHHMM(end) }
 }

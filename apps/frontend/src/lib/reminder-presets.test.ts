@@ -46,6 +46,18 @@ describe("computeRemindAt — working hours (start of work)", () => {
   })
 })
 
+describe("computeRemindAt — DST safety", () => {
+  test("advances by calendar days across a fall-back transition, not fixed 24h", () => {
+    // Nov 1 2026 00:30 in America/New_York is the DST fall-back day (25h long),
+    // so `now + 24h` of milliseconds still reads as Nov 1 locally. Civil-date
+    // arithmetic must land "tomorrow" / "next week" on Monday Nov 2, not Nov 1.
+    const dstNow = new Date("2026-11-01T04:30:00Z")
+    const ny = "America/New_York"
+    expect(computeRemindAt(tomorrow, dstNow, ny, MON_FRI_9).toISOString()).toBe("2026-11-02T14:00:00.000Z")
+    expect(computeRemindAt(nextWeek, dstNow, ny, MON_FRI_9).toISOString()).toBe("2026-11-02T14:00:00.000Z")
+  })
+})
+
 describe("computeRemindAt — working week (next week)", () => {
   test("Mon–Fri resolves Next week to Monday", () => {
     expect(computeRemindAt(nextWeek, NOW, TZ, MON_FRI_9).toISOString()).toBe("2026-06-08T09:00:00.000Z")

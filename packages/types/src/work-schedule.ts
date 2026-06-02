@@ -36,17 +36,19 @@ export interface WorkSchedule {
   days: Record<Weekday, ShiftInterval[]>
 }
 
-const NINE_TO_FIVE: ShiftInterval[] = [{ start: "09:00", end: "17:00" }]
+function nineToFive(): ShiftInterval[] {
+  return [{ start: "09:00", end: "17:00" }]
+}
 
 /** Mon–Fri, 09:00–17:00 — the fallback when nothing is configured. */
 export const DEFAULT_WORK_SCHEDULE: WorkSchedule = {
   days: {
     0: [],
-    1: [...NINE_TO_FIVE],
-    2: [...NINE_TO_FIVE],
-    3: [...NINE_TO_FIVE],
-    4: [...NINE_TO_FIVE],
-    5: [...NINE_TO_FIVE],
+    1: nineToFive(),
+    2: nineToFive(),
+    3: nineToFive(),
+    4: nineToFive(),
+    5: nineToFive(),
     6: [],
   },
 }

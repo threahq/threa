@@ -57,7 +57,7 @@ export function SettingsDialog() {
         <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
           <ResponsiveDialogTitle>Settings</ResponsiveDialogTitle>
           <ResponsiveDialogDescription className="sr-only">
-            Manage your profile, AI preferences, notifications, and accessibility settings.
+            Manage your profile, AI preferences, working hours, notifications, and accessibility settings.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
 

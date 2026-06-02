@@ -1203,10 +1203,9 @@ export function registerWorkspaceSocketHandlers(
   const handleWorkspaceSettingsUpdated = (payload: WorkspaceSettingsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
-    queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-      if (!old) return old
-      return { ...old, workspaceSettings: payload.settings }
-    })
+    // Invalidate (forcing a refetch) when the bootstrap isn't cached yet so the
+    // event isn't dropped if it lands before the bootstrap fetch settles (INV-53).
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, workspaceSettings: payload.settings }))
   }
 
   // Handle bot created

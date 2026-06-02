@@ -91,12 +91,26 @@ function buildZonedDate(timezone: string, y: number, m: number, d: number, hours
   return candidate
 }
 
+type CalendarDay = { y: number; m: number; d: number; weekday: number }
+
+/**
+ * Advance a zoned calendar date by whole days using civil-date arithmetic.
+ * Adding fixed 24h chunks of milliseconds is wrong across DST transitions (a
+ * fall-back day is 25h long, so `now + 24h` can read as the same local day);
+ * incrementing the calendar `d` field instead always moves a whole day.
+ */
+function shiftCalendarDay(day: CalendarDay, delta: number): CalendarDay {
+  const shifted = new Date(Date.UTC(day.y, day.m, day.d + delta))
+  return {
+    y: shifted.getUTCFullYear(),
+    m: shifted.getUTCMonth(),
+    d: shifted.getUTCDate(),
+    weekday: (((day.weekday + delta) % 7) + 7) % 7,
+  }
+}
+
 /** Build the start-of-work instant for a given local calendar day + weekday. */
-function startOfWorkInstant(
-  timezone: string,
-  schedule: WorkSchedule,
-  day: { y: number; m: number; d: number; weekday: number }
-): Date {
+function startOfWorkInstant(timezone: string, schedule: WorkSchedule, day: CalendarDay): Date {
   const minutes = startOfWorkForDay(schedule, day.weekday as Weekday)
   return buildZonedDate(timezone, day.y, day.m, day.d, Math.floor(minutes / 60), minutes % 60)
 }
@@ -109,13 +123,11 @@ function nextWeekStart(now: Date, timezone: string, schedule: WorkSchedule): Dat
   // Always skip into next week — if today already is the week-start day, jump a
   // full week so "Next week" never resolves to earlier today.
   const daysUntil = today.weekday === startWeekday ? 7 : (startWeekday - today.weekday + 7) % 7 || 7
-  const target = calendarInZone(new Date(now.getTime() + daysUntil * 24 * 60 * 60_000), timezone)
-  return startOfWorkInstant(timezone, schedule, target)
+  return startOfWorkInstant(timezone, schedule, shiftCalendarDay(today, daysUntil))
 }
 
 function tomorrowStart(now: Date, timezone: string, schedule: WorkSchedule): Date {
-  const tomorrow = calendarInZone(new Date(now.getTime() + 24 * 60 * 60_000), timezone)
-  return startOfWorkInstant(timezone, schedule, tomorrow)
+  return startOfWorkInstant(timezone, schedule, shiftCalendarDay(calendarInZone(now, timezone), 1))
 }
 
 export function computeRemindAt(
