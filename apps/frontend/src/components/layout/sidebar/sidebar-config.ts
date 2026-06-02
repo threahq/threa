@@ -223,12 +223,16 @@ export function createCustomSection(config: SidebarConfig, sectionId: string, na
 export function renameCustomSection(config: SidebarConfig, sectionId: string, name: string): SidebarConfig {
   const trimmed = name.trim()
   if (!trimmed) return config
-  return {
-    ...config,
-    sections: config.sections.map((s) =>
-      s.spec.kind === "custom" && s.spec.sectionId === sectionId ? { ...s, spec: { ...s.spec, name: trimmed } } : s
-    ),
-  }
+  let changed = false
+  const sections = config.sections.map((section) => {
+    if (section.spec.kind !== "custom" || section.spec.sectionId !== sectionId) return section
+    if (section.spec.name === trimmed) return section
+    changed = true
+    return { ...section, spec: { ...section.spec, name: trimmed } }
+  })
+  // Unknown id or a no-op rename returns the original object so the caller's
+  // identity check skips a needless persist + resubscribe.
+  return changed ? { ...config, sections } : config
 }
 
 /** The id of the custom section a stream is filed under, or `null` if none. */
@@ -250,18 +254,26 @@ export function setStreamCustomSection(
   streamId: string,
   sectionId: string | null
 ): SidebarConfig {
-  return {
-    ...config,
-    sections: config.sections.map((section) => {
-      const spec = section.spec
-      if (spec.kind !== "custom") return section
-      const without = spec.streamIds.filter((id) => id !== streamId)
-      const next = spec.sectionId === sectionId ? [...without, streamId] : without
-      // Preserve referential identity when nothing changed (avoids needless churn).
-      if (next.length === spec.streamIds.length && next.every((id, i) => id === spec.streamIds[i])) return section
-      return { ...section, spec: { ...spec, streamIds: next } }
-    }),
-  }
+  // A non-null target that no longer exists (e.g. the section was removed on
+  // another device between render and drop) must not silently unfile the
+  // stream from wherever it currently lives — treat it as a no-op.
+  const targetExists =
+    sectionId === null ||
+    config.sections.some((section) => section.spec.kind === "custom" && section.spec.sectionId === sectionId)
+  if (!targetExists) return config
+
+  let changed = false
+  const sections = config.sections.map((section) => {
+    const spec = section.spec
+    if (spec.kind !== "custom") return section
+    const without = spec.streamIds.filter((id) => id !== streamId)
+    const next = spec.sectionId === sectionId ? [...without, streamId] : without
+    // Preserve referential identity when nothing changed (avoids needless churn).
+    if (next.length === spec.streamIds.length && next.every((id, i) => id === spec.streamIds[i])) return section
+    changed = true
+    return { ...section, spec: { ...spec, streamIds: next } }
+  })
+  return changed ? { ...config, sections } : config
 }
 
 /** How a resolved section renders. Derived purely from its spec. */

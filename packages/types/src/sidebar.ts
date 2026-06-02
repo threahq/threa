@@ -23,6 +23,9 @@ export type SidebarTypeSection = (typeof SIDEBAR_TYPE_SECTIONS)[number]
 /** Max length of a user-supplied custom-section name (validated on write, trimmed on render). */
 export const MAX_CUSTOM_SECTION_NAME_LENGTH = 80
 
+/** Max streams a custom section may hold — bounds the per-user config document. Enforced on write (Zod) and read (sanitizer). */
+export const MAX_CUSTOM_SECTION_STREAM_IDS = 500
+
 /** What streams a section draws from. Presentation is derived from this at render time. */
 export type SidebarSectionSpec =
   | { kind: "smart"; bucket: SidebarSectionKey }
@@ -195,6 +198,9 @@ function sanitizeCustomStreamIds(streamIds: unknown, claimed: Set<string>): stri
   if (!Array.isArray(streamIds)) return []
   const kept: string[] = []
   for (const id of streamIds) {
+    // Cap on read too, so a stale/oversized persisted row can't exceed the
+    // write-time bound and keep inflating bootstrap/socket payloads.
+    if (kept.length >= MAX_CUSTOM_SECTION_STREAM_IDS) break
     if (typeof id !== "string" || id.length === 0 || claimed.has(id)) continue
     claimed.add(id)
     kept.push(id)

@@ -9,6 +9,7 @@ import {
   SIDEBAR_QUICK_LINKS,
   SIDEBAR_QUICK_LINK_VISIBILITIES,
   MAX_CUSTOM_SECTION_NAME_LENGTH,
+  MAX_CUSTOM_SECTION_STREAM_IDS,
 } from "@threa/types"
 
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
@@ -22,7 +23,7 @@ const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
     kind: z.literal("custom"),
     sectionId: z.string().min(1).max(64),
     name: z.string().trim().min(1).max(MAX_CUSTOM_SECTION_NAME_LENGTH),
-    streamIds: z.array(z.string().min(1).max(64)).max(500).optional().default([]),
+    streamIds: z.array(z.string().min(1).max(64)).max(MAX_CUSTOM_SECTION_STREAM_IDS).optional().default([]),
   }),
   z.object({ kind: z.literal("quicklinks") }),
 ])

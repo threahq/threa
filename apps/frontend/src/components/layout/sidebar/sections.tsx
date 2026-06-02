@@ -3,6 +3,7 @@ import { Fragment, type ReactNode, type RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { UnreadBadge } from "@/components/unread-badge"
+import { isDraftId } from "@/hooks"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
 import { DraggableStreamRow } from "./sidebar-dnd"
@@ -280,9 +281,12 @@ export function StreamSection({
         scrollContainerRef={scrollContainerRef}
       />
     )
-    // Only wrap as a drag source when dragging is on (desktop) — wrapping every
-    // row when disabled would register a dead draggable per stream for nothing.
-    return streamDragEnabled ? (
+    // Wrap as a drag source only when dragging is on (desktop) and the row is a
+    // persisted stream — drafts (incl. virtual DMs) carry transient ids that
+    // must never be filed into config, and wrapping a disabled row would
+    // register a dead draggable for nothing.
+    const dragEnabled = streamDragEnabled && !isDraftId(stream.id)
+    return dragEnabled ? (
       <DraggableStreamRow key={stream.id} streamId={stream.id}>
         {item}
       </DraggableStreamRow>
@@ -398,8 +402,9 @@ export function TieredStreamSection({
         scrollContainerRef={scrollContainerRef}
       />
     )
-    // Drag source only when dragging is on (desktop); see StreamSection.renderRow.
-    return streamDragEnabled ? (
+    // Drag source only for persisted streams when dragging is on; see StreamSection.renderRow.
+    const dragEnabled = streamDragEnabled && !isDraftId(stream.id)
+    return dragEnabled ? (
       <DraggableStreamRow key={stream.id} streamId={stream.id}>
         {item}
       </DraggableStreamRow>

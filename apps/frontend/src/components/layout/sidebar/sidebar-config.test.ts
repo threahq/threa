@@ -87,6 +87,24 @@ describe("custom sections", () => {
     expect(renameCustomSection(created, "ghost", "X")).toEqual(created)
   })
 
+  it("renameCustomSection preserves referential identity on a no-op rename", () => {
+    const created = createCustomSection(SMART_SIDEBAR_CONFIG, "sec_1", "Work")
+    // Same name (after trim) and unknown id both return the original object, so
+    // the optimistic-write identity check skips a needless persist + resubscribe.
+    expect(renameCustomSection(created, "sec_1", "Work")).toBe(created)
+    expect(renameCustomSection(created, "sec_1", "  Work  ")).toBe(created)
+    expect(renameCustomSection(created, "ghost", "Other")).toBe(created)
+  })
+
+  it("setStreamCustomSection leaves membership untouched when the target section is missing", () => {
+    const config = setStreamCustomSection(createCustomSection(SMART_SIDEBAR_CONFIG, "sec_a", "A"), "stream_1", "sec_a")
+    // Filing into a section that no longer exists must not strip the stream from
+    // the section it's currently in — it's a no-op that returns the same object.
+    const result = setStreamCustomSection(config, "stream_1", "ghost")
+    expect(result).toBe(config)
+    expect(getStreamCustomSectionId(result, "stream_1")).toBe("sec_a")
+  })
+
   it("setStreamCustomSection files a stream exclusively, moving it between sections", () => {
     let config = createCustomSection(SMART_SIDEBAR_CONFIG, "sec_a", "A")
     config = createCustomSection(config, "sec_b", "B")

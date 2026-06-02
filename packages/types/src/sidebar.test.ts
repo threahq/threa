@@ -3,6 +3,7 @@ import {
   normalizeSidebarConfig,
   SIDEBAR_CONFIG_VERSION,
   QUICK_LINKS_SECTION_ID,
+  MAX_CUSTOM_SECTION_STREAM_IDS,
   type RawSidebarConfig,
   type SidebarSection,
 } from "./sidebar"
@@ -125,5 +126,20 @@ describe("normalizeSidebarConfig section sanitization", () => {
     const result = normalizeSidebarConfig(config)
 
     expect(result.sections[0].spec).toMatchObject({ kind: "custom", streamIds: [] })
+  })
+
+  test("caps a custom section's streamIds at the write-time bound on read", () => {
+    const streamIds = Array.from({ length: MAX_CUSTOM_SECTION_STREAM_IDS + 25 }, (_, i) => `s${i}`)
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "custom:a", spec: { kind: "custom", sectionId: "a", name: "A", streamIds } }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+    const spec = result.sections[0].spec
+    if (spec.kind !== "custom") throw new Error("expected a custom section")
+    expect(spec.streamIds).toHaveLength(MAX_CUSTOM_SECTION_STREAM_IDS)
   })
 })
