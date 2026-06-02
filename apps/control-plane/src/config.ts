@@ -59,6 +59,15 @@ export interface ControlPlaneConfig {
     globalMax: number
     authMax: number
   }
+  waitlist: {
+    /**
+     * Resend API key for the waitlist confirmation email. Null falls back to a
+     * stub sender that logs instead of sending — the signup still succeeds.
+     */
+    resendApiKey: string | null
+    /** From address for the confirmation (a verified Resend sender/domain). */
+    fromEmail: string
+  }
 }
 
 export function loadControlPlaneConfig(): ControlPlaneConfig {
@@ -153,10 +162,18 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
       globalMax: Number(process.env.GLOBAL_RATE_LIMIT_MAX) || 300,
       authMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 20,
     },
+    waitlist: {
+      resendApiKey: process.env.RESEND_API_KEY?.trim() || null,
+      fromEmail: process.env.WAITLIST_FROM_EMAIL?.trim() || "Threa <hello@threa.io>",
+    },
   }
 
   if (useStubAuth) {
     logger.warn("Control plane: Using stub auth service - NOT FOR PRODUCTION")
+  }
+
+  if (isProduction && !config.waitlist.resendApiKey) {
+    logger.warn("Control plane: RESEND_API_KEY unset — waitlist confirmation emails will not send")
   }
 
   return config

@@ -30,7 +30,7 @@ import {
   type RegionalCreatePayload,
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
-import { WaitlistService } from "./features/waitlist"
+import { WaitlistService, ResendWaitlistEmailSender, StubWaitlistEmailSender } from "./features/waitlist"
 import { BackofficeService, seedPlatformAdmins } from "./features/backoffice"
 import {
   WorkosAuthzService,
@@ -82,7 +82,10 @@ export async function startServer(): Promise<ControlPlaneInstance> {
     requireWorkspaceCreationInvite: config.workspaceCreationRequiresInvite,
   })
   const shadowService = new InvitationShadowService({ pool, regionalClient, workosOrgService })
-  const waitlistService = new WaitlistService({ pool })
+  const waitlistEmailSender = config.waitlist.resendApiKey
+    ? new ResendWaitlistEmailSender({ apiKey: config.waitlist.resendApiKey, from: config.waitlist.fromEmail })
+    : new StubWaitlistEmailSender()
+  const waitlistService = new WaitlistService({ pool, emailSender: waitlistEmailSender })
   const workosAuthzAdminService = new WorkosAuthzAdminService({ pool, workosOrgService })
   await seedPlatformAdmins(pool, config.platformAdminWorkosUserIds)
 
