@@ -57,6 +57,25 @@ describe("calculateUrgency", () => {
   it("returns quiet with no unread and no mentions", () => {
     expect(calculateUrgency(streamWith(AuthorTypes.BOT), 0, 0, false)).toBe("quiet")
   })
+
+  it("surfaces activity when a notification landed but unread was missed", () => {
+    // activity:created bumped activityCount via the user room, but the per-stream
+    // stream:activity that drives unreadCount never arrived — the sidebar should
+    // still light up to match the Activity feed.
+    expect(calculateUrgency(streamWith("user"), 0, 0, false, 2)).toBe("activity")
+  })
+
+  it("prefers mentions over the activity fallback", () => {
+    expect(calculateUrgency(streamWith("user"), 0, 1, false, 2)).toBe("mentions")
+  })
+
+  it("prefers unread author-typed urgency over the activity fallback", () => {
+    expect(calculateUrgency(streamWith(AuthorTypes.PERSONA), 1, 0, false, 2)).toBe("ai")
+  })
+
+  it("stays quiet when muted even with pending activity", () => {
+    expect(calculateUrgency(streamWith("user"), 0, 0, true, 2)).toBe("quiet")
+  })
 })
 
 describe("categorizeStream", () => {
@@ -119,6 +138,22 @@ describe("categorizeStream", () => {
   it("keeps unread streams in 'recent' even when there is no cached preview at all", () => {
     const stream = makeStream({ lastMessagePreview: null })
     expect(categorizeStream(stream, 1, "activity")).toBe("recent")
+  })
+
+  it("promotes activity-only streams to 'recent' even when the cached preview is stale", () => {
+    // A notification arrived via the always-joined user room (urgency "activity")
+    // before the per-stream stream:activity bumped the unread count. The sidebar
+    // row glows, so it must not sink into "other" just because its last cached
+    // message is older than 7 days.
+    const stream = makeStream({
+      lastMessagePreview: {
+        authorId: "user_2",
+        authorType: "user",
+        content: "hello",
+        createdAt: "2026-03-01T12:00:00Z", // >7 days ago
+      },
+    })
+    expect(categorizeStream(stream, 0, "activity")).toBe("recent")
   })
 
   it("puts streams with no preview and no unread in 'other'", () => {

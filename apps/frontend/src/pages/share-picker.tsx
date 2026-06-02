@@ -70,6 +70,7 @@ export function SharePickerPage() {
   const unreadState = useWorkspaceUnreadState(workspaceId!)
   const unreadCounts = unreadState?.unreadCounts ?? EMPTY_COUNTS
   const mentionCounts = unreadState?.mentionCounts ?? EMPTY_COUNTS
+  const activityCounts = unreadState?.activityCounts ?? EMPTY_COUNTS
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   const { createShareDraft, saveShareContent } = useShareTarget()
 
@@ -197,8 +198,9 @@ export function SharePickerPage() {
         const score = scoreStreamMatch(stream, lowerQuery)
         const unreadCount = unreadCounts[stream.id] ?? 0
         const mentionCount = mentionCounts[stream.id] ?? 0
+        const activityCount = activityCounts[stream.id] ?? 0
         const isMuted = mutedStreamIds.has(stream.id)
-        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted)
+        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted, activityCount)
         return { stream, score, urgency, unreadCount, mentionCount }
       })
       .filter(({ score }) => score !== Infinity)
@@ -238,6 +240,7 @@ export function SharePickerPage() {
     handleSelectStream,
     unreadCounts,
     mentionCounts,
+    activityCounts,
     mutedStreamIds,
   ])
 

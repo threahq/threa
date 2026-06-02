@@ -62,7 +62,7 @@ export function ExplorerFilters({ workspaceId, filters, parentStreamId, onUpdate
   const streams = useWorkspaceStreams(workspaceId)
   const users = useWorkspaceUsers(workspaceId)
   const { getUnreadCount } = useUnreadCounts(workspaceId)
-  const { getMentionCount } = useActivityCounts(workspaceId)
+  const { getMentionCount, getActivityCount } = useActivityCounts(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
 
@@ -110,13 +110,14 @@ export function ExplorerFilters({ workspaceId, filters, parentStreamId, onUpdate
         const score = scoreStreamMatch(stream, lowerQuery)
         const unreadCount = getUnreadCount(stream.id)
         const mentionCount = getMentionCount(stream.id)
+        const activityCount = getActivityCount(stream.id)
         const isMuted = mutedStreamIds.has(stream.id)
-        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted)
+        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted, activityCount)
         return { stream, score, urgency }
       })
       .filter(({ score }) => score !== Infinity)
       .sort((a, b) => compareStreamEntries(a, b, { isSearching, mode: "recency" }))
-  }, [streams, streamSearch, filters.streamIds, getUnreadCount, getMentionCount, mutedStreamIds])
+  }, [streams, streamSearch, filters.streamIds, getUnreadCount, getMentionCount, getActivityCount, mutedStreamIds])
 
   const labelForStream = (stream: { type: string; displayName?: string | null; slug?: string | null }) =>
     streamLabel(stream)

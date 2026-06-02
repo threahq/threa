@@ -75,7 +75,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const labelAssignments = useWorkspaceLabelAssignments(workspaceId)
   const { createDraft } = useDraftScratchpads(workspaceId)
   const { getUnreadCount } = useUnreadCounts(workspaceId)
-  const { getMentionCount, unreadActivityCount } = useActivityCounts(workspaceId)
+  const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
   const { drafts: allDrafts } = useAllDrafts(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
@@ -120,8 +120,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         const streamWithPreview = { ...stream, lastMessagePreview: stream.lastMessagePreview ?? null }
         const unreadCount = getUnreadCount(stream.id)
         const mentionCount = getMentionCount(stream.id)
+        const activityCount = getActivityCount(stream.id)
         const isMuted = mutedStreamIdSet.has(stream.id)
-        const urgency = calculateUrgency(streamWithPreview, unreadCount, mentionCount, isMuted)
+        const urgency = calculateUrgency(streamWithPreview, unreadCount, mentionCount, isMuted, activityCount)
         const section = categorizeStream(streamWithPreview, unreadCount, urgency)
         const dmPeerUserId = dmPeerByStreamId.get(stream.id) ?? dmPeerByStreamId.get(stream.rootStreamId ?? "")
 
@@ -147,6 +148,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     mutedStreamIdSet,
     getUnreadCount,
     getMentionCount,
+    getActivityCount,
     dmPeerByStreamId,
     idbDmPeers,
     workspaceUsers,

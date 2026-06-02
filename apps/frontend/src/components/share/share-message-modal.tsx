@@ -67,6 +67,7 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: Sh
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const unreadCounts = unreadState?.unreadCounts ?? EMPTY_COUNTS
   const mentionCounts = unreadState?.mentionCounts ?? EMPTY_COUNTS
+  const activityCounts = unreadState?.activityCounts ?? EMPTY_COUNTS
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
   // The Drawer/Dialog split is owned by ResponsiveDialog; isMobile here only
   // governs the post-select navigation contract (mobile strips `?panel=…`).
@@ -94,8 +95,9 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: Sh
         const score = scoreStreamMatch(stream, lower)
         const unreadCount = unreadCounts[stream.id] ?? 0
         const mentionCount = mentionCounts[stream.id] ?? 0
+        const activityCount = activityCounts[stream.id] ?? 0
         const isMuted = mutedStreamIds.has(stream.id)
-        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted)
+        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted, activityCount)
         return { stream, score, urgency }
       })
       .filter(({ score }) => score !== Infinity)
@@ -110,7 +112,7 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: Sh
       list.sort((a, b) => compareStreamEntries(a, b, { isSearching, mode: sortMode }))
     }
     return byType
-  }, [streams, memberStreamIds, search, sortMode, unreadCounts, mentionCounts, mutedStreamIds])
+  }, [streams, memberStreamIds, search, sortMode, unreadCounts, mentionCounts, activityCounts, mutedStreamIds])
 
   // Wrap the parent's open-change so search resets on every close path
   // (Esc, backdrop, X, programmatic). Without this, dismissing without

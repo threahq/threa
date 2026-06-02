@@ -73,7 +73,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
   } = context
 
   const { getUnreadCount } = useUnreadCounts(workspaceId)
-  const { getMentionCount } = useActivityCounts(workspaceId)
+  const { getMentionCount, getActivityCount } = useActivityCounts(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
 
@@ -171,8 +171,9 @@ export function useStreamItems(context: ModeContext): ModeResult {
         const score = scoreStreamMatch(stream, lowerQuery)
         const unreadCount = getUnreadCount(stream.id)
         const mentionCount = getMentionCount(stream.id)
+        const activityCount = getActivityCount(stream.id)
         const isMuted = mutedStreamIds.has(stream.id)
-        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted)
+        const urgency = calculateUrgency(stream, unreadCount, mentionCount, isMuted, activityCount)
         return { stream, score, unreadCount, mentionCount, urgency }
       })
       .filter(({ score }) => score !== Infinity)
@@ -271,6 +272,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     closeDialog,
     getUnreadCount,
     getMentionCount,
+    getActivityCount,
     mutedStreamIds,
   ])
 

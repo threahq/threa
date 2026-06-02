@@ -9,12 +9,13 @@ interface StreamWithOptionalPreview {
   lastMessagePreview?: { authorType: AuthorType } | null
 }
 
-/** Calculate urgency level for a stream based on unread and mention state */
+/** Calculate urgency level for a stream based on unread, mention, and activity state */
 export function calculateUrgency(
   stream: StreamWithOptionalPreview,
   unreadCount: number,
   mentionCount: number,
-  isMuted: boolean
+  isMuted: boolean,
+  activityCount = 0
 ): UrgencyLevel {
   if (isMuted) return "quiet"
 
@@ -26,6 +27,13 @@ export function calculateUrgency(
     if (authorType === AuthorTypes.BOT) return "bot"
     return "activity"
   }
+
+  // A notification reached the always-joined per-user room (activity:created)
+  // but the per-stream stream:activity that drives unreadCount was missed — e.g.
+  // before the stream-room join lands, or while it's briefly disconnected. Light
+  // the stream so the sidebar never stays quiet for something the Activity feed
+  // is already showing.
+  if (activityCount > 0) return "activity"
 
   return "quiet"
 }
@@ -41,12 +49,14 @@ export function categorizeStream(stream: StreamWithPreview, unreadCount: number,
     return "important"
   }
 
-  // Any stream with unread activity stays in Recent regardless of age or
-  // whether a preview has been cached yet. An active chat should never sink
-  // into "Everything else" while the user is still catching up. Muted streams
+  // A stream the user is still catching up on stays in Recent regardless of age
+  // or whether a preview has been cached yet — it should never sink into
+  // "Everything else". This covers unread messages and activity-only streams: a
+  // notification can arrive via the always-joined user room (urgency "activity")
+  // before the per-stream stream:activity bumps the unread count. Muted streams
   // (urgency "quiet") are excluded — muting is an explicit deprioritization
   // signal, so unread messages in a muted stream should not resurface.
-  if (unreadCount > 0 && urgency !== "quiet") {
+  if (urgency !== "quiet" && (unreadCount > 0 || urgency === "activity")) {
     return "recent"
   }
 
