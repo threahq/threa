@@ -58,6 +58,7 @@ export interface ControlPlaneConfig {
   rateLimits: {
     globalMax: number
     authMax: number
+    waitlistMax: number
   }
   waitlist: {
     /**
@@ -161,6 +162,7 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
     rateLimits: {
       globalMax: Number(process.env.GLOBAL_RATE_LIMIT_MAX) || 300,
       authMax: Number(process.env.AUTH_RATE_LIMIT_MAX) || 20,
+      waitlistMax: Number(process.env.WAITLIST_RATE_LIMIT_MAX) || 10,
     },
     waitlist: {
       resendApiKey: process.env.RESEND_API_KEY?.trim() || null,
@@ -174,6 +176,14 @@ export function loadControlPlaneConfig(): ControlPlaneConfig {
 
   if (isProduction && !config.waitlist.resendApiKey) {
     logger.warn("Control plane: RESEND_API_KEY unset — waitlist confirmation emails will not send")
+  }
+
+  // Send failures are swallowed post-signup, so an unverified from-address
+  // would drop every confirmation email with no other signal.
+  if (config.waitlist.resendApiKey && !process.env.WAITLIST_FROM_EMAIL?.trim()) {
+    logger.warn(
+      `Control plane: WAITLIST_FROM_EMAIL unset — falling back to "${config.waitlist.fromEmail}"; sends fail unless it is a verified Resend sender`
+    )
   }
 
   return config

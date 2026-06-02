@@ -26,6 +26,7 @@ import type { RegionConfig } from "./config"
 interface RateLimitConfig {
   globalMax: number
   authMax: number
+  waitlistMax: number
 }
 
 interface Dependencies {
@@ -70,7 +71,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     key: ipKey,
   })
   const authLimit = createRateLimit({ name: "cp-auth", windowMs: 60_000, max: deps.rateLimits.authMax, key: ipKey })
-  const waitlistLimit = createRateLimit({ name: "cp-waitlist", windowMs: 60_000, max: 10, key: ipKey })
+  const waitlistLimit = createRateLimit({
+    name: "cp-waitlist",
+    windowMs: 60_000,
+    max: deps.rateLimits.waitlistMax,
+    key: ipKey,
+  })
 
   const accountsService = new AccountsService({ authService, membership: workspaceService })
   const authHandlers = createControlPlaneAuthHandlers({
