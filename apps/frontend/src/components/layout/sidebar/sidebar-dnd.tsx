@@ -1,6 +1,7 @@
 import type { ReactNode } from "react"
 import { useDraggable, useDroppable } from "@dnd-kit/core"
 import { cn } from "@/lib/utils"
+import { customSectionId } from "./sidebar-config"
 
 /**
  * Drag-and-drop wiring for filing streams into custom sidebar sections. A stream
@@ -34,43 +35,42 @@ export function customSectionIdFromDropData(data: unknown): string | null {
 }
 
 /**
- * Wraps a sidebar stream row to make it draggable. Only the pointer listeners
- * are spread (not dnd-kit's keyboard `attributes`) so the wrapper doesn't turn
- * into a focusable button around the row's `<Link>` — keyboard users file
- * streams through the accessible "Add to section…" action instead. With an
- * activation distance on the sensor, a plain click still navigates the link.
+ * Wraps a sidebar stream row to make it draggable. Rendered only where dragging
+ * is enabled (desktop) — the caller renders the row bare otherwise, so we never
+ * register a dead draggable per row. Only the pointer listeners are spread (not
+ * dnd-kit's keyboard `attributes`) so the wrapper doesn't turn into a focusable
+ * button around the row's `<Link>` — keyboard users file streams through the
+ * accessible "Add to section…" action instead. With an activation distance on
+ * the sensor, a plain click still navigates the link.
  */
-export function DraggableStreamRow({
-  streamId,
-  enabled,
-  children,
-}: {
-  streamId: string
-  enabled: boolean
-  children: ReactNode
-}) {
+export function DraggableStreamRow({ streamId, children }: { streamId: string; children: ReactNode }) {
   const data: StreamDragData = { type: "stream", streamId }
-  const { setNodeRef, listeners, isDragging } = useDraggable({ id: `stream:${streamId}`, data, disabled: !enabled })
+  const { setNodeRef, listeners, isDragging } = useDraggable({ id: `stream:${streamId}`, data })
 
   return (
-    <div ref={setNodeRef} {...(enabled ? listeners : {})} className={cn(isDragging && "opacity-40")}>
+    <div ref={setNodeRef} {...listeners} className={cn(isDragging && "opacity-40")}>
       {children}
     </div>
   )
 }
 
-/** A droppable wrapper that highlights a custom section while a stream hovers it. */
+/**
+ * A droppable wrapper that highlights a custom section while a stream hovers it.
+ * The droppable id reuses the section's stable id ({@link customSectionId}) so
+ * the `custom:`-prefix convention lives in one place; the handler reads the
+ * section id from the data payload, not by parsing the id.
+ */
 export function CustomSectionDropZone({
-  customSectionId,
+  sectionId,
   enabled,
   children,
 }: {
-  customSectionId: string
+  sectionId: string
   enabled: boolean
   children: ReactNode
 }) {
-  const data: CustomSectionDropData = { type: "custom-section", customSectionId }
-  const { setNodeRef, isOver } = useDroppable({ id: `custom-section:${customSectionId}`, data, disabled: !enabled })
+  const data: CustomSectionDropData = { type: "custom-section", customSectionId: sectionId }
+  const { setNodeRef, isOver } = useDroppable({ id: customSectionId(sectionId), data, disabled: !enabled })
 
   return (
     <div

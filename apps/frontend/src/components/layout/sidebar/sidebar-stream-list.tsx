@@ -230,11 +230,7 @@ export function SidebarStreamList({
         // there. Other section kinds render as-is.
         if (section.spec.kind === "custom") {
           return (
-            <CustomSectionDropZone
-              key={section.id}
-              customSectionId={section.spec.sectionId}
-              enabled={streamDragEnabled}
-            >
+            <CustomSectionDropZone key={section.id} sectionId={section.spec.sectionId} enabled={streamDragEnabled}>
               {sectionEl}
             </CustomSectionDropZone>
           )
