@@ -1,0 +1,162 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+---
+
+<DocsLayout
+  title="Operations · Threa Developers"
+  current="operations"
+  sections={[
+    { id: "errors", label: "Errors" },
+    { id: "pagination", label: "Pagination" },
+    { id: "idempotency", label: "Idempotency" },
+    { id: "rate-limits", label: "Rate limits" },
+    { id: "cors", label: "CORS" },
+  ]}
+>
+  <p class="eyebrow">Operations</p>
+  <h1>Running in <span class="accent">production</span>.</h1>
+  <p class="lead">
+    How errors come back, how paging works, how to send a message exactly once,
+    and the rate limits in force. Plus the CORS setting that gates in-browser
+    calls.
+  </p>
+
+  <h2 id="errors">Errors</h2>
+  <p>Errors are JSON with a human-readable <code>error</code> and, for validation failures, a <code>details</code> map of field to reasons:</p>
+  <CodeBlock
+    lang="json"
+    label="400 Bad Request"
+    code={`{
+  "error": "Validation failed",
+  "details": {
+    "query": ["query is required"],
+    "limit": ["Number must be less than or equal to 50"]
+  }
+}`}
+  />
+  <table class="docs-table">
+    <thead><tr><th>Status</th><th>Means</th></tr></thead>
+    <tbody>
+      <tr><td><code>400</code></td><td>Request failed schema validation. Check <code>details</code>.</td></tr>
+      <tr><td><code>401</code></td><td>Missing, malformed, revoked, or expired key. Also if the key owner is no longer active.</td></tr>
+      <tr><td><code>403</code></td><td>Authenticated, but not allowed to touch this resource.</td></tr>
+      <tr><td><code>404</code></td><td>Resource not found, or your key lacks the scope to see it exists.</td></tr>
+      <tr><td><code>204</code></td><td>Success with no body (e.g. a delete).</td></tr>
+      <tr><td><code>429</code></td><td>Rate limited. See below.</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="pagination">Pagination</h2>
+  <p>
+    List endpoints are cursor-paginated. Pass <code>limit</code> for page size and
+    <code>after</code> to continue. Each response carries <code>hasMore</code> and
+    an opaque <code>cursor</code>; feed that cursor back as <code>after</code> until
+    <code>hasMore</code> is false.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="first page"
+    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?limit=50" \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+    run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?limit=50" }}
+  />
+  <CodeBlock
+    lang="json"
+    label="response tail"
+    code={`{
+  "data": [ /* … */ ],
+  "hasMore": true,
+  "cursor": "eyJ2IjoxLCJzIjoiMjAyNi0wNS0yOC…"
+}`}
+  />
+  <div class="note">
+    <strong>Two exceptions</strong>
+    Listing messages in a stream pages by message <code>sequence</code> via
+    <code>before</code>/<code>after</code> (numeric), with a <code>hasMore</code>
+    flag and no opaque cursor. And when you pass a free-text <code>query</code> to a
+    list endpoint, results rank by relevance and cursoring is turned off.
+  </div>
+
+  <h2 id="idempotency">Idempotency</h2>
+  <p>
+    Sending a message accepts an optional <code>clientMessageId</code> (up to 128
+    characters). Retrying with the same stream and <code>clientMessageId</code>
+    won't create a duplicate. You get the original message back, with the same
+    <code>201</code>. Generate one ID per logical message and reuse it across
+    retries.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="idempotent send"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "content": "Deploy finished: v2.4.1 is live.",
+    "clientMessageId": "deploy-2.4.1-notify"
+  }'`}
+  />
+  <p>
+    Replace <code>STREAM_ID</code> with a real stream (list streams above to find
+    one). The dedupe is a database constraint, so it holds even for concurrent
+    retries.
+  </p>
+
+  <h2 id="rate-limits">Rate limits</h2>
+  <p>
+    Several limits stack, each over a rolling 60-second window. A request has to
+    clear all of them, so the tightest one that applies is what you actually feel.
+    These are the current defaults and may be tuned.
+  </p>
+  <table class="docs-table">
+    <thead><tr><th>Limit</th><th>Window</th><th>Scope</th><th>Applies to</th></tr></thead>
+    <tbody>
+      <tr><td><strong>60 requests</strong></td><td>60s</td><td>per API key</td><td>every endpoint</td></tr>
+      <tr><td><strong>600 requests</strong></td><td>60s</td><td>per workspace</td><td>every endpoint</td></tr>
+      <tr><td><strong>300 requests</strong></td><td>60s</td><td>per client IP</td><td>baseline, all routes</td></tr>
+      <tr><td><strong>20 requests</strong></td><td>60s</td><td>per caller</td><td>attachment uploads</td></tr>
+    </tbody>
+  </table>
+  <p>
+    For a single key on a single host, the <strong>60/min per key</strong> limit is
+    the one you'll hit first. The per-IP baseline matters when many keys share one
+    machine; the per-workspace ceiling caps everyone together. Uploads are held
+    tighter still.
+  </p>
+  <p>
+    Whichever you hit first returns <code>429</code>. The body reports the limit and
+    window, and every response carries the standard <code>RateLimit-*</code> headers
+    so you can back off before you're cut off:
+  </p>
+  <CodeBlock
+    lang="text"
+    label="429 + headers"
+    code={`HTTP/1.1 429 Too Many Requests
+RateLimit-Limit: 60
+RateLimit-Remaining: 0
+RateLimit-Reset: 23
+
+{ "error": "Rate limit exceeded", "limit": 60, "windowMs": 60000 }`}
+  />
+  <p>
+    Watch <code>RateLimit-Remaining</code> and pause until
+    <code>RateLimit-Reset</code> seconds have passed. To go faster, spread work
+    across keys and hosts rather than pushing one key past 60/min.
+  </p>
+
+  <h2 id="cors">CORS</h2>
+  <div class="note warn">
+    <strong>Why "Run" may fail here</strong>
+    Calls you run on these pages go straight from your browser to the base URL.
+    A browser only allows that if the API has added this site's origin to its
+    CORS allow-list. Until then, runnable samples report a CORS block. The same
+    request still works from curl or your own server, which aren't subject to it.
+  </div>
+  <p>
+    The allow-list is the <code>CORS_ALLOWED_ORIGINS</code> environment variable on
+    the backend (comma-separated origins). Add the docs origin there and the
+    in-browser Run button works. For your own integrations this never applies: a
+    server or CLI client has no preflight to satisfy.
+  </p>
+</DocsLayout>

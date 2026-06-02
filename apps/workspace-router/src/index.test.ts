@@ -314,6 +314,17 @@ describe("workspace-router", () => {
       }
     })
 
+    test("proxies POST /api/waitlist to control-plane", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        await worker.fetch(makeRequest("/api/waitlist", "POST"), makeEnv({ CONTROL_PLANE_URL: CP_URL }))
+        expect(getProxiedUrl(fn)).toBe("http://localhost:3003/api/waitlist")
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test("proxies POST /api/workspaces to control-plane", async () => {
       const originalFetch = globalThis.fetch
       const fn = mockFetchFn()

@@ -39,6 +39,8 @@ const INVITATION_ACCEPT_RE = /^\/api\/invitations\/[^/]+\/accept$/
 /** Public link-invite lookup + claim (handled by control-plane, unauthenticated) */
 const INVITATION_LOOKUP_RE = /^\/api\/invitations\/lookup$/
 const INVITATION_CLAIM_RE = /^\/api\/invitations\/claim$/
+/** Public waitlist signup from the marketing site (handled by control-plane, unauthenticated) */
+const WAITLIST_ROUTE_RE = /^\/api\/waitlist\/?$/
 
 /** Matches /api/workspaces/:workspaceId with optional trailing path */
 const WORKSPACE_ROUTE_RE = /^\/api\/workspaces\/([^/]+)(?:\/.+)?$/
@@ -133,7 +135,8 @@ export default {
           DEV_AUTH_ROUTE_RE.test(path) ||
           (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
           (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
-          (INVITATION_CLAIM_RE.test(path) && method === "POST")
+          (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
+          (WAITLIST_ROUTE_RE.test(path) && method === "POST")
         ) {
           try {
             return await proxyRequest(request, env.CONTROL_PLANE_URL)
@@ -179,7 +182,8 @@ export default {
         DEV_AUTH_ROUTE_RE.test(path) ||
         (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
         (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
-        (INVITATION_CLAIM_RE.test(path) && method === "POST")
+        (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
+        (WAITLIST_ROUTE_RE.test(path) && method === "POST")
       ) {
         try {
           return await proxyRequest(request, env.CONTROL_PLANE_URL)

@@ -1,0 +1,867 @@
+---
+import Layout from "../layouts/Layout.astro"
+import SvgDefs from "../components/SvgDefs.astro"
+
+// Where the waitlist form POSTs. The marketing site is a separate origin from
+// the API, so this is a cross-origin call to the workspace-router, which proxies
+// /api/waitlist to the control-plane. Overridable at build via PUBLIC_API_BASE.
+const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://app.threa.io"
+---
+
+<Layout>
+  <SvgDefs />
+
+<div class="frame">
+  <div class="hero-shell">
+    <div class="hero-inner">
+      <div class="nav-row">
+        <div class="brand">
+          <svg><use href="#threa-mark"/></svg>
+          <span class="wordmark">Threa</span>
+        </div>
+        <nav class="nav-links">
+          <a href="/" aria-current="page">Product</a><a href="/developers">Developer</a><a href="/about">About</a>
+        </nav>
+      </div>
+      <div class="hero-stage">
+        <div>
+          <h1 class="h-display">
+            Team chat that<br/>
+            <span class="accent">holds the why</span>.
+          </h1>
+          <p class="lede">
+            Channels, threads, and DMs, with a memory underneath.
+            The decisions you make and the reasons behind them stay
+            attached to the conversation, so they're still there when
+            the question comes up again.
+          </p>
+          <div class="actions">
+            <a class="cta" href="#waitlist">Join the waitlist</a>
+            <span class="quiet">/ early 2026</span>
+          </div>
+        </div>
+        <div class="hero-right">
+          <div class="tl">
+            <div class="tl-caption">
+              <span class="hash">#api-v3</span>
+              <span class="meta">/ Friday · 5 messages</span>
+            </div>
+
+            <!-- Top-anchored message list — messages stack downward and the
+                 composer (positioned absolutely below) overlays the bottom,
+                 so the latest message slides UNDER the composer. The
+                 inline pin-scroll script keeps the bottom in view as new
+                 rows expand. -->
+            <div class="tl-messages">
+
+            <!-- 1: Maya raises the question (static, already in the channel) -->
+            <div class="tl-row">
+              <div class="tl-avatar av-maya">MR</div>
+              <div class="tl-body">
+                <div class="tl-head-line">
+                  <span class="tl-name">Maya Reyes</span>
+                  <span class="tl-time" data-time="maya">Friday 14:03</span>
+                </div>
+                <div class="tl-text">Picking the auth refactor back up next sprint. Anyone remember why we paused it in March?</div>
+              </div>
+            </div>
+
+            <!-- 2: Jordan recalls vaguely — enters at 19% with a 2s gold flash -->
+            <div class="tl-row pop-jordan">
+              <div class="tl-avatar av-jordan">JL</div>
+              <div class="tl-body">
+                <div class="tl-head-line">
+                  <span class="tl-name">Jordan Lee</span>
+                  <span class="tl-time" data-time="jordan">Friday 14:04</span>
+                </div>
+                <div class="tl-text">I'm pretty sure there were open concerns but I can't find the thread.</div>
+              </div>
+            </div>
+
+            <!-- 3: Alex's message — sent from the composer below. Row
+                 enters at 49% at the same moment the composer clears. -->
+            <div class="tl-row pop-alex">
+              <div class="tl-avatar av-alex">AP</div>
+              <div class="tl-body">
+                <div class="tl-head-line">
+                  <span class="tl-name">Alex Park</span>
+                  <span class="tl-time" data-time="alex">Friday 14:05</span>
+                </div>
+                <div class="tl-text"><span class="mention">@ariadne</span> do you know?</div>
+              </div>
+            </div>
+
+            <!-- 4: Trace card — running ↔ completed in place
+                 (matches AgentSessionEvent.tsx structure exactly). -->
+            <div class="trace-card">
+              <div class="trace-icon-slot">
+                <div class="trace-icon trace-icon-running" aria-hidden="true"><svg><use href="#spinner-icon"/></svg></div>
+                <div class="trace-icon trace-icon-done" aria-hidden="true"><svg><use href="#check-icon"/></svg></div>
+              </div>
+              <div class="trace-main">
+                <div class="trace-row trace-row-running">
+                  <div class="trace-title">Ariadne is working…</div>
+                  <div class="trace-sub"><span class="num"><span class="trace-step-count"></span></span> of 5 steps</div>
+                </div>
+                <div class="trace-row trace-row-done">
+                  <div class="trace-title">Session complete</div>
+                  <div class="trace-sub">5 steps · 3.7s</div>
+                </div>
+              </div>
+              <div class="trace-time" data-time-short="ariadne">14:05</div>
+            </div>
+
+            <!-- 5: Ariadne replies with quote card -->
+            <div class="tl-row persona pop-ariadne">
+              <div class="tl-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
+              <div class="tl-body">
+                <div class="tl-head-line">
+                  <span class="tl-name">Ariadne</span>
+                  <span class="tl-time" data-time="ariadne">Friday 14:05</span>
+                </div>
+                <div class="tl-text">You held the refactor for Jordan's review of the token-rotation model. Their concern from Mar 12:</div>
+
+                <div class="quote-card">
+                  <div class="qm" aria-hidden="true"><svg><use href="#quote-icon"/></svg></div>
+                  <div class="q-author">
+                    <div class="q-avatar av-jordan">JL</div>
+                    <div class="q-name">Jordan Lee</div>
+                    <div class="q-time">Mar 12 · 11:42</div>
+                  </div>
+                  <div class="q-body">"Hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. Can we pause this until I've reviewed the design?"</div>
+                </div>
+
+                <div class="tl-text" style="margin-top:8px;">Original thread in <span class="ref-pill">#api-v3</span>.</div>
+
+                <div class="reactions">
+                  <span class="rxn rxn-1"><span class="em">👍</span><span class="num">3</span></span>
+                  <span class="rxn rxn-2"><span class="em">🙏</span><span class="num">2</span></span>
+                  <span class="rxn rxn-3"><span class="em">💡</span><span class="num">1</span></span>
+                </div>
+              </div>
+            </div>
+
+            </div><!-- /.tl-messages -->
+
+            <!-- Composer — types @ariadne, fires send, then waits. Mirrors the
+                 real MessageComposer (apps/frontend/src/components/composer):
+                 hint on the left, icon action row + gold send on the right,
+                 keyboard shortcut hint sits OUTSIDE below. -->
+            <div class="composer" aria-label="Message composer">
+              <div class="composer-editor">
+                <span class="composer-mention-wrap" aria-hidden="true"><span class="mention">@ariadne</span></span>
+                <input
+                  class="composer-input"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false"
+                  readonly
+                  tabindex="-1"
+                  inputmode="none"
+                  placeholder="Type a message..."
+                  aria-label="Message"
+                  data-trail=" do you know?"
+                />
+              </div>
+              <div class="composer-bar">
+                <span class="composer-hint">Select text to format</span>
+                <div class="composer-actions">
+                  <button type="button" class="cb cb-maximize" aria-label="Expand editor" data-tip="Expand editor"><svg><use href="#icon-maximize"/></svg></button>
+                  <button type="button" class="cb cb-aa" aria-label="Formatting" data-tip="Format text">Aa</button>
+                  <button type="button" class="cb cb-emoji" aria-label="Insert emoji" data-tip="Emoji"><span>😊</span></button>
+                  <button type="button" class="cb" aria-label="Insert mention" data-tip="Mention (@ariadne)"><svg><use href="#icon-at"/></svg></button>
+                  <button type="button" class="cb" aria-label="Insert command" data-tip="Slash command"><svg><use href="#icon-slash"/></svg></button>
+                  <button type="button" class="cb" aria-label="Attach files" data-tip="Attach files"><svg><use href="#icon-paperclip"/></svg></button>
+                  <button type="button" class="cb" aria-label="Dictate a message" data-tip="Dictate"><svg><use href="#icon-mic"/></svg></button>
+                  <button type="button" class="cb" aria-label="Drafts" data-tip="Drafts"><svg><use href="#icon-fileedit"/></svg></button>
+                  <button type="button" class="cb" aria-label="Scheduled" data-tip="Schedule"><svg><use href="#icon-calendarclock"/></svg></button>
+                  <div class="composer-send" aria-label="Send" data-tip="Send">
+                    <svg viewBox="0 0 24 24"><path d="M 12 5 L 12 19 M 6 11 L 12 5 L 18 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="composer-hint-foot">Enter to send · Shift+Enter for new line</div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     MEMORY FLOW — capture · hold · return
+     Mirrors the real mechanic: extract a decision from the
+     conversation, hold it as a memo, return it when the topic
+     comes back. No invented graph relations.
+     ============================================================ -->
+<div class="frame warm">
+  <div class="memo-shell is-centerpiece">
+    <div class="section-meta">
+      <span>How memory works</span>
+      <span>· capture · hold · return</span>
+    </div>
+    <h2>Conversation becomes memory.</h2>
+    <p class="lede">
+      Threa reads the conversation, finds the part where a
+      decision gets made, and keeps it as a short memo that links
+      back to the messages it came from. When the topic returns,
+      so does the memo.
+    </p>
+
+    <div class="memory-flow">
+
+      <!-- ============ 01 · CAPTURE ============ -->
+      <div class="memory-col">
+        <div class="memory-step">01 / Capture</div>
+        <h3 class="memory-heading">Finding the decision</h3>
+        <p class="memory-why">
+          Most of a channel is noise. The part worth keeping is
+          usually a handful of lines where something actually gets
+          settled.
+        </p>
+
+        <div class="capture-list" aria-label="Five-message slice; the three middle messages carry the decision.">
+          <!-- 1: unrelated chatter -->
+          <div class="capture-row is-noise">
+            <div class="c-avatar av-sam">SP</div>
+            <div class="c-body">
+              <div class="c-head">
+                <span class="c-name">Sam Patel</span>
+                <span class="c-time">Mar 12 · 11:38</span>
+              </div>
+              <div class="c-text">Lunch order: pasta or pizza, last call.</div>
+            </div>
+          </div>
+
+          <!-- 2: selected — Jordan asks to pause -->
+          <div class="capture-row is-selected">
+            <div class="c-avatar av-jordan">JL</div>
+            <div class="c-body">
+              <div class="c-head">
+                <span class="c-name">Jordan Lee</span>
+                <span class="c-time">Mar 12 · 11:42</span>
+              </div>
+              <div class="c-text">Hold on, I'm not comfortable changing the auth boundary without working through the token-rotation flow first. Can we pause this until I've reviewed the design?</div>
+            </div>
+          </div>
+
+          <!-- 3: selected — Maya agrees -->
+          <div class="capture-row is-selected">
+            <div class="c-avatar av-maya">MR</div>
+            <div class="c-body">
+              <div class="c-head">
+                <span class="c-name">Maya Reyes</span>
+                <span class="c-time">Mar 12 · 11:44</span>
+              </div>
+              <div class="c-text">Fair. Let's hold v3 then. What do you need from us before sign-off?</div>
+            </div>
+          </div>
+
+          <!-- 4: selected — Jordan names the next step -->
+          <div class="capture-row is-selected">
+            <div class="c-avatar av-jordan">JL</div>
+            <div class="c-body">
+              <div class="c-head">
+                <span class="c-name">Jordan Lee</span>
+                <span class="c-time">Mar 12 · 11:46</span>
+              </div>
+              <div class="c-text">A walkthrough of the rotation flow + how existing sessions migrate. I'll block out time the week of the 18th.</div>
+            </div>
+          </div>
+
+          <!-- 5: unrelated chatter -->
+          <div class="capture-row is-noise">
+            <div class="c-avatar av-sam">SP</div>
+            <div class="c-body">
+              <div class="c-head">
+                <span class="c-name">Sam Patel</span>
+                <span class="c-time">Mar 12 · 11:47</span>
+              </div>
+              <div class="c-text">Pizza it is, ordering now.</div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- ============ 02 · HOLD ============ -->
+      <div class="memory-col">
+        <div class="memory-step">02 / Hold</div>
+        <h3 class="memory-heading">Keeping it as a memo</h3>
+        <p class="memory-why">
+          Nobody rereads a transcript two months later. A short,
+          sourced memo is the part that stays useful once the
+          thread has scrolled away.
+        </p>
+
+        <div class="memory-card decision-memo">
+          <div class="dm-kicker"><span class="dot"></span> Decision · Mar 12</div>
+          <div class="dm-title">Auth refactor held pending token-rotation review.</div>
+
+          <div class="dm-field">
+            <div class="dm-label">Why</div>
+            <div class="dm-body">Jordan asked to pause the v3 auth boundary until the rotation flow has been walked through. The concern was migrating existing sessions without a forced re-auth wave.</div>
+          </div>
+
+          <div class="dm-field">
+            <div class="dm-label">Next</div>
+            <div class="dm-body">Design walkthrough with Jordan, week of Apr 18.</div>
+          </div>
+
+          <div class="dm-field">
+            <div class="dm-label">Source</div>
+            <div class="dm-body dm-source">3 messages · <span class="ref-pill">#api-v3</span> · Jordan Lee · Maya Reyes</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ============ 03 · RETURN ============ -->
+      <div class="memory-col is-return">
+        <div class="memory-step">03 / Return</div>
+        <h3 class="memory-heading">When it comes up again</h3>
+        <p class="memory-why">
+          A reason you can't find isn't worth much. The memo has to
+          show up on its own when the question returns, without
+          anyone remembering to go looking.
+        </p>
+
+        <div class="recall-thread">
+          <div class="recall-meta">
+            <span class="hash">#sprint-planning</span>
+            <span>/ May 7 · two months later</span>
+          </div>
+
+          <div class="recall-list">
+            <div class="recall-row">
+              <div class="r-avatar av-maya">MR</div>
+              <div class="r-body">
+                <div class="r-head">
+                  <span class="r-name">Maya Reyes</span>
+                  <span class="r-time">May 7 · 09:12</span>
+                </div>
+                <div class="r-text"><span class="mention">@ariadne</span> we're picking auth back up this sprint. What was the hold on again?</div>
+              </div>
+            </div>
+
+            <div class="recall-row persona">
+              <div class="r-avatar av-ariadne"><svg><use href="#ariadne-icon"/></svg></div>
+              <div class="r-body">
+                <div class="r-head">
+                  <span class="r-name">Ariadne</span>
+                  <span class="r-time">May 7 · 09:12</span>
+                </div>
+                <div class="r-text">
+                  You paused v3 in March pending Jordan's review of the rotation flow.
+                  Wei flagged a related mobile-session concern in April that didn't make
+                  the original hold. Worth folding in before the walkthrough.
+                </div>
+
+                <div class="recall-memo-card">
+                  <div class="rmc-icon"><svg><use href="#icon-compass"/></svg></div>
+                  <div class="rmc-body">
+                    <div class="rmc-kicker"><span class="k-type">decision</span><span class="k-tag">#api-v3</span></div>
+                    <div class="rmc-title">Auth refactor held pending token-rotation review</div>
+                  </div>
+                  <div class="rmc-meta">Mar 12</div>
+                </div>
+
+                <div class="recall-memo-card">
+                  <div class="rmc-icon"><svg><use href="#icon-bookopen"/></svg></div>
+                  <div class="rmc-body">
+                    <div class="rmc-kicker"><span class="k-type">context</span><span class="k-tag">#mobile-platform</span></div>
+                    <div class="rmc-title">Session migration needs device-bound refresh handling</div>
+                  </div>
+                  <div class="rmc-meta">Apr 02</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     OPEN SOURCE — built in the open, forkable, self-hostable
+     Inspiration: t3.chat, Cal.com, Plausible, Supabase — leading
+     with openness as a feature, not a footnote. Tone is
+     dev-credible (real commands, real claims) without star-count
+     theatre we don't have yet on day one.
+     ============================================================ -->
+<div class="frame" id="open-source">
+  <div class="memo-shell">
+    <div class="feature-band media-left">
+      <div class="band-media">
+        <div class="os-terminal" aria-label="Clone and run Threa locally.">
+          <span class="row"><span class="prompt">$</span><span class="cmd">git clone</span> <span class="arg">github.com/threahq/threa.git</span></span>
+          <span class="row"><span class="prompt">$</span><span class="cmd">cd</span> <span class="arg">threa</span> <span class="cmd">&amp;&amp;</span> <span class="cmd">bun install</span></span>
+          <span class="row"><span class="prompt">$</span><span class="cmd">bun run dev</span></span>
+          <span class="out">→ http://localhost:5173</span>
+          <span class="row"><span class="cmt"># your machine. your data.</span></span>
+        </div>
+
+        <figure class="patch-example" aria-label="Patch Threa by describing the change to your own agent.">
+          <figcaption><span class="file">patch.md</span><span class="hint">describe the change →</span></figcaption>
+          <div class="patch-body">
+            <span class="ln md-h"># Compact density toggle</span>
+            <span class="ln md-p">Add a "Compact" option under Settings → Appearance.</span>
+            <span class="ln md-li">- add a `density` pref: comfortable | compact</span>
+            <span class="ln md-li">- compact tightens message-row padding and line-height</span>
+            <span class="ln md-li">- persist per-device; default to comfortable</span>
+            <span class="ln md-li">- apply it in the timeline, threads, and scratchpads</span>
+          </div>
+          <div class="patch-run"><span class="prompt">$</span><span class="cmd">claude</span> -p <span class="arg">"$(cat patch.md)"</span></div>
+        </figure>
+      </div>
+      <div class="band-copy">
+        <div class="section-meta">
+          <span>Open source</span>
+          <span>· read · fork · audit</span>
+        </div>
+        <h2>The whole thing is open source.</h2>
+        <p class="lede">
+          Source for the frontend, backend, and control-plane is all
+          public. Read exactly how it works and fork it if you want
+          your own version. The repo you're reading is the one we ship.
+        </p>
+
+        <div class="os-tenets">
+          <div class="os-tenet">
+            <h4>Public source</h4>
+            <p>
+              Frontend, backend, control-plane, and infrastructure,
+              all on GitHub. The wrong turns and the design
+              explorations are in there too.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Yours to fork</h4>
+            <p>
+              Fork it and make it yours. Add the feature you want
+              instead of waiting for us to ship it, on the same code
+              we run.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Encrypted where it counts</h4>
+            <p>
+              Most conversations stay readable to Threa, which is what
+              lets it build memory from them. Turn on end-to-end
+              encryption for the sensitive ones and Threa keeps only
+              ciphertext; those conversations don't become memos.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Built in the open</h4>
+            <p>
+              Roadmap, design notes, and decisions are public too,
+              not just the finished code.
+            </p>
+          </div>
+        </div>
+
+        <a class="os-cta" href="https://github.com/threahq/threa">Browse the source <span class="arr">→</span></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     BRING YOUR OWN AGENT — data portability + BYO agent
+     The contrarian beat: every other platform is racing to lock
+     you into their built-in agent. Threa ships a good one
+     (Ariadne) AND makes it trivial to walk your memory over to
+     the agent you already pay for. The starter-motor framing is
+     the headline idea.
+     ============================================================ -->
+<div class="frame warm" id="byo-agent">
+  <div class="memo-shell">
+    <div class="feature-band media-right">
+      <div class="band-copy">
+        <div class="section-meta">
+          <span>Bring your own agent</span>
+          <span>· export · open · yours</span>
+        </div>
+        <h2>Bring the agent you already use.</h2>
+        <p class="lede">
+          Threa ships with Ariadne, useful from day one. But you've
+          probably already got an agent set up the way you like it.
+          Threa is built to sit inside the stack you have, so there's
+          an open API with scoped keys over your workspace. Wire up
+          Claude, Cursor, or your own setup and point it at the same
+          memory Ariadne reads.
+        </p>
+
+        <div class="os-tenets">
+          <div class="os-tenet">
+            <h4>Readable over the API</h4>
+            <p>
+              Your memos come back as JSON and your messages as
+              markdown through a public read API. What you put in, you
+              can pull back out programmatically.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Agent-agnostic</h4>
+            <p>
+              An open read API over your workspace. Whatever agent you
+              point at it sees the same memory Ariadne does, with the
+              same source links and timestamps.
+            </p>
+          </div>
+          <div class="os-tenet">
+            <h4>Private to you</h4>
+            <p>
+              We don't train on your data or sell it. AI features send
+              your messages to an inference provider under a
+              no-retention contract; the conversations you encrypt stay
+              opaque even to us.
+            </p>
+          </div>
+        </div>
+
+        <a class="os-cta" href="/developers">Read the data docs <span class="arr">→</span></a>
+      </div>
+      <div class="band-media">
+        <blockquote class="byo-quote">
+          Ariadne is here to get you started. The agent you rely on should
+          be your own, with your work reachable
+          from it instead of locked inside one more app.
+        </blockquote>
+
+        <div class="byo-agents" aria-label="Bring the agent you already use: Claude, Claude Code, ChatGPT, Cursor, Copilot, Grok, Gemini, or whatever comes next.">
+          <span class="byo-lead">Bring your own</span>
+          <span class="byo-clip" aria-hidden="true">
+            <span class="byo-track">
+              <span class="byo-word">Claude</span>
+              <span class="byo-word">Claude Code</span>
+              <span class="byo-word">ChatGPT</span>
+              <span class="byo-word">Cursor</span>
+              <span class="byo-word">Copilot</span>
+              <span class="byo-word">Grok</span>
+              <span class="byo-word">Gemini</span>
+              <span class="byo-word">whatever's next</span>
+              <span class="byo-word">Claude</span>
+            </span>
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     05 · WHY I BUILT THIS — features a developer missed in Slack
+     First-person founder voice. The byline name is a placeholder.
+     ============================================================ -->
+<div class="frame" id="why">
+  <div class="memo-shell">
+    <div class="section-meta">
+      <span>Why I built this</span>
+      <span>· from one developer</span>
+    </div>
+    <h2>What I wished other tools had.</h2>
+    <p class="lede">
+      Partly I built Threa out of spite. Years of watching decisions
+      disappear into channels, plus a short list of things I wanted
+      from a chat app and never got. So I added them.
+    </p>
+
+    <ul class="missing-grid">
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Nested threads</h4>
+          <p>Threads inside threads, so a tangent off a tangent gets its own space instead of taking over the parent.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Move a message into a thread</h4>
+          <p>A stray reply in the channel can be lifted into a thread after the fact, without copy-paste.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Quote replies</h4>
+          <p>Reply to the exact line someone wrote, quoted inline, so the context comes with it.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Markdown and real code blocks</h4>
+          <p>A markdown composer with fenced code and syntax highlighting that doesn't mangle the snippet you paste.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Full-screen composer</h4>
+          <p>Pop the composer out into a full editor for a longer message. Room to draft and edit, with no stray Enter sending it before it's ready.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Stash a message</h4>
+          <p>Save a half-written message without sending it and pick it back up later. Not one draft stuck in the input box, but a stash you can pull from.</p>
+        </div>
+      </li>
+      <li class="missing-item">
+        <span class="check"><svg><use href="#check-icon"/></svg></span>
+        <div>
+          <h4>Decisions you can find later</h4>
+          <p>The reasoning behind a call is kept as a memo and comes back when the topic does.</p>
+        </div>
+      </li>
+    </ul>
+
+    <p class="missing-sign">Building Threa in the open.</p>
+  </div>
+</div>
+
+<!-- ============================================================
+     WAITLIST CTA
+     ============================================================ -->
+<div class="frame warm" id="waitlist">
+  <div class="cta-shell">
+    <div>
+      <h3>Workplace chat that <span class="accent">remembers</span>.<br/>Get on the list.</h3>
+    </div>
+    <div>
+      <form class="wl-form" id="waitlist-form" novalidate>
+        <div class="form-row">
+          <input
+            type="email"
+            name="email"
+            id="wl-email"
+            placeholder="you@yourdomain.com"
+            autocomplete="email"
+            required
+          />
+          <button type="submit" class="cta" id="wl-submit">Join the waitlist</button>
+        </div>
+        <!-- Honeypot: off-screen, never shown to humans. Bots that fill every
+             field trip it and the submission is silently dropped server-side. -->
+        <input
+          type="text"
+          name="company"
+          id="wl-hp"
+          class="wl-hp"
+          tabindex="-1"
+          autocomplete="off"
+          aria-hidden="true"
+        />
+      </form>
+      <span class="quiet" id="wl-status" aria-live="polite">/ early 2026 · no spam</span>
+    </div>
+  </div>
+</div>
+
+<footer class="footer">
+  <div class="brand" style="gap:10px;">
+    <svg style="width:18px;height:18px;color:hsl(var(--gold));"><use href="#threa-mark"/></svg>
+    <span class="wordmark" style="font-size:11px;">Threa</span>
+    <span style="color:hsl(var(--muted));text-transform:none;letter-spacing:0;font-family:var(--font-display);font-size:12px;margin-left:6px;">· 2026</span>
+  </div>
+  <div class="ln">
+    <a href="/">Product</a>
+    <a href="/developers">Developer</a>
+    <a href="/about">About</a>
+  </div>
+</footer>
+
+  <script is:inline>
+  /* Auto-scroll on each beat so newly-faded-in rows come into view. The
+     list is naturally scrollable; once the user interacts (wheel, touch,
+     keyboard) we surrender the scroll and never fight them. */
+  (function () {
+    const tlm = document.querySelector('.tl-messages')
+    if (!tlm) return
+
+    /* ---- local time stamps ----
+       Replace the hardcoded weekday/HH:mm with the user's actual local
+       day and a now-anchored cadence: 4/2/0 minutes ago, with Alex and
+       Ariadne both at "now" (Ariadne's reply follows immediately on send).
+       Day name is computed per stamp so messages that cross midnight
+       still read correctly. */
+    const now = new Date()
+    const dayOf = d => d.toLocaleDateString(undefined, { weekday: 'long' })
+    const pad = n => String(n).padStart(2, '0')
+    const hhmm = d => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    const ago = mins => new Date(now.getTime() - mins * 60_000)
+    const stamps = {
+      maya: ago(4),
+      jordan: ago(2),
+      alex: ago(0),
+      ariadne: now,
+    }
+    document.querySelectorAll('[data-time]').forEach(el => {
+      const d = stamps[el.dataset.time] || now
+      el.textContent = `${dayOf(d)} ${hhmm(d)}`
+    })
+    document.querySelectorAll('[data-time-short]').forEach(el => {
+      const d = stamps[el.dataset.timeShort] || now
+      el.textContent = hhmm(d)
+    })
+    const cap = document.querySelector('.tl-caption .meta')
+    if (cap) cap.textContent = `/ ${dayOf(now)} · 5 messages`
+
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+    const cycle = 22_000
+    const start = performance.now()
+
+    /* ---- composer typewriter ----
+       Real <input>, driven by JS — value changes trigger the browser's
+       native caret which sits at the correct end-of-text position and
+       blinks the same way it does anywhere else in the OS. Faster than a
+       fake caret: ~100ms/char so it reads as confident, casual typing
+       rather than a slow demo loop. */
+    const editor = document.querySelector('.composer-editor')
+    const input = document.querySelector('.composer-input')
+    const trailText = input?.dataset.trail ?? ''
+    /* 30% — mention pill snaps in, typing begins
+       36% — finished typing " do you know?" (~85ms/char)
+       49% — send fires, input clears, mention pill collapses */
+    const mentionInPct = 30, typeStartPct = 30, typeEndPct = 36, clearPct = 49
+    let lastChars = -1
+    let focused = false
+    const updateInput = (t) => {
+      if (!input || !editor) return
+      const pct = (t / cycle) * 100
+      const mentionIn = pct >= mentionInPct && pct < clearPct
+      editor.classList.toggle('has-mention', mentionIn)
+      let chars
+      if (pct < typeStartPct) chars = 0
+      else if (pct < typeEndPct) {
+        const p = (pct - typeStartPct) / (typeEndPct - typeStartPct)
+        chars = Math.floor(p * trailText.length)
+      } else if (pct < clearPct) chars = trailText.length
+      else chars = 0
+      if (chars !== lastChars) {
+        input.value = trailText.slice(0, chars)
+        lastChars = chars
+      }
+      /* Focus once on first frame so the browser-drawn caret is visible
+         in the empty input from the start of the loop. */
+      if (!focused) {
+        try { input.focus({ preventScroll: true }) } catch { input.focus() }
+        focused = true
+      }
+    }
+    const tick = (now) => {
+      const t = now - start
+      updateInput(t)
+      if (t < cycle) requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+
+    /* ---- beat-based auto-scroll ----
+       Each beat scrolls the bottom of the latest revealed row into view.
+       If the user has manually scrolled, the auto-scroll backs off. */
+    let userScrolled = false
+    const surrender = () => { userScrolled = true }
+    tlm.addEventListener('wheel', surrender, { passive: true })
+    tlm.addEventListener('touchstart', surrender, { passive: true })
+    tlm.addEventListener('keydown', surrender)
+
+    const scrollToBottom = () => {
+      if (userScrolled) return
+      tlm.scrollTo({ top: tlm.scrollHeight - tlm.clientHeight, behavior: 'smooth' })
+    }
+
+    /* Beat times (percent of cycle, +small lag so opacity has resolved). */
+    const beats = [49.5, 51.5, 71.5, 85.5]
+    beats.forEach(p => setTimeout(scrollToBottom, p * cycle / 100))
+  })()
+  </script>
+
+  <script is:inline>
+  /* "Bring your own ___" word reel. Slides the track up one line per beat.
+     The last word is a clone of the first; when we land on it we snap the
+     track back to the top with the transition off, so the loop is seamless. */
+  (function () {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const track = document.querySelector('.byo-track')
+    if (!track) return
+    const lastIndex = track.querySelectorAll('.byo-word').length - 1 // clone
+    let i = 0
+    const advance = () => {
+      i += 1
+      track.style.transform = `translateY(-${i * 1.3}em)`
+      if (i === lastIndex) {
+        setTimeout(() => {
+          track.style.transition = 'none'
+          i = 0
+          track.style.transform = 'translateY(0)'
+          void track.offsetHeight /* reflow so the next slide animates */
+          track.style.transition = ''
+        }, 560)
+      }
+    }
+    setInterval(advance, 2200)
+  })()
+  </script>
+
+  <script is:inline define:vars={{ apiBase }}>
+  /* Waitlist signup. Validates on the client for fast feedback, then POSTs to
+     the control-plane (via the workspace-router). The server validates
+     authoritatively and dedupes; a repeat email still resolves as success. */
+  (function () {
+    const form = document.getElementById("waitlist-form")
+    if (!form) return
+    const email = document.getElementById("wl-email")
+    const hp = document.getElementById("wl-hp")
+    const submit = document.getElementById("wl-submit")
+    const status = document.getElementById("wl-status")
+    const idle = "/ early 2026 · no spam"
+
+    const setStatus = (msg, kind) => {
+      status.textContent = msg
+      status.classList.remove("is-ok", "is-err")
+      if (kind) status.classList.add(kind)
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault()
+      const value = (email.value || "").trim()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
+        setStatus("Enter a valid email address.", "is-err")
+        email.focus()
+        return
+      }
+
+      const original = submit.textContent
+      submit.disabled = true
+      submit.textContent = "Joining…"
+      setStatus(idle)
+
+      try {
+        const res = await fetch(apiBase + "/api/waitlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: value, source: "home", hp: hp.value || "" }),
+        })
+        if (!res.ok) throw new Error("status " + res.status)
+        form.reset()
+        submit.textContent = "Joined"
+        setStatus("You're on the list. I'll be in touch.", "is-ok")
+      } catch {
+        submit.disabled = false
+        submit.textContent = original
+        setStatus("Something went wrong. Try again.", "is-err")
+      }
+    })
+  })()
+  </script>
+</Layout>

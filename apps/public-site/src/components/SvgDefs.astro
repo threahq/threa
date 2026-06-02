@@ -1,0 +1,78 @@
+---
+---
+<!-- Shared SVG symbol library: brand mark, Ariadne icon, status
+     and composer icons. Rendered once (hidden) and referenced via
+     <use href="#id"/> throughout the page. Ported from v10. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="threa-mark" viewBox="0 0 100 100">
+      <path d="M 50 24 C 64 30, 72 42, 72 50 C 72 58, 64 70, 50 76 C 36 70, 28 58, 28 50 C 28 42, 36 30, 50 24 Z"
+            fill="none" stroke="currentColor" stroke-width="1.6" />
+      <path d="M 50 14 C 47 26, 46 38, 50 50 C 54 62, 53 74, 50 86"
+            fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+    </symbol>
+    <symbol id="ariadne-icon" viewBox="0 0 100 100">
+      <path d="M 50 18 C 28 18, 20 35, 28 48 C 36 61, 50 55, 50 50 C 50 45, 64 39, 72 48 C 80 57, 72 70, 50 82 C 28 70, 20 57, 28 48"
+            fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="quote-icon" viewBox="0 0 24 24">
+      <path d="M 6 8 L 6 14 C 6 16 4 17 4 17 L 5 18 C 8 17 10 15 10 11 L 10 8 Z M 15 8 L 15 14 C 15 16 13 17 13 17 L 14 18 C 17 17 19 15 19 11 L 19 8 Z"
+            fill="currentColor"/>
+    </symbol>
+    <!-- Knowledge-type icons (lucide), matching the app's memo display:
+         decision = Compass, context = BookOpen. Used in memo embed cards. -->
+    <symbol id="icon-compass" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-bookopen" viewBox="0 0 24 24">
+      <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="check-icon" viewBox="0 0 24 24">
+      <path d="M 5 12 L 10 17 L 19 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="spinner-icon" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2" stroke-opacity="0.25" />
+      <path d="M 12 4 A 8 8 0 0 1 20 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+    </symbol>
+    <!-- composer action-bar icons (Lucide-style) -->
+    <symbol id="icon-maximize" viewBox="0 0 24 24">
+      <polyline points="15 3 21 3 21 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <polyline points="9 21 3 21 3 15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-at" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M 16 8 V 13 A 3 3 0 0 0 22 13 V 12 A 10 10 0 1 0 18.08 19.94" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <!-- Slash (Lucide) — the slash-command trigger. A plain "/" stroke,
+         NOT a circle/ban sign. -->
+    <symbol id="icon-slash" viewBox="0 0 24 24">
+      <line x1="22" y1="2" x2="2" y2="22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="icon-paperclip" viewBox="0 0 24 24">
+      <path d="M 21.44 11.05 L 12.25 20.24 A 6 6 0 0 1 3.76 11.75 L 12.33 3.18 A 4 4 0 0 1 17.99 8.84 L 9.41 17.41 A 2 2 0 0 1 6.58 14.58 L 15.07 6.1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="icon-mic" viewBox="0 0 24 24">
+      <rect x="9" y="2" width="6" height="13" rx="3" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M 19 10 V 12 A 7 7 0 0 1 5 12 V 10 M 12 19 V 23" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </symbol>
+    <!-- FileEdit (Lucide) — stashed-drafts trigger in the real composer. -->
+    <symbol id="icon-fileedit" viewBox="0 0 24 24">
+      <path d="M 4 13.5 V 4 A 2 2 0 0 1 6 2 H 14.5 L 20 7.5 V 20 A 2 2 0 0 1 18 22 H 12.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <polyline points="14 2 14 8 20 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 10.42 12.61 A 2.1 2.1 0 1 1 13.39 15.58 L 7.95 21 L 4 22 L 4.99 18.05 L 10.42 12.61 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <!-- CalendarClock (Lucide) — scheduled-messages trigger. -->
+    <symbol id="icon-calendarclock" viewBox="0 0 24 24">
+      <path d="M 21 7.5 V 6 A 2 2 0 0 0 19 4 H 5 A 2 2 0 0 0 3 6 V 20 A 2 2 0 0 0 5 22 H 8.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 16 2 V 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M 8 2 V 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <path d="M 3 10 H 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="16" cy="16" r="6" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M 17.5 17.5 L 16 16.25 V 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+  </defs>
+</svg>

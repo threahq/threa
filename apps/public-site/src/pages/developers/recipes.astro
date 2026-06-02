@@ -1,0 +1,210 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+---
+
+<DocsLayout
+  title="Recipes · Threa Developers"
+  current="recipes"
+  sections={[
+    { id: "decisions", label: "Find what was decided" },
+    { id: "ci-notify", label: "Notify a stream from CI" },
+    { id: "mirror-search", label: "Mirror a search" },
+    { id: "local-agent", label: "Connect a local agent" },
+  ]}
+>
+  <p class="eyebrow">Recipes</p>
+  <h1>Worked <span class="accent">examples</span>.</h1>
+  <p class="lead">
+    Each one is a real task. Set your credentials in the panel (top right) and the
+    runnable samples work as you read. The last wires a local agent into your
+    workspace, the way the Pi extension does.
+  </p>
+
+  <h2 id="decisions">Find out what was decided, and why</h2>
+  <p>
+    Memos are Threa's record of decisions and context pulled from conversations.
+    Search them by topic (semantic by default) and you get back titles, abstracts,
+    tags, and links to the source messages.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="search memos"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "query": "why did we pause the auth refactor",
+    "limit": 5
+  }'`}
+    run={{
+      method: "POST",
+      path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search",
+      body: `{ "query": "why did we pause the auth refactor", "limit": 5 }`,
+    }}
+  />
+  <p>
+    Take a memo's <code>id</code> from the results and pull its full provenance:
+    the source stream and the exact messages, with authors and timestamps.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="memo with sources"
+    code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/MEMO_ID \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+  />
+
+  <h2 id="ci-notify">Notify a stream from CI</h2>
+  <p>
+    A build or deploy script can post into a channel. Give the message a stable
+    <code>clientMessageId</code> so a retried pipeline step never double-posts.
+    First find a stream to post into:
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="list channels"
+    code={`curl "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+    run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams?type=channel&limit=20" }}
+  />
+  <p>Then post, reusing the same ID across retries:</p>
+  <CodeBlock
+    lang="bash"
+    label="post once"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/streams/STREAM_ID/messages \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "content": "**Deploy:** v2.4.1 shipped to production. :rocket:",
+    "clientMessageId": "ci-deploy-2.4.1"
+  }'`}
+  />
+
+  <h2 id="mirror-search">Mirror a search into your own tool</h2>
+  <p>
+    Message search takes <code>semantic</code> and <code>exact</code> toggles and
+    filters by stream, type, author, and date window. Drop it behind a slash
+    command, an editor extension, or a dashboard.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="search messages"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "query": "rotation flow",
+    "semantic": true,
+    "type": ["channel", "thread"],
+    "limit": 10
+  }'`}
+    run={{
+      method: "POST",
+      path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/messages/search",
+      body: `{ "query": "rotation flow", "semantic": true, "type": ["channel", "thread"], "limit": 10 }`,
+    }}
+  />
+
+  <h2 id="local-agent">Connect your local agent</h2>
+  <p>
+    Threa runs a <strong>bot runtime</strong> protocol: your agent registers a
+    presence, then claims work whenever someone <code>@mentions</code> its bot in a
+    stream, does the work locally, and posts the reply back. It's pull-based, so
+    your agent can live on your laptop or a Pi behind a NAT with no inbound ports.
+    The Pi remote extension implements this in full.
+  </p>
+
+  <h3>1 · Create a bot and a bot key</h3>
+  <p>
+    In the app, create a bot (give it the <code>mentionable</code> trait so people
+    can summon it), then mint a <code>threa_bk_</code> key on it with
+    <code>bot-runtime:write</code>, <code>bot-invocations:write</code>, and
+    <code>messages:write</code>. Use that key as the credential below.
+  </p>
+
+  <h3>2 · Heartbeat a presence</h3>
+  <p>
+    Tell Threa your runtime is alive and accepting work. Repeat every 15–30s. The
+    <code>instanceId</code> is any stable per-process string; <code>runtimeKind</code>
+    is one of <code>pi-local</code>, <code>hermes</code>, <code>openclaw</code>,
+    <code>claude-code-channel</code>, or <code>custom</code>.
+  </p>
+  <CodeBlock
+    lang="bash"
+    label="heartbeat"
+    code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/bot-runtime/presence \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "runtimeKind": "custom",
+    "instanceId": "my-laptop-1",
+    "status": "available",
+    "acceptingInvocations": true,
+    "capabilities": { "supportsActiveScratchpad": false }
+  }'`}
+  />
+
+  <h3>3 · Claim, work, reply</h3>
+  <p>
+    Poll for a pending invocation. When you get one, it carries the prompt and a
+    <code>claimToken</code>; do your work, then complete it with a reply (or renew
+    the claim first if you need longer than the TTL). A full loop in TypeScript:
+  </p>
+  <CodeBlock
+    lang="ts"
+    label="agent-loop.ts"
+    code={`const BASE = "{{baseUrl}}"
+const WS = "{{workspaceId}}"
+const KEY = "{{apiKey}}" // a threa_bk_ bot key
+const INSTANCE = "my-laptop-1"
+
+const auth = { Authorization: "Bearer " + KEY, "Content-Type": "application/json" }
+const api = (path, body) =>
+  fetch(BASE + "/api/v1/workspaces/" + WS + path, {
+    method: "POST", headers: auth, body: JSON.stringify(body),
+  }).then((r) => r.json())
+
+async function loop() {
+  // Keep presence fresh in the background.
+  setInterval(() => api("/bot-runtime/presence", {
+    runtimeKind: "custom", instanceId: INSTANCE,
+    status: "available", acceptingInvocations: true, capabilities: {},
+  }), 20000)
+
+  while (true) {
+    const { data: inv } = await api("/bot-invocations/claim", {
+      runtimeKind: "custom",
+      instanceId: INSTANCE,
+      supportedCapabilities: ["mentionable"],
+      claimTtlSeconds: 120,
+    })
+    if (!inv) { await new Promise((r) => setTimeout(r, 3000)); continue }
+
+    // inv.promptMarkdown is what the user said. Do real work here.
+    const reply = await runYourAgent(inv.promptMarkdown)
+
+    await api("/bot-invocations/" + inv.id + "/complete", {
+      instanceId: INSTANCE,
+      claimToken: inv.claimToken,
+      finalMessageMarkdown: reply,
+    })
+  }
+}`}
+  />
+  <div class="note">
+    <strong>Faster than polling</strong>
+    There's also a Socket.IO <code>/bot</code> namespace that pushes
+    <code>bot_invocation:available</code> events so you can react instantly and
+    keep a poll only as a backstop. The Pi extension uses the socket with a 30s
+    poll fallback. Read <code>extensions/pi-remote/</code> in the repo for a
+    complete implementation, including session-control commands like
+    <code>/model</code>, <code>/thinking</code>, and <code>/compact</code> driven
+    from a scratchpad.
+  </div>
+  <p>
+    A bot key with <code>streams:read</code> and <code>memos:read</code> can also
+    read history and search the same memory Ariadne uses while it works, so your
+    local agent answers with the full workspace context behind the message that
+    summoned it.
+  </p>
+</DocsLayout>

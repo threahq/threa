@@ -1,0 +1,60 @@
+---
+/*
+ * A code sample whose {{baseUrl}} / {{workspaceId}} / {{apiKey}} tokens are
+ * live-substituted with the reader's own credentials (see scripts/playground.ts).
+ * Each token renders as a chip with an explain-on-hover tooltip. If `run` is
+ * provided, a Run button fires the call against the reader's base URL and
+ * prints the response under the block.
+ */
+interface RunConfig {
+  method: string
+  path: string
+  body?: string
+  multipart?: boolean
+}
+interface Props {
+  code: string
+  lang?: string
+  label?: string
+  run?: RunConfig
+}
+const { code, lang = "bash", label, run } = Astro.props
+
+const TOKEN_RE = /\{\{(baseUrl|workspaceId|apiKey)\}\}/g
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+}
+
+// Turn the raw template into HTML: escaped literal segments with token chips
+// spliced in. The chips are filled by the playground runtime at load.
+let html = ""
+let last = 0
+let m: RegExpExecArray | null
+while ((m = TOKEN_RE.exec(code)) !== null) {
+  html += escapeHtml(code.slice(last, m.index))
+  html += `<span class="pg-var is-unset" data-var="${m[1]}"></span>`
+  last = m.index + m[0].length
+}
+html += escapeHtml(code.slice(last))
+---
+
+<div class="pg-block">
+  <div class="pg-block-head">
+    <span class="pg-lang">{label ?? lang}</span>
+    <div class="pg-actions">
+      {run && (
+        <button type="button" class="pg-btn pg-run" data-run={JSON.stringify(run)}>
+          Run
+        </button>
+      )}
+      <button type="button" class="pg-btn pg-copy" data-copy>Copy</button>
+    </div>
+  </div>
+  <pre class={`pg-pre lang-${lang}`}><code set:html={html} /></pre>
+  <span hidden data-template={code}></span>
+  {run && <pre class="pg-output" hidden></pre>}
+</div>

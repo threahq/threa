@@ -45,6 +45,44 @@ jobs:
           workingDirectory: apps/frontend
           packageManager: bun
 
+  deploy-public-site:
+    name: Deploy Public Site
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    concurrency:
+      group: deploy-public-site
+      cancel-in-progress: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build public site
+        run: bun run --cwd apps/public-site build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name threa-public-site --branch main --commit-hash ${{ github.event.workflow_run.head_sha }} --commit-message "deploy ${{ github.event.workflow_run.head_sha }}" --commit-dirty=true
+          workingDirectory: apps/public-site
+          packageManager: bun
+
   deploy-workspace-router:
     name: Deploy Workspace Router
     runs-on: ubuntu-latest

@@ -1,0 +1,104 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro"
+import CodeBlock from "../../components/CodeBlock.astro"
+---
+
+<DocsLayout title="Overview · Threa Developers" current="overview">
+  <p class="eyebrow">Developers</p>
+  <h1>Threa's <span class="accent">public API</span>.</h1>
+  <p class="lead">
+    A REST API over your workspace: messages, streams, members, attachments, and
+    the memos Threa builds from your conversations. The memory Ariadne reads is
+    the memory your own agent reads, through scoped keys you issue yourself.
+  </p>
+
+  <p>
+    Add your workspace ID and an API key in the Credentials panel (top right).
+    Every sample on these pages then fills in your real values, and the runnable
+    ones call the API and print the response. What you paste stays in your
+    browser and is sent only on requests you run yourself.
+  </p>
+
+  <div class="note">
+    <strong>No MCP server yet</strong>
+    There's no Model Context Protocol server today, so an agent host like Claude
+    Desktop can't auto-discover Threa through MCP. You connect over the REST API
+    and the bot runtime instead (see <a class="link" href="/developers/recipes">Recipes</a>).
+    An MCP server is planned.
+  </div>
+
+  <h2>Base URL</h2>
+  <p>
+    The API lives at <code>https://app.threa.io</code>, versioned under
+    <code>/api/v1</code> and scoped to a workspace:
+    <code>/api/v1/workspaces/&#123;workspaceId&#125;/…</code>. Your workspace ID is
+    in the app URL, after <code>/w/</code>.
+  </p>
+
+  <h2>Quickstart</h2>
+  <ol class="steps">
+    <li>
+      <h3>Create an API key</h3>
+      <p>
+        In the app, open <strong>Settings → API keys</strong>, create a
+        user key, pick the scopes you need, and copy it once. Full walkthrough in
+        <a class="link" href="/developers/authentication">Authentication</a>.
+      </p>
+    </li>
+    <li>
+      <h3>Add it to the Credentials panel</h3>
+      <p>
+        Open the panel (top right) and enter your workspace ID and key. The status
+        turns green once a call to <code>/me</code> succeeds.
+      </p>
+    </li>
+    <li>
+      <h3>Confirm who you are</h3>
+      <p>
+        <code>GET /me</code> needs no scope. It reports the identity behind the
+        key. Run it:
+      </p>
+      <CodeBlock
+        lang="bash"
+        label="who am I"
+        code={`curl {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me \\
+  -H "Authorization: Bearer {{apiKey}}"`}
+        run={{ method: "GET", path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/me" }}
+      />
+    </li>
+    <li>
+      <h3>Search your own workspace</h3>
+      <p>
+        With <code>memos:read</code>, search what Threa has remembered. It's the
+        same retrieval Ariadne uses, with source links and timestamps.
+      </p>
+      <CodeBlock
+        lang="bash"
+        label="search memos"
+        code={`curl -X POST {{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search \\
+  -H "Authorization: Bearer {{apiKey}}" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "query": "auth", "limit": 5 }'`}
+        run={{
+          method: "POST",
+          path: "{{baseUrl}}/api/v1/workspaces/{{workspaceId}}/memos/search",
+          body: `{ "query": "auth", "limit": 5 }`,
+        }}
+      />
+    </li>
+  </ol>
+
+  <h2>What you can build</h2>
+  <ul>
+    <li><strong>Read and write messages</strong> in any stream you can access, with idempotent sends.</li>
+    <li><strong>Search</strong> messages and memos semantically or exactly, scoped to streams, types, and dates.</li>
+    <li><strong>Pull memos</strong> with their source messages, so an external agent works from the same knowledge as Ariadne.</li>
+    <li><strong>Run your own agent</strong> as a bot: heartbeat a runtime, claim invocations when it's mentioned, post replies. The Pi remote extension works this way.</li>
+    <li><strong>Upload and read attachments</strong>, including the text Threa extracts from them.</li>
+  </ul>
+  <p>
+    Next: <a class="link" href="/developers/authentication">Authentication</a> for
+    keys and scopes, then <a class="link" href="/developers/recipes">Recipes</a>
+    for worked examples.
+  </p>
+</DocsLayout>
