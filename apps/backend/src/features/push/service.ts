@@ -535,12 +535,29 @@ export class PushService {
     })
     if (allSubs.length === 0) return { active: [], expired: [] }
 
-    // Partition subscriptions: devices with no session in the expiry window are expired.
-    // Devices that have a recent session (even if not active right now) are still valid.
+    // Partition subscriptions by whether the device still looks logged in.
+    //
+    // Two independent signals prove a device is still authenticated, and EITHER
+    // keeps the subscription alive:
+    //   1. A socket heartbeat for the device within the window (recentDeviceKeys,
+    //      cross-workspace since the auth cookie is global).
+    //   2. A recent authenticated re-registration of the subscription itself
+    //      (updatedAt — the only write to this row). The frontend re-runs the
+    //      idempotent subscribe handshake over HTTP on every app open/foreground.
+    //      This is the signal that survives a backend socket-session timeout: on
+    //      devices where WebSockets are flaky or short-lived (mobile, iOS PWA,
+    //      proxies that block WS) the heartbeat never lands, but the HTTP
+    //      re-register does, so the user who keeps opening the app keeps push.
+    //
+    // A subscription is only "expired" (→ session-expired push + cleanup) once
+    // BOTH signals are stale for the full window — i.e. the device genuinely
+    // hasn't logged in for ~30 days (matching the auth cookie TTL).
+    const expiryThreshold = Date.now() - SESSION_EXPIRY_WINDOW_MS
     const activeSubs: PushSubscription[] = []
     const expiredSubs: PushSubscription[] = []
     for (const sub of allSubs) {
-      if (recentDeviceKeys.has(sub.deviceKey)) {
+      const seenRecently = sub.updatedAt.getTime() > expiryThreshold
+      if (recentDeviceKeys.has(sub.deviceKey) || seenRecently) {
         activeSubs.push(sub)
       } else {
         expiredSubs.push(sub)

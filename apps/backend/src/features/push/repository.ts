@@ -25,6 +25,12 @@ export interface PushSubscription {
   deviceKey: string
   userAgent: string | null
   createdAt: Date
+  /**
+   * Bumped on every (idempotent) re-registration via {@link insert}, which is
+   * the only write path to this table. Push delivery reads it as "last time an
+   * authenticated client confirmed this device" so a subscription survives a
+   * backend socket-session timeout and only expires after genuine inactivity.
+   */
   updatedAt: Date
 }
 
