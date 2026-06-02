@@ -128,6 +128,25 @@ describe("normalizeSidebarConfig section sanitization", () => {
     expect(result.sections[0].spec).toMatchObject({ kind: "custom", streamIds: [] })
   })
 
+  test("dedupes custom sections sharing a sectionId even when their stored ids differ", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [
+        { id: "custom:work", spec: { kind: "custom", sectionId: "work", name: "Work", streamIds: ["s1"] } },
+        // A drifted id that still points at the same sectionId — must not survive.
+        { id: "foo", spec: { kind: "custom", sectionId: "work", name: "Work dup", streamIds: ["s2"] } },
+      ],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+    const customs = result.sections.filter((s) => s.spec.kind === "custom")
+
+    expect(customs).toHaveLength(1)
+    expect(customs[0].id).toBe("custom:work")
+  })
+
   test("caps a custom section's streamIds at the write-time bound on read", () => {
     const streamIds = Array.from({ length: MAX_CUSTOM_SECTION_STREAM_IDS + 25 }, (_, i) => `s${i}`)
     const config = {

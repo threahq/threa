@@ -255,9 +255,19 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
   // already validates (Zod) + dedups via addSection; this guards stray data on
   // every read boundary (bootstrap, IDB rehydrate, socket sync).
   const seenSectionIds = new Set<string>()
+  const seenCustomSectionIds = new Set<string>()
   let sections = (config.sections ?? []).filter((section) => {
     if (!section || !isRenderableSectionSpec(section.spec)) return false
     if (seenSectionIds.has(section.id)) return false
+    // A custom section carries its own identity (`sectionId`) that the filing /
+    // rename helpers and the drop-zone id key off, independent of the dedup key
+    // `id`. Dedupe on it too so a drifted or duplicated `id` can't leave two
+    // custom sections sharing a `sectionId` — which would desync membership and
+    // collide drop-zone ids.
+    if (section.spec.kind === "custom") {
+      if (seenCustomSectionIds.has(section.spec.sectionId)) return false
+      seenCustomSectionIds.add(section.spec.sectionId)
+    }
     seenSectionIds.add(section.id)
     return true
   })
