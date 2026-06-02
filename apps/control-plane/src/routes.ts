@@ -13,6 +13,7 @@ import { createAccountsHandlers, AccountsService } from "./features/accounts"
 import { createIntegrationHandlers } from "./features/integrations"
 import { createWorkspaceHandlers, type ControlPlaneWorkspaceService } from "./features/workspaces"
 import { createInvitationShadowHandlers, type InvitationShadowService } from "./features/invitation-shadows"
+import { createWaitlistHandlers, type WaitlistService } from "./features/waitlist"
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
 import {
   createBackofficeAuthzAdminHandlers,
@@ -32,6 +33,7 @@ interface Dependencies {
   authService: AuthService
   workspaceService: ControlPlaneWorkspaceService
   shadowService: InvitationShadowService
+  waitlistService: WaitlistService
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
   internalApiKey: string
@@ -49,6 +51,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     authService,
     workspaceService,
     shadowService,
+    waitlistService,
     backofficeService,
     workosAuthzAdminService,
     internalApiKey,
@@ -67,6 +70,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     key: ipKey,
   })
   const authLimit = createRateLimit({ name: "cp-auth", windowMs: 60_000, max: deps.rateLimits.authMax, key: ipKey })
+  const waitlistLimit = createRateLimit({ name: "cp-waitlist", windowMs: 60_000, max: 10, key: ipKey })
 
   const accountsService = new AccountsService({ authService, membership: workspaceService })
   const authHandlers = createControlPlaneAuthHandlers({
@@ -78,6 +82,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   })
   const workspace = createWorkspaceHandlers({ workspaceService, shadowService })
   const shadow = createInvitationShadowHandlers({ shadowService })
+  const waitlist = createWaitlistHandlers({ waitlistService })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
   const backoffice = createBackofficeHandlers({ backofficeService })
   const backofficeAuthz = createBackofficeAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
@@ -99,6 +104,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // the cross-IdP fallback alongside provider-direct social buttons.
   app.post("/api/auth/magic/send", authLimit, authHandlers.magicSend)
   app.post("/api/auth/magic/verify", authLimit, authHandlers.magicVerify)
+
+  // Public waitlist signup from the marketing site (threa.io). Unauthenticated;
+  // its own IP rate limit guards against spam.
+  app.post("/api/waitlist", waitlistLimit, waitlist.signUp)
 
   // Dev/test auth stub routes
   if (authService instanceof StubAuthService) {

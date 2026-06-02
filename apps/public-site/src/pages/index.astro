@@ -1,6 +1,11 @@
 ---
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
+
+// Where the waitlist form POSTs. The marketing site is a separate origin from
+// the API, so this is a cross-origin call to the workspace-router, which proxies
+// /api/waitlist to the control-plane. Overridable at build via PUBLIC_API_BASE.
+const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://app.threa.io"
 ---
 
 <Layout>
@@ -633,11 +638,31 @@ import SvgDefs from "../components/SvgDefs.astro"
       <h3>Workplace chat that <span class="accent">remembers</span>.<br/>Get on the list.</h3>
     </div>
     <div>
-      <div class="form-row">
-        <input type="email" placeholder="you@yourdomain.com" />
-        <button type="button" class="cta">Join the waitlist</button>
-      </div>
-      <span class="quiet">/ early 2026 · no spam</span>
+      <form class="wl-form" id="waitlist-form" novalidate>
+        <div class="form-row">
+          <input
+            type="email"
+            name="email"
+            id="wl-email"
+            placeholder="you@yourdomain.com"
+            autocomplete="email"
+            required
+          />
+          <button type="submit" class="cta" id="wl-submit">Join the waitlist</button>
+        </div>
+        <!-- Honeypot: off-screen, never shown to humans. Bots that fill every
+             field trip it and the submission is silently dropped server-side. -->
+        <input
+          type="text"
+          name="company"
+          id="wl-hp"
+          class="wl-hp"
+          tabindex="-1"
+          autocomplete="off"
+          aria-hidden="true"
+        />
+      </form>
+      <span class="quiet" id="wl-status" aria-live="polite">/ early 2026 · no spam</span>
     </div>
   </div>
 </div>
@@ -785,6 +810,58 @@ import SvgDefs from "../components/SvgDefs.astro"
       }
     }
     setInterval(advance, 2200)
+  })()
+  </script>
+
+  <script is:inline define:vars={{ apiBase }}>
+  /* Waitlist signup. Validates on the client for fast feedback, then POSTs to
+     the control-plane (via the workspace-router). The server validates
+     authoritatively and dedupes; a repeat email still resolves as success. */
+  (function () {
+    const form = document.getElementById("waitlist-form")
+    if (!form) return
+    const email = document.getElementById("wl-email")
+    const hp = document.getElementById("wl-hp")
+    const submit = document.getElementById("wl-submit")
+    const status = document.getElementById("wl-status")
+    const idle = "/ early 2026 · no spam"
+
+    const setStatus = (msg, kind) => {
+      status.textContent = msg
+      status.classList.remove("is-ok", "is-err")
+      if (kind) status.classList.add(kind)
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault()
+      const value = (email.value || "").trim()
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
+        setStatus("Enter a valid email address.", "is-err")
+        email.focus()
+        return
+      }
+
+      const original = submit.textContent
+      submit.disabled = true
+      submit.textContent = "Joining…"
+      setStatus(idle)
+
+      try {
+        const res = await fetch(apiBase + "/api/waitlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: value, source: "home", hp: hp.value || "" }),
+        })
+        if (!res.ok) throw new Error("status " + res.status)
+        form.reset()
+        submit.textContent = "Joined"
+        setStatus("You're on the list. I'll be in touch.", "is-ok")
+      } catch {
+        submit.disabled = false
+        submit.textContent = original
+        setStatus("Something went wrong. Try again.", "is-err")
+      }
+    })
   })()
   </script>
 </Layout>

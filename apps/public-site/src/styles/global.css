@@ -1858,6 +1858,22 @@ body {
   margin-top: 12px;
   display: block;
 }
+/* Honeypot — kept in the layout for bots but pulled off-screen for humans and
+   assistive tech (aria-hidden on the element). */
+.wl-hp {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+#wl-status.is-ok {
+  color: hsl(var(--emerald));
+}
+#wl-status.is-err {
+  color: hsl(0 60% 48%);
+}
 
 .footer {
   max-width: 1240px;
