@@ -71,8 +71,10 @@ builds the optimistic `message_created` event using `Date.now()` as a placeholde
 so it sorts after real events (which carry small monotonic sequences), then writes a durable
 row to `db.pendingMessages` and the optimistic event to `db.events` with `_clientId` and
 `_status: "pending"` (`:617-637`). The `CachedEvent._status` field
-(`apps/frontend/src/db/database.ts:137`) is the `"pending" | "sent" | "failed" | "editing"`
-marker the rest of the pattern keys off.
+(`apps/frontend/src/db/database.ts:137`) is the marker the rest of the pattern keys off.
+Its type is `"pending" | "sent" | "failed" | "editing"`, but only `pending`, `failed`, and
+`editing` are ever written to IDB; `"sent"` is declared and never written (the queue's
+`markSent` updates React context state, not the row).
 
 **Drain.** `useMessageQueue` (`apps/frontend/src/hooks/use-message-queue.ts:163`) sends
 pending rows one at a time in `createdAt` order, passing `clientMessageId: next.clientId`
@@ -92,11 +94,14 @@ confirmed events by the `[streamId+_sequenceNum]` index and merges in any `pendi
 `failed` rows off the `_status` index, then re-sorts, so optimistic and failed sends land
 in their natural slot by sequence rather than being appended at the end.
 
-**Failure.** The queue never deletes a row on failure (`:155`). A failed send is marked
-`_status: "failed"` on its event and given an exponential backoff (`:286-294`); a
-privacy-boundary rejection is held as `blocked-privacy` and surfaces a toast instead of
-auto-retrying (`:262-279`). The row stays visible until the server confirms it or the user
-deletes it.
+**Failure.** The queue never deletes a row on failure (`:155`). A failed send marks the
+event `_status: "failed"` and gives the queue row an exponential backoff (`:286-294`). A
+privacy-boundary rejection is handled on a separate track: the event still goes to
+`_status: "failed"`, but the `pendingMessages` row's own `status` field (typed
+`"editing" | "blocked-privacy"` at `database.ts:227`, distinct from the event's `_status`)
+is set to `blocked-privacy` so the drain skips it, and a toast is surfaced instead of
+auto-retrying (`:262-279`). Either way the row stays visible until the server confirms it
+or the user deletes it.
 
 ## Boundaries
 
