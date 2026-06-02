@@ -1,5 +1,5 @@
 import express from "express"
-import pino from "pino"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 import { loadEnclaveConfig } from "./config"
 import { createEnclaveKeyPair } from "./keystore"
 import { registerWithBackend, revokeWithBackend } from "./register"
@@ -9,7 +9,7 @@ import { createOpenRouterChat } from "./llm"
 import { createBackendCallbacks } from "./agent/backend-callbacks"
 import { createCancelHandler, createSessionsHandler, requireInternalKey } from "./sessions"
 
-const logger = pino({ name: "enclave" })
+const logger = baseLogger.child({ name: "enclave" })
 
 async function main() {
   const config = loadEnclaveConfig()

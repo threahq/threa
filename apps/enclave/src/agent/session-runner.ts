@@ -1,11 +1,11 @@
-import pino from "pino"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 import type { EnclaveSessionAssignment } from "@threa/types"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import type { BackendCallbacks } from "./backend-callbacks"
 import { runEnclaveTurn } from "./run-turn"
 
-const logger = pino({ name: "enclave-session" })
+const logger = baseLogger.child({ name: "enclave-session" })
 
 /**
  * Refresh interval for the session heartbeat. The backend reclaims a session

@@ -8,9 +8,9 @@ import {
   generateKeyPair,
   importRecipientPrivateKey,
 } from "@threa/crypto"
-import pino from "pino"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 
-const logger = pino({ name: "enclave-keystore" })
+const logger = baseLogger.child({ name: "enclave-keystore" })
 
 export interface EnclaveKeyPair {
   /** Stable identifier for this instance (one per process lifetime). */

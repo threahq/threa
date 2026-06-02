@@ -1,14 +1,12 @@
 import pino from "pino"
+import pretty from "pino-pretty"
 
 const isProduction = process.env.NODE_ENV === "production"
 const testLogFile = process.env.THREA_TEST_LOG_FILE
-const prettyTransport = {
-  target: "pino-pretty",
-  options: {
-    colorize: true,
-    translateTime: "HH:MM:ss",
-    ignore: "pid,hostname",
-  },
+const prettyOptions = {
+  colorize: true,
+  translateTime: "HH:MM:ss",
+  ignore: "pid,hostname",
 }
 
 const baseOptions = {
@@ -18,27 +16,20 @@ const baseOptions = {
   },
 }
 
-// pino-pretty runs as a worker thread that resolves its target module from
-// disk. The enclave ships as a single-file bundle with no node_modules, so the
-// transport can't be resolved there and pino throws at construction. Build it
-// behind a guard and fall back to plain JSON on stdout when it isn't available,
-// so the same code runs both from source (backend) and bundled (enclave).
-function tryPrettyStream(): pino.DestinationStream | undefined {
-  try {
-    return pino.transport(prettyTransport)
-  } catch {
-    return undefined
-  }
-}
-
+// pino-pretty as a directly-imported, *synchronous* stream — NOT `pino.transport`,
+// which spawns a worker thread that resolves the target module ("pino-pretty")
+// from disk at runtime. The enclave ships as a single-file bundle with no
+// node_modules for that worker to resolve, so the transport throws at
+// construction there. A synchronous stream is bundled inline, so the SAME logger
+// runs identically from source (the regional backend) and inside the enclave
+// bundle — keeping their dev output aligned. Production stays plain JSON on
+// stdout (no pretty) for log aggregation.
 export const logger = (() => {
   if (!testLogFile) {
-    if (isProduction) return pino(baseOptions)
-    const pretty = tryPrettyStream()
-    return pretty ? pino(baseOptions, pretty) : pino(baseOptions)
+    return isProduction ? pino(baseOptions) : pino(baseOptions, pretty(prettyOptions))
   }
 
-  const primaryStream = isProduction ? process.stdout : (tryPrettyStream() ?? process.stdout)
+  const primaryStream = isProduction ? process.stdout : pretty(prettyOptions)
   const fileStream = pino.destination({
     dest: testLogFile,
     mkdir: true,
