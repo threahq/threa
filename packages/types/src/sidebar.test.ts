@@ -3,6 +3,7 @@ import {
   normalizeSidebarConfig,
   SIDEBAR_CONFIG_VERSION,
   QUICK_LINKS_SECTION_ID,
+  MAX_CUSTOM_SECTION_STREAM_IDS,
   type RawSidebarConfig,
   type SidebarSection,
 } from "./sidebar"
@@ -76,5 +77,90 @@ describe("normalizeSidebarConfig section sanitization", () => {
     const result = normalizeSidebarConfig(config)
 
     expect(result.sections.map((s) => s.spec.kind)).toEqual(["quicklinks", "smart"])
+  })
+
+  test("drops a custom section with a blank name but keeps a valid one", () => {
+    const config: RawSidebarConfig = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [
+        { id: "custom:blank", spec: { kind: "custom", sectionId: "blank", name: "   ", streamIds: [] } },
+        { id: "custom:work", spec: { kind: "custom", sectionId: "work", name: "Work", streamIds: ["s1"] } },
+      ],
+      quickLinks: [],
+    }
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections.map((s) => s.id)).toEqual(["custom:work"])
+  })
+
+  test("sanitizes custom-section streamIds and enforces single membership across sections", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [
+        // Non-string ids and an in-section duplicate are stripped.
+        { id: "custom:a", spec: { kind: "custom", sectionId: "a", name: "A", streamIds: ["s1", "s1", 7, "s2"] } },
+        // s2 already lives in A, so the first listing wins and B keeps only s3.
+        { id: "custom:b", spec: { kind: "custom", sectionId: "b", name: "B", streamIds: ["s2", "s3"] } },
+      ],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+    const byId = (id: string) => result.sections.find((s) => s.id === id)?.spec
+
+    expect(byId("custom:a")).toMatchObject({ streamIds: ["s1", "s2"] })
+    expect(byId("custom:b")).toMatchObject({ streamIds: ["s3"] })
+  })
+
+  test("coerces a custom section's missing/non-array streamIds to an empty list", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "custom:a", spec: { kind: "custom", sectionId: "a", name: "A" } }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+
+    expect(result.sections[0].spec).toMatchObject({ kind: "custom", streamIds: [] })
+  })
+
+  test("dedupes custom sections sharing a sectionId even when their stored ids differ", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [
+        { id: "custom:work", spec: { kind: "custom", sectionId: "work", name: "Work", streamIds: ["s1"] } },
+        // A drifted id that still points at the same sectionId — must not survive.
+        { id: "foo", spec: { kind: "custom", sectionId: "work", name: "Work dup", streamIds: ["s2"] } },
+      ],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+    const customs = result.sections.filter((s) => s.spec.kind === "custom")
+
+    // First listing wins; the drifted-id duplicate is dropped entirely.
+    expect(customs).toEqual([
+      { id: "custom:work", spec: { kind: "custom", sectionId: "work", name: "Work", streamIds: ["s1"] } },
+    ])
+  })
+
+  test("caps a custom section's streamIds at the write-time bound on read", () => {
+    const streamIds = Array.from({ length: MAX_CUSTOM_SECTION_STREAM_IDS + 25 }, (_, i) => `s${i}`)
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart",
+      sections: [{ id: "custom:a", spec: { kind: "custom", sectionId: "a", name: "A", streamIds } }],
+      quickLinks: [],
+    } as unknown as RawSidebarConfig
+
+    const result = normalizeSidebarConfig(config)
+    const spec = result.sections[0].spec
+    if (spec.kind !== "custom") throw new Error("expected a custom section")
+    expect(spec.streamIds).toHaveLength(MAX_CUSTOM_SECTION_STREAM_IDS)
   })
 })

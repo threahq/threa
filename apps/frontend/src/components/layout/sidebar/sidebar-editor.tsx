@@ -1,5 +1,5 @@
-import { useMemo } from "react"
-import { CircleDot, Eye, EyeOff, GripVertical, RotateCcw, X } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { CircleDot, Eye, EyeOff, FolderInput, GripVertical, Plus, RotateCcw, X } from "lucide-react"
 import {
   DndContext,
   KeyboardSensor,
@@ -22,6 +22,7 @@ import {
   SIDEBAR_SECTION_KEYS,
   SIDEBAR_TYPE_SECTIONS,
   SIDEBAR_BASE_PRESETS,
+  MAX_CUSTOM_SECTION_NAME_LENGTH,
   type SidebarSection,
   type SidebarSectionSpec,
   type SidebarQuickLink,
@@ -59,6 +60,9 @@ import {
   sectionIdForSpec,
   setQuickLinkVisibility,
   moveQuickLink,
+  createCustomSection,
+  renameCustomSection,
+  newCustomSectionId,
 } from "./sidebar-config"
 
 const PRESET_LABELS: Record<SidebarBasePreset, string> = { smart: "Smart", all: "All" }
@@ -206,6 +210,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
                 quickLinks={config.quickLinks}
                 reduceMotion={reduceMotion}
                 onRemoveSection={(id) => setConfig(removeSection(config, id))}
+                onRenameCustomSection={(sectionId, name) => setConfig(renameCustomSection(config, sectionId, name))}
                 onSetQuickLinkVisibility={(key, visibility) =>
                   setConfig(setQuickLinkVisibility(config, key, visibility))
                 }
@@ -218,6 +223,10 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
                 onAdd={(spec) => setConfig(addSection(config, spec))}
               />
             </DndContext>
+
+            <CustomSectionCreator
+              onCreate={(name) => setConfig(createCustomSection(config, newCustomSectionId(), name))}
+            />
           </section>
         </ResponsiveDialogBody>
 
@@ -244,6 +253,7 @@ function SectionsList({
   quickLinks,
   reduceMotion,
   onRemoveSection,
+  onRenameCustomSection,
   onSetQuickLinkVisibility,
   onMoveQuickLink,
 }: {
@@ -253,6 +263,7 @@ function SectionsList({
   quickLinks: SidebarQuickLink[]
   reduceMotion: boolean
   onRemoveSection: (id: string) => void
+  onRenameCustomSection: (sectionId: string, name: string) => void
   onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
   onMoveQuickLink: (activeKey: string, overKey: string) => void
 }) {
@@ -284,6 +295,7 @@ function SectionsList({
               quickLinks={quickLinks}
               reduceMotion={reduceMotion}
               onRemove={() => onRemoveSection(section.id)}
+              onRenameCustomSection={onRenameCustomSection}
               onSetQuickLinkVisibility={onSetQuickLinkVisibility}
               onMoveQuickLink={onMoveQuickLink}
             />
@@ -302,6 +314,7 @@ function SortableSectionRow({
   quickLinks,
   reduceMotion,
   onRemove,
+  onRenameCustomSection,
   onSetQuickLinkVisibility,
   onMoveQuickLink,
 }: {
@@ -310,6 +323,7 @@ function SortableSectionRow({
   quickLinks: SidebarQuickLink[]
   reduceMotion: boolean
   onRemove: () => void
+  onRenameCustomSection: (sectionId: string, name: string) => void
   onSetQuickLinkVisibility: (key: SidebarQuickLink["key"], visibility: SidebarQuickLinkVisibility) => void
   onMoveQuickLink: (activeKey: string, overKey: string) => void
 }) {
@@ -331,7 +345,7 @@ function SortableSectionRow({
       >
         <DragHandle label={`Reorder ${name}`} attributes={attributes} listeners={listeners} />
         <div className="min-w-0 flex-1">
-          <SectionRowContent section={section} labelsById={labelsById} />
+          <SectionRowContent section={section} labelsById={labelsById} onRenameCustomSection={onRenameCustomSection} />
         </div>
         <button
           type="button"
@@ -518,12 +532,31 @@ function DragHandle({
   )
 }
 
-/** The visual for a section row: a tinted chip for labels, icon + name otherwise. */
-function SectionRowContent({ section, labelsById }: { section: SidebarSection; labelsById: Map<string, CachedLabel> }) {
+/** The visual for a section row: a tinted chip for labels, an editable name for
+ *  custom sections, icon + name otherwise. */
+function SectionRowContent({
+  section,
+  labelsById,
+  onRenameCustomSection,
+}: {
+  section: SidebarSection
+  labelsById: Map<string, CachedLabel>
+  onRenameCustomSection: (sectionId: string, name: string) => void
+}) {
   if (section.spec.kind === "label") {
     const label = labelsById.get(section.spec.labelId)
     if (!label) return <span className="truncate text-sm italic text-muted-foreground">Unavailable label</span>
     return <LabelChip label={label} />
+  }
+  // Custom sections own their name, so the row doubles as a rename field.
+  if (section.spec.kind === "custom") {
+    return (
+      <CustomSectionNameInput
+        sectionId={section.spec.sectionId}
+        name={section.spec.name}
+        onRename={onRenameCustomSection}
+      />
+    )
   }
   // Stream-type sections carry no emoji; mirror the live sidebar's lucide glyph
   // (BADGE_CONFIG) so a reordered "Channels"/"Scratchpads"/"DMs" row stays
@@ -546,7 +579,92 @@ function SectionRowContent({ section, labelsById }: { section: SidebarSection; l
 /** Plain-text name for a section, for the reorder/remove button aria-labels. */
 function sectionDisplayName(section: SidebarSection, labelsById: Map<string, CachedLabel>): string {
   if (section.spec.kind === "label") return labelsById.get(section.spec.labelId)?.name ?? "label section"
+  if (section.spec.kind === "custom") return section.spec.name
   return sectionPresentation(section.spec).label
+}
+
+/** Inline rename field for a custom section row. Commits on blur / Enter (not per
+ *  keystroke) so renaming doesn't fire a write — and a persisted change reflects
+ *  back. Top-level per INV-18. */
+function CustomSectionNameInput({
+  sectionId,
+  name,
+  onRename,
+}: {
+  sectionId: string
+  name: string
+  onRename: (sectionId: string, name: string) => void
+}) {
+  const [value, setValue] = useState(name)
+  // Reflect a name changed elsewhere (another device) when not mid-edit.
+  useEffect(() => setValue(name), [name])
+
+  const commit = () => {
+    const trimmed = value.trim()
+    if (!trimmed || trimmed === name) {
+      setValue(name)
+      return
+    }
+    onRename(sectionId, trimmed)
+  }
+
+  return (
+    <span className="flex items-center gap-1.5">
+      <FolderInput className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault()
+            e.currentTarget.blur()
+          }
+        }}
+        maxLength={MAX_CUSTOM_SECTION_NAME_LENGTH}
+        aria-label="Section name"
+        className="min-w-0 flex-1 rounded bg-transparent px-0.5 text-sm font-medium outline-none focus:ring-1 focus:ring-ring"
+      />
+    </span>
+  )
+}
+
+/** Inline form to create a new, empty custom section by name. Top-level per INV-18. */
+function CustomSectionCreator({ onCreate }: { onCreate: (name: string) => void }) {
+  const [name, setName] = useState("")
+
+  const submit = () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    onCreate(trimmed)
+    setName("")
+  }
+
+  return (
+    <div className="space-y-1.5 pt-3">
+      <p className="text-xs text-muted-foreground">Create a custom section:</p>
+      <div className="flex items-center gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault()
+              submit()
+            }
+          }}
+          maxLength={MAX_CUSTOM_SECTION_NAME_LENGTH}
+          placeholder="Section name…"
+          aria-label="New custom section name"
+          className="min-w-0 flex-1 rounded-md border bg-card px-2.5 py-1.5 text-base outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
+        />
+        <Button type="button" size="sm" variant="outline" onClick={submit} disabled={!name.trim()} className="shrink-0">
+          <Plus className="mr-1 h-3.5 w-3.5" />
+          Add section
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 /** The always-visible tray of addable sections. Each chip can be dragged onto the

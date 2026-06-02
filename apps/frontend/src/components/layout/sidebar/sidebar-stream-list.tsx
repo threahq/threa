@@ -1,9 +1,22 @@
-import { Fragment, type ReactNode, type RefObject } from "react"
+import { Fragment, useState, type ReactNode, type RefObject } from "react"
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core"
 import type { CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection } from "./sections"
+import { CustomSectionDropZone, customSectionIdFromDropData, streamIdFromDragData } from "./sidebar-dnd"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import type { ResolvedSection } from "./resolve-sections"
 import type { SidebarActionItem } from "./sidebar-actions"
@@ -52,6 +65,11 @@ interface SidebarStreamListProps {
    * counts/route signals the sidebar owns; `null` when the user removed the block.
    */
   quickLinksSlot?: ReactNode
+  /**
+   * File a stream into the custom section with this id (drag-and-drop drop). The
+   * parent owns the sidebar config, so the membership write lives there.
+   */
+  onFileStreamToSection: (streamId: string, customSectionId: string) => void
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -71,8 +89,30 @@ export function SidebarStreamList({
   onCreateChannel,
   scratchpadAddMenuActions,
   quickLinksSlot,
+  onFileStreamToSection,
   scrollContainerRef,
 }: SidebarStreamListProps) {
+  // Dragging streams into sections is a desktop interaction; on mobile the same
+  // is done through the action drawer's section picker, so we leave touch
+  // gestures (scroll, long-press) untouched by disabling drag entirely.
+  const isMobile = useIsMobile()
+  const streamDragEnabled = !isMobile
+  const [draggingStreamId, setDraggingStreamId] = useState<string | null>(null)
+  // Distance constraint so a click still navigates the row's link — a drag only
+  // begins once the pointer has moved past the threshold.
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }))
+
+  const handleDragStart = (event: DragStartEvent) => {
+    setDraggingStreamId(streamIdFromDragData(event.active.data.current))
+  }
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    setDraggingStreamId(null)
+    const streamId = streamIdFromDragData(event.active.data.current)
+    const customSectionId = customSectionIdFromDropData(event.over?.data.current)
+    if (streamId && customSectionId) onFileStreamToSection(streamId, customSectionId)
+  }
+
   if (hasError) {
     return <p className="px-2 py-4 text-xs text-destructive text-center">Failed to load</p>
   }
@@ -110,8 +150,16 @@ export function SidebarStreamList({
     return undefined
   }
 
+  const draggingStream = draggingStreamId ? processedStreams.find((s) => s.id === draggingStreamId) : null
+
   return (
-    <>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setDraggingStreamId(null)}
+    >
       {resolvedSections.map(({ section, items }) => {
         // The Quick Links block renders its own link list at this position. The
         // slot owns its spacing (and may render null when every link is hidden),
@@ -134,37 +182,32 @@ export function SidebarStreamList({
         const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
         const add = addWiringFor(section.spec)
 
-        if (presentation.tiered) {
-          return (
-            <TieredStreamSection
-              key={section.id}
-              sectionKey={section.id}
-              label={headerLabel}
-              titleContent={titleContent}
-              icon={presentation.icon}
-              items={items}
-              allStreams={processedStreams}
-              workspaceId={workspaceId}
-              activeStreamId={activeStreamId}
-              getUnreadCount={getUnreadCount}
-              getMentionCount={getMentionCount}
-              state={state}
-              onToggle={onToggle}
-              moreState={getSectionState(moreKey(section.id), MORE_DEFAULT)}
-              onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
-              compact={presentation.compact}
-              showPreviewOnHover={presentation.showPreviewOnHover}
-              scrollContainerRef={scrollContainerRef}
-              onAdd={add?.onAdd}
-              addTooltip={add?.addTooltip}
-              addMenuActions={add?.addMenuActions}
-            />
-          )
-        }
-
-        return (
+        const sectionEl = presentation.tiered ? (
+          <TieredStreamSection
+            sectionKey={section.id}
+            label={headerLabel}
+            titleContent={titleContent}
+            icon={presentation.icon}
+            items={items}
+            allStreams={processedStreams}
+            workspaceId={workspaceId}
+            activeStreamId={activeStreamId}
+            getUnreadCount={getUnreadCount}
+            getMentionCount={getMentionCount}
+            state={state}
+            onToggle={onToggle}
+            moreState={getSectionState(moreKey(section.id), MORE_DEFAULT)}
+            onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
+            compact={presentation.compact}
+            showPreviewOnHover={presentation.showPreviewOnHover}
+            scrollContainerRef={scrollContainerRef}
+            onAdd={add?.onAdd}
+            addTooltip={add?.addTooltip}
+            addMenuActions={add?.addMenuActions}
+            streamDragEnabled={streamDragEnabled}
+          />
+        ) : (
           <StreamSection
-            key={section.id}
             label={headerLabel}
             titleContent={titleContent}
             icon={presentation.icon}
@@ -179,9 +222,31 @@ export function SidebarStreamList({
             compact={presentation.compact}
             showPreviewOnHover={presentation.showPreviewOnHover}
             scrollContainerRef={scrollContainerRef}
+            streamDragEnabled={streamDragEnabled}
           />
         )
+
+        // Custom sections are drop targets — a stream dragged onto one is filed
+        // there. Other section kinds render as-is.
+        if (section.spec.kind === "custom") {
+          return (
+            <CustomSectionDropZone key={section.id} sectionId={section.spec.sectionId} enabled={streamDragEnabled}>
+              {sectionEl}
+            </CustomSectionDropZone>
+          )
+        }
+        return <Fragment key={section.id}>{sectionEl}</Fragment>
       })}
-    </>
+
+      {/* A small chip trails the cursor while filing a stream, so the drag reads
+          as intentional even though the source row stays put (dimmed). */}
+      <DragOverlay dropAnimation={null}>
+        {draggingStream ? (
+          <div className="pointer-events-none rounded-md border bg-card px-2.5 py-1.5 text-sm font-medium shadow-md">
+            {streamLabel(draggingStream, "sidebar")}
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   )
 }

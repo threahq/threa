@@ -1,10 +1,12 @@
 import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react"
-import type { ReactNode, RefObject } from "react"
+import { Fragment, type ReactNode, type RefObject } from "react"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { UnreadBadge } from "@/components/unread-badge"
+import { isDraftId } from "@/hooks"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
+import { DraggableStreamRow } from "./sidebar-dnd"
 import type { StreamItemData } from "./types"
 import { getActivityTime } from "./utils"
 
@@ -235,6 +237,8 @@ interface StreamSectionProps {
   addTooltip?: string
   /** Dropdown actions for the "+" button. Overrides `onAdd` when provided. */
   addMenuActions?: SidebarActionItem[] | null
+  /** When true, each stream row is a drag source for filing into a custom section (desktop). */
+  streamDragEnabled?: boolean
 }
 
 /** Simple binary collapsible section used for Important / Recent / Pinned. */
@@ -257,10 +261,39 @@ export function StreamSection({
   onAdd,
   addTooltip,
   addMenuActions,
+  streamDragEnabled = false,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
   const mentionAggregate = sumMentions(items, getMentionCount)
+
+  const renderRow = (stream: StreamItemData) => {
+    const item = (
+      <StreamItem
+        workspaceId={workspaceId}
+        stream={stream}
+        isActive={stream.id === activeStreamId}
+        unreadCount={getUnreadCount(stream.id)}
+        mentionCount={getMentionCount(stream.id)}
+        allStreams={allStreams}
+        compact={compact}
+        showPreviewOnHover={showPreviewOnHover}
+        scrollContainerRef={scrollContainerRef}
+      />
+    )
+    // Wrap as a drag source only when dragging is on (desktop) and the row is a
+    // persisted stream — drafts (incl. virtual DMs) carry transient ids that
+    // must never be filed into config, and wrapping a disabled row would
+    // register a dead draggable for nothing.
+    const dragEnabled = streamDragEnabled && !isDraftId(stream.id)
+    return dragEnabled ? (
+      <DraggableStreamRow key={stream.id} streamId={stream.id}>
+        {item}
+      </DraggableStreamRow>
+    ) : (
+      <Fragment key={stream.id}>{item}</Fragment>
+    )
+  }
 
   return (
     <div className="mb-4">
@@ -277,24 +310,7 @@ export function StreamSection({
         addMenuActions={addMenuActions}
       />
 
-      {!isCollapsed && items.length > 0 && (
-        <div className="mt-1 flex flex-col gap-0.5">
-          {items.map((stream) => (
-            <StreamItem
-              key={stream.id}
-              workspaceId={workspaceId}
-              stream={stream}
-              isActive={stream.id === activeStreamId}
-              unreadCount={getUnreadCount(stream.id)}
-              mentionCount={getMentionCount(stream.id)}
-              allStreams={allStreams}
-              compact={compact}
-              showPreviewOnHover={showPreviewOnHover}
-              scrollContainerRef={scrollContainerRef}
-            />
-          ))}
-        </div>
-      )}
+      {!isCollapsed && items.length > 0 && <div className="mt-1 flex flex-col gap-0.5">{items.map(renderRow)}</div>}
 
       {!isCollapsed && action}
     </div>
@@ -353,6 +369,7 @@ export function TieredStreamSection({
   onAdd,
   addTooltip,
   addMenuActions,
+  streamDragEnabled = false,
 }: TieredStreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -371,20 +388,30 @@ export function TieredStreamSection({
   const isMoreOpen = moreState === "open"
   const visibleItems = isMoreOpen ? [...activeItems, ...quietItems] : [...activeItems, ...quietVisible]
 
-  const renderItem = (stream: StreamItemData) => (
-    <StreamItem
-      key={stream.id}
-      workspaceId={workspaceId}
-      stream={stream}
-      isActive={stream.id === activeStreamId}
-      unreadCount={getUnreadCount(stream.id)}
-      mentionCount={getMentionCount(stream.id)}
-      allStreams={allStreams}
-      compact={compact}
-      showPreviewOnHover={showPreviewOnHover}
-      scrollContainerRef={scrollContainerRef}
-    />
-  )
+  const renderItem = (stream: StreamItemData) => {
+    const item = (
+      <StreamItem
+        workspaceId={workspaceId}
+        stream={stream}
+        isActive={stream.id === activeStreamId}
+        unreadCount={getUnreadCount(stream.id)}
+        mentionCount={getMentionCount(stream.id)}
+        allStreams={allStreams}
+        compact={compact}
+        showPreviewOnHover={showPreviewOnHover}
+        scrollContainerRef={scrollContainerRef}
+      />
+    )
+    // Drag source only for persisted streams when dragging is on; see StreamSection.renderRow.
+    const dragEnabled = streamDragEnabled && !isDraftId(stream.id)
+    return dragEnabled ? (
+      <DraggableStreamRow key={stream.id} streamId={stream.id}>
+        {item}
+      </DraggableStreamRow>
+    ) : (
+      <Fragment key={stream.id}>{item}</Fragment>
+    )
+  }
 
   return (
     <div className="mb-4">

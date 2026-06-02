@@ -8,12 +8,23 @@ import {
   SIDEBAR_BASE_PRESETS,
   SIDEBAR_QUICK_LINKS,
   SIDEBAR_QUICK_LINK_VISIBILITIES,
+  MAX_CUSTOM_SECTION_NAME_LENGTH,
+  MAX_CUSTOM_SECTION_STREAM_IDS,
 } from "@threa/types"
 
 const sidebarSectionSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("smart"), bucket: z.enum(SIDEBAR_SECTION_KEYS) }),
   z.object({ kind: z.literal("type"), streamType: z.enum(SIDEBAR_TYPE_SECTIONS) }),
   z.object({ kind: z.literal("label"), labelId: z.string().min(1).max(64) }),
+  // Custom section: a hand-curated membership the service normalizes (sanitizes
+  // streamIds, enforces single membership) on write. Cap streamIds so the
+  // per-user config document can't grow unbounded.
+  z.object({
+    kind: z.literal("custom"),
+    sectionId: z.string().min(1).max(64),
+    name: z.string().trim().min(1).max(MAX_CUSTOM_SECTION_NAME_LENGTH),
+    streamIds: z.array(z.string().min(1).max(64)).max(MAX_CUSTOM_SECTION_STREAM_IDS).optional().default([]),
+  }),
   z.object({ kind: z.literal("quicklinks") }),
 ])
 

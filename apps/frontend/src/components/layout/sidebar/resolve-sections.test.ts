@@ -7,7 +7,7 @@ import {
   SIDEBAR_CONFIG_VERSION,
 } from "@threa/types"
 import { resolveSections, type ResolveSectionsInput } from "./resolve-sections"
-import { labelSectionId } from "./sidebar-config"
+import { customSectionId, labelSectionId } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"
 
 interface ItemOverrides {
@@ -221,5 +221,109 @@ describe("resolveSections — label sections", () => {
     const processedStreams = [makeItem({ id: "s_1", section: "recent", activity: 1 })]
     const result = resolveSections(labelFirst, makeInput({ processedStreams, streamIdsByLabel: new Map() }))
     expect(result.find((r) => r.section.id === labelSectionId("lbl_1"))?.items).toEqual([])
+  })
+})
+
+describe("resolveSections — custom sections", () => {
+  function customSpec(sectionId: string, streamIds: string[]) {
+    return { kind: "custom" as const, sectionId, name: sectionId, streamIds }
+  }
+
+  it("trumps order: a stream filed in a custom section shows only there, even when a section above would claim it", () => {
+    // Recent is ordered first and would normally claim s_new, but s_new is filed
+    // into the custom section below — so it appears only in the custom section.
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+        { id: customSectionId("sec_1"), spec: customSpec("sec_1", ["s_new"]) },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "s_old", section: "recent", activity: 1 }),
+      makeItem({ id: "s_new", section: "recent", activity: 9 }),
+    ]
+
+    const result = resolveSections(config, makeInput({ processedStreams })).map((r) => ({
+      id: r.section.id,
+      items: r.items.map((i) => i.id),
+    }))
+
+    expect(result).toEqual([
+      { id: "recent", items: ["s_old"] },
+      { id: customSectionId("sec_1"), items: ["s_new"] },
+    ])
+  })
+
+  it("withholds custom-filed streams from a label lens regardless of order", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+        { id: customSectionId("sec_1"), spec: customSpec("sec_1", ["s_lab"]) },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "s_lab", section: "recent", activity: 5 }),
+      makeItem({ id: "s_other", section: "recent", activity: 3 }),
+    ]
+    // Both streams carry the label, but s_lab is also filed into the custom section.
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["s_lab", "s_other"])]])
+
+    const result = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel })).map((r) => ({
+      id: r.section.id,
+      items: r.items.map((i) => i.id),
+    }))
+
+    expect(result).toEqual([
+      // Label lens keeps only s_other; s_lab is trumped by its custom section.
+      { id: labelSectionId("lbl_1"), items: ["s_other"] },
+      { id: customSectionId("sec_1"), items: ["s_lab"] },
+    ])
+  })
+
+  it("sorts custom members by activity and ignores ids with no matching stream", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [{ id: customSectionId("sec_1"), spec: customSpec("sec_1", ["a", "b", "ghost"]) }],
+      quickLinks: [],
+    }
+    const processedStreams = [
+      makeItem({ id: "a", section: "other", activity: 1 }),
+      makeItem({ id: "b", section: "other", activity: 9 }),
+    ]
+    const custom = resolveSections(config, makeInput({ processedStreams })).find(
+      (r) => r.section.id === customSectionId("sec_1")
+    )
+    // b (activity 9) before a (activity 1); "ghost" has no stream and is dropped.
+    expect(custom?.items.map((i) => i.id)).toEqual(["b", "a"])
+  })
+
+  it("keeps a stream in only the first custom section when two list it (single membership)", () => {
+    const config = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: customSectionId("sec_a"), spec: customSpec("sec_a", ["s_x"]) },
+        { id: customSectionId("sec_b"), spec: customSpec("sec_b", ["s_x"]) },
+      ],
+      quickLinks: [],
+    }
+    const processedStreams = [makeItem({ id: "s_x", section: "other", activity: 1 })]
+
+    const result = resolveSections(config, makeInput({ processedStreams })).map((r) => ({
+      id: r.section.id,
+      items: r.items.map((i) => i.id),
+    }))
+
+    expect(result).toEqual([
+      { id: customSectionId("sec_a"), items: ["s_x"] },
+      { id: customSectionId("sec_b"), items: [] },
+    ])
   })
 })

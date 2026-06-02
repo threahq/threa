@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef, useState, type RefObject } from "react"
-import { Archive, FileEdit, Lock, Settings, Sparkles, Tag } from "lucide-react"
+import { Archive, FileEdit, FolderPlus, Lock, Settings, Sparkles, Tag } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
+import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -54,6 +55,7 @@ export function ScratchpadItem({
   const { openStreamSettings } = useStreamSettings()
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
+  const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const hasUnread = unreadCount > 0
   const isDraft = isDraftId(streamWithPreview.id)
 
@@ -91,6 +93,12 @@ export function ScratchpadItem({
               label: "Labels…",
               icon: Tag,
               onSelect: () => setLabelPickerOpen(true),
+            } satisfies SidebarActionItem,
+            {
+              id: "add-to-section",
+              label: "Add to section…",
+              icon: FolderPlus,
+              onSelect: () => setSectionPickerOpen(true),
             } satisfies SidebarActionItem,
           ]
         : []),
@@ -196,6 +204,14 @@ export function ScratchpadItem({
           resourceId={streamWithPreview.id}
           open
           onOpenChange={setLabelPickerOpen}
+        />
+      )}
+      {sectionPickerOpen && (
+        <SectionPicker
+          workspaceId={workspaceId}
+          streamId={streamWithPreview.id}
+          open
+          onOpenChange={setSectionPickerOpen}
         />
       )}
       {isMobile && actions.length > 0 && (
