@@ -37,6 +37,7 @@ import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skelet
 import { SidebarFooter } from "./sidebar-footer"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
+import { setStreamCustomSection } from "./sidebar-config"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream } from "./utils"
 import type { StreamItemData } from "./types"
@@ -58,7 +59,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     bumpScrollVersion,
     collapseOnMobile,
   } = useSidebar()
-  const { config: sidebarConfig } = useSidebarConfig(workspaceId)
+  const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
   const location = useLocation()
@@ -364,6 +365,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     openCreateChannel()
   }
 
+  // Drag-and-drop drop: file the stream into the target custom section.
+  // setStreamCustomSection keeps membership exclusive (removed from any other).
+  const handleFileStreamToSection = (streamId: string, customSectionId: string) => {
+    setSidebarConfig(setStreamCustomSection(sidebarConfig, streamId, customSectionId))
+  }
+
   return (
     <>
       <SidebarShell
@@ -392,6 +399,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onCreateScratchpad={handleCreateScratchpad}
             onCreateChannel={handleCreateChannel}
             scratchpadAddMenuActions={scratchpadAddMenuActions}
+            onFileStreamToSection={handleFileStreamToSection}
             quickLinksSlot={
               hasQuickLinksSection ? (
                 <SidebarQuickLinks

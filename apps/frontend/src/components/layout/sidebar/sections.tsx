@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import { UnreadBadge } from "@/components/unread-badge"
 import { SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 import { StreamItem } from "./stream-item"
+import { DraggableStreamRow } from "./sidebar-dnd"
 import type { StreamItemData } from "./types"
 import { getActivityTime } from "./utils"
 
@@ -235,6 +236,8 @@ interface StreamSectionProps {
   addTooltip?: string
   /** Dropdown actions for the "+" button. Overrides `onAdd` when provided. */
   addMenuActions?: SidebarActionItem[] | null
+  /** When true, each stream row is a drag source for filing into a custom section (desktop). */
+  streamDragEnabled?: boolean
 }
 
 /** Simple binary collapsible section used for Important / Recent / Pinned. */
@@ -257,6 +260,7 @@ export function StreamSection({
   onAdd,
   addTooltip,
   addMenuActions,
+  streamDragEnabled = false,
 }: StreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -280,18 +284,19 @@ export function StreamSection({
       {!isCollapsed && items.length > 0 && (
         <div className="mt-1 flex flex-col gap-0.5">
           {items.map((stream) => (
-            <StreamItem
-              key={stream.id}
-              workspaceId={workspaceId}
-              stream={stream}
-              isActive={stream.id === activeStreamId}
-              unreadCount={getUnreadCount(stream.id)}
-              mentionCount={getMentionCount(stream.id)}
-              allStreams={allStreams}
-              compact={compact}
-              showPreviewOnHover={showPreviewOnHover}
-              scrollContainerRef={scrollContainerRef}
-            />
+            <DraggableStreamRow key={stream.id} streamId={stream.id} enabled={streamDragEnabled}>
+              <StreamItem
+                workspaceId={workspaceId}
+                stream={stream}
+                isActive={stream.id === activeStreamId}
+                unreadCount={getUnreadCount(stream.id)}
+                mentionCount={getMentionCount(stream.id)}
+                allStreams={allStreams}
+                compact={compact}
+                showPreviewOnHover={showPreviewOnHover}
+                scrollContainerRef={scrollContainerRef}
+              />
+            </DraggableStreamRow>
           ))}
         </div>
       )}
@@ -353,6 +358,7 @@ export function TieredStreamSection({
   onAdd,
   addTooltip,
   addMenuActions,
+  streamDragEnabled = false,
 }: TieredStreamSectionProps) {
   const isCollapsed = state === "collapsed"
   const unreadAggregate = sumUnread(items, getUnreadCount)
@@ -372,18 +378,19 @@ export function TieredStreamSection({
   const visibleItems = isMoreOpen ? [...activeItems, ...quietItems] : [...activeItems, ...quietVisible]
 
   const renderItem = (stream: StreamItemData) => (
-    <StreamItem
-      key={stream.id}
-      workspaceId={workspaceId}
-      stream={stream}
-      isActive={stream.id === activeStreamId}
-      unreadCount={getUnreadCount(stream.id)}
-      mentionCount={getMentionCount(stream.id)}
-      allStreams={allStreams}
-      compact={compact}
-      showPreviewOnHover={showPreviewOnHover}
-      scrollContainerRef={scrollContainerRef}
-    />
+    <DraggableStreamRow key={stream.id} streamId={stream.id} enabled={streamDragEnabled}>
+      <StreamItem
+        workspaceId={workspaceId}
+        stream={stream}
+        isActive={stream.id === activeStreamId}
+        unreadCount={getUnreadCount(stream.id)}
+        mentionCount={getMentionCount(stream.id)}
+        allStreams={allStreams}
+        compact={compact}
+        showPreviewOnHover={showPreviewOnHover}
+        scrollContainerRef={scrollContainerRef}
+      />
+    </DraggableStreamRow>
   )
 
   return (

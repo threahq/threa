@@ -159,4 +159,30 @@ describe("updateSidebarConfigSchema", () => {
     })
     expect(parsed.sections[0].spec).toEqual({ kind: "quicklinks" })
   })
+
+  it("accepts a custom section spec and defaults missing streamIds to an empty list", () => {
+    const parsed = updateSidebarConfigSchema.parse({
+      basePreset: "smart",
+      sections: [
+        { id: "custom:work", spec: { kind: "custom", sectionId: "work", name: "Work", streamIds: ["stream_1"] } },
+        // streamIds omitted — the schema defaults it.
+        { id: "custom:home", spec: { kind: "custom", sectionId: "home", name: "Home" } },
+      ],
+    })
+    expect(parsed.sections[0].spec).toEqual({
+      kind: "custom",
+      sectionId: "work",
+      name: "Work",
+      streamIds: ["stream_1"],
+    })
+    expect(parsed.sections[1].spec).toMatchObject({ kind: "custom", name: "Home", streamIds: [] })
+  })
+
+  it("rejects a custom section with a blank name", () => {
+    const result = updateSidebarConfigSchema.safeParse({
+      basePreset: "smart",
+      sections: [{ id: "custom:x", spec: { kind: "custom", sectionId: "x", name: "   ", streamIds: [] } }],
+    })
+    expect(result.success).toBe(false)
+  })
 })

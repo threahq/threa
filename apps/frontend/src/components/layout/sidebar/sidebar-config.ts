@@ -35,6 +35,19 @@ export function labelSectionId(labelId: string): string {
   return `label:${labelId}`
 }
 
+/**
+ * Section id for a custom section. Derived from the spec's own `sectionId` (a
+ * generated uuid) so it doubles as the collapse-state key and dnd sortable id.
+ */
+export function customSectionId(sectionId: string): string {
+  return `custom:${sectionId}`
+}
+
+/** Mint a fresh id for a new custom section. Config-local, not a domain entity. */
+export function newCustomSectionId(): string {
+  return crypto.randomUUID()
+}
+
 /** Whether the config already pins the given label as a sidebar section. */
 export function hasLabelSection(config: SidebarConfig, labelId: string): boolean {
   return config.sections.some((s) => s.spec.kind === "label" && s.spec.labelId === labelId)
@@ -62,6 +75,8 @@ export function sectionIdForSpec(spec: SidebarSectionSpec): string {
       return TYPE_SECTION_IDS[spec.streamType]
     case "label":
       return labelSectionId(spec.labelId)
+    case "custom":
+      return customSectionId(spec.sectionId)
     case "quicklinks":
       return QUICK_LINKS_SECTION_ID
   }
@@ -184,6 +199,71 @@ export function toggleLabelSection(config: SidebarConfig, labelId: string): Side
   return hasSection(config, spec) ? removeSection(config, labelSectionId(labelId)) : addSection(config, spec)
 }
 
+/** A custom section's spec, narrowed for callers that only handle this kind. */
+export type CustomSectionSpec = Extract<SidebarSectionSpec, { kind: "custom" }>
+
+/** The custom sections in the layout, in order. The picker/editor list these. */
+export function customSections(config: SidebarConfig): CustomSectionSpec[] {
+  return config.sections.flatMap((s) => (s.spec.kind === "custom" ? [s.spec] : []))
+}
+
+/**
+ * Append a new, empty custom section with the given name. Pure — the caller
+ * mints the id (so this stays testable) and persists the result. The name is
+ * trimmed; an all-whitespace name is rejected (returns the config unchanged).
+ */
+export function createCustomSection(config: SidebarConfig, sectionId: string, name: string): SidebarConfig {
+  const trimmed = name.trim()
+  if (!trimmed) return config
+  const spec: CustomSectionSpec = { kind: "custom", sectionId, name: trimmed, streamIds: [] }
+  return { ...config, sections: [...config.sections, { id: customSectionId(sectionId), spec }] }
+}
+
+/** Rename a custom section. Pure; no-op for an unknown id or a blank name. */
+export function renameCustomSection(config: SidebarConfig, sectionId: string, name: string): SidebarConfig {
+  const trimmed = name.trim()
+  if (!trimmed) return config
+  return {
+    ...config,
+    sections: config.sections.map((s) =>
+      s.spec.kind === "custom" && s.spec.sectionId === sectionId ? { ...s, spec: { ...s.spec, name: trimmed } } : s
+    ),
+  }
+}
+
+/** The id of the custom section a stream is filed under, or `null` if none. */
+export function getStreamCustomSectionId(config: SidebarConfig, streamId: string): string | null {
+  for (const s of config.sections) {
+    if (s.spec.kind === "custom" && s.spec.streamIds.includes(streamId)) return s.spec.sectionId
+  }
+  return null
+}
+
+/**
+ * File a stream into a single custom section (or remove it from all when
+ * `sectionId` is null). Membership is exclusive — the stream is first removed
+ * from every custom section, then appended to the target — so a stream lives in
+ * at most one custom section. Pure; the caller persists the result.
+ */
+export function setStreamCustomSection(
+  config: SidebarConfig,
+  streamId: string,
+  sectionId: string | null
+): SidebarConfig {
+  return {
+    ...config,
+    sections: config.sections.map((section) => {
+      const spec = section.spec
+      if (spec.kind !== "custom") return section
+      const without = spec.streamIds.filter((id) => id !== streamId)
+      const next = spec.sectionId === sectionId ? [...without, streamId] : without
+      // Preserve referential identity when nothing changed (avoids needless churn).
+      if (next.length === spec.streamIds.length && next.every((id, i) => id === spec.streamIds[i])) return section
+      return { ...section, spec: { ...spec, streamIds: next } }
+    }),
+  }
+}
+
 /** How a resolved section renders. Derived purely from its spec. */
 export interface SectionPresentation {
   label: string
@@ -257,10 +337,28 @@ const QUICK_LINKS_PRESENTATION: SectionPresentation = {
   defaultCollapse: "open",
 }
 
+/**
+ * Presentation for a custom section. The user named it deliberately, so it stays
+ * visible when empty — both as a reminder it exists and as a drop target. Tiered
+ * so a large hand-curated set doesn't flood the sidebar. `label` carries the
+ * user's name (the spec owns it, unlike labels whose name is resolved at render).
+ */
+function customSectionPresentation(name: string): SectionPresentation {
+  return {
+    label: name,
+    tiered: true,
+    compact: true,
+    showPreviewOnHover: true,
+    hideWhenEmpty: false,
+    defaultCollapse: "open",
+  }
+}
+
 /** Resolve how a section should render from its spec. */
 export function sectionPresentation(spec: SidebarSectionSpec): SectionPresentation {
   if (spec.kind === "type") return TYPE_PRESENTATION[spec.streamType]
   if (spec.kind === "label") return LABEL_PRESENTATION
+  if (spec.kind === "custom") return customSectionPresentation(spec.name)
   if (spec.kind === "quicklinks") return QUICK_LINKS_PRESENTATION
 
   const config = SMART_SECTIONS[spec.bucket]

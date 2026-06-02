@@ -20,6 +20,9 @@ export type SidebarSectionKey = (typeof SIDEBAR_SECTION_KEYS)[number]
 export const SIDEBAR_TYPE_SECTIONS = ["scratchpad", "channel", "dm"] as const
 export type SidebarTypeSection = (typeof SIDEBAR_TYPE_SECTIONS)[number]
 
+/** Max length of a user-supplied custom-section name (validated on write, trimmed on render). */
+export const MAX_CUSTOM_SECTION_NAME_LENGTH = 80
+
 /** What streams a section draws from. Presentation is derived from this at render time. */
 export type SidebarSectionSpec =
   | { kind: "smart"; bucket: SidebarSectionKey }
@@ -31,6 +34,17 @@ export type SidebarSectionSpec =
    * stored here (only the id, so a renamed/recolored label stays in sync).
    */
   | { kind: "label"; labelId: string }
+  /**
+   * A user-defined section: a hand-curated set of streams the viewer files here,
+   * the lightweight cousin of a label (no shared catalog, no per-stream
+   * attribution — the membership lives inline in {@link streamIds}). Unlike a
+   * label lens, a custom section is **exclusive and trumps order**: a stream
+   * pinned here shows only here, even if a smart/label/type section ordered above
+   * it would also match (see `resolveSections`). A stream belongs to at most one
+   * custom section — `normalizeSidebarConfig` enforces this, keeping a duplicated
+   * id only in the first custom section that lists it.
+   */
+  | { kind: "custom"; sectionId: string; name: string; streamIds: string[] }
   /**
    * The Quick Links block (Drafts / Saved / Files / …). A position-only marker:
    * the links themselves — their order and per-link visibility — live in
@@ -155,11 +169,37 @@ function isRenderableSectionSpec(spec: SidebarSectionSpec | undefined | null): s
       return (SIDEBAR_TYPE_SECTIONS as readonly string[]).includes(spec.streamType)
     case "label":
       return typeof spec.labelId === "string" && spec.labelId.length > 0
+    case "custom":
+      // A blank-named section would render an unlabeled, indistinguishable
+      // header; streamIds is sanitized separately (see normalizeSidebarConfig).
+      return (
+        typeof spec.sectionId === "string" &&
+        spec.sectionId.length > 0 &&
+        typeof spec.name === "string" &&
+        spec.name.trim().length > 0
+      )
     case "quicklinks":
       return true
     default:
       return false
   }
+}
+
+/**
+ * Sanitize a custom section's membership: keep only string stream ids, and drop
+ * any id already claimed by an earlier custom section so a stream lives in at
+ * most one (the write path enforces this too; this guards stray data on read).
+ * Mutates `claimed` with the ids it keeps.
+ */
+function sanitizeCustomStreamIds(streamIds: unknown, claimed: Set<string>): string[] {
+  if (!Array.isArray(streamIds)) return []
+  const kept: string[] = []
+  for (const id of streamIds) {
+    if (typeof id !== "string" || id.length === 0 || claimed.has(id)) continue
+    claimed.add(id)
+    kept.push(id)
+  }
+  return kept
 }
 
 /** Resolve a stored link's visibility, migrating the pre-v2 boolean and coercing invalid `active`. */
@@ -215,6 +255,20 @@ export function normalizeSidebarConfig(config: RawSidebarConfig): SidebarConfig 
     seenSectionIds.add(section.id)
     return true
   })
+
+  // Custom-section membership is exclusive: a stream may appear in only one
+  // custom section. Sanitize each section's streamIds and enforce single
+  // membership across them (first listing wins), so a duplicate written by a
+  // racing client can't surface the same stream in two custom sections.
+  const claimedCustomStreamIds = new Set<string>()
+  sections = sections.map((section) =>
+    section.spec.kind === "custom"
+      ? {
+          ...section,
+          spec: { ...section.spec, streamIds: sanitizeCustomStreamIds(section.spec.streamIds, claimedCustomStreamIds) },
+        }
+      : section
+  )
 
   // v1 → v2: existing users had quick links rendered above their sections, not
   // as a section. Prepend the block so it stays visible after the upgrade. Only

@@ -614,6 +614,7 @@ export {
   type SidebarSectionKey,
   SIDEBAR_TYPE_SECTIONS,
   type SidebarTypeSection,
+  MAX_CUSTOM_SECTION_NAME_LENGTH,
   type SidebarSectionSpec,
   type SidebarSection,
   SIDEBAR_BASE_PRESETS,

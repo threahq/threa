@@ -6,7 +6,7 @@ import * as workspaceStore from "@/stores/workspace-store"
 import * as contexts from "@/contexts"
 import * as dialogModule from "@/components/ui/responsive-dialog"
 import { SidebarEditorDialog } from "./sidebar-editor"
-import { moveSection, removeSection } from "./sidebar-config"
+import { createCustomSection, moveSection, removeSection, renameCustomSection } from "./sidebar-config"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -179,5 +179,32 @@ describe("SidebarEditorDialog", () => {
       ...ALL_SIDEBAR_CONFIG,
       sections: [...ALL_SIDEBAR_CONFIG.sections, { id: "important", spec: { kind: "smart", bucket: "important" } }],
     })
+  })
+
+  it("creates a custom section from the inline creator", async () => {
+    useConfig(SMART_SIDEBAR_CONFIG)
+    mount()
+
+    await userEvent.type(screen.getByRole("textbox", { name: "New custom section name" }), "Work")
+    await userEvent.click(screen.getByRole("button", { name: "Add section" }))
+
+    expect(setConfig).toHaveBeenCalledTimes(1)
+    const next = setConfig.mock.calls[0][0] as SidebarConfig
+    // Appended as an empty custom section (the id is minted at create time).
+    expect(next.sections.at(-1)?.spec).toMatchObject({ kind: "custom", name: "Work", streamIds: [] })
+    expect(next.sections.slice(0, -1)).toEqual(SMART_SIDEBAR_CONFIG.sections)
+  })
+
+  it("renames a custom section on blur", async () => {
+    const config = createCustomSection(SMART_SIDEBAR_CONFIG, "sec_1", "Work")
+    useConfig(config)
+    mount()
+
+    const input = screen.getByRole("textbox", { name: "Section name" })
+    await userEvent.clear(input)
+    await userEvent.type(input, "Personal")
+    await userEvent.tab()
+
+    expect(setConfig).toHaveBeenCalledWith(renameCustomSection(config, "sec_1", "Personal"))
   })
 })
