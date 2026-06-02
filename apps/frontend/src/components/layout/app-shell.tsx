@@ -64,16 +64,11 @@ function PullIndicator({ distance, progress, pulling, refreshing, mode }: PullIn
 /**
  * Soft, position-matched urgency glow blocks. Each block is a single blurred
  * bar sized to its stream row (expanded 150% and centered) so the color diffuses
- * out as a glow rather than a hard bar. Shared by the desktop edge strip and the
- * mobile left-edge hint. The `position`/`height` fractions are measured against
- * the sidebar in `useUrgencyTracking`, so both surfaces render the same column.
- *
- * `opacityScale` dims the whole column for surfaces that need a gentler hint.
- * On mobile the strip bleeds rightward into the content area (the sidebar is
- * off-screen), so a full-strength glow reads as aggressive; scaling it down
- * keeps it a subtle "worth a glance" cue rather than a demand for attention.
+ * out as a glow rather than a hard bar. Rendered on the desktop edge strip; the
+ * `position`/`height` fractions are measured against the sidebar in
+ * `useUrgencyTracking`.
  */
-function UrgencyGlowBlocks({ blocks, opacityScale = 1 }: { blocks: Map<string, UrgencyBlock>; opacityScale?: number }) {
+function UrgencyGlowBlocks({ blocks }: { blocks: Map<string, UrgencyBlock> }) {
   return (
     <>
       {Array.from(blocks.entries()).map(([streamId, block]) => {
@@ -90,7 +85,7 @@ function UrgencyGlowBlocks({ blocks, opacityScale = 1 }: { blocks: Map<string, U
               height: `${Math.max(expandedHeight * 100, 4)}%`,
               backgroundColor: block.color,
               filter: "blur(12px)",
-              opacity: block.opacity * opacityScale,
+              opacity: block.opacity,
             }}
           />
         )
@@ -274,20 +269,6 @@ export function AppShell({ sidebar, children }: AppShellProps) {
               onClick={!isSwiping ? handleBackdropClick : undefined}
               aria-hidden="true"
             />
-          )}
-
-          {/* Mobile urgency glow - the sidebar itself is off-screen, so this is the
-               only at-a-glance hint that there's something worth opening it for.
-               Sits below the backdrop (z-30) so it's covered once the drawer opens,
-               and bleeds rightward into content (left edge clipped at the screen edge). */}
-          {isMobile && !isOpen && (
-            <div
-              className="fixed left-0 top-0 z-20 h-full w-[6px] pointer-events-none"
-              style={{ clipPath: "inset(-50px -50px -50px 0)" }}
-              aria-hidden="true"
-            >
-              <UrgencyGlowBlocks blocks={urgencyBlocks} opacityScale={0.3} />
-            </div>
           )}
 
           {/* Sidebar wrapper - handles positioning */}
