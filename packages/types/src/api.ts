@@ -546,6 +546,15 @@ export interface EnclaveSessionAssignment {
   maxTokens?: number
   reply: { keyGeneration: number; senderId: string }
   /**
+   * Non-secret metadata about the triggering message, so the enclave can emit the
+   * same "Triggered by" CONTEXT trace step the in-process orchestration layer does
+   * (`persona-agent` → CONTEXT_RECEIVED). The step's *content* is the message body
+   * — the decrypted prompt — which the enclave seals under the SSK like any step;
+   * only this id/author/time metadata travels in the clear. Omitted → no context
+   * step (e.g. a turn with no resolvable trigger author).
+   */
+  trigger?: { messageId: string; authorName: string; authorType: AuthorType; createdAt: string }
+  /**
    * Per-stream tool-privacy policy: the tool categories the enclave may use this
    * turn. Omitted means no restriction (today's behavior). Present (even `[]`)
    * restricts the agent to exactly those categories — the enclave currently only

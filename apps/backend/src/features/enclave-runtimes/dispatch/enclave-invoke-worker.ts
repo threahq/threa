@@ -4,6 +4,7 @@ import { logger } from "../../../lib/logger"
 import { withTransaction } from "../../../db"
 import { OutboxRepository } from "../../../lib/outbox"
 import { StreamEventRepository, StreamRepository } from "../../streams"
+import { UserRepository } from "../../workspaces"
 import { UserPreferencesService } from "../../user-preferences"
 import type { EnclaveInvokeJobData, JobHandler } from "../../../lib/queue/job-queue"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
@@ -65,14 +66,17 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const trigger = await MessageRepository.findById(pool, triggerId)
     if (!trigger || !trigger.ciphertext) return // gone, or not an E2E message
 
-    const [liveEiks, wraps, surrounding, stream, preferences] = await Promise.all([
+    const [liveEiks, wraps, surrounding, stream, preferences, authors] = await Promise.all([
       EnclaveRuntimesRepository.listLive(pool, ENCLAVE_RUNTIME_STALENESS_MS),
       StreamE2eKeyWrapsRepository.listForStream(pool, workspaceId, streamId),
       MessageRepository.findSurrounding(pool, triggerId, streamId, MAX_HISTORY_MESSAGES, 0),
       StreamRepository.findById(pool, streamId),
       userPreferencesService.getPreferences(workspaceId, trigger.authorId),
+      UserRepository.findByIds(pool, workspaceId, [trigger.authorId]),
     ])
     if (!stream) return
+    // Display name for the enclave's "Triggered by" CONTEXT step (metadata only).
+    const triggerAuthorName = authors[0]?.name ?? "Unknown"
 
     // Assemble Ariadne's system prompt with the SAME shared builder the main app
     // uses (temporal grounding, response style, send_message rules, tool sections,
@@ -89,6 +93,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       liveEiks,
       wraps,
       trigger,
+      triggerAuthorName,
       priorMessages: surrounding.filter((m) => m.id !== triggerId),
       persona: {
         systemPrompt,

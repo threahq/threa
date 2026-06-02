@@ -186,6 +186,14 @@ export async function runEnclaveTurn(
     },
   })
 
+  // Lead with the CONTEXT step ("Triggered by: …") before the loop runs — the
+  // enclave's stand-in for the in-process persona-agent orchestration step. The
+  // body is the decrypted prompt, sealed by the observer; metadata is clear.
+  // Best-effort: a trace failure must never block the actual turn.
+  if (request.trigger) {
+    await traceObserver.emitContext({ ...request.trigger, content: promptText }).catch(() => {})
+  }
+
   await runtime.run()
 
   return {

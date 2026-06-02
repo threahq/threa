@@ -30,6 +30,8 @@ export interface BuildInvokeInputs {
   wraps: StreamE2eKeyWrap[]
   /** The triggering user message (its ciphertext becomes the prompt). */
   trigger: Message
+  /** Display name of the trigger's author, for the enclave's CONTEXT trace step. */
+  triggerAuthorName: string
   /** Prior messages, oldest→newest, for context. */
   priorMessages: Message[]
   persona: PersonaInvokeConfig
@@ -99,6 +101,14 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
     // web surface, today's behavior).
     ...(e2e.allowedToolCategories ? { allowedToolCategories: e2e.allowedToolCategories } : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
+    // Clear metadata for the enclave's "Triggered by" CONTEXT step; the body is
+    // the decrypted prompt, sealed enclave-side.
+    trigger: {
+      messageId: trigger.id,
+      authorName: inputs.triggerAuthorName,
+      authorType: trigger.authorType,
+      createdAt: trigger.createdAt.toISOString(),
+    },
   }
 
   return { instanceUrl: chosen.instanceUrl, keyId: chosen.keyId, assignment }

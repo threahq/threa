@@ -173,6 +173,42 @@ export class EnclaveTraceObserver implements AgentObserver {
   }
 
   /**
+   * Emit the leading CONTEXT step — the enclave's equivalent of the in-process
+   * persona-agent's CONTEXT_RECEIVED step ("Triggered by: …"). The runtime never
+   * emits this for the initial trigger (only `context:received` for mid-turn new
+   * messages), so the enclave's orchestration layer (run-turn) drives it once,
+   * before the loop. The message body is the decrypted prompt, sealed under the
+   * SSK exactly like a step; id/author/time are clear metadata. Content shape
+   * matches the in-process step so the same frontend renderer applies.
+   */
+  async emitContext(trigger: {
+    messageId: string
+    authorName: string
+    authorType: string
+    createdAt: string
+    content: string
+  }): Promise<void> {
+    const stepId = mintStepId()
+    const sealed = await this.seal(
+      JSON.stringify({
+        messages: [
+          {
+            messageId: trigger.messageId,
+            authorName: trigger.authorName,
+            authorType: trigger.authorType,
+            createdAt: trigger.createdAt,
+            content: trigger.content.slice(0, 300),
+            isTrigger: true,
+          },
+        ],
+      }),
+      stepId
+    )
+    await this.openStep({ stepId, stepType: AgentStepTypes.CONTEXT_RECEIVED, ...sealed })
+    await this.deps.sendStep({ stepId, stepType: AgentStepTypes.CONTEXT_RECEIVED, ...sealed })
+  }
+
+  /**
    * Open an in-flight step — best-effort. The `step:started` frame is live-UX
    * only (it lets an open trace dialog render the in-progress step); the durable
    * record is the *finalize* (`sendStep`), which has its own persistence fallback.

@@ -269,6 +269,35 @@ describe("EnclaveTraceObserver", () => {
     expect(await open(ssk, steps[0]!)).toBe("Paris.")
   })
 
+  it("emits a sealed CONTEXT step for the trigger (started + finalized, isTrigger)", async () => {
+    const { observer, ssk, started, steps } = makeObserver()
+
+    await observer.emitContext({
+      messageId: "msg_trigger",
+      authorName: "Kris",
+      authorType: "user",
+      createdAt: "2026-06-02T09:27:00.000Z",
+      content: "Hi 👋",
+    })
+
+    expect(started).toHaveLength(1)
+    expect(steps).toHaveLength(1)
+    expect(started[0]!.stepId).toBe(steps[0]!.stepId)
+    expect(steps[0]!.stepType).toBe("context_received")
+    // The body is sealed; decrypts to the same { messages:[{…isTrigger}] } shape
+    // the in-process CONTEXT_RECEIVED step persists, so the same renderer applies.
+    const parsed = JSON.parse(await open(ssk, steps[0]!)) as {
+      messages: Array<{ messageId: string; authorName: string; content: string; isTrigger: boolean }>
+    }
+    expect(parsed.messages).toHaveLength(1)
+    expect(parsed.messages[0]).toMatchObject({
+      messageId: "msg_trigger",
+      authorName: "Kris",
+      content: "Hi 👋",
+      isTrigger: true,
+    })
+  })
+
   it("ignores non-step lifecycle events", async () => {
     const { observer, started, steps } = makeObserver()
 
