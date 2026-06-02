@@ -1,8 +1,8 @@
 /*
  * Small OpenAPI/JSON-Schema helpers for the hand-rendered API reference.
  *
- * The reference reads the spec we ship (public/openapi.json) at build time and
- * renders it with the site's own components — no embedded widget. These helpers
+ * The reference reads the canonical spec (docs/public-api/openapi.json) at build
+ * time and renders it with the site's own components — no embedded widget. These helpers
  * flatten a JSON Schema into table rows and synthesize a minimal example body,
  * which is all the reference needs. The spec has no $ref indirection, so we
  * don't resolve references here.
