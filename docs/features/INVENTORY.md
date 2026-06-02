@@ -64,7 +64,10 @@ Two rules for using it:
 | personas-are-data                                                   | Agents are data-driven personas with declarative tools, not hardcoded implementations               | (domain model)      |
 
 Note: the three domain-model rows (streams, memos, personas) live in `docs/core-concepts.md`
-today. Open question below.
+today. Decided: they migrate into `concepts/` (one doc each, normal document-feature runs,
+with core-concepts.md as the starting source but verified against code like everything
+else). Once all three have landed, core-concepts.md is reduced to a short pointer into
+this tree. See Decisions below.
 
 ## Architecture
 
@@ -95,16 +98,19 @@ today. Open question below.
 - **Minor infra** (operation-leases, observability/metrics wiring, emoji): document
   inline in whichever doc touches them, or not at all.
 
+## Decisions
+
+1. **`docs/core-concepts.md` migrates** (decided 2026-06-02). The streams, memos/GAM,
+   and personas sections each become a `concepts/` doc through normal document-feature
+   runs. Whichever run lands the last of the three also reduces core-concepts.md to a
+   short pointer into this tree, so external references keep working.
+
 ## Open questions
 
-1. **Does `docs/core-concepts.md` migrate?** Streams, memos/GAM, and personas are
-   documented there today. Either those sections move into `concepts/` (one doc each,
-   with frontmatter) and core-concepts.md becomes a pointer, or the concept rows above
-   stay links. Migrating keeps one system; linking avoids churn.
-2. **Backfill order.** Suggested: start where docs pay rent fastest. That's the surfaces
+1. **Backfill order.** Suggested: start where docs pay rent fastest. That's the surfaces
    under active change (e2e-encrypted-scratchpads, ai-companions, agent-runtime) and the
    concepts that prevent recurring bugs (optimistic-then-reconcile,
    content-canonical-form, race-safe-writes).
-3. **Granularity calls** to make at writing time: split user-settings from
+2. **Granularity calls** to make at writing time: split user-settings from
    workspace-settings or merge; whether public-api belongs in `public/` (developer
    audience) or its own bucket.
