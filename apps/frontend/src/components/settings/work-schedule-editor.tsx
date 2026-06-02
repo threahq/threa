@@ -71,10 +71,11 @@ export function WorkScheduleEditor({ value, onChange, disabled }: WorkScheduleEd
       {WEEKDAYS_MONDAY_FIRST.map((day) => {
         const shifts = getDayShifts(value, day)
         const working = shifts.length > 0
-        // Once the last shift reaches midnight there's no room to append
-        // another — appending would seed an overlapping interval.
+        // Can only append another shift when the last one has a parseable end
+        // before midnight — otherwise there's no room (or the row is invalid),
+        // and appending would seed an overlapping/reordered interval.
         const lastShiftEnd = parseHHMM(shifts[shifts.length - 1]?.end ?? "")
-        const dayFull = lastShiftEnd !== null && lastShiftEnd >= DAY_END
+        const canAppendShift = lastShiftEnd !== null && lastShiftEnd < DAY_END
         return (
           <div key={day} className="rounded-md border px-3 py-2.5">
             <div className="flex items-center justify-between">
@@ -113,11 +114,12 @@ export function WorkScheduleEditor({ value, onChange, disabled }: WorkScheduleEd
                   variant="ghost"
                   size="sm"
                   className="h-7 gap-1 px-2 text-xs"
-                  disabled={disabled || shifts.length >= 6 || dayFull}
+                  disabled={disabled || shifts.length >= 6 || !canAppendShift}
                   onClick={() => {
                     // Start the next shift where the last one ended (e.g. an
                     // afternoon block after a morning shift).
-                    setDay(day, [...shifts, makeShift(lastShiftEnd ?? 9 * 60)])
+                    if (!canAppendShift) return
+                    setDay(day, [...shifts, makeShift(lastShiftEnd)])
                   }}
                 >
                   <Plus className="h-3.5 w-3.5" />
