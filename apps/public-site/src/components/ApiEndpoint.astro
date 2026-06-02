@@ -88,9 +88,12 @@ const paramNode = (p: Parameter): SchemaNode => ({
 // Example curl. workspaceId becomes a live token; other path ids become
 // editable placeholders (e.g. {streamId} -> STREAM_ID).
 function tokenizePath(p: string): string {
-  return p
-    .replaceAll("{workspaceId}", "{{workspaceId}}")
-    .replace(/\{(\w+)\}/g, (_, k: string) => k.replace(/Id$/, "").toUpperCase() + "_ID")
+  // Single pass so we don't re-match the {{workspaceId}} we just emitted:
+  // workspaceId becomes the live playground token; other ids become editable
+  // placeholders (e.g. {streamId} -> STREAM_ID).
+  return p.replace(/\{(\w+)\}/g, (_, k: string) =>
+    k === "workspaceId" ? "{{workspaceId}}" : k.replace(/Id$/, "").toUpperCase() + "_ID",
+  )
 }
 function exampleQueryValue(p: Parameter): string {
   const s = p.schema

@@ -40,6 +40,23 @@ describe("Waitlist", () => {
     expect(res.data.ok).toBe(true)
   })
 
+  test("POST /api/waitlist accepts a valid email even when source is oversized or non-string", async () => {
+    const client = new TestClient()
+    const oversized = await client.post<{ ok: boolean }>("/api/waitlist", {
+      email: "oversized-source@example.com",
+      source: "x".repeat(200),
+    })
+    expect(oversized.status).toBe(200)
+    expect(oversized.data.ok).toBe(true)
+
+    const nonString = await client.post<{ ok: boolean }>("/api/waitlist", {
+      email: "nonstring-source@example.com",
+      source: { nested: "object" },
+    })
+    expect(nonString.status).toBe(200)
+    expect(nonString.data.ok).toBe(true)
+  })
+
   test("POST /api/waitlist rejects an invalid email", async () => {
     const client = new TestClient()
     const res = await client.post<{ error: string; code: string }>("/api/waitlist", { email: "not-an-email" })
