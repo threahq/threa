@@ -181,8 +181,9 @@ chore:
 
 - **A feature PR updates its feature doc** in the same PR. New feature → new doc;
   changed behavior → edited doc. The `create-pr` and `code-review` skills check for this.
-- **Greptile reviews the diff against the feature doc**, not a stale plan. Because the
-  doc is present-tense and accurate, design-adherence review actually means something.
+- **The automated PR reviewer (CodeRabbit) checks the diff against the feature doc**, not
+  a stale plan. Because the doc is present-tense and accurate, design-adherence review
+  actually means something.
 - **Plans become transient scratch.** Plans are still useful while _building_ — they're
   just not committed artifacts. They live as local agent state and are gitignored. The
   durable record is the feature doc.
@@ -200,6 +201,9 @@ This started as a pilot:
 - `architecture/sync-engine.md` — the subsystem that implements that principle.
 - `architecture/outbox-pattern.md` — a self-contained pattern + its one implementation.
 
-Once the shape is approved, the follow-on work is: backfill docs for the other shipped
-features, wire the Astro content collection in the public-site worktree, update the
-`create-pr` / `code-review` / `sync-plan` skills, and remove the committed plans.
+The shape is approved (PR #706). [`INVENTORY.md`](INVENTORY.md) catalogs everything left
+to document, bucket by bucket, with sweep-level one-liners and pointers; backfill works
+through it row by row, verifying each doc against the code as it's written. Remaining
+follow-on work beyond backfill: wire the Astro content collection in the public-site
+worktree, update the `create-pr` / `code-review` / `sync-plan` skills, and remove the
+committed plans.
