@@ -39,7 +39,12 @@ const INVITATION_ACCEPT_RE = /^\/api\/invitations\/[^/]+\/accept$/
 /** Public link-invite lookup + claim (handled by control-plane, unauthenticated) */
 const INVITATION_LOOKUP_RE = /^\/api\/invitations\/lookup$/
 const INVITATION_CLAIM_RE = /^\/api\/invitations\/claim$/
-/** Public waitlist signup from the marketing site (handled by control-plane, unauthenticated) */
+/**
+ * Public waitlist signup from the marketing site (handled by control-plane,
+ * unauthenticated). Proxied for POST *and* OPTIONS: the marketing site is a
+ * different origin (threa.io -> app.threa.io), so the browser sends a CORS
+ * preflight that must reach control-plane's cors() middleware to be answered.
+ */
 const WAITLIST_ROUTE_RE = /^\/api\/waitlist\/?$/
 
 /** Matches /api/workspaces/:workspaceId with optional trailing path */
@@ -136,7 +141,7 @@ export default {
           (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
           (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
           (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
-          (WAITLIST_ROUTE_RE.test(path) && method === "POST")
+          (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS"))
         ) {
           try {
             return await proxyRequest(request, env.CONTROL_PLANE_URL)
@@ -183,7 +188,7 @@ export default {
         (INVITATION_ACCEPT_RE.test(path) && method === "POST") ||
         (INVITATION_LOOKUP_RE.test(path) && method === "GET") ||
         (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
-        (WAITLIST_ROUTE_RE.test(path) && method === "POST")
+        (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS"))
       ) {
         try {
           return await proxyRequest(request, env.CONTROL_PLANE_URL)
