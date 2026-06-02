@@ -143,8 +143,10 @@ describe("normalizeSidebarConfig section sanitization", () => {
     const result = normalizeSidebarConfig(config)
     const customs = result.sections.filter((s) => s.spec.kind === "custom")
 
-    expect(customs).toHaveLength(1)
-    expect(customs[0].id).toBe("custom:work")
+    // First listing wins; the drifted-id duplicate is dropped entirely.
+    expect(customs).toEqual([
+      { id: "custom:work", spec: { kind: "custom", sectionId: "work", name: "Work", streamIds: ["s1"] } },
+    ])
   })
 
   test("caps a custom section's streamIds at the write-time bound on read", () => {
