@@ -30,6 +30,16 @@ describe("Waitlist", () => {
     expect(res.data.ok).toBe(true)
   })
 
+  test("POST /api/waitlist accepts a valid email even when source is empty", async () => {
+    const client = new TestClient()
+    const res = await client.post<{ ok: boolean }>("/api/waitlist", {
+      email: "empty-source@example.com",
+      source: "",
+    })
+    expect(res.status).toBe(200)
+    expect(res.data.ok).toBe(true)
+  })
+
   test("POST /api/waitlist rejects an invalid email", async () => {
     const client = new TestClient()
     const res = await client.post<{ error: string; code: string }>("/api/waitlist", { email: "not-an-email" })

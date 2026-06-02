@@ -7,9 +7,10 @@ const signUpSchema = z.object({
   // Trim before validating so a pasted address with stray whitespace still
   // passes; the service lowercases for the UNIQUE dedupe.
   email: z.string().trim().pipe(z.email()),
-  // Where the signup came from (e.g. "home", "about"). Optional, capped so a
-  // crafted payload can't bloat the row.
-  source: z.string().trim().min(1).max(40).optional(),
+  // Where the signup came from (e.g. "home", "about"). Optional metadata, capped
+  // so a crafted payload can't bloat the row. Never gates the signup: a bad or
+  // empty source is coerced to null rather than rejecting a valid email.
+  source: z.string().trim().max(40).optional(),
   // Honeypot: a hidden field real users never fill. Bots that auto-complete
   // every input trip it, and we silently drop the submission.
   hp: z.string().optional(),
@@ -35,7 +36,7 @@ export function createWaitlistHandlers({ waitlistService }: Dependencies) {
 
       await waitlistService.signUp({
         email: parsed.data.email,
-        source: parsed.data.source ?? null,
+        source: parsed.data.source || null,
       })
       res.json({ ok: true })
     },
