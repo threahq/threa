@@ -64,7 +64,7 @@ export class EnclaveTraceObserver implements AgentObserver {
         // AAD-bound to this step's id, reused for both the start and the finalize.
         const stepId = mintStepId()
         const sealed = await this.seal(event.content, stepId)
-        await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.THINKING, ...sealed })
+        await this.openStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed })
         await this.deps.sendStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed, durationMs: event.durationMs })
         return
       }
@@ -80,7 +80,7 @@ export class EnclaveTraceObserver implements AgentObserver {
         const stepId = mintStepId()
         this.stepIdByToolCallId.set(event.toolCallId, stepId)
         this.substepsByToolCallId.set(event.toolCallId, [])
-        await this.deps.sendStepStarted({ stepId, stepType: event.stepType })
+        await this.openStep({ stepId, stepType: event.stepType })
         return
       }
 
@@ -145,7 +145,7 @@ export class EnclaveTraceObserver implements AgentObserver {
           // Synthesize a started + finalized error step so it's still visible.
           const stepId = mintStepId()
           const sealed = await this.seal(content, stepId)
-          await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.TOOL_ERROR, ...sealed })
+          await this.openStep({ stepId, stepType: AgentStepTypes.TOOL_ERROR, ...sealed })
           await this.deps.sendStep({
             stepId,
             stepType: AgentStepTypes.TOOL_ERROR,
@@ -160,7 +160,7 @@ export class EnclaveTraceObserver implements AgentObserver {
       case "message:sent": {
         const stepId = mintStepId()
         const sealed = await this.seal(event.content, stepId)
-        await this.deps.sendStepStarted({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
+        await this.openStep({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
         await this.deps.sendStep({
           stepId,
           stepType: AgentStepTypes.MESSAGE_SENT,
@@ -170,6 +170,18 @@ export class EnclaveTraceObserver implements AgentObserver {
         return
       }
     }
+  }
+
+  /**
+   * Open an in-flight step — best-effort. The `step:started` frame is live-UX
+   * only (it lets an open trace dialog render the in-progress step); the durable
+   * record is the *finalize* (`sendStep`), which has its own persistence fallback.
+   * So a failed/unsupported start POST must NOT abort the handler and drop the
+   * finalize — swallow it. (This is why a backend missing the `/steps/started`
+   * route still records every step, just without the live in-flight frame.)
+   */
+  private async openStep(step: EnclaveSealedStepStart): Promise<void> {
+    await this.deps.sendStepStarted(step).catch(() => {})
   }
 
   /**

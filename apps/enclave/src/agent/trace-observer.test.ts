@@ -240,6 +240,35 @@ describe("EnclaveTraceObserver", () => {
     expect(await open(ssk, steps[0]!)).toBe("read_url failed: boom")
   })
 
+  it("still finalizes the step when the step:started frame fails (best-effort start)", async () => {
+    // A backend missing /steps/started (or a transient blip) makes sendStepStarted
+    // reject. That must never drop the durable finalized step.
+    const ssk = generateStreamKey()
+    const started: EnclaveSealedStepStart[] = []
+    const steps: EnclaveSealedStep[] = []
+    const observer = new EnclaveTraceObserver({
+      streamId: STREAM_ID,
+      replySsk: ssk,
+      replyKeyGeneration: GEN,
+      senderId: SENDER,
+      sendStepStarted: async () => {
+        throw new Error("session step:started failed: 404")
+      },
+      sendStep: async (step) => {
+        steps.push(step)
+      },
+      sendSubstep: async () => {},
+    })
+
+    await observer.handle({ type: "message:sent", messageId: "msg_reply", content: "Paris." })
+
+    expect(started).toHaveLength(0) // the start frame never landed…
+    expect(steps).toHaveLength(1) // …but the finalize did
+    expect(steps[0]!.stepType).toBe("message_sent")
+    expect(steps[0]!.messageId).toBe("msg_reply")
+    expect(await open(ssk, steps[0]!)).toBe("Paris.")
+  })
+
   it("ignores non-step lifecycle events", async () => {
     const { observer, started, steps } = makeObserver()
 
