@@ -17,6 +17,7 @@ import {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MIN,
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
 } from "@threa/types"
+import { workScheduleSchema } from "../../lib/schemas"
 
 const updatePreferencesSchema = z.object({
   theme: z.enum(THEME_OPTIONS).optional(),
@@ -46,6 +47,8 @@ const updatePreferencesSchema = z.object({
   // registry server-side when a session opens; this layer only bounds length.
   voiceTranscriptionModel: z.string().max(100).nullable().optional(),
   voicePolishLevel: z.enum(VOICE_POLISH_LEVEL_OPTIONS).optional(),
+  // null clears the personal override (revert to the workspace default).
+  workSchedule: workScheduleSchema.nullable().optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({

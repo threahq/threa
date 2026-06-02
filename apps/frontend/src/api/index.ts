@@ -35,6 +35,7 @@ export {
 } from "./memos"
 export { conversationsApi, type ListConversationsParams } from "./conversations"
 export { preferencesApi } from "./preferences"
+export { workspaceSettingsApi } from "./workspace-settings"
 export { sidebarConfigApi } from "./sidebar-config"
 export { aiUsageApi } from "./ai-usage"
 export { agentSessionsApi } from "./agent-sessions"

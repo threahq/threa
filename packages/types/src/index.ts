@@ -581,6 +581,33 @@ export {
   type UpdateUserPreferencesInput,
 } from "./preferences"
 
+// Work schedule (working week + working hours)
+export {
+  type Weekday,
+  WEEKDAYS,
+  WEEKDAYS_MONDAY_FIRST,
+  type ShiftInterval,
+  type WorkSchedule,
+  DEFAULT_WORK_SCHEDULE,
+  parseHHMM,
+  minutesToHHMM,
+  getDayShifts,
+  isWorkingDay,
+  workingDays,
+  startOfWorkMinutes,
+  typicalStartMinutes,
+  startOfWorkForDay,
+  firstWorkingWeekday,
+} from "./work-schedule"
+
+// Workspace settings
+export {
+  type WorkspaceSettings,
+  DEFAULT_WORKSPACE_SETTINGS,
+  type UpdateWorkspaceSettingsInput,
+  type WorkspaceSettingKey,
+} from "./workspace-settings"
+
 // Sidebar configuration
 export {
   SIDEBAR_SECTION_KEYS,

@@ -4,7 +4,12 @@ import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
-import { DEFAULT_SIDEBAR_CONFIG, type StreamMember, type WorkspaceBootstrap } from "@threa/types"
+import {
+  DEFAULT_SIDEBAR_CONFIG,
+  DEFAULT_WORKSPACE_SETTINGS,
+  type StreamMember,
+  type WorkspaceBootstrap,
+} from "@threa/types"
 import { workspaceKeys } from "./use-workspaces"
 import { useUnreadCounts } from "./use-unread-counts"
 
@@ -85,6 +90,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       blockquoteCollapseThreshold: 6,
       voiceTranscriptionModel: null,
       voicePolishLevel: "opinionated",
+      workSchedule: null,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",
@@ -92,6 +98,12 @@ function makeBootstrap(): WorkspaceBootstrap {
         highContrast: false,
       },
       keyboardShortcuts: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    },
+    workspaceSettings: {
+      ...DEFAULT_WORKSPACE_SETTINGS,
+      workspaceId: "ws_1",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
