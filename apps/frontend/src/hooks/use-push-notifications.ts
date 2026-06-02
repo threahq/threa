@@ -43,6 +43,16 @@ interface UsePushNotificationsResult {
 /** Hard cap on the subscribe round-trip so a hung fetch never strands the UI in "subscribing". */
 const SUBSCRIBE_TIMEOUT_MS = 15_000
 
+/**
+ * Minimum gap between opportunistic re-subscribes triggered by foreground/online
+ * events. The subscribe flow is idempotent, but we throttle it so rapid tab
+ * switches don't spam the backend. Recovering a browser-dropped subscription is
+ * still prompt via the `pushsubscriptionchanged` event; these triggers are the
+ * safety net that also keeps the server-side "last seen" recency fresh so an
+ * active device never ages into push expiry.
+ */
+const RESUBSCRIBE_THROTTLE_MS = 5 * 60_000
+
 class SubscribeTimeoutError extends Error {
   constructor() {
     super("Timed out while subscribing to push notifications")
@@ -215,6 +225,9 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
   // user already retried successfully) can't clobber the latest result.
   const subscribeGenRef = useRef(0)
   const currentAbortRef = useRef<AbortController | null>(null)
+  // Timestamp of the last subscribe() invocation, used to throttle the
+  // opportunistic foreground/online re-subscribes.
+  const lastSubscribeAtRef = useRef(0)
 
   // Re-sync opt-out state when workspaceId/account changes (initializer only runs on mount)
   useEffect(() => {
@@ -234,6 +247,7 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
     // racing toward a terminal state we no longer want.
     const gen = ++subscribeGenRef.current
     const isLatest = () => subscribeGenRef.current === gen
+    lastSubscribeAtRef.current = Date.now()
     currentAbortRef.current?.abort()
     const controller = new AbortController()
     currentAbortRef.current = controller
@@ -313,8 +327,33 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
     const handleSubscriptionChange = () => {
       void subscribe()
     }
+
+    // Opportunistically re-register when the app is foregrounded or comes back
+    // online. A push subscription can silently lapse while a tab sits idle or
+    // backgrounded (browser eviction, OS sleep, network loss); re-running the
+    // idempotent flow on resume recreates it and refreshes the server-side
+    // recency so an active device never ages into push expiry. Throttled so
+    // rapid tab switching doesn't hammer the backend.
+    const resubscribeThrottled = () => {
+      if (Date.now() - lastSubscribeAtRef.current < RESUBSCRIBE_THROTTLE_MS) return
+      void subscribe()
+    }
+    // visibilitychange fires on both show and hide — only act on becoming
+    // visible. `online`, by contrast, is worth acting on even while
+    // backgrounded: the re-register is a plain HTTP call that works fine in a
+    // hidden tab and keeps the subscription from aging out.
+    const handleVisible = () => {
+      if (document.visibilityState !== "visible") return
+      resubscribeThrottled()
+    }
     window.addEventListener("pushsubscriptionchanged", handleSubscriptionChange)
-    return () => window.removeEventListener("pushsubscriptionchanged", handleSubscriptionChange)
+    document.addEventListener("visibilitychange", handleVisible)
+    window.addEventListener("online", resubscribeThrottled)
+    return () => {
+      window.removeEventListener("pushsubscriptionchanged", handleSubscriptionChange)
+      document.removeEventListener("visibilitychange", handleVisible)
+      window.removeEventListener("online", resubscribeThrottled)
+    }
   }, [permission, workspaceId, subscribe, optedOut])
 
   // Unsubscribe from push notifications for this workspace.

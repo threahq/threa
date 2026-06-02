@@ -92,6 +92,28 @@ describe("Push Notifications", () => {
       expect(all).toHaveLength(1)
     })
 
+    test("re-registering an endpoint refreshes updated_at (its last-seen signal)", async () => {
+      const params = {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/last-seen",
+        p256dh: "p",
+        auth: "a",
+        deviceKey: "d",
+      }
+      const first = await PushSubscriptionRepository.insert(pool, params)
+      expect(first.updatedAt).toBeInstanceOf(Date)
+
+      // Backdate so we can prove the re-register moves it forward.
+      await pool.query(`UPDATE push_subscriptions SET updated_at = now() - interval '40 days' WHERE id = $1`, [
+        first.id,
+      ])
+
+      const second = await PushSubscriptionRepository.insert(pool, params)
+      expect(second.id).toBe(first.id)
+      expect(second.updatedAt.getTime()).toBeGreaterThan(Date.now() - 60_000)
+    })
+
     test("deleteByEndpoint removes subscription and returns true; false for non-existent", async () => {
       await PushSubscriptionRepository.insert(pool, {
         workspaceId: testWorkspaceId,
@@ -450,6 +472,19 @@ describe("Push Notifications", () => {
     async function createRecentInactiveSession(wId: string, uId: string, deviceKey = "d") {
       const s = await UserSessionRepository.upsert(pool, { workspaceId: wId, userId: uId, deviceKey })
       await pool.query(`UPDATE user_sessions SET last_active_at = now() - interval '2 minutes' WHERE id = $1`, [s.id])
+    }
+
+    /**
+     * Backdate a subscription's updated_at (its last-registration time) so the
+     * "recent re-registration" signal no longer keeps it alive. Lets tests
+     * exercise the genuine-expiry path (a subscription must be stale on BOTH
+     * the heartbeat and the re-registration signal to be expired).
+     */
+    async function backdateSubscriptionRegistration(endpoint: string, interval: string) {
+      await pool.query(`UPDATE push_subscriptions SET updated_at = now() - $2::interval WHERE endpoint = $1`, [
+        endpoint,
+        interval,
+      ])
     }
 
     function makePayload(overrides?: Partial<ActivityCreatedOutboxPayload>): ActivityCreatedOutboxPayload {
@@ -961,6 +996,9 @@ describe("Push Notifications", () => {
         auth: "a2",
         deviceKey: "device-2",
       })
+      // No socket session AND no recent re-registration → genuinely expired.
+      await backdateSubscriptionRegistration("https://push.example.com/sub/expired-1", "60 days")
+      await backdateSubscriptionRegistration("https://push.example.com/sub/expired-2", "60 days")
 
       await service.deliverPushForActivity(makePayload())
 
@@ -998,6 +1036,8 @@ describe("Push Notifications", () => {
 
       // Only device-1 has a recent session (within 30-day expiry window)
       await createRecentInactiveSession(testWorkspaceId, testUserId, "device-1")
+      // device-2 has neither a session nor a recent re-registration → expired.
+      await backdateSubscriptionRegistration("https://push.example.com/sub/expired-device", "60 days")
 
       await service.deliverPushForActivity(makePayload())
 
@@ -1070,6 +1110,9 @@ describe("Push Notifications", () => {
         auth: "a",
         deviceKey: "device-1",
       })
+      // Backdate the local re-registration so ONLY the cross-workspace session
+      // can keep this subscription alive — that's what this test asserts.
+      await backdateSubscriptionRegistration("https://push.example.com/sub/cross-ws", "60 days")
 
       // Session exists on the SAME device but in a DIFFERENT workspace.
       // Auth is global (single cookie), so this proves the device is still logged in.
@@ -1090,6 +1133,34 @@ describe("Push Notifications", () => {
       // Subscription should still exist
       const subs = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
       expect(subs).toHaveLength(1)
+    })
+
+    test("recent re-registration with no socket session anywhere → delivers normally (survives backend socket-session timeout)", async () => {
+      const service = createServiceWithLookups()
+
+      // Subscription was re-registered recently over HTTP (auto-subscribe on app
+      // open), but the device has NO user_sessions row at all — the WebSocket
+      // heartbeat never landed (flaky mobile WS, iOS PWA, proxy blocking WS).
+      // The old behaviour deleted this subscription as "expired"; it must now
+      // survive because the device clearly logged in recently.
+      await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/http-only",
+        p256dh: "p",
+        auth: "a",
+        deviceKey: "device-http-only",
+      })
+
+      await service.deliverPushForActivity(makePayload())
+
+      // Normal push (not session_expired), and the subscription is retained.
+      expect(sendSpy).toHaveBeenCalledTimes(1)
+      const payload = JSON.parse(sendSpy.mock.calls[0][1] as string)
+      expect(payload.data.action).toBeUndefined()
+      expect(payload.data.activityType).toBe(ActivityTypes.MENTION)
+      const remaining = await PushSubscriptionRepository.findByUserId(pool, testWorkspaceId, testUserId)
+      expect(remaining).toHaveLength(1)
     })
 
     test("stale subscription cleanup on 410 response", async () => {
