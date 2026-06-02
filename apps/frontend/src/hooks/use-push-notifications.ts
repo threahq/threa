@@ -225,8 +225,10 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
   // user already retried successfully) can't clobber the latest result.
   const subscribeGenRef = useRef(0)
   const currentAbortRef = useRef<AbortController | null>(null)
-  // Timestamp of the last subscribe() invocation, used to throttle the
-  // opportunistic foreground/online re-subscribes.
+  // Timestamp of the last *completed* subscribe handshake, used to throttle the
+  // opportunistic foreground/online re-subscribes. Only advanced on a finished
+  // attempt — a failed/aborted one leaves it untouched so a transient error
+  // doesn't block the next recovery retry for the throttle window.
   const lastSubscribeAtRef = useRef(0)
 
   // Re-sync opt-out state when workspaceId/account changes (initializer only runs on mount)
@@ -247,7 +249,6 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
     // racing toward a terminal state we no longer want.
     const gen = ++subscribeGenRef.current
     const isLatest = () => subscribeGenRef.current === gen
-    lastSubscribeAtRef.current = Date.now()
     currentAbortRef.current?.abort()
     const controller = new AbortController()
     currentAbortRef.current = controller
@@ -277,6 +278,11 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
       ])
 
       if (!isLatest()) return
+
+      // Handshake completed (subscribed or disabled-on-server) — start the
+      // opportunistic re-subscribe cooldown. Failed attempts skip this (the
+      // catch block doesn't set it) so recovery retries aren't throttled.
+      lastSubscribeAtRef.current = Date.now()
 
       if (result.kind === "disabled-on-server") {
         setIsSubscribed(false)

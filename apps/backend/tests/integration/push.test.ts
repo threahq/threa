@@ -111,7 +111,9 @@ describe("Push Notifications", () => {
 
       const second = await PushSubscriptionRepository.insert(pool, params)
       expect(second.id).toBe(first.id)
-      expect(second.updatedAt.getTime()).toBeGreaterThan(Date.now() - 60_000)
+      // Compare against the prior DB timestamp (both DB-clock, monotonic) rather
+      // than the app clock, which would couple the assertion to DB/app skew.
+      expect(second.updatedAt.getTime()).toBeGreaterThan(first.updatedAt.getTime())
     })
 
     test("deleteByEndpoint removes subscription and returns true; false for non-existent", async () => {
