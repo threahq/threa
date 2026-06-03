@@ -55,7 +55,7 @@ Two rules for using it:
 | memos-are-pointers                                                    | GAM stores semantic pointers to source messages, never copies                                       | (domain model)      |
 | workspace-is-the-boundary                                             | Workspace is the ownership, query, sharding, and residency boundary                                 | INV-8, INV-50       |
 | integrity-in-app-code                                                 | No FKs, prefixed ULIDs, TEXT plus code validation; relational integrity lives in the application    | INV-1, INV-2, INV-3 |
-| race-safe-writes                                                      | Write paths tolerate concurrent callers; no select-then-update, prefer set-based ops                | INV-20, INV-56      |
+| [race-safe-writes](concepts/race-safe-writes.md) ✅                   | Write paths tolerate concurrent callers; no select-then-update, prefer set-based ops                | INV-20, INV-56      |
 | events-and-projections                                                | Append-only `stream_events` is the source of truth; read projections commit in the same transaction | INV-7               |
 | [optimistic-then-reconcile](concepts/optimistic-then-reconcile.md) ✅ | Optimistic events land in IDB with temp ids; server events replace them by `clientMessageId`        | (frontend pattern)  |
 | idb-is-the-client-source-of-truth                                     | The UI reads IndexedDB via live queries; sync writes IDB, never components directly                 | (frontend pattern)  |
