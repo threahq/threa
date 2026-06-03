@@ -1,0 +1,101 @@
+---
+title: End-to-End Encrypted Scratchpads
+status: building
+audience: public
+since: 2026-05
+surfaces: [scratchpads, sidebar, stream-header, composer, timeline, ai-trace]
+public_site: false
+summary: >
+  Personal scratchpads where message content and the AI's working trace are
+  readable only on your unlocked devices — the server stores ciphertext it
+  cannot decrypt, and the Ariadne assistant runs in a separate enclave that
+  decrypts only in memory.
+related: [architecture/e2e-enclave.md]
+---
+
+## What it does
+
+An end-to-end encrypted (E2E) scratchpad is a normal scratchpad whose message
+**content** is encrypted on your device before it reaches the server. The server
+persists and relays ciphertext it cannot read; plaintext exists only inside an
+unlocked browser tab and, when you invoke the AI, briefly inside an isolated
+**enclave** process that holds no database credentials and never logs payloads.
+
+Encryption is **opt-in per scratchpad**. You create one from the sidebar's New
+menu ("Encrypted Scratchpad"). Existing plaintext streams and other users are
+completely unaffected — there is no workspace-wide switch, and the encrypted and
+unencrypted paths share the same stream UI.
+
+The key model, in plain terms:
+
+- A per-user **identity key** is generated once and protected by a passphrase
+  (Argon2id derives a key-encryption key; the wrapped private key is stored
+  server-side, useless without the passphrase).
+- Each encrypted stream has a **per-stream symmetric key (SSK)** that actually
+  seals the messages. The SSK is HPKE-wrapped to each participant's identity key,
+  so only invited identities can open it. Inviting or removing a participant
+  rolls the key generation forward; history stays sealed under the old generation.
+- The built-in **Ariadne** assistant participates as its own encrypted recipient:
+  the SSK is wrapped to a fresh **enclave instance key** at invocation time, the
+  enclave unwraps it in memory, runs the same agent loop the rest of the app uses,
+  and seals each reply (and each AI trace step) back under the SSK.
+
+## How a user experiences it
+
+- **Creating one.** Sidebar → New → "Encrypted Scratchpad". The first time, you
+  set a passphrase (the setup modal); after that, new encrypted scratchpads reuse
+  your identity key.
+- **The lock is the signal.** Encrypted scratchpads carry a lock badge in the
+  sidebar and an **"Encrypted"** pill in the stream header (where a normal
+  scratchpad shows its companion-mode toggle). Companion mode is locked off for
+  encrypted streams — the enclave path replaces it.
+- **Locked vs. unlocked.** On a fresh device or after locking, the stream is
+  _locked_: the header and composer show an inline **Unlock** affordance, and
+  message bodies render a placeholder instead of content. Unlocking is in-place —
+  a passphrase modal, no detour through Settings. "Keep me unlocked on this
+  device" persists a non-extractable key locally so you skip the passphrase on the
+  next load on that device.
+- **Talking to Ariadne.** Once unlocked, you chat exactly as in a normal
+  scratchpad. Ariadne's replies stream in, and its **AI trace** (context, tool
+  calls, research substeps) is visible in the trace modal — all of it decrypted
+  client-side from ciphertext the server only relayed. Ariadne can do web research
+  and read URLs; you can press **Stop research** to end a long research step early
+  and still get a reply from partial findings.
+
+## Boundaries
+
+This feature is `building`. What it deliberately does **not** do yet — the
+known-missing tally, kept current as gaps close:
+
+- **No full-page unlock gate.** A locked encrypted scratchpad still mounts the
+  normal timeline shell and composer, showing per-surface banners and per-message
+  placeholders rather than replacing the whole view with a single "unlock to
+  continue" page. (`apps/frontend/src/pages/stream.tsx` mounts `TimelineView`
+  unconditionally.)
+- **Stream names are plaintext.** A stream's display name is server-visible
+  metadata stored in the clear; only message content and AI trace data are
+  encrypted. Server-side AI name polish is disabled for encrypted streams, so the
+  name falls back to the first ~40 characters of the first message.
+- **Passphrase only — no PIN.** There is no 6/8-digit PIN unlock (Signal /
+  Messenger style). Unlock is passphrase + Argon2id.
+- **No biometric / WebAuthn unlock.** Device trust today is the "keep me unlocked
+  on this device" local-key path, not a fingerprint/passkey-bound key.
+- **Attachments are not encrypted yet.** Encrypt-before-upload for E2E attachments
+  is being built in a separate change; until it lands, attachments are out of
+  scope for encrypted scratchpads.
+- **No mid-generation interjection.** You can't yet send a message (or edit one to
+  reconsider) while Ariadne is mid-turn and have it fold into the running turn.
+  The only mid-turn control is the graceful "Stop research" abort.
+- **Ariadne is web-only in the enclave.** Inside an encrypted stream, Ariadne has
+  web research and URL reading; it cannot reach workspace tools (GAM memory,
+  reading other streams) because that would require plaintext egress from the
+  enclave.
+- **Content-reading server features are off by design.** Semantic search, GAM
+  memo extraction, notification/preview snippets, and dictation polish do not run
+  for encrypted streams — the server can't read the content. Client-side keyword
+  search over already-decrypted content still works.
+
+## Related
+
+- [E2E Enclave](../architecture/e2e-enclave.md) — how the enclave, dispatch, trace
+  mirroring, and deploy shape actually work.
