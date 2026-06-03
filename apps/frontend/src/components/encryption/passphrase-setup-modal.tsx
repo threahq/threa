@@ -16,6 +16,8 @@ import { cn } from "@/lib/utils"
 import { setupNewKey } from "@/stores/e2e-session-store"
 import { scorePassphrase, type PassphraseScore } from "./passphrase-strength"
 import { RevealablePassphraseInput } from "./revealable-passphrase-input"
+import { PinInput, PIN_LENGTH } from "./pin-input"
+import { isValidPin } from "@/lib/crypto/pin-device-key"
 
 interface PassphraseSetupModalProps {
   open: boolean
@@ -74,6 +76,7 @@ export function PassphraseSetupModal({
   const [confirm, setConfirm] = useState("")
   const [acknowledged, setAcknowledged] = useState(false)
   const [trustDevice, setTrustDevice] = useState(defaultTrustDevice)
+  const [pin, setPin] = useState("")
   const [submitting, setSubmitting] = useState(false)
 
   // Reset the toggle to the caller's default each time the modal opens.
@@ -83,11 +86,15 @@ export function PassphraseSetupModal({
 
   const passphraseTooShort = passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH
   const mismatched = confirm.length > 0 && passphrase !== confirm
+  // The PIN is optional, but a partial/invalid entry blocks submit so it can't
+  // be silently dropped. Only offered alongside device trust.
+  const pinInvalid = trustDevice && pin.length > 0 && !isValidPin(pin)
   const strength = useMemo(() => scorePassphrase(passphrase), [passphrase])
   const canSubmit =
     !submitting &&
     !passphraseTooShort &&
     !mismatched &&
+    !pinInvalid &&
     passphrase.length >= MIN_PASSPHRASE_LENGTH &&
     confirm.length > 0 &&
     acknowledged
@@ -97,6 +104,7 @@ export function PassphraseSetupModal({
     setConfirm("")
     setAcknowledged(false)
     setTrustDevice(defaultTrustDevice)
+    setPin("")
     setSubmitting(false)
   }
 
@@ -111,7 +119,8 @@ export function PassphraseSetupModal({
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      const result = await setupNewKey(workspaceId, userId, passphrase, { trustDevice })
+      const devicePin = trustDevice && isValidPin(pin) ? pin : undefined
+      const result = await setupNewKey(workspaceId, userId, passphrase, { trustDevice, pin: devicePin })
       if (result?.trustRequested && !result.trustPersisted) {
         toast.warning(
           "Encryption enabled, but couldn't keep you unlocked on this device. You'll need your passphrase next time."
@@ -204,6 +213,20 @@ export function PassphraseSetupModal({
                 </span>
               </Label>
             </div>
+
+            {trustDevice && (
+              <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
+                <Label className="font-normal">
+                  Quick-unlock PIN <span className="text-muted-foreground">(optional)</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    Set a {PIN_LENGTH}-digit PIN to reopen on this device without your full passphrase. The PIN never
+                    leaves this device.
+                  </span>
+                </Label>
+                <PinInput value={pin} onChange={setPin} disabled={submitting} ariaLabel="Quick-unlock PIN" />
+                {pinInvalid && <p className="text-xs text-destructive">Enter all {PIN_LENGTH} digits, or leave blank.</p>}
+              </div>
+            )}
           </ResponsiveDialogBody>
           <ResponsiveDialogFooter className="gap-2 px-6 pb-6">
             <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)} disabled={submitting}>
