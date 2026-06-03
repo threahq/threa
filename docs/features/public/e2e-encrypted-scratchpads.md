@@ -86,13 +86,14 @@ known-missing tally, kept current as gaps close:
   biometric. It needs a PRF-capable passkey/authenticator; where that's
   unavailable the passphrase (and PIN) paths still work, and the passphrase
   remains the recovery root.
-- **Attachments: sending is encrypted; the viewer half is still landing.** When you
-  attach a file in an encrypted scratchpad it's encrypted on your device before
-  upload — the server stores opaque bytes and a placeholder row, and the
-  per-attachment key + real filename/mime/size ride sealed inside the message
-  payload. Server-side processing (image captioning, PDF text, transcoding) is off
-  for these. The consume side (decrypt-and-render in the timeline) is the remaining
-  slice.
+- **Attachments are end-to-end encrypted both ways.** When you attach a file in an
+  encrypted scratchpad it's encrypted on your device before upload — the server
+  stores opaque bytes and a placeholder row, and the per-attachment key + real
+  filename/mime/size ride sealed inside the message payload. The timeline decrypts
+  on view: images preview inline and other files decrypt on click, using the
+  per-file key recovered from the message — never the server's placeholder row.
+  Server-side processing (image captioning, PDF text, transcoding) stays off for
+  these by design (the server can't read the content).
 - **Interjections are picked up after the current turn, not folded into it.** If you
   send a message while Ariadne is mid-turn, it isn't ignored: when the running turn
   finishes, a follow-up turn automatically runs for the message(s) that arrived

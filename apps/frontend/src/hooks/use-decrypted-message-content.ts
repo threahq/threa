@@ -7,6 +7,7 @@ import {
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"
+import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 
 /**
  * Render-time decryption hook for E2E `message_created` events.
@@ -31,7 +32,7 @@ export type DecryptedMessageContent =
   | { status: "plaintext"; contentMarkdown: string; contentJson: JSONContent | undefined }
   | { status: "locked" }
   | { status: "pending" }
-  | { status: "decrypted"; contentMarkdown: string; contentJson: JSONContent }
+  | { status: "decrypted"; contentMarkdown: string; contentJson: JSONContent; attachmentRefs: AttachmentRef[] }
   | { status: "failed" }
 
 interface EnvelopePayload {
@@ -106,6 +107,7 @@ export function useDecryptedMessageContent(
       status: "decrypted",
       contentMarkdown: cached.content.contentMarkdown,
       contentJson: cached.content.contentJson,
+      attachmentRefs: cached.content.attachmentRefs ?? [],
     }
   }
   if (cached?.status === "failed") return { status: "failed" }

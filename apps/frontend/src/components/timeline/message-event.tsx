@@ -38,6 +38,8 @@ import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useLongPress } from "@/hooks/use-long-press"
 import { AttachmentList } from "./attachment-list"
+import { E2eAttachmentList } from "./e2e-attachment-list"
+import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { LinkPreviewList } from "./link-preview-list"
 import { MemoPreviewList } from "./memo-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
@@ -153,6 +155,13 @@ interface MessageLayoutProps {
   hoverActions?: ReactNode
   footer?: ReactNode
   children?: ReactNode
+  /**
+   * Decrypted E2E attachment refs (key/iv/filename/mime), surfaced from the
+   * SSK-sealed payload. When present, the body renders `<E2eAttachmentList>`
+   * (fetch + decrypt on view) instead of the plaintext `<AttachmentList>` —
+   * the server-side attachment rows are opaque placeholders for E2E messages.
+   */
+  attachmentRefs?: AttachmentRef[]
   containerClassName?: string
   isHighlighted?: boolean
   isNew?: boolean
@@ -407,6 +416,7 @@ function MessageLayout({
   hoverActions,
   footer,
   children,
+  attachmentRefs,
   containerClassName,
   isHighlighted,
   isNew,
@@ -455,12 +465,20 @@ function MessageLayout({
             className="text-sm leading-relaxed"
           />
         </div>
-        {payload.attachments && payload.attachments.length > 0 && (
-          <AttachmentList
-            attachments={payload.attachments}
-            workspaceId={workspaceId}
-            deferHydration={deferSecondaryHydration}
-          />
+        {attachmentRefs && attachmentRefs.length > 0 ? (
+          // E2E attachments: the server rows are opaque placeholders (no
+          // thumbnails/metadata), so render from the decrypted refs — fetch the
+          // ciphertext and decrypt on view — instead of the normal list.
+          <E2eAttachmentList workspaceId={workspaceId} refs={attachmentRefs} />
+        ) : (
+          payload.attachments &&
+          payload.attachments.length > 0 && (
+            <AttachmentList
+              attachments={payload.attachments}
+              workspaceId={workspaceId}
+              deferHydration={deferSecondaryHydration}
+            />
+          )
         )}
         {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
         <MessageLinkPreviews
@@ -702,6 +720,8 @@ interface MessageEventInnerProps {
   groupContinuation?: boolean
   /** True when this is the first message in the stream — drives the context-bag attachment badge. */
   isFirstMessage?: boolean
+  /** Decrypted E2E attachment refs, threaded to the body's `<E2eAttachmentList>`. */
+  attachmentRefs?: AttachmentRef[]
   batch?: BatchTimelineState
 }
 
@@ -742,6 +762,7 @@ function SentMessageEvent({
   deferSecondaryHydration,
   groupContinuation,
   isFirstMessage,
+  attachmentRefs,
   batch,
 }: MessageEventInnerProps) {
   const { panelId, getPanelUrl } = usePanel()
@@ -1121,6 +1142,7 @@ function SentMessageEvent({
         streamId={streamId}
         actorName={actorName}
         isFirstMessage={isFirstMessage}
+        attachmentRefs={attachmentRefs}
         statusIndicator={
           <>
             <RelativeTime date={event.createdAt} className="text-xs text-muted-foreground" />
@@ -1689,6 +1711,7 @@ export function MessageEvent({
           deferSecondaryHydration={deferSecondaryHydration}
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}
+          attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
           batch={batch}
         />
       )
