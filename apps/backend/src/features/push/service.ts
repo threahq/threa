@@ -290,7 +290,7 @@ export class PushService {
 
     // 4. Build structured push payload — display text is formatted by the service worker (INV-46)
     const context = activity.context as
-      | { contentPreview?: string; streamName?: string; authorName?: string }
+      | { contentPreview?: string; streamName?: string; authorName?: string; emoji?: string }
       | null
       | undefined
     const pushPayload = JSON.stringify({
@@ -303,6 +303,9 @@ export class PushService {
         contentPreview: context?.contentPreview?.slice(0, 200),
         streamName: context?.streamName,
         authorName: context?.authorName,
+        // Reaction emoji — lets the SW render "Alice reacted 👍 to …" instead of
+        // formatting a reaction like a plain incoming message. Absent for non-reactions.
+        emoji: context?.emoji,
       },
     })
 

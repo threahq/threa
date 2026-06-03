@@ -554,8 +554,10 @@ interface PushData {
   contentPreview?: string
   streamName?: string
   authorName?: string
+  /** Reaction emoji — present only for "reaction" activity; drives the "X reacted 👍 to …" line. */
+  emoji?: string
   /** Rolling message history accumulated by the SW for grouped notifications. */
-  messages?: Array<{ authorName?: string; contentPreview?: string }>
+  messages?: Array<{ authorName?: string; contentPreview?: string; emoji?: string }>
   /** Backend-driven action: "clear" dismisses notifications for the stream; "session_expired" prompts re-login. */
   action?: "clear" | "session_expired"
   /** Payload kind: "test" is sent by the in-app diagnostic to verify end-to-end delivery. */
@@ -644,6 +646,7 @@ self.addEventListener("push", (event) => {
         const messages = appendMessage(previousMessages, {
           authorName: data.authorName,
           contentPreview: data.contentPreview,
+          emoji: data.emoji,
         })
 
         const title = formatTitle(messages, data.streamName, data.activityType)

@@ -703,6 +703,39 @@ describe("Push Notifications", () => {
       expect(payload.data).not.toHaveProperty("workosUserId")
     })
 
+    test("reaction payload carries the emoji so the SW can render a reaction line", async () => {
+      const service = createServiceWithLookups()
+
+      await PushSubscriptionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        userId: testUserId,
+        endpoint: "https://push.example.com/sub/reaction-emoji",
+        p256dh: "p",
+        auth: "a",
+        deviceKey: "d",
+      })
+      await createRecentInactiveSession(testWorkspaceId, testUserId)
+
+      await service.deliverPushForActivity(
+        makePayload({
+          activity: {
+            ...makePayload().activity,
+            activityType: ActivityTypes.REACTION,
+            context: { contentPreview: "ship it", streamName: "general", authorName: "Pierre", emoji: "🫡" },
+          },
+        })
+      )
+
+      expect(sendSpy).toHaveBeenCalledTimes(1)
+      const payload = JSON.parse(sendSpy.mock.calls[0][1] as string)
+      expect(payload.data).toMatchObject({
+        activityType: ActivityTypes.REACTION,
+        authorName: "Pierre",
+        contentPreview: "ship it",
+        emoji: "🫡",
+      })
+    })
+
     test("focused device with recent interaction → only pushes to that device", async () => {
       const service = createServiceWithLookups()
 
