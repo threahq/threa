@@ -279,7 +279,7 @@ function SidebarCreateButtonFace() {
 }
 
 const CREATE_BUTTON_CLASS =
-  "group/new w-full justify-start gap-2.5 px-2.5 bg-primary/[0.04] hover:bg-primary/10 hover:text-foreground data-[state=open]:bg-primary/10 data-[state=open]:text-foreground"
+  "group/new w-full justify-start gap-2.5 px-3 bg-primary/[0.04] hover:bg-primary/10 hover:text-foreground data-[state=open]:bg-primary/10 data-[state=open]:text-foreground"
 
 /**
  * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
