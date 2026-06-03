@@ -8,7 +8,7 @@ import {
   type StreamEnvelope,
 } from "@threa/crypto"
 import { generateUIK } from "../keys"
-import { sealStreamMessage, tryDecryptMessagePayload } from "../message-envelope"
+import { sealStreamMessage, sealStreamName, tryDecryptMessagePayload, tryOpenStreamName } from "../message-envelope"
 import { clearStreamKeyCache } from "../stream-key-cache"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
@@ -114,6 +114,46 @@ describe("sealStreamMessage + tryDecryptMessagePayload (v2 SSK loopback)", () =>
       { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
     )
     expect(result).toBeNull()
+  })
+})
+
+describe("sealStreamName + tryOpenStreamName (sealed stream name loopback)", () => {
+  it("round-trips a name sealed under the SSK and opened via the resolved wrap", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    await stubOwnerWrap(ssk, uik.publicKey)
+
+    const sealed = await sealStreamName({ name: "Therapy notes", streamId: STREAM, ssk, keyGeneration: 0 })
+    expect(sealed.envelope.keyGeneration).toBe(0)
+
+    const name = await tryOpenStreamName(
+      { ciphertext: sealed.ciphertext, envelope: sealed.envelope },
+      { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
+    )
+    expect(name).toBe("Therapy notes")
+  })
+
+  it("returns null when there is no sealed name", async () => {
+    const uik = await generateUIK()
+    const name = await tryOpenStreamName(
+      { ciphertext: null, envelope: null },
+      { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
+    )
+    expect(name).toBeNull()
+  })
+
+  it("returns null when the viewer holds no wrap for the name's generation", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    await stubOwnerWrap(ssk, uik.publicKey, "e2ek_someone_else")
+
+    const sealed = await sealStreamName({ name: "Secret name", streamId: STREAM, ssk, keyGeneration: 0 })
+
+    const name = await tryOpenStreamName(
+      { ciphertext: sealed.ciphertext, envelope: sealed.envelope },
+      { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
+    )
+    expect(name).toBeNull()
   })
 })
 

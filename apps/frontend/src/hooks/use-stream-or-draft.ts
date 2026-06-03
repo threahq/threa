@@ -5,7 +5,7 @@ import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { sealStreamMessage } from "@/lib/crypto/message-envelope"
+import { sealStreamMessage, sealStreamName } from "@/lib/crypto/message-envelope"
 import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
@@ -469,8 +469,35 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
   const rename = useCallback(
     async (newName: string) => {
+      // For an encrypted stream, also seal the name under the SSK so the server
+      // stores a tamper-evident copy beside the plaintext fallback. Best-effort:
+      // if the session is locked or the key can't be resolved, the rename still
+      // updates the plaintext name (the locked-state fallback) rather than failing.
+      let sealedNameFields: { sealedNameCiphertext: string; sealedNameEnvelope: unknown } | undefined
+      if (baseStream?.e2eEnabled && currentUserId) {
+        const session = getE2eSessionState(workspaceId, currentUserId)
+        if (session.status === "unlocked" && session.privateKey && session.keyId) {
+          const streamKey = await resolveCurrentStreamKey({
+            workspaceId,
+            streamId,
+            recipientKeyId: session.keyId,
+            privateKey: session.privateKey,
+          })
+          if (streamKey) {
+            const sealed = await sealStreamName({
+              name: newName,
+              streamId,
+              ssk: streamKey.key,
+              keyGeneration: streamKey.keyGeneration,
+            })
+            sealedNameFields = { sealedNameCiphertext: sealed.ciphertext, sealedNameEnvelope: sealed.envelope }
+          }
+        }
+      }
+
       const updatedStream = await streamService.update(workspaceId, streamId, {
         displayName: newName,
+        ...sealedNameFields,
       })
       await db.streams.put(toCachedStream(updatedStream, idbStream))
 
@@ -489,7 +516,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         }
       })
     },
-    [streamId, workspaceId, streamService, queryClient, idbStream]
+    [streamId, workspaceId, streamService, queryClient, idbStream, baseStream?.e2eEnabled, currentUserId]
   )
 
   const archive = useCallback(async () => {
