@@ -14,7 +14,7 @@ summary: >
   One per-workspace class that owns the whole client sync lifecycle: bootstrap the
   workspace and its streams (subscribe-then-bootstrap), keep them live over the socket,
   and re-sync everything on reconnect or page resume.
-related: [concepts/subscribe-then-bootstrap.md, architecture/outbox-pattern.md]
+related: [concepts/subscribe-then-bootstrap.md, concepts/optimistic-then-reconcile.md, architecture/outbox-pattern.md]
 ---
 
 ## The gist
