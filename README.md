@@ -6,6 +6,7 @@ into searchable notes linked back to their source messages.
 
 - Website: [threa.io](https://threa.io)
 - App: [app.threa.io](https://app.threa.io)
+- Developer docs: [threa.io/developers](https://threa.io/developers)
 
 ## Memory (GAM)
 
@@ -23,6 +24,8 @@ is configurable per stream via personas.
 
 Threa also exposes a read API over the workspace with scoped keys (memos as JSON,
 messages as markdown), so an external agent can read the same data Ariadne does.
+The [developer docs](https://threa.io/developers) cover authentication, the API
+reference, and recipes.
 
 ## Features
 
@@ -54,10 +57,11 @@ Browser ──→ Frontend (Cloudflare Pages)
 - **Frontend** (`apps/frontend`). React 19 + Vite SPA on Cloudflare Pages.
   Real-time updates over Socket.io; offline drafts in IndexedDB.
 - **Workspace Router** (`apps/workspace-router`). Cloudflare Worker that routes
-  `/api/*`: auth, workspace creation, and `/api/regions` go to the control plane,
-  and `/api/workspaces/:id/*` to the right regional backend (resolved from
-  Cloudflare KV). It answers `GET /api/workspaces/:id/config` directly with
-  `{ region, wsUrl }`, which the frontend uses to open its WebSocket.
+  `/api/*`: auth, `GET/POST /api/workspaces`, and `/api/regions` go to the
+  control plane, and `/api/workspaces/:id/*` to the right regional backend
+  (resolved from Cloudflare KV). It answers `GET /api/workspaces/:id/config`
+  directly with `{ region, wsUrl }`, which the frontend uses to open its
+  WebSocket.
 - **Control Plane** (`apps/control-plane`). Global service for authentication
   (WorkOS), workspace creation, and region assignment. Runs on Railway with its
   own PostgreSQL database.
