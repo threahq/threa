@@ -4,6 +4,8 @@ import { ActivityTypes } from "@threa/types"
 export interface NotificationMessage {
   authorName?: string
   contentPreview?: string
+  /** Set for reaction entries — the emoji the actor reacted with. Renders a distinct line. */
+  emoji?: string
 }
 
 /** Max messages to keep in a grouped notification's rolling history. */
@@ -55,9 +57,16 @@ function truncate(text: string, maxLen: number): string {
   return text.slice(0, maxLen - 1) + "…"
 }
 
-/** Format a single message line: "AuthorName: preview text…" */
+/**
+ * Format a single line. Reactions read "Alice reacted 👍 to "preview…"" so they
+ * are unmistakably a reaction, not a new message; plain messages stay "Alice: preview…".
+ */
 function formatLine(msg: NotificationMessage): string {
   const preview = msg.contentPreview ? truncate(msg.contentPreview, MAX_PREVIEW_CHARS) : ""
+  if (msg.emoji) {
+    const who = msg.authorName ?? "Someone"
+    return preview ? `${who} reacted ${msg.emoji} to "${preview}"` : `${who} reacted ${msg.emoji}`
+  }
   if (msg.authorName) {
     return preview ? `${msg.authorName}: ${preview}` : msg.authorName
   }

@@ -131,4 +131,27 @@ describe("formatBody", () => {
     // "Alice: " + 79 chars + "…" = within limit
     expect(body).toBe(`Alice: ${"a".repeat(79)}…`)
   })
+
+  it("formats a reaction with author, emoji, and preview", () => {
+    const messages: NotificationMessage[] = [{ authorName: "Pierre", contentPreview: "ship it", emoji: "🫡" }]
+    expect(formatBody(messages)).toBe('Pierre reacted 🫡 to "ship it"')
+  })
+
+  it("formats a reaction without a preview", () => {
+    const messages: NotificationMessage[] = [{ authorName: "Pierre", emoji: "🫡" }]
+    expect(formatBody(messages)).toBe("Pierre reacted 🫡")
+  })
+
+  it("formats a reaction without an author", () => {
+    const messages: NotificationMessage[] = [{ contentPreview: "ship it", emoji: "🫡" }]
+    expect(formatBody(messages)).toBe('Someone reacted 🫡 to "ship it"')
+  })
+
+  it("mixes reaction and message lines in a grouped body", () => {
+    const messages: NotificationMessage[] = [
+      { authorName: "Alice", contentPreview: "hello" },
+      { authorName: "Pierre", contentPreview: "hello", emoji: "🫡" },
+    ]
+    expect(formatBody(messages)).toBe('Alice: hello\nPierre reacted 🫡 to "hello"')
+  })
 })
