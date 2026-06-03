@@ -97,4 +97,64 @@ test.describe("E2E encrypted scratchpads", () => {
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0, { timeout: 15_000 })
     await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
   })
+
+  test("an attached image round-trips: encrypt on send, decrypt-and-render on view", async ({ page }) => {
+    await loginAndCreateWorkspace(page, "e2e-enc-attach")
+
+    // Create an encrypted scratchpad and stay unlocked (device trust is
+    // irrelevant here — we send within the same session).
+    await page.getByRole("button", { name: "New", exact: true }).click()
+    await page.getByRole("menuitem", { name: /New Encrypted Scratchpad/i }).click()
+    const setup = page.getByRole("dialog")
+    await expect(setup.getByText("Set up encrypted scratchpads")).toBeVisible({ timeout: 10_000 })
+    await setup.locator("#e2e-passphrase").fill(PASSPHRASE)
+    await setup.locator("#e2e-passphrase-confirm").fill(PASSPHRASE)
+    await setup.locator("#e2e-acknowledged").check()
+    // Interacting with the trust-device checkbox just above the button settles
+    // the dialog's scroll so the action button is reachable (same sequence the
+    // gate/rename tests use).
+    const trustDevice = setup.locator("#e2e-setup-trust-device")
+    if (await trustDevice.isChecked()) await trustDevice.uncheck()
+    await setup.getByRole("button", { name: "Enable encryption" }).click()
+    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+
+    // Paste a 1x1 PNG into the composer → it's encrypted client-side and the
+    // ciphertext uploaded; the chip confirms the upload completed.
+    const editor = page.locator("[contenteditable='true']")
+    await editor.click()
+    await page.evaluate(() => {
+      const el = document.querySelector("[contenteditable='true']")
+      if (!el) throw new Error("Editor not found")
+      // 1x1 red PNG.
+      const png = Uint8Array.from([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00,
+        0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00,
+        0x05, 0xfe, 0xd4, 0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+      ])
+      const file = new File([png], "screenshot.png", { type: "image/png" })
+      const dt = new DataTransfer()
+      dt.items.add(file)
+      el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }))
+    })
+    await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 15_000 })
+
+    // Send via the composer's Send button (deterministic — pressing Enter races
+    // with the caret position after the async paste insertion). The composer
+    // clears its attachment reference once the send fires, which we assert first
+    // so a slow decrypt-render below can't be confused with a send that never
+    // happened.
+    await page.getByRole("button", { name: "Send", exact: true }).first().click()
+    await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15_000 })
+
+    // The sender's own row must render the image from a *decrypted blob* — not
+    // the server's opaque ciphertext. The `<img>` element only mounts once the
+    // ciphertext has been fetched and decrypted into an object URL, so its mere
+    // presence (with a `blob:` src) proves the local decrypt round-trip. Cold
+    // first paint walks the full pipeline (echo → seed → S3 GET → AES-GCM open),
+    // so allow generous headroom.
+    const image = page.locator('img[alt="pasted-image-1.png"]')
+    await expect(image).toBeVisible({ timeout: 30_000 })
+    expect(await image.getAttribute("src")).toMatch(/^blob:/)
+  })
 })
