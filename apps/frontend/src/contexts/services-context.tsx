@@ -38,6 +38,7 @@ export interface StreamService {
   markAsRead: typeof streamsApi.markAsRead
   checkSlugAvailable: typeof streamsApi.checkSlugAvailable
   setNotificationLevel: typeof streamsApi.setNotificationLevel
+  pin: typeof streamsApi.pin
   addMember: typeof streamsApi.addMember
   removeMember: typeof streamsApi.removeMember
 }

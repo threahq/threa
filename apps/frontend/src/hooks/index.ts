@@ -22,6 +22,7 @@ export {
   useArchiveStream,
   useUnarchiveStream,
   useSetNotificationLevel,
+  usePinStream,
   useAddStreamMember,
   useRemoveStreamMember,
   streamKeys,

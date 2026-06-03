@@ -16,6 +16,7 @@ import * as urgencyTrackingModule from "./use-urgency-tracking"
 const collapseOnMobile = vi.fn()
 const openStreamSettings = vi.fn()
 const setMenuOpen = vi.fn()
+const pinStream = vi.fn()
 
 const mobileState = {
   isMobileValue: true,
@@ -62,6 +63,7 @@ describe("StreamItem", () => {
     collapseOnMobile.mockReset()
     openStreamSettings.mockReset()
     setMenuOpen.mockReset()
+    pinStream.mockReset()
     mobileState.isMobileValue = true
 
     vi.spyOn(contextsModule, "useSidebar").mockReturnValue({
@@ -73,6 +75,9 @@ describe("StreamItem", () => {
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(hooksModule, "isDraftId").mockImplementation(() => false)
+    vi.spyOn(hooksModule, "usePinStream").mockReturnValue({
+      mutate: pinStream,
+    } as unknown as ReturnType<typeof hooksModule.usePinStream>)
     vi.spyOn(hooksModule, "useActors").mockReturnValue({
       getActorName: () => "Ariadne",
       getActorAvatar: () => null,
@@ -158,6 +163,56 @@ describe("StreamItem", () => {
     fireEvent.click(screen.getByRole("button", { name: "Settings" }))
 
     expect(openStreamSettings).toHaveBeenCalledWith("stream_general")
+  })
+
+  it("pins an unpinned stream from the action menu", async () => {
+    const stream = createStream({ isPinned: false })
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
+      touches: [{ clientX: 16, clientY: 16 }],
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Pin" }))
+    expect(pinStream).toHaveBeenCalledWith({ streamId: "stream_general", pinned: true })
+  })
+
+  it("unpins a pinned stream from the action menu", async () => {
+    const stream = createStream({ isPinned: true })
+
+    renderWithRouter(
+      <StreamItem
+        workspaceId="workspace_1"
+        stream={stream}
+        isActive={false}
+        unreadCount={0}
+        mentionCount={0}
+        allStreams={[stream]}
+      />
+    )
+
+    fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
+      touches: [{ clientX: 16, clientY: 16 }],
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(500)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Unpin" }))
+    expect(pinStream).toHaveBeenCalledWith({ streamId: "stream_general", pinned: false })
   })
 
   it("keeps compact hover previews hidden on mobile", () => {

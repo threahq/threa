@@ -329,6 +329,62 @@ export function useSetNotificationLevel(workspaceId: string, streamId: string) {
   })
 }
 
+/**
+ * Pin / unpin a stream for the viewer. Pinning is a per-membership setting that
+ * drives the sidebar's "Pinned" section, which reads memberships straight from
+ * IDB — so this writes the new state to IDB optimistically (reverting on error)
+ * for an instant sidebar update, then reconciles with the server's authoritative
+ * `pinnedAt` and keeps the workspace bootstrap query cache in sync.
+ */
+export function usePinStream(workspaceId: string) {
+  const queryClient = useQueryClient()
+  const streamService = useStreamService()
+
+  return useMutation({
+    mutationFn: ({ streamId, pinned }: { streamId: string; pinned: boolean }) =>
+      streamService.pin(workspaceId, streamId, pinned),
+    onMutate: async ({ streamId, pinned }) => {
+      const membershipId = `${workspaceId}:${streamId}`
+      const previous = await db.streamMemberships.get(membershipId)
+      if (previous) {
+        await db.streamMemberships.put({
+          ...previous,
+          pinned,
+          pinnedAt: pinned ? (previous.pinnedAt ?? new Date().toISOString()) : null,
+          _cachedAt: Date.now(),
+        })
+      }
+      return { previous }
+    },
+    onError: (_error, _vars, context) => {
+      if (context?.previous) void db.streamMemberships.put(context.previous)
+    },
+    onSuccess: async (membership, { streamId }) => {
+      const membershipId = `${workspaceId}:${streamId}`
+      const current = await db.streamMemberships.get(membershipId)
+      if (current) {
+        await db.streamMemberships.put({
+          ...current,
+          ...membership,
+          id: membershipId,
+          workspaceId,
+          _cachedAt: Date.now(),
+        })
+      }
+
+      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+        if (!old) return old
+        return {
+          ...old,
+          streamMemberships: old.streamMemberships.map((sm) =>
+            sm.streamId === streamId ? { ...sm, pinned: membership.pinned, pinnedAt: membership.pinnedAt } : sm
+          ),
+        }
+      })
+    },
+  })
+}
+
 export function useAddStreamMember(workspaceId: string, streamId: string) {
   const streamService = useStreamService()
   const queryClient = useQueryClient()

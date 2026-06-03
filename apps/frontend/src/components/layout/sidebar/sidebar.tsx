@@ -104,6 +104,14 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   // Build set of muted streams (for suppressing unread badges)
   const mutedStreamIdSet = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
+
+  // Streams the viewer pinned — drives the smart "Pinned" section. Pinned state
+  // is per-membership (not on the stream row), so derive it from memberships.
+  const pinnedStreamIdSet = useMemo(() => {
+    const ids = new Set<string>()
+    for (const m of idbStreamMemberships) if (m.pinned) ids.add(m.streamId)
+    return ids
+  }, [idbStreamMemberships])
   const dmPeerByStreamId = useMemo(() => new Map(idbDmPeers.map((peer) => [peer.streamId, peer.userId])), [idbDmPeers])
 
   // Process streams into enriched data with urgency and section
@@ -123,8 +131,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         const mentionCount = getMentionCount(stream.id)
         const activityCount = getActivityCount(stream.id)
         const isMuted = mutedStreamIdSet.has(stream.id)
+        const isPinned = pinnedStreamIdSet.has(stream.id)
         const urgency = calculateUrgency(streamWithPreview, unreadCount, mentionCount, isMuted, activityCount)
-        const section = categorizeStream(streamWithPreview, unreadCount, urgency)
+        const section = categorizeStream(streamWithPreview, unreadCount, urgency, isPinned)
         const dmPeerUserId = dmPeerByStreamId.get(stream.id) ?? dmPeerByStreamId.get(stream.rootStreamId ?? "")
 
         // DM names are viewer-specific and can be stale/null in the cached stream
@@ -141,12 +150,14 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           urgency,
           section,
           dmPeerUserId,
+          isPinned,
         }
       })
   }, [
     idbStreams,
     memberStreamIds,
     mutedStreamIdSet,
+    pinnedStreamIdSet,
     getUnreadCount,
     getMentionCount,
     getActivityCount,

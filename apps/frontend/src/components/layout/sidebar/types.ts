@@ -17,4 +17,6 @@ export interface StreamItemData extends StreamWithPreview {
   urgency: UrgencyLevel
   section: SectionKey
   dmPeerUserId?: string
+  /** Whether the viewer has pinned this stream (drives the Pinned section + action label). */
+  isPinned?: boolean
 }

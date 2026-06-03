@@ -88,6 +88,21 @@ describe("categorizeStream", () => {
     vi.useRealTimers()
   })
 
+  it("puts pinned streams in 'pinned' regardless of read state", () => {
+    expect(categorizeStream(makeStream(), 0, "quiet", true)).toBe("pinned")
+  })
+
+  it("keeps a pinned stream in 'pinned' even when it would otherwise be 'important'", () => {
+    // Pinning is sticky: an explicit pin keeps the stream in the Pinned section
+    // so the user retains one-click access, even with an unread mention. The
+    // urgency strip still flags the mention in place.
+    expect(categorizeStream(makeStream(), 3, "mentions", true)).toBe("pinned")
+  })
+
+  it("ignores pinned when the flag is not set", () => {
+    expect(categorizeStream(makeStream(), 3, "mentions", false)).toBe("important")
+  })
+
   it("puts mentioned streams in 'important'", () => {
     expect(categorizeStream(makeStream(), 3, "mentions")).toBe("important")
   })

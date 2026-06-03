@@ -152,6 +152,13 @@ export const streamsApi = {
     return res.membership
   },
 
+  async pin(workspaceId: string, streamId: string, pinned: boolean): Promise<StreamMember> {
+    const res = await api.post<{ membership: StreamMember }>(`/api/workspaces/${workspaceId}/streams/${streamId}/pin`, {
+      pinned,
+    })
+    return res.membership
+  },
+
   async join(workspaceId: string, streamId: string): Promise<StreamMember> {
     const res = await api.post<{ data: { membership: StreamMember } }>(
       `/api/workspaces/${workspaceId}/streams/${streamId}/join`

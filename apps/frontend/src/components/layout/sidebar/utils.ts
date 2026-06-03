@@ -39,10 +39,19 @@ export function calculateUrgency(
 }
 
 /** Categorize stream into smart section */
-export function categorizeStream(stream: StreamWithPreview, unreadCount: number, urgency: UrgencyLevel): SectionKey {
-  // TODO: Add pinned support when backend implements it
-  // if (stream.isPinned && unreadCount > 0) return "important"
-  // if (stream.isPinned) return "pinned"
+export function categorizeStream(
+  stream: StreamWithPreview,
+  unreadCount: number,
+  urgency: UrgencyLevel,
+  isPinned = false
+): SectionKey {
+  // Explicit pins are sticky: a pinned stream always lives in the Pinned section
+  // so the user keeps one-click access to it regardless of read state. Its
+  // urgency strip and unread badge still surface activity in place. A custom
+  // section filing still wins over this — resolveSections withholds custom-section
+  // members from every smart bucket (including Pinned) — and a labeled stream is
+  // claimed by whichever of its Pinned/label section sits higher in the order.
+  if (isPinned) return "pinned"
 
   // Important: mentions or AI activity with unread
   if (urgency === "mentions" || (urgency === "ai" && unreadCount > 0)) {

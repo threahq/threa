@@ -1,5 +1,17 @@
 import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
-import { Bell, FileEdit, FolderPlus, Hash, Lock, MessageSquareText, Settings, Tag, User } from "lucide-react"
+import {
+  Bell,
+  FileEdit,
+  FolderPlus,
+  Hash,
+  Lock,
+  MessageSquareText,
+  Pin,
+  PinOff,
+  Settings,
+  Tag,
+  User,
+} from "lucide-react"
 import { Link } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
@@ -7,7 +19,7 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { RelativeTime } from "@/components/relative-time"
 import { getThreadRootContext } from "@/components/thread/breadcrumb-helpers"
-import { isDraftId, useActors } from "@/hooks"
+import { isDraftId, useActors, usePinStream } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
@@ -203,6 +215,7 @@ export function StreamItem({
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { collapseOnMobile } = useSidebar()
+  const pinStream = usePinStream(workspaceId)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)
@@ -262,11 +275,18 @@ export function StreamItem({
     return config ?? null
   })()
 
+  const isPinned = stream.isPinned ?? false
   const actions = useMemo<SidebarActionItem[]>(
     () =>
       isVirtualDraft
         ? []
         : [
+            {
+              id: "pin",
+              label: isPinned ? "Unpin" : "Pin",
+              icon: isPinned ? PinOff : Pin,
+              onSelect: () => pinStream.mutate({ streamId: stream.id, pinned: !isPinned }),
+            },
             {
               id: "settings",
               label: "Settings",
@@ -286,7 +306,7 @@ export function StreamItem({
               onSelect: () => setSectionPickerOpen(true),
             },
           ],
-    [isVirtualDraft, openStreamSettings, stream.id]
+    [isVirtualDraft, isPinned, pinStream, openStreamSettings, stream.id]
   )
 
   let drawerPreview: SidebarActionPreview | null = null
