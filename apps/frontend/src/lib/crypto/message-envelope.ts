@@ -185,6 +185,12 @@ export interface DecryptMessagePayload {
 export interface DecryptedMessageContent {
   contentMarkdown: string
   contentJson: JSONContent
+  /**
+   * E2E attachments sealed in the payload. Optional so the many call sites that
+   * construct bare `{contentMarkdown, contentJson}` (and the v1 path) stay valid;
+   * the v2 decrypt always populates it, and readers default to `[]`.
+   */
+  attachmentRefs?: AttachmentRef[]
 }
 
 export interface DecryptMessageOpts {
@@ -242,10 +248,11 @@ async function tryOpenStreamMessage(
       ciphertext: base64ToBytes(payload.ciphertext),
     })
     // The decrypted bytes are either the bare markdown body or the versioned
-    // wrapper carrying attachmentRefs; strip the wrapper so callers always see
-    // the real markdown. (Surfacing the refs to the viewer lands in Slice B2.)
-    const { contentMarkdown } = parseSealedPayload(raw)
-    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown) }
+    // wrapper carrying attachmentRefs. Surface both: the markdown for the body,
+    // the refs (key/iv/filename/mime) so the viewer can fetch + decrypt the
+    // opaque S3 ciphertext on view.
+    const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
+    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown), attachmentRefs }
   } catch {
     return null
   }
@@ -264,7 +271,8 @@ async function tryDecryptFanoutMessage(
       privateKey: opts.privateKey,
       recipientKeyId: opts.recipientKeyId,
     })
-    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown) }
+    // The v1 fan-out path predates E2E attachments — no refs to surface.
+    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown), attachmentRefs: [] }
   } catch {
     return null
   }

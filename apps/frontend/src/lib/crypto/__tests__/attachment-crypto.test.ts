@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { base64ToBytes, bytesToBase64, openMessage, STREAM_ENVELOPE_VERSION, utf8Encode } from "@threa/crypto"
 import {
   clearAttachmentRefCache,
+  decryptAttachmentBytes,
   encryptAttachmentBytes,
   getAttachmentRef,
   rememberAttachmentRef,
@@ -40,6 +41,22 @@ describe("encryptAttachmentBytes", () => {
     const b = await encryptAttachmentBytes(utf8Encode("b"))
     expect(a.key).not.toBe(b.key)
     expect(a.iv).not.toBe(b.iv)
+  })
+})
+
+describe("decryptAttachmentBytes (the viewer inverse)", () => {
+  it("round-trips: encrypt → decrypt with the ref's key/iv recovers the bytes", async () => {
+    const plaintext = utf8Encode("the launch slipped to Q3 — keep it off Slack")
+    const { ciphertext, key, iv } = await encryptAttachmentBytes(plaintext)
+
+    const opened = await decryptAttachmentBytes({ ciphertext, key, iv })
+    expect(bytesToBase64(opened)).toBe(bytesToBase64(plaintext))
+  })
+
+  it("throws on the wrong key (AES-GCM tag check), never returns garbage", async () => {
+    const { ciphertext, iv } = await encryptAttachmentBytes(utf8Encode("secret file"))
+    const wrongKey = bytesToBase64(new Uint8Array(32).fill(9))
+    await expect(decryptAttachmentBytes({ ciphertext, key: wrongKey, iv })).rejects.toThrow()
   })
 })
 
