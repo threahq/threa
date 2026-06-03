@@ -4,15 +4,8 @@ import { Search } from "lucide-react"
 import { Badge, type BadgeProps } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { PageHeader } from "@/components/layout/page-header"
+import { formatDate } from "@/lib/format"
 import { backofficeKeys, getWaitlist, type WaitlistEntry } from "@/api/backoffice"
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  })
-}
 
 /** Known statuses get a deliberate colour; anything unexpected falls back to outline. */
 const STATUS_VARIANT: Record<string, BadgeProps["variant"]> = {

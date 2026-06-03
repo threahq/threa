@@ -12,3 +12,16 @@ export function formatDateTime(iso: string): string {
     minute: "2-digit",
   })
 }
+
+/**
+ * Date-only variant of {@link formatDateTime} for list rows and previews where
+ * the time-of-day would be noise. Same en-GB convention so dates read the same
+ * across the backoffice (INV-35).
+ */
+export function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  })
+}
