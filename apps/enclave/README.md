@@ -97,3 +97,38 @@ SELECT id, instance_id, key_id, instance_url, last_seen_at, revoked_at
 FROM enclave_runtimes
 ORDER BY registered_at DESC LIMIT 5;
 ```
+
+## Deploying (Railway)
+
+The build is wired (`railway.toml` → `Dockerfile.enclave`, `/healthz`); deploying
+is creating the service and giving it four variables. The enclave self-registers
+with the backend over `BACKEND_BASE_URL`, so no backend config change is needed —
+once it boots and heartbeats, encrypted scratchpads can serve Ariadne turns.
+
+All Railway services listen on the injected `PORT` (8080); internal URLs use
+`:8080`, not the Dockerfile's `EXPOSE 3011`.
+
+```sh
+# 1. Create the service in the existing project and point it at the repo.
+railway add --service enclave
+
+# 2. Set its variables. INTERNAL_API_KEY must MATCH the backend's — read it with
+#    `railway variables --service backend` and reuse the same value. OPENROUTER_API_KEY
+#    is your zero-retention OpenRouter key (billing-attached, so set it yourself).
+railway variables --service enclave \
+  --set "BACKEND_BASE_URL=http://backend.railway.internal:8080" \
+  --set "INTERNAL_API_KEY=<same value as backend>" \
+  --set "OPENROUTER_API_KEY=<your openrouter key>" \
+  --set "ENCLAVE_SELF_URL=http://enclave.railway.internal:8080"
+
+# 3. Deploy.
+railway up --service enclave
+```
+
+`ENCLAVE_SELF_URL` is the address the backend stores to reach this instance for
+session callbacks; the internal Railway DNS name is sufficient (the backend and
+enclave share the private network). Then confirm with the `enclave_runtimes`
+query above — a fresh row with a recent `last_seen_at` and null `revoked_at`
+means it registered and is heartbeating.
+
+Egress (above) should be pinned to the backend + `openrouter.ai` only.
