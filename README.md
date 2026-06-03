@@ -58,7 +58,7 @@ Cursor, or your own setup can read the same memory Ariadne does.
 
 Threa is a Bun monorepo. The request path for the main app:
 
-```
+```text
 Browser ──→ Frontend (Cloudflare Pages)
         ──→ Workspace Router (Cloudflare Worker) ──→ Control Plane
                                                  ──→ Regional Backend
@@ -68,8 +68,10 @@ Browser ──→ Frontend (Cloudflare Pages)
 - **Frontend** (`apps/frontend`). React 19 + Vite SPA on Cloudflare Pages.
   Real-time updates over Socket.io; offline drafts in IndexedDB.
 - **Workspace Router** (`apps/workspace-router`). Cloudflare Worker that routes
-  `/api/*` to the control plane (auth, workspace creation) or the right regional
-  backend, resolving workspace-to-region from Cloudflare KV.
+  `/api/*`: auth and workspace creation go to the control plane, and
+  `/api/workspaces/:id/*` to the right regional backend (resolved from Cloudflare
+  KV). It answers `GET /api/workspaces/:id/config` directly with
+  `{ region, wsUrl }`, which the frontend uses to open its WebSocket.
 - **Control Plane** (`apps/control-plane`). Global service for authentication
   (WorkOS), workspace creation, and region assignment. Runs on Railway with its
   own PostgreSQL database.
