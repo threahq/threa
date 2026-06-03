@@ -1,7 +1,9 @@
 import { describe, test, expect } from "bun:test"
 import { Pool } from "pg"
+import { waitlistId } from "@threa/backend-common"
 import { TestClient, loginAs, createWorkspace } from "../client"
 import { PlatformRoleRepository } from "../../src/features/backoffice"
+import { WaitlistRepository } from "../../src/features/waitlist"
 import { WorkosAuthzRepository } from "../../src/features/workos-authz"
 import { WorkspaceRegistryRepository } from "../../src/features/workspaces"
 import { CONTROL_PLANE_LISTENER_ID } from "../../src/lib/outbox-listeners"
@@ -54,6 +56,19 @@ async function seedMembership(input: {
       observedAt,
     })
     return { workosOrganizationId: ws.workos_organization_id, lastEventAt: observedAt }
+  } finally {
+    await pool.end()
+  }
+}
+
+/** Insert a single waitlist signup directly, mirroring the public signup path. */
+async function seedWaitlistEntry(email: string, source: string | null): Promise<void> {
+  const pool = new Pool({
+    connectionString:
+      process.env.TEST_DATABASE_URL || "postgresql://threa:threa@localhost:5454/threa_control_plane_test",
+  })
+  try {
+    await WaitlistRepository.insert(pool, { id: waitlistId(), email, source })
   } finally {
     await pool.end()
   }
@@ -405,6 +420,52 @@ describe("Backoffice", () => {
       } finally {
         await pool.end()
       }
+    })
+  })
+
+  describe("GET /api/backoffice/waitlist", () => {
+    test("returns 401 without session", async () => {
+      const client = new TestClient()
+      const res = await client.get("/api/backoffice/waitlist")
+      expect(res.status).toBe(401)
+    })
+
+    test("returns 403 when authenticated but not a platform admin", async () => {
+      const client = new TestClient()
+      await loginAs(client, "waitlist-nonadmin@example.com", "Waitlist Non Admin")
+
+      const res = await client.get<{ code: string }>("/api/backoffice/waitlist")
+      expect(res.status).toBe(403)
+      expect(res.data.code).toBe("NOT_PLATFORM_ADMIN")
+    })
+
+    test("returns recent signups and exact counts for a platform admin", async () => {
+      const client = new TestClient()
+      const user = await loginAs(client, "waitlist-admin@example.com", "Waitlist Admin")
+      await grantAdmin(user.id)
+
+      const seededEmail = `waitlist-seed-${Date.now()}@example.com`
+      await seedWaitlistEntry(seededEmail, "marketing-hero")
+
+      const res = await client.get<{
+        waitlist: {
+          entries: Array<{ id: string; email: string; source: string | null; status: string; createdAt: string }>
+          stats: { total: number; pending: number; invited: number }
+          truncated: boolean
+        }
+      }>("/api/backoffice/waitlist")
+
+      expect(res.status).toBe(200)
+      const seeded = res.data.waitlist.entries.find((e) => e.email === seededEmail)
+      expect(seeded).toBeTruthy()
+      expect(seeded?.source).toBe("marketing-hero")
+      // New signups default to pending and carry a round-trippable ISO timestamp.
+      expect(seeded?.status).toBe("pending")
+      expect(new Date(seeded!.createdAt).toISOString()).toBe(seeded!.createdAt)
+      // Counts are computed in the DB, so they cover at least the row we seeded.
+      expect(res.data.waitlist.stats.total).toBeGreaterThanOrEqual(1)
+      expect(res.data.waitlist.stats.pending).toBeGreaterThanOrEqual(1)
+      expect(typeof res.data.waitlist.truncated).toBe("boolean")
     })
   })
 

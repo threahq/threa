@@ -171,6 +171,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     backoffice.resyncWorkspaceMembers
   )
   app.get("/api/backoffice/outbox-events/status", auth, requirePlatformAdmin, backoffice.getOutboxEventsStatus)
+  app.get("/api/backoffice/waitlist", auth, requirePlatformAdmin, backoffice.listWaitlist)
   app.get("/api/backoffice/workspaces/:id/invitations", auth, requirePlatformAdmin, backoffice.listWorkspaceInvitations)
   app.get(
     "/api/backoffice/workspace-owner-invitations",

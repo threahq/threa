@@ -15,7 +15,16 @@ import { WorkspaceRegistryRepository } from "../workspaces"
 import { WorkosAuthzBackfill, WorkosAuthzRepository } from "../workos-authz"
 import type { WorkosAuthzOrganizationBackfillResult } from "../workos-authz"
 import { InvitationShadowRepository } from "../invitation-shadows"
+import { WaitlistRepository } from "../waitlist"
 import { CONTROL_PLANE_LISTENER_ID } from "../../lib/outbox-listeners"
+
+/**
+ * Cap on the number of waitlist rows returned to the backoffice table. The
+ * headline counts come from a separate grouped query (exact regardless of this
+ * cap), so a large waitlist degrades to "most recent N" rather than an
+ * unbounded payload.
+ */
+const WAITLIST_LIST_LIMIT = 500
 
 /** Platform roles recognised by the backoffice gate. */
 export const PLATFORM_ROLES = ["admin"] as const
@@ -129,6 +138,34 @@ export interface WorkspaceInvitationSummary {
     email: string | null
     name: string | null
   } | null
+}
+
+/** A single marketing-site waitlist signup, shaped for the backoffice table. */
+export interface WaitlistEntry {
+  id: string
+  email: string
+  /** Where the signup came from (marketing CTA id, etc.); null when unset. */
+  source: string | null
+  status: string
+  createdAt: string
+}
+
+/** Exact signup counts, computed in the database so a list cap never skews them. */
+export interface WaitlistStats {
+  total: number
+  pending: number
+  invited: number
+}
+
+/**
+ * Backoffice waitlist view: the most recent signups plus exact headline counts.
+ * `truncated` is true when there are more signups than `entries` contains, so
+ * the UI can say "showing the most recent N".
+ */
+export interface WaitlistOverview {
+  entries: WaitlistEntry[]
+  stats: WaitlistStats
+  truncated: boolean
 }
 
 /**
@@ -452,6 +489,38 @@ export class BackofficeService {
       createdAt: row.created_at.toISOString(),
       inviter: summarizeInviter(row.inviter_workos_user_id, inviterById),
     }))
+  }
+
+  /**
+   * Backoffice waitlist view. Returns the most recent signups (capped) for the
+   * table alongside exact status counts computed in the database, so the
+   * headline numbers stay accurate even when the list is truncated. The two
+   * reads run concurrently — neither depends on the other.
+   */
+  async listWaitlist(): Promise<WaitlistOverview> {
+    const [rows, counts] = await Promise.all([
+      WaitlistRepository.list(this.pool, WAITLIST_LIST_LIMIT),
+      WaitlistRepository.statusCounts(this.pool),
+    ])
+
+    const countByStatus = new Map(counts.map((c) => [c.status, c.count]))
+    const total = counts.reduce((sum, c) => sum + c.count, 0)
+
+    return {
+      entries: rows.map((row) => ({
+        id: row.id,
+        email: row.email,
+        source: row.source,
+        status: row.status,
+        createdAt: row.created_at.toISOString(),
+      })),
+      stats: {
+        total,
+        pending: countByStatus.get("pending") ?? 0,
+        invited: countByStatus.get("invited") ?? 0,
+      },
+      truncated: total > rows.length,
+    }
   }
 
   // --- private helpers -----------------------------------------------------

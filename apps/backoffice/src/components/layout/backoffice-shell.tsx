@@ -1,6 +1,6 @@
 import { type ReactNode } from "react"
 import { Link, NavLink, Outlet } from "react-router-dom"
-import { LayoutDashboard, Users, MailPlus } from "lucide-react"
+import { LayoutDashboard, Users, MailPlus, ClipboardList } from "lucide-react"
 import { ThreaLogo } from "@/components/threa-logo"
 import { useAuth } from "@/auth"
 import { cn } from "@/lib/utils"
@@ -17,6 +17,7 @@ const NAV_ITEMS: Array<{ to: string; label: string; icon: ReactNode; end?: boole
   { to: "/", label: "Overview", icon: <LayoutDashboard className="size-4" />, end: true },
   // `end` is omitted so NavLink treats `/workspaces/:id` as active too.
   { to: "/workspaces", label: "Workspaces", icon: <Users className="size-4" /> },
+  { to: "/waitlist", label: "Waitlist", icon: <ClipboardList className="size-4" /> },
   { to: "/invites/workspace-owners", label: "Invitations", icon: <MailPlus className="size-4" /> },
 ]
 
