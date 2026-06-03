@@ -29,10 +29,46 @@ a {
   backdrop-filter: blur(10px);
   border-bottom: 1px solid hsl(var(--line));
 }
+.docs-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* Hamburger: hidden on desktop (the side nav is always in flow); revealed at
+   the mobile breakpoint where the side nav becomes an off-canvas drawer. */
+.docs-menu-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-left: -6px;
+  border: 1px solid hsl(var(--line));
+  border-radius: 8px;
+  background: hsl(var(--paper));
+  color: hsl(var(--ink-soft));
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.docs-menu-toggle:hover {
+  color: hsl(var(--ink));
+  border-color: hsl(var(--muted));
+}
+/* Drawer-only footer links; the same destinations sit in the top nav on
+   desktop, so hide them there to avoid duplication. */
+.docs-side-foot {
+  display: none;
+}
+/* Scrim behind the open drawer. Sits unused (hidden) on desktop. */
+.docs-side-backdrop {
+  display: none;
+}
 .docs-nav .brand {
   display: flex;
   align-items: center;
   gap: 11px;
+  min-width: 0;
 }
 .docs-nav .brand svg {
   width: 20px;
@@ -48,10 +84,7 @@ a {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: hsl(var(--gold));
-  border: 1px solid hsl(var(--gold) / 0.4);
-  border-radius: 999px;
-  padding: 2px 8px;
-  margin-left: 2px;
+  margin-left: 4px;
 }
 .docs-nav-links {
   display: flex;
@@ -761,12 +794,8 @@ a {
 }
 .scope-chip {
   font-family: var(--font-mono);
-  font-size: 12px;
-  background: hsl(var(--gold) / 0.1);
-  border: 1px solid hsl(var(--gold) / 0.35);
+  font-size: 12.5px;
   color: hsl(var(--gold-dim));
-  border-radius: 4px;
-  padding: 1px 6px;
 }
 
 /* key-type cards */
@@ -974,14 +1003,23 @@ a {
   text-transform: uppercase;
   color: hsl(var(--muted));
 }
-.api-scope {
+/* Required scopes — plain gold-tinted mono tokens, no chip. .api-scope is a
+   <code> element, so explicitly drop the generic in-article code chrome
+   (background/border/padding) that would otherwise box it. The flex gap on
+   .api-scopes keeps multiple scopes legible as a list. */
+.docs-article .api-scopes code.api-scope {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px;
   color: hsl(var(--gold-dim));
-  background: hsl(var(--gold) / 0.1);
-  border: 1px solid hsl(var(--gold) / 0.3);
-  border-radius: 5px;
-  padding: 2px 8px;
+}
+.api-scope + .api-scope::before {
+  content: "·";
+  color: hsl(var(--muted));
+  margin-right: 7px;
 }
 .api-scope-none {
   font-size: 13px;
@@ -1095,9 +1133,76 @@ a {
   .docs-shell {
     grid-template-columns: 1fr;
   }
-  .docs-side {
+
+  /* Reveal the hamburger; the horizontal top links collapse into the drawer
+     (whose nav groups + foot cover every destination). */
+  .docs-menu-toggle {
+    display: inline-flex;
+  }
+  .docs-nav-links {
     display: none;
   }
+
+  /* Side nav becomes an off-canvas drawer that slides in below the sticky
+     top bar (which stays above it, so the hamburger keeps toggling it). */
+  .docs-side {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    bottom: 0;
+    z-index: 35;
+    width: min(82vw, 320px);
+    height: auto;
+    padding: 26px 22px 40px;
+    background: hsl(var(--paper));
+    border-right: 1px solid hsl(var(--line));
+    box-shadow: 0 0 60px -18px hsl(28 30% 22% / 0.5);
+    transform: translateX(-100%);
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  body.docs-nav-open {
+    overflow: hidden;
+  }
+  body.docs-nav-open .docs-side {
+    transform: translateX(0);
+  }
+
+  .docs-side-backdrop {
+    display: block;
+    position: fixed;
+    inset: 52px 0 0;
+    z-index: 30;
+    background: hsl(var(--ink) / 0.34);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 0.22s,
+      visibility 0.22s;
+  }
+  body.docs-nav-open .docs-side-backdrop {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .docs-side-foot {
+    display: flex;
+    flex-direction: column;
+    gap: 11px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid hsl(var(--line));
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+  }
+  .docs-side-foot a {
+    color: hsl(var(--muted));
+    text-decoration: none;
+  }
+  .docs-side-foot a:hover {
+    color: hsl(var(--ink));
+  }
+
   .pg-fields {
     grid-template-columns: 1fr;
   }

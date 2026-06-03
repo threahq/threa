@@ -151,6 +151,7 @@ body {
   border-radius: 2px;
   border: none;
   cursor: pointer;
+  white-space: nowrap;
 }
 .cta::after {
   content: "→";
@@ -360,15 +361,12 @@ body {
   border-radius: 4px;
   font-weight: 500;
 }
+/* Channel reference (e.g. #api-v3) — plain gold-tinted mono text, no chip.
+   It reads as a channel handle inline rather than a boxed pill. */
 .ref-pill {
-  display: inline-block;
-  background: hsl(var(--paper-warm));
-  border: 1px solid hsl(var(--line));
-  color: hsl(var(--ink-soft));
-  padding: 0 8px;
-  border-radius: 4px;
+  color: hsl(var(--gold-dim));
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: 0.92em;
 }
 
 /* ---------- COMPOSER ----------
@@ -1559,11 +1557,18 @@ body {
 @media (max-width: 880px) {
   .memory-flow {
     grid-template-columns: 1fr;
-    gap: 36px;
+    gap: 44px;
   }
   .memory-flow::before,
   .memory-flow::after {
     display: none;
+  }
+  /* Stacked columns: the connector points DOWN into the next step, centered
+     in the gap above it, instead of sideways into a column that isn't there. */
+  .memory-col + .memory-col::before {
+    left: 50%;
+    top: -32px;
+    transform: translateX(-50%) rotate(90deg);
   }
 }
 
@@ -2030,5 +2035,81 @@ body {
   .missing-grid {
     grid-template-columns: 1fr;
     gap: 20px;
+  }
+}
+
+/* ---------- HERO / NAV / CTA / FOOTER RESPONSIVE ----------
+   The hero and waitlist strips are two-column grids by default; without a
+   breakpoint they stay two-up on phones, which crushed the chat demo into a
+   sliver and pushed it off-screen (horizontal scroll). Collapse them to one
+   column, tighten the page gutter, and let the chat demo own a full-width row
+   below the copy. */
+@media (max-width: 880px) {
+  :root {
+    --pad-x: 28px;
+  }
+
+  .hero-inner {
+    padding: 40px var(--pad-x) 56px;
+  }
+  .hero-inner .nav-row {
+    margin-bottom: 40px;
+  }
+
+  .hero-stage {
+    grid-template-columns: 1fr;
+    gap: 40px;
+  }
+  .hero-stage .actions {
+    flex-wrap: wrap;
+  }
+  /* Full-width demo on its own row reads as a real conversation again instead
+     of a squeezed column. */
+  .hero-right .tl {
+    height: clamp(480px, 72vh, 560px);
+  }
+
+  .cta-shell {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 56px var(--pad-x);
+  }
+
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+    padding: 28px var(--pad-x) 48px;
+  }
+}
+
+@media (max-width: 560px) {
+  .nav-links {
+    gap: 16px;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+  }
+
+  /* The chat demo's composer mirrors the real one with a full action row. At
+     phone width nine icons plus send overflow the card, so we keep the
+     essential controls (format, emoji, mention, attach) and the send button,
+     and drop the secondary ones — the demo still reads as the real composer. */
+  .composer-actions .cb[aria-label="Expand editor"],
+  .composer-actions .cb[aria-label="Insert command"],
+  .composer-actions .cb[aria-label="Dictate a message"],
+  .composer-actions .cb[aria-label="Drafts"],
+  .composer-actions .cb[aria-label="Scheduled"] {
+    display: none;
+  }
+
+  /* Waitlist form: input over a full-width button instead of side by side. */
+  .cta-shell .form-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .cta-shell .form-row .cta {
+    width: 100%;
+    justify-content: center;
   }
 }
