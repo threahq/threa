@@ -289,6 +289,21 @@ describe("e2e session store — keep me unlocked on this device", () => {
       expect(after!.pinFailedAttempts).toBe(0)
     })
 
+    it("rotating the passphrase clears a PIN device key instead of silently downgrading", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "old-passphrase", { params: FAST_PARAMS, pin: PIN })
+      await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-passphrase", "new-passphrase", FAST_PARAMS)
+
+      // The PIN-gated device key is gone — not re-persisted as a plain auto-resume
+      // key, which would have dropped the PIN gate.
+      expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+
+      // A reload now requires the passphrase (no PIN, no auto-resume).
+      await reload()
+      const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(s.status).toBe("locked")
+      expect(s.pinProtected).toBeFalsy()
+    })
+
     it("forgets the PIN after MAX_PIN_ATTEMPTS so only the passphrase recovers", async () => {
       await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, pin: PIN })
       await reload()

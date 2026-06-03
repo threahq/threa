@@ -93,6 +93,12 @@ const INITIAL_STATE: E2eSessionState = {
   error: null,
 }
 
+// `setState` merges, so a definitive transition that only set one device-unlock
+// flag could let the other survive stale (e.g. `webauthnProtected: true` lingering
+// after a switch to a PIN-only device, mis-routing the unlock prompt). Spread this
+// into every locked/unlocked transition and override the one that should be true.
+const NO_UNLOCK_PROMPT = { pinProtected: false, webauthnProtected: false } as const
+
 interface ScopeState {
   state: E2eSessionState
   cachedKey: CachedKeyView | null
@@ -321,7 +327,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       publicKey: base64ToBytes(deviceKey.publicKey),
       privateKey: deviceKey.privateKey,
       deviceTrusted: true,
-      pinProtected: false,
+      ...NO_UNLOCK_PROMPT,
       error: null,
     })
   } else if (deviceKey?.pinWrappedPrivate) {
@@ -332,6 +338,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       keyId: deviceKey.keyId,
       publicKey: base64ToBytes(deviceKey.publicKey),
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       pinProtected: true,
       error: null,
     })
@@ -343,12 +350,14 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       keyId: deviceKey.keyId,
       publicKey: base64ToBytes(deviceKey.publicKey),
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       webauthnProtected: true,
       error: null,
     })
   } else if (cachedRow) {
     setState(workspaceId, userId, {
       status: "locked",
+      ...NO_UNLOCK_PROMPT,
       keyId: scope.cachedKey!.keyId,
       publicKey: scope.cachedKey!.publicKey,
       deviceTrusted: false,
@@ -383,6 +392,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       publicKey: null,
       privateKey: null,
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       error: null,
     })
     return
@@ -416,6 +426,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       publicKey: view.publicKey,
       privateKey: null,
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       error: null,
     })
     return
@@ -650,7 +661,7 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
       if (scope.loadGeneration === generation) {
         setState(workspaceId, userId, {
           status: "locked",
-          pinProtected: false,
+          ...NO_UNLOCK_PROMPT,
           privateKey: null,
           error: "Too many PIN attempts — unlock with your passphrase.",
         })
@@ -661,6 +672,7 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
         const left = MAX_PIN_ATTEMPTS - attempts
         setState(workspaceId, userId, {
           status: "locked",
+          ...NO_UNLOCK_PROMPT,
           pinProtected: true,
           privateKey: null,
           error: `Incorrect PIN — ${left} attempt${left === 1 ? "" : "s"} left.`,
@@ -680,7 +692,7 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
     publicKey: base64ToBytes(row.publicKey),
     privateKey,
     deviceTrusted: true,
-    pinProtected: false,
+    ...NO_UNLOCK_PROMPT,
     error: null,
   })
 }
@@ -734,6 +746,7 @@ export async function unlockWithWebAuthn(workspaceId: string, userId: string, pr
     if (scope.loadGeneration === generation) {
       setState(workspaceId, userId, {
         status: "locked",
+        ...NO_UNLOCK_PROMPT,
         webauthnProtected: true,
         privateKey: null,
         error: "Biometric unlock failed — try again or use your passphrase.",
@@ -750,7 +763,7 @@ export async function unlockWithWebAuthn(workspaceId: string, userId: string, pr
     publicKey: base64ToBytes(row.publicKey),
     privateKey,
     deviceTrusted: true,
-    webauthnProtected: false,
+    ...NO_UNLOCK_PROMPT,
     error: null,
   })
 }
@@ -803,13 +816,21 @@ export async function rotatePassphrase(
   if (scope.loadGeneration !== generation) return
 
   // Rotation mints a fresh keyId. If this device was trusted, re-persist the
-  // device key under the new keyId (as non-extractable) so the next reload
-  // still resumes unlocked instead of being treated as a stale rotation.
-  // Best-effort: a failed re-persist just drops trust, it doesn't fail rotate.
+  // device key under the new keyId so the next reload still resumes instead of
+  // being treated as a stale rotation. But a PIN/biometric-gated device must not
+  // be silently re-persisted as a plain auto-resume key — that would DOWNGRADE
+  // security by dropping the gate. For those, clear the device key so the user
+  // re-establishes their PIN/biometric under the new passphrase; only plain
+  // trusted devices re-persist automatically. Best-effort either way.
   let trustPersisted = false
   if (wasTrusted) {
-    const hardened = await toNonExtractable(privateKey)
-    trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, hardened)
+    const existing = await readDeviceKey(workspaceId, userId)
+    if (existing?.pinWrappedPrivate || existing?.webauthnWrappedPrivate) {
+      await deleteDeviceKey(workspaceId, userId).catch(() => {})
+    } else {
+      const hardened = await toNonExtractable(privateKey)
+      trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, hardened)
+    }
     if (scope.loadGeneration !== generation) return
   }
   scope.cachedKey = view
@@ -819,6 +840,7 @@ export async function rotatePassphrase(
     publicKey: view.publicKey,
     privateKey,
     deviceTrusted: trustPersisted,
+    ...NO_UNLOCK_PROMPT,
     error: null,
   })
 }
