@@ -63,4 +63,38 @@ test.describe("E2E encrypted scratchpads", () => {
     await unlock.getByRole("button", { name: /^Unlock$/ }).click()
     await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0, { timeout: 15_000 })
   })
+
+  test("creating an encrypted scratchpad while locked unlocks inline, then creates", async ({ page }) => {
+    await loginAndCreateWorkspace(page, "e2e-enc-locked")
+
+    // First-time setup via the create flow, with device trust OFF so a reload
+    // lands locked (key exists, device not trusted) — the `locked` create branch.
+    await page.getByRole("button", { name: "New", exact: true }).click()
+    await page.getByRole("menuitem", { name: /New Encrypted Scratchpad/i }).click()
+    const setup = page.getByRole("dialog")
+    await expect(setup.getByText("Set up encrypted scratchpads")).toBeVisible({ timeout: 10_000 })
+    await setup.locator("#e2e-passphrase").fill(PASSPHRASE)
+    await setup.locator("#e2e-passphrase-confirm").fill(PASSPHRASE)
+    await setup.locator("#e2e-acknowledged").check()
+    const trustDevice = setup.locator("#e2e-setup-trust-device")
+    if (await trustDevice.isChecked()) await trustDevice.uncheck()
+    await setup.getByRole("button", { name: "Enable encryption" }).click()
+    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+
+    await page.reload()
+    await expect(page.getByText("This scratchpad is encrypted")).toBeVisible({ timeout: 15_000 })
+
+    // Now the key exists but the session is locked. Asking for a new encrypted
+    // scratchpad should open the unlock modal (not a dead-end), then create it.
+    await page.getByRole("button", { name: "New", exact: true }).click()
+    await page.getByRole("menuitem", { name: /New Encrypted Scratchpad/i }).click()
+    const unlock = page.getByRole("dialog")
+    await expect(unlock.getByText("Unlock encrypted scratchpads")).toBeVisible({ timeout: 10_000 })
+    await unlock.locator("input[type='password'], input[type='text']").first().fill(PASSPHRASE)
+    await unlock.getByRole("button", { name: /^Unlock$/ }).click()
+
+    // The deferred create runs after unlock → a fresh encrypted scratchpad opens.
+    await expect(page.getByText("This scratchpad is encrypted")).toHaveCount(0, { timeout: 15_000 })
+    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+  })
 })

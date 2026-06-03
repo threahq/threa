@@ -333,9 +333,16 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   }
 
   const openCreatedEncryptedScratchpad = async (withAriadne: boolean) => {
-    const streamId = await createEncryptedScratchpad(withAriadne)
-    collapseOnMobile()
-    navigate(`/w/${workspaceId}/s/${streamId}`)
+    // Called both directly and deferred (via the modal's onComplete, fired as
+    // `void`), so it must own its own error feedback — an unhandled rejection
+    // after setup/unlock would otherwise leave the user with no signal.
+    try {
+      const streamId = await createEncryptedScratchpad(withAriadne)
+      collapseOnMobile()
+      navigate(`/w/${workspaceId}/s/${streamId}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't create the encrypted scratchpad")
+    }
   }
 
   // Asking for an encrypted scratchpad IS the onboarding trigger: if the user
@@ -344,13 +351,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // first" message. Falls back to a direct create only outside the unlock
   // provider (unit harnesses); the provider is always present in the app.
   const handleCreateEncryptedScratchpad = async (withAriadne: boolean) => {
-    const session = currentUser ? getE2eSessionState(workspaceId, currentUser.id) : null
-    if (!e2eUnlock || session?.status === "unlocked") {
+    // The create needs a resolved workspace user; without one the onboarding
+    // modals would run for an action that can't succeed. Bail early (briefly,
+    // until the workspace finishes hydrating) rather than route through setup.
+    if (!currentUser) return
+    const session = getE2eSessionState(workspaceId, currentUser.id)
+    if (!e2eUnlock || session.status === "unlocked") {
       await openCreatedEncryptedScratchpad(withAriadne)
       return
     }
     const finish = () => void openCreatedEncryptedScratchpad(withAriadne)
-    if (session?.status === "no-key") {
+    if (session.status === "no-key") {
       e2eUnlock.openSetup({ onComplete: finish })
     } else {
       e2eUnlock.openUnlock({ onUnlocked: finish })
