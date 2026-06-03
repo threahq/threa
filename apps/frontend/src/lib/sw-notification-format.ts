@@ -26,6 +26,38 @@ export function appendMessage(existing: NotificationMessage[], incoming: Notific
   return updated
 }
 
+/**
+ * Parse a Threa stream-view URL into its workspace + stream ids, or null when
+ * the URL isn't a stream view. The route is `/w/{workspaceId}/s/{streamId}`;
+ * an open thread is a `?m=…` query (not a path segment), so it still resolves
+ * to the underlying stream. Non-stream surfaces (sidebar root, settings,
+ * activity, saved) return null and never match.
+ */
+function parseStreamRoute(url: string): { workspaceId: string; streamId: string } | null {
+  let pathname: string
+  try {
+    pathname = new URL(url).pathname
+  } catch {
+    return null
+  }
+  const match = pathname.match(/^\/w\/([^/]+)\/s\/([^/]+)/)
+  if (!match) return null
+  return { workspaceId: match[1], streamId: match[2] }
+}
+
+/**
+ * True when `url` is a window already viewing the given stream. Used by the
+ * service worker to suppress a push the user can already see: a push for the
+ * stream on screen is dropped, but a push for any *other* stream (or a
+ * non-stream view) still surfaces even while the app is focused. Absent ids
+ * never match — we can't confirm the view, so we err toward showing.
+ */
+export function isViewingStream(url: string, workspaceId: string | undefined, streamId: string | undefined): boolean {
+  if (!workspaceId || !streamId) return false
+  const route = parseStreamRoute(url)
+  return route !== null && route.workspaceId === workspaceId && route.streamId === streamId
+}
+
 /** Resolve the notification tag — mentions get a distinct tag so they stay visually separate. */
 export function resolveTag(streamId: string, activityType?: string): string {
   if (activityType === ActivityTypes.MENTION) {

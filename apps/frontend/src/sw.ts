@@ -632,13 +632,23 @@ self.addEventListener("push", (event) => {
   // Tag by stream, with mentions on a separate tag so they stay visually distinct.
   const tag = data.streamId ? resolveTag(data.streamId, data.activityType) : "threa-notification"
 
-  // Suppress notification if the user has a focused app window — they can already see the message.
-  // Backend always sends the push; the SW decides whether to display it.
+  // Suppress only when a focused window is already viewing THIS stream — the user
+  // can see the message there. A push for any other stream still shows even with
+  // the app focused, so you're alerted to conversations you aren't looking at
+  // (e.g. viewing the DM with Pierre doesn't mute a new message in #general).
+  // Backend always sends the push; the SW decides whether to display it. Skipping
+  // only the on-screen stream (vs. every focused push) also keeps us off the
+  // userVisibleOnly silent-push budget that browsers penalize on mobile.
   event.waitUntil(
     Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true })]).then(
-      async ([{ appendMessage, formatTitle, formatBody }, clients]) => {
-        const hasFocusedWindow = clients.some((c) => c.focused && new URL(c.url).origin === self.location.origin)
-        if (hasFocusedWindow) return
+      async ([{ appendMessage, formatTitle, formatBody, isViewingStream }, clients]) => {
+        const viewingThisStream = clients.some(
+          (c) =>
+            c.focused &&
+            new URL(c.url).origin === self.location.origin &&
+            isViewingStream(c.url, data.workspaceId, data.streamId)
+        )
+        if (viewingThisStream) return
 
         // Accumulate a rolling list of recent messages from the existing notification
         const existing = await self.registration.getNotifications({ tag })
