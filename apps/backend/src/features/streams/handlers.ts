@@ -88,17 +88,36 @@ const createStreamSchema = z
     path: ["e2eEnabled"],
   })
 
-const updateStreamSchema = z.object({
-  displayName: z.string().min(1).max(100).optional(),
-  slug: z
-    .string()
-    .regex(SLUG_PATTERN, {
-      message: "Slug must start with a letter and contain only lowercase letters, numbers, hyphens, or underscores",
-    })
-    .optional(),
-  description: z.string().max(500).optional(),
-  visibility: visibilitySchema.optional(),
+// Sealed display name for an E2E stream: SSK-sealed ciphertext + its framing.
+// The server stores these opaque (it can't read them); the envelope shape
+// mirrors `StreamEnvelope` from @threa/crypto without importing it here.
+const sealedNameEnvelopeSchema = z.object({
+  v: z.number(),
+  keyGeneration: z.number().int().min(0),
+  iv: z.string().min(1),
+  aad: z.string().min(1),
 })
+
+const updateStreamSchema = z
+  .object({
+    displayName: z.string().min(1).max(100).optional(),
+    slug: z
+      .string()
+      .regex(SLUG_PATTERN, {
+        message: "Slug must start with a letter and contain only lowercase letters, numbers, hyphens, or underscores",
+      })
+      .optional(),
+    description: z.string().max(500).optional(),
+    visibility: visibilitySchema.optional(),
+    // Optional encrypted name. Both halves travel together or not at all — a
+    // ciphertext without its envelope (or vice versa) is unopenable.
+    sealedNameCiphertext: z.string().min(1).optional(),
+    sealedNameEnvelope: sealedNameEnvelopeSchema.optional(),
+  })
+  .refine((v) => (v.sealedNameCiphertext === undefined) === (v.sealedNameEnvelope === undefined), {
+    message: "sealedNameCiphertext and sealedNameEnvelope must be sent together",
+    path: ["sealedNameCiphertext"],
+  })
 
 const updateCompanionModeSchema = z.object({
   companionMode: companionModeSchema,
@@ -552,9 +571,21 @@ export function createStreamHandlers({
         })
       }
 
-      const { displayName, slug, description, visibility } = result.data
+      const { displayName, slug, description, visibility, sealedNameCiphertext, sealedNameEnvelope } = result.data
 
-      const updated = await streamService.updateStream(streamId, { displayName, slug, description, visibility })
+      // Schema guarantees both halves arrive together; pair them for the service.
+      const sealedName =
+        sealedNameCiphertext && sealedNameEnvelope
+          ? { ciphertext: sealedNameCiphertext, envelope: sealedNameEnvelope }
+          : undefined
+
+      const updated = await streamService.updateStream(streamId, {
+        displayName,
+        slug,
+        description,
+        visibility,
+        sealedName,
+      })
       res.json({ stream: updated })
     },
 

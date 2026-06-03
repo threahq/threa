@@ -83,6 +83,14 @@ export interface UpdateStreamInput {
   visibility?: Visibility
   companionMode?: CompanionMode
   companionPersonaId?: string
+  /**
+   * Encrypted display name for an E2E stream — base64 ciphertext + its
+   * `StreamEnvelope` framing (typed `unknown` to keep this package crypto-free).
+   * Sent alongside the plaintext `displayName` on rename; both halves travel
+   * together or not at all.
+   */
+  sealedNameCiphertext?: string
+  sealedNameEnvelope?: unknown
 }
 
 export interface UpdateCompanionModeInput {

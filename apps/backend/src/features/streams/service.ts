@@ -681,35 +681,62 @@ export class StreamService {
 
   async updateStream(
     streamId: string,
-    data: { displayName?: string; slug?: string; description?: string; visibility?: Visibility }
+    data: {
+      displayName?: string
+      slug?: string
+      description?: string
+      visibility?: Visibility
+      /**
+       * Sealed (encrypted) display name for an E2E stream — stored on
+       * `e2e_streams`, not `streams`. The plaintext `displayName` above is still
+       * sent and stays the locked-state fallback; this is the authoritative name
+       * an unlocked client prefers. Ignored (no-op) for plaintext streams.
+       */
+      sealedName?: { ciphertext: string; envelope: unknown }
+    }
   ): Promise<Stream | null> {
+    const { sealedName, ...streamData } = data
     try {
       return await withTransaction(this.pool, async (client) => {
         // Slug uniqueness check (exclude current stream)
-        if (data.slug) {
+        if (streamData.slug) {
           const current = await StreamRepository.findById(client, streamId)
-          if (current && data.slug !== current.slug) {
-            const slugExists = await StreamRepository.slugExistsInWorkspace(client, current.workspaceId, data.slug)
+          if (current && streamData.slug !== current.slug) {
+            const slugExists = await StreamRepository.slugExistsInWorkspace(
+              client,
+              current.workspaceId,
+              streamData.slug
+            )
             if (slugExists) {
-              throw new DuplicateSlugError(data.slug)
+              throw new DuplicateSlugError(streamData.slug)
             }
           }
         }
 
-        const stream = await StreamRepository.update(client, streamId, data)
-        if (stream) {
-          await OutboxRepository.insert(client, "stream:updated", {
-            workspaceId: stream.workspaceId,
-            streamId: stream.id,
-            stream,
-          })
+        const stream = await StreamRepository.update(client, streamId, streamData)
+        if (!stream) return null
+
+        // The sealed name lives on a different table; persist it in the same
+        // transaction, then re-read the joined stream so the emitted event and
+        // the response carry the new sealed name. The UPDATE no-ops on a
+        // plaintext stream id, so the re-read only happens for real E2E renames.
+        let result = stream
+        if (sealedName && (await E2eStreamsRepository.updateSealedName(client, stream.workspaceId, streamId, sealedName))) {
+          const full = await StreamRepository.findById(client, streamId)
+          if (full) result = full
         }
-        return stream
+
+        await OutboxRepository.insert(client, "stream:updated", {
+          workspaceId: result.workspaceId,
+          streamId: result.id,
+          stream: result,
+        })
+        return result
       })
     } catch (error) {
       // DB unique constraint catches races the application check misses
-      if (data.slug && isUniqueViolation(error, "streams_workspace_id_slug_key")) {
-        throw new DuplicateSlugError(data.slug)
+      if (streamData.slug && isUniqueViolation(error, "streams_workspace_id_slug_key")) {
+        throw new DuplicateSlugError(streamData.slug)
       }
       throw error
     }

@@ -31,6 +31,9 @@ interface StreamRow {
    */
   e2e_owner_user_key_id?: string | null
   e2e_actors?: { kind: string; keyId: string | null }[] | null
+  /** Sealed display name (E2E streams only) — BYTEA + JSONB framing, both NULL until first rename. */
+  e2e_name_ciphertext?: Buffer | null
+  e2e_name_envelope?: unknown | null
 }
 
 /**
@@ -186,6 +189,9 @@ function mapRowToStream(row: StreamRow): Stream {
       e2eEnabled: true,
       e2eOwnerKeyId,
       e2eActors: (row.e2e_actors ?? []) as E2eActor[],
+      // Sealed name travels base64 on the wire; both are null until first rename.
+      sealedNameCiphertext: row.e2e_name_ciphertext ? row.e2e_name_ciphertext.toString("base64") : null,
+      sealedNameEnvelope: row.e2e_name_envelope ?? null,
     }),
   }
 }
@@ -232,6 +238,8 @@ const SELECT_FIELDS_WITH_E2E = `
   s.companion_mode, s.companion_persona_id,
   s.created_by, s.created_at, s.updated_at, s.archived_at, s.display_name_generated_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
+  e.name_ciphertext AS e2e_name_ciphertext,
+  e.name_envelope AS e2e_name_envelope,
   (
     SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'actorId', a.actor_id, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
     FROM e2e_stream_actors a
@@ -536,6 +544,8 @@ export const StreamRepository = {
         lm.content_json as last_message_content,
         lm.created_at as last_message_at,
         e.owner_user_key_id AS e2e_owner_user_key_id,
+        e.name_ciphertext AS e2e_name_ciphertext,
+        e.name_envelope AS e2e_name_envelope,
         (
           SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'actorId', a.actor_id, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
           FROM e2e_stream_actors a

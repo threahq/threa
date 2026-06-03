@@ -77,6 +77,29 @@ export const E2eStreamsRepository = {
     return result.rows.map((row) => row.stream_id)
   },
 
+  /**
+   * Store the sealed (encrypted) display name for an E2E stream. The plaintext
+   * `streams.display_name` is updated separately on the same rename; this is the
+   * authoritative name an unlocked client prefers. The server holds opaque bytes
+   * + framing it cannot read. Returns whether a row was updated (false for a
+   * plaintext stream id — the WHERE matches nothing), so the caller only re-reads
+   * the joined stream when a sealed name actually landed.
+   */
+  async updateSealedName(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    sealed: { ciphertext: string; envelope: unknown }
+  ): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE e2e_streams
+      SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
+          name_envelope = ${JSON.stringify(sealed.envelope)}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
     const result = await db.query<E2eStreamRow>(sql`
       SELECT ${sql.raw(COLUMNS)}
