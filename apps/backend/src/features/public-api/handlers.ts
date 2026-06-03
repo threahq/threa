@@ -16,6 +16,7 @@ import {
   type StreamService,
 } from "../streams"
 import { UserRepository } from "../workspaces"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -532,6 +533,23 @@ export function createPublicApiHandlers({
       return
     }
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  /**
+   * Reject a plaintext write into an end-to-end-encrypted stream. The public
+   * API has no ciphertext message path (send/update accept plaintext only), so
+   * a write here would persist a plaintext row in an E2E scratchpad and break
+   * the encryption guarantee — the same INV-E1 mismatch the first-party handler
+   * blocks. We fail before any insert. Lift this once the public API can carry
+   * a sealed payload.
+   */
+  async function assertNotE2eStream(workspaceId: string, streamId: string): Promise<void> {
+    if (await E2eStreamsRepository.isE2eStream(pool, workspaceId, streamId)) {
+      throw new HttpError("Stream is end-to-end encrypted; the public API cannot post plaintext to it", {
+        status: 400,
+        code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+      })
+    }
   }
 
   /** Find a message, verify stream access, and verify ownership. Used by update/delete. */
@@ -1638,6 +1656,7 @@ export function createPublicApiHandlers({
 
       // Verify stream access
       await assertStreamAccessible(req, streamId)
+      await assertNotE2eStream(workspaceId, streamId)
 
       // Normalize and parse content
       const contentMarkdown = normalizeMessage(content)
@@ -1717,6 +1736,7 @@ export function createPublicApiHandlers({
 
       const { content } = result.data
       const { message: existing, actorId, actorType, displayName } = await resolveOwnedMessage(messageId, req)
+      await assertNotE2eStream(workspaceId, existing.streamId)
 
       // Normalize and parse content
       const contentMarkdown = normalizeMessage(content)
