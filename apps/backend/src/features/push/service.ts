@@ -7,6 +7,7 @@ import {
   PrefNotificationLevels,
   ActivityTypes,
   StreamTypes,
+  PRESENCE_INTERACTION_WINDOW_MS,
   type PrefNotificationLevel,
   type StreamType,
 } from "@threa/types"
@@ -36,7 +37,9 @@ const CURRENTLY_FOCUSED_WINDOW_MS = 60_000
  * fall through to fanout so the user gets notified on whichever device they
  * pick up next.
  */
-const RECENT_INTERACTION_WINDOW_MS = 2 * 60 * 1_000 // 2 minutes
+// Shared with the frontend SW's push-suppression check so the two layers agree
+// on what "present" means (@threa/types).
+const RECENT_INTERACTION_WINDOW_MS = PRESENCE_INTERACTION_WINDOW_MS
 
 /**
  * Per-device session expiry window. If a specific device has not sent a heartbeat

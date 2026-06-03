@@ -5,21 +5,13 @@ import { api } from "@/api/client"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
-import { recordInteractionPresence } from "@/lib/sw-presence"
+import { useSwPresence } from "@/hooks/use-sw-presence"
 
 /** Periodic heartbeat tick for session liveness — must be < ACTIVE_SESSION_WINDOW_MS on the backend (60s). */
 const PERIODIC_HEARTBEAT_INTERVAL_MS = 30_000
 
 /** Throttle for focus-change-driven heartbeats so a flicker of blur/focus events doesn't flood the socket. */
 const FOCUS_CHANGE_HEARTBEAT_THROTTLE_MS = 10_000
-
-/**
- * Throttle for writing the device-presence timestamp the service worker reads
- * to gate push suppression. A single write captures "last interaction" accurate
- * to within this interval — well under the SW's 2-minute presence window — so
- * we don't touch Cache Storage on every pointer move.
- */
-const PRESENCE_WRITE_THROTTLE_MS = 10_000
 
 /**
  * Socket connection status.
@@ -254,23 +246,9 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
     }
   }, [socket, status, pageInteraction])
 
-  // Record this device's recent interaction so the service worker can gate push
-  // suppression on activity, not focus alone (a focused-but-abandoned tab should
-  // stop silencing notifications). Independent of socket status — push delivery
-  // matters even when the socket is down (flaky mobile). Seeded immediately when
-  // the window is focused so the stream you just opened is treated as watched.
-  useEffect(() => {
-    if (typeof window === "undefined" || !("caches" in window)) return
-    let lastWriteAt = 0
-    const write = () => {
-      const now = Date.now()
-      if (now - lastWriteAt < PRESENCE_WRITE_THROTTLE_MS) return
-      lastWriteAt = now
-      void recordInteractionPresence(now)
-    }
-    if (document.hasFocus()) write()
-    return pageInteraction.subscribe(write)
-  }, [pageInteraction])
+  // Record recent interaction so the SW can gate push suppression on activity,
+  // not focus alone (see useSwPresence). Reuses the tracker the heartbeats use.
+  useSwPresence(pageInteraction)
 
   useEffect(() => {
     const previousPageActivity = previousPageActivityRef.current

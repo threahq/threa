@@ -659,6 +659,16 @@ export const E2eKeyWrapRecipientKinds = {
  */
 export const HEARTBEAT_INTERACTION_THROTTLE_MS = 15_000
 
+/**
+ * How recently a device must have seen a direct interaction (pointer/key/touch)
+ * to count as "the device the user is actively on." Shared across the push
+ * presence boundary: the backend uses it to decide which device is attended for
+ * notification routing, and the frontend service worker uses the same window to
+ * decide whether to suppress a push for the stream on screen. Shared so the two
+ * sides cannot drift on what "present" means.
+ */
+export const PRESENCE_INTERACTION_WINDOW_MS = 2 * 60 * 1_000
+
 // Bot kind: shared (admin-managed, workspace-wide) vs personal (owned by one user)
 export const BOT_TYPES = ["shared", "personal"] as const
 export type BotType = (typeof BOT_TYPES)[number]

@@ -2,7 +2,7 @@
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
 import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threa/types"
 import { resolveTag } from "./lib/sw-notification-format"
-import { isDevicePresent } from "./lib/sw-presence"
+import { isDevicePresent, PRESENCE_CACHE } from "./lib/sw-presence"
 import {
   SW_MSG_NOTIFICATION_CLICK,
   SW_MSG_SUBSCRIPTION_CHANGED,
@@ -69,7 +69,13 @@ self.addEventListener("activate", (event) => {
       // Clean stale caches from previous SW versions. Keep only the current
       // workbox precache, push-bootstrap, and share-target caches. Without this,
       // old precache buckets linger and can serve stale HTML/CSS after an update.
-      const currentCaches = new Set([PUSH_BOOTSTRAP_CACHE, SHARE_TARGET_CACHE, PENDING_SYNC_CACHE, AVATAR_CACHE])
+      const currentCaches = new Set([
+        PUSH_BOOTSTRAP_CACHE,
+        SHARE_TARGET_CACHE,
+        PENDING_SYNC_CACHE,
+        AVATAR_CACHE,
+        PRESENCE_CACHE,
+      ])
       const allCaches = await caches.keys()
       await Promise.all(
         allCaches
