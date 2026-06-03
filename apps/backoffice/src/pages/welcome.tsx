@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header"
 import { Section } from "@/components/layout/section"
 import { useUser } from "@/auth"
 import { cn } from "@/lib/utils"
+import { formatDate } from "@/lib/format"
 import {
   backofficeKeys,
   listWorkspaceOwnerInvitations,
@@ -16,14 +17,6 @@ import {
 } from "@/api/backoffice"
 
 const RECENT_LIMIT = 5
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  })
-}
 
 function countByState(
   invitations: WorkspaceOwnerInvitation[] | undefined,

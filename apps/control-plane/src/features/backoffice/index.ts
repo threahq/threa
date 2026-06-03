@@ -8,6 +8,9 @@ export type {
   WorkspaceOwnerSummary,
   WorkspaceRef,
   BackofficeConfig,
+  WaitlistEntry,
+  WaitlistStats,
+  WaitlistOverview,
 } from "./service"
 export { createBackofficeHandlers } from "./handlers"
 export { createPlatformAdminMiddleware } from "./middleware"

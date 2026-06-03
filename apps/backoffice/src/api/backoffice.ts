@@ -96,12 +96,34 @@ export interface WorkspaceInvitation {
   } | null
 }
 
+export interface WaitlistEntry {
+  id: string
+  email: string
+  source: string | null
+  status: string
+  createdAt: string
+}
+
+export interface WaitlistStats {
+  total: number
+  pending: number
+  invited: number
+}
+
+export interface WaitlistOverview {
+  entries: WaitlistEntry[]
+  stats: WaitlistStats
+  /** True when there are more signups than `entries` contains (list is capped). */
+  truncated: boolean
+}
+
 export const backofficeKeys = {
   workspaces: ["backoffice", "workspaces"] as const,
   workspace: (id: string) => ["backoffice", "workspaces", id] as const,
   workspaceMembers: (id: string) => ["backoffice", "workspaces", id, "members"] as const,
   workspaceInvitations: (id: string) => ["backoffice", "workspaces", id, "invitations"] as const,
   invitations: ["backoffice", "invitations"] as const,
+  waitlist: ["backoffice", "waitlist"] as const,
   config: ["backoffice", "config"] as const,
 }
 
@@ -143,6 +165,10 @@ export function revokeWorkspaceOwnerInvitation(id: string): Promise<void> {
 
 export function getBackofficeConfig(): Promise<BackofficeConfig> {
   return api.get<{ config: BackofficeConfig }>("/api/backoffice/config").then((r) => r.config)
+}
+
+export function getWaitlist(): Promise<WaitlistOverview> {
+  return api.get<{ waitlist: WaitlistOverview }>("/api/backoffice/waitlist").then((r) => r.waitlist)
 }
 
 export function listWorkspaceMembers(id: string): Promise<WorkspaceMember[]> {

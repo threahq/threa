@@ -24,4 +24,33 @@ export const WaitlistRepository = {
     )
     return (result.rowCount ?? 0) > 0
   },
+
+  /**
+   * Most recent signups first, capped at `limit`. Backs the backoffice waitlist
+   * view — the table only needs a recent window; accurate totals come from
+   * {@link statusCounts} so a capped list never skews the headline numbers.
+   */
+  async list(db: Querier, limit: number): Promise<WaitlistRow[]> {
+    const result = await db.query<WaitlistRow>(
+      `SELECT id, email, source, status, created_at, updated_at
+       FROM waitlist
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit]
+    )
+    return result.rows
+  },
+
+  /**
+   * Signup counts grouped by status, computed in the database so the totals are
+   * exact regardless of any list cap. Uses the `(status, created_at)` index.
+   */
+  async statusCounts(db: Querier): Promise<Array<{ status: string; count: number }>> {
+    const result = await db.query<{ status: string; count: number }>(
+      `SELECT status, COUNT(*)::int AS count
+       FROM waitlist
+       GROUP BY status`
+    )
+    return result.rows
+  },
 }

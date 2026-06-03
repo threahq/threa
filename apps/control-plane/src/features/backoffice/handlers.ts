@@ -154,5 +154,10 @@ export function createBackofficeHandlers({ backofficeService }: Dependencies) {
     async getConfig(_req: Request, res: Response) {
       res.json({ config: backofficeService.getConfig() })
     },
+
+    async listWaitlist(_req: Request, res: Response) {
+      const waitlist = await backofficeService.listWaitlist()
+      res.json({ waitlist })
+    },
   }
 }

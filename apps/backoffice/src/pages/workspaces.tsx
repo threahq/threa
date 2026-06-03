@@ -4,15 +4,8 @@ import { Link } from "react-router-dom"
 import { ChevronRight, Search } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { PageHeader } from "@/components/layout/page-header"
+import { formatDate } from "@/lib/format"
 import { backofficeKeys, listWorkspaces, type WorkspaceSummary } from "@/api/backoffice"
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-GB", {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-  })
-}
 
 function matches(workspace: WorkspaceSummary, q: string): boolean {
   if (!q) return true
