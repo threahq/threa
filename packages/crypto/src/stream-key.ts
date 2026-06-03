@@ -236,3 +236,32 @@ export function buildWrapAad(parts: {
     utf8Encode(parts.recipientKeyId)
   )
 }
+
+/**
+ * Canonical AAD for a stream's *sealed name* — the encrypted copy of a stream's
+ * display name stored alongside the plaintext fallback. Binds the ciphertext to
+ * its `(streamId, generation)` slot plus a fixed `name` label, so a malicious
+ * server can't relocate a sealed name onto another stream or swap it with a
+ * sealed message body (whose AAD is `streamId|messageId|senderId`). The `name`
+ * literal keeps this namespace disjoint from `buildWrapAad`'s layout even though
+ * both start with `streamId|generation`. Keep stable — changing it breaks every
+ * existing sealed name. Same delimiter-safety rules as `buildWrapAad`.
+ */
+export function buildNameAad(parts: { streamId: string; keyGeneration: number }): Uint8Array<ArrayBuffer> {
+  if (parts.streamId.length === 0) {
+    throw new Error("buildNameAad: streamId must be non-empty")
+  }
+  if (parts.streamId.includes("|")) {
+    throw new Error("buildNameAad: streamId must not contain '|'")
+  }
+  if (!Number.isInteger(parts.keyGeneration) || parts.keyGeneration < 0) {
+    throw new Error("buildNameAad: keyGeneration must be a non-negative integer")
+  }
+  return concatBytes(
+    utf8Encode(parts.streamId),
+    utf8Encode("|"),
+    utf8Encode("name"),
+    utf8Encode("|"),
+    utf8Encode(String(parts.keyGeneration))
+  )
+}
