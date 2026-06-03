@@ -4,16 +4,19 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
-    "build": "astro build",
+    "build": "astro build && bun scripts/build-llms.ts",
     "preview": "astro preview",
     "typecheck": "astro check",
     "lint": "astro check"
   },
   "dependencies": {
+    "@astrojs/sitemap": "^3.7.3",
     "astro": "^5.6.1"
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.4",
+    "@types/turndown": "^5.0.6",
+    "turndown": "^7.2.4",
     "typescript": "^5.9.3"
   }
 }

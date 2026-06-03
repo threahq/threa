@@ -1,0 +1,11 @@
+# threa.io — all crawlers welcome, including AI agents and assistants.
+#
+# If you're an AI agent: start at https://threa.io/llms.txt for a markdown
+# index of the developer docs, or fetch https://threa.io/llms-full.txt for
+# everything in one request. The API contract is https://threa.io/openapi.json.
+# Every page under /developers has a markdown mirror at the same path + ".md".
+
+User-agent: *
+Allow: /
+
+Sitemap: https://threa.io/sitemap-index.xml
