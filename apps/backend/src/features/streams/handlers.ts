@@ -88,6 +88,10 @@ const createStreamSchema = z
     path: ["e2eEnabled"],
   })
 
+// Canonical base64 (correct alphabet + padding/length). Rejects e.g. "!!!!" or
+// "YWJj$" so a malformed sealed ciphertext can't be Buffer.from-decoded to junk.
+const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+
 // Sealed display name for an E2E stream: SSK-sealed ciphertext + its framing.
 // The server stores these opaque (it can't read them); the envelope shape
 // mirrors `StreamEnvelope` from @threa/crypto without importing it here.
@@ -109,15 +113,26 @@ const updateStreamSchema = z
       .optional(),
     description: z.string().max(500).optional(),
     visibility: visibilitySchema.optional(),
-    // Optional encrypted name. Both halves travel together or not at all — a
-    // ciphertext without its envelope (or vice versa) is unopenable.
-    sealedNameCiphertext: z.string().min(1).optional(),
-    sealedNameEnvelope: sealedNameEnvelopeSchema.optional(),
+    // Optional encrypted name. Strict base64 so a malformed ciphertext can't be
+    // decoded to garbage by the permissive Buffer.from. `null` on both clears the
+    // sealed name (rename without a fresh seal); a ciphertext without its
+    // envelope (or vice versa) is unopenable.
+    sealedNameCiphertext: z.string().min(1).regex(BASE64_PATTERN, "must be base64").nullable().optional(),
+    sealedNameEnvelope: sealedNameEnvelopeSchema.nullable().optional(),
   })
-  .refine((v) => (v.sealedNameCiphertext === undefined) === (v.sealedNameEnvelope === undefined), {
-    message: "sealedNameCiphertext and sealedNameEnvelope must be sent together",
-    path: ["sealedNameCiphertext"],
-  })
+  .refine(
+    (v) => {
+      const c = v.sealedNameCiphertext
+      const e = v.sealedNameEnvelope
+      if (c === undefined && e === undefined) return true // omitted: leave untouched
+      if (c === null && e === null) return true // cleared together
+      return typeof c === "string" && e != null // set together
+    },
+    {
+      message: "sealedNameCiphertext and sealedNameEnvelope must be set together, cleared together, or omitted",
+      path: ["sealedNameCiphertext"],
+    }
+  )
 
 const updateCompanionModeSchema = z.object({
   companionMode: companionModeSchema,
@@ -573,11 +588,13 @@ export function createStreamHandlers({
 
       const { displayName, slug, description, visibility, sealedNameCiphertext, sealedNameEnvelope } = result.data
 
-      // Schema guarantees both halves arrive together; pair them for the service.
-      const sealedName =
-        sealedNameCiphertext && sealedNameEnvelope
-          ? { ciphertext: sealedNameCiphertext, envelope: sealedNameEnvelope }
-          : undefined
+      // Schema guarantees one of: both set, both null (clear), or both omitted.
+      let sealedName: { ciphertext: string; envelope: unknown } | null | undefined
+      if (sealedNameCiphertext != null && sealedNameEnvelope != null) {
+        sealedName = { ciphertext: sealedNameCiphertext, envelope: sealedNameEnvelope }
+      } else if (sealedNameCiphertext === null || sealedNameEnvelope === null) {
+        sealedName = null
+      }
 
       const updated = await streamService.updateStream(streamId, {
         displayName,

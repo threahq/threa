@@ -78,23 +78,31 @@ export const E2eStreamsRepository = {
   },
 
   /**
-   * Store the sealed (encrypted) display name for an E2E stream. The plaintext
+   * Store (or clear) the sealed display name for an E2E stream. The plaintext
    * `streams.display_name` is updated separately on the same rename; this is the
    * authoritative name an unlocked client prefers. The server holds opaque bytes
-   * + framing it cannot read. Returns whether a row was updated (false for a
-   * plaintext stream id — the WHERE matches nothing), so the caller only re-reads
-   * the joined stream when a sealed name actually landed.
+   * + framing it cannot read. Passing `null` clears both columns — used when a
+   * rename can't produce a fresh seal (locked session), so a stale sealed name
+   * can't outrank the new plaintext one after the next unlock.
+   *
+   * Returns whether a row was updated (false for a plaintext stream id — the
+   * WHERE matches nothing). `Buffer.from(_, "base64")` is permissive, so we
+   * round-trip-check the ciphertext and reject anything that isn't canonical
+   * base64 rather than silently persisting a corrupt blob.
    */
   async updateSealedName(
     db: Querier,
     workspaceId: string,
     streamId: string,
-    sealed: { ciphertext: string; envelope: unknown }
+    sealed: { ciphertext: string; envelope: unknown } | null
   ): Promise<boolean> {
+    if (sealed && Buffer.from(sealed.ciphertext, "base64").toString("base64") !== sealed.ciphertext) {
+      throw new Error("updateSealedName: ciphertext is not canonical base64")
+    }
     const result = await db.query(sql`
       UPDATE e2e_streams
-      SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
-          name_envelope = ${JSON.stringify(sealed.envelope)}
+      SET name_ciphertext = ${sealed ? Buffer.from(sealed.ciphertext, "base64") : null},
+          name_envelope = ${sealed ? JSON.stringify(sealed.envelope) : null}
       WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
     `)
     return (result.rowCount ?? 0) > 0

@@ -688,14 +688,25 @@ export class StreamService {
       visibility?: Visibility
       /**
        * Sealed (encrypted) display name for an E2E stream — stored on
-       * `e2e_streams`, not `streams`. The plaintext `displayName` above is still
-       * sent and stays the locked-state fallback; this is the authoritative name
-       * an unlocked client prefers. Ignored (no-op) for plaintext streams.
+       * `e2e_streams`, not `streams`. The plaintext `displayName` stays the
+       * locked-state fallback; this is the authoritative name an unlocked client
+       * prefers. `{ciphertext, envelope}` sets it, `null` clears it (rename
+       * without a fresh seal), `undefined` leaves it untouched. Required to come
+       * with a `displayName` so the two never desync.
        */
-      sealedName?: { ciphertext: string; envelope: unknown }
+      sealedName?: { ciphertext: string; envelope: unknown } | null
     }
   ): Promise<Stream | null> {
     const { sealedName, ...streamData } = data
+    // A sealed-name change (set or clear) must accompany a plaintext displayName,
+    // or `streams.display_name` and the sealed copy desync (locked/sidebar
+    // surfaces show the old label while unlocked clients decrypt the new one).
+    if (sealedName !== undefined && streamData.displayName === undefined) {
+      throw new HttpError("displayName is required when sealedName is provided", {
+        status: 400,
+        code: "SEALED_NAME_REQUIRES_DISPLAY_NAME",
+      })
+    }
     try {
       return await withTransaction(this.pool, async (client) => {
         // Slug uniqueness check (exclude current stream)
@@ -716,15 +727,15 @@ export class StreamService {
         const stream = await StreamRepository.update(client, streamId, streamData)
         if (!stream) return null
 
-        // The sealed name lives on a different table; persist it in the same
-        // transaction, then re-read the joined stream so the emitted event and
-        // the response carry the new sealed name. The UPDATE no-ops on a
-        // plaintext stream id, so the re-read only happens for real E2E renames.
-        let result = stream
-        if (sealedName && (await E2eStreamsRepository.updateSealedName(client, stream.workspaceId, streamId, sealedName))) {
-          const full = await StreamRepository.findById(client, streamId)
-          if (full) result = full
+        // The sealed name lives on a different table; set/clear it in the same
+        // transaction. `StreamRepository.update` returns only the plaintext
+        // columns, so always re-read the e2e-joined stream before emitting —
+        // otherwise an E2E `stream:updated` would ship a partial shape (missing
+        // e2eEnabled / actors / sealed name). INV-7.
+        if (sealedName !== undefined) {
+          await E2eStreamsRepository.updateSealedName(client, stream.workspaceId, streamId, sealedName)
         }
+        const result = (await StreamRepository.findById(client, streamId)) ?? stream
 
         await OutboxRepository.insert(client, "stream:updated", {
           workspaceId: result.workspaceId,

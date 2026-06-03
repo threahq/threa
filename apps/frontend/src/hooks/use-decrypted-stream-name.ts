@@ -25,7 +25,6 @@ export function useDecryptedStreamName(
 ): string | null {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
-  const [name, setName] = useState<string | null>(null)
 
   const streamId = stream?.id
   const e2eEnabled = stream?.e2eEnabled ?? false
@@ -35,9 +34,22 @@ export function useDecryptedStreamName(
   const keyId = session.keyId
   const privateKey = session.privateKey
 
+  // A stable key for the exact inputs a decrypted name depends on. The decrypted
+  // value is stored against it and only returned when it still matches, so a
+  // previous stream's name (or a pre-rename name) is never shown after the inputs
+  // change but before the async decrypt resolves.
+  const sourceKey =
+    e2eEnabled && streamId && ciphertext && sealedEnvelope && unlocked && keyId && privateKey
+      ? `${workspaceId}:${streamId}:${ciphertext}:${keyId}`
+      : null
+  const [result, setResult] = useState<{ sourceKey: string | null; name: string | null }>({
+    sourceKey: null,
+    name: null,
+  })
+
   useEffect(() => {
-    if (!e2eEnabled || !streamId || !ciphertext || !sealedEnvelope || !unlocked || !keyId || !privateKey) {
-      setName(null)
+    if (!sourceKey || !streamId || !ciphertext || !sealedEnvelope || !keyId || !privateKey) {
+      setResult({ sourceKey: null, name: null })
       return
     }
     let cancelled = false
@@ -45,12 +57,12 @@ export function useDecryptedStreamName(
       { ciphertext, envelope: sealedEnvelope },
       { workspaceId, streamId, recipientKeyId: keyId, privateKey }
     ).then((decrypted) => {
-      if (!cancelled) setName(decrypted)
+      if (!cancelled) setResult({ sourceKey, name: decrypted })
     })
     return () => {
       cancelled = true
     }
-  }, [workspaceId, streamId, e2eEnabled, ciphertext, sealedEnvelope, unlocked, keyId, privateKey])
+  }, [sourceKey, workspaceId, streamId, ciphertext, sealedEnvelope, keyId, privateKey])
 
-  return name
+  return result.sourceKey === sourceKey ? result.name : null
 }

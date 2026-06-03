@@ -469,12 +469,15 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
   const rename = useCallback(
     async (newName: string) => {
-      // For an encrypted stream, also seal the name under the SSK so the server
-      // stores a tamper-evident copy beside the plaintext fallback. Best-effort:
-      // if the session is locked or the key can't be resolved, the rename still
-      // updates the plaintext name (the locked-state fallback) rather than failing.
-      let sealedNameFields: { sealedNameCiphertext: string; sealedNameEnvelope: unknown } | undefined
+      // For an encrypted stream the name has two copies: the plaintext fallback
+      // and a sealed (tamper-evident) copy an unlocked client prefers. We must
+      // never leave a STALE sealed name — if we can't produce a fresh seal (the
+      // session is locked or the key can't be resolved), explicitly CLEAR it
+      // (null) so the new plaintext name is authoritative, instead of leaving the
+      // old ciphertext to outrank it after the next unlock.
+      let sealedNameFields: { sealedNameCiphertext: string | null; sealedNameEnvelope: unknown } | undefined
       if (baseStream?.e2eEnabled && currentUserId) {
+        sealedNameFields = { sealedNameCiphertext: null, sealedNameEnvelope: null }
         const session = getE2eSessionState(workspaceId, currentUserId)
         if (session.status === "unlocked" && session.privateKey && session.keyId) {
           const streamKey = await resolveCurrentStreamKey({

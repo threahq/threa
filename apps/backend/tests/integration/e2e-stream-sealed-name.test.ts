@@ -95,4 +95,24 @@ describe("E2E sealed stream name", () => {
     expect(stream?.e2eEnabled).toBeUndefined()
     expect(stream?.sealedNameCiphertext).toBeUndefined()
   })
+
+  test("null clears a previously-stored sealed name (rename without a fresh seal)", async () => {
+    const { wsId, sId } = await seedStream(true)
+    const ciphertext = Buffer.from("sealed-name").toString("base64")
+    await E2eStreamsRepository.updateSealedName(pool, wsId, sId, { ciphertext, envelope: ENVELOPE })
+    expect((await StreamRepository.findById(pool, sId))?.sealedNameCiphertext).toBe(ciphertext)
+
+    const cleared = await E2eStreamsRepository.updateSealedName(pool, wsId, sId, null)
+    expect(cleared).toBe(true)
+    const stream = await StreamRepository.findById(pool, sId)
+    expect(stream?.sealedNameCiphertext).toBeNull()
+    expect(stream?.sealedNameEnvelope).toBeNull()
+  })
+
+  test("rejects non-canonical base64 instead of storing a corrupt blob", async () => {
+    const { wsId, sId } = await seedStream(true)
+    await expect(
+      E2eStreamsRepository.updateSealedName(pool, wsId, sId, { ciphertext: "!!!!", envelope: ENVELOPE })
+    ).rejects.toThrow(/base64/)
+  })
 })
