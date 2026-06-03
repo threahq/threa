@@ -9,9 +9,11 @@ import {
   setDeviceTrust,
   setupNewKey,
   unlock,
+  unlockWithPin,
 } from "./e2e-session-store"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { DEFAULT_KDF_PARAMS } from "@/lib/crypto/passphrase"
+import { MAX_PIN_ATTEMPTS } from "@/lib/crypto/pin-device-key"
 import { db } from "@/db"
 
 // Real Argon2id on default params would take ~250ms per derivation, which
@@ -229,10 +231,11 @@ describe("e2e session store — keep me unlocked on this device", () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, trustDevice: true })
     const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
     expect(row).toBeDefined()
-    expect(row!.privateKey).toBeInstanceOf(CryptoKey)
-    expect(row!.privateKey.extractable).toBe(false)
+    const privateKey = row!.privateKey!
+    expect(privateKey).toBeInstanceOf(CryptoKey)
+    expect(privateKey.extractable).toBe(false)
     // Non-extractable means the raw bytes can never be read back out.
-    await expect(crypto.subtle.exportKey("pkcs8", row!.privateKey)).rejects.toThrow()
+    await expect(crypto.subtle.exportKey("pkcs8", privateKey)).rejects.toThrow()
   })
 
   it("lock forgets the device key so a reload requires the passphrase again", async () => {
@@ -245,6 +248,60 @@ describe("e2e session store — keep me unlocked on this device", () => {
 
     await reload()
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("locked")
+  })
+
+  describe("device PIN quick-unlock", () => {
+    const PIN = "135790"
+
+    it("setup with a PIN resumes pin-locked, and the right PIN unlocks", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp-correct", { params: FAST_PARAMS, pin: PIN })
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+      // PIN mode stores the sealed bundle, not an auto-resume CryptoKey.
+      const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+      expect(row!.pinWrappedPrivate).toBeTruthy()
+      expect(row!.privateKey).toBeUndefined()
+
+      await reload()
+      const locked = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(locked.status).toBe("locked")
+      expect(locked.pinProtected).toBe(true)
+
+      await unlockWithPin(WORKSPACE_ID, USER_ID, PIN)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+    })
+
+    it("a wrong PIN keeps the session locked and counts the attempt", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, pin: PIN })
+      await reload()
+
+      await expect(unlockWithPin(WORKSPACE_ID, USER_ID, "000000")).rejects.toThrow()
+      const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(s.status).toBe("locked")
+      expect(s.pinProtected).toBe(true)
+      const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+      expect(row!.pinFailedAttempts).toBe(1)
+
+      // The correct PIN then unlocks and clears the counter.
+      await unlockWithPin(WORKSPACE_ID, USER_ID, PIN)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+      const after = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+      expect(after!.pinFailedAttempts).toBe(0)
+    })
+
+    it("forgets the PIN after MAX_PIN_ATTEMPTS so only the passphrase recovers", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, pin: PIN })
+      await reload()
+
+      for (let i = 0; i < MAX_PIN_ATTEMPTS; i++) {
+        await expect(unlockWithPin(WORKSPACE_ID, USER_ID, "000000")).rejects.toThrow()
+      }
+
+      // Device PIN material is gone; a reload no longer offers a PIN.
+      expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+      const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(s.status).toBe("locked")
+      expect(s.pinProtected).toBe(false)
+    })
   })
 
   it("setDeviceTrust toggles persistence without re-entering the passphrase", async () => {

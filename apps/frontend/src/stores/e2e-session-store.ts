@@ -5,6 +5,12 @@ import { clearStreamKeyCache } from "@/lib/crypto/stream-key-cache"
 import { clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
 import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
 import { generateUIK, toNonExtractable, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
+import {
+  MAX_PIN_ATTEMPTS,
+  unwrapPrivateKeyWithPin,
+  wrapPrivateKeyWithPin,
+  type PinWrappedKey,
+} from "@/lib/crypto/pin-device-key"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
 import { db, type CachedE2eDeviceKey, type CachedE2eKey } from "@/db"
 
@@ -41,6 +47,13 @@ export interface E2eSessionState {
    * checked state reactively.
    */
   deviceTrusted: boolean
+  /**
+   * `true` when this device's trusted key is gated behind a PIN — a reload
+   * resumes `locked` and the unlock surface should prompt for the PIN (with a
+   * passphrase fallback) rather than the passphrase directly. Only meaningful
+   * alongside `status: "locked"`; cleared once unlocked.
+   */
+  pinProtected?: boolean
   /** Last error from a setup / unlock / rotate attempt. Cleared on the next action. */
   error: string | null
 }
@@ -199,6 +212,39 @@ async function tryPersistDeviceKey(
   }
 }
 
+/**
+ * Persist a PIN-gated device key: the PIN-wrapped private bundle + salt/params,
+ * with the attempt counter reset. No `privateKey` is stored, so a reload can't
+ * auto-resume — `unlockWithPin` must run first. Best-effort like its sibling.
+ */
+async function tryPersistPinDeviceKey(
+  workspaceId: string,
+  userId: string,
+  keyId: string,
+  publicKey: Uint8Array,
+  wrapped: PinWrappedKey
+): Promise<boolean> {
+  try {
+    const row: CachedE2eDeviceKey = {
+      id: `${workspaceId}:${userId}`,
+      workspaceId,
+      userId,
+      keyId,
+      publicKey: bytesToBase64(publicKey),
+      pinWrappedPrivate: wrapped.pinWrappedPrivate,
+      pinSalt: wrapped.pinSalt,
+      pinKdfParams: wrapped.pinKdfParams,
+      pinFailedAttempts: 0,
+      trustedAt: new Date().toISOString(),
+    }
+    await db.e2eDeviceKeys.put(row)
+    return true
+  } catch (err) {
+    console.warn("[e2e] device PIN persist failed; staying unlocked for this session only", err)
+    return false
+  }
+}
+
 /** Forget this device's trusted key (explicit lock, rotation mismatch, sign-out). */
 function deleteDeviceKey(workspaceId: string, userId: string): Promise<void> {
   return db.e2eDeviceKeys.delete(`${workspaceId}:${userId}`)
@@ -228,13 +274,25 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
   if (cachedRow) {
     scope.cachedKey = toCachedKeyView(cachedRow)
   }
-  if (deviceKey) {
+  if (deviceKey?.privateKey) {
     setState(workspaceId, userId, {
       status: "unlocked",
       keyId: deviceKey.keyId,
       publicKey: base64ToBytes(deviceKey.publicKey),
       privateKey: deviceKey.privateKey,
       deviceTrusted: true,
+      pinProtected: false,
+      error: null,
+    })
+  } else if (deviceKey?.pinWrappedPrivate) {
+    // PIN-gated: the key is here but sealed under the PIN, so resume `locked`
+    // and flag `pinProtected` so the unlock surface prompts for the PIN.
+    setState(workspaceId, userId, {
+      status: "locked",
+      keyId: deviceKey.keyId,
+      publicKey: base64ToBytes(deviceKey.publicKey),
+      deviceTrusted: false,
+      pinProtected: true,
       error: null,
     })
   } else if (cachedRow) {
@@ -340,7 +398,7 @@ export async function setupNewKey(
   workspaceId: string,
   userId: string,
   passphrase: string,
-  opts?: { params?: KdfParams; trustDevice?: boolean }
+  opts?: { params?: KdfParams; trustDevice?: boolean; pin?: string }
 ): Promise<DeviceTrustResult | undefined> {
   const params = opts?.params ?? DEFAULT_KDF_PARAMS
   const scope = getOrCreateScope(workspaceId, userId)
@@ -374,8 +432,15 @@ export async function setupNewKey(
   if (scope.loadGeneration !== generation) return
 
   const trustDevice = opts?.trustDevice ?? false
+  const pin = opts?.pin
   let trustPersisted = false
-  if (trustDevice) {
+  if (pin) {
+    // PIN quick-unlock: seal the (extractable) fresh key under the PIN-derived
+    // KEK and store the bundle — a reload will require the PIN, not auto-resume.
+    const wrapped = await wrapPrivateKeyWithPin(uik.privateKey, pin)
+    trustPersisted = await tryPersistPinDeviceKey(workspaceId, userId, view.keyId, view.publicKey, wrapped)
+    if (scope.loadGeneration !== generation) return
+  } else if (trustDevice) {
     // The freshly generated key is extractable; persist the hardened
     // non-extractable form so the raw bytes never touch disk. Best-effort: a
     // failed device-key write must not fail setup — the key is already on the
@@ -391,9 +456,10 @@ export async function setupNewKey(
     publicKey: view.publicKey,
     privateKey: uik.privateKey,
     deviceTrusted: trustPersisted,
+    pinProtected: false,
     error: null,
   })
-  return { trustRequested: trustDevice, trustPersisted }
+  return { trustRequested: trustDevice || !!pin, trustPersisted }
 }
 
 /**
@@ -405,7 +471,7 @@ export async function unlock(
   workspaceId: string,
   userId: string,
   passphrase: string,
-  opts?: { trustDevice?: boolean }
+  opts?: { trustDevice?: boolean; pin?: string }
 ): Promise<DeviceTrustResult | undefined> {
   const scope = getOrCreateScope(workspaceId, userId)
   const cached = scope.cachedKey
@@ -413,15 +479,17 @@ export async function unlock(
     throw new Error("No wrapped key available to unlock")
   }
   const trustDevice = opts?.trustDevice ?? false
+  const pin = opts?.pin
   const generation = ++scope.loadGeneration
   setState(workspaceId, userId, { status: "unlocking", error: null })
 
   let privateKey: CryptoKey
   try {
     const kek = await deriveKEK(passphrase, cached.kdfSalt, cached.kdfParams)
-    // Non-extractable by default — this is the key we persist for trusted
-    // devices, and the session never needs the raw bytes back.
-    privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek)
+    // Non-extractable by default — the session never needs the raw bytes back.
+    // Setting a device PIN is the exception: it must re-seal the private key
+    // under the PIN-KEK, which requires an extractable key to export.
+    privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek, { extractable: !!pin })
   } catch (err) {
     // Only a derive/unwrap failure is the wrong-passphrase (or tampered-bundle)
     // case — the one condition the modal surfaces as "try again". Failures in
@@ -439,10 +507,14 @@ export async function unlock(
   // device-trust write does. Persisting (or clearing) trust is best-effort: a
   // failed IDB write means "not kept unlocked", never a failed unlock.
   let trustPersisted = false
-  if (trustDevice) {
+  if (pin) {
+    // Re-seal under the PIN: a reload will require the PIN, not auto-resume.
+    const wrapped = await wrapPrivateKeyWithPin(privateKey, pin)
+    trustPersisted = await tryPersistPinDeviceKey(workspaceId, userId, cached.keyId, cached.publicKey, wrapped)
+  } else if (trustDevice) {
     trustPersisted = await tryPersistDeviceKey(workspaceId, userId, cached.keyId, cached.publicKey, privateKey)
   } else {
-    // Honour an explicit "don't keep me unlocked": drop any prior trust.
+    // Honour an explicit "don't keep me unlocked": drop any prior trust (incl. a PIN).
     try {
       await deleteDeviceKey(workspaceId, userId)
     } catch (err) {
@@ -457,9 +529,78 @@ export async function unlock(
     publicKey: cached.publicKey,
     privateKey,
     deviceTrusted: trustPersisted,
+    pinProtected: false,
     error: null,
   })
-  return { trustRequested: trustDevice, trustPersisted }
+  return { trustRequested: trustDevice || !!pin, trustPersisted }
+}
+
+/**
+ * Resume an unlocked session from this device's PIN-gated key. Reads the
+ * PIN-wrapped bundle, derives the KEK from the PIN, and unwraps. On the wrong
+ * PIN it counts the failure and, once `MAX_PIN_ATTEMPTS` is hit, forgets the
+ * device PIN entirely (dropping back to passphrase-only) so a stolen device
+ * can't be brute-forced offline. Throws on any failure so the modal can render
+ * an inline error; the error message is also set on the session state.
+ */
+export async function unlockWithPin(workspaceId: string, userId: string, pin: string): Promise<void> {
+  const scope = getOrCreateScope(workspaceId, userId)
+  const row = await readDeviceKey(workspaceId, userId)
+  if (!row?.pinWrappedPrivate || !row.pinSalt || !row.pinKdfParams) {
+    throw new Error("No device PIN is set")
+  }
+  const wrapped: PinWrappedKey = {
+    pinWrappedPrivate: row.pinWrappedPrivate,
+    pinSalt: row.pinSalt,
+    pinKdfParams: row.pinKdfParams,
+  }
+  const generation = ++scope.loadGeneration
+  setState(workspaceId, userId, { status: "unlocking", error: null })
+
+  let privateKey: CryptoKey
+  try {
+    privateKey = await unwrapPrivateKeyWithPin(wrapped, pin)
+  } catch (err) {
+    const attempts = (row.pinFailedAttempts ?? 0) + 1
+    if (attempts >= MAX_PIN_ATTEMPTS) {
+      // Lockout: forget the PIN material so only the passphrase can recover.
+      await deleteDeviceKey(workspaceId, userId).catch(() => {})
+      if (scope.loadGeneration === generation) {
+        setState(workspaceId, userId, {
+          status: "locked",
+          pinProtected: false,
+          privateKey: null,
+          error: "Too many PIN attempts — unlock with your passphrase.",
+        })
+      }
+    } else {
+      await db.e2eDeviceKeys.update(`${workspaceId}:${userId}`, { pinFailedAttempts: attempts }).catch(() => {})
+      if (scope.loadGeneration === generation) {
+        const left = MAX_PIN_ATTEMPTS - attempts
+        setState(workspaceId, userId, {
+          status: "locked",
+          pinProtected: true,
+          privateKey: null,
+          error: `Incorrect PIN — ${left} attempt${left === 1 ? "" : "s"} left.`,
+        })
+      }
+    }
+    throw err instanceof Error ? err : new Error("Incorrect PIN")
+  }
+
+  if (scope.loadGeneration !== generation) return
+
+  // Success — clear the failed-attempt counter.
+  await db.e2eDeviceKeys.update(`${workspaceId}:${userId}`, { pinFailedAttempts: 0 }).catch(() => {})
+  setState(workspaceId, userId, {
+    status: "unlocked",
+    keyId: row.keyId,
+    publicKey: base64ToBytes(row.publicKey),
+    privateKey,
+    deviceTrusted: true,
+    pinProtected: false,
+    error: null,
+  })
 }
 
 /**
