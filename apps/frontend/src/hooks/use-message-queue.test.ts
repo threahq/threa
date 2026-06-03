@@ -186,7 +186,6 @@ describe("useMessageQueue", () => {
     expect(mockCreate).toHaveBeenCalledWith("ws_1", "stream_1", {
       streamId: "stream_1",
       contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }] },
-      contentMarkdown: "Hello",
       attachmentIds: undefined,
       clientMessageId: "temp_abc",
     })
@@ -403,7 +402,6 @@ describe("useMessageQueue", () => {
         type: "doc",
         content: [{ type: "paragraph", content: [{ type: "text", text: "With attachments" }] }],
       },
-      contentMarkdown: "With attachments",
       attachmentIds: ["attach_1", "attach_2"],
       clientMessageId: "temp_attach",
     })
