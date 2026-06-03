@@ -50,11 +50,12 @@ The key model, in plain terms:
   scratchpad shows its companion-mode toggle). Companion mode is locked off for
   encrypted streams — the enclave path replaces it.
 - **Locked vs. unlocked.** On a fresh device or after locking, the stream is
-  _locked_: the header and composer show an inline **Unlock** affordance, and
-  message bodies render a placeholder instead of content. Unlocking is in-place —
-  a passphrase modal, no detour through Settings. "Keep me unlocked on this
-  device" persists a non-extractable key locally so you skip the passphrase on the
-  next load on that device.
+  _locked_: the timeline and composer are replaced by a single full-page unlock
+  view (with the header keeping its inline **Unlock** affordance too), so you never
+  scroll a wall of locked placeholders. Unlocking is in-place — a passphrase modal,
+  no detour through Settings. "Keep me unlocked on this device" persists a
+  non-extractable key locally so you skip the passphrase on the next load on that
+  device.
 - **Talking to Ariadne.** Once unlocked, you chat exactly as in a normal
   scratchpad. Ariadne's replies stream in, and its **AI trace** (context, tool
   calls, research substeps) is visible in the trace modal — all of it decrypted
@@ -67,11 +68,6 @@ The key model, in plain terms:
 This feature is `building`. What it deliberately does **not** do yet — the
 known-missing tally, kept current as gaps close:
 
-- **No full-page unlock gate.** A locked encrypted scratchpad still mounts the
-  normal timeline shell and composer, showing per-surface banners and per-message
-  placeholders rather than replacing the whole view with a single "unlock to
-  continue" page. (`apps/frontend/src/pages/stream.tsx` mounts `TimelineView`
-  unconditionally.)
 - **Stream names are plaintext.** A stream's display name is server-visible
   metadata stored in the clear; only message content and AI trace data are
   encrypted. Server-side AI name polish is disabled for encrypted streams, so the
