@@ -494,7 +494,6 @@ export function registerStreamSocketHandlers(
     const newEvent = payload.event
     const newPayload = newEvent.payload as {
       contentJson: unknown
-      contentMarkdown: string
       clientMessageId?: string
     }
     const now = Date.now()
@@ -508,24 +507,10 @@ export function registerStreamSocketHandlers(
       // Dexie live-query observers never see a frame with neither event.
       await db.events.put({ ...newEvent, workspaceId, _sequenceNum: sequenceToNum(newEvent.sequence), _cachedAt: now })
 
-      // Now remove the optimistic event
+      // Now remove the optimistic event, keyed by the client id the server echoes back.
       if (newPayload.clientMessageId) {
         await db.events.delete(newPayload.clientMessageId).catch(() => {})
         await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
-      } else {
-        // Fallback: content-based match for events sent before clientMessageId was deployed
-        const tempEvents = await db.events
-          .where("streamId")
-          .equals(streamId)
-          .filter((e) => {
-            if (!e.id.startsWith("temp_")) return false
-            const p = e.payload as { contentMarkdown: string }
-            return e.actorId === newEvent.actorId && p.contentMarkdown === newPayload.contentMarkdown
-          })
-          .toArray()
-        if (tempEvents.length > 0) {
-          await db.events.delete(tempEvents[0].id)
-        }
       }
     })
 

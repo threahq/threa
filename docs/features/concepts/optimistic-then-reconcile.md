@@ -83,11 +83,10 @@ deliberately leaves the optimistic `db.events` row for the socket handler to swa
 (`:249-255`). A Web Lock keeps two tabs from sending the same row.
 
 **Reconcile.** `handleMessageCreated` in `apps/frontend/src/sync/stream-sync.ts:486` runs
-one Dexie transaction that no-ops if the real event id is already present (`:504-505`),
-inserts the real event first (`:509`), then deletes the optimistic event and its pending
-row keyed by `payload.clientMessageId` (`:512-514`). A comment at `:507` cites the
-insert-before-delete ordering directly. A content-based fallback (`:516-528`) covers
-legacy events that predate `clientMessageId`.
+one Dexie transaction that no-ops if the real event id is already present (`:503-504`),
+inserts the real event first (`:508`), then deletes the optimistic event and its pending
+row keyed by `payload.clientMessageId` (`:511-513`). A comment at `:506` cites the
+insert-before-delete ordering directly.
 
 **Render merge.** `loadStreamEvents` (`apps/frontend/src/stores/stream-store.ts:27`) reads
 confirmed events by the `[streamId+_sequenceNum]` index and merges in any `pending` or
@@ -115,10 +114,6 @@ or the user deletes it.
 - **Saved-message actions** (save / done / archive) use TanStack mutations with cache
   invalidation against `db.savedMessages`, not the IDB-durable optimistic queue
   (`apps/frontend/src/hooks/use-saved.ts`).
-- **The content-based fallback is a compatibility shim**, not the primary path. It can
-  mis-dedupe two identical messages sent in quick succession, and it does not match E2E
-  messages (whose wire `contentMarkdown` is placeholder ciphertext). Current sends always
-  carry a `clientMessageId`, so the fallback only fires for events that predate it.
 
 ## Invariants
 
