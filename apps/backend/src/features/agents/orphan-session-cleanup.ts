@@ -15,15 +15,18 @@ export interface OrphanSessionCleanup {
 const ORPHAN_ERROR = "Session orphaned (stale heartbeat)"
 
 /**
- * Mark one orphaned session FAILED and emit the failure lifecycle (stream event +
+ * Mark one RUNNING session FAILED and emit the failure lifecycle (stream event +
  * outbox + session-room socket), mirroring the in-process failure path. Returns
  * whether we won the RUNNING→FAILED transition (false if it terminated under us).
- * Exported for direct testing of the emission.
+ * Shared by orphan cleanup and the enclave dispatch worker (assign-failure path),
+ * which can't rely on cleanup as a backstop: cleanup only scans RUNNING sessions,
+ * so a session it marks FAILED itself must emit its own lifecycle.
  */
-export async function failOrphanedSession(
+export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
-  session: { id: string; streamId: string; personaId: string }
+  session: { id: string; streamId: string; personaId: string },
+  error: string
 ): Promise<boolean> {
   const { id: sessionId, streamId, personaId } = session
   // Resolve the workspace from the stream (agent_sessions don't carry it) so we
@@ -35,7 +38,7 @@ export async function failOrphanedSession(
   // completed concurrently isn't clobbered and we don't double-emit a failure.
   const won = await withTransaction(pool, async (tx) => {
     const failed = await AgentSessionRepository.updateStatus(tx, sessionId, SessionStatuses.FAILED, {
-      error: ORPHAN_ERROR,
+      error,
       onlyIfStatus: SessionStatuses.RUNNING,
     })
     if (!failed) return false
@@ -51,7 +54,7 @@ export async function failOrphanedSession(
         payload: {
           sessionId,
           stepCount: steps.length,
-          error: ORPHAN_ERROR,
+          error,
           traceId: sessionId,
           failedAt: new Date().toISOString(),
         },
@@ -112,7 +115,7 @@ export function createOrphanSessionCleanup(
 
       for (const session of orphaned) {
         try {
-          const won = await failOrphanedSession(pool, io, session)
+          const won = await failSessionWithLifecycle(pool, io, session, ORPHAN_ERROR)
           if (won) {
             logger.info({ sessionId: session.id, streamId: session.streamId }, "Marked orphaned session as failed")
           }

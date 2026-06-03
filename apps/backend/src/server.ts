@@ -704,7 +704,7 @@ export async function startServer(): Promise<ServerInstance> {
   // is configured — the forwarder authenticates to the enclave with it, and the
   // enclave rejects callers that don't present it.
   if (enclaveForwarder) {
-    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, enclaveForwarder })
+    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, io, enclaveForwarder })
     jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
       tier: QueueTiers.INTERACTIVE,
       fairness: QueueFairness.NONE,

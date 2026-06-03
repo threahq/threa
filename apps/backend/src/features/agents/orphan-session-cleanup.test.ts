@@ -5,11 +5,12 @@ import * as db from "../../db"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
-import { failOrphanedSession } from "./orphan-session-cleanup"
+import { failSessionWithLifecycle } from "./orphan-session-cleanup"
 
 const pool = {} as Pool
 
 const ORPHAN = { id: "session_1", streamId: "stream_1", personaId: "persona_ariadne" }
+const ERROR = "Session orphaned (stale heartbeat)"
 
 afterEach(() => mock.restore())
 
@@ -19,7 +20,7 @@ function fakeIo() {
   return { io, emit }
 }
 
-describe("failOrphanedSession", () => {
+describe("failSessionWithLifecycle", () => {
   it("marks FAILED only from RUNNING and emits the failed lifecycle (stream event + outbox + session room)", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const tx = {} as never
@@ -31,16 +32,16 @@ describe("failOrphanedSession", () => {
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
     const { io, emit } = fakeIo()
 
-    const won = await failOrphanedSession(pool, io, ORPHAN)
+    const won = await failSessionWithLifecycle(pool, io, ORPHAN, ERROR)
 
     expect(won).toBe(true)
     // Conditional transition: never clobbers a session that already left RUNNING.
-    expect(update.mock.calls[0]![3]).toMatchObject({ onlyIfStatus: SessionStatuses.RUNNING })
+    expect(update.mock.calls[0]![3]).toMatchObject({ error: ERROR, onlyIfStatus: SessionStatuses.RUNNING })
     // The lifecycle event is what unblocks the inline indicator + keeps refresh consistent.
     expect(insertEvent.mock.calls[0]![1]).toMatchObject({
       streamId: "stream_1",
       eventType: "agent_session:failed",
-      payload: { sessionId: "session_1", stepCount: 2 },
+      payload: { sessionId: "session_1", stepCount: 2, error: ERROR },
     })
     expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:failed")
     // And a live-open trace dialog (session room) is updated directly.
@@ -58,7 +59,7 @@ describe("failOrphanedSession", () => {
     const insertOutbox = spyOn(OutboxRepository, "insert")
     const { io, emit } = fakeIo()
 
-    const won = await failOrphanedSession(pool, io, ORPHAN)
+    const won = await failSessionWithLifecycle(pool, io, ORPHAN, ERROR)
 
     expect(won).toBe(false)
     expect(insertEvent).not.toHaveBeenCalled()
@@ -75,7 +76,7 @@ describe("failOrphanedSession", () => {
     const insertEvent = spyOn(StreamEventRepository, "insert")
     const { io, emit } = fakeIo()
 
-    const won = await failOrphanedSession(pool, io, ORPHAN)
+    const won = await failSessionWithLifecycle(pool, io, ORPHAN, ERROR)
 
     expect(won).toBe(true)
     expect(update).toHaveBeenCalledTimes(1)
