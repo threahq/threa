@@ -605,6 +605,16 @@ export interface CachedE2eDeviceKey {
   pinSalt?: string
   pinKdfParams?: KdfParams
   pinFailedAttempts?: number
+  /**
+   * Biometric (WebAuthn PRF) quick-unlock: the UIK private key wrapped under the
+   * authenticator's PRF-derived secret, plus the credential id and PRF salt
+   * needed to reproduce that secret via a biometric assertion. Present only when
+   * biometric unlock is set; mutually exclusive with `privateKey`/`pin*`. The
+   * secret itself is never stored — it's re-derived from the authenticator.
+   */
+  webauthnCredentialId?: string
+  webauthnPrfSalt?: string
+  webauthnWrappedPrivate?: string
   trustedAt: string
 }
 
