@@ -31,7 +31,10 @@ export function useCreateEncryptedScratchpad(workspaceId: string, currentUserId:
       }
       const session = getE2eSessionState(workspaceId, currentUserId)
       if (session.status !== "unlocked" || !session.keyId || !session.publicKey) {
-        throw new Error("Unlock encrypted scratchpads first (Settings → Encryption)")
+        // Callers onboard first (the sidebar opens setup/unlock inline before
+        // calling this), so reaching here is a programming error, not a
+        // user-facing state — never surface a "go set up encryption" message.
+        throw new Error("createEncryptedScratchpad called without an unlocked E2E session")
       }
       const ownerKeyId = session.keyId
       const ownerPublicKey = session.publicKey
