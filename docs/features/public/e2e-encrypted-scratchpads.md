@@ -81,9 +81,13 @@ known-missing tally, kept current as gaps close:
 - **Attachments are not encrypted yet.** Encrypt-before-upload for E2E attachments
   is being built in a separate change; until it lands, attachments are out of
   scope for encrypted scratchpads.
-- **No mid-generation interjection.** You can't yet send a message (or edit one to
-  reconsider) while Ariadne is mid-turn and have it fold into the running turn.
-  The only mid-turn control is the graceful "Stop research" abort.
+- **Interjections are picked up after the current turn, not folded into it.** If you
+  send a message while Ariadne is mid-turn, it isn't ignored: when the running turn
+  finishes, a follow-up turn automatically runs for the message(s) that arrived
+  during it — the same finish-then-catch-up behavior the non-encrypted Ariadne uses.
+  What's still missing is *mid-turn* adaptation (folding the new message into the
+  in-flight turn) and edit-to-reconsider. The mid-turn control today is the graceful
+  "Stop research" abort.
 - **Ariadne is web-only in the enclave.** Inside an encrypted stream, Ariadne has
   web research and URL reading; it cannot reach workspace tools (GAM memory,
   reading other streams) because that would require plaintext egress from the

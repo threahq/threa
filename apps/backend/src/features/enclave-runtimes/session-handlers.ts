@@ -5,7 +5,9 @@ import type { Server } from "socket.io"
 import { AGENT_STEP_TYPES, AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
 import { withTransaction } from "../../db"
 import { eventId } from "../../lib/id"
+import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
+import { JobQueues, type QueueManager } from "../../lib/queue"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses, getBuiltInAgentConfig, type AgentSession } from "../agents"
 import { StreamRepository, StreamEventRepository } from "../streams"
@@ -95,6 +97,8 @@ interface Dependencies {
   eventService: EventService
   /** Sealed steps broadcast to the session room for live trace rendering. Always present in the API process. */
   io: Server
+  /** Enqueues the catch-up follow-up turn on completion (enclave interjection parity). */
+  jobQueue: QueueManager
 }
 
 /**
@@ -137,7 +141,7 @@ function emitInlineProgress(
   })
 }
 
-export function createEnclaveSessionHandlers({ pool, eventService, io }: Dependencies) {
+export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
@@ -450,6 +454,40 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
       // stream room, so the dialog wouldn't otherwise transition until a refetch.
       if (committed && stream) {
         io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:completed", { sessionId: id })
+      }
+
+      // Interjection catch-up (parity with the main app's `checkForUnseenMessages`,
+      // persona-agent-worker.ts): a user message that landed while this turn ran was
+      // suppressed by the one-running guard in the enclave-invoke worker, so dispatch
+      // a follow-up turn for the latest such message. The enclave saw history up to
+      // its trigger and nothing after, so the trigger's sequence is the "seen"
+      // boundary. Only after we actually won the completion, so a raced redelivery
+      // doesn't double-dispatch. Best-effort: a failed enqueue is logged, not fatal —
+      // the next user message would re-trigger anyway.
+      if (committed && stream && session.triggerMessageId) {
+        try {
+          const triggerSeq = await StreamEventRepository.getMessageSequence(
+            pool,
+            session.streamId,
+            session.triggerMessageId
+          )
+          if (triggerSeq !== null) {
+            const unseen = await StreamEventRepository.getLatestUnseenUserMessage(pool, session.streamId, triggerSeq)
+            if (unseen) {
+              await jobQueue.send(JobQueues.ENCLAVE_INVOKE, {
+                workspaceId: stream.workspaceId,
+                streamId: session.streamId,
+                messageId: unseen.messageId,
+                triggeredBy: unseen.authorId,
+              })
+            }
+          }
+        } catch (err) {
+          logger.error(
+            { err, sessionId: id, streamId: session.streamId },
+            "Enclave interjection follow-up dispatch failed"
+          )
+        }
       }
 
       res.status(204).end()

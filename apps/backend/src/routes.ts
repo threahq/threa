@@ -85,6 +85,7 @@ import type { WorkosOrgService } from "@threa/backend-common"
 import type { BotApiKeyService } from "./features/public-api"
 import type { Pool } from "pg"
 import type { PoolMonitor } from "./lib/observability"
+import type { QueueManager } from "./lib/queue"
 
 interface Dependencies {
   pool: Pool
@@ -131,6 +132,7 @@ interface Dependencies {
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
+  jobQueue: QueueManager
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -278,7 +280,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
     // Session callbacks: a live enclave drives an assigned turn over these
     // (liveness refresh + sealed replies on completion). Same shared-secret gate.
-    const enclaveSession = createEnclaveSessionHandlers({ pool, eventService, io: deps.io })
+    const enclaveSession = createEnclaveSessionHandlers({ pool, eventService, io: deps.io, jobQueue: deps.jobQueue })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
     app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
     app.post("/internal/enclave-runtimes/sessions/:id/steps/started", internalAuth, enclaveSession.stepStarted)

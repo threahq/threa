@@ -9,6 +9,7 @@ import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { EventService } from "../messaging"
+import type { QueueManager } from "../../lib/queue"
 import { createEnclaveSessionHandlers } from "./session-handlers"
 
 const pool = {} as Pool
@@ -42,6 +43,7 @@ const SESSION = {
   personaId: "persona_ariadne",
   status: SessionStatuses.RUNNING,
   lastSeenSequence: null,
+  triggerMessageId: "msg_trigger",
   createdAt: new Date("2026-05-30T00:00:00.000Z"),
 } as unknown as Awaited<ReturnType<typeof AgentSessionRepository.findById>>
 
@@ -77,10 +79,16 @@ function fakeIo() {
   return { io, emit }
 }
 
+function fakeJobQueue() {
+  const send = mock(async (_queue: string, _data: unknown) => "job_test")
+  return { jobQueue: { send } as unknown as QueueManager, send }
+}
+
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
   const eventService = { createMessage } as unknown as EventService
   const { io, emit } = fakeIo()
-  return { handlers: createEnclaveSessionHandlers({ pool, eventService, io }), createMessage, io, emit }
+  const { jobQueue, send } = fakeJobQueue()
+  return { handlers: createEnclaveSessionHandlers({ pool, eventService, io, jobQueue }), createMessage, io, emit, send }
 }
 
 describe("createEnclaveSessionHandlers.message", () => {
@@ -156,12 +164,16 @@ describe("createEnclaveSessionHandlers.complete", () => {
       fn(tx)) as never)
     const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers, createMessage, io, emit } = makeHandlers()
+    // No user message arrived during the turn → no follow-up dispatch.
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
+    spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
+    const { handlers, createMessage, io, emit, send } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
 
     expect(res.statusCode).toBe(204)
+    expect(send).not.toHaveBeenCalled() // nothing unseen → no catch-up turn
     expect(createMessage).not.toHaveBeenCalled() // replies were already streamed via /messages
     expect(complete).toHaveBeenCalledTimes(1)
     // Completion + event are one atomic transaction (INV-7): completeSession runs
@@ -182,6 +194,39 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // And a live-open trace dialog (session room) is transitioned to completed.
     expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:completed")).toBe(true)
+  })
+
+  it("dispatches a catch-up enclave turn for a user message that arrived mid-turn", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    // The trigger was at sequence 5; a user message landed at 9 while the turn ran.
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
+    spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue({
+      messageId: "msg_new",
+      authorId: "usr_1",
+      sequence: 9n,
+    })
+    const { handlers, send } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.complete(req("session_1", COMPLETE_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]![0]).toBe("enclave.invoke")
+    expect(send.mock.calls[0]![1]).toMatchObject({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      messageId: "msg_new",
+      triggeredBy: "usr_1",
+    })
   })
 
   it("does not emit the completed event when the session raced to a terminal state", async () => {
@@ -430,13 +475,23 @@ describe("createEnclaveSessionHandlers.substep", () => {
 
 describe("createEnclaveSessionHandlers.heartbeat", () => {
   it("400s without a session id", async () => {
-    const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService, io: fakeIo().io })
+    const handlers = createEnclaveSessionHandlers({
+      pool,
+      eventService: {} as EventService,
+      io: fakeIo().io,
+      jobQueue: fakeJobQueue().jobQueue,
+    })
     await expect(handlers.heartbeat(req(undefined, {}), fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
 
   it("refreshes the heartbeat and 204s", async () => {
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
-    const handlers = createEnclaveSessionHandlers({ pool, eventService: {} as EventService, io: fakeIo().io })
+    const handlers = createEnclaveSessionHandlers({
+      pool,
+      eventService: {} as EventService,
+      io: fakeIo().io,
+      jobQueue: fakeJobQueue().jobQueue,
+    })
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)
     expect(beat).toHaveBeenCalledWith(pool, "session_1")
