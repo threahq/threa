@@ -1,58 +1,44 @@
 # Threa
 
-Workplace chat that remembers.
+Threa is a workplace chat application (channels, threads, DMs, scratchpads) with
+an automatic memory layer that extracts decisions and context from conversations
+into searchable notes linked back to their source messages.
 
-Website: [threa.io](https://threa.io) · App: [app.threa.io](https://app.threa.io)
+- Website: [threa.io](https://threa.io)
+- App: [app.threa.io](https://app.threa.io)
 
-Channels, threads, and DMs, with a memory underneath. The decisions you make and
-the reasons behind them stay attached to the conversation, so they're still
-there when the question comes up again.
+## Memory (GAM)
 
-## The problem
-
-Decisions get made in chat and then scroll away. Two months later someone asks
-why a project was paused, nobody can find the thread, and the discussion happens
-again. The reasoning was there; it just wasn't reachable.
-
-## How memory works
-
-Threa reads the conversation, finds the part where a decision actually gets
-settled, and keeps it as a short **memo** that links back to the messages it came
-from. The subsystem that does this is **GAM (General Agentic Memory)**. Memos are
-searchable by full text and by meaning (vector search), and they surface on their
-own when the topic returns, without anyone remembering to go looking.
-
-- **Capture.** Most of a channel is noise; the part worth keeping is usually a
-  handful of lines. GAM finds those and writes a memo.
-- **Hold.** The memo is short and sourced, so it stays useful after the thread
-  has scrolled away.
-- **Return.** When the topic comes up again, the relevant memos come with it.
+The memory layer is **GAM (General Agentic Memory)**. As messages arrive, GAM
+classifies them, extracts the ones that record a decision or its context, and
+stores each as a **memo**: a short summary that links back to the messages it was
+derived from. Memos are indexed for full-text and vector (semantic) search and
+are retrieved automatically when a related topic comes up.
 
 ## Ariadne
 
-Ariadne is the built-in agent, available in any conversation. Ask it why
-something was decided and it answers from the memos and their source messages,
-with links and timestamps. Personas let you adjust how it behaves per stream.
+Ariadne is the built-in conversational agent, available in any stream. It answers
+from memos and their source messages, citing links and timestamps. Its behavior
+is configurable per stream via personas.
 
-You can also bring your own agent. Threa exposes a read API over your workspace
-with scoped keys: memos come back as JSON, messages as markdown, so Claude,
-Cursor, or your own setup can read the same memory Ariadne does.
+Threa also exposes a read API over the workspace with scoped keys (memos as JSON,
+messages as markdown), so an external agent can read the same data Ariadne does.
 
 ## Features
 
-- **Scratchpads.** Personal, AI-assisted notes. Threa starts solo, with
-  scratchpads as the entry point rather than channels.
+- **Scratchpads.** Personal, AI-assisted notes; the default entry point for solo
+  use.
 - **Channels.** Public or private team conversations.
 - **Direct messages.** One-on-one chat.
-- **Threads.** Nested discussions off any message, including threads inside
-  threads. A stray reply can be moved into a thread after the fact.
-- **Quote replies.** Reply to the exact line someone wrote, quoted inline.
+- **Threads.** Nested discussions off any message, including threads within
+  threads; a message can be moved into a thread after the fact.
+- **Quote replies.** Inline quotes of a specific line.
 - **Markdown composer.** Fenced code with syntax highlighting, a full-screen
-  editor, and a stash for half-written messages.
+  editor, and saved drafts.
 - **Memos.** Decisions and context extracted from conversations (GAM).
 - **Search.** Full-text and semantic search with filters.
-- **End-to-end encryption.** Turn it on for sensitive conversations. Threa keeps
-  only ciphertext for those, and they don't become memos.
+- **End-to-end encryption.** Opt-in per conversation; encrypted streams store
+  only ciphertext and are excluded from memo extraction.
 
 ## Architecture
 
@@ -68,9 +54,9 @@ Browser ──→ Frontend (Cloudflare Pages)
 - **Frontend** (`apps/frontend`). React 19 + Vite SPA on Cloudflare Pages.
   Real-time updates over Socket.io; offline drafts in IndexedDB.
 - **Workspace Router** (`apps/workspace-router`). Cloudflare Worker that routes
-  `/api/*`: auth and workspace creation go to the control plane, and
-  `/api/workspaces/:id/*` to the right regional backend (resolved from Cloudflare
-  KV). It answers `GET /api/workspaces/:id/config` directly with
+  `/api/*`: auth, workspace creation, and `/api/regions` go to the control plane,
+  and `/api/workspaces/:id/*` to the right regional backend (resolved from
+  Cloudflare KV). It answers `GET /api/workspaces/:id/config` directly with
   `{ region, wsUrl }`, which the frontend uses to open its WebSocket.
 - **Control Plane** (`apps/control-plane`). Global service for authentication
   (WorkOS), workspace creation, and region assignment. Runs on Railway with its
