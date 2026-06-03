@@ -177,10 +177,10 @@ export function PassphraseSetupModal({
         <form onSubmit={handleSubmit}>
           <ResponsiveDialogBody className="space-y-4 py-4">
             <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
-              <p className="font-medium">There is no recovery.</p>
+              <p className="font-medium">Save your passphrase now — there is no recovery.</p>
               <p className="mt-1 text-destructive/90">
-                If you forget this passphrase, every message you encrypt with this key becomes permanently unreadable.
-                Write it down somewhere safe.
+                Store it in a password manager, or write it down somewhere safe. No one can reset it for you: if you
+                forget it, everything in your encrypted scratchpads becomes permanently unreadable.
               </p>
             </div>
 
@@ -221,7 +221,8 @@ export function PassphraseSetupModal({
                 className="mt-0.5"
               />
               <Label htmlFor="e2e-acknowledged" className="cursor-pointer font-normal leading-snug">
-                I understand that losing this passphrase means losing access to my encrypted scratchpads permanently.
+                I've saved my passphrase somewhere safe. I understand it can't be recovered, and losing it means losing
+                access to my encrypted scratchpads permanently.
               </Label>
             </div>
 
