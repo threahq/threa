@@ -83,10 +83,10 @@ export function MessageEditForm({
   }, [])
 
   const saveEdit = useCallback(
-    async (json: JSONContent, markdown: string) => {
+    async (json: JSONContent) => {
       setIsSaving(true)
       try {
-        await messageService.update(workspaceId, messageId, { contentJson: json, contentMarkdown: markdown })
+        await messageService.update(workspaceId, messageId, { contentJson: json })
         queryClient.invalidateQueries({ queryKey: messageKeys.versions(workspaceId, messageId) })
         onSave()
       } catch {
@@ -115,7 +115,7 @@ export function MessageEditForm({
     setFormatOpen(false)
     setMobileExpanded(false)
     setMobileLinkPopoverOpen(false)
-    await saveEdit(contentJson, trimmed)
+    await saveEdit(contentJson)
   }, [contentJson, saveEdit, initialMarkdown, onCancel, onDelete])
 
   const handleDocEditorSend = useCallback(
@@ -132,7 +132,7 @@ export function MessageEditForm({
         return
       }
       setDocEditorOpen(false)
-      await saveEdit(parseMarkdown(trimmed), trimmed)
+      await saveEdit(parseMarkdown(trimmed))
     },
     [saveEdit, initialMarkdown, onCancel, onDelete]
   )

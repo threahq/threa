@@ -298,11 +298,9 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
         throw new Error("Invalid DM draft target")
       }
 
-      const contentMarkdown = serializeToMarkdown(input.contentJson)
       const message = await messageService.createDm(workspaceId, targetUserId, {
         dmUserId: targetUserId,
         contentJson: input.contentJson,
-        contentMarkdown,
         attachmentIds: input.attachmentIds,
       })
 

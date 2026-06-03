@@ -23,7 +23,7 @@ import { useAttachments } from "@/hooks/use-attachments"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { toast } from "sonner"
-import { collectAttachmentReferenceIds, serializeToMarkdown } from "@threa/prosemirror"
+import { collectAttachmentReferenceIds } from "@threa/prosemirror"
 import { EMPTY_DOC, ensureTrailingParagraph } from "@/lib/prosemirror-utils"
 
 interface ScheduledEditDialogProps {
@@ -216,13 +216,11 @@ export function ScheduledEditDialog({ workspaceId, scheduled, onClose }: Schedul
         liveJson,
         attachmentsHook.getPendingAttachmentsSnapshot()
       )
-      const contentMarkdown = serializeToMarkdown(materialized)
       const attachmentIds = collectAttachmentReferenceIds(materialized)
       await updateMutation.mutateAsync({
         id: scheduled.id,
         input: {
           contentJson: materialized,
-          contentMarkdown,
           scheduledFor: sendAtDate.toISOString(),
           attachmentIds,
           expectedVersion,

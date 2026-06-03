@@ -239,7 +239,6 @@ export function useMessageQueue(): void {
           await messageService.create(next.workspaceId, next.streamId, {
             streamId: next.streamId,
             contentJson,
-            contentMarkdown: next.content,
             attachmentIds: next.attachmentIds,
             clientMessageId: next.clientId,
             confirmedPrivacyWarning: next.confirmedPrivacyWarning,

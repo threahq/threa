@@ -15,6 +15,9 @@ export {
   MESSAGE_METADATA_RESERVED_PREFIX,
 } from "./metadata-schema"
 
+// Content helpers
+export { deriveContentMarkdown } from "./content"
+
 // Repository
 export { MessageRepository } from "./repository"
 export type { Message, InsertMessageParams } from "./repository"
