@@ -80,13 +80,16 @@ broken once a real message with formatting flows through.
 - **The one converter.** `serializeToMarkdown` and `parseMarkdown` live in
   `packages/prosemirror/src/markdown.ts`, with a single shared `INLINE_MARKDOWN_PATTERN` so the
   frontend editor and the backend tokenize identically.
-- **Boundary in.** `normalizeContent` (`apps/backend/src/features/messaging/handlers.ts:183`) takes
-  whichever form the caller sent and returns both: a rich client's `contentJson` gets a markdown
-  projection serialized from it, and an AI/external caller's markdown gets parsed to `contentJson`.
-- **Internal handling out.** The composer works in `contentJson` and sends `contentJson` to the API
-  (`apps/frontend/src/components/timeline/message-input.tsx:510`); the offline operation queue
-  persists optimistic message events as `contentJson` too
-  (`apps/frontend/src/sync/operation-queue.ts:144`).
+- **Boundary in.** `normalizeContent` (`apps/backend/src/features/messaging/handlers.ts:183`) returns
+  both forms. A rich client sends `contentJson` with `contentMarkdown` optional; the backend keeps the
+  JSON as the canon and currently uses the supplied markdown, falling back to serializing it from the
+  JSON only when absent (`:191`). A markdown-only caller (the public API, AI integrations) sends just a
+  `content` string, which the backend parses to `contentJson` (`:194`).
+- **Internal handling out.** The editor and the durable send queue hold `contentJson`: the optimistic
+  `message_created` event and the `pendingMessages` IDB row both carry it
+  (`apps/frontend/src/hooks/use-stream-or-draft.ts:559`, `:617`). At the boundary the frontend
+  serializes the JSON to markdown and posts both forms on the wire
+  (`apps/frontend/src/hooks/use-message-queue.ts:238`).
 - **The strippers.** `stripMarkdownToInline()` / `stripMarkdown()`
   (`apps/frontend/src/lib/markdown/strip.ts`) remove markdown and collapse newlines for single-line
   previews; `truncateContent()` (`apps/frontend/src/components/layout/sidebar/utils.ts:79`) accepts
