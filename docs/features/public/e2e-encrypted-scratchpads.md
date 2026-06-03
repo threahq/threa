@@ -80,8 +80,12 @@ known-missing tally, kept current as gaps close:
   locally-stored key, with a lockout that falls back to the passphrase after a few
   wrong tries. The passphrase remains the only recovery root — there's no PIN-based
   account recovery, by design.
-- **No biometric / WebAuthn unlock.** Device trust today is the "keep me unlocked
-  on this device" local-key path, not a fingerprint/passkey-bound key.
+- **Biometric unlock is bound to the device authenticator.** You can set up
+  fingerprint/face unlock (WebAuthn PRF): the local key is wrapped under a secret
+  only your device's authenticator can reproduce, so a reload prompts for the
+  biometric. It needs a PRF-capable passkey/authenticator; where that's
+  unavailable the passphrase (and PIN) paths still work, and the passphrase
+  remains the recovery root.
 - **Attachments: sending is encrypted; the viewer half is still landing.** When you
   attach a file in an encrypted scratchpad it's encrypted on your device before
   upload — the server stores opaque bytes and a placeholder row, and the
