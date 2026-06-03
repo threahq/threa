@@ -18,6 +18,8 @@ import { scorePassphrase, type PassphraseScore } from "./passphrase-strength"
 import { RevealablePassphraseInput } from "./revealable-passphrase-input"
 import { PinInput, PIN_LENGTH } from "./pin-input"
 import { isValidPin } from "@/lib/crypto/pin-device-key"
+import { isWebAuthnAvailable, registerPrfCredential, type PrfRegistration } from "@/lib/crypto/webauthn-device-key"
+import { Fingerprint } from "lucide-react"
 
 interface PassphraseSetupModalProps {
   open: boolean
@@ -77,6 +79,8 @@ export function PassphraseSetupModal({
   const [acknowledged, setAcknowledged] = useState(false)
   const [trustDevice, setTrustDevice] = useState(defaultTrustDevice)
   const [pin, setPin] = useState("")
+  const [biometric, setBiometric] = useState<PrfRegistration | null>(null)
+  const [registeringBiometric, setRegisteringBiometric] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   // Reset the toggle to the caller's default each time the modal opens.
@@ -88,7 +92,7 @@ export function PassphraseSetupModal({
   const mismatched = confirm.length > 0 && passphrase !== confirm
   // The PIN is optional, but a partial/invalid entry blocks submit so it can't
   // be silently dropped. Only offered alongside device trust.
-  const pinInvalid = trustDevice && pin.length > 0 && !isValidPin(pin)
+  const pinInvalid = trustDevice && !biometric && pin.length > 0 && !isValidPin(pin)
   const strength = useMemo(() => scorePassphrase(passphrase), [passphrase])
   const canSubmit =
     !submitting &&
@@ -105,7 +109,28 @@ export function PassphraseSetupModal({
     setAcknowledged(false)
     setTrustDevice(defaultTrustDevice)
     setPin("")
+    setBiometric(null)
+    setRegisteringBiometric(false)
     setSubmitting(false)
+  }
+
+  const handleSetupBiometric = async () => {
+    if (registeringBiometric) return
+    setRegisteringBiometric(true)
+    try {
+      const registration = await registerPrfCredential({
+        rpId: window.location.hostname,
+        rpName: "Threa",
+        userId: new TextEncoder().encode(userId),
+        userName: userId,
+      })
+      setBiometric(registration)
+      toast.success("Biometric unlock ready")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't set up biometric unlock")
+    } finally {
+      setRegisteringBiometric(false)
+    }
   }
 
   const handleOpenChange = (next: boolean) => {
@@ -119,8 +144,9 @@ export function PassphraseSetupModal({
     if (!canSubmit) return
     setSubmitting(true)
     try {
-      const devicePin = trustDevice && isValidPin(pin) ? pin : undefined
-      const result = await setupNewKey(workspaceId, userId, passphrase, { trustDevice, pin: devicePin })
+      const webauthn = trustDevice && biometric ? biometric : undefined
+      const devicePin = !webauthn && trustDevice && isValidPin(pin) ? pin : undefined
+      const result = await setupNewKey(workspaceId, userId, passphrase, { trustDevice, pin: devicePin, webauthn })
       if (result?.trustRequested && !result.trustPersisted) {
         toast.warning(
           "Encryption enabled, but couldn't keep you unlocked on this device. You'll need your passphrase next time."
@@ -215,16 +241,50 @@ export function PassphraseSetupModal({
             </div>
 
             {trustDevice && (
-              <div className="space-y-2 rounded-md border border-border bg-muted/30 p-3">
-                <Label className="font-normal">
-                  Quick-unlock PIN <span className="text-muted-foreground">(optional)</span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    Set a {PIN_LENGTH}-digit PIN to reopen on this device without your full passphrase. The PIN never
-                    leaves this device.
-                  </span>
-                </Label>
-                <PinInput value={pin} onChange={setPin} disabled={submitting} ariaLabel="Quick-unlock PIN" />
-                {pinInvalid && <p className="text-xs text-destructive">Enter all {PIN_LENGTH} digits, or leave blank.</p>}
+              <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+                {!biometric && (
+                  <div className="space-y-2">
+                    <Label className="font-normal">
+                      Quick-unlock PIN <span className="text-muted-foreground">(optional)</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        Set a {PIN_LENGTH}-digit PIN to reopen on this device without your full passphrase. The PIN
+                        never leaves this device.
+                      </span>
+                    </Label>
+                    <PinInput value={pin} onChange={setPin} disabled={submitting} ariaLabel="Quick-unlock PIN" />
+                    {pinInvalid && (
+                      <p className="text-xs text-destructive">Enter all {PIN_LENGTH} digits, or leave blank.</p>
+                    )}
+                  </div>
+                )}
+                {isWebAuthnAvailable() && (
+                  <div className="space-y-1.5 border-t border-border pt-3 first:border-t-0 first:pt-0">
+                    <Label className="font-normal">
+                      Biometric unlock <span className="text-muted-foreground">(optional)</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        Use this device's fingerprint or face unlock instead of a PIN.
+                      </span>
+                    </Label>
+                    {biometric ? (
+                      <p className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
+                        <Fingerprint className="h-3.5 w-3.5" />
+                        Biometric unlock enabled for this device.
+                      </p>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        disabled={registeringBiometric || submitting}
+                        onClick={handleSetupBiometric}
+                      >
+                        <Fingerprint className="h-4 w-4" />
+                        {registeringBiometric ? "Waiting…" : "Set up biometric unlock"}
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </ResponsiveDialogBody>

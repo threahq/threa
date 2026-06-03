@@ -11,7 +11,7 @@ import {
   wrapPrivateKeyWithPin,
   type PinWrappedKey,
 } from "@/lib/crypto/pin-device-key"
-import { unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "@/lib/crypto/webauthn-device-key"
+import { getPrfSecret, unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "@/lib/crypto/webauthn-device-key"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
 import { db, type CachedE2eDeviceKey, type CachedE2eKey } from "@/db"
 
@@ -683,6 +683,31 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
     pinProtected: false,
     error: null,
   })
+}
+
+/**
+ * Whether this device has a biometric (WebAuthn PRF) key set — lets the UI offer
+ * the biometric prompt without reaching into IDB itself (INV-15).
+ */
+export async function hasBiometricUnlock(workspaceId: string, userId: string): Promise<boolean> {
+  const row = await readDeviceKey(workspaceId, userId)
+  return !!row?.webauthnWrappedPrivate
+}
+
+/**
+ * End-to-end biometric unlock from a user gesture: read this device's credential,
+ * run the WebAuthn assertion (the OS biometric prompt) to recover the PRF secret,
+ * and unlock with it. Keeps the credential lookup + ceremony in the store so the
+ * modal stays a thin button. Throws (cancelled / no biometric / bad secret) so
+ * the caller can fall back to the passphrase.
+ */
+export async function unlockWithBiometric(workspaceId: string, userId: string): Promise<void> {
+  const row = await readDeviceKey(workspaceId, userId)
+  if (!row?.webauthnWrappedPrivate || !row.webauthnCredentialId || !row.webauthnPrfSalt) {
+    throw new Error("No biometric unlock is set")
+  }
+  const prfSecret = await getPrfSecret(row.webauthnCredentialId, row.webauthnPrfSalt)
+  await unlockWithWebAuthn(workspaceId, userId, prfSecret)
 }
 
 /**
