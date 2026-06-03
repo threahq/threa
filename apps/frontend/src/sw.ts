@@ -2,6 +2,7 @@
 import { cleanupOutdatedCaches, matchPrecache, precacheAndRoute } from "workbox-precaching"
 import { AuthorTypes, type LastMessagePreview, type StreamEvent } from "@threa/types"
 import { resolveTag } from "./lib/sw-notification-format"
+import { isDevicePresent } from "./lib/sw-presence"
 import {
   SW_MSG_NOTIFICATION_CLICK,
   SW_MSG_SUBSCRIPTION_CHANGED,
@@ -632,13 +633,16 @@ self.addEventListener("push", (event) => {
   // Tag by stream, with mentions on a separate tag so they stay visually distinct.
   const tag = data.streamId ? resolveTag(data.streamId, data.activityType) : "threa-notification"
 
-  // Suppress only when a focused window is already viewing THIS stream — the user
-  // can see the message there. A push for any other stream still shows even with
-  // the app focused, so you're alerted to conversations you aren't looking at
-  // (e.g. viewing the DM with Pierre doesn't mute a new message in #general).
-  // Backend always sends the push; the SW decides whether to display it. Skipping
-  // only the on-screen stream (vs. every focused push) also keeps us off the
-  // userVisibleOnly silent-push budget that browsers penalize on mobile.
+  // Suppress only when a focused window is already viewing THIS stream AND the
+  // device was interacted with recently — the user can actually see the message
+  // there. A push for any other stream still shows even with the app focused, so
+  // you're alerted to conversations you aren't looking at (e.g. viewing the DM
+  // with Pierre doesn't mute a new message in #general). Requiring recent
+  // interaction (not focus alone) means a tab left focused and walked away from
+  // ages out and stops eating notifications — matching the backend's attended
+  // rule. Backend always sends the push; the SW decides whether to display it.
+  // Skipping only the on-screen stream also keeps us off the userVisibleOnly
+  // silent-push budget that browsers penalize on mobile.
   event.waitUntil(
     Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true })]).then(
       async ([{ appendMessage, formatTitle, formatBody, isViewingStream }, clients]) => {
@@ -648,7 +652,7 @@ self.addEventListener("push", (event) => {
             new URL(c.url).origin === self.location.origin &&
             isViewingStream(c.url, data.workspaceId, data.streamId)
         )
-        if (viewingThisStream) return
+        if (viewingThisStream && (await isDevicePresent())) return
 
         // Accumulate a rolling list of recent messages from the existing notification
         const existing = await self.registration.getNotifications({ tag })
