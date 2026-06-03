@@ -85,10 +85,10 @@ Threa uses [Bun](https://bun.sh).
 ```bash
 bun install
 bun run db:start   # PostgreSQL + MinIO via Docker
-bun run dev        # all services
+bun run dev        # control-plane, workspace-router, backend, frontend, backoffice
 ```
 
-The app comes up at `http://localhost:5173`.
+The app comes up at `http://localhost:3000`.
 
 ```bash
 bun run test       # unit/integration (backend)
