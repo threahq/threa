@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.enclave"
+watchPatterns = ["apps/enclave/**", "packages/types/**", "packages/crypto/**", "Dockerfile.enclave", "bun.lock"]
+
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+region = "europe-west4-drams3a"
