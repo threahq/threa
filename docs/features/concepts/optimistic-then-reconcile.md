@@ -83,9 +83,9 @@ deliberately leaves the optimistic `db.events` row for the socket handler to swa
 (`:249-255`). A Web Lock keeps two tabs from sending the same row.
 
 **Reconcile.** `handleMessageCreated` in `apps/frontend/src/sync/stream-sync.ts:486` runs
-one Dexie transaction that no-ops if the real event id is already present (`:504-505`),
-inserts the real event first (`:509`), then deletes the optimistic event and its pending
-row keyed by `payload.clientMessageId` (`:512-514`). A comment at `:507` cites the
+one Dexie transaction that no-ops if the real event id is already present (`:503-504`),
+inserts the real event first (`:508`), then deletes the optimistic event and its pending
+row keyed by `payload.clientMessageId` (`:511-513`). A comment at `:506` cites the
 insert-before-delete ordering directly.
 
 **Render merge.** `loadStreamEvents` (`apps/frontend/src/stores/stream-store.ts:27`) reads
