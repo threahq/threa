@@ -415,9 +415,40 @@ function bindSubnavCollapse(): void {
   })
 }
 
+/* Mobile navigation drawer. On narrow viewports the side nav is hidden off
+   canvas; the hamburger slides it in. Closing on backdrop tap, link tap, or
+   Escape keeps it out of the way once the reader has chosen where to go. */
+function bindMobileNav(): void {
+  const toggle = document.getElementById("docs-menu-toggle")
+  const side = document.getElementById("docs-side")
+  const backdrop = document.getElementById("docs-side-backdrop")
+  if (!toggle || !side || !backdrop) return
+  backdrop.removeAttribute("hidden") // JS owns visibility from here via CSS
+
+  const isOpen = () => document.body.classList.contains("docs-nav-open")
+  const open = () => {
+    document.body.classList.add("docs-nav-open")
+    toggle.setAttribute("aria-expanded", "true")
+  }
+  const close = () => {
+    document.body.classList.remove("docs-nav-open")
+    toggle.setAttribute("aria-expanded", "false")
+  }
+
+  toggle.addEventListener("click", () => (isOpen() ? close() : open()))
+  backdrop.addEventListener("click", close)
+  side.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("a")) close()
+  })
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && isOpen()) close()
+  })
+}
+
 function boot(): void {
   hydrateTokens(readCreds())
   bindPanel()
+  bindMobileNav()
   bindCredentialsBar()
   bindVarTooltips()
   bindTokenFocus()
