@@ -107,7 +107,11 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
         </div>
       </header>
 
-      <ScrollArea className="flex-1">
+      {/* Force the Radix viewport's display:table wrapper to block/full-width so
+          descendant `truncate` clips at the viewport instead of letting a long
+          preview line push the page wider than the screen on mobile. Matches the
+          saved/activity pages. */}
+      <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
         <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">{body}</main>
       </ScrollArea>
     </div>
@@ -203,7 +207,7 @@ function StreamRow({
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium">{name ?? "Untitled"}</span>
           <time className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
             {formatRelativeTime(new Date(activityAt), undefined, undefined, { terse: true })}
