@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from "react"
 import { useParams } from "react-router-dom"
-import { Bell, BellOff, CheckCircle2, Loader2, ServerCrash, TriangleAlert } from "lucide-react"
+import { Bell, BellOff, CheckCircle2, Loader2, Moon, ServerCrash, TriangleAlert } from "lucide-react"
+import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
-import { PREF_NOTIFICATION_LEVEL_OPTIONS, type PrefNotificationLevel } from "@threa/types"
+import { useCurrentWorkspaceUser, usePauseNotifications, useResumeNotifications } from "@/hooks"
+import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
+import {
+  NOTIFICATION_PAUSE_OPTIONS,
+  type NotificationPauseOption,
+  formatNotificationPauseLabel,
+  statusDurationToExpiry,
+} from "@/lib/status"
+import { PREF_NOTIFICATION_LEVEL_OPTIONS, resolveNotificationPause, type PrefNotificationLevel } from "@threa/types"
 
 const NOTIFICATION_LABELS: Record<PrefNotificationLevel, string> = {
   all: "All messages",
@@ -294,6 +304,90 @@ function resolveStatusInfo(args: {
   return { label: "Subscribing…", variant: "secondary" }
 }
 
+/**
+ * Manually pause notifications (do-not-disturb), independent of status. A
+ * status with "pause notifications" set drives the same underlying state, so
+ * this section also surfaces a status-driven pause and explains it.
+ */
+function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
+  const currentUser = useCurrentWorkspaceUser(workspaceId)
+  const schedule = useEffectiveWorkSchedule(workspaceId)
+  const pause = usePauseNotifications(workspaceId)
+  const resume = useResumeNotifications(workspaceId)
+
+  const active = currentUser ? resolveNotificationPause(currentUser, new Date()) : null
+  const busy = pause.isPending || resume.isPending
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+  const handlePause = async (option: NotificationPauseOption) => {
+    const until = option.duration ? statusDurationToExpiry(option.duration, timezone, schedule) : null
+    try {
+      await pause.mutateAsync(until)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to pause notifications")
+    }
+  }
+
+  const handleResume = async () => {
+    try {
+      await resume.mutateAsync()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to resume notifications")
+    }
+  }
+
+  // A pause coming purely from a do-not-disturb status can't be lifted from
+  // here without changing the status — explain that instead of a dead button.
+  const statusOnly = active?.source === "status"
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium">Pause notifications</h3>
+        <p className="text-sm text-muted-foreground">
+          Snooze notifications on all your devices for a while. Your activity still lands in Threa — only the push is
+          held back.
+        </p>
+      </div>
+
+      {active ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
+          <div className="flex min-w-0 items-center gap-2">
+            <Moon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{formatNotificationPauseLabel(active)}</p>
+              {statusOnly && (
+                <p className="text-xs text-muted-foreground">Set by your status — clear your status to resume.</p>
+              )}
+            </div>
+          </div>
+          {!statusOnly && (
+            <Button onClick={handleResume} variant="outline" size="sm" disabled={busy}>
+              Resume
+            </Button>
+          )}
+        </div>
+      ) : (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" disabled={busy}>
+              <BellOff className="mr-2 h-3.5 w-3.5" />
+              Pause notifications
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            {NOTIFICATION_PAUSE_OPTIONS.map((option) => (
+              <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </section>
+  )
+}
+
 export function NotificationsSettings() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const { preferences, updatePreference } = usePreferences()
@@ -328,6 +422,8 @@ export function NotificationsSettings() {
 
       {workspaceId && (
         <>
+          <Separator />
+          <PauseNotificationsSection workspaceId={workspaceId} />
           <Separator />
           <PushNotificationSection workspaceId={workspaceId} />
         </>

@@ -163,7 +163,7 @@ import {
   type VideoTranscodeSubmitJobData,
   type VideoTranscodeCheckJobData,
 } from "./lib/queue"
-import { ProcessingStatuses } from "@threa/types"
+import { ProcessingStatuses, resolveNotificationPause } from "@threa/types"
 import { AttachmentRepository } from "./features/attachments"
 import { ulid } from "ulid"
 import { loadConfig } from "./lib/env"
@@ -498,6 +498,25 @@ export async function startServer(): Promise<ServerInstance> {
       getUserNotificationLevel: async (workspaceId, userId) => {
         const prefs = await userPreferencesService.getPreferences(workspaceId, userId)
         return prefs.notificationLevel
+      },
+      isNotificationPaused: async (workspaceId, userId) => {
+        // Single query (INV-30): the mapped user already masks an expired status
+        // and an elapsed pause, so the shared resolver decides with delivery-time
+        // `now` — one definition shared with the frontend badge (INV-35).
+        const user = await UserRepository.findById(pool, workspaceId, userId)
+        if (!user) return false
+        return (
+          resolveNotificationPause({
+            statusEmoji: user.statusEmoji,
+            statusText: user.statusText,
+            statusExpiresAt: user.statusExpiresAt ? user.statusExpiresAt.toISOString() : null,
+            statusPausesNotifications: user.statusPausesNotifications,
+            notificationsPausedUntil: user.notificationsPausedUntil
+              ? user.notificationsPausedUntil.toISOString()
+              : null,
+            notificationsPausedIndefinitely: user.notificationsPausedIndefinitely,
+          }) !== null
+        )
       },
       getStreamType: async (workspaceId, streamId) => {
         // StreamRepository.findById queries by ULID only; we verify workspace ownership

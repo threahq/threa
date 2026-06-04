@@ -87,7 +87,7 @@ export const workspacesApi = {
 
   async setStatus(
     workspaceId: string,
-    data: { emoji: string | null; text: string | null; expiresAt: string | null }
+    data: { emoji: string | null; text: string | null; expiresAt: string | null; pausesNotifications: boolean }
   ): Promise<User> {
     const res = await api.put<{ user?: User }>(`/api/workspaces/${workspaceId}/status`, data)
     if (!res.user) {
@@ -100,6 +100,23 @@ export const workspacesApi = {
     const res = await api.delete<{ user?: User }>(`/api/workspaces/${workspaceId}/status`)
     if (!res.user) {
       throw new Error("Status response missing user payload")
+    }
+    return res.user
+  },
+
+  /** Pause notifications: `until` is an ISO instant for a timed pause, or null for indefinite. */
+  async pauseNotifications(workspaceId: string, until: string | null): Promise<User> {
+    const res = await api.put<{ user?: User }>(`/api/workspaces/${workspaceId}/notifications/pause`, { until })
+    if (!res.user) {
+      throw new Error("Notification pause response missing user payload")
+    }
+    return res.user
+  },
+
+  async resumeNotifications(workspaceId: string): Promise<User> {
+    const res = await api.delete<{ user?: User }>(`/api/workspaces/${workspaceId}/notifications/pause`)
+    if (!res.user) {
+      throw new Error("Notification pause response missing user payload")
     }
     return res.user
   },

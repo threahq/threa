@@ -106,6 +106,10 @@ export const statusPresetSchema = z
     emoji: statusEmojiSchema,
     text: statusTextSchema,
     defaultDuration: statusDurationSchema.nullable(),
+    // When set, picking this preset also pauses notifications for the status's
+    // lifetime. Defaults to false so presets stored before this field shipped
+    // (and callers that omit it) keep validating.
+    pausesNotifications: z.boolean().optional().default(false),
   })
   .refine((p) => isStatusContentful(p), { message: "A status needs an emoji or text" })
 
@@ -131,9 +135,24 @@ export const setStatusSchema = z
       .transform((v) => (v.trim().length === 0 ? null : v.trim()))
       .nullable(),
     expiresAt: z.string().datetime().nullable(),
+    // Whether this status also silences notifications while it is active.
+    pausesNotifications: z.boolean().optional().default(false),
   })
   .refine((s) => isStatusContentful(s), { message: "A status needs an emoji or text" })
   .refine((s) => !s.expiresAt || new Date(s.expiresAt).getTime() <= Date.now() + MAX_STATUS_EXPIRY_MS, {
     message: "Status expiry is too far in the future",
     path: ["expiresAt"],
+  })
+
+// Manually pausing notifications (do-not-disturb), independent of status. A
+// non-null `until` is a timed pause the client resolves from a chosen duration;
+// `null` means "pause indefinitely". The server bounds the absolute instant the
+// same way it bounds a status expiry, since it owns the broadcast state.
+export const setNotificationPauseSchema = z
+  .object({
+    until: z.string().datetime().nullable(),
+  })
+  .refine((s) => !s.until || new Date(s.until).getTime() <= Date.now() + MAX_STATUS_EXPIRY_MS, {
+    message: "Pause window is too far in the future",
+    path: ["until"],
   })

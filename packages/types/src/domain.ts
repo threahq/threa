@@ -84,6 +84,12 @@ export interface User {
   statusText: string | null
   /** ISO 8601 instant the status auto-clears at, or null for indefinite. */
   statusExpiresAt: string | null
+  /** Whether the active status silences notifications for its lifetime (do-not-disturb). */
+  statusPausesNotifications: boolean
+  /** ISO 8601 instant a manual notification pause ends, or null when not on a timed pause. */
+  notificationsPausedUntil: string | null
+  /** True when the user paused notifications indefinitely ("until I turn it back on"). */
+  notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   joinedAt: string
 }

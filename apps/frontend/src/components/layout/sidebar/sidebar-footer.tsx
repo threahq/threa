@@ -6,6 +6,7 @@ import {
   FileText,
   Hash,
   LogOut,
+  Moon,
   Plus,
   Settings,
   User as UserIcon,
@@ -21,10 +22,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
-import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
+import { getAvatarUrl, resolveActiveStatus, resolveNotificationPause, type User } from "@threa/types"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
-import { formatStatusClearLabel } from "@/lib/status"
+import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { StatusPicker } from "@/components/status/status-picker"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
@@ -141,11 +142,13 @@ function SidebarStatusHeader({
   avatarSrc,
   currentUser,
   status,
+  dndLabel,
   onClick,
 }: {
   avatarSrc?: string | null
   currentUser: User
   status: FooterStatus | null
+  dndLabel: string | null
   onClick: () => void
 }) {
   const clears = status ? formatStatusClearLabel(status.expiresAt) : null
@@ -179,6 +182,12 @@ function SidebarStatusHeader({
               <p className="truncate text-xs text-muted-foreground">Set a status</p>
             )}
             {clears && <p className="truncate text-[11px] text-muted-foreground/70">{clears}</p>}
+            {dndLabel && (
+              <p className="flex items-center gap-1 truncate text-[11px] text-muted-foreground/70">
+                <Moon className="h-2.5 w-2.5 shrink-0" />
+                {dndLabel}
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -214,6 +223,12 @@ export function SidebarFooter({
     if (!active) return null
     return { glyph: active.emoji ? toEmoji(active.emoji) : null, text: active.text, expiresAt: active.expiresAt }
   }, [currentUser, toEmoji])
+
+  const dndLabel = useMemo<string | null>(() => {
+    if (!currentUser) return null
+    const pause = resolveNotificationPause(currentUser)
+    return pause ? formatNotificationPauseLabel(pause) : null
+  }, [currentUser])
 
   const openStatus = useCallback(() => {
     collapseOnMobile()
@@ -368,7 +383,13 @@ export function SidebarFooter({
           title="Account menu"
           description="Choose an account action."
           header={
-            <SidebarStatusHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} onClick={openStatus} />
+            <SidebarStatusHeader
+              avatarSrc={avatarSrc}
+              currentUser={currentUser}
+              status={status}
+              dndLabel={dndLabel}
+              onClick={openStatus}
+            />
           }
         />
         {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
@@ -388,7 +409,13 @@ export function SidebarFooter({
         open={menuOpen}
         onOpenChange={setMenuOpen}
         header={
-          <SidebarStatusHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} onClick={openStatus} />
+          <SidebarStatusHeader
+            avatarSrc={avatarSrc}
+            currentUser={currentUser}
+            status={status}
+            dndLabel={dndLabel}
+            onClick={openStatus}
+          />
         }
         trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} status={status} />}
       />

@@ -54,6 +54,12 @@ const SESSION_EXPIRY_WINDOW_MS = 30 * 24 * 60 * 60 * 1_000 // 30 days (matches c
 interface CrossFeatureLookups {
   /** Resolve a user's notification level preference. */
   getUserNotificationLevel: (workspaceId: string, userId: string) => Promise<PrefNotificationLevel>
+  /**
+   * Whether the user currently has notifications paused (do-not-disturb) — via
+   * a do-not-disturb status or a manual pause. Evaluated at delivery time so an
+   * expired pause stops suppressing even while the user is offline.
+   */
+  isNotificationPaused: (workspaceId: string, userId: string) => Promise<boolean>
   /** Resolve a stream's type by ID within a workspace. Returns null if not found. */
   getStreamType: (workspaceId: string, streamId: string) => Promise<StreamType | null>
   /**
@@ -261,6 +267,12 @@ export class PushService {
       return
     }
 
+    // Do-not-disturb suppresses push delivery (the activity feed already
+    // recorded the row — DND silences the alert, it does not drop history).
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
+      return
+    }
+
     if (prefLevel === PrefNotificationLevels.MENTIONS) {
       const shouldPush = await this.shouldPushForMentionsMode(workspaceId, activity.activityType, activity.streamId)
       if (!shouldPush) {
@@ -329,6 +341,12 @@ export class PushService {
 
     const prefLevel = await this.lookups.getUserNotificationLevel(workspaceId, targetUserId)
     if (prefLevel === PrefNotificationLevels.NONE) {
+      return
+    }
+
+    // A reminder the user scheduled still respects an active do-not-disturb
+    // window — the push is held back; the in-app/socket toast still fires.
+    if (await this.lookups.isNotificationPaused(workspaceId, targetUserId)) {
       return
     }
 

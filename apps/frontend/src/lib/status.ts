@@ -1,4 +1,10 @@
-import { type StatusDuration, type StatusPreset, SYSTEM_DEFAULT_STATUSES, type WorkSchedule } from "@threa/types"
+import {
+  type ActiveNotificationPause,
+  type StatusDuration,
+  type StatusPreset,
+  SYSTEM_DEFAULT_STATUSES,
+  type WorkSchedule,
+} from "@threa/types"
 import { computeRemindAt } from "@/lib/reminder-presets"
 import { formatFutureTime } from "@/lib/dates"
 
@@ -67,4 +73,32 @@ export function mergeStatusPresets(
 export function formatStatusClearLabel(expiresAt: string | null, now: Date = new Date()): string | null {
   if (!expiresAt) return null
   return `Clears ${formatFutureTime(new Date(expiresAt), now)}`
+}
+
+/**
+ * Duration choices for manually pausing notifications, Slack-style. `null`
+ * duration means "until I turn it back on" (indefinite). A "custom" date/time
+ * is handled separately by the caller, like the status picker.
+ */
+export interface NotificationPauseOption {
+  id: string
+  label: string
+  duration: StatusDuration | null
+}
+
+export const NOTIFICATION_PAUSE_OPTIONS: NotificationPauseOption[] = [
+  { id: "30m", label: "For 30 minutes", duration: { kind: "duration", minutes: 30 } },
+  { id: "1h", label: "For 1 hour", duration: { kind: "duration", minutes: 60 } },
+  { id: "2h", label: "For 2 hours", duration: { kind: "duration", minutes: 120 } },
+  { id: "tomorrow", label: "Until tomorrow", duration: { kind: "calendar", calendar: "tomorrow-start" } },
+  { id: "indefinite", label: "Until I turn it back on", duration: null },
+]
+
+/**
+ * Label for an active do-not-disturb window. `null` end reads as indefinite;
+ * a concrete end resolves to the device-local "tomorrow at 9:00 AM" phrasing.
+ */
+export function formatNotificationPauseLabel(pause: ActiveNotificationPause, now: Date = new Date()): string {
+  if (pause.until === null) return "Notifications paused"
+  return `Notifications paused until ${formatFutureTime(new Date(pause.until), now)}`
 }

@@ -110,6 +110,9 @@ describe("SidebarFooter", () => {
           statusEmoji: null,
           statusText: null,
           statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -161,6 +164,9 @@ describe("SidebarFooter", () => {
           statusEmoji: null,
           statusText: null,
           statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -203,6 +209,9 @@ describe("SidebarFooter", () => {
           statusEmoji: null,
           statusText: null,
           statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}

@@ -1,4 +1,5 @@
 import type { AuthorType } from "@threa/types"
+import { Moon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useActors } from "@/hooks"
@@ -83,6 +84,10 @@ export function ActorAvatar({
   else if (actorType === "system") fallbackTint = "bg-blue-500/10 text-blue-500"
 
   const statusEmoji = showStatus ? info.status?.emoji : null
+  // A do-not-disturb badge stands in only when there's no status emoji already
+  // signalling it (a DND *status* shows its own glyph) — so a statusless manual
+  // pause still surfaces a moon, without double-badging.
+  const showDnd = showStatus && !statusEmoji && Boolean(info.dnd)
 
   const avatar = (
     <Avatar className={cn(SIZE_CLASSES[size], "shrink-0", className)}>
@@ -94,12 +99,15 @@ export function ActorAvatar({
   // Badge is absolutely positioned over the avatar so it never shifts layout
   // (INV-21). The wrapper is `inline-flex` with no extra box, matching the
   // avatar's footprint.
-  if (!statusEmoji) return avatar
+  if (!statusEmoji && !showDnd) return avatar
   const statusTitle = [info.status?.text, formatStatusClearLabel(info.status?.expiresAt ?? null)]
     .filter(Boolean)
     .join(" · ")
   return (
-    <span className="relative inline-flex shrink-0" title={statusTitle || undefined}>
+    <span
+      className="relative inline-flex shrink-0"
+      title={statusTitle || (showDnd ? "Notifications paused" : undefined)}
+    >
       {avatar}
       <span
         aria-hidden
@@ -108,7 +116,7 @@ export function ActorAvatar({
           STATUS_BADGE_CLASSES[size]
         )}
       >
-        {statusEmoji}
+        {statusEmoji ?? <Moon className="h-2.5 w-2.5 text-muted-foreground" />}
       </span>
     </span>
   )

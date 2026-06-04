@@ -50,6 +50,12 @@ export interface CachedWorkspaceUser {
   statusEmoji: string | null
   statusText: string | null
   statusExpiresAt: string | null
+  // Do-not-disturb. Same caching note as the status fields above: rows cached
+  // before the feature lack these at runtime; readers normalize with `?? null`
+  // / `?? false`, and a bootstrap refetch backfills them.
+  statusPausesNotifications: boolean
+  notificationsPausedUntil: string | null
+  notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   joinedAt: string
   _cachedAt: number

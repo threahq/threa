@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { Smile, Trash2, Plus } from "lucide-react"
+import { BellOff, Smile, Trash2, Plus } from "lucide-react"
 import {
   WORKSPACE_PERMISSION_SCOPES,
   SYSTEM_DEFAULT_STATUSES,
   STATUS_TEXT_MAX_LENGTH,
   MAX_STATUS_PRESETS,
   isStatusContentful,
+  presetPausesNotifications,
   type StatusPreset,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -73,7 +74,10 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
   }
 
   const addPreset = () => {
-    setDraft((prev) => [...prev, { id: `status_${crypto.randomUUID()}`, emoji: null, text: "", defaultDuration: null }])
+    setDraft((prev) => [
+      ...prev,
+      { id: `status_${crypto.randomUUID()}`, emoji: null, text: "", defaultDuration: null, pausesNotifications: false },
+    ])
   }
 
   return (
@@ -81,8 +85,9 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
       <div>
         <h3 className="text-sm font-medium">Status presets</h3>
         <p className="text-sm text-muted-foreground">
-          The statuses members can pick from. Each can carry an emoji, text, and a default duration. Members can also
-          save their own personal presets on top of these.
+          The statuses members can pick from. Each can carry an emoji, text, and a default duration. Toggle the bell to
+          have a status pause notifications while it's active. Members can also save their own personal presets on top
+          of these.
         </p>
       </div>
 
@@ -133,6 +138,18 @@ export function StatusesTab({ workspaceId }: StatusesTabProps) {
                   ))}
                 </SelectContent>
               </Select>
+              <Button
+                type="button"
+                variant={presetPausesNotifications(preset) ? "secondary" : "ghost"}
+                size="icon"
+                aria-label="Pause notifications for this status"
+                aria-pressed={presetPausesNotifications(preset)}
+                title="Pause notifications while this status is active"
+                disabled={!canManage}
+                onClick={() => updatePreset(index, { pausesNotifications: !presetPausesNotifications(preset) })}
+              >
+                <BellOff className="h-4 w-4" />
+              </Button>
               {canManage && (
                 <Button
                   type="button"

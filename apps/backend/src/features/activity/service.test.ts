@@ -103,6 +103,9 @@ describe("ActivityService author name resolution", () => {
       statusEmoji: null,
       statusText: null,
       statusExpiresAt: null,
+      statusPausesNotifications: false,
+      notificationsPausedUntil: null,
+      notificationsPausedIndefinitely: false,
       setupCompleted: true,
       joinedAt: new Date(),
     })

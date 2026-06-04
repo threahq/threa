@@ -65,6 +65,9 @@ interface WorkspaceUserPayload {
   statusEmoji: string | null
   statusText: string | null
   statusExpiresAt: string | null
+  statusPausesNotifications: boolean
+  notificationsPausedUntil: string | null
+  notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   email: string
   joinedAt: string

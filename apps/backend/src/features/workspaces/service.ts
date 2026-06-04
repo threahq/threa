@@ -443,10 +443,61 @@ export class WorkspaceService {
   async setUserStatus(
     userId: string,
     workspaceId: string,
-    status: { statusEmoji: string | null; statusText: string | null; statusExpiresAt: Date | null }
+    status: {
+      statusEmoji: string | null
+      statusText: string | null
+      statusExpiresAt: Date | null
+      statusPausesNotifications: boolean
+    }
   ): Promise<User> {
     return withTransaction(this.pool, async (client) => {
       const updated = await UserRepository.update(client, workspaceId, userId, status)
+      if (!updated) {
+        throw new HttpError("User not found", { status: 404, code: "USER_NOT_FOUND" })
+      }
+
+      await OutboxRepository.insert(client, "workspace_user:updated", {
+        workspaceId,
+        user: serializeBigInt(updated),
+      })
+
+      return updated
+    })
+  }
+
+  /**
+   * Pause or resume the caller's notifications independently of their status
+   * ("pause for an hour" / "until I turn it back on"). The user-row write and
+   * the `workspace_user:updated` broadcast stay in one transaction (INV-7) so
+   * the do-not-disturb badge appears on every device atomically. A non-null
+   * `until` is a timed pause; `null` means indefinite.
+   */
+  async setNotificationPause(userId: string, workspaceId: string, pause: { until: Date | null }): Promise<User> {
+    return withTransaction(this.pool, async (client) => {
+      const updated = await UserRepository.update(client, workspaceId, userId, {
+        notificationsPausedUntil: pause.until,
+        notificationsPausedIndefinitely: pause.until === null,
+      })
+      if (!updated) {
+        throw new HttpError("User not found", { status: 404, code: "USER_NOT_FOUND" })
+      }
+
+      await OutboxRepository.insert(client, "workspace_user:updated", {
+        workspaceId,
+        user: serializeBigInt(updated),
+      })
+
+      return updated
+    })
+  }
+
+  /** Resume the caller's notifications, clearing any manual pause. */
+  async clearNotificationPause(userId: string, workspaceId: string): Promise<User> {
+    return withTransaction(this.pool, async (client) => {
+      const updated = await UserRepository.update(client, workspaceId, userId, {
+        notificationsPausedUntil: null,
+        notificationsPausedIndefinitely: false,
+      })
       if (!updated) {
         throw new HttpError("User not found", { status: 404, code: "USER_NOT_FOUND" })
       }
