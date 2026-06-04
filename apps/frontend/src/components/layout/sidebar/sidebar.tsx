@@ -15,6 +15,7 @@ import {
   useLiveScheduledCount,
   useSidebarConfig,
   useUnreadCounts,
+  useAssignLabel,
 } from "@/hooks"
 import { useSyncStatus } from "@/sync/sync-status"
 import { useSyncEngine } from "@/sync/sync-engine"
@@ -82,6 +83,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { drafts: allDrafts } = useAllDrafts(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
+  const assignLabel = useAssignLabel(workspaceId)
   const navigate = useNavigate()
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
   const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
@@ -407,6 +409,16 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     setSidebarConfig(setStreamCustomSection(sidebarConfig, streamId, customSectionId))
   }
 
+  // Drag-and-drop drop onto a label section: tag the stream with that label.
+  // A labeled stream lives under its label lens (which trumps the smart/type
+  // buckets), so first unfile it from any custom section — the custom-section
+  // trump would otherwise hide it from the very lens the drop just targeted.
+  const handleAssignStreamLabel = (streamId: string, labelId: string) => {
+    const unfiled = setStreamCustomSection(sidebarConfig, streamId, null)
+    if (unfiled !== sidebarConfig) setSidebarConfig(unfiled)
+    assignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
+  }
+
   return (
     <>
       <SidebarShell
@@ -436,6 +448,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onCreateChannel={handleCreateChannel}
             scratchpadAddMenuActions={scratchpadAddMenuActions}
             onFileStreamToSection={handleFileStreamToSection}
+            onAssignStreamLabel={handleAssignStreamLabel}
             quickLinksSlot={
               hasQuickLinksSection ? (
                 <SidebarQuickLinks

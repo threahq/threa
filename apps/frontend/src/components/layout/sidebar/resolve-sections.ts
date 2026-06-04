@@ -41,22 +41,33 @@ export interface ResolvedSection {
  * before each section's caps, so a capped bucket (e.g. Recent) backfills the
  * slots freed by streams claimed above it.
  *
- * Custom sections are the exception to topmost-wins: a stream filed into one
- * shows **only** there, even when a smart/label/type section ordered above it
- * would also match. Their membership is collected up front and excluded from
- * every non-custom section regardless of order — so a custom section "trumps"
- * the layout order rather than competing for the topmost claim.
+ * Custom sections and pinned label sections are the exception to topmost-wins:
+ * a stream filed into a custom section, or carrying a pinned label, shows under
+ * that section **only**, even when a smart/type bucket ordered above it would
+ * also match. Both memberships are collected up front and excluded from the
+ * automatic buckets regardless of order — so an explicit "filing" trumps the
+ * layout order rather than competing for the topmost claim. Custom sections
+ * out-rank label sections (a stream filed into a custom section is withheld
+ * from the label lens too); among label sections, the topmost one wins.
  */
 export function resolveSections(config: SidebarConfig, input: ResolveSectionsInput): ResolvedSection[] {
   const claimed = new Set<string>()
   // Streams pinned to any custom section, gathered before resolving so they can
-  // be withheld from non-custom sections wherever those sit in the order.
+  // be withheld from every other section wherever those sit in the order.
   const customClaimed = new Set<string>()
+  // Streams carrying a label that is pinned as a section, gathered the same way
+  // so the label lens claims them out of the smart/type buckets — a labeled
+  // stream lives under its label, not its automatic bucket, regardless of order.
+  const labeledClaimed = new Set<string>()
   for (const section of config.sections) {
     if (section.spec.kind === "custom") for (const id of section.spec.streamIds) customClaimed.add(id)
+    if (section.spec.kind === "label") {
+      const ids = input.streamIdsByLabel.get(section.spec.labelId)
+      if (ids) for (const id of ids) labeledClaimed.add(id)
+    }
   }
   return config.sections.map((section) => {
-    const items = resolveItems(section.spec, input, claimed, customClaimed)
+    const items = resolveItems(section.spec, input, claimed, customClaimed, labeledClaimed)
     for (const item of items) claimed.add(item.id)
     return { section, items }
   })
@@ -66,17 +77,28 @@ function resolveItems(
   spec: SidebarSectionSpec,
   input: ResolveSectionsInput,
   claimed: ReadonlySet<string>,
-  customClaimed: ReadonlySet<string>
+  customClaimed: ReadonlySet<string>,
+  labeledClaimed: ReadonlySet<string>
 ): StreamItemData[] {
   // A custom section draws only its own membership, minus anything an earlier
   // custom section already took (single-membership; topmost custom wins).
   if (spec.kind === "custom") return resolveCustomSection(spec.streamIds, input, claimed)
-  // Non-custom sections never show a stream filed into a custom section, so fold
-  // the custom membership into their exclusion set on top of the running claims.
-  const exclude = customClaimed.size === 0 ? claimed : new Set([...claimed, ...customClaimed])
+  // A label lens shows its streams out of the buckets, but a stream filed into a
+  // custom section still trumps the label — fold custom membership into the
+  // exclusion. Topmost label wins via the running `claimed` set.
+  if (spec.kind === "label") {
+    const exclude = customClaimed.size === 0 ? claimed : new Set([...claimed, ...customClaimed])
+    return resolveLabelSection(spec.labelId, input, exclude)
+  }
+  // Smart/type buckets never show a stream that was filed into a custom section
+  // or that carries a pinned label, so fold both memberships into their
+  // exclusion set on top of the running claims.
+  const exclude =
+    customClaimed.size === 0 && labeledClaimed.size === 0
+      ? claimed
+      : new Set([...claimed, ...customClaimed, ...labeledClaimed])
   if (spec.kind === "smart") return resolveSmartBucket(spec.bucket, input, exclude)
   if (spec.kind === "type") return resolveTypeSection(spec.streamType, input, exclude)
-  if (spec.kind === "label") return resolveLabelSection(spec.labelId, input, exclude)
   // Quick links draw no streams — the block renders its own link list, so the
   // resolved section is a positional placeholder the stream list renders specially.
   return []

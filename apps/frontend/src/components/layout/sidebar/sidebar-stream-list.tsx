@@ -16,7 +16,13 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection } from "./sections"
-import { CustomSectionDropZone, customSectionIdFromDropData, streamIdFromDragData } from "./sidebar-dnd"
+import {
+  CustomSectionDropZone,
+  LabelSectionDropZone,
+  customSectionIdFromDropData,
+  labelIdFromDropData,
+  streamIdFromDragData,
+} from "./sidebar-dnd"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
 import type { ResolvedSection } from "./resolve-sections"
 import type { SidebarActionItem } from "./sidebar-actions"
@@ -70,6 +76,11 @@ interface SidebarStreamListProps {
    * parent owns the sidebar config, so the membership write lives there.
    */
   onFileStreamToSection: (streamId: string, customSectionId: string) => void
+  /**
+   * Apply a label to a stream dragged onto its label section (drag-and-drop
+   * drop). The parent owns the label mutation and the unfile-from-custom write.
+   */
+  onAssignStreamLabel: (streamId: string, labelId: string) => void
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -90,6 +101,7 @@ export function SidebarStreamList({
   scratchpadAddMenuActions,
   quickLinksSlot,
   onFileStreamToSection,
+  onAssignStreamLabel,
   scrollContainerRef,
 }: SidebarStreamListProps) {
   // Dragging streams into sections is a desktop interaction; on mobile the same
@@ -112,8 +124,16 @@ export function SidebarStreamList({
   const handleDragEnd = (event: DragEndEvent) => {
     setDraggingStreamId(null)
     const streamId = streamIdFromDragData(event.active.data.current)
+    if (!streamId) return
+    // A drop lands on exactly one zone; file into a custom section or, when the
+    // target is a label section, apply that label instead.
     const customSectionId = customSectionIdFromDropData(event.over?.data.current)
-    if (streamId && customSectionId) onFileStreamToSection(streamId, customSectionId)
+    if (customSectionId) {
+      onFileStreamToSection(streamId, customSectionId)
+      return
+    }
+    const labelId = labelIdFromDropData(event.over?.data.current)
+    if (labelId) onAssignStreamLabel(streamId, labelId)
   }
 
   if (hasError) {
@@ -235,13 +255,21 @@ export function SidebarStreamList({
           />
         )
 
-        // Custom sections are drop targets — a stream dragged onto one is filed
-        // there. Other section kinds render as-is.
+        // Custom and label sections are drop targets — a stream dragged onto a
+        // custom section is filed there; one dragged onto a label section is
+        // tagged with that label. Other section kinds render as-is.
         if (section.spec.kind === "custom") {
           return (
             <CustomSectionDropZone key={section.id} sectionId={section.spec.sectionId} enabled={streamDragEnabled}>
               {sectionEl}
             </CustomSectionDropZone>
+          )
+        }
+        if (section.spec.kind === "label") {
+          return (
+            <LabelSectionDropZone key={section.id} labelId={section.spec.labelId} enabled={streamDragEnabled}>
+              {sectionEl}
+            </LabelSectionDropZone>
           )
         }
         return <Fragment key={section.id}>{sectionEl}</Fragment>
