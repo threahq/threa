@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { act, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import { e2eKeysApi } from "@/api/e2e-keys"
@@ -42,7 +42,17 @@ beforeEach(() => {
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue(USER)
 })
 
-afterEach(() => {
+afterEach(async () => {
+  // `input-otp` (rendered via PinInput) defers a selection-sync `setState` with
+  // `setTimeout(…, 50)` and never clears it on unmount. If that timer fires after
+  // Vitest tears down the jsdom environment, React reads a `window` that's gone
+  // and throws "window is not defined" as an unhandled error — failing the whole
+  // run even though every assertion passed. Drain it here, while `window` still
+  // exists. 50ms is the library's longest deferral, and its callback only touches
+  // caret-mirror state (not the value/selection deps), so it can't re-arm itself.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60))
+  })
   resetE2eSessionStoreCache()
   vi.restoreAllMocks()
 })
@@ -68,7 +78,14 @@ describe("PinUnlockModal", () => {
     await arrangePinLocked(ws)
     const onUnlocked = vi.fn()
     render(
-      <PinUnlockModal open workspaceId={ws} userId={USER} onOpenChange={() => {}} onUnlocked={onUnlocked} onUsePassphrase={() => {}} />
+      <PinUnlockModal
+        open
+        workspaceId={ws}
+        userId={USER}
+        onOpenChange={() => {}}
+        onUnlocked={onUnlocked}
+        onUsePassphrase={() => {}}
+      />
     )
 
     expect(await screen.findByText("Enter your PIN")).toBeInTheDocument()
