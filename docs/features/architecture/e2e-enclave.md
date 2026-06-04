@@ -107,14 +107,15 @@ sub-loop returns partial findings and the turn still replies. For in-process
   transaction as the stream, so there is never a window where the stream exists but
   its E2E flag doesn't. The repository layer (plus a check constraint) carries the
   "never treat E2E content as plaintext" guarantee.
-- **Deploy shape (the current gap).** `Dockerfile.enclave` exists and is sound
-  (multi-stage Bun-build → unprivileged `node:22-slim`, `EXPOSE 3011`). What's
-  missing is a **`railway.toml`** wiring it to a deploy target — every other
-  service has one; the enclave did not until this doc's change. Deploying it
-  requires: a Railway service pointed at `Dockerfile.enclave` with `healthcheckPath
-= "/healthz"`; the four required env vars (`ENCLAVE_SELF_URL`, `BACKEND_BASE_URL`,
-  `INTERNAL_API_KEY`, `OPENROUTER_API_KEY` — see `apps/enclave/README.md`); and an
-  egress allow-list pinning outbound traffic to the backend and OpenRouter only.
+- **Deploy shape.** `Dockerfile.enclave` is sound (multi-stage Bun-build →
+  unprivileged `node:22-slim`, `EXPOSE 3011`) and `apps/enclave/railway.toml` now
+  wires it to a deploy target (`Dockerfile.enclave`, `healthcheckPath = "/healthz"`),
+  matching every other service. Bringing up an instance is then just: create the
+  Railway service and set the four required env vars (`ENCLAVE_SELF_URL`,
+  `BACKEND_BASE_URL`, `INTERNAL_API_KEY`, `OPENROUTER_API_KEY` — see
+  `apps/enclave/README.md`); the enclave self-registers with the backend over
+  `BACKEND_BASE_URL`, so no backend config change is needed. Pin the egress
+  allow-list to the backend and OpenRouter only.
   All E2E DB migrations are **additive** (new tables + new nullable columns; nothing
   dropped), and E2E is opt-in per scratchpad with no global flag, so the encrypted
   path can ship without affecting any existing plaintext stream or user.
