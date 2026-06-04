@@ -174,12 +174,14 @@ export async function reconcileLabels(
  * Refresh-on-mount server fetch. The render source is always IDB via the
  * workspace store; this background fetch keeps it warm and reconciles entries
  * that were created/archived while we were offline. Labels are part of the
- * workspace bootstrap, so first paint never blocks on this.
+ * workspace bootstrap, so first paint never blocks on this. Returns the query
+ * so a detail view can tell "still settling" apart from "genuinely absent"
+ * (a cold deep-link lands before bootstrap populates the cache).
  */
 export function useLabelsSync(workspaceId: string) {
   const labelService = useLabelService()
 
-  useQuery({
+  return useQuery({
     queryKey: labelKeys.list(workspaceId),
     queryFn: async () => {
       const res = await labelService.list(workspaceId)

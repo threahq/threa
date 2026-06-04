@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, Globe, Lock, PanelLeft, Tag } from "lucide-react"
+import { ArrowLeft, ChevronRight, Globe, Lock, PanelLeft, Tag } from "lucide-react"
 import { Visibilities } from "@threa/types"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -33,7 +33,7 @@ export function LabelDetailPage() {
 }
 
 function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; labelId: string }) {
-  useLabelsSync(workspaceId)
+  const labelsQuery = useLabelsSync(workspaceId)
   const labels = useWorkspaceLabels(workspaceId)
   const label = useMemo(() => labels.find((l) => l.id === labelId && !l.archivedAt) ?? null, [labels, labelId])
   const streams = useLabelStreams(workspaceId, labelId)
@@ -47,6 +47,44 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
     () => streams.map((stream) => ({ stream, name: resolveStreamName(stream.id, { streams, users, dmPeers }) })),
     [streams, users, dmPeers]
   )
+
+  // A cold deep-link to this URL lands before bootstrap fills the cache, so an
+  // empty `labels` array means "still settling", not "no such label" — wait for
+  // the first fetch to settle before deciding it's genuinely missing, or the
+  // page flashes a not-found state on every hard refresh.
+  let body: React.ReactNode
+  if (!label && !labelsQuery.isFetched) {
+    body = <LoadingState />
+  } else if (!label) {
+    body = <NotFound workspaceId={workspaceId} />
+  } else {
+    body = (
+      <>
+        <LabelHero
+          label={label}
+          streamCount={namedStreams.length}
+          config={sidebarConfig}
+          onConfigChange={setSidebarConfig}
+        />
+        <section className="mt-8">
+          <h2 className="mb-2.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Streams</h2>
+          {namedStreams.length === 0 ? (
+            <EmptyStreams />
+          ) : (
+            <div className="overflow-hidden rounded-xl border bg-card">
+              <ul className="divide-y">
+                {namedStreams.map(({ stream, name }, i) => (
+                  <li key={stream.id}>
+                    <StreamRow workspaceId={workspaceId} stream={stream} name={name} index={i} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      </>
+    )
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -70,107 +108,142 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
       </header>
 
       <ScrollArea className="flex-1">
-        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
-          {!label ? (
-            <NotFound workspaceId={workspaceId} />
-          ) : (
-            <>
-              <LabelHero label={label} config={sidebarConfig} onConfigChange={setSidebarConfig} />
-              <section className="mt-8">
-                <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                  Streams
-                  <span className="rounded-full bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-                    {namedStreams.length}
-                  </span>
-                </h2>
-                {namedStreams.length === 0 ? (
-                  <EmptyStreams />
-                ) : (
-                  <ul className="flex flex-col gap-1">
-                    {namedStreams.map(({ stream, name }) => (
-                      <li key={stream.id}>
-                        <StreamRow workspaceId={workspaceId} stream={stream} name={name} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            </>
-          )}
-        </main>
+        <main className="mx-auto w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">{body}</main>
       </ScrollArea>
     </div>
   )
 }
 
+function streamCountLabel(count: number): string {
+  if (count === 0) return "No streams yet"
+  return `${count} ${count === 1 ? "stream" : "streams"}`
+}
+
 function LabelHero({
   label,
+  streamCount,
   config,
   onConfigChange,
 }: {
   label: CachedLabel
+  streamCount: number
   config: SidebarConfig
   onConfigChange: (config: SidebarConfig) => void
 }) {
   const pinned = hasLabelSection(config, label.id)
   const isPublic = label.visibility === Visibilities.PUBLIC
   return (
-    <div className="rounded-xl border bg-card p-4 sm:p-5" style={{ borderLeft: `3px solid ${label.color}` }}>
-      <div className="flex items-start gap-3">
+    <div
+      className="relative overflow-hidden rounded-xl border p-5 sm:p-6"
+      // A faint wash in the label's own color so the page reads as *its* place,
+      // with the same 3px left rail the catalog cards use.
+      style={{ backgroundColor: hexToRgba(label.color, 0.05), borderLeft: `3px solid ${label.color}` }}
+    >
+      <div className="flex items-start gap-4">
         <div
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-2xl"
-          style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-2xl"
+          style={{ backgroundColor: hexToRgba(label.color, 0.14), color: label.color }}
           aria-hidden
         >
-          {label.emoji ?? <Tag className="h-5 w-5" />}
+          {label.emoji ?? <Tag className="h-6 w-6" />}
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-lg font-semibold leading-tight">{label.name}</h2>
-          <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-            {isPublic ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-            <span>{isPublic ? "Public" : "Private"}</span>
+          <h2 className="truncate text-xl font-semibold leading-tight">{label.name}</h2>
+          <div className="mt-1.5 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              {isPublic ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
+              {isPublic ? "Public" : "Private"}
+            </span>
+            <span aria-hidden>·</span>
+            <span>{streamCountLabel(streamCount)}</span>
           </div>
+          {label.description && (
+            <p className="mt-3 max-w-prose text-sm leading-relaxed text-foreground/80">
+              {stripMarkdownToInline(label.description)}
+            </p>
+          )}
         </div>
         <Button
           size="sm"
-          variant="ghost"
+          variant={pinned ? "secondary" : "outline"}
           aria-pressed={pinned}
-          className={cn("h-7 shrink-0 gap-1.5 px-2 text-xs", pinned && "text-primary")}
+          className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
           onClick={() => onConfigChange(toggleLabelSection(config, label.id))}
         >
-          <PanelLeft className="h-3 w-3" />
-          {pinned ? "In sidebar" : "Show in sidebar"}
+          <PanelLeft className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">{pinned ? "In sidebar" : "Show in sidebar"}</span>
         </Button>
       </div>
-      {label.description && (
-        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{stripMarkdownToInline(label.description)}</p>
-      )}
     </div>
   )
 }
 
-function StreamRow({ workspaceId, stream, name }: { workspaceId: string; stream: CachedStream; name: string | null }) {
+function StreamRow({
+  workspaceId,
+  stream,
+  name,
+  index,
+}: {
+  workspaceId: string
+  stream: CachedStream
+  name: string | null
+  index: number
+}) {
   const Icon = STREAM_ICONS[stream.type] ?? Tag
   const preview = stream.lastMessagePreview
   const activityAt = preview?.createdAt ?? stream.createdAt
   return (
     <Link
       to={`/w/${workspaceId}/s/${stream.id}`}
-      className="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 transition-colors hover:border-border hover:bg-muted/50"
+      // Subtle staggered reveal on load — capped so a long list doesn't ripple.
+      className="group flex animate-in fade-in items-center gap-3 px-3.5 py-3 transition-colors hover:bg-muted/40"
+      style={{ animationDelay: `${Math.min(index, 8) * 25}ms`, animationFillMode: "both" }}
     >
       <span className="shrink-0 text-muted-foreground" aria-hidden>
         <Icon className="h-4 w-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{name ?? "Untitled"}</span>
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+          <time className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
             {formatRelativeTime(new Date(activityAt), undefined, undefined, { terse: true })}
-          </span>
+          </time>
         </div>
-        {preview && <p className="truncate text-xs text-muted-foreground">{truncateContent(preview.content, 120)}</p>}
+        {preview && (
+          <p className="mt-0.5 truncate text-sm text-muted-foreground">{truncateContent(preview.content, 120)}</p>
+        )}
       </div>
+      {/* Always present (no layout shift, INV-21) — only its color fades in on hover. */}
+      <ChevronRight
+        className="h-4 w-4 shrink-0 text-transparent transition-colors group-hover:text-muted-foreground/60"
+        aria-hidden
+      />
     </Link>
+  )
+}
+
+function LoadingState() {
+  return (
+    <div className="animate-pulse">
+      <div className="flex items-start gap-4 rounded-xl border p-5 sm:p-6">
+        <div className="h-12 w-12 shrink-0 rounded-xl bg-muted" />
+        <div className="flex-1 space-y-2 pt-1">
+          <div className="h-4 w-40 rounded bg-muted" />
+          <div className="h-3 w-24 rounded bg-muted" />
+        </div>
+      </div>
+      <div className="mt-8 overflow-hidden rounded-xl border">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="flex items-center gap-3 border-b px-3.5 py-3 last:border-b-0">
+            <div className="h-4 w-4 shrink-0 rounded bg-muted" />
+            <div className="flex-1 space-y-1.5">
+              <div className="h-3.5 w-1/3 rounded bg-muted" />
+              <div className="h-3 w-2/3 rounded bg-muted" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

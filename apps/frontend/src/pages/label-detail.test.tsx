@@ -82,9 +82,10 @@ function renderPage() {
 describe("LabelDetailPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(hooksModule, "useLabelsSync").mockReturnValue(
-      undefined as unknown as ReturnType<typeof hooksModule.useLabelsSync>
-    )
+    // Settled fetch by default — the loading/settling path is exercised explicitly below.
+    vi.spyOn(hooksModule, "useLabelsSync").mockReturnValue({ isFetched: true } as unknown as ReturnType<
+      typeof hooksModule.useLabelsSync
+    >)
     vi.spyOn(hooksModule, "useSidebarConfig").mockReturnValue({
       config: SIDEBAR_CONFIG,
       setConfig: vi.fn(),
@@ -113,8 +114,18 @@ describe("LabelDetailPage", () => {
     expect(links.map((l) => l.textContent)).toEqual(
       expect.arrayContaining([expect.stringContaining("Newer note"), expect.stringContaining("Older note")])
     )
-    // Count chip next to the section heading.
-    expect(screen.getByText("2")).toBeInTheDocument()
+    // Stream count is summarized in the hero meta.
+    expect(screen.getByText("2 streams")).toBeInTheDocument()
+  })
+
+  it("singularizes the count for one stream", () => {
+    vi.spyOn(hooksModule, "useLabelStreams").mockReturnValue([
+      stream("stream_one", "Only note", "2026-03-01T00:00:00.000Z"),
+    ])
+
+    renderPage()
+
+    expect(screen.getByText("1 stream")).toBeInTheDocument()
   })
 
   it("shows an empty state when the label has no streams", () => {
@@ -123,9 +134,10 @@ describe("LabelDetailPage", () => {
     renderPage()
 
     expect(screen.getByText("Nothing here yet")).toBeInTheDocument()
+    expect(screen.getByText("No streams yet")).toBeInTheDocument()
   })
 
-  it("shows a not-found state when the label is unknown or archived", () => {
+  it("shows a not-found state when the label is unknown or archived and the fetch has settled", () => {
     vi.spyOn(workspaceStoreModule, "useWorkspaceLabels").mockReturnValue(
       [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabels>
     )
@@ -134,5 +146,21 @@ describe("LabelDetailPage", () => {
     renderPage()
 
     expect(screen.getByText("Label not found")).toBeInTheDocument()
+  })
+
+  it("does not flash not-found while the labels fetch is still settling (cold deep-link)", () => {
+    // Empty cache + unsettled fetch = bootstrap hasn't landed yet, not "absent".
+    vi.spyOn(hooksModule, "useLabelsSync").mockReturnValue({ isFetched: false } as unknown as ReturnType<
+      typeof hooksModule.useLabelsSync
+    >)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceLabels").mockReturnValue(
+      [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceLabels>
+    )
+    vi.spyOn(hooksModule, "useLabelStreams").mockReturnValue([])
+
+    renderPage()
+
+    expect(screen.queryByText("Label not found")).not.toBeInTheDocument()
+    expect(screen.queryByText("Nothing here yet")).not.toBeInTheDocument()
   })
 })
