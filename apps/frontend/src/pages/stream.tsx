@@ -36,6 +36,7 @@ import { TimelineView } from "@/components/timeline"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
+import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
@@ -463,7 +464,9 @@ export function StreamPage() {
         </div>
       </header>
       <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
-        <TimelineView isDraft={isDraft} autoFocus={!isMobile} />
+        <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
+          <TimelineView isDraft={isDraft} autoFocus={!isMobile} />
+        </StreamEncryptionGate>
       </main>
       {stream && !isDraft && (
         <LabelPicker
