@@ -68,10 +68,12 @@ The key model, in plain terms:
 This feature is `building`. What it deliberately does **not** do yet — the
 known-missing tally, kept current as gaps close:
 
-- **Stream names are plaintext.** A stream's display name is server-visible
-  metadata stored in the clear; only message content and AI trace data are
-  encrypted. Server-side AI name polish is disabled for encrypted streams, so the
-  name falls back to the first ~40 characters of the first message.
+- **Stream names keep a server-visible plaintext copy.** Renaming an encrypted
+  scratchpad now also seals the name under the stream key (a tamper-evident copy
+  the app prefers once unlocked), but a plaintext `displayName` is still stored so
+  the name shows everywhere even while locked — which means the server can still
+  see titles. This is a deliberate trade for display continuity, not full title
+  privacy. Server-side AI name polish stays disabled for encrypted streams.
 - **Passphrase only — no PIN.** There is no 6/8-digit PIN unlock (Signal /
   Messenger style). Unlock is passphrase + Argon2id.
 - **No biometric / WebAuthn unlock.** Device trust today is the "keep me unlocked

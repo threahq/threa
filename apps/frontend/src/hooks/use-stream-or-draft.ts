@@ -5,7 +5,7 @@ import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { sealStreamMessage } from "@/lib/crypto/message-envelope"
+import { sealStreamMessage, sealStreamName } from "@/lib/crypto/message-envelope"
 import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
@@ -469,8 +469,38 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
   const rename = useCallback(
     async (newName: string) => {
+      // For an encrypted stream the name has two copies: the plaintext fallback
+      // and a sealed (tamper-evident) copy an unlocked client prefers. We must
+      // never leave a STALE sealed name — if we can't produce a fresh seal (the
+      // session is locked or the key can't be resolved), explicitly CLEAR it
+      // (null) so the new plaintext name is authoritative, instead of leaving the
+      // old ciphertext to outrank it after the next unlock.
+      let sealedNameFields: { sealedNameCiphertext: string | null; sealedNameEnvelope: unknown } | undefined
+      if (baseStream?.e2eEnabled && currentUserId) {
+        sealedNameFields = { sealedNameCiphertext: null, sealedNameEnvelope: null }
+        const session = getE2eSessionState(workspaceId, currentUserId)
+        if (session.status === "unlocked" && session.privateKey && session.keyId) {
+          const streamKey = await resolveCurrentStreamKey({
+            workspaceId,
+            streamId,
+            recipientKeyId: session.keyId,
+            privateKey: session.privateKey,
+          })
+          if (streamKey) {
+            const sealed = await sealStreamName({
+              name: newName,
+              streamId,
+              ssk: streamKey.key,
+              keyGeneration: streamKey.keyGeneration,
+            })
+            sealedNameFields = { sealedNameCiphertext: sealed.ciphertext, sealedNameEnvelope: sealed.envelope }
+          }
+        }
+      }
+
       const updatedStream = await streamService.update(workspaceId, streamId, {
         displayName: newName,
+        ...sealedNameFields,
       })
       await db.streams.put(toCachedStream(updatedStream, idbStream))
 
@@ -489,7 +519,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         }
       })
     },
-    [streamId, workspaceId, streamService, queryClient, idbStream]
+    [streamId, workspaceId, streamService, queryClient, idbStream, baseStream?.e2eEnabled, currentUserId]
   )
 
   const archive = useCallback(async () => {

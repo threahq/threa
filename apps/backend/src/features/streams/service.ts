@@ -681,35 +681,73 @@ export class StreamService {
 
   async updateStream(
     streamId: string,
-    data: { displayName?: string; slug?: string; description?: string; visibility?: Visibility }
+    data: {
+      displayName?: string
+      slug?: string
+      description?: string
+      visibility?: Visibility
+      /**
+       * Sealed (encrypted) display name for an E2E stream — stored on
+       * `e2e_streams`, not `streams`. The plaintext `displayName` stays the
+       * locked-state fallback; this is the authoritative name an unlocked client
+       * prefers. `{ciphertext, envelope}` sets it, `null` clears it (rename
+       * without a fresh seal), `undefined` leaves it untouched. Required to come
+       * with a `displayName` so the two never desync.
+       */
+      sealedName?: { ciphertext: string; envelope: unknown } | null
+    }
   ): Promise<Stream | null> {
+    const { sealedName, ...streamData } = data
+    // A sealed-name change (set or clear) must accompany a plaintext displayName,
+    // or `streams.display_name` and the sealed copy desync (locked/sidebar
+    // surfaces show the old label while unlocked clients decrypt the new one).
+    if (sealedName !== undefined && streamData.displayName === undefined) {
+      throw new HttpError("displayName is required when sealedName is provided", {
+        status: 400,
+        code: "SEALED_NAME_REQUIRES_DISPLAY_NAME",
+      })
+    }
     try {
       return await withTransaction(this.pool, async (client) => {
         // Slug uniqueness check (exclude current stream)
-        if (data.slug) {
+        if (streamData.slug) {
           const current = await StreamRepository.findById(client, streamId)
-          if (current && data.slug !== current.slug) {
-            const slugExists = await StreamRepository.slugExistsInWorkspace(client, current.workspaceId, data.slug)
+          if (current && streamData.slug !== current.slug) {
+            const slugExists = await StreamRepository.slugExistsInWorkspace(
+              client,
+              current.workspaceId,
+              streamData.slug
+            )
             if (slugExists) {
-              throw new DuplicateSlugError(data.slug)
+              throw new DuplicateSlugError(streamData.slug)
             }
           }
         }
 
-        const stream = await StreamRepository.update(client, streamId, data)
-        if (stream) {
-          await OutboxRepository.insert(client, "stream:updated", {
-            workspaceId: stream.workspaceId,
-            streamId: stream.id,
-            stream,
-          })
+        const stream = await StreamRepository.update(client, streamId, streamData)
+        if (!stream) return null
+
+        // The sealed name lives on a different table; set/clear it in the same
+        // transaction. `StreamRepository.update` returns only the plaintext
+        // columns, so always re-read the e2e-joined stream before emitting —
+        // otherwise an E2E `stream:updated` would ship a partial shape (missing
+        // e2eEnabled / actors / sealed name). INV-7.
+        if (sealedName !== undefined) {
+          await E2eStreamsRepository.updateSealedName(client, stream.workspaceId, streamId, sealedName)
         }
-        return stream
+        const result = (await StreamRepository.findById(client, streamId)) ?? stream
+
+        await OutboxRepository.insert(client, "stream:updated", {
+          workspaceId: result.workspaceId,
+          streamId: result.id,
+          stream: result,
+        })
+        return result
       })
     } catch (error) {
       // DB unique constraint catches races the application check misses
-      if (data.slug && isUniqueViolation(error, "streams_workspace_id_slug_key")) {
-        throw new DuplicateSlugError(data.slug)
+      if (streamData.slug && isUniqueViolation(error, "streams_workspace_id_slug_key")) {
+        throw new DuplicateSlugError(streamData.slug)
       }
       throw error
     }

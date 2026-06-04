@@ -37,6 +37,7 @@ import { LabelPicker } from "@/components/labels/label-picker"
 import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
+import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { StreamPanel, ThreadHeader } from "@/components/thread"
 import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
@@ -105,6 +106,9 @@ export function StreamPage() {
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const dmPeers = useWorkspaceDmPeers(workspaceId ?? "")
+  // For an unlocked encrypted stream, the tamper-evident decrypted name; null
+  // otherwise (plaintext stream, locked, or not yet decrypted) → plaintext label.
+  const decryptedStreamName = useDecryptedStreamName(workspaceId ?? "", stream)
 
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
@@ -143,7 +147,7 @@ export function StreamPage() {
   const isDmDraft = isDraft && isDmDraftId(streamId)
   let streamName = "Stream"
   if (stream) {
-    streamName = streamLabel(stream)
+    streamName = decryptedStreamName ?? streamLabel(stream)
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }

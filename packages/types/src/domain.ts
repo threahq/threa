@@ -186,6 +186,15 @@ export interface Stream {
    * E2E JOIN is omitted entirely.
    */
   e2eActors?: E2eActor[]
+  /**
+   * The stream's display name sealed under the SSK (base64 ciphertext + its
+   * `StreamEnvelope` framing, typed `unknown` to keep this package crypto-free).
+   * Both null until the stream is first renamed while E2E. An unlocked client
+   * decrypts and prefers this; `displayName` above stays the locked-state
+   * fallback. Present (possibly null) only on E2E streams.
+   */
+  sealedNameCiphertext?: string | null
+  sealedNameEnvelope?: unknown | null
 }
 
 /** A non-human participant the stream key is wrapped to in an E2E stream. */

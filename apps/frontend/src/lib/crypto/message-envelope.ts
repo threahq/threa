@@ -3,6 +3,7 @@ import type { JSONContent } from "@tiptap/react"
 import {
   base64ToBytes,
   buildMessageAad,
+  buildNameAad,
   bytesToBase64,
   decryptPayloadAsString,
   ENVELOPE_VERSION,
@@ -58,6 +59,56 @@ export async function sealStreamMessage(input: SealStreamMessageInput): Promise<
     aad,
   })
   return { ciphertext: bytesToBase64(ciphertext), envelope, e2eVersion: STREAM_ENVELOPE_VERSION }
+}
+
+/**
+ * Seal a stream's display name under its SSK, bound to `(streamId, "name",
+ * generation)` so a malicious server can't relocate it onto another stream or
+ * swap it with a message body. Stored alongside the plaintext `displayName`
+ * (which stays the locked-state fallback); an unlocked client prefers this
+ * tamper-evident copy. Reuses the same SSK ciphertext path as messages.
+ */
+export async function sealStreamName(input: {
+  name: string
+  streamId: string
+  ssk: Uint8Array
+  keyGeneration: number
+}): Promise<{ ciphertext: string; envelope: StreamEnvelope }> {
+  const aad = buildNameAad({ streamId: input.streamId, keyGeneration: input.keyGeneration })
+  const { envelope, ciphertext } = await sealMessage({
+    key: input.ssk,
+    keyGeneration: input.keyGeneration,
+    payload: input.name,
+    aad,
+  })
+  return { ciphertext: bytesToBase64(ciphertext), envelope }
+}
+
+/**
+ * Open a sealed stream name. Resolves the SSK for the envelope's generation via
+ * the stream's wraps and decrypts. Returns null when there's no sealed name, the
+ * envelope is unparseable, the SSK can't be resolved (not a recipient / locked),
+ * or the AAD is forged — callers fall back to the plaintext name.
+ */
+export async function tryOpenStreamName(
+  payload: { ciphertext?: string | null; envelope?: unknown },
+  opts: DecryptMessageOpts
+): Promise<string | null> {
+  const env = parseStreamEnvelope(payload.envelope)
+  if (!env || typeof payload.ciphertext !== "string") return null
+  try {
+    const ssk = await resolveStreamKey({
+      workspaceId: opts.workspaceId,
+      streamId: opts.streamId,
+      keyGeneration: env.keyGeneration,
+      recipientKeyId: opts.recipientKeyId,
+      privateKey: opts.privateKey,
+    })
+    if (!ssk) return null
+    return await openMessageAsString({ key: ssk, envelope: env, ciphertext: base64ToBytes(payload.ciphertext) })
+  } catch {
+    return null
+  }
 }
 
 export interface DecryptMessagePayload {

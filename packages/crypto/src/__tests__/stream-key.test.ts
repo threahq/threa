@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { utf8Decode, utf8Encode } from "../encoding"
+import { bytesToBase64, utf8Decode, utf8Encode } from "../encoding"
 import { buildMessageAad } from "../envelope"
 import { exportPublicKey, generateKeyPair } from "../hpke"
 import {
+  buildNameAad,
   buildWrapAad,
   generateStreamKey,
   openMessage,
@@ -29,6 +30,44 @@ describe("generateStreamKey", () => {
     expect(a).toHaveLength(32)
     expect(b).toHaveLength(32)
     expect(a).not.toEqual(b)
+  })
+})
+
+describe("buildNameAad", () => {
+  it("binds streamId, a fixed 'name' label, and generation", () => {
+    const aad = buildNameAad({ streamId: "stream_1", keyGeneration: 0 })
+    expect(utf8Decode(aad)).toBe("stream_1|name|0")
+  })
+
+  it("is disjoint from a wrap AAD with the same stream + generation", () => {
+    const name = buildNameAad({ streamId: "stream_1", keyGeneration: 1 })
+    const wrap = buildWrapAad({ streamId: "stream_1", keyGeneration: 1, recipientKeyId: "uik_alice" })
+    expect(utf8Decode(name)).not.toBe(utf8Decode(wrap))
+  })
+
+  it("rejects an empty streamId, a delimiter in the id, and a bad generation", () => {
+    expect(() => buildNameAad({ streamId: "", keyGeneration: 0 })).toThrow()
+    expect(() => buildNameAad({ streamId: "a|b", keyGeneration: 0 })).toThrow()
+    expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: -1 })).toThrow()
+    expect(() => buildNameAad({ streamId: "stream_1", keyGeneration: 1.5 })).toThrow()
+  })
+
+  it("seals a name that opens under the same slot and rejects a relocated one", async () => {
+    const key = generateStreamKey()
+    const { envelope, ciphertext } = await sealMessage({
+      key,
+      keyGeneration: 0,
+      payload: "Therapy notes",
+      aad: buildNameAad({ streamId: "stream_1", keyGeneration: 0 }),
+    })
+
+    // The AAD travels on the envelope, so a faithful open recovers the name.
+    await expect(openMessageAsString({ key, envelope, ciphertext })).resolves.toBe("Therapy notes")
+
+    // A server that relocates the sealed name onto another stream forges the AAD;
+    // opening with the relocated binding must fail (AES-GCM tag check).
+    const relocated = { ...envelope, aad: bytesToBase64(buildNameAad({ streamId: "stream_2", keyGeneration: 0 })) }
+    await expect(openMessageAsString({ key, envelope: relocated, ciphertext })).rejects.toThrow()
   })
 })
 
