@@ -125,3 +125,32 @@ describe("formatMessagesWithTemporal — ID tagging for pointer URLs", () => {
     expect(personaContent).toContain("[msg:msg_persona_1 author:persona_ariadne] Got it.")
   })
 })
+
+describe("formatMessagesWithTemporal — reactions awareness", () => {
+  test("annotates a message with its reactions, naming reactors via the resolved actor map", () => {
+    const msg = userMsg({ reactions: { ":+1:": ["user_alice"], ":tada:": ["persona_ariadne"] } })
+    const actorNames = new Map([
+      ["user_alice", "Alice"],
+      ["persona_ariadne", "Ariadne"],
+    ])
+
+    const formatted = formatMessagesWithTemporal([msg], baseContext, actorNames)
+    const content = formatted[0].content as string
+
+    expect(content).toContain("[Reactions: :+1: by Alice; :tada: by Ariadne]")
+  })
+
+  test("falls back to 'someone' for reactor ids that can't be resolved", () => {
+    const msg = userMsg({ reactions: { ":eyes:": ["usr_ghost"] } })
+
+    const formatted = formatMessagesWithTemporal([msg], baseContext)
+    const content = formatted[0].content as string
+
+    expect(content).toContain("[Reactions: :eyes: by someone]")
+  })
+
+  test("messages without reactions get no reactions annotation", () => {
+    const formatted = formatMessagesWithTemporal([userMsg()], baseContext)
+    expect(formatted[0].content as string).not.toContain("[Reactions:")
+  })
+})

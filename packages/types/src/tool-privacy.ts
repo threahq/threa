@@ -44,6 +44,10 @@ export const ToolPrivacyCategories = {
  */
 export const TOOL_CATEGORIES_BY_NAME = {
   send_message: ["messaging"],
+  // Reacting is in-product participation (like sending a reply), not data
+  // egress, so it rides the always-allowed `messaging` class rather than a
+  // privacy grant.
+  react_to_message: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],

@@ -19,6 +19,7 @@ import type {
   SavedMessageView,
   ScheduledMessageView,
   WorkspaceInvitableRole,
+  AuthorType,
 } from "@threa/types"
 
 /**
@@ -218,6 +219,14 @@ export interface ReactionOutboxPayload extends StreamScopedPayload {
   messageId: string
   emoji: string
   userId: string
+  /**
+   * Actor type of the reactor. "user" for human reactions; "persona" when an
+   * agent reacted via `react_to_message`. Downstream handlers (activity feed,
+   * emoji-usage) use this to attribute or skip the reaction correctly. Optional
+   * on the wire so pre-existing/un-upgraded producers still validate; consumers
+   * treat a missing value as "user".
+   */
+  actorType?: AuthorType
 }
 
 export interface StreamDisplayNameUpdatedPayload extends StreamScopedPayload {

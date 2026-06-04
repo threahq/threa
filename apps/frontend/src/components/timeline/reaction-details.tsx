@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
 import { Drawer, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
-import { useActors } from "@/hooks"
+import { useActors, actorTypeFromId } from "@/hooks"
 import { useLongPress } from "@/hooks/use-long-press"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -97,7 +97,9 @@ export function ReactionDetailsContent({ reactions, workspaceId, defaultEmoji = 
               key={userId}
               className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted/50 transition-colors"
             >
-              <span className="truncate flex-1 text-foreground/90">{getActorName(userId, "user")}</span>
+              <span className="truncate flex-1 text-foreground/90">
+                {getActorName(userId, actorTypeFromId(userId))}
+              </span>
               <span className="shrink-0 text-base flex items-center gap-0.5">
                 {visibleEmojis.map((shortcode) => (
                   <span key={shortcode}>{toEmoji(shortcode) ?? shortcode}</span>

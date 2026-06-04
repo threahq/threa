@@ -3,7 +3,7 @@ import { createWebSearchTool, createReadUrlTool, type AgentTool } from "@threa/a
 import type { WorkspaceAgentResult } from "../researcher"
 import type { GeneralResearchResult } from "../general-researcher"
 import type { GitHubToolDeps, LinearToolDeps, RunGeneralResearchOptions, RunWorkspaceAgentOptions } from "../tools"
-import type { WorkspaceToolDeps } from "../tools/tool-deps"
+import type { ReactionToolDeps, WorkspaceToolDeps } from "../tools/tool-deps"
 import { logger } from "../../../lib/logger"
 import {
   createGeneralResearchTool,
@@ -14,6 +14,7 @@ import {
   createSearchAttachmentsTool,
   createGetAttachmentTool,
   createDescribeMemoTool,
+  createReactToMessageTool,
   createLoadAttachmentTool,
   createLoadPdfSectionTool,
   createLoadFileSectionTool,
@@ -50,6 +51,12 @@ export interface ToolSetConfig {
   runWorkspaceAgent?: (query: string, opts: RunWorkspaceAgentOptions) => Promise<WorkspaceAgentResult>
   runGeneralResearch?: (query: string, opts: RunGeneralResearchOptions) => Promise<GeneralResearchResult>
   workspace?: WorkspaceToolDeps
+  /**
+   * Reaction callbacks bound to the running persona. Present only on the live
+   * companion turn (not the general-researcher sub-agent), gating the
+   * `react_to_message` tool — the researcher reads/searches, it never reacts.
+   */
+  reactions?: ReactionToolDeps
   github?: GitHubToolDeps
   linear?: LinearToolDeps
   supportsVision?: boolean
@@ -69,6 +76,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     runWorkspaceAgent,
     runGeneralResearch,
     workspace,
+    reactions,
     github,
     linear,
     supportsVision,
@@ -127,6 +135,9 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
       : null,
     workspace && isToolEnabled(enabledTools, AgentToolNames.GET_ATTACHMENT) ? createGetAttachmentTool(workspace) : null,
     workspace && isToolEnabled(enabledTools, AgentToolNames.DESCRIBE_MEMO) ? createDescribeMemoTool(workspace) : null,
+    workspace && reactions && isToolEnabled(enabledTools, AgentToolNames.REACT_TO_MESSAGE)
+      ? createReactToMessageTool(workspace, reactions)
+      : null,
     workspace && supportsVision && isToolEnabled(enabledTools, AgentToolNames.LOAD_ATTACHMENT)
       ? createLoadAttachmentTool(workspace)
       : null,

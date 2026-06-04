@@ -193,6 +193,7 @@ describe("ActivityFeedHandler", () => {
       messageId: "msg_test",
       emoji: ":eyes:",
       actorId: "usr_reactor",
+      actorType: "user",
     })
   })
 

@@ -207,6 +207,14 @@ export interface AddReactionParams {
   streamId: string
   emoji: string
   userId: string
+  /**
+   * Actor type of the reactor. Defaults to "user" for human reactions sent
+   * through the HTTP API. Persona-authored reactions (the agent's
+   * `react_to_message` tool) pass "persona" so the stream event, outbox
+   * payload, and downstream activity/emoji handlers attribute the reaction
+   * correctly instead of treating the persona id as a workspace user.
+   */
+  actorType?: AuthorType
 }
 
 export interface RemoveReactionParams {
@@ -215,6 +223,8 @@ export interface RemoveReactionParams {
   streamId: string
   emoji: string
   userId: string
+  /** Same semantics as `AddReactionParams.actorType`. */
+  actorType?: AuthorType
 }
 
 export interface MoveMessagesToThreadParams {
@@ -1296,6 +1306,7 @@ export class EventService {
   }
 
   async addReaction(params: AddReactionParams): Promise<Message | null> {
+    const actorType = params.actorType ?? AuthorTypes.USER
     return withTransaction(this.pool, async (client) => {
       // 1. Append event
       await StreamEventRepository.insert(client, {
@@ -1308,7 +1319,7 @@ export class EventService {
           userId: params.userId,
         } satisfies ReactionPayload,
         actorId: params.userId,
-        actorType: "user",
+        actorType,
       })
 
       // 2. Update projection
@@ -1322,6 +1333,7 @@ export class EventService {
           messageId: params.messageId,
           emoji: params.emoji,
           userId: params.userId,
+          actorType,
         })
       }
 
@@ -1330,6 +1342,7 @@ export class EventService {
   }
 
   async removeReaction(params: RemoveReactionParams): Promise<Message | null> {
+    const actorType = params.actorType ?? AuthorTypes.USER
     return withTransaction(this.pool, async (client) => {
       // 1. Append event
       await StreamEventRepository.insert(client, {
@@ -1342,7 +1355,7 @@ export class EventService {
           userId: params.userId,
         } satisfies ReactionPayload,
         actorId: params.userId,
-        actorType: "user",
+        actorType,
       })
 
       // 2. Update projection
@@ -1356,6 +1369,7 @@ export class EventService {
           messageId: params.messageId,
           emoji: params.emoji,
           userId: params.userId,
+          actorType,
         })
       }
 

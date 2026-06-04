@@ -1,4 +1,4 @@
-export { type WorkspaceToolDeps } from "./tool-deps"
+export { type WorkspaceToolDeps, type ReactionToolDeps } from "./tool-deps"
 // Web + send tools moved to @threa/agent-runtime (shared with the enclave).
 // Re-exported here so backend imports (`../tools`) keep working.
 export {
@@ -34,6 +34,7 @@ export {
 } from "./search-attachments-tool"
 export { createGetAttachmentTool, type GetAttachmentInput, type AttachmentDetails } from "./get-attachment-tool"
 export { createDescribeMemoTool, type DescribeMemoInput } from "./describe-memo-tool"
+export { createReactToMessageTool, type ReactToMessageInput } from "./react-to-message-tool"
 export { createLoadAttachmentTool, type LoadAttachmentInput, type LoadAttachmentResult } from "./load-attachment-tool"
 export { createLoadPdfSectionTool, type LoadPdfSectionInput, type LoadPdfSectionResult } from "./load-pdf-section-tool"
 export {

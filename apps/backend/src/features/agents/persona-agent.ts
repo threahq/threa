@@ -101,6 +101,22 @@ export interface PersonaAgentDeps {
     messageId: string
     actorId: string
   }) => Promise<{ id: string } | null>
+  addReaction: (params: {
+    workspaceId: string
+    streamId: string
+    messageId: string
+    emoji: string
+    actorId: string
+    actorType: AuthorType
+  }) => Promise<{ id: string } | null>
+  removeReaction: (params: {
+    workspaceId: string
+    streamId: string
+    messageId: string
+    emoji: string
+    actorId: string
+    actorType: AuthorType
+  }) => Promise<{ id: string } | null>
   createThread: (params: {
     workspaceId: string
     parentStreamId: string
@@ -162,6 +178,8 @@ export class PersonaAgent {
       createMessage,
       editMessage,
       deleteMessage,
+      addReaction,
+      removeReaction,
       createThread,
     } = this.deps
     const {
@@ -437,6 +455,31 @@ export class PersonaAgent {
           }
         }
 
+        // Reaction callbacks for the react_to_message tool, bound to this
+        // persona's identity + actorType so the tool only supplies the target
+        // message, its stream, and the emoji. Reactions are attributed to the
+        // persona, never the invoking user.
+        const reactionDeps: import("./tools/tool-deps").ReactionToolDeps = {
+          addReaction: ({ streamId: targetStream, messageId: targetMessage, emoji }) =>
+            addReaction({
+              workspaceId,
+              streamId: targetStream,
+              messageId: targetMessage,
+              emoji,
+              actorId: persona.id,
+              actorType: AuthorTypes.PERSONA,
+            }),
+          removeReaction: ({ streamId: targetStream, messageId: targetMessage, emoji }) =>
+            removeReaction({
+              workspaceId,
+              streamId: targetStream,
+              messageId: targetMessage,
+              emoji,
+              actorId: persona.id,
+              actorType: AuthorTypes.PERSONA,
+            }),
+        }
+
         const githubDeps = workspaceIntegrationService
           ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
           : undefined
@@ -503,6 +546,7 @@ export class PersonaAgent {
           runWorkspaceAgent,
           runGeneralResearch,
           workspace: workspaceDeps,
+          reactions: reactionDeps,
           github: githubDeps,
           linear: linearDeps,
           supportsVision: modelRegistry.supportsVision(persona.model),

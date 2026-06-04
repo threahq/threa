@@ -80,7 +80,7 @@ export {
 
 export { useSearch } from "./use-search"
 
-export { useActors, type ActorLookup } from "./use-actors"
+export { useActors, actorTypeFromId, type ActorLookup } from "./use-actors"
 export { useMovedTombstone } from "./use-moved-tombstone"
 
 export { useWorkspaceEmoji } from "./use-workspace-emoji"
