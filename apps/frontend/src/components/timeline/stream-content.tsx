@@ -130,6 +130,53 @@ export function classifyDeepLinkScrollTick(args: {
   return "active"
 }
 
+/**
+ * Window (ms) within which an upward scroll counts as "the user is scrolling
+ * away right now". Virtuoso crosses `atBottomThreshold` at the *onset* of a
+ * scroll, so a fresh scroll-away stamp marks a genuine scroll-away; content that
+ * grows under a stationary reader crosses the threshold with the scroll position
+ * unchanged (no scroll event, stale stamp). Sized to absorb the small latency
+ * between the scroll and Virtuoso's throttled atBottom callback.
+ */
+export const TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS = 300
+
+/**
+ * Decide what to do when Virtuoso reports an `atBottomStateChange` for the live
+ * (non-jump) timeline.
+ *
+ *  - `repin`      a row grew under a reader parked at the tail — most often an
+ *                 async embed / image in the last message finishing load over
+ *                 the next few seconds, which grows the row past
+ *                 `atBottomThreshold`. Virtuoso reports atBottom=false, and the
+ *                 default handling would disable followOutput and strand the
+ *                 last message behind the floating composer until the next
+ *                 message or manual scroll. Re-pin to the tail and keep
+ *                 following instead.
+ *  - `propagate`  forward to the scroll hook unchanged: atBottom=true (settled
+ *                 at the tail) or a genuine user scroll-away (a recent upward
+ *                 scroll) that must disable follow so we never yank the reader
+ *                 back down.
+ *
+ * The scroll-away signal is the scroll *position* moving up, not an input
+ * event, so it is device-independent: wheel, touch, keyboard, and dragging the
+ * native scrollbar all decrease scrollTop and stamp it, while a row growing
+ * under a stationary reader does not move scrollTop and so never fires a scroll.
+ * Its error modes are one-sided: a missed scroll-away stamp degrades to the old
+ * behavior (a brief non-re-pin), never a wrong yank.
+ *
+ * `nowMs` / `scrolledAwayAtMs` are `performance.now()` readings.
+ */
+export function classifyTailFollowOnAtBottomChange(args: {
+  atBottom: boolean
+  isJumpMode: boolean
+  nowMs: number
+  scrolledAwayAtMs: number
+}): "repin" | "propagate" {
+  if (args.atBottom || args.isJumpMode) return "propagate"
+  const userScrolledAway = args.nowMs - args.scrolledAwayAtMs < TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS
+  return userScrolledAway ? "propagate" : "repin"
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -743,6 +790,7 @@ export function StreamContent({
     shouldFollowOutput,
     scrollToBottom: virtualScrollToBottom,
     disableAutoScroll: virtualDisableAutoScroll,
+    handleReservedSpaceChange,
     handleAtBottomChange,
     handleRangeChanged,
     handleScrollerRef,
@@ -780,49 +828,12 @@ export function StreamContent({
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
 
-  // Re-anchor the virtualized list to the bottom when the floating composer
-  // settles to a new height. The footer spacer that keeps the last message
-  // above the composer is sized from `--composer-height`, but Virtuoso freezes
-  // its scrollTop when that spacer grows (followOutput only reacts to new
-  // items; the resize safety-net only watches the scroller's own height). So a
-  // composer that lands taller a few frames after a message arrives (its 200ms
-  // height transition, async encryption notice / attachment chips) covers the
-  // bottom of the last message until the next reload. virtualScrollToBottom
-  // self-guards on isAtBottomRef, so this is a no-op unless the user is parked
-  // at the live tail (never fires during a deep-link jump or while scrolled up
-  // reading). The plain-scroll (thread/draft) path needs none of this: its
-  // `padding-bottom` reflows the content so the bottom row is never frozen
-  // behind the composer.
-  //
-  // Two arrival paths, handled differently:
-  //  - `initial`: the composer's first measurement, fired from a layout effect
-  //    *before paint*. The list first scrolled to LAST against the approximate
-  //    persisted footer height; when the real composer differs (cold boot with
-  //    a restored draft, density/zoom change) we correct it synchronously here,
-  //    in the same frame the list reveals, so there is no visible jump.
-  //  - runtime changes: arrive async from the ResizeObserver after paint (the
-  //    200ms height transition, attachment chips settling). Debounced so the
-  //    snap lands once after the transition settles rather than fighting
-  //    Virtuoso's reflow on every intermediate frame.
-  //
-  // Called through a ref so the handler identity stays stable: virtualScrollToBottom
-  // is rebuilt on every itemCount change, and a changing prop would re-render
-  // the memoized MessageInput on every new message (the exact churn that memo
-  // exists to prevent).
-  const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
-  virtualScrollToBottomRef.current = virtualScrollToBottom
-  const composerResizeTimerRef = useRef<number | undefined>(undefined)
-  const handleComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
-    window.clearTimeout(composerResizeTimerRef.current)
-    if (opts.initial) {
-      virtualScrollToBottomRef.current()
-      return
-    }
-    composerResizeTimerRef.current = window.setTimeout(() => {
-      virtualScrollToBottomRef.current()
-    }, 120)
-  }, [])
-  useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
+  // The plain-scroll (thread/draft) path keeps the last message above the
+  // floating composer with `padding-bottom: var(--composer-height)`, which
+  // reflows the content so the bottom row is never frozen behind the composer.
+  // The virtualized path needs an active re-anchor instead — see
+  // `handleReservedSpaceChange` in useVirtuosoScroll — and wires it to
+  // MessageInput's `onComposerHeightChange` below.
 
   // Scroll to a specific message and keep re-scrolling until the target
   // element is actually visible in the scroller viewport. Items rendered
@@ -847,6 +858,13 @@ export function StreamContent({
   // exactly the "I scroll up to read context, then get yanked back to the
   // linked message" deep-link bug.
   const userInteractedAtRef = useRef(0)
+  // Timestamp of the last time the scroll position moved *up* (scrollTop
+  // decreased) on the live timeline. Stamped by a passive scroll listener on
+  // the Virtuoso scroller (attached in handleVirtuosoScrollerRef). Read by the
+  // atBottom classifier to tell a genuine scroll-away from a row growing under a
+  // stationary reader — see classifyTailFollowOnAtBottomChange. Position-based
+  // (not input-based) so it covers dragging the native scrollbar too.
+  const scrolledAwayAtRef = useRef(0)
   const scrollToMessage = useCallback(
     (messageId: string) => {
       if (!useVirtualized) {
@@ -1340,6 +1358,7 @@ export function StreamContent({
                     virtuosoScrollerRef={virtuosoScrollerRef}
                     handleScrollerRef={handleScrollerRef}
                     userInteractedAtRef={userInteractedAtRef}
+                    scrolledAwayAtRef={scrolledAwayAtRef}
                     scrollAbortRef={scrollAbortRef}
                     isJumpMode={isJumpMode}
                     firstItemIndex={firstItemIndex}
@@ -1548,7 +1567,7 @@ export function StreamContent({
                 disabled={isArchived || isSystem}
                 disabledReason={disabledReason}
                 autoFocus={autoFocus}
-                onComposerHeightChange={useVirtualized ? handleComposerHeightChange : undefined}
+                onComposerHeightChange={useVirtualized ? handleReservedSpaceChange : undefined}
               />
             )}
           </div>
@@ -1568,6 +1587,7 @@ function VirtuosoMessageList({
   virtuosoScrollerRef,
   handleScrollerRef,
   userInteractedAtRef,
+  scrolledAwayAtRef,
   scrollAbortRef,
   isJumpMode,
   firstItemIndex,
@@ -1608,6 +1628,9 @@ function VirtuosoMessageList({
   /** Stamp set by long-lived scroller input listeners; read by the outer
    *  scrollToMessage refine loop so manual scroll always wins. */
   userInteractedAtRef: React.MutableRefObject<number>
+  /** Stamp set when the scroll position last moved up; read by the atBottom
+   *  classifier to tell a scroll-away from a row growing under the reader. */
+  scrolledAwayAtRef: React.MutableRefObject<number>
   /** Non-null while a scrollToMessage refine loop is in flight. Programmatic
    *  scroll-into-view must not trigger edge pagination. */
   scrollAbortRef: React.MutableRefObject<(() => void) | null>
@@ -1807,11 +1830,27 @@ function VirtuosoMessageList({
         el.addEventListener("touchstart", mark, { passive: true })
         el.addEventListener("touchmove", mark, { passive: true })
         el.addEventListener("keydown", mark)
+        // Device-independent scroll-away stamp: any upward movement of the
+        // scroll position (wheel, touch, keyboard, or dragging the native
+        // scrollbar — none of which the input listeners above fully cover)
+        // decreases scrollTop and fires `scroll`. A row growing under a
+        // stationary reader does not move scrollTop, so it never stamps. The
+        // atBottom classifier uses this to avoid re-pinning a reader who is
+        // genuinely scrolling up. Programmatic snaps to the tail only ever
+        // increase scrollTop, so they never register as a scroll-away.
+        let prevScrollTop = el.scrollTop
+        const onScroll = () => {
+          const next = el.scrollTop
+          if (next < prevScrollTop - 1) scrolledAwayAtRef.current = performance.now()
+          prevScrollTop = next
+        }
+        el.addEventListener("scroll", onScroll, { passive: true })
         userInteractionCleanupRef.current = () => {
           el.removeEventListener("wheel", mark)
           el.removeEventListener("touchstart", mark)
           el.removeEventListener("touchmove", mark)
           el.removeEventListener("keydown", mark)
+          el.removeEventListener("scroll", onScroll)
         }
       }
     },
@@ -1837,6 +1876,23 @@ function VirtuosoMessageList({
   const wrappedHandleAtBottomChange = useCallback(
     (atBottom: boolean) => {
       if (visibleItems.length > 0) hasRangeSettledRef.current = true
+      // Tell a genuine scroll-away apart from a row growing under a stationary
+      // reader at the live tail (an async embed/image in the last message
+      // finishing load, which grows it past atBottomThreshold over a few
+      // seconds). Both surface as atBottom=false, but only the user-driven one
+      // should disable follow; the content-driven one must re-pin so the last
+      // message doesn't sit stranded behind the floating composer. See
+      // classifyTailFollowOnAtBottomChange.
+      const decision = classifyTailFollowOnAtBottomChange({
+        atBottom,
+        isJumpMode,
+        nowMs: performance.now(),
+        scrolledAwayAtMs: scrolledAwayAtRef.current,
+      })
+      if (decision === "repin") {
+        virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" })
+        return
+      }
       // In jump mode the user is reading a deep-linked / searched history
       // window. Prepend/append reflow and size measurement make Virtuoso
       // transiently report atBottom; letting that arm followOutput (and the
@@ -1846,7 +1902,7 @@ function VirtuosoMessageList({
       // still propagates so a real scroll-away keeps follow disabled.
       handleAtBottomChange(isJumpMode ? false : atBottom)
     },
-    [handleAtBottomChange, visibleItems.length, isJumpMode]
+    [handleAtBottomChange, visibleItems.length, isJumpMode, scrolledAwayAtRef, virtuosoRef]
   )
 
   const wrappedHandleRangeChanged = useCallback(
