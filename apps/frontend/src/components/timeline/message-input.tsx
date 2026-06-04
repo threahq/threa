@@ -48,6 +48,12 @@ interface MessageInputProps {
    * synchronously instead of debouncing.
    */
   onComposerHeightChange?: (px: number, opts: { initial: boolean }) => void
+  /**
+   * Render the composer in-flow (docked) as a flex sibling below the scroll
+   * area instead of floating absolutely over it. In docked mode the scroll area
+   * shrinks to fit, so no height publishing / re-anchoring is needed.
+   */
+  docked?: boolean
 }
 
 function attachmentMatchKey(attachment: Pick<PendingAttachment, "filename" | "mimeType">): string {
@@ -209,6 +215,7 @@ function MessageInputComponent({
   disabledReason,
   autoFocus,
   onComposerHeightChange,
+  docked = false,
 }: MessageInputProps) {
   const editLastCtx = useEditLastMessage()
   const triggerEditLast = editLastCtx?.triggerEditLast
@@ -432,7 +439,9 @@ function MessageInputComponent({
   // Disabled while the expanded overlay is open so the scroll area can use its
   // full height behind the overlay. `onHeightChange` lets the virtualized
   // timeline re-anchor to the bottom when the composer settles to a new height.
-  useComposerHeightPublish(selfRef, { active: !expanded, onHeightChange: onComposerHeightChange })
+  // Docked mode needs no reserved space (the scroll area is a flex sibling that
+  // shrinks to fit), so don't measure/publish the height at all.
+  useComposerHeightPublish(selfRef, { active: !expanded && !docked, onHeightChange: onComposerHeightChange })
 
   // Escape to close — only when focus is inside this expanded editor
   useEffect(() => {
@@ -595,7 +604,7 @@ function MessageInputComponent({
     // A plain in-flow div lands at the top of the absolutely-positioned stream
     // area and overlaps the first messages instead.
     return (
-      <FloatingComposerShell ref={selfRef} data-message-composer-root>
+      <FloatingComposerShell ref={selfRef} docked={docked} data-message-composer-root>
         <div className="flex items-center justify-center py-3 px-4 rounded-md bg-muted/50">
           <p className="text-sm text-muted-foreground text-center">{disabledReason}</p>
         </div>
@@ -711,7 +720,7 @@ function MessageInputComponent({
           under document.body), so the composer is hidden purely from DOM presence.
           This replaces a previous ref-counted React state mechanism that was prone to
           leaks across hydration races and virtualization cycles. */}
-      <FloatingComposerShell ref={selfRef} hidden={expanded} data-message-composer-root>
+      <FloatingComposerShell ref={selfRef} hidden={expanded} docked={docked} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!stream?.e2eEnabled} streamId={stream?.id} />
         {!expanded && <MessageComposer {...composerProps} autoFocus={autoFocus} onExpandClick={handleExpandClick} />}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}

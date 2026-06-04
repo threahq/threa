@@ -780,49 +780,12 @@ export function StreamContent({
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
 
-  // Re-anchor the virtualized list to the bottom when the floating composer
-  // settles to a new height. The footer spacer that keeps the last message
-  // above the composer is sized from `--composer-height`, but Virtuoso freezes
-  // its scrollTop when that spacer grows (followOutput only reacts to new
-  // items; the resize safety-net only watches the scroller's own height). So a
-  // composer that lands taller a few frames after a message arrives (its 200ms
-  // height transition, async encryption notice / attachment chips) covers the
-  // bottom of the last message until the next reload. virtualScrollToBottom
-  // self-guards on isAtBottomRef, so this is a no-op unless the user is parked
-  // at the live tail (never fires during a deep-link jump or while scrolled up
-  // reading). The plain-scroll (thread/draft) path needs none of this: its
-  // `padding-bottom` reflows the content so the bottom row is never frozen
-  // behind the composer.
-  //
-  // Two arrival paths, handled differently:
-  //  - `initial`: the composer's first measurement, fired from a layout effect
-  //    *before paint*. The list first scrolled to LAST against the approximate
-  //    persisted footer height; when the real composer differs (cold boot with
-  //    a restored draft, density/zoom change) we correct it synchronously here,
-  //    in the same frame the list reveals, so there is no visible jump.
-  //  - runtime changes: arrive async from the ResizeObserver after paint (the
-  //    200ms height transition, attachment chips settling). Debounced so the
-  //    snap lands once after the transition settles rather than fighting
-  //    Virtuoso's reflow on every intermediate frame.
-  //
-  // Called through a ref so the handler identity stays stable: virtualScrollToBottom
-  // is rebuilt on every itemCount change, and a changing prop would re-render
-  // the memoized MessageInput on every new message (the exact churn that memo
-  // exists to prevent).
-  const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
-  virtualScrollToBottomRef.current = virtualScrollToBottom
-  const composerResizeTimerRef = useRef<number | undefined>(undefined)
-  const handleComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
-    window.clearTimeout(composerResizeTimerRef.current)
-    if (opts.initial) {
-      virtualScrollToBottomRef.current()
-      return
-    }
-    composerResizeTimerRef.current = window.setTimeout(() => {
-      virtualScrollToBottomRef.current()
-    }, 120)
-  }, [])
-  useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
+  // Docked composer (prototype): the composer is a flex sibling below the
+  // scroll area rather than floating over it, so there is no reserved space to
+  // keep in sync and no composer-height-driven re-anchor. When the composer
+  // grows the scroll area shrinks, and useVirtuosoScroll's clientHeight resize
+  // safety-net keeps the tail glued — the same path that already handles the
+  // mobile keyboard.
 
   // Scroll to a specific message and keep re-scrolling until the target
   // element is actually visible in the scroller viewport. Items rendered
@@ -1297,17 +1260,14 @@ export function StreamContent({
       <QuoteReplyProvider>
         <SharedMessagesProvider map={mergedSharedMessages}>
           <TextSelectionQuote streamId={streamId} />
-          <div className="relative h-full">
-            <div className="absolute inset-0 overflow-hidden">
+          <div className="flex h-full flex-col">
+            <div className="relative flex-1 min-h-0 overflow-hidden">
               {isSearchOpen && (
                 <StreamSearchBar search={streamSearch} onClose={handleSearchClose} onNavigate={handleSearchNavigate} />
               )}
               {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
               {isDraft && (
-                <div
-                  className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
-                  style={{ paddingBottom: "var(--composer-height, 0px)" }}
-                >
+                <div className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain">
                   {hasDraftPendingEvents ? (
                     <EventList
                       timelineItems={draftTimelineItems}
@@ -1384,11 +1344,10 @@ export function StreamContent({
                       isFetchingNewer ? "opacity-100" : "opacity-0"
                     )}
                     style={{
-                      // Sit above the Jump to latest button (when visible) which itself sits above the floating composer.
-                      bottom:
-                        isJumpMode || isScrolledFarFromBottom
-                          ? "calc(var(--composer-height, 0px) + 3.5rem)"
-                          : "calc(var(--composer-height, 0px) + 0.5rem)",
+                      // Sit above the Jump to latest button (when visible). The
+                      // docked composer is a flex sibling below this scroll area,
+                      // so offsets are relative to the scroll area's own bottom.
+                      bottom: isJumpMode || isScrolledFarFromBottom ? "3.5rem" : "0.5rem",
                     }}
                   >
                     Loading newer messages...
@@ -1403,7 +1362,6 @@ export function StreamContent({
                     (isSearchOpen || batchMode) && "pt-11",
                     batchMode && "select-none"
                   )}
-                  style={{ paddingBottom: "var(--composer-height, 0px)" }}
                   data-suppress-pull-refresh="true"
                   onScroll={plainHandleScroll}
                   {...batchPointerHandlers}
@@ -1441,25 +1399,26 @@ export function StreamContent({
                   )}
                 </div>
               )}
+              {/* Bottom fade — content dissolves into the docked composer instead
+                of ending on a hard edge, preserving the floating-pill feel. */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[5] h-5 bg-gradient-to-t from-background to-transparent" />
+              {/* Jump to latest — shown when scrolled far from bottom or in jump
+                mode. Floats just above the docked composer (this scroll area's
+                bottom edge). */}
+              {(isJumpMode || isScrolledFarFromBottom) && (
+                <div className="pointer-events-none absolute left-1/2 bottom-2 -translate-x-1/2 z-10">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="pointer-events-auto shadow-lg gap-1.5"
+                    onClick={handleJumpToLatest}
+                  >
+                    <ArrowDown className="h-3.5 w-3.5" />
+                    Jump to latest
+                  </Button>
+                </div>
+              )}
             </div>
-            {/* Jump to latest button — shown when scrolled far from bottom or in jump mode.
-              Positioned above the floating composer pill. */}
-            {(isJumpMode || isScrolledFarFromBottom) && (
-              <div
-                className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10"
-                style={{ bottom: "calc(var(--composer-height, 0px) + 0.5rem)" }}
-              >
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="pointer-events-auto shadow-lg gap-1.5"
-                  onClick={handleJumpToLatest}
-                >
-                  <ArrowDown className="h-3.5 w-3.5" />
-                  Jump to latest
-                </Button>
-              </div>
-            )}
             {dragGhost && (
               <div
                 className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
@@ -1522,7 +1481,7 @@ export function StreamContent({
               </AlertDialogContent>
             </AlertDialog>
             {membershipResolved && !isMember && isPublicChannel && (
-              <div className="absolute inset-x-0 z-10" style={{ bottom: "var(--composer-height, 0px)" }}>
+              <div className="shrink-0 z-10">
                 <JoinChannelBar
                   workspaceId={workspaceId}
                   streamId={streamId}
@@ -1532,7 +1491,7 @@ export function StreamContent({
               </div>
             )}
             {showBotRuntimePresence && activeBotPresence && (
-              <div className="pointer-events-none mx-4 mb-2 mt-2 flex justify-center">
+              <div className="pointer-events-none shrink-0 mx-4 mb-2 mt-2 flex justify-center">
                 <ActiveBotStatusStrip
                   botName={activeBotPresence.bot.name}
                   runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
@@ -1548,7 +1507,7 @@ export function StreamContent({
                 disabled={isArchived || isSystem}
                 disabledReason={disabledReason}
                 autoFocus={autoFocus}
-                onComposerHeightChange={useVirtualized ? handleComposerHeightChange : undefined}
+                docked
               />
             )}
           </div>
@@ -2008,7 +1967,10 @@ function VirtuosoMessageList({
 // for the composer's height (Virtuoso treats Footer as content).
 const StreamHeaderSpacer = () => <div className="h-3 sm:h-6" aria-hidden />
 
-const ComposerFooterSpacer = () => <div aria-hidden style={{ height: "var(--composer-height, 0px)" }} />
+// Small breathing gap below the last message. With the docked composer there is
+// no overlap to reserve space for, so this is just a little air above the
+// composer (and under the bottom fade) rather than the full composer height.
+const ComposerFooterSpacer = () => <div aria-hidden className="h-3" />
 
 // 44px scrollable spacer used as Virtuoso's Header while the search or
 // batch-selection bar is open. Both bars render `absolute top-0` outside the
