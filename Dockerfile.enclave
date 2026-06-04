@@ -29,6 +29,7 @@ RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --produc
 # Copy source and bundle to a single Node-targeted ESM file.
 COPY packages/types/ packages/types/
 COPY packages/crypto/ packages/crypto/
+COPY packages/agent-runtime/ packages/agent-runtime/
 COPY apps/enclave/ apps/enclave/
 RUN bun build apps/enclave/src/index.ts --target=node --format=esm --outfile /app/dist/index.mjs
 
