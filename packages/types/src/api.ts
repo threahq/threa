@@ -229,8 +229,6 @@ export interface CreateMessageInputJson {
   streamId: string
   /** ProseMirror JSON content from TipTap editor */
   contentJson: JSONContent
-  /** Optional pre-computed markdown (backend derives if missing) */
-  contentMarkdown?: string
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
@@ -250,8 +248,6 @@ export interface CreateDmMessageInputJson {
   dmUserId: string
   /** ProseMirror JSON content from TipTap editor */
   contentJson: JSONContent
-  /** Optional pre-computed markdown (backend derives if missing) */
-  contentMarkdown?: string
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
@@ -525,7 +521,6 @@ export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInp
  */
 export interface UpdateMessageInputJson {
   contentJson: JSONContent
-  contentMarkdown?: string
   /** See `CreateMessageInputJson.confirmedPrivacyWarning`. */
   confirmedPrivacyWarning?: boolean
 }
@@ -1162,7 +1157,6 @@ export interface ScheduleMessageInput {
   streamId: string
   parentMessageId?: string | null
   contentJson: JSONContent
-  contentMarkdown: string
   attachmentIds?: string[]
   metadata?: Record<string, string>
   scheduledFor: string
@@ -1178,7 +1172,6 @@ export interface ScheduleMessageInput {
  */
 export interface UpdateScheduledMessageInput {
   contentJson?: JSONContent
-  contentMarkdown?: string
   attachmentIds?: string[]
   metadata?: Record<string, string> | null
   scheduledFor?: string

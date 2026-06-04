@@ -1,6 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import { HttpError } from "../../lib/errors"
+import { deriveContentMarkdown } from "../messaging"
 import type { ScheduledMessagesService } from "./service"
 
 const contentJsonSchema = z.object({
@@ -12,7 +13,6 @@ const scheduleSchema = z.object({
   streamId: z.string().min(1),
   parentMessageId: z.string().min(1).nullable().optional(),
   contentJson: contentJsonSchema,
-  contentMarkdown: z.string(),
   attachmentIds: z.array(z.string()).optional(),
   metadata: z.record(z.string(), z.string()).optional(),
   scheduledFor: z.string().datetime(),
@@ -25,7 +25,6 @@ const scheduleSchema = z.object({
 const updateSchema = z
   .object({
     contentJson: contentJsonSchema.optional(),
-    contentMarkdown: z.string().optional(),
     attachmentIds: z.array(z.string()).optional(),
     metadata: z.record(z.string(), z.string()).nullable().optional(),
     scheduledFor: z.string().datetime().optional(),
@@ -34,7 +33,6 @@ const updateSchema = z
   .refine(
     (d) =>
       d.contentJson !== undefined ||
-      d.contentMarkdown !== undefined ||
       d.attachmentIds !== undefined ||
       d.metadata !== undefined ||
       d.scheduledFor !== undefined,
@@ -70,7 +68,7 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
         streamId: data.streamId,
         parentMessageId: data.parentMessageId ?? null,
         contentJson: data.contentJson,
-        contentMarkdown: data.contentMarkdown,
+        contentMarkdown: deriveContentMarkdown(data.contentJson),
         attachmentIds: data.attachmentIds ?? [],
         metadata: data.metadata ?? null,
         scheduledFor: new Date(data.scheduledFor),
@@ -133,7 +131,10 @@ export function createScheduledMessagesHandlers({ scheduledMessagesService }: De
         id,
         expectedVersion: parsed.data.expectedVersion,
         contentJson: parsed.data.contentJson,
-        contentMarkdown: parsed.data.contentMarkdown,
+        // Markdown moves with the JSON: derive it when the content changes, and
+        // leave it untouched (undefined) when this edit only touches scheduling
+        // or attachments.
+        contentMarkdown: parsed.data.contentJson ? deriveContentMarkdown(parsed.data.contentJson) : undefined,
         attachmentIds: parsed.data.attachmentIds,
         metadata: parsed.data.metadata,
         scheduledFor: parsed.data.scheduledFor ? new Date(parsed.data.scheduledFor) : undefined,

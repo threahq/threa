@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { serializeToMarkdown } from "@threa/prosemirror"
 import { useScheduledService } from "@/contexts"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { useUser } from "@/auth"
@@ -287,7 +288,10 @@ export function useScheduleMessage(workspaceId: string) {
         streamId: input.streamId,
         parentMessageId: input.parentMessageId ?? null,
         contentJson: input.contentJson,
-        contentMarkdown: input.contentMarkdown,
+        // The server derives the canonical markdown from contentJson; this local
+        // projection only feeds the optimistic preview until the server view
+        // replaces it.
+        contentMarkdown: serializeToMarkdown(input.contentJson),
         attachmentIds: input.attachmentIds ?? [],
         metadata: input.metadata ?? null,
         scheduledFor: input.scheduledFor,

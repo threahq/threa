@@ -560,7 +560,6 @@ function MessageInputComponent({
       const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
       const attachments = extractUploadedAttachments(normalizedContent)
       const attachmentIds = attachments.map((a) => a.id)
-      const contentMarkdown = serializeToMarkdown(normalizedContent)
 
       try {
         composer.setContent(EMPTY_DOC)
@@ -568,7 +567,6 @@ function MessageInputComponent({
         await scheduleMessageMutation.mutateAsync({
           streamId,
           contentJson: normalizedContent,
-          contentMarkdown,
           attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
           scheduledFor: when.toISOString(),
         })

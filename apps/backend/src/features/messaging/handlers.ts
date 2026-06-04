@@ -12,7 +12,8 @@ import { type CommandDispatchedPayload, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from 
 import { serializeBigInt } from "@threa/backend-common"
 import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
-import { collectAttachmentReferenceIds, parseMarkdown, serializeToMarkdown } from "@threa/prosemirror"
+import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
+import { deriveContentMarkdown } from "./content"
 import type { JSONContent } from "@threa/types"
 import { messageMetadataSchema } from "./metadata-schema"
 
@@ -33,11 +34,13 @@ const contentJsonSchema = z.object({
   content: z.array(z.any()),
 })
 
-// Schema for JSON input to an existing stream (from rich clients)
+// Schema for JSON input to an existing stream (from rich clients).
+// `contentMarkdown` is intentionally not accepted: the backend derives it from
+// `contentJson` (see `deriveContentMarkdown`) so the stored markdown can't
+// diverge from the JSON. Markdown is only an input on the markdown-only path.
 const createMessageJsonToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   contentJson: contentJsonSchema,
-  contentMarkdown: z.string().optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -48,11 +51,12 @@ const createMessageMarkdownToStreamSchema = z.object({
   ...commonMessageOptionsSchema,
 })
 
-// Schema for JSON input to a DM target user (lazy stream creation on first message)
+// Schema for JSON input to a DM target user (lazy stream creation on first
+// message). Like the stream variant, `contentMarkdown` is not accepted; the
+// backend derives it from `contentJson`.
 const createMessageJsonToDmSchema = z.object({
   dmUserId: z.string().min(1, "dmUserId is required"),
   contentJson: contentJsonSchema,
-  contentMarkdown: z.string().optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -139,10 +143,10 @@ const createMessageSchema = z.union([
   createMessageE2eToStreamSchema,
 ])
 
-// Update can also be either format
+// Update can also be either format. As on create, the JSON variant does not
+// accept `contentMarkdown`; the backend derives it from `contentJson`.
 const updateMessageJsonSchema = z.object({
   contentJson: contentJsonSchema,
-  contentMarkdown: z.string().optional(),
   confirmedPrivacyWarning: z.boolean().optional(),
 })
 
@@ -172,6 +176,7 @@ export {
   addReactionSchema,
   moveMessagesToThreadSchema,
   validateMoveMessagesToThreadSchema,
+  normalizeContent,
 }
 
 /**
@@ -185,11 +190,11 @@ function normalizeContent(input: z.infer<typeof createPlaintextMessageSchema> | 
   contentMarkdown: string
 } {
   if ("contentJson" in input) {
-    // Rich client: JSON provided, trust the structure but still normalize the
-    // markdown projection so editable raw emoji text becomes canonical shortcode
-    // content for storage, usage tracking, and external consumers.
-    const contentMarkdown = normalizeMessage(input.contentMarkdown ?? serializeToMarkdown(input.contentJson))
-    return { contentJson: input.contentJson, contentMarkdown }
+    // Rich client: JSON is the canon. Always derive the markdown projection from
+    // it rather than trusting any client-supplied markdown, so the stored
+    // markdown (read by agents, mention-gating, search, and the API wire) can't
+    // diverge from the JSON humans render. See `deriveContentMarkdown`.
+    return { contentJson: input.contentJson, contentMarkdown: deriveContentMarkdown(input.contentJson) }
   } else {
     // AI/external: Markdown provided, normalize and parse to JSON
     const normalizedMarkdown = normalizeMessage(input.content)
