@@ -1,5 +1,8 @@
-import { createContext, useContext, useCallback, useMemo, type ReactNode } from "react"
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { useSearchParams, useLocation } from "react-router-dom"
+
+/** Which pane the user most recently interacted with — drives "copy current link" (mod+L). */
+export type FocusedPane = "main" | "panel"
 
 /**
  * Check if a panel ID represents a draft thread
@@ -40,6 +43,11 @@ interface PanelContextValue {
   openPanel: (streamId: string) => void
   /** Close the current panel */
   closePanel: () => void
+
+  /** Record which pane the user is interacting with (main view vs thread panel). */
+  setFocusedPane: (pane: FocusedPane) => void
+  /** Read the most recently focused pane. Defaults to "main". */
+  getFocusedPane: () => FocusedPane
 }
 
 const PanelContext = createContext<PanelContextValue | null>(null)
@@ -93,6 +101,19 @@ export function PanelProvider({ children }: PanelProviderProps) {
     )
   }, [setSearchParams])
 
+  // Tracked via a ref, not state: only the mod+L handler reads it (on keypress),
+  // so updating it on every click/focus must not re-render panel consumers.
+  const focusedPaneRef = useRef<FocusedPane>("main")
+  const setFocusedPane = useCallback((pane: FocusedPane) => {
+    focusedPaneRef.current = pane
+  }, [])
+  const getFocusedPane = useCallback(() => focusedPaneRef.current, [])
+
+  // When the panel closes, focus belongs to the main pane again.
+  useEffect(() => {
+    if (panelId === null) focusedPaneRef.current = "main"
+  }, [panelId])
+
   const value = useMemo<PanelContextValue>(
     () => ({
       panelId,
@@ -100,8 +121,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
       getPanelUrl,
       openPanel,
       closePanel,
+      setFocusedPane,
+      getFocusedPane,
     }),
-    [panelId, isPanelOpen, getPanelUrl, openPanel, closePanel]
+    [panelId, isPanelOpen, getPanelUrl, openPanel, closePanel, setFocusedPane, getFocusedPane]
   )
 
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>

@@ -1,7 +1,16 @@
 import { useSearchParams, useParams } from "react-router-dom"
 import { useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
-import { MessageSquare, ChevronLeft, MoreHorizontal, CornerDownRight, Paperclip, Settings, Tag } from "lucide-react"
+import {
+  MessageSquare,
+  ChevronLeft,
+  MoreHorizontal,
+  CornerDownRight,
+  Paperclip,
+  Settings,
+  Tag,
+  Link2,
+} from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -51,6 +60,7 @@ import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import { streamLabel } from "@/lib/streams"
+import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 
@@ -64,7 +74,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const { getStreamState } = useCoordinatedLoading()
   const [searchParams] = useSearchParams()
   const highlightMessageId = searchParams.get("m")
-  const { panelId, openPanel, getPanelUrl, closePanel } = usePanel()
+  const { panelId, openPanel, getPanelUrl, closePanel, setFocusedPane } = usePanel()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
@@ -216,6 +226,14 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     label: "Labels…",
     icon: Tag,
     onSelect: () => setLabelPickerOpen(true),
+  })
+  panelMenuActions.push({
+    id: "copy-link",
+    label: "Copy link",
+    icon: Link2,
+    onSelect: () => {
+      if (panelId) void copyStreamLink(workspaceId, panelId)
+    },
   })
   panelMenuActions.push({
     id: "move-messages",
@@ -398,7 +416,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   }
 
   return (
-    <SidePanel data-editor-zone="panel">
+    <SidePanel
+      data-editor-zone="panel"
+      onPointerDownCapture={() => setFocusedPane("panel")}
+      onFocusCapture={() => setFocusedPane("panel")}
+    >
       <SidePanelHeader className="relative">
         <StreamLoadingIndicator isLoading={showLoadingIndicator} />
         {/* Mobile: thread view takes over the full screen, so the sidebar

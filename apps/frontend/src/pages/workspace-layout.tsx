@@ -40,6 +40,8 @@ import {
   TraceProvider,
   useTrace,
   MediaGalleryProvider,
+  usePanel,
+  isDraftPanel,
 } from "@/contexts"
 import {
   useKeyboardShortcuts,
@@ -68,6 +70,7 @@ import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
 import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
+import { copyStreamLink } from "@/lib/stream-links"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 
@@ -108,6 +111,32 @@ function useOnlineStatus(): boolean {
     () => navigator.onLine,
     () => true
   )
+}
+
+/**
+ * Registers the mod+L "copy link" shortcut. Must be rendered inside
+ * PanelProvider so it can read which pane (main view vs thread panel) the user
+ * last interacted with. Copies the thread link when the panel is focused and
+ * shows a real (non-draft) thread; otherwise copies the main stream link.
+ */
+function StreamLinkKeyboardHandler({
+  workspaceId,
+  mainStreamId,
+}: {
+  workspaceId: string
+  mainStreamId: string | undefined
+}) {
+  const { panelId, getFocusedPane } = usePanel()
+
+  useKeyboardShortcuts({
+    copyStreamLink: () => {
+      const targetStreamId = getFocusedPane() === "panel" && panelId && !isDraftPanel(panelId) ? panelId : mainStreamId
+      if (!targetStreamId) return
+      void copyStreamLink(workspaceId, targetStreamId)
+    },
+  })
+
+  return null
 }
 
 /**
@@ -370,6 +399,7 @@ export function WorkspaceLayout() {
                             <E2eUnlockProvider workspaceId={workspaceId}>
                               <QuickSwitcherProvider openSwitcher={openSwitcher}>
                                 <PanelProvider>
+                                  <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
                                   <MediaGalleryProvider>
                                     <TraceProvider>
                                       <SidebarProvider>

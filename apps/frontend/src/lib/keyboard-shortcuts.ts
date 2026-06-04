@@ -76,6 +76,14 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     category: "navigation",
     global: true,
   },
+  {
+    id: "copyStreamLink",
+    label: "Copy Link",
+    description: "Copy a link to the focused stream or thread",
+    defaultKey: "mod+l",
+    category: "navigation",
+    global: true,
+  },
   // Editor formatting shortcuts (not global — only active when editor is focused)
   {
     id: "formatBold",

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
-import { Bell, FileEdit, FolderPlus, Hash, Lock, MessageSquareText, Settings, Tag, User } from "lucide-react"
+import { Bell, FileEdit, FolderPlus, Hash, Link2, Lock, MessageSquareText, Settings, Tag, User } from "lucide-react"
 import { Link } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
@@ -13,6 +13,7 @@ import { useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
+import { copyStreamLink } from "@/lib/stream-links"
 import { BADGE_CONFIG, URGENCY_COLORS } from "./config"
 import {
   SidebarActionDrawer,
@@ -280,13 +281,19 @@ export function StreamItem({
               onSelect: () => setLabelPickerOpen(true),
             },
             {
+              id: "copy-link",
+              label: "Copy link",
+              icon: Link2,
+              onSelect: () => void copyStreamLink(workspaceId, stream.id),
+            },
+            {
               id: "add-to-section",
               label: "Add to section…",
               icon: FolderPlus,
               onSelect: () => setSectionPickerOpen(true),
             },
           ],
-    [isVirtualDraft, openStreamSettings, stream.id]
+    [isVirtualDraft, openStreamSettings, stream.id, workspaceId]
   )
 
   let drawerPreview: SidebarActionPreview | null = null
