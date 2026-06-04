@@ -33,8 +33,8 @@ export { PdfProcessingJobRepository } from "./pdf/job-repository"
 export type { PdfProcessingJob, InsertPdfProcessingJobParams } from "./pdf/job-repository"
 
 // Service
-export { AttachmentService } from "./service"
-export type { CreateAttachmentParams } from "./service"
+export { AttachmentService, buildUploadParams, parseE2eUploadFlag } from "./service"
+export type { CreateAttachmentParams, UploadedFileFacts } from "./service"
 
 // Handlers
 export { createAttachmentHandlers } from "./handlers"

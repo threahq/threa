@@ -185,14 +185,31 @@ export const ProcessingStatuses = {
 } as const satisfies Record<string, ProcessingStatus>
 
 // Attachment malware safety status
-export const ATTACHMENT_SAFETY_STATUSES = ["pending_scan", "clean", "quarantined"] as const
+export const ATTACHMENT_SAFETY_STATUSES = ["pending_scan", "clean", "quarantined", "e2e_unscanned"] as const
 export type AttachmentSafetyStatus = (typeof ATTACHMENT_SAFETY_STATUSES)[number]
 
 export const AttachmentSafetyStatuses = {
   PENDING_SCAN: "pending_scan",
   CLEAN: "clean",
   QUARANTINED: "quarantined",
+  /**
+   * E2E attachment: the bytes in S3 are client-side ciphertext, so the malware
+   * scanner can't read them. We don't scan and say so — never a faked `clean`.
+   * Download is allowed (it's the owner's own ciphertext); processors skip.
+   */
+  E2E_UNSCANNED: "e2e_unscanned",
 } as const satisfies Record<string, AttachmentSafetyStatus>
+
+/**
+ * Safety statuses that may bind/download as a message attachment: scanned-clean
+ * or E2E ciphertext (unscannable, but the owner's own bytes). Single source of
+ * truth so the `isAttachmentSafeForSharing` predicate and the race-safe
+ * `attachToMessage` SQL filter can't drift (INV-33).
+ */
+export const SHAREABLE_SAFETY_STATUSES = [
+  AttachmentSafetyStatuses.CLEAN,
+  AttachmentSafetyStatuses.E2E_UNSCANNED,
+] as const satisfies readonly AttachmentSafetyStatus[]
 
 // Video transcode job status
 export const VIDEO_TRANSCODE_STATUSES = ["pending", "submitted", "completed", "failed"] as const

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses } from "@threa/types"
+import { AttachmentSafetyStatuses, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 import { EventService } from "./event-service"
 import { MessageRepository } from "./repository"
 import { SharedMessageRepository } from "./sharing/repository"
@@ -54,6 +54,79 @@ describe("EventService attachment safety checks", () => {
     ).rejects.toThrow("Invalid attachment IDs: must be malware-scan clean")
 
     expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
+  })
+
+  it("binds a fresh E2E (e2e_unscanned) ciphertext attachment to the message", async () => {
+    // The opaque attachment row: placeholder name/mime, never scanned, not yet
+    // owned by a message. The E2E create path must still attach it.
+    spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
+      {
+        id: "attach_e2e",
+        workspaceId: "ws_1",
+        streamId: null,
+        messageId: null,
+        safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 1234,
+      },
+    ] as any)
+    spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: "evt_1",
+      streamId: params.streamId,
+      sequence: 1n,
+      eventType: params.eventType,
+      payload: params.payload,
+      actorId: params.actorId,
+      actorType: params.actorType,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
+      id: params.id,
+      streamId: params.streamId,
+      sequence: params.sequence,
+      authorId: params.authorId,
+      authorType: params.authorType,
+      contentJson: params.contentJson,
+      contentMarkdown: params.contentMarkdown,
+      replyCount: 0,
+      clientMessageId: null,
+      sentVia: null,
+      reactions: {},
+      metadata: {},
+      editedAt: null,
+      deletedAt: null,
+      createdAt: new Date(),
+    })) as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+    spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(undefined)
+    spyOn(AttachmentReferenceRepository, "insertMany").mockResolvedValue(0)
+    spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
+    // One fresh row to attach → the bind call reports one row updated.
+    spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
+
+    const service = new EventService({} as any)
+    await service.createMessage({
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "usr_1",
+      authorType: "user",
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+      ciphertext: Buffer.from("opaque-bytes"),
+      envelope: { v: 2, keyGeneration: 0, iv: "AAAA", aad: "AAAA" },
+      e2eVersion: 2,
+      attachmentIds: ["attach_e2e"],
+    })
+
+    // Bind the fresh e2e_unscanned row to this message: (client, ids, msgId, streamId).
+    expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
+      expect.anything(),
+      ["attach_e2e"],
+      expect.stringMatching(/^msg_/),
+      "stream_1"
+    )
   })
 
   it("allows re-referencing an attachment the author can already read and skips re-attach", async () => {

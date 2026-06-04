@@ -78,9 +78,13 @@ known-missing tally, kept current as gaps close:
   Messenger style). Unlock is passphrase + Argon2id.
 - **No biometric / WebAuthn unlock.** Device trust today is the "keep me unlocked
   on this device" local-key path, not a fingerprint/passkey-bound key.
-- **Attachments are not encrypted yet.** Encrypt-before-upload for E2E attachments
-  is being built in a separate change; until it lands, attachments are out of
-  scope for encrypted scratchpads.
+- **Attachments: sending is encrypted; the viewer half is still landing.** When you
+  attach a file in an encrypted scratchpad it's encrypted on your device before
+  upload — the server stores opaque bytes and a placeholder row, and the
+  per-attachment key + real filename/mime/size ride sealed inside the message
+  payload. Server-side processing (image captioning, PDF text, transcoding) is off
+  for these. The consume side (decrypt-and-render in the timeline) is the remaining
+  slice.
 - **Interjections are picked up after the current turn, not folded into it.** If you
   send a message while Ariadne is mid-turn, it isn't ignored: when the running turn
   finishes, a follow-up turn automatically runs for the message(s) that arrived

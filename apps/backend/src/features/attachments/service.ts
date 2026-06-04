@@ -1,3 +1,4 @@
+import { z } from "zod"
 import { Pool } from "pg"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -32,6 +33,57 @@ export interface CreateAttachmentParams {
   mimeType: string
   sizeBytes: number
   storagePath: string
+  /**
+   * The bytes in S3 are client-side ciphertext. Skips the malware scan (it can't
+   * read ciphertext) and emits no processor work; the row is marked
+   * `e2e_unscanned` + `skipped`. Caller passes placeholder filename/mime.
+   */
+  e2e?: boolean
+}
+
+/** Server-forced metadata for E2E uploads — the real values ride encrypted. */
+export const E2E_PLACEHOLDER_FILENAME = "encrypted"
+export const E2E_PLACEHOLDER_MIME_TYPE = "application/octet-stream"
+
+/** The raw facts an upload entry point knows after multer streams a file to S3. */
+export interface UploadedFileFacts {
+  id: string
+  workspaceId: string
+  uploadedBy: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  storagePath: string
+}
+
+/**
+ * Derive the create params from an uploaded file and the caller's E2E intent —
+ * the single chokepoint every upload entry point (first-party + public API)
+ * routes through, so the threat-model rule "E2E ⇒ the server keeps no real
+ * filename/mime" can't drift between them. For E2E we overwrite the client's
+ * metadata with placeholders by construction; the real values ride encrypted in
+ * the message's attachmentRefs.
+ */
+export function buildUploadParams(file: UploadedFileFacts, e2e: boolean): CreateAttachmentParams {
+  return {
+    ...file,
+    filename: e2e ? E2E_PLACEHOLDER_FILENAME : file.filename,
+    mimeType: e2e ? E2E_PLACEHOLDER_MIME_TYPE : file.mimeType,
+    e2e,
+  }
+}
+
+/**
+ * Parse the multipart `e2e` flag. Form fields arrive as the string `"true"`;
+ * JSON callers may send a real boolean. Anything else (absent/other) is false.
+ */
+const e2eUploadFlagSchema = z
+  .object({ e2e: z.union([z.literal("true"), z.boolean()]).optional() })
+  .transform((body) => body.e2e === "true" || body.e2e === true)
+
+export function parseE2eUploadFlag(body: unknown): boolean {
+  const parsed = e2eUploadFlagSchema.safeParse(body)
+  return parsed.success ? parsed.data : false
 }
 
 export type CreateAttachmentForUploadResult =
@@ -57,6 +109,30 @@ export class AttachmentService {
       Number.isFinite(params.sizeBytes) && params.sizeBytes > 0
         ? params.sizeBytes
         : await this.storage.getObjectSize(params.storagePath)
+
+    // E2E: the bytes are ciphertext the scanner can't read and processors can't
+    // parse. Insert as unscanned + skipped and emit no `attachment:uploaded`
+    // event — no caption/extract/transcode/embedding work is dispatched.
+    if (params.e2e) {
+      return withTransaction(this.pool, async (client) =>
+        AttachmentRepository.insert(client, {
+          id: params.id,
+          workspaceId: params.workspaceId,
+          uploadedBy: params.uploadedBy,
+          // Force placeholders at the persistence boundary too, not only in
+          // buildUploadParams — the threat-model rule "server keeps no real
+          // filename/mime for E2E" then holds even for a caller that reaches
+          // create() without going through that helper.
+          filename: E2E_PLACEHOLDER_FILENAME,
+          mimeType: E2E_PLACEHOLDER_MIME_TYPE,
+          sizeBytes,
+          storagePath: params.storagePath,
+          safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+          processingStatus: ProcessingStatuses.SKIPPED,
+          e2eOnly: true,
+        })
+      )
+    }
 
     const attachment = await withTransaction(this.pool, async (client) => {
       return AttachmentRepository.insert(client, {

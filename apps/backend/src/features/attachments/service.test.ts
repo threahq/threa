@@ -5,7 +5,14 @@ import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
-import { AttachmentService } from "./service"
+import {
+  AttachmentService,
+  buildUploadParams,
+  parseE2eUploadFlag,
+  E2E_PLACEHOLDER_FILENAME,
+  E2E_PLACEHOLDER_MIME_TYPE,
+  type UploadedFileFacts,
+} from "./service"
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
@@ -21,6 +28,7 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
     storagePath: "k",
     processingStatus: "completed",
     safetyStatus: AttachmentSafetyStatuses.CLEAN,
+    e2eOnly: false,
     thumbnailStoragePath: null,
     width: null,
     height: null,
@@ -43,6 +51,7 @@ function createService() {
   return {
     service: new AttachmentService({} as any, storage, malwareScanner),
     storage,
+    malwareScanner,
   }
 }
 
@@ -136,8 +145,9 @@ describe("AttachmentService", () => {
       sizeBytes: params.sizeBytes,
       storageProvider: "s3",
       storagePath: params.storagePath,
-      processingStatus: "pending",
-      safetyStatus: AttachmentSafetyStatuses.PENDING_SCAN,
+      processingStatus: params.processingStatus ?? "pending",
+      safetyStatus: params.safetyStatus ?? AttachmentSafetyStatuses.PENDING_SCAN,
+      e2eOnly: params.e2eOnly ?? false,
       thumbnailStoragePath: null,
       width: null,
       height: null,
@@ -189,6 +199,75 @@ describe("AttachmentService", () => {
       })
     )
     expect(attachment.sizeBytes).toBe(4096)
+  })
+
+  describe("E2E uploads", () => {
+    function spyInsertEcho() {
+      return spyOn(AttachmentRepository, "insert").mockImplementation(async (_client, params) => ({
+        id: params.id,
+        workspaceId: params.workspaceId,
+        streamId: null,
+        messageId: null,
+        uploadedBy: params.uploadedBy,
+        filename: params.filename,
+        mimeType: params.mimeType,
+        sizeBytes: params.sizeBytes,
+        storageProvider: "s3",
+        storagePath: params.storagePath,
+        processingStatus: params.processingStatus ?? "pending",
+        safetyStatus: params.safetyStatus ?? AttachmentSafetyStatuses.PENDING_SCAN,
+        e2eOnly: params.e2eOnly ?? false,
+        thumbnailStoragePath: null,
+        width: null,
+        height: null,
+        createdAt: new Date(),
+      }))
+    }
+
+    it("skips the malware scan, emits no processor event, and persists e2e_unscanned + skipped", async () => {
+      spyOn(db, "withTransaction").mockImplementation((async (_db: unknown, callback: (client: any) => Promise<any>) =>
+        callback({})) as any)
+      const insertSpy = spyInsertEcho()
+      const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+
+      const { service, malwareScanner } = createService()
+
+      const attachment = await service.create({
+        id: "attach_e2e",
+        workspaceId: "ws_1",
+        uploadedBy: "usr_1",
+        filename: "encrypted",
+        mimeType: "application/octet-stream",
+        sizeBytes: 2048,
+        storagePath: "ws_1/attach_e2e/encrypted",
+        e2e: true,
+      })
+
+      // The scanner never runs on ciphertext, and no processor work is dispatched.
+      expect(malwareScanner.scan).not.toHaveBeenCalled()
+      expect(outboxSpy).not.toHaveBeenCalled()
+
+      expect(insertSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          e2eOnly: true,
+          safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+          processingStatus: "skipped",
+        })
+      )
+      expect(attachment).toMatchObject({
+        e2eOnly: true,
+        safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED,
+        processingStatus: "skipped",
+      })
+    })
+
+    it("treats an E2E upload as shareable (download allowed despite never being scanned)", async () => {
+      const { service } = createService()
+      expect(
+        service.getSharingBlockReason(makeAttachment({ safetyStatus: AttachmentSafetyStatuses.E2E_UNSCANNED }))
+      ).toBeNull()
+    })
   })
 
   it("fails loudly when storage cannot determine the object size", async () => {
@@ -314,5 +393,49 @@ describe("AttachmentService", () => {
 
       expect(result).toBeNull()
     })
+  })
+})
+
+// The single chokepoint both upload entry points (first-party + public API)
+// delegate to, so the "E2E ⇒ no real metadata on the server" rule is proven
+// once for both paths.
+describe("buildUploadParams", () => {
+  const file: UploadedFileFacts = {
+    id: "attach_1",
+    workspaceId: "ws_1",
+    uploadedBy: "usr_1",
+    filename: "Q3-layoffs.xlsx",
+    mimeType: "application/vnd.ms-excel",
+    sizeBytes: 2048,
+    storagePath: "ws_1/attach_1/Q3-layoffs.xlsx",
+  }
+
+  it("keeps real metadata and leaves e2e off for a normal upload", () => {
+    expect(buildUploadParams(file, false)).toEqual({ ...file, e2e: false })
+  })
+
+  it("replaces the real filename/mime with placeholders for an E2E upload", () => {
+    const params = buildUploadParams(file, true)
+    expect(params).toEqual({
+      ...file,
+      filename: E2E_PLACEHOLDER_FILENAME,
+      mimeType: E2E_PLACEHOLDER_MIME_TYPE,
+      e2e: true,
+    })
+    // The real name must never survive onto the params the server persists.
+    expect(params.filename).not.toBe(file.filename)
+    expect(params.mimeType).not.toBe(file.mimeType)
+    // Ciphertext size is the one fact that can't be hidden — it's the S3 object.
+    expect(params.sizeBytes).toBe(2048)
+  })
+})
+
+describe("parseE2eUploadFlag", () => {
+  it("reads the multipart string flag and defaults to false", () => {
+    expect(parseE2eUploadFlag({ e2e: "true" })).toBe(true)
+    expect(parseE2eUploadFlag({ e2e: true })).toBe(true)
+    expect(parseE2eUploadFlag({ e2e: "false" })).toBe(false)
+    expect(parseE2eUploadFlag({})).toBe(false)
+    expect(parseE2eUploadFlag(undefined)).toBe(false)
   })
 })

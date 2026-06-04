@@ -1,5 +1,27 @@
 import { useState, useCallback, useRef, type ChangeEvent, type RefObject } from "react"
 import { attachmentsApi } from "@/api"
+import { encryptAttachmentBytes, rememberAttachmentRef } from "@/lib/crypto/attachment-crypto"
+
+/** The placeholder name/mime the server forces for E2E ciphertext uploads. */
+const E2E_CIPHERTEXT_FILENAME = "encrypted"
+const E2E_CIPHERTEXT_MIME = "application/octet-stream"
+
+interface UploadOptions {
+  /**
+   * When the destination stream is E2E, encrypt each file client-side before
+   * upload and stash its key/iv so the send path can seal them into the
+   * message's `attachmentRefs`.
+   */
+  e2eEnabled?: boolean
+}
+
+/** The canonical facts a successful upload yields, regardless of E2E. */
+interface UploadedFacts {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+}
 
 export interface PendingAttachment {
   id: string
@@ -46,7 +68,8 @@ export interface UseAttachmentsReturn {
   imageCount: number
 }
 
-export function useAttachments(workspaceId: string): UseAttachmentsReturn {
+export function useAttachments(workspaceId: string, options?: UploadOptions): UseAttachmentsReturn {
+  const e2eEnabled = options?.e2eEnabled === true
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const pendingAttachmentsRef = useRef<PendingAttachment[]>([])
   const [imageCount, setImageCount] = useState(0)
@@ -64,6 +87,36 @@ export function useAttachments(workspaceId: string): UseAttachmentsReturn {
   )
 
   const getPendingAttachmentsSnapshot = useCallback(() => pendingAttachmentsRef.current, [])
+
+  // The single upload chokepoint both entry points (file-picker + paste/drop)
+  // route through, so the E2E encrypt-before-upload rule can't drift between
+  // them. For E2E we upload opaque ciphertext (the server forces a placeholder
+  // name/mime) and keep the real facts locally for the composer chip and the
+  // message ref; non-E2E uploads the file as-is and trusts the server's echo.
+  const uploadOne = useCallback(
+    async (file: File): Promise<UploadedFacts> => {
+      if (e2eEnabled) {
+        const plaintext = new Uint8Array(await file.arrayBuffer())
+        const { ciphertext, key, iv } = await encryptAttachmentBytes(plaintext)
+        const cipherFile = new File([ciphertext], E2E_CIPHERTEXT_FILENAME, { type: E2E_CIPHERTEXT_MIME })
+        const attachment = await attachmentsApi.upload(workspaceId, cipherFile, { e2e: true })
+        if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
+        const filename = file.name
+        const mimeType = file.type || E2E_CIPHERTEXT_MIME
+        rememberAttachmentRef({ attachmentId: attachment.id, key, iv, filename, mimeType, sizeBytes: file.size })
+        return { id: attachment.id, filename, mimeType, sizeBytes: file.size }
+      }
+      const attachment = await attachmentsApi.upload(workspaceId, file)
+      if (!attachment?.id) throw new Error("Invalid response: missing attachment data")
+      return {
+        id: attachment.id,
+        filename: attachment.filename,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+      }
+    },
+    [workspaceId, e2eEnabled]
+  )
 
   const handleFileSelect = useCallback(
     async (e: ChangeEvent<HTMLInputElement>) => {
@@ -91,25 +144,11 @@ export function useAttachments(workspaceId: string): UseAttachmentsReturn {
         ])
 
         try {
-          const attachment = await attachmentsApi.upload(workspaceId, file)
-
-          if (!attachment || !attachment.id) {
-            throw new Error("Invalid response: missing attachment data")
-          }
+          const facts = await uploadOne(file)
 
           // Replace temp with real attachment
           updatePendingAttachments((prev) =>
-            prev.map((a) =>
-              a.id === tempId
-                ? {
-                    id: attachment.id,
-                    filename: attachment.filename,
-                    mimeType: attachment.mimeType,
-                    sizeBytes: attachment.sizeBytes,
-                    status: "uploaded" as const,
-                  }
-                : a
-            )
+            prev.map((a) => (a.id === tempId ? { ...facts, status: "uploaded" as const } : a))
           )
         } catch (err) {
           // Mark as error
@@ -127,7 +166,7 @@ export function useAttachments(workspaceId: string): UseAttachmentsReturn {
         }
       }
     },
-    [updatePendingAttachments, workspaceId]
+    [updatePendingAttachments, uploadOne]
   )
 
   // Use ref to track image count synchronously for proper indexing
@@ -160,17 +199,10 @@ export function useAttachments(workspaceId: string): UseAttachmentsReturn {
       updatePendingAttachments((prev) => [...prev, pendingAttachment])
 
       try {
-        const attachment = await attachmentsApi.upload(workspaceId, file)
-
-        if (!attachment || !attachment.id) {
-          throw new Error("Invalid response: missing attachment data")
-        }
+        const facts = await uploadOne(file)
 
         const uploadedAttachment: PendingAttachment = {
-          id: attachment.id,
-          filename: attachment.filename,
-          mimeType: attachment.mimeType,
-          sizeBytes: attachment.sizeBytes,
+          ...facts,
           status: "uploaded",
         }
 
@@ -199,7 +231,7 @@ export function useAttachments(workspaceId: string): UseAttachmentsReturn {
         }
       }
     },
-    [updatePendingAttachments, workspaceId]
+    [updatePendingAttachments, uploadOne]
   )
 
   const removeAttachment = useCallback(

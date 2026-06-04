@@ -335,6 +335,7 @@ describe("MessageFormatter", () => {
         storagePath: "/path/to/image.jpg",
         processingStatus: "completed" as const,
         safetyStatus: "clean" as const,
+        e2eOnly: false,
         thumbnailStoragePath: null,
         width: null,
         height: null,

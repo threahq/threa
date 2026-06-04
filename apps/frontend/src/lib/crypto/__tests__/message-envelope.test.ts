@@ -8,8 +8,15 @@ import {
   type StreamEnvelope,
 } from "@threa/crypto"
 import { generateUIK } from "../keys"
-import { sealStreamMessage, sealStreamName, tryDecryptMessagePayload, tryOpenStreamName } from "../message-envelope"
+import {
+  parseSealedPayload,
+  sealStreamMessage,
+  sealStreamName,
+  tryDecryptMessagePayload,
+  tryOpenStreamName,
+} from "../message-envelope"
 import { clearStreamKeyCache } from "../stream-key-cache"
+import type { AttachmentRef } from "../attachment-crypto"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
 const WS = "ws_1"
@@ -92,6 +99,40 @@ describe("sealStreamMessage + tryDecryptMessagePayload (v2 SSK loopback)", () =>
       { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
     )
     expect(result).toBeNull()
+  })
+
+  it("seals attachmentRefs into the payload and still opens to the plain markdown", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    await stubOwnerWrap(ssk, uik.publicKey)
+
+    const sealed = await sealStreamMessage({
+      contentMarkdown: "see attached",
+      streamId: STREAM,
+      messageId: MSG,
+      senderId: SENDER,
+      ssk,
+      keyGeneration: 0,
+      attachmentRefs: [
+        {
+          attachmentId: "attach_1",
+          key: "a2V5",
+          iv: "aXY=",
+          filename: "Q3.xlsx",
+          mimeType: "application/vnd.ms-excel",
+          sizeBytes: 2048,
+        },
+      ],
+    })
+
+    const result = await tryDecryptMessagePayload(
+      { contentMarkdown: "​", ciphertext: sealed.ciphertext, envelope: sealed.envelope },
+      { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
+    )
+    // The wrapper is stripped: the refs stay sealed, the body is clean markdown
+    // (and never the JSON envelope leaking into the rendered text).
+    expect(result?.contentMarkdown).toBe("see attached")
+    expect(result?.contentMarkdown).not.toContain("attach_1")
   })
 
   it("returns null when the ciphertext is tampered (AEAD auth fails)", async () => {
@@ -181,5 +222,31 @@ describe("tryDecryptMessagePayload (v1 fan-out read-compat)", () => {
       { privateKey: {} as CryptoKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
     )
     expect(result).toBeNull()
+  })
+})
+
+describe("parseSealedPayload", () => {
+  const refs: AttachmentRef[] = [
+    { attachmentId: "attach_1", key: "a2V5", iv: "aXY=", filename: "Q3.xlsx", mimeType: "x", sizeBytes: 1 },
+  ]
+
+  it("returns a bare markdown string unchanged (the no-attachment shape)", () => {
+    expect(parseSealedPayload("hello **world**")).toEqual({ contentMarkdown: "hello **world**", attachmentRefs: [] })
+  })
+
+  it("treats markdown that merely starts with `{` as markdown, not a wrapper", () => {
+    expect(parseSealedPayload("{not json at all")).toEqual({ contentMarkdown: "{not json at all", attachmentRefs: [] })
+    const jsonButNotOurs = JSON.stringify({ foo: "bar" })
+    expect(parseSealedPayload(jsonButNotOurs)).toEqual({ contentMarkdown: jsonButNotOurs, attachmentRefs: [] })
+  })
+
+  it("extracts contentMarkdown and refs from the versioned wrapper", () => {
+    const wrapper = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "see attached", attachmentRefs: refs })
+    expect(parseSealedPayload(wrapper)).toEqual({ contentMarkdown: "see attached", attachmentRefs: refs })
+  })
+
+  it("falls back to no refs when a wrapper's attachmentRefs is not an array", () => {
+    const malformed = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "body", attachmentRefs: "oops" })
+    expect(parseSealedPayload(malformed)).toEqual({ contentMarkdown: "body", attachmentRefs: [] })
   })
 })
