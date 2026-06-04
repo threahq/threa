@@ -44,6 +44,11 @@ interface SidebarActionMenuProps {
   align?: ComponentProps<typeof DropdownMenuContent>["align"]
   side?: ComponentProps<typeof DropdownMenuContent>["side"]
   contentClassName?: string
+  /** Non-item node rendered at the top of the menu (e.g. an identity/status card). */
+  header?: ReactNode
+  /** Controlled open state — omit for Radix's uncontrolled behavior. */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 async function runSidebarAction(action: SidebarActionItem) {
@@ -123,10 +128,13 @@ export function SidebarActionMenu({
   align = "end",
   side,
   contentClassName,
+  header,
+  open,
+  onOpenChange,
 }: SidebarActionMenuProps) {
   const { setMenuOpen } = useSidebar()
 
-  if (actions.length === 0) return null
+  if (actions.length === 0 && !header) return null
 
   const defaultTrigger = (
     <Button
@@ -144,9 +152,16 @@ export function SidebarActionMenu({
   )
 
   return (
-    <DropdownMenu onOpenChange={setMenuOpen}>
+    <DropdownMenu
+      open={open}
+      onOpenChange={(next) => {
+        setMenuOpen(next)
+        onOpenChange?.(next)
+      }}
+    >
       <DropdownMenuTrigger asChild>{trigger ?? defaultTrigger}</DropdownMenuTrigger>
       <DropdownMenuContent side={side} align={align} className={cn("w-40", contentClassName)}>
+        {header}
         {actions.map((action) => (
           <SidebarActionMenuEntry key={action.id} action={action} />
         ))}

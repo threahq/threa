@@ -118,7 +118,9 @@ describe("SidebarFooter", () => {
 
     await user.click(screen.getByRole("button", { name: /kris/i }))
 
-    expect(screen.getByText("kris@example.com")).toBeInTheDocument()
+    // The identity card at the top of the menu is the status affordance (no
+    // status set in this fixture, so it invites the user to set one).
+    expect(screen.getByRole("button", { name: "Set a status" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "AI Usage" })).toHaveAttribute("href", "/w/workspace_1/admin/ai-usage")
 
     await user.click(screen.getByRole("button", { name: "Settings" }))

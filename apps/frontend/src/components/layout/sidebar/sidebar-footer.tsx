@@ -8,7 +8,6 @@ import {
   LogOut,
   Plus,
   Settings,
-  Smile,
   User as UserIcon,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
@@ -130,40 +129,55 @@ const SidebarFooterTrigger = forwardRef<HTMLButtonElement, SidebarFooterTriggerP
 
 SidebarFooterTrigger.displayName = "SidebarFooterTrigger"
 
-function SidebarFooterHeader({
+/**
+ * The identity card at the top of the account menu. Tapping it opens the status
+ * picker — this is the single "set your status" affordance (there's no separate
+ * status row). Shows the current status (emoji + text + when it clears) or a
+ * "Set a status" hint.
+ */
+function SidebarStatusHeader({
   avatarSrc,
   currentUser,
   status,
+  onClick,
 }: {
   avatarSrc?: string | null
   currentUser: User
   status: FooterStatus | null
+  onClick: () => void
 }) {
+  const clears = status ? formatStatusClearLabel(status.expiresAt) : null
   return (
-    <div className="px-4 pt-1 pb-3">
-      <div className="rounded-xl bg-muted/60 px-3.5 py-3">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={status ? "Update your status" : "Set a status"}
+      className="block w-full p-1 text-left"
+    >
+      <div className="rounded-lg bg-muted/60 px-3 py-2.5 transition-colors hover:bg-muted">
         <div className="flex items-center gap-3">
           <FooterAvatar
             avatarSrc={avatarSrc}
             currentUser={currentUser}
             status={status}
-            className="h-10 w-10"
-            badgeClassName="text-sm"
+            className="h-9 w-9"
+            badgeClassName="text-xs"
           />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-foreground">{currentUser.name}</p>
-            {status?.text ? (
+            {status?.text || status?.glyph ? (
               <p className="truncate text-xs text-muted-foreground">
                 {status.glyph && <span className="mr-1">{status.glyph}</span>}
                 {status.text}
               </p>
             ) : (
-              <p className="truncate text-xs text-muted-foreground">{currentUser.email}</p>
+              <p className="truncate text-xs text-muted-foreground">Set a status</p>
             )}
+            {clears && <p className="truncate text-[11px] text-muted-foreground/70">{clears}</p>}
           </div>
         </div>
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -180,6 +194,7 @@ export function SidebarFooter({
   const { collapseOnMobile } = useSidebar()
   const isMobile = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
   const queryClient = useQueryClient()
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
@@ -198,6 +213,7 @@ export function SidebarFooter({
   const openStatus = useCallback(() => {
     collapseOnMobile()
     setDrawerOpen(false)
+    setMenuOpen(false)
     setStatusOpen(true)
   }, [collapseOnMobile])
 
@@ -284,18 +300,11 @@ export function SidebarFooter({
   const menuActions = useMemo<SidebarActionItem[]>(
     () => [
       {
-        id: "status",
-        label: status ? status.text || "Update your status" : "Set a status",
-        emoji: status?.glyph ?? undefined,
-        description: status ? formatStatusClearLabel(status.expiresAt) : undefined,
-        icon: Smile,
-        onSelect: openStatus,
-      },
-      {
         id: "profile",
         label: "Profile",
         icon: UserIcon,
         onSelect: () => handleOpenSettings("profile"),
+        // Divider between the status header card and the action list.
         separatorBefore: true,
       },
       {
@@ -332,16 +341,7 @@ export function SidebarFooter({
         onSelect: handleLogout,
       },
     ],
-    [
-      status,
-      openStatus,
-      handleOpenSettings,
-      openWorkspaceSettings,
-      openAccountSwitcher,
-      collapseOnMobile,
-      handleLogout,
-      workspaceId,
-    ]
+    [handleOpenSettings, openWorkspaceSettings, openAccountSwitcher, collapseOnMobile, handleLogout, workspaceId]
   )
 
   if (!currentUser) return null
@@ -362,7 +362,9 @@ export function SidebarFooter({
           actions={menuActions}
           title="Account menu"
           description="Choose an account action."
-          header={<SidebarFooterHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} />}
+          header={
+            <SidebarStatusHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} onClick={openStatus} />
+          }
         />
         {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
       </div>
@@ -377,7 +379,12 @@ export function SidebarFooter({
         ariaLabel="Account menu"
         side="top"
         align="start"
-        contentClassName="w-56"
+        contentClassName="w-64"
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        header={
+          <SidebarStatusHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} onClick={openStatus} />
+        }
         trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} status={status} />}
       />
       {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
