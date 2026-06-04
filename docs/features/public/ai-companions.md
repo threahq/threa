@@ -6,52 +6,51 @@ since: 2026-05
 surfaces: [scratchpads, stream-settings, message-timeline, trace-view]
 public_site: true
 summary: >
-  Turn on a companion for a stream and Ariadne reads new messages and replies in
-  the thread. A live activity card and a step-by-step trace show what it did.
+  A per-stream on/off setting; when it's on, Ariadne reads each new message and
+  replies in the thread. An activity card and a step-by-step trace show what it did.
 ---
 
 ## What it does
 
-A companion is an AI participant in a stream. Turn it on for a scratchpad and
-Ariadne, Threa's built-in companion, reads each new message and replies in the
-thread. Turn it off and the stream is storage only, with no AI replies.
+A companion is an AI agent attached to a stream. Each stream carries a companion
+mode that is either on or off. With it on, Ariadne (Threa's built-in companion)
+reads each new message in the stream and replies in the thread. With it off, the
+stream is storage only and nothing runs.
 
-Ariadne can search your workspace (messages, streams, people, attachments),
-search the web, read URLs, run longer research, and read from connected GitHub
-and Linear. Replies post into the stream like any other message, so they sit
-alongside yours and stay in the thread's history.
+Ariadne replies as a normal participant: its messages land in the stream next to
+yours and stay in the thread's history. It has a set of tools it can call while it
+works: searching the workspace (messages, streams, people, attachments), searching
+the web and reading URLs, a longer research mode, and reading from GitHub and
+Linear when those integrations are connected.
 
-Two ways to invoke it:
+A companion runs in two cases:
 
-- **Companion mode.** Switch a stream to "Companion" and Ariadne replies to every
-  new message you post there. A new scratchpad starts this way; a plain quick note
-  starts quiet.
-- **By mention.** Type `@ariadne` in a message and it replies to that one message,
-  whether or not companion mode is on.
+- **Companion mode on.** Ariadne responds to every new message in the stream. A
+  new scratchpad starts with companion mode on; a quick note starts with it off.
+- **A mention.** Writing `@ariadne` in a message invokes Ariadne for that one
+  message, regardless of the stream's companion mode.
 
-When you open a thread off a scratchpad that has companion mode on, the thread
-inherits it, so Ariadne keeps replying in the thread without you turning it on
-again.
+Companion mode is inherited down a scratchpad: a thread opened under a scratchpad
+that has it on runs the companion too, without being switched on per thread.
 
-## How you use it
+## How it surfaces
 
-- **Start with or without it.** "New Scratchpad" creates a stream with the
-  companion on; "New Quick Note" creates the same kind of stream with it off, for
-  plain capture. You can change either one later.
-- **Companion mode toggle.** In a stream's settings, pick Companion or Quiet.
-  Companion means Ariadne reads new messages and replies; Quiet means the stream is
-  storage only. The change saves right away.
-- **See which streams have it.** A scratchpad with the companion on shows a sparkle
-  marker in the sidebar and a companion indicator in its header.
-- **Activity card.** While Ariadne is running, an activity card in the timeline
-  reads "Ariadne is working…" with a running count of steps and messages and a line
-  for the current phase (for example "Planning queries…"). When it finishes the
-  card reads "Session complete" with the step count, duration, and number of
-  messages sent.
-- **Trace.** Click the card to open the trace: each step, the tools called, the
-  reasoning, and the sources used. It streams in as Ariadne works and stays
-  available afterward.
-- **Stop a long run.** During a long research step the card shows a Stop button.
+- **Creating one.** "New Scratchpad" makes a stream with companion mode on; "New
+  Quick Note" makes the same kind of stream with it off. Either can be changed
+  later.
+- **The toggle.** A stream's settings has a Companion / Quiet switch. Companion
+  means Ariadne reads new messages and replies; Quiet means storage only. It saves
+  immediately.
+- **Indicators.** A scratchpad with companion mode on shows a sparkle marker in the
+  sidebar and a companion indicator in its header.
+- **The activity card.** While a run is in progress, a card in the timeline shows
+  "Ariadne is working…" with a running count of steps and messages and the current
+  phase (for example "Planning queries…"). When the run ends the card shows
+  "Session complete" with the step count, duration, and number of messages sent.
+- **The trace.** Opening the card shows the trace of the run: each step, the tools
+  called, the reasoning, and the sources used. It streams in while the run is going
+  and stays available afterward.
+- **Stopping a run.** During a long research step the card shows a Stop button.
 
 ## Boundaries
 
