@@ -71,6 +71,25 @@ export interface ParsedSealedPayload {
 }
 
 /**
+ * Validate one decrypted `attachmentRefs` element before it reaches the viewer.
+ * The refs are decrypted text we authored, but a malformed or mixed-version
+ * payload could carry objects missing `key`/`iv`/`filename`/etc. — those must
+ * not flow to the timeline (it would try to fetch/decrypt with `undefined`).
+ */
+function isAttachmentRef(value: unknown): value is AttachmentRef {
+  if (typeof value !== "object" || value === null) return false
+  const r = value as Record<string, unknown>
+  return (
+    typeof r.attachmentId === "string" &&
+    typeof r.key === "string" &&
+    typeof r.iv === "string" &&
+    typeof r.filename === "string" &&
+    typeof r.mimeType === "string" &&
+    typeof r.sizeBytes === "number"
+  )
+}
+
+/**
  * Inverse of `serializeSealedPayload`. A decrypted string is either the bare
  * markdown body (the legacy/no-attachment shape) or the versioned wrapper;
  * anything that doesn't parse as our wrapper is treated as raw markdown so old
@@ -82,9 +101,12 @@ export function parseSealedPayload(raw: string): ParsedSealedPayload {
       const parsed = JSON.parse(raw) as Partial<E2eSealedPayload>
       if (parsed.__e2ePayload === E2E_PAYLOAD_VERSION && typeof parsed.contentMarkdown === "string") {
         // attachmentRefs comes from decrypted text we authored, but guard the
-        // shape anyway so a malformed wrapper degrades to "no attachments"
-        // rather than handing a non-array to the timeline.
-        const attachmentRefs = Array.isArray(parsed.attachmentRefs) ? parsed.attachmentRefs : []
+        // shape anyway so a malformed wrapper degrades to "no attachments" and
+        // any malformed element is dropped, rather than handing junk to the
+        // timeline.
+        const attachmentRefs = Array.isArray(parsed.attachmentRefs)
+          ? parsed.attachmentRefs.filter(isAttachmentRef)
+          : []
         return { contentMarkdown: parsed.contentMarkdown, attachmentRefs }
       }
     } catch {

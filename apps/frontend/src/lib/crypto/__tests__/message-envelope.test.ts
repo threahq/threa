@@ -129,12 +129,16 @@ describe("sealStreamMessage + tryDecryptMessagePayload (v2 SSK loopback)", () =>
       { contentMarkdown: "​", ciphertext: sealed.ciphertext, envelope: sealed.envelope },
       { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: STREAM }
     )
-    // The body is clean markdown (the JSON wrapper never leaks into rendered
-    // text), and the refs are surfaced so the viewer can decrypt the file.
-    expect(result?.contentMarkdown).toBe("see attached")
+    // The body is clean markdown and the refs are surfaced so the viewer can
+    // decrypt the file. One object assertion over the decrypted shape; the
+    // wrapper-never-leaks check stays separate.
+    expect(result).toMatchObject({
+      contentMarkdown: "see attached",
+      attachmentRefs: [
+        { attachmentId: "attach_1", filename: "Q3.xlsx", mimeType: "application/vnd.ms-excel", sizeBytes: 2048 },
+      ],
+    })
     expect(result?.contentMarkdown).not.toContain("attach_1")
-    expect(result?.attachmentRefs).toHaveLength(1)
-    expect(result?.attachmentRefs?.[0]).toMatchObject({ attachmentId: "attach_1", filename: "Q3.xlsx" })
   })
 
   it("returns null when the ciphertext is tampered (AEAD auth fails)", async () => {
