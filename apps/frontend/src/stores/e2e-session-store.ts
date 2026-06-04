@@ -11,6 +11,7 @@ import {
   wrapPrivateKeyWithPin,
   type PinWrappedKey,
 } from "@/lib/crypto/pin-device-key"
+import { getPrfSecret, unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "@/lib/crypto/webauthn-device-key"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
 import { db, type CachedE2eDeviceKey, type CachedE2eKey } from "@/db"
 
@@ -54,6 +55,12 @@ export interface E2eSessionState {
    * alongside `status: "locked"`; cleared once unlocked.
    */
   pinProtected?: boolean
+  /**
+   * `true` when this device's trusted key is gated behind a biometric (WebAuthn
+   * PRF) — the unlock surface should offer the biometric prompt (with a
+   * passphrase fallback). Only meaningful alongside `status: "locked"`.
+   */
+  webauthnProtected?: boolean
   /** Last error from a setup / unlock / rotate attempt. Cleared on the next action. */
   error: string | null
 }
@@ -85,6 +92,12 @@ const INITIAL_STATE: E2eSessionState = {
   deviceTrusted: false,
   error: null,
 }
+
+// `setState` merges, so a definitive transition that only set one device-unlock
+// flag could let the other survive stale (e.g. `webauthnProtected: true` lingering
+// after a switch to a PIN-only device, mis-routing the unlock prompt). Spread this
+// into every locked/unlocked transition and override the one that should be true.
+const NO_UNLOCK_PROMPT = { pinProtected: false, webauthnProtected: false } as const
 
 interface ScopeState {
   state: E2eSessionState
@@ -245,6 +258,39 @@ async function tryPersistPinDeviceKey(
   }
 }
 
+/**
+ * Persist a biometric (WebAuthn PRF) device key: the PRF-wrapped private bundle
+ * + the credential id and PRF salt needed to re-derive the secret. No
+ * `privateKey` is stored, so a reload requires a biometric assertion
+ * (`unlockWithWebAuthn`). Best-effort like its siblings.
+ */
+async function tryPersistWebAuthnDeviceKey(
+  workspaceId: string,
+  userId: string,
+  keyId: string,
+  publicKey: Uint8Array,
+  webauthn: { credentialId: string; prfSalt: string; wrappedPrivate: string }
+): Promise<boolean> {
+  try {
+    const row: CachedE2eDeviceKey = {
+      id: `${workspaceId}:${userId}`,
+      workspaceId,
+      userId,
+      keyId,
+      publicKey: bytesToBase64(publicKey),
+      webauthnCredentialId: webauthn.credentialId,
+      webauthnPrfSalt: webauthn.prfSalt,
+      webauthnWrappedPrivate: webauthn.wrappedPrivate,
+      trustedAt: new Date().toISOString(),
+    }
+    await db.e2eDeviceKeys.put(row)
+    return true
+  } catch (err) {
+    console.warn("[e2e] device biometric persist failed; staying unlocked for this session only", err)
+    return false
+  }
+}
+
 /** Forget this device's trusted key (explicit lock, rotation mismatch, sign-out). */
 function deleteDeviceKey(workspaceId: string, userId: string): Promise<void> {
   return db.e2eDeviceKeys.delete(`${workspaceId}:${userId}`)
@@ -281,7 +327,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       publicKey: base64ToBytes(deviceKey.publicKey),
       privateKey: deviceKey.privateKey,
       deviceTrusted: true,
-      pinProtected: false,
+      ...NO_UNLOCK_PROMPT,
       error: null,
     })
   } else if (deviceKey?.pinWrappedPrivate) {
@@ -292,12 +338,26 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       keyId: deviceKey.keyId,
       publicKey: base64ToBytes(deviceKey.publicKey),
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       pinProtected: true,
+      error: null,
+    })
+  } else if (deviceKey?.webauthnWrappedPrivate) {
+    // Biometric-gated: sealed under the authenticator's PRF secret; resume
+    // `locked` and flag `webauthnProtected` so the surface offers the biometric.
+    setState(workspaceId, userId, {
+      status: "locked",
+      keyId: deviceKey.keyId,
+      publicKey: base64ToBytes(deviceKey.publicKey),
+      deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
+      webauthnProtected: true,
       error: null,
     })
   } else if (cachedRow) {
     setState(workspaceId, userId, {
       status: "locked",
+      ...NO_UNLOCK_PROMPT,
       keyId: scope.cachedKey!.keyId,
       publicKey: scope.cachedKey!.publicKey,
       deviceTrusted: false,
@@ -332,6 +392,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       publicKey: null,
       privateKey: null,
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       error: null,
     })
     return
@@ -365,6 +426,7 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
       publicKey: view.publicKey,
       privateKey: null,
       deviceTrusted: false,
+      ...NO_UNLOCK_PROMPT,
       error: null,
     })
     return
@@ -398,7 +460,12 @@ export async function setupNewKey(
   workspaceId: string,
   userId: string,
   passphrase: string,
-  opts?: { params?: KdfParams; trustDevice?: boolean; pin?: string }
+  opts?: {
+    params?: KdfParams
+    trustDevice?: boolean
+    pin?: string
+    webauthn?: { credentialId: string; prfSalt: string; prfSecret: Uint8Array }
+  }
 ): Promise<DeviceTrustResult | undefined> {
   const params = opts?.params ?? DEFAULT_KDF_PARAMS
   const scope = getOrCreateScope(workspaceId, userId)
@@ -433,8 +500,19 @@ export async function setupNewKey(
 
   const trustDevice = opts?.trustDevice ?? false
   const pin = opts?.pin
+  const webauthn = opts?.webauthn
   let trustPersisted = false
-  if (pin) {
+  if (webauthn) {
+    // Biometric quick-unlock: seal the (extractable) fresh key under the
+    // authenticator's PRF secret. A reload requires a biometric assertion.
+    const wrappedPrivate = await wrapPrivateKeyWithPrf(uik.privateKey, webauthn.prfSecret)
+    trustPersisted = await tryPersistWebAuthnDeviceKey(workspaceId, userId, view.keyId, view.publicKey, {
+      credentialId: webauthn.credentialId,
+      prfSalt: webauthn.prfSalt,
+      wrappedPrivate,
+    })
+    if (scope.loadGeneration !== generation) return
+  } else if (pin) {
     // PIN quick-unlock: seal the (extractable) fresh key under the PIN-derived
     // KEK and store the bundle — a reload will require the PIN, not auto-resume.
     const wrapped = await wrapPrivateKeyWithPin(uik.privateKey, pin)
@@ -457,9 +535,10 @@ export async function setupNewKey(
     privateKey: uik.privateKey,
     deviceTrusted: trustPersisted,
     pinProtected: false,
+    webauthnProtected: false,
     error: null,
   })
-  return { trustRequested: trustDevice || !!pin, trustPersisted }
+  return { trustRequested: trustDevice || !!pin || !!webauthn, trustPersisted }
 }
 
 /**
@@ -471,7 +550,11 @@ export async function unlock(
   workspaceId: string,
   userId: string,
   passphrase: string,
-  opts?: { trustDevice?: boolean; pin?: string }
+  opts?: {
+    trustDevice?: boolean
+    pin?: string
+    webauthn?: { credentialId: string; prfSalt: string; prfSecret: Uint8Array }
+  }
 ): Promise<DeviceTrustResult | undefined> {
   const scope = getOrCreateScope(workspaceId, userId)
   const cached = scope.cachedKey
@@ -480,6 +563,7 @@ export async function unlock(
   }
   const trustDevice = opts?.trustDevice ?? false
   const pin = opts?.pin
+  const webauthn = opts?.webauthn
   const generation = ++scope.loadGeneration
   setState(workspaceId, userId, { status: "unlocking", error: null })
 
@@ -487,9 +571,9 @@ export async function unlock(
   try {
     const kek = await deriveKEK(passphrase, cached.kdfSalt, cached.kdfParams)
     // Non-extractable by default — the session never needs the raw bytes back.
-    // Setting a device PIN is the exception: it must re-seal the private key
-    // under the PIN-KEK, which requires an extractable key to export.
-    privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek, { extractable: !!pin })
+    // Setting a device PIN or biometric is the exception: it must re-seal the
+    // private key under the new KEK, which requires an extractable key to export.
+    privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek, { extractable: !!pin || !!webauthn })
   } catch (err) {
     // Only a derive/unwrap failure is the wrong-passphrase (or tampered-bundle)
     // case — the one condition the modal surfaces as "try again". Failures in
@@ -507,7 +591,15 @@ export async function unlock(
   // device-trust write does. Persisting (or clearing) trust is best-effort: a
   // failed IDB write means "not kept unlocked", never a failed unlock.
   let trustPersisted = false
-  if (pin) {
+  if (webauthn) {
+    // Re-seal under the authenticator's PRF secret: a reload requires biometric.
+    const wrappedPrivate = await wrapPrivateKeyWithPrf(privateKey, webauthn.prfSecret)
+    trustPersisted = await tryPersistWebAuthnDeviceKey(workspaceId, userId, cached.keyId, cached.publicKey, {
+      credentialId: webauthn.credentialId,
+      prfSalt: webauthn.prfSalt,
+      wrappedPrivate,
+    })
+  } else if (pin) {
     // Re-seal under the PIN: a reload will require the PIN, not auto-resume.
     const wrapped = await wrapPrivateKeyWithPin(privateKey, pin)
     trustPersisted = await tryPersistPinDeviceKey(workspaceId, userId, cached.keyId, cached.publicKey, wrapped)
@@ -530,9 +622,10 @@ export async function unlock(
     privateKey,
     deviceTrusted: trustPersisted,
     pinProtected: false,
+    webauthnProtected: false,
     error: null,
   })
-  return { trustRequested: trustDevice || !!pin, trustPersisted }
+  return { trustRequested: trustDevice || !!pin || !!webauthn, trustPersisted }
 }
 
 /**
@@ -568,7 +661,7 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
       if (scope.loadGeneration === generation) {
         setState(workspaceId, userId, {
           status: "locked",
-          pinProtected: false,
+          ...NO_UNLOCK_PROMPT,
           privateKey: null,
           error: "Too many PIN attempts — unlock with your passphrase.",
         })
@@ -579,6 +672,7 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
         const left = MAX_PIN_ATTEMPTS - attempts
         setState(workspaceId, userId, {
           status: "locked",
+          ...NO_UNLOCK_PROMPT,
           pinProtected: true,
           privateKey: null,
           error: `Incorrect PIN — ${left} attempt${left === 1 ? "" : "s"} left.`,
@@ -598,7 +692,78 @@ export async function unlockWithPin(workspaceId: string, userId: string, pin: st
     publicKey: base64ToBytes(row.publicKey),
     privateKey,
     deviceTrusted: true,
-    pinProtected: false,
+    ...NO_UNLOCK_PROMPT,
+    error: null,
+  })
+}
+
+/**
+ * Whether this device has a biometric (WebAuthn PRF) key set — lets the UI offer
+ * the biometric prompt without reaching into IDB itself (INV-15).
+ */
+export async function hasBiometricUnlock(workspaceId: string, userId: string): Promise<boolean> {
+  const row = await readDeviceKey(workspaceId, userId)
+  return !!row?.webauthnWrappedPrivate
+}
+
+/**
+ * End-to-end biometric unlock from a user gesture: read this device's credential,
+ * run the WebAuthn assertion (the OS biometric prompt) to recover the PRF secret,
+ * and unlock with it. Keeps the credential lookup + ceremony in the store so the
+ * modal stays a thin button. Throws (cancelled / no biometric / bad secret) so
+ * the caller can fall back to the passphrase.
+ */
+export async function unlockWithBiometric(workspaceId: string, userId: string): Promise<void> {
+  const row = await readDeviceKey(workspaceId, userId)
+  if (!row?.webauthnWrappedPrivate || !row.webauthnCredentialId || !row.webauthnPrfSalt) {
+    throw new Error("No biometric unlock is set")
+  }
+  const prfSecret = await getPrfSecret(row.webauthnCredentialId, row.webauthnPrfSalt)
+  await unlockWithWebAuthn(workspaceId, userId, prfSecret)
+}
+
+/**
+ * Resume an unlocked session from this device's biometric (WebAuthn PRF) key.
+ * The caller runs the biometric assertion (`getPrfSecret`) and passes the PRF
+ * secret here; we unwrap the stored bundle with it. No app-side attempt counter
+ * — the authenticator gates biometric attempts itself; a failure here means a
+ * bad/foreign secret, surfaced inline with a passphrase fallback. Throws on
+ * failure so the modal can react.
+ */
+export async function unlockWithWebAuthn(workspaceId: string, userId: string, prfSecret: Uint8Array): Promise<void> {
+  const scope = getOrCreateScope(workspaceId, userId)
+  const row = await readDeviceKey(workspaceId, userId)
+  if (!row?.webauthnWrappedPrivate) {
+    throw new Error("No biometric unlock is set")
+  }
+  const generation = ++scope.loadGeneration
+  setState(workspaceId, userId, { status: "unlocking", error: null })
+
+  let privateKey: CryptoKey
+  try {
+    privateKey = await unwrapPrivateKeyWithPrf(row.webauthnWrappedPrivate, prfSecret)
+  } catch (err) {
+    if (scope.loadGeneration === generation) {
+      setState(workspaceId, userId, {
+        status: "locked",
+        ...NO_UNLOCK_PROMPT,
+        webauthnProtected: true,
+        privateKey: null,
+        error: "Biometric unlock failed — try again or use your passphrase.",
+      })
+    }
+    throw err instanceof Error ? err : new Error("Biometric unlock failed")
+  }
+
+  if (scope.loadGeneration !== generation) return
+
+  setState(workspaceId, userId, {
+    status: "unlocked",
+    keyId: row.keyId,
+    publicKey: base64ToBytes(row.publicKey),
+    privateKey,
+    deviceTrusted: true,
+    ...NO_UNLOCK_PROMPT,
     error: null,
   })
 }
@@ -651,13 +816,21 @@ export async function rotatePassphrase(
   if (scope.loadGeneration !== generation) return
 
   // Rotation mints a fresh keyId. If this device was trusted, re-persist the
-  // device key under the new keyId (as non-extractable) so the next reload
-  // still resumes unlocked instead of being treated as a stale rotation.
-  // Best-effort: a failed re-persist just drops trust, it doesn't fail rotate.
+  // device key under the new keyId so the next reload still resumes instead of
+  // being treated as a stale rotation. But a PIN/biometric-gated device must not
+  // be silently re-persisted as a plain auto-resume key — that would DOWNGRADE
+  // security by dropping the gate. For those, clear the device key so the user
+  // re-establishes their PIN/biometric under the new passphrase; only plain
+  // trusted devices re-persist automatically. Best-effort either way.
   let trustPersisted = false
   if (wasTrusted) {
-    const hardened = await toNonExtractable(privateKey)
-    trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, hardened)
+    const existing = await readDeviceKey(workspaceId, userId)
+    if (existing?.pinWrappedPrivate || existing?.webauthnWrappedPrivate) {
+      await deleteDeviceKey(workspaceId, userId).catch(() => {})
+    } else {
+      const hardened = await toNonExtractable(privateKey)
+      trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, hardened)
+    }
     if (scope.loadGeneration !== generation) return
   }
   scope.cachedKey = view
@@ -667,6 +840,7 @@ export async function rotatePassphrase(
     publicKey: view.publicKey,
     privateKey,
     deviceTrusted: trustPersisted,
+    ...NO_UNLOCK_PROMPT,
     error: null,
   })
 }

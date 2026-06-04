@@ -10,6 +10,7 @@ import {
   setupNewKey,
   unlock,
   unlockWithPin,
+  unlockWithWebAuthn,
 } from "./e2e-session-store"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { DEFAULT_KDF_PARAMS } from "@/lib/crypto/passphrase"
@@ -288,6 +289,21 @@ describe("e2e session store — keep me unlocked on this device", () => {
       expect(after!.pinFailedAttempts).toBe(0)
     })
 
+    it("rotating the passphrase clears a PIN device key instead of silently downgrading", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "old-passphrase", { params: FAST_PARAMS, pin: PIN })
+      await rotatePassphrase(WORKSPACE_ID, USER_ID, "old-passphrase", "new-passphrase", FAST_PARAMS)
+
+      // The PIN-gated device key is gone — not re-persisted as a plain auto-resume
+      // key, which would have dropped the PIN gate.
+      expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+
+      // A reload now requires the passphrase (no PIN, no auto-resume).
+      await reload()
+      const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(s.status).toBe("locked")
+      expect(s.pinProtected).toBeFalsy()
+    })
+
     it("forgets the PIN after MAX_PIN_ATTEMPTS so only the passphrase recovers", async () => {
       await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, pin: PIN })
       await reload()
@@ -301,6 +317,39 @@ describe("e2e session store — keep me unlocked on this device", () => {
       const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
       expect(s.status).toBe("locked")
       expect(s.pinProtected).toBe(false)
+    })
+  })
+
+  describe("device biometric (WebAuthn PRF) quick-unlock", () => {
+    // The ceremony (navigator.credentials) is covered by the Playwright
+    // virtual-authenticator E2E; here the PRF secret is supplied directly.
+    const SECRET = new Uint8Array(32).fill(7)
+    const WEBAUTHN = { credentialId: "cred_test", prfSalt: "c2FsdHk=", prfSecret: SECRET }
+
+    it("setup with biometric resumes webauthn-locked, and the secret unlocks", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp-correct", { params: FAST_PARAMS, webauthn: WEBAUTHN })
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+      const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+      expect(row!.webauthnWrappedPrivate).toBeTruthy()
+      expect(row!.privateKey).toBeUndefined()
+
+      await reload()
+      const locked = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(locked.status).toBe("locked")
+      expect(locked.webauthnProtected).toBe(true)
+
+      await unlockWithWebAuthn(WORKSPACE_ID, USER_ID, SECRET)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+    })
+
+    it("a wrong PRF secret keeps the session locked", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, webauthn: WEBAUTHN })
+      await reload()
+
+      await expect(unlockWithWebAuthn(WORKSPACE_ID, USER_ID, new Uint8Array(32).fill(9))).rejects.toThrow()
+      const s = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(s.status).toBe("locked")
+      expect(s.webauthnProtected).toBe(true)
     })
   })
 

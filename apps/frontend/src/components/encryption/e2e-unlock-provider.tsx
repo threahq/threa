@@ -4,6 +4,7 @@ import { getE2eSessionState, loadE2eKeyForUser } from "@/stores/e2e-session-stor
 import { PassphraseSetupModal } from "./passphrase-setup-modal"
 import { PassphraseUnlockModal } from "./passphrase-unlock-modal"
 import { PinUnlockModal } from "./pin-unlock-modal"
+import { BiometricUnlockModal } from "./biometric-unlock-modal"
 
 interface OpenUnlockOptions {
   /** Pre-check the "keep me unlocked on this device" box. Inline entry points
@@ -55,6 +56,7 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
   const userId = useWorkspaceUserId(workspaceId)
   const [unlockOpen, setUnlockOpen] = useState(false)
   const [pinUnlockOpen, setPinUnlockOpen] = useState(false)
+  const [biometricUnlockOpen, setBiometricUnlockOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [unlockDefaultTrust, setUnlockDefaultTrust] = useState(true)
   const [setupDefaultTrust, setSetupDefaultTrust] = useState(true)
@@ -69,10 +71,11 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
     (opts?: OpenUnlockOptions) => {
       setUnlockDefaultTrust(opts?.defaultTrustDevice ?? true)
       onUnlockedRef.current = opts?.onUnlocked ?? null
-      // A device with a PIN set gets the quick PIN prompt (with a passphrase
-      // fallback inside it); otherwise the passphrase modal.
+      // Route to the device's quick-unlock method (each modal has a passphrase
+      // fallback); otherwise the passphrase modal.
       const session = userId ? getE2eSessionState(workspaceId, userId) : null
-      if (session?.pinProtected) setPinUnlockOpen(true)
+      if (session?.webauthnProtected) setBiometricUnlockOpen(true)
+      else if (session?.pinProtected) setPinUnlockOpen(true)
       else setUnlockOpen(true)
     },
     [workspaceId, userId]
@@ -107,6 +110,17 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
             onUnlocked={() => onUnlockedRef.current?.()}
             onUsePassphrase={() => {
               setPinUnlockOpen(false)
+              setUnlockOpen(true)
+            }}
+          />
+          <BiometricUnlockModal
+            open={biometricUnlockOpen}
+            workspaceId={workspaceId}
+            userId={userId}
+            onOpenChange={setBiometricUnlockOpen}
+            onUnlocked={() => onUnlockedRef.current?.()}
+            onUsePassphrase={() => {
+              setBiometricUnlockOpen(false)
               setUnlockOpen(true)
             }}
           />
