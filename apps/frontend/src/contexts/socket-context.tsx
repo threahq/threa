@@ -5,6 +5,7 @@ import { api } from "@/api/client"
 import { getCachedWsConfig, setCachedWsConfig } from "@/lib/cached-ws-config"
 import { usePageActivity } from "@/hooks/use-page-activity"
 import { usePageInteraction } from "@/hooks/use-page-interaction"
+import { useSwPresence } from "@/hooks/use-sw-presence"
 
 /** Periodic heartbeat tick for session liveness — must be < ACTIVE_SESSION_WINDOW_MS on the backend (60s). */
 const PERIODIC_HEARTBEAT_INTERVAL_MS = 30_000
@@ -244,6 +245,10 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
       unsubscribe()
     }
   }, [socket, status, pageInteraction])
+
+  // Record recent interaction so the SW can gate push suppression on activity,
+  // not focus alone (see useSwPresence). Reuses the tracker the heartbeats use.
+  useSwPresence(pageInteraction)
 
   useEffect(() => {
     const previousPageActivity = previousPageActivityRef.current

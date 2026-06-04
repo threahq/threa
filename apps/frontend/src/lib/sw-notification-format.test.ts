@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest"
-import { appendMessage, resolveTag, formatTitle, formatBody, type NotificationMessage } from "./sw-notification-format"
+import {
+  appendMessage,
+  resolveTag,
+  formatTitle,
+  formatBody,
+  isViewingStream,
+  type NotificationMessage,
+} from "./sw-notification-format"
 
 describe("resolveTag", () => {
   it("returns streamId for message activity", () => {
@@ -12,6 +19,41 @@ describe("resolveTag", () => {
 
   it("returns streamId when activityType is undefined", () => {
     expect(resolveTag("stream_123")).toBe("stream_123")
+  })
+})
+
+describe("isViewingStream", () => {
+  const ORIGIN = "https://app.threa.io"
+
+  it("matches a window viewing the same workspace + stream", () => {
+    expect(isViewingStream(`${ORIGIN}/w/ws_1/s/stream_1`, "ws_1", "stream_1")).toBe(true)
+  })
+
+  it("ignores a query string (open thread still counts as the stream)", () => {
+    expect(isViewingStream(`${ORIGIN}/w/ws_1/s/stream_1?m=msg_9`, "ws_1", "stream_1")).toBe(true)
+  })
+
+  it("does not match a different stream in the same workspace", () => {
+    expect(isViewingStream(`${ORIGIN}/w/ws_1/s/stream_2`, "ws_1", "stream_1")).toBe(false)
+  })
+
+  it("does not match the same stream id in a different workspace", () => {
+    expect(isViewingStream(`${ORIGIN}/w/ws_2/s/stream_1`, "ws_1", "stream_1")).toBe(false)
+  })
+
+  it("does not match a non-stream view", () => {
+    expect(isViewingStream(`${ORIGIN}/w/ws_1/saved`, "ws_1", "stream_1")).toBe(false)
+    expect(isViewingStream(`${ORIGIN}/w/ws_1`, "ws_1", "stream_1")).toBe(false)
+    expect(isViewingStream(`${ORIGIN}/workspaces`, "ws_1", "stream_1")).toBe(false)
+  })
+
+  it("returns false when the push has no stream/workspace id (cannot confirm the view)", () => {
+    expect(isViewingStream(`${ORIGIN}/w/ws_1/s/stream_1`, undefined, "stream_1")).toBe(false)
+    expect(isViewingStream(`${ORIGIN}/w/ws_1/s/stream_1`, "ws_1", undefined)).toBe(false)
+  })
+
+  it("returns false for a malformed url", () => {
+    expect(isViewingStream("not a url", "ws_1", "stream_1")).toBe(false)
   })
 })
 

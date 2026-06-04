@@ -169,6 +169,8 @@ export {
   INTERNAL_API_KEY_HEADER,
   // Socket heartbeat
   HEARTBEAT_INTERACTION_THROTTLE_MS,
+  // Push presence (attended-device interaction window)
+  PRESENCE_INTERACTION_WINDOW_MS,
   // Bots
   BOT_TYPES,
   type BotType,
