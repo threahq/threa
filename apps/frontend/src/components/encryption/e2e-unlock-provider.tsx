@@ -13,6 +13,10 @@ interface OpenUnlockOptions {
 
 interface OpenSetupOptions {
   defaultTrustDevice?: boolean
+  /** Run once setup succeeds — lets a caller continue the action that needed a
+   *  key (e.g. finish creating the encrypted scratchpad the user just asked for)
+   *  instead of dead-ending on a "set up encryption first" message. */
+  onComplete?: () => void
 }
 
 export interface E2eUnlockContextValue {
@@ -53,6 +57,7 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
   const [unlockDefaultTrust, setUnlockDefaultTrust] = useState(true)
   const [setupDefaultTrust, setSetupDefaultTrust] = useState(true)
   const onUnlockedRef = useRef<(() => void) | null>(null)
+  const onSetupRef = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (userId) void loadE2eKeyForUser(workspaceId, userId)
@@ -66,6 +71,7 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
 
   const openSetup = useCallback((opts?: OpenSetupOptions) => {
     setSetupDefaultTrust(opts?.defaultTrustDevice ?? true)
+    onSetupRef.current = opts?.onComplete ?? null
     setSetupOpen(true)
   }, [])
 
@@ -90,6 +96,7 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
             userId={userId}
             defaultTrustDevice={setupDefaultTrust}
             onOpenChange={setSetupOpen}
+            onSetupComplete={() => onSetupRef.current?.()}
           />
         </>
       )}

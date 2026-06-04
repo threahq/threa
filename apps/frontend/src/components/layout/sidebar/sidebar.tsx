@@ -4,6 +4,8 @@ import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
 import { useAuth } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
+import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
 import {
   useActivityCounts,
   useAllDrafts,
@@ -83,6 +85,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const navigate = useNavigate()
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
   const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
+  const e2eUnlock = useE2eUnlockOptional()
 
   const draftCount = allDrafts.length
   const savedCount = useLiveSavedCount(workspaceId)
@@ -329,13 +332,40 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     navigate(`/w/${workspaceId}/s/${draftId}`)
   }
 
-  // `runSidebarAction` toasts on throw, so let the encrypted creator's session
-  // checks propagate ("Unlock encrypted scratchpads first…") rather than
-  // swallowing them here.
+  const openCreatedEncryptedScratchpad = async (withAriadne: boolean) => {
+    // Called both directly and deferred (via the modal's onComplete, fired as
+    // `void`), so it must own its own error feedback — an unhandled rejection
+    // after setup/unlock would otherwise leave the user with no signal.
+    try {
+      const streamId = await createEncryptedScratchpad(withAriadne)
+      collapseOnMobile()
+      navigate(`/w/${workspaceId}/s/${streamId}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't create the encrypted scratchpad")
+    }
+  }
+
+  // Asking for an encrypted scratchpad IS the onboarding trigger: if the user
+  // has no key yet (or is locked), open setup/unlock inline and create the
+  // scratchpad the moment they finish — never dead-end on a "set up encryption
+  // first" message. Falls back to a direct create only outside the unlock
+  // provider (unit harnesses); the provider is always present in the app.
   const handleCreateEncryptedScratchpad = async (withAriadne: boolean) => {
-    const streamId = await createEncryptedScratchpad(withAriadne)
-    collapseOnMobile()
-    navigate(`/w/${workspaceId}/s/${streamId}`)
+    // The create needs a resolved workspace user; without one the onboarding
+    // modals would run for an action that can't succeed. Bail early (briefly,
+    // until the workspace finishes hydrating) rather than route through setup.
+    if (!currentUser) return
+    const session = getE2eSessionState(workspaceId, currentUser.id)
+    if (!e2eUnlock || session.status === "unlocked") {
+      await openCreatedEncryptedScratchpad(withAriadne)
+      return
+    }
+    const finish = () => void openCreatedEncryptedScratchpad(withAriadne)
+    if (session.status === "no-key") {
+      e2eUnlock.openSetup({ onComplete: finish })
+    } else {
+      e2eUnlock.openUnlock({ onUnlocked: finish })
+    }
   }
 
   const scratchpadAddMenuActions: SidebarActionItem[] = [
