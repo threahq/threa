@@ -149,6 +149,7 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
    */
   private async renderAnimatedGifThumbnail(original: Buffer, metadata: sharp.Metadata): Promise<Buffer> {
     const pages = metadata.pages ?? 1
+    const loop = metadata.loop ?? 0
     const plan = planGifThumbnailFrames(metadata.delay ?? [], pages)
 
     const resized = await sharp(original, { animated: true })
@@ -156,11 +157,12 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
         fit: "inside",
         withoutEnlargement: true,
       })
-      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY })
+      // Loop count is set explicitly (rather than relying on sharp's passthrough)
+      // so it matches the frame-dropping path below.
+      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY, loop })
       .toBuffer()
 
-    // Already under the cap: keep the resized animation exactly as authored
-    // (source loop count and per-frame delays are carried through by sharp).
+    // Already under the cap: keep the resized animation exactly as authored.
     if (!plan.dropped) return resized
 
     // Capping collapsed the animation to a single frame — emit a static thumbnail.
@@ -170,11 +172,15 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
         .toBuffer()
     }
 
-    const frames = await Promise.all(
-      plan.keep.map((index) => sharp(resized, { page: index, pages: 1 }).png().toBuffer())
-    )
+    // Extract the surviving frames sequentially. A long GIF can keep many frames
+    // after the cap, and decoding them all at once would hold every frame in
+    // memory simultaneously.
+    const frames: Buffer[] = []
+    for (const index of plan.keep) {
+      frames.push(await sharp(resized, { page: index, pages: 1 }).png().toBuffer())
+    }
     return sharp(frames, { join: { animated: true } })
-      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY, delay: plan.delays, loop: metadata.loop ?? 0 })
+      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY, delay: plan.delays, loop })
       .toBuffer()
   }
 }

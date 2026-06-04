@@ -125,6 +125,8 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     const meta = await sharp(body, { animated: true }).metadata()
     expect(meta.format).toBe("webp")
     expect(meta.pages).toBe(6)
+    // Source loops forever (loop: 0); the thumbnail must too.
+    expect(meta.loop).toBe(0)
     expect(Math.max(meta.width ?? 0, meta.pageHeight ?? 0)).toBeLessThanOrEqual(640)
     expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "attach_1", {
       thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
