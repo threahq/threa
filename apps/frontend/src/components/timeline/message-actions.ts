@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
+import { buildStreamLink } from "@/lib/stream-links"
 
 /**
  * Context available to message actions.
@@ -373,7 +374,9 @@ export const messageActions: MessageAction[] = [
     when: (ctx) => !!ctx.messageId && !!ctx.workspaceId && !!ctx.streamId,
     action: async (ctx) => {
       try {
-        const url = `${window.location.origin}/w/${ctx.workspaceId}/s/${ctx.streamId}?m=${ctx.messageId}`
+        // `when` above guarantees these are present; compose on the shared
+        // builder so the route shape lives in one place (stream-links.ts).
+        const url = `${buildStreamLink(ctx.workspaceId!, ctx.streamId!)}?m=${ctx.messageId}`
         await copyToClipboard(url)
         toast.success("Link copied")
       } catch {

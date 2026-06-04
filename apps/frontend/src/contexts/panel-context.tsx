@@ -101,9 +101,11 @@ export function PanelProvider({ children }: PanelProviderProps) {
     )
   }, [setSearchParams])
 
-  // Tracked via a ref, not state: only the mod+L handler reads it (on keypress),
-  // so updating it on every click/focus must not re-render panel consumers.
-  const focusedPaneRef = useRef<FocusedPane>("main")
+  // Tracked via a ref, not state: only the copy-link shortcut reads it (on
+  // keypress), so updating it on every click/focus must not re-render panel
+  // consumers. Seed from the initial URL so a deep link that opens a panel
+  // (which then autofocuses) reports the panel before any pointer interaction.
+  const focusedPaneRef = useRef<FocusedPane>(panelId !== null ? "panel" : "main")
   const setFocusedPane = useCallback((pane: FocusedPane) => {
     focusedPaneRef.current = pane
   }, [])
