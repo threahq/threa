@@ -5,9 +5,12 @@ import {
   buildMessageAad,
   buildWrapAad,
   bytesToBase64,
+  decryptAttachmentBytes,
   openMessageAsString,
+  parseSealedPayload,
   sealMessage,
   unwrapStreamKey,
+  type AttachmentRef,
 } from "@threa/crypto"
 import { AgentToolNames } from "@threa/types"
 import type {
@@ -105,28 +108,39 @@ export async function runEnclaveTurn(
     sskByGeneration.set(wrap.keyGeneration, await unwrap(keyPair, request.streamId, wrap))
   }
 
+  // Inline attachment ciphertext for the trigger, keyed by id. The backend
+  // shipped these because the enclave can't reach S3; the per-file key lives in
+  // the decrypted payload, not here.
+  const ciphertextById = new Map((request.attachmentCiphertexts ?? []).map((a) => [a.attachmentId, a.ciphertext]))
+
   // Open the history this enclave is entitled to. Generations predating our
-  // invite have no wrap; that history is skipped rather than fatal.
+  // invite have no wrap; that history is skipped rather than fatal. Strip the
+  // sealed-payload wrapper so the model sees clean markdown (not the JSON
+  // envelope) for any message that carried attachments; note the filenames so
+  // the model has context, but we only fetch+feed bytes for the trigger.
   const messages: ModelMessage[] = []
   for (const item of request.history) {
     const ssk = sskByGeneration.get(item.envelope.keyGeneration)
     if (!ssk) continue
-    const content = await openMessageAsString({
+    const raw = await openMessageAsString({
       key: ssk,
       envelope: item.envelope,
       ciphertext: base64ToBytes(item.ciphertext),
     })
-    messages.push({ role: item.role, content })
+    const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
+    messages.push({ role: item.role, content: withAttachmentNote(contentMarkdown, attachmentRefs) })
   }
 
   const promptSsk = sskByGeneration.get(request.prompt.envelope.keyGeneration)
   if (!promptSsk) throw new InvokeError("No SSK wrap for the prompt's key generation")
-  const promptText = await openMessageAsString({
+  const promptRaw = await openMessageAsString({
     key: promptSsk,
     envelope: request.prompt.envelope,
     ciphertext: base64ToBytes(request.prompt.ciphertext),
   })
-  messages.push({ role: "user", content: promptText })
+  const { contentMarkdown: promptText, attachmentRefs: promptRefs } = parseSealedPayload(promptRaw)
+  const promptContent = await buildUserContent(promptText, promptRefs, ciphertextById)
+  messages.push({ role: "user", content: promptContent } as ModelMessage)
 
   const replySsk = sskByGeneration.get(request.reply.keyGeneration)
   if (!replySsk) throw new InvokeError("No SSK wrap for the reply's key generation")
@@ -219,6 +233,69 @@ export async function runEnclaveTurn(
     model: request.model,
     usage: { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens },
   }
+}
+
+/**
+ * AI-SDK user content parts the enclave builds for an attachment-bearing turn.
+ * Structurally match the SDK's `UserContent` part shapes; the whole content is
+ * asserted onto `ModelMessage` (the role↔content union needs the cast) and the
+ * enclave's `openai-format` maps these to OpenRouter image_url / file parts.
+ */
+type EnclaveUserPart =
+  | { type: "text"; text: string }
+  | { type: "image"; image: string }
+  | { type: "file"; data: string; mediaType: string; filename: string }
+
+/**
+ * Build the trigger user message: clean markdown plus a decrypted multimodal
+ * part per attachment, so the (vision/PDF-capable) model reads the actual file —
+ * parity with the non-E2E path, which feeds extracted text/images. The per-file
+ * key/iv come from the decrypted ref; the ciphertext was shipped inline by the
+ * backend. A missing or undecryptable file degrades to a text note rather than
+ * failing the turn. No attachments → a plain string (byte-identical to before).
+ */
+async function buildUserContent(
+  contentMarkdown: string,
+  refs: AttachmentRef[],
+  ciphertextById: Map<string, string>
+): Promise<string | EnclaveUserPart[]> {
+  if (refs.length === 0) return contentMarkdown
+  const media: EnclaveUserPart[] = []
+  const notes: string[] = []
+  for (const ref of refs) {
+    const ct = ciphertextById.get(ref.attachmentId)
+    if (!ct) {
+      notes.push(`[Attachment "${ref.filename}" is unavailable]`)
+      continue
+    }
+    try {
+      const bytes = await decryptAttachmentBytes({ ciphertext: base64ToBytes(ct), key: ref.key, iv: ref.iv })
+      const b64 = bytesToBase64(bytes)
+      if (ref.mimeType.startsWith("image/")) {
+        media.push({ type: "image", image: `data:${ref.mimeType};base64,${b64}` })
+      } else {
+        media.push({ type: "file", data: b64, mediaType: ref.mimeType, filename: ref.filename })
+      }
+    } catch {
+      notes.push(`[Attachment "${ref.filename}" could not be decrypted]`)
+    }
+  }
+  // Fold any "unavailable/undecryptable" notes into the leading text so the model
+  // still knows a file was meant to be there.
+  const text = [contentMarkdown, ...notes].filter((s) => s.length > 0).join("\n\n")
+  // No decryptable media → a plain string (byte-identical to the no-attachment path).
+  if (media.length === 0) return text
+  return [{ type: "text", text }, ...media]
+}
+
+/**
+ * History attachments aren't fetched (trigger-only this slice), but the model
+ * should still know a file was shared — append the filenames as a text note.
+ */
+function withAttachmentNote(contentMarkdown: string, refs: AttachmentRef[]): string {
+  if (refs.length === 0) return contentMarkdown
+  const note = `[Attached: ${refs.map((r) => r.filename).join(", ")}]`
+  return contentMarkdown.length > 0 ? `${contentMarkdown}\n\n${note}` : note
 }
 
 async function unwrap(keyPair: EnclaveKeyPair, streamId: string, wrap: EnclaveSskWrap): Promise<Uint8Array> {

@@ -9,6 +9,8 @@ import { OutboxRepository } from "../../../lib/outbox"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import { MessageRepository } from "../../messaging"
+import { AttachmentRepository } from "../../attachments"
+import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { Message } from "../../messaging"
 import { UserRepository } from "../../workspaces"
 import { UserPreferencesService } from "../../user-preferences"
@@ -57,6 +59,8 @@ const TRIGGER = {
 
 afterEach(() => mock.restore())
 
+const FAKE_STORAGE = { getObject: async () => Buffer.from("") } as unknown as StorageProvider
+
 function fakeIo() {
   const emit = mock((_event: string, _payload: unknown) => {})
   const io = { to: mock((_room: string) => ({ emit })) } as unknown as Server
@@ -72,6 +76,7 @@ function arrangeDispatch() {
   spyOn(EnclaveRuntimesRepository, "listLive").mockResolvedValue([EIK])
   spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([WRAP])
   spyOn(MessageRepository, "findSurrounding").mockResolvedValue([])
+  spyOn(AttachmentRepository, "findByMessageId").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(UserPreferencesService.prototype, "getPreferences").mockResolvedValue({} as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
@@ -99,6 +104,7 @@ describe("createEnclaveInvokeWorker", () => {
       pool,
       io,
       enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
     })
     await worker(JOB)
 
@@ -128,6 +134,7 @@ describe("createEnclaveInvokeWorker", () => {
       pool,
       io,
       enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
     })
     await worker(JOB)
 
@@ -155,6 +162,7 @@ describe("createEnclaveInvokeWorker", () => {
       pool,
       io,
       enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
     })
     // The original assign error still propagates so the job retries.
     await expect(worker(JOB)).rejects.toThrow("enclave unreachable")
