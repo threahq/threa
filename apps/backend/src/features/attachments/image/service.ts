@@ -5,7 +5,12 @@ import { logger } from "../../../lib/logger"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import { OutboxRepository } from "../../../lib/outbox"
 import { AttachmentRepository } from "../repository"
-import { IMAGE_THUMBNAIL_MAX_DIMENSION, IMAGE_THUMBNAIL_WEBP_QUALITY, shouldGenerateThumbnail } from "./config"
+import {
+  IMAGE_THUMBNAIL_MAX_DIMENSION,
+  IMAGE_THUMBNAIL_WEBP_QUALITY,
+  planGifThumbnailFrames,
+  shouldGenerateThumbnail,
+} from "./config"
 import type { ImageThumbnailServiceLike } from "./types"
 
 export interface ImageThumbnailServiceDeps {
@@ -74,14 +79,7 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
       width = w
       height = h
 
-      thumbnail = await sharp(original)
-        .rotate()
-        .resize(IMAGE_THUMBNAIL_MAX_DIMENSION, IMAGE_THUMBNAIL_MAX_DIMENSION, {
-          fit: "inside",
-          withoutEnlargement: true,
-        })
-        .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY })
-        .toBuffer()
+      thumbnail = await this.renderThumbnail(original, metadata)
     } catch (error) {
       // A corrupt/unsupported image is not retryable — the raw file still
       // serves via the ?variant=thumbnail fallback, so this is non-fatal.
@@ -121,5 +119,68 @@ export class ImageThumbnailService implements ImageThumbnailServiceLike {
 
     if (!committed) return
     log.info({ width, height, bytes: thumbnail.length }, "Image thumbnail generated")
+  }
+
+  /**
+   * Encodes the resized thumbnail. Animated GIFs stay animated (frame-rate
+   * capped); everything else collapses to a single orientation-corrected frame.
+   */
+  private async renderThumbnail(original: Buffer, metadata: sharp.Metadata): Promise<Buffer> {
+    const isAnimatedGif = metadata.format === "gif" && (metadata.pages ?? 1) > 1
+    if (isAnimatedGif) {
+      return this.renderAnimatedGifThumbnail(original, metadata)
+    }
+
+    return sharp(original)
+      .rotate()
+      .resize(IMAGE_THUMBNAIL_MAX_DIMENSION, IMAGE_THUMBNAIL_MAX_DIMENSION, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY })
+      .toBuffer()
+  }
+
+  /**
+   * Resizes an animated GIF into a small animated WebP. All frames are resized
+   * once, then the frame-rate cap (see {@link planGifThumbnailFrames}) decides
+   * which frames survive: low-rate sources keep their pacing as-authored, while
+   * high-rate sources are downsampled and re-timed to preserve total duration.
+   */
+  private async renderAnimatedGifThumbnail(original: Buffer, metadata: sharp.Metadata): Promise<Buffer> {
+    const pages = metadata.pages ?? 1
+    const loop = metadata.loop ?? 0
+    const plan = planGifThumbnailFrames(metadata.delay ?? [], pages)
+
+    const resized = await sharp(original, { animated: true })
+      .resize(IMAGE_THUMBNAIL_MAX_DIMENSION, IMAGE_THUMBNAIL_MAX_DIMENSION, {
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      // Loop count is set explicitly (rather than relying on sharp's passthrough)
+      // so it matches the frame-dropping path below.
+      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY, loop })
+      .toBuffer()
+
+    // Already under the cap: keep the resized animation exactly as authored.
+    if (!plan.dropped) return resized
+
+    // Capping collapsed the animation to a single frame — emit a static thumbnail.
+    if (plan.keep.length < 2) {
+      return sharp(resized, { page: plan.keep[0] ?? 0, pages: 1 })
+        .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY })
+        .toBuffer()
+    }
+
+    // Extract the surviving frames sequentially. A long GIF can keep many frames
+    // after the cap, and decoding them all at once would hold every frame in
+    // memory simultaneously.
+    const frames: Buffer[] = []
+    for (const index of plan.keep) {
+      frames.push(await sharp(resized, { page: index, pages: 1 }).png().toBuffer())
+    }
+    return sharp(frames, { join: { animated: true } })
+      .webp({ quality: IMAGE_THUMBNAIL_WEBP_QUALITY, delay: plan.delays, loop })
+      .toBuffer()
   }
 }
