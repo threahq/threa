@@ -1,11 +1,11 @@
-import { useCallback, useMemo } from "react"
+import { useCallback, useMemo, useRef } from "react"
 import { useParams } from "react-router-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import type { Editor } from "@tiptap/react"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type CommandInfo } from "@threa/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
-import { MEMO_SEARCH_SLASH_ACTION } from "./command-extension"
+import { MEMO_SEARCH_SLASH_ACTION, GIPHY_SLASH_ACTION } from "./command-extension"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
 import { streamKeys } from "@/hooks/use-streams"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
@@ -59,6 +59,19 @@ const MEMO_SLASH_ITEM: CommandItem = {
 }
 
 /**
+ * Discovery shortcut for the GIF picker. Like the memo entry it inserts no chip;
+ * selecting it opens the picker (see the `command` wrapper in `renderList`) and
+ * the chosen GIF is attached to the message. Inline placement so it's available
+ * everywhere — mid-sentence too — the same way `/memo` is.
+ */
+const GIPHY_SLASH_ITEM: CommandItem = {
+  name: "giphy",
+  description: "Search and attach a GIF",
+  clientActionId: GIPHY_SLASH_ACTION,
+  placement: "inline",
+}
+
+/**
  * Hook that manages the command suggestion state and provides render callbacks.
  * Returns configuration for the CommandExtension and a render function for the popup.
  *
@@ -68,8 +81,20 @@ const MEMO_SLASH_ITEM: CommandItem = {
  * gets the familiar "type command, press send" UX rather than an action
  * firing the moment they pick from the autocomplete.
  */
-export function useCommandSuggestion({ includeMemoSearch = false }: { includeMemoSearch?: boolean } = {}) {
+export function useCommandSuggestion({
+  includeMemoSearch = false,
+  includeGiphy = false,
+  onOpenGiphy,
+}: {
+  includeMemoSearch?: boolean
+  includeGiphy?: boolean
+  onOpenGiphy?: () => void
+} = {}) {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
+  // Held in a ref so the `renderList` callback stays referentially stable (the
+  // TipTap extension captures it once) even as the host re-renders.
+  const onOpenGiphyRef = useRef(onOpenGiphy)
+  onOpenGiphyRef.current = onOpenGiphy
   const metadata = useWorkspaceMetadata(workspaceId)
   const queryClient = useQueryClient()
   const streamBootstrapKey = workspaceId && streamId ? streamKeys.bootstrap(workspaceId, streamId) : null
@@ -97,8 +122,12 @@ export function useCommandSuggestion({ includeMemoSearch = false }: { includeMem
         args: cmd.args,
         clientActionId: cmd.clientActionId,
       }))
-    return includeMemoSearch ? [MEMO_SLASH_ITEM, ...serverCommands] : serverCommands
-  }, [metadata?.commands, streamBootstrap?.commands, streamId, includeMemoSearch])
+    return [
+      ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),
+      ...(includeGiphy ? [GIPHY_SLASH_ITEM] : []),
+      ...serverCommands,
+    ]
+  }, [metadata?.commands, streamBootstrap?.commands, streamId, includeMemoSearch, includeGiphy])
 
   const renderList = useCallback(
     (props: {
@@ -106,7 +135,17 @@ export function useCommandSuggestion({ includeMemoSearch = false }: { includeMem
       items: CommandItem[]
       clientRect: (() => DOMRect | null) | null
       command: (item: CommandItem) => void
-    }) => <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={props.command} />,
+    }) => {
+      // Picking the giphy entry runs the normal command (which removes the typed
+      // `/giphy` via the extension's onSelectItem) and then opens the picker. The
+      // picker lives in React, so the open has to fire here rather than inside
+      // the TipTap extension.
+      const command = (item: CommandItem) => {
+        props.command(item)
+        if (item.clientActionId === GIPHY_SLASH_ACTION) onOpenGiphyRef.current?.()
+      }
+      return <CommandList ref={props.ref} items={props.items} clientRect={props.clientRect} command={command} />
+    },
     []
   )
 

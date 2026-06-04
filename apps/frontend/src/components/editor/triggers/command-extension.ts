@@ -12,6 +12,15 @@ export const CommandPluginKey = new PluginKey("slashCommand")
  */
 export const MEMO_SEARCH_SLASH_ACTION = "memo-search"
 
+/**
+ * Client-action id for the synthetic "giphy" slash entry. Like the memo entry it
+ * inserts no command chip — selecting it removes the typed `/giphy` and the
+ * React layer (see `useCommandSuggestion`) opens the GIF picker. The chosen GIF
+ * is attached to the message as an upload, so nothing reaches the backend
+ * command pipeline. Frontend-only.
+ */
+export const GIPHY_SLASH_ACTION = "giphy"
+
 export interface CommandNodeAttrs {
   name: string
   /**
@@ -56,8 +65,16 @@ export const CommandExtension = createTriggerExtension<CommandItem, CommandNodeA
   onSelectItem: ({ editor, range, item }) => {
     // The "memo" entry is a discovery shortcut into the memo-search trigger:
     // replace the typed `/memo` with `/memo ` so MemoSearchExtension activates.
-    if (item.clientActionId !== MEMO_SEARCH_SLASH_ACTION) return false
-    editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
-    return true
+    if (item.clientActionId === MEMO_SEARCH_SLASH_ACTION) {
+      editor.chain().focus().deleteRange(range).insertContent("/memo ").run()
+      return true
+    }
+    // The "giphy" entry inserts no chip — drop the typed `/giphy` here; the
+    // React command wrapper opens the picker once the pick is handled.
+    if (item.clientActionId === GIPHY_SLASH_ACTION) {
+      editor.chain().focus().deleteRange(range).run()
+      return true
+    }
+    return false
   },
 })
