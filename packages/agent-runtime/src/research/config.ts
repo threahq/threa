@@ -17,12 +17,14 @@ export const GENERAL_RESEARCH_MODEL_ID = "openrouter:anthropic/claude-sonnet-4.6
 export const GENERAL_RESEARCH_TEMPERATURE = 0.3
 
 /**
- * Hard cap on agent-loop iterations. Each iteration is one model turn that may
- * issue several tool calls, so six turns is plenty for a focused investigation
- * while keeping worst-case cost bounded. The wall-clock budget below is the real
- * limiter and usually bites first.
+ * Soft cap on agent-loop iterations. Each iteration is one model turn that may
+ * issue several tool calls. The wall-clock budget below is the real limiter and
+ * usually bites first; this is the cost backstop. Hitting it degrades to partial
+ * findings (not a failure — see `allowNoMessageOutput` in general-researcher),
+ * so it can be generous: a focused investigation often needs more than a couple
+ * of search→read→synthesise rounds.
  */
-export const GENERAL_RESEARCH_MAX_ITERATIONS = 6
+export const GENERAL_RESEARCH_MAX_ITERATIONS = 12
 
 /**
  * Hard wall-clock budget for a single general_research run in milliseconds. When

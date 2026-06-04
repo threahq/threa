@@ -179,8 +179,17 @@ export interface AgentSessionSubstepPayload {
   triggerMessageId: string
   /** The step type this substep belongs to (e.g. "workspace_search"). */
   stepType: AgentStepType
-  /** Human-readable phase text — e.g. "Planning queries…", "Evaluating results…". */
-  substep: string
+  /**
+   * Human-readable phase text — e.g. "Planning queries…", "Evaluating results…".
+   * Present for plaintext (non-E2E) sessions. For E2E sessions the text is sealed
+   * (derived from encrypted content), so it ships as `ciphertext`/`envelope`
+   * instead and the client decrypts it.
+   */
+  substep?: string
+  /** E2E: sealed phase text — base64 ciphertext the client decrypts under the SSK. */
+  ciphertext?: string
+  /** E2E: stream envelope for `ciphertext` (HPKE/SSK metadata). */
+  envelope?: unknown
   /** ISO timestamp for ordering when multiple substeps arrive rapidly. */
   updatedAt: string
 }

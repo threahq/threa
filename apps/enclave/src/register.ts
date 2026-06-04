@@ -1,9 +1,9 @@
-import pino from "pino"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
 
-const logger = pino({ name: "enclave-register" })
+const logger = baseLogger.child({ name: "enclave-register" })
 
 /**
  * Registers this instance's EIK with the backend. Idempotent: backend's

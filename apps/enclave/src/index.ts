@@ -1,5 +1,5 @@
 import express from "express"
-import pino from "pino"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 import { loadEnclaveConfig } from "./config"
 import { createEnclaveKeyPair } from "./keystore"
 import { registerWithBackend, revokeWithBackend } from "./register"
@@ -7,16 +7,14 @@ import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
 import { createOpenRouterChat } from "./llm"
 import { createBackendCallbacks } from "./agent/backend-callbacks"
-import { createSessionsHandler, requireInternalKey } from "./sessions"
+import { createCancelHandler, createSessionsHandler, requireInternalKey } from "./sessions"
 
-const logger = pino({ name: "enclave" })
+const logger = baseLogger.child({ name: "enclave" })
 
 async function main() {
   const config = loadEnclaveConfig()
   const keyPair = await createEnclaveKeyPair()
   logger.info({ instanceId: keyPair.instanceId, keyId: keyPair.keyId }, "Enclave EIK generated")
-
-  await registerWithBackend(config, keyPair)
 
   const app = express()
   app.disable("x-powered-by")
@@ -50,24 +48,54 @@ async function main() {
   const rawChat = createOpenRouterChat(config)
   const callbacks = createBackendCallbacks(config)
   const inFlight = new Set<string>()
+  const aborts = new Map<string, AbortController>()
   app.post(
     "/sessions",
     requireInternalKey(config.internalApiKey),
     express.json({ limit: "4mb" }),
-    createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, toolConfig: { tavilyApiKey: config.tavilyApiKey } })
+    createSessionsHandler({
+      keyPair,
+      rawChat,
+      callbacks,
+      inFlight,
+      aborts,
+      toolConfig: { tavilyApiKey: config.tavilyApiKey },
+    })
   )
+
+  // Graceful "Stop research": the backend forwards a user abort here. No body —
+  // the session id is in the path; the key gate is enough (same secret as /sessions).
+  app.post("/sessions/:id/cancel", requireInternalKey(config.internalApiKey), createCancelHandler({ aborts }))
 
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, "Enclave request failed")
     res.status(500).json({ error: "Internal Server Error" })
   })
 
-  const heartbeat = startHeartbeat(config, keyPair, async () => {
-    await registerWithBackend(config, keyPair)
-  })
-
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port, selfUrl: config.selfUrl }, "Enclave listening")
+  })
+
+  // Initial registration is best-effort: in local/dev every service boots at
+  // once, so the backend may not be listening yet. Retry briefly, then serve
+  // regardless — the heartbeat (backend 404 → re-register) brings us into the
+  // live set once the backend is reachable, so a slow or absent backend at boot
+  // never crashes the enclave (the HTTP server is already up for liveness).
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      await registerWithBackend(config, keyPair)
+      break
+    } catch (err) {
+      if (attempt === 10) {
+        logger.warn({ err }, "Initial registration failed after retries; relying on heartbeat re-registration")
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+    }
+  }
+
+  const heartbeat = startHeartbeat(config, keyPair, async () => {
+    await registerWithBackend(config, keyPair)
   })
 
   // On a graceful signal, how long to let in-flight sessions finish before exit.

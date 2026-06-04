@@ -616,6 +616,13 @@ export async function startServer(): Promise<ServerInstance> {
   // claim endpoint every second.
   attachBotNamespace({ io, botRuntimeService, botApiKeyService, botSocketRegistry })
 
+  // Built once here so both the socket layer (forwarding a user "Stop research"
+  // to the enclave that owns an E2E session) and the enclave-invoke worker below
+  // share it. Null when no internal key — enclave dispatch/cancel are then off.
+  const enclaveForwarder = config.internalApiKey
+    ? new EnclaveForwarder({ internalApiKey: config.internalApiKey })
+    : undefined
+
   registerSocketHandlers(io, {
     pool,
     authService,
@@ -623,6 +630,7 @@ export async function startServer(): Promise<ServerInstance> {
     pushService,
     userSocketRegistry,
     sessionAbortRegistry,
+    enclaveForwarder,
   })
 
   // Dedicated voice relay on its own namespace so audio frames don't share the
@@ -695,11 +703,8 @@ export async function startServer(): Promise<ServerInstance> {
   // Enclave (Ariadne E2E) forwarder + worker. Only wired when an internal key
   // is configured — the forwarder authenticates to the enclave with it, and the
   // enclave rejects callers that don't present it.
-  const enclaveForwarder = config.internalApiKey
-    ? new EnclaveForwarder({ internalApiKey: config.internalApiKey })
-    : null
   if (enclaveForwarder) {
-    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, enclaveForwarder })
+    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, io, enclaveForwarder })
     jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
       tier: QueueTiers.INTERACTIVE,
       fairness: QueueFairness.NONE,
@@ -1059,7 +1064,7 @@ export async function startServer(): Promise<ServerInstance> {
   await outboxDispatcher.start()
   outboxRetentionWorker.start()
 
-  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main)
+  const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
   const pushSessionCleanup = createPushSessionCleanup(pushService)

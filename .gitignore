@@ -19,3 +19,6 @@ playwright-report/
 # Agent tmp files
 .tmp/
 .threa-attachments/
+
+# Dev-only persisted enclave EIK (never committed; prod uses ephemeral keys)
+apps/enclave/.enclave-key.dev.json

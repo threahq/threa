@@ -9,11 +9,14 @@ import {
   sealMessage,
   unwrapStreamKey,
 } from "@threa/crypto"
+import { AgentToolNames } from "@threa/types"
 import type {
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   EnclaveSealedReply,
   EnclaveSealedStep,
+  EnclaveSealedStepStart,
+  EnclaveSealedSubstep,
   EnclaveSskWrap,
 } from "@threa/types"
 import { AgentRuntime } from "@threa/agent-runtime/runtime"
@@ -57,11 +60,26 @@ export interface EnclaveTurnDeps {
    */
   onMessage: (reply: EnclaveSealedReply) => Promise<void>
   /**
-   * Stream a sealed trace step back as the loop emits it (thinking, tool calls,
-   * message_sent). Sealed under the same SSK as replies; the backend persists
-   * ciphertext only.
+   * Open a sealed in-flight step the moment the loop starts it (tool:start, and
+   * the leading edge of thinking/message_sent). Lets an open trace dialog render
+   * the in-progress step before it finishes, mirroring the non-E2E runtime.
+   */
+  onStepStarted: (step: EnclaveSealedStepStart) => Promise<void>
+  /**
+   * Finalize a sealed trace step in place when it completes (thinking, tool
+   * calls, message_sent). Sealed under the same SSK as replies; the backend
+   * persists ciphertext only.
    */
   onStep: (step: EnclaveSealedStep) => Promise<void>
+  /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
+  onSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
+  /**
+   * Cooperative cancellation for long-running tools (research). Wired to the
+   * runtime's `toolSignalProvider`, so the user's "Stop research" aborts the web
+   * sub-loop gracefully — it returns partial findings and the turn still replies,
+   * exactly like the in-process `SessionAbortRegistry` path. Omitted → no cancel.
+   */
+  abortSignal?: AbortSignal
   /**
    * Web-tool configuration. Absent or keyless degrades gracefully: no Tavily key
    * means no `web_search` (URL reads + research still work). Omitting `tools`
@@ -78,7 +96,7 @@ export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStep, tools } = deps
+  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, tools, abortSignal } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -130,7 +148,9 @@ export async function runEnclaveTurn(
     replySsk,
     replyKeyGeneration: request.reply.keyGeneration,
     senderId: request.reply.senderId,
+    sendStepStarted: onStepStarted,
     sendStep: onStep,
+    sendSubstep: onSubstep,
   })
 
   const runtime = new AgentRuntime({
@@ -153,6 +173,16 @@ export async function runEnclaveTurn(
     observers: [traceObserver],
     maxTokens: request.maxTokens,
     temperature: request.temperature,
+    // Hand ONLY the long-running research sub-loop the session's cancel signal so
+    // a user "Stop research" aborts it gracefully (partial findings, the turn
+    // still replies). Gated by tool name exactly like the in-process path, so a
+    // short/uninterruptible tool never receives an already-aborted signal.
+    ...(abortSignal
+      ? {
+          toolSignalProvider: (_toolCallId: string, toolName: string) =>
+            toolName === AgentToolNames.GENERAL_RESEARCH ? abortSignal : undefined,
+        }
+      : {}),
     // Terminal action: mint each reply's id, seal it under the current SSK bound
     // to that id, and stream it back now (awaited, so it's delivered before the
     // loop moves on). The backend stores ciphertext under this id.
@@ -173,6 +203,14 @@ export async function runEnclaveTurn(
       return { messageId }
     },
   })
+
+  // Lead with the CONTEXT step ("Triggered by: …") before the loop runs — the
+  // enclave's stand-in for the in-process persona-agent orchestration step. The
+  // body is the decrypted prompt, sealed by the observer; metadata is clear.
+  // Best-effort: a trace failure must never block the actual turn.
+  if (request.trigger) {
+    await traceObserver.emitContext({ ...request.trigger, content: promptText }).catch(() => {})
+  }
 
   await runtime.run()
 

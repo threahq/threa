@@ -39,9 +39,10 @@ export interface CommandContext {
    * Drafts don't apply here — the stream must exist on the server so the
    * `e2e_streams` row can be written atomically with the stream insert
    * (INV-7). Returns the new stream id; throws/toasts if the user's E2E
-   * session isn't unlocked.
+   * session isn't unlocked. `withAriadne` invites the enclave actor so the
+   * scratchpad gets AI replies; pass false for a no-AI encrypted quick note.
    */
-  createEncryptedScratchpad: () => Promise<string>
+  createEncryptedScratchpad: (withAriadne: boolean) => Promise<string>
   openCreateChannel: () => void
   setMode?: (mode: "stream" | "command" | "search") => void
   requestInput: (request: InputRequest) => void
@@ -122,14 +123,30 @@ export const commands: Command[] = [
     id: "new-encrypted-scratchpad",
     label: "New Encrypted Scratchpad",
     icon: Lock,
-    keywords: ["create", "encrypted", "e2e", "private", "secret", "secure"],
+    keywords: ["create", "encrypted", "e2e", "private", "secret", "secure", "ariadne", "ai"],
     action: async ({ workspaceId, navigate, closeDialog, createEncryptedScratchpad }) => {
       try {
-        const streamId = await createEncryptedScratchpad()
+        const streamId = await createEncryptedScratchpad(true)
         closeDialog()
         navigate(`/w/${workspaceId}/s/${streamId}`)
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to create encrypted scratchpad"
+        toast.error(message)
+      }
+    },
+  },
+  {
+    id: "new-encrypted-quick-note",
+    label: "New Encrypted Quick Note",
+    icon: Lock,
+    keywords: ["create", "encrypted", "e2e", "private", "secret", "secure", "no ai", "no companion", "quiet", "silent"],
+    action: async ({ workspaceId, navigate, closeDialog, createEncryptedScratchpad }) => {
+      try {
+        const streamId = await createEncryptedScratchpad(false)
+        closeDialog()
+        navigate(`/w/${workspaceId}/s/${streamId}`)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to create encrypted quick note"
         toast.error(message)
       }
     },

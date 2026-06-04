@@ -43,6 +43,8 @@ function msg(id: string, authorType: "user" | "persona", text: string, gen = 1):
   return {
     id,
     authorType,
+    authorId: "usr_kris",
+    createdAt: new Date("2026-06-02T09:27:00.000Z"),
     ciphertext: Buffer.from(`cipher:${text}`),
     envelope: { v: 2, keyGeneration: gen, iv: "aXY=", aad: "YWFk" },
   } as unknown as Message
@@ -62,6 +64,7 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
     liveEiks: [eik("eik_live", "https://enclave-1.internal")],
     wraps: [wrap("eik_live", 1)],
     trigger: msg("msg_trigger", "user", "hello"),
+    triggerAuthorName: "Kris",
     priorMessages: [],
     persona: PERSONA,
     replySenderId: "persona_ariadne",
@@ -79,14 +82,25 @@ describe("buildEnclaveSessionAssignment", () => {
       assignment: {
         sessionId: "session_test",
         model: "anthropic/claude-sonnet-4.6", // openrouter: prefix stripped
+        // The full system prompt is assembled upstream (buildEnclaveSystemPrompt)
+        // and passed through here verbatim as persona.systemPrompt.
         system: "You are Ariadne.",
         temperature: 0.7,
         reply: { keyGeneration: 1, senderId: "persona_ariadne" },
         prompt: { ciphertext: Buffer.from("cipher:hello").toString("base64") },
         wraps: [{ keyGeneration: 1, wrapEnc: "enc_eik_live_1", wrapCt: "ct_eik_live_1" }],
+        // Clear trigger metadata for the enclave's "Triggered by" CONTEXT step.
+        trigger: { messageId: "msg_trigger", authorName: "Kris", authorType: "user" },
       },
     })
     expect(built!.assignment).not.toHaveProperty("maxTokens") // null → omitted
+  })
+
+  it("omits the trigger metadata when the author name can't be resolved", () => {
+    const built = buildEnclaveSessionAssignment(inputs({ triggerAuthorName: undefined }))
+    // No misleading "Unknown" placeholder row — the enclave suppresses the
+    // CONTEXT "Triggered by" step entirely when there's no name.
+    expect(built!.assignment).not.toHaveProperty("trigger")
   })
 
   it("returns null when no enclave actor is invited", () => {

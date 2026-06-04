@@ -471,6 +471,56 @@ export interface EnclaveSealedStep {
 }
 
 /**
+ * One sealed trace step *start* — emitted the moment the agent loop opens a step
+ * (the LLM's reasoning, a tool call, a reply), mirroring the unencrypted runtime's
+ * `tool:start`/`startStep`. It lets an open trace dialog render the in-flight step
+ * (and hang its live substeps under it) before completion, exactly as it does for
+ * non-E2E personas. `stepType` + `stepId` travel in clear; content is sealed under
+ * the reply SSK when it's already known (reasoning/reply text) and absent for tools
+ * whose result isn't known yet. A matching `EnclaveSealedStep` finalizes the same
+ * `stepId` in place when the step completes.
+ */
+export interface EnclaveSealedStepStart {
+  stepId: string
+  stepType: AgentStepType
+  /** For message_sent steps: the reply id this step describes (clear, same as the finalize). */
+  messageId?: string
+  /** Sealed content when known at start (reasoning/reply); absent for tools (no result yet). */
+  ciphertext?: string
+  envelope?: EnclaveStreamEnvelope
+}
+
+/**
+ * One sealed *substep* — the ephemeral mid-run phase text a tool emits (e.g. the
+ * research sub-agent's "Searching the web: …" / "Reading …"). Because that text
+ * is derived from the user's encrypted prompt it is sealed under the SSK exactly
+ * like a step; the backend relays the ciphertext and the owner's browser
+ * decrypts it. Never persisted — it drives the live "Ariadne is …" indicator.
+ */
+export interface EnclaveSealedSubstep {
+  /** The step type this substep belongs to (clear metadata, same as steps). */
+  stepType: AgentStepType
+  /** The single new phase text, sealed — drives the live "Ariadne is …" indicator (ephemeral). */
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+  /**
+   * The in-flight step this substep belongs to. Present once the step has been
+   * opened (tool:start); lets the backend persist the running snapshot onto that
+   * row so a refresh / opening the trace mid-run replays the phases so far —
+   * mirroring the unencrypted `ActiveStep.updateSubsteps`.
+   */
+  stepId?: string
+  /**
+   * The running `{ substeps: [{ text, at }] }` snapshot, sealed as a JSON string
+   * exactly like a step's content. Persisted (not just broadcast) onto the step
+   * row so the trace recovers the full phase timeline on refresh; the owner's
+   * browser decrypts it the same way it decrypts step content (INV-E7).
+   */
+  snapshotCiphertext?: string
+  snapshotEnvelope?: EnclaveStreamEnvelope
+}
+
+/**
  * The work the backend assigns to a live enclave via `POST /sessions`. The
  * backend never decrypts: it ships ciphertext + the wraps addressed to that EIK
  * plus the `sessionId` it created the `agent_sessions` row under. The enclave
@@ -491,6 +541,15 @@ export interface EnclaveSessionAssignment {
   temperature?: number
   maxTokens?: number
   reply: { keyGeneration: number; senderId: string }
+  /**
+   * Non-secret metadata about the triggering message, so the enclave can emit the
+   * same "Triggered by" CONTEXT trace step the in-process orchestration layer does
+   * (`persona-agent` → CONTEXT_RECEIVED). The step's *content* is the message body
+   * — the decrypted prompt — which the enclave seals under the SSK like any step;
+   * only this id/author/time metadata travels in the clear. Omitted → no context
+   * step (e.g. a turn with no resolvable trigger author).
+   */
+  trigger?: { messageId: string; authorName: string; authorType: AuthorType; createdAt: string }
   /**
    * Per-stream tool-privacy policy: the tool categories the enclave may use this
    * turn. Omitted means no restriction (today's behavior). Present (even `[]`)

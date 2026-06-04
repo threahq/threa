@@ -4,6 +4,7 @@ import helmet from "helmet"
 import cookieParser from "cookie-parser"
 import pinoHttp from "pino-http"
 import { randomUUID } from "crypto"
+import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import { logger } from "./lib/logger"
 import { bigIntReplacer } from "@threa/backend-common"
 import { createMetricsMiddleware } from "./middleware/metrics"
@@ -65,7 +66,17 @@ export function createApp(options: CreateAppOptions): Express {
       },
       genReqId: (req) => (req.headers["x-request-id"] as string) || randomUUID(),
       redact: {
-        paths: ["req.headers.authorization", "req.headers.cookie", "res.headers['set-cookie']"],
+        // The default pino-http req serializer logs the full headers object, so
+        // every secret-bearing header must be redacted here or it lands in the
+        // log on any 4xx/5xx. `x-internal-api-key` is the shared internal-auth
+        // secret (enclave/control-plane → backend); Node lowercases header names,
+        // and the path is derived from the constant so it can't drift.
+        paths: [
+          "req.headers.authorization",
+          "req.headers.cookie",
+          `req.headers["${INTERNAL_API_KEY_HEADER.toLowerCase()}"]`,
+          "res.headers['set-cookie']",
+        ],
         censor: "[REDACTED]",
       },
       customSuccessMessage: (req, res) => {

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQueryClient, type QueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { StreamTypes, type E2eActorKind, type WorkspaceBootstrap } from "@threa/types"
 import { e2eActorsApi } from "@/api/e2e-actors"
@@ -36,6 +36,64 @@ export function isActorInvited(
   return stream?.e2eActors?.some((a) => a.kind === kind) ?? false
 }
 
+/**
+ * Invite an actor into a server-side E2E scratchpad and wrap the rolled SSK to
+ * the new recipient set. Shared by the manual invite affordance
+ * (`useInviteActor`) and the create-with-Ariadne path, so both go through one
+ * code path (no drift). Returns `"wrapped"` when the SSK was rolled + wrapped,
+ * or `"invited-unwrapped"` when the actor was recorded but no owner credentials
+ * were available to wrap (the re-key happens later via the repair affordance).
+ */
+export async function inviteActorToStream(params: {
+  workspaceId: string
+  streamId: string
+  kind: E2eActorKind
+  actorId?: string
+  queryClient: QueryClient
+  /** Unlocked owner credentials for the SSK rewrap; null skips the wrap. */
+  owner: { keyId: string; publicKey: Uint8Array } | null
+}): Promise<"wrapped" | "invited-unwrapped"> {
+  const { workspaceId, streamId, kind, actorId, queryClient, owner } = params
+  const { stream, keyRoll } = await e2eActorsApi.invite(workspaceId, streamId, kind, actorId)
+
+  // Reactive source of truth for the open stream is the IDB row
+  // (useWorkspaceStreams → useLiveQuery), so update it surgically.
+  await db.streams.update(streamId, { e2eActors: stream.e2eActors })
+
+  queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
+    if (!old || typeof old !== "object") return old
+    return { ...old, stream }
+  })
+
+  queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
+    if (!old) return old
+    return {
+      ...old,
+      streams: old.streams.map((s) =>
+        s.id === streamId ? { ...s, ...stream, lastMessagePreview: s.lastMessagePreview } : s
+      ),
+    }
+  })
+
+  // The actor is recorded; now roll the SSK forward and wrap it to the new
+  // recipient set so the agent can actually decrypt. `keyRoll` is null when the
+  // actor has no live key yet — nothing to wrap to, so the invite stands and a
+  // re-key happens once a key exists.
+  if (keyRoll) {
+    if (!owner) return "invited-unwrapped"
+    await rekeyStream({
+      workspaceId,
+      streamId,
+      nextGeneration: keyRoll.nextGeneration,
+      ownerKeyId: owner.keyId,
+      ownerPublicKey: owner.publicKey,
+      actorRecipients: keyRoll.recipients,
+    })
+  }
+
+  return "wrapped"
+}
+
 export function useInviteActor(workspaceId: string, streamId: string) {
   const queryClient = useQueryClient()
   const userId = useWorkspaceUserId(workspaceId)
@@ -46,48 +104,16 @@ export function useInviteActor(workspaceId: string, streamId: string) {
     async (kind: E2eActorKind, actorId?: string) => {
       setIsInviting(true)
       try {
-        const { stream, keyRoll } = await e2eActorsApi.invite(workspaceId, streamId, kind, actorId)
-
-        // Reactive source of truth for the open stream is the IDB row
-        // (useWorkspaceStreams → useLiveQuery), so update it surgically.
-        await db.streams.update(streamId, { e2eActors: stream.e2eActors })
-
-        queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
-          if (!old || typeof old !== "object") return old
-          return { ...old, stream }
-        })
-
-        queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-          if (!old) return old
-          return {
-            ...old,
-            streams: old.streams.map((s) =>
-              s.id === streamId ? { ...s, ...stream, lastMessagePreview: s.lastMessagePreview } : s
-            ),
-          }
-        })
-
-        // The actor is recorded; now roll the SSK forward and wrap it to the
-        // new recipient set so the agent can actually decrypt. The roll needs
-        // the owner's unlocked UIK (it mints + wraps a fresh key client-side).
-        // `keyRoll` is null when the actor has no live key yet — nothing to
-        // wrap to, so the invite stands and a re-key happens once a key exists.
-        if (keyRoll) {
-          if (session.status !== "unlocked" || !session.keyId || !session.publicKey) {
-            toast.success(`${E2E_ACTOR_LABELS[kind]} invited — unlock this scratchpad's encryption to grant it access.`)
-            return
-          }
-          await rekeyStream({
-            workspaceId,
-            streamId,
-            nextGeneration: keyRoll.nextGeneration,
-            ownerKeyId: session.keyId,
-            ownerPublicKey: session.publicKey,
-            actorRecipients: keyRoll.recipients,
-          })
+        const owner =
+          session.status === "unlocked" && session.keyId && session.publicKey
+            ? { keyId: session.keyId, publicKey: session.publicKey }
+            : null
+        const result = await inviteActorToStream({ workspaceId, streamId, kind, actorId, queryClient, owner })
+        if (result === "invited-unwrapped") {
+          toast.success(`${E2E_ACTOR_LABELS[kind]} invited — unlock this scratchpad's encryption to grant it access.`)
+        } else {
+          toast.success(`${E2E_ACTOR_LABELS[kind]} invited to this scratchpad`)
         }
-
-        toast.success(`${E2E_ACTOR_LABELS[kind]} invited to this scratchpad`)
       } catch (err) {
         const message = err instanceof Error ? err.message : `Failed to invite ${E2E_ACTOR_LABELS[kind]}`
         toast.error(message)

@@ -354,6 +354,8 @@ export type {
   EnclaveSskWrap,
   EnclaveSealedReply,
   EnclaveSealedStep,
+  EnclaveSealedStepStart,
+  EnclaveSealedSubstep,
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   UpdateStreamInput,

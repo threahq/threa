@@ -58,4 +58,25 @@ export class EnclaveForwarder {
       throw new EnclaveForwardError(`Enclave assign returned ${res.status}`, res.status)
     }
   }
+
+  /**
+   * Forward a user's "Stop research" to the enclave that owns the session, so it
+   * gracefully aborts the in-flight turn's long-running tools (partial findings,
+   * the turn still replies). Resolves `true` on the enclave's 202 ack; `false` on
+   * any non-202 or network failure — the caller treats a failed cancel as "nothing
+   * to abort" rather than surfacing an error (the turn may have already finished).
+   */
+  async cancelSession(instanceUrl: string, sessionId: string): Promise<boolean> {
+    const url = `${instanceUrl.replace(/\/$/, "")}/sessions/${sessionId}/cancel`
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { [INTERNAL_API_KEY_HEADER]: this.internalApiKey },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      })
+      return res.status === 202
+    } catch {
+      return false
+    }
+  }
 }

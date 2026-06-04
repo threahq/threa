@@ -109,7 +109,7 @@ export type {
 // Workers
 export { createPersonaAgentWorker, checkForUnseenMessages } from "./persona-agent-worker"
 export type { PersonaAgentLike, PersonaAgentWorkerDeps } from "./persona-agent-worker"
-export { createOrphanSessionCleanup } from "./orphan-session-cleanup"
+export { createOrphanSessionCleanup, failSessionWithLifecycle } from "./orphan-session-cleanup"
 export type { OrphanSessionCleanup } from "./orphan-session-cleanup"
 
 // Repositories
@@ -163,6 +163,10 @@ export { resolveActorNames } from "./actor-names"
 
 // Context builder
 export { buildStreamContext, enrichMessagesWithAttachments } from "./context-builder"
+
+// Enclave system-prompt assembly (shared builder + reduced toolset) so the
+// enclave runs Ariadne on the same prompt as the main app.
+export { buildEnclaveSystemPrompt } from "./enclave-system-prompt"
 export type {
   Participant,
   AnchorMessage,

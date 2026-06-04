@@ -107,6 +107,22 @@ export function requestDecryption(
   return promise
 }
 
+/**
+ * Seed the cache with already-known plaintext for an event id, marking it
+ * decrypted without running crypto. Used on send reconciliation: the sender
+ * already holds the plaintext it just encrypted, so the incoming server event —
+ * which carries only ciphertext — can render its content immediately instead of
+ * flashing a "decrypting" placeholder as the optimistic row is swapped for the
+ * sent row. No-op if the event already has a decrypted entry.
+ */
+export function seedDecryption(eventId: string, content: DecryptedMessageContent): void {
+  const existing = entries.get(eventId)
+  if (existing && existing.status === "decrypted") return
+  touch(eventId, { status: "decrypted", content })
+  inflight.delete(eventId)
+  emit(eventId)
+}
+
 export function clearDecryptCache(): void {
   generation++
   const ids = Array.from(entries.keys())

@@ -1565,15 +1565,36 @@ function applyDecryptedContent(payload: MessagePayload, decrypted: DecryptedMess
       const text = "🔒 Locked — unlock to view"
       return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
     }
-    case "pending": {
-      const text = "🔒 Decrypting…"
-      return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
-    }
+    case "pending":
+      // The row is withheld while pending (see MessageEvent), so this payload is
+      // never rendered — return it untouched rather than a placeholder.
+      return payload
     case "failed": {
       const text = "🔒 Decryption failed"
       return { ...payload, contentMarkdown: text, contentJson: makePlaceholderJson(text) }
     }
   }
+}
+
+/**
+ * Sized, message-aligned skeleton shown for the ~frame an E2E message is
+ * decrypting on first paint. Matches the message row's gutter/padding so it
+ * doesn't jump on resolve, and crucially has non-zero height so react-virtuoso
+ * can measure it (a zero-height item warns and corrupts scroll math).
+ */
+function DecryptingPlaceholder({ groupContinuation }: { groupContinuation: boolean }) {
+  return (
+    <div className="flex gap-3 px-3 py-1 sm:px-6" aria-hidden="true">
+      {groupContinuation ? (
+        <div className="w-8 shrink-0" />
+      ) : (
+        <div className="h-8 w-8 shrink-0 rounded-full bg-muted/40" />
+      )}
+      <div className="flex-1 self-center">
+        <div className="h-3 max-w-[14rem] rounded bg-muted/30" />
+      </div>
+    </div>
+  )
 }
 
 export function MessageEvent({
@@ -1598,6 +1619,16 @@ export function MessageEvent({
   const status = getStatus(event.id)
 
   const actorName = getActorName(event.actorId, event.actorType)
+
+  // While an E2E message is still decrypting on first paint, withhold the
+  // content rather than flashing a "🔒 Decrypting…" placeholder — but render a
+  // sized skeleton, never a zero-height row: the timeline is virtualized
+  // (react-virtuoso), and a zero-sized item warns and breaks scroll
+  // measurement. Decryption is near-instant local crypto and the result is
+  // cached, so this shows for ~a frame on first decrypt only (re-scroll hits
+  // the cache and renders decrypted directly). Self-sent messages don't hit
+  // this branch — the send path seeds the decrypt cache with the plaintext.
+  if (decrypted.status === "pending") return <DecryptingPlaceholder groupContinuation={groupContinuation} />
 
   switch (status) {
     // Pending/failed/editing rows aren't selectable (they don't have a

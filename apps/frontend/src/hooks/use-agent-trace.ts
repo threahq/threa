@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useSocket } from "@/contexts"
 import { agentSessionsApi } from "@/api"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { joinRoomWithAck } from "@/lib/socket-room"
+import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
+import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
 import type {
   AgentSessionStep,
   AgentSession,
@@ -60,12 +63,17 @@ interface UseAgentTraceResult {
  */
 export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentTraceResult {
   const socket = useSocket()
+  const userId = useWorkspaceUserId(workspaceId)
 
   // Real-time state accumulated from socket events
   const [realtimeSteps, setRealtimeSteps] = useState<Map<string, AgentSessionStep>>(new Map())
   const [streamingContent, setStreamingContent] = useState<Record<string, string>>({})
   const [streamingSubsteps, setStreamingSubsteps] = useState<Partial<Record<AgentStepType, StreamingSubstep[]>>>({})
   const [terminalStatus, setTerminalStatus] = useState<"completed" | "failed" | null>(null)
+  // Per step type, the `at` of its last completion. A substep that resolves with
+  // an older/equal timestamp belongs to that finished instance — dropping it stops
+  // a late E2E decrypt from resurrecting a cleared step's phase timeline.
+  const closedAtByTypeRef = useRef<Map<AgentStepType, string>>(new Map())
   // Track if socket is subscribed (enables query after subscription)
   const [isSubscribed, setIsSubscribed] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
@@ -134,6 +142,9 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
       // carries the canonical history, so refresh-stable rendering takes over.
       const completedType = payload.step.stepType
       if (completedType) {
+        // Watermark the completion so a late decrypt for this instance can't
+        // re-add a phase after we clear it (see `closedAtByTypeRef`).
+        closedAtByTypeRef.current.set(completedType, payload.step.completedAt ?? new Date().toISOString())
         setStreamingSubsteps((prev) => {
           if (!(completedType in prev)) return prev
           const next = { ...prev }
@@ -148,20 +159,48 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
   // Substep: ephemeral phase text from a long-running tool. We accumulate per
   // step type so the trace dialog can render an inline timeline of phases for the
   // currently in-flight step. Cleared on step completion (handleStepCompleted).
+  const appendSubstep = useCallback((stepType: AgentStepType, text: string, at: string) => {
+    // Drop a substep that belongs to an already-finished instance of this step
+    // type (a stale decrypt resolving after completion).
+    const closedAt = closedAtByTypeRef.current.get(stepType)
+    if (closedAt && at <= closedAt) return
+    setStreamingSubsteps((prev) => {
+      const list = prev[stepType] ?? []
+      if (list.some((s) => s.text === text && s.at === at)) return prev
+      // Order by `at`, not promise-resolution order, so out-of-order decrypts land
+      // in emission order. Then dedupe consecutive identical phase text.
+      const merged = [...list, { text, at }].sort((a, b) => a.at.localeCompare(b.at))
+      const deduped = merged.filter((s, i) => i === 0 || s.text !== merged[i - 1]?.text)
+      return { ...prev, [stepType]: deduped }
+    })
+  }, [])
+
   const handleSubstep = useCallback(
     (payload: AgentSessionSubstepPayload) => {
-      if (payload?.sessionId !== sessionId || !payload.stepType || !payload.substep) return
-      setStreamingSubsteps((prev) => {
-        const list = prev[payload.stepType] ?? []
-        // Dedupe consecutive identical substeps (the backend may emit the same phase twice on retry)
-        if (list.length > 0 && list[list.length - 1]?.text === payload.substep) return prev
-        return {
-          ...prev,
-          [payload.stepType]: [...list, { text: payload.substep, at: payload.updatedAt }],
-        }
-      })
+      if (payload?.sessionId !== sessionId || !payload.stepType) return
+      // Plaintext (non-E2E) substep.
+      if (typeof payload.substep === "string" && payload.substep) {
+        appendSubstep(payload.stepType, payload.substep, payload.updatedAt)
+        return
+      }
+      // E2E: the phase text is sealed under the stream key (it's derived from the
+      // encrypted prompt). Decrypt it the same way message/step content is, then
+      // apply. Silently skip if the session isn't unlocked.
+      if (typeof payload.ciphertext === "string" && payload.envelope) {
+        const session = getE2eSessionState(workspaceId, userId ?? "")
+        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return
+        void tryDecryptMessagePayload(
+          { contentMarkdown: "", ciphertext: payload.ciphertext, envelope: payload.envelope },
+          { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId: payload.streamId }
+        )
+          .then((decrypted) => {
+            if (decrypted?.contentMarkdown)
+              appendSubstep(payload.stepType, decrypted.contentMarkdown, payload.updatedAt)
+          })
+          .catch(() => {})
+      }
     },
-    [sessionId]
+    [sessionId, workspaceId, userId, appendSubstep]
   )
 
   const handleCompleted = useCallback(
@@ -192,6 +231,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     setRealtimeSteps(new Map())
     setStreamingContent({})
     setStreamingSubsteps({})
+    closedAtByTypeRef.current = new Map()
     setTerminalStatus(null)
     setIsSubscribed(false)
     setIsSubscribing(true)

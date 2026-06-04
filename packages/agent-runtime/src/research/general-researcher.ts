@@ -36,7 +36,7 @@ export interface GeneralResearchResult {
    * redundant field.
    */
   partial?: boolean
-  partialReason?: "user_abort" | "timeout"
+  partialReason?: "user_abort" | "timeout" | "max_iterations"
 }
 
 /**
@@ -132,6 +132,11 @@ export async function runGeneralResearch(
     tools: input.tools,
     temperature: deps.temperature ?? GENERAL_RESEARCH_TEMPERATURE,
     maxIterations: deps.maxIterations ?? GENERAL_RESEARCH_MAX_ITERATIONS,
+    // Running out of iterations is a degrade-to-partial outcome, not a failure:
+    // return whatever the loop gathered (handled as `partial` below) instead of
+    // throwing "completed without sending a message" and surfacing the whole
+    // research call as failed. The wall-clock deadline already bounds runtime.
+    allowNoMessageOutput: true,
     costContext: input.costContext,
     telemetry: deps.telemetry,
     observers: [observer],
@@ -155,9 +160,11 @@ export async function runGeneralResearch(
     // call — the canonical citation list. Just cap it.
     const sources = result.sources.slice(0, MAX_RESULT_SOURCES)
     if (!brief) {
-      // Loop finished without producing a brief (rare). Treat as partial so the
-      // caller acknowledges incomplete research rather than asserting an answer.
-      return { brief: "", sources, substeps, partial: true, partialReason: "timeout" }
+      // Loop returned without a brief — it ran out of iterations before
+      // synthesising (allowNoMessageOutput makes that a graceful return, not a
+      // throw). Treat as partial so the caller acknowledges incomplete research
+      // and leans on the gathered sources rather than asserting an answer.
+      return { brief: "", sources, substeps, partial: true, partialReason: "max_iterations" }
     }
     return { brief, sources, substeps }
   } catch (err) {

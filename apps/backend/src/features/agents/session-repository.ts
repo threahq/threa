@@ -652,9 +652,20 @@ export const AgentSessionRepository = {
     stepId: string,
     params: {
       content?: unknown
+      /** E2E (enclave) finalize: SSK-sealed content + envelope set in place on the in-flight row. */
+      contentCiphertext?: string
+      contentEnvelope?: unknown
       sources?: TraceSource[]
       messageId?: string
       completedAt?: Date
+      /**
+       * Guard against overwriting a finalized step. A mid-run substep snapshot can
+       * race a finalize (`/steps`): network reordering or a retry can land the
+       * snapshot after completion, clobbering the final content with a partial one.
+       * When set, the row updates only while still running — a no-op (null) once
+       * finalized, so the final content always wins.
+       */
+      requireRunning?: boolean
     }
   ): Promise<AgentSessionStep | null> {
     const result = await db.query<StepRow>(
@@ -662,10 +673,13 @@ export const AgentSessionRepository = {
         UPDATE agent_session_steps
         SET
           content = COALESCE(${params.content != null ? JSON.stringify(params.content) : null}, content),
+          content_ciphertext = COALESCE(${params.contentCiphertext ?? null}, content_ciphertext),
+          content_envelope = COALESCE(${params.contentEnvelope ? JSON.stringify(params.contentEnvelope) : null}, content_envelope),
           sources = COALESCE(${params.sources ? JSON.stringify(params.sources) : null}, sources),
           message_id = COALESCE(${params.messageId ?? null}, message_id),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
         WHERE id = ${stepId}
+          ${sql.raw(params.requireRunning ? "AND completed_at IS NULL" : "")}
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
       `
     )

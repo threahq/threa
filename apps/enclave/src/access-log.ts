@@ -1,5 +1,5 @@
 import pinoHttp from "pino-http"
-import pino from "pino"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 import { randomUUID } from "crypto"
 
 /**
@@ -8,10 +8,10 @@ import { randomUUID } from "crypto"
  *
  * Authorization headers and cookies are redacted at the pino layer.
  */
-const baseLogger = pino({ name: "enclave-access" })
-
 export const accessLog = pinoHttp({
-  logger: baseLogger,
+  // Share the regional backend's logger config (level, pretty-in-dev / JSON-in-prod,
+  // error serializer) via a named child, so enclave access logs match the backend's.
+  logger: baseLogger.child({ name: "enclave-access" }),
   autoLogging: {
     ignore: (req) => req.url === "/healthz" || req.url === "/pubkey",
   },
