@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
 import { Bell, BellOff, CheckCircle2, Loader2, Moon, ServerCrash, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
@@ -9,11 +9,13 @@ import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DateTimeField } from "@/components/forms/date-time-field"
 import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
 import { useCurrentWorkspaceUser, usePauseNotifications, useResumeNotifications } from "@/hooks"
 import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
+import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
 import {
   NOTIFICATION_PAUSE_OPTIONS,
   type NotificationPauseOption,
@@ -319,13 +321,39 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   const busy = pause.isPending || resume.isPending
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
-  const handlePause = async (option: NotificationPauseOption) => {
-    const until = option.duration ? statusDurationToExpiry(option.duration, timezone, schedule) : null
+  // The "Custom…" path reveals an inline date/time field rather than pausing
+  // immediately, mirroring the status picker's custom expiry.
+  const [customOpen, setCustomOpen] = useState(false)
+  const [customDate, setCustomDate] = useState("")
+  const [customTime, setCustomTime] = useState("")
+
+  const pauseUntil = async (until: string | null) => {
     try {
       await pause.mutateAsync(until)
+      setCustomOpen(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to pause notifications")
     }
+  }
+
+  const handlePause = (option: NotificationPauseOption) => {
+    void pauseUntil(option.duration ? statusDurationToExpiry(option.duration, timezone, schedule) : null)
+  }
+
+  const openCustom = () => {
+    const inAnHour = new Date(Date.now() + 60 * 60 * 1000)
+    setCustomDate(toDateInputValue(inAnHour))
+    setCustomTime(toTimeInputValue(inAnHour))
+    setCustomOpen(true)
+  }
+
+  const handleCustomPause = () => {
+    const when = parseLocalDateTime(customDate, customTime)
+    if (!when || when.getTime() <= Date.now()) {
+      toast.error("Pick a time in the future")
+      return
+    }
+    void pauseUntil(when.toISOString())
   }
 
   const handleResume = async () => {
@@ -340,6 +368,74 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   // here without changing the status — explain that instead of a dead button.
   const statusOnly = active?.source === "status"
 
+  // One ternary level (INV-47): pick the control via if/else, render it once.
+  let control: ReactNode
+  if (active) {
+    control = (
+      <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Moon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{formatNotificationPauseLabel(active)}</p>
+            {statusOnly && (
+              <p className="text-xs text-muted-foreground">Set by your status — clear your status to resume.</p>
+            )}
+          </div>
+        </div>
+        {!statusOnly && (
+          <Button onClick={handleResume} variant="outline" size="sm" disabled={busy}>
+            Resume
+          </Button>
+        )}
+      </div>
+    )
+  } else if (customOpen) {
+    control = (
+      <div className="space-y-3 rounded-lg border bg-card p-4">
+        <DateTimeField
+          date={customDate}
+          time={customTime}
+          onDateChange={setCustomDate}
+          onTimeChange={setCustomTime}
+          minDate={toDateInputValue(new Date())}
+          density="compact"
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={() => setCustomOpen(false)} disabled={busy}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleCustomPause} disabled={busy}>
+            Pause
+          </Button>
+        </div>
+      </div>
+    )
+  } else {
+    control = (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" disabled={busy}>
+            <BellOff className="mr-2 h-3.5 w-3.5" />
+            Pause notifications
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration !== null).map((option) => (
+            <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+              {option.label}
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuItem onSelect={openCustom}>Until a specific time…</DropdownMenuItem>
+          {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null).map((option) => (
+            <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+              {option.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+
   return (
     <section className="space-y-3">
       <div>
@@ -350,40 +446,7 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
         </p>
       </div>
 
-      {active ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
-          <div className="flex min-w-0 items-center gap-2">
-            <Moon className="h-4 w-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{formatNotificationPauseLabel(active)}</p>
-              {statusOnly && (
-                <p className="text-xs text-muted-foreground">Set by your status — clear your status to resume.</p>
-              )}
-            </div>
-          </div>
-          {!statusOnly && (
-            <Button onClick={handleResume} variant="outline" size="sm" disabled={busy}>
-              Resume
-            </Button>
-          )}
-        </div>
-      ) : (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" disabled={busy}>
-              <BellOff className="mr-2 h-3.5 w-3.5" />
-              Pause notifications
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            {NOTIFICATION_PAUSE_OPTIONS.map((option) => (
-              <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
-                {option.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      {control}
     </section>
   )
 }
