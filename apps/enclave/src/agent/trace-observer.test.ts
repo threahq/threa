@@ -263,9 +263,7 @@ describe("EnclaveTraceObserver", () => {
     await observer.handle({ type: "message:sent", messageId: "msg_reply", content: "Paris." })
 
     expect(started).toHaveLength(0) // the start frame never landed…
-    expect(steps).toHaveLength(1) // …but the finalize did
-    expect(steps[0]!.stepType).toBe("message_sent")
-    expect(steps[0]!.messageId).toBe("msg_reply")
+    expect(steps).toMatchObject([{ stepType: "message_sent", messageId: "msg_reply" }]) // …but the finalize did
     expect(await open(ssk, steps[0]!)).toBe("Paris.")
   })
 

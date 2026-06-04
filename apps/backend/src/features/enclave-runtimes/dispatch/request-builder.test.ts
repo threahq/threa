@@ -96,6 +96,13 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(built!.assignment).not.toHaveProperty("maxTokens") // null → omitted
   })
 
+  it("omits the trigger metadata when the author name can't be resolved", () => {
+    const built = buildEnclaveSessionAssignment(inputs({ triggerAuthorName: undefined }))
+    // No misleading "Unknown" placeholder row — the enclave suppresses the
+    // CONTEXT "Triggered by" step entirely when there's no name.
+    expect(built!.assignment).not.toHaveProperty("trigger")
+  })
+
   it("returns null when no enclave actor is invited", () => {
     expect(
       buildEnclaveSessionAssignment(inputs({ actors: [{ kind: "bot", actorId: "bot_x", keyId: null }] }))

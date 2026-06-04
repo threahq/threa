@@ -79,7 +79,9 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     ])
     if (!stream) return
     // Display name for the enclave's "Triggered by" CONTEXT step (metadata only).
-    const triggerAuthorName = authors[0]?.name ?? "Unknown"
+    // Left undefined when unresolved → the enclave suppresses the row rather than
+    // rendering a misleading "Unknown" author.
+    const triggerAuthorName = authors[0]?.name
 
     // Assemble Ariadne's system prompt with the SAME shared builder the main app
     // uses (temporal grounding, response style, send_message rules, tool sections,

@@ -658,6 +658,14 @@ export const AgentSessionRepository = {
       sources?: TraceSource[]
       messageId?: string
       completedAt?: Date
+      /**
+       * Guard against overwriting a finalized step. A mid-run substep snapshot can
+       * race a finalize (`/steps`): network reordering or a retry can land the
+       * snapshot after completion, clobbering the final content with a partial one.
+       * When set, the row updates only while still running — a no-op (null) once
+       * finalized, so the final content always wins.
+       */
+      requireRunning?: boolean
     }
   ): Promise<AgentSessionStep | null> {
     const result = await db.query<StepRow>(
@@ -671,6 +679,7 @@ export const AgentSessionRepository = {
           message_id = COALESCE(${params.messageId ?? null}, message_id),
           completed_at = COALESCE(${params.completedAt ?? null}, completed_at)
         WHERE id = ${stepId}
+          ${sql.raw(params.requireRunning ? "AND completed_at IS NULL" : "")}
         RETURNING ${sql.raw(STEP_SELECT_FIELDS)}
       `
     )

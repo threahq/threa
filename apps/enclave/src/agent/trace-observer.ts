@@ -197,7 +197,7 @@ export class EnclaveTraceObserver implements AgentObserver {
             authorName: trigger.authorName,
             authorType: trigger.authorType,
             createdAt: trigger.createdAt,
-            content: trigger.content.slice(0, 300),
+            content: trigger.content,
             isTrigger: true,
           },
         ],
@@ -217,7 +217,14 @@ export class EnclaveTraceObserver implements AgentObserver {
    * route still records every step, just without the live in-flight frame.)
    */
   private async openStep(step: EnclaveSealedStepStart): Promise<void> {
-    await this.deps.sendStepStarted(step).catch(() => {})
+    // Swallow both a rejected promise AND a synchronous throw — a bad
+    // `sendStepStarted` must never abort the handler and drop the durable
+    // finalize. `.catch()` alone misses a sync throw before the promise exists.
+    try {
+      await this.deps.sendStepStarted(step)
+    } catch {
+      // best-effort: the live `step:started` frame is UX-only (see above)
+    }
   }
 
   /**

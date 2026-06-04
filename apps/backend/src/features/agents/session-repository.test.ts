@@ -94,3 +94,31 @@ describe("AgentSessionRepository.updateStatus SQL guards", () => {
     expect(captured.text).not.toContain("AND status = ANY(")
   })
 })
+
+describe("AgentSessionRepository.updateStep finalize-race guard", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("gates the update on a still-running step when requireRunning is set", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db = createQuerierCapture(captured)
+
+    await AgentSessionRepository.updateStep(db, "step_1", {
+      contentCiphertext: "ct",
+      contentEnvelope: { keyGeneration: 1 },
+      requireRunning: true,
+    })
+
+    expect(captured.text).toContain("AND completed_at IS NULL")
+  })
+
+  it("updates unconditionally when requireRunning is not set (finalize path)", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db = createQuerierCapture(captured)
+
+    await AgentSessionRepository.updateStep(db, "step_1", { completedAt: new Date(), content: { done: true } })
+
+    expect(captured.text).not.toContain("AND completed_at IS NULL")
+  })
+})

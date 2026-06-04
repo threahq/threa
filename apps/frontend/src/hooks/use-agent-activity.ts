@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from "react"
+import { useMemo, useState, useEffect, useCallback, useRef } from "react"
 import type { Socket } from "socket.io-client"
 import type {
   StreamEvent,
@@ -43,6 +43,12 @@ interface ProgressEntry {
   stepCount: number
   messageCount: number
   substep: string | null
+  /**
+   * `updatedAt` of the currently-applied substep. Gates out-of-order writes: a
+   * decrypt that resolves after a newer one (or a duplicate redelivery) carries an
+   * older/equal timestamp and is dropped, so the latest phase always wins.
+   */
+  substepUpdatedAt?: string
   threadStreamId?: string
 }
 
@@ -64,6 +70,14 @@ export function useAgentActivity(
 ): Map<string, MessageAgentActivity> {
   // Track live activity from socket: sessionId → { triggerMessageId, personaName, currentStepType }
   const [progressBySession, setProgressBySession] = useState<Map<string, ProgressEntry>>(new Map())
+
+  // Mirror of `progressBySession` for synchronous reads inside event handlers —
+  // lets a substep capture the session's step generation at *arrival* time so a
+  // late async decrypt can't apply onto a step that has since moved on.
+  const progressRef = useRef(progressBySession)
+  useEffect(() => {
+    progressRef.current = progressBySession
+  }, [progressBySession])
 
   // Derive running sessions from events array (bootstrap source of truth for streams
   // that contain session lifecycle events, e.g. threads and scratchpads)
@@ -169,21 +183,31 @@ export function useAgentActivity(
         stepCount: payload.stepCount,
         messageCount: payload.messageCount,
         substep: sameStep ? (prior?.substep ?? null) : null,
+        substepUpdatedAt: sameStep ? prior?.substepUpdatedAt : undefined,
         threadStreamId: payload.threadStreamId,
       })
       return next
     })
   }, [])
 
-  const applySubstep = useCallback((sessionId: string, text: string) => {
-    setProgressBySession((prev) => {
-      const existing = prev.get(sessionId)
-      if (!existing) return prev
-      const next = new Map(prev)
-      next.set(sessionId, { ...existing, substep: text })
-      return next
-    })
-  }, [])
+  // Apply a decoded substep, gated against races: drop it if the session's step
+  // generation advanced since the substep arrived (`stepCountAtArrival`), or if a
+  // newer substep already landed (`updatedAt` ordering). Both guard the async E2E
+  // decrypt, whose resolution order isn't the arrival order.
+  const applySubstep = useCallback(
+    (sessionId: string, text: string, updatedAt: string, stepCountAtArrival: number | undefined) => {
+      setProgressBySession((prev) => {
+        const existing = prev.get(sessionId)
+        if (!existing) return prev
+        if (stepCountAtArrival !== undefined && existing.stepCount !== stepCountAtArrival) return prev
+        if (existing.substepUpdatedAt && updatedAt <= existing.substepUpdatedAt) return prev
+        const next = new Map(prev)
+        next.set(sessionId, { ...existing, substep: text, substepUpdatedAt: updatedAt })
+        return next
+      })
+    },
+    []
+  )
 
   // Substep: ephemeral phase text from a long-running tool. Only updates the entry
   // for the matching session — does NOT touch step counts or step type. For E2E
@@ -191,8 +215,11 @@ export function useAgentActivity(
   // same way message/step content is before applying.
   const handleSubstep = useCallback(
     (payload: AgentSessionSubstepPayload) => {
+      // Capture the step generation at arrival so a late decrypt can't apply onto
+      // a step that has since advanced.
+      const stepCountAtArrival = progressRef.current.get(payload.sessionId)?.stepCount
       if (typeof payload.substep === "string" && payload.substep) {
-        applySubstep(payload.sessionId, payload.substep)
+        applySubstep(payload.sessionId, payload.substep, payload.updatedAt, stepCountAtArrival)
         return
       }
       if (typeof payload.ciphertext === "string" && payload.envelope) {
@@ -203,7 +230,8 @@ export function useAgentActivity(
           { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId: payload.streamId }
         )
           .then((decrypted) => {
-            if (decrypted?.contentMarkdown) applySubstep(payload.sessionId, decrypted.contentMarkdown)
+            if (decrypted?.contentMarkdown)
+              applySubstep(payload.sessionId, decrypted.contentMarkdown, payload.updatedAt, stepCountAtArrival)
           })
           .catch(() => {})
       }

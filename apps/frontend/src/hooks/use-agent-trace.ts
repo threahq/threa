@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { useSocket } from "@/contexts"
 import { agentSessionsApi } from "@/api"
@@ -70,6 +70,10 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
   const [streamingContent, setStreamingContent] = useState<Record<string, string>>({})
   const [streamingSubsteps, setStreamingSubsteps] = useState<Partial<Record<AgentStepType, StreamingSubstep[]>>>({})
   const [terminalStatus, setTerminalStatus] = useState<"completed" | "failed" | null>(null)
+  // Per step type, the `at` of its last completion. A substep that resolves with
+  // an older/equal timestamp belongs to that finished instance — dropping it stops
+  // a late E2E decrypt from resurrecting a cleared step's phase timeline.
+  const closedAtByTypeRef = useRef<Map<AgentStepType, string>>(new Map())
   // Track if socket is subscribed (enables query after subscription)
   const [isSubscribed, setIsSubscribed] = useState(false)
   const [isSubscribing, setIsSubscribing] = useState(false)
@@ -138,6 +142,9 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
       // carries the canonical history, so refresh-stable rendering takes over.
       const completedType = payload.step.stepType
       if (completedType) {
+        // Watermark the completion so a late decrypt for this instance can't
+        // re-add a phase after we clear it (see `closedAtByTypeRef`).
+        closedAtByTypeRef.current.set(completedType, payload.step.completedAt ?? new Date().toISOString())
         setStreamingSubsteps((prev) => {
           if (!(completedType in prev)) return prev
           const next = { ...prev }
@@ -153,11 +160,18 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
   // step type so the trace dialog can render an inline timeline of phases for the
   // currently in-flight step. Cleared on step completion (handleStepCompleted).
   const appendSubstep = useCallback((stepType: AgentStepType, text: string, at: string) => {
+    // Drop a substep that belongs to an already-finished instance of this step
+    // type (a stale decrypt resolving after completion).
+    const closedAt = closedAtByTypeRef.current.get(stepType)
+    if (closedAt && at <= closedAt) return
     setStreamingSubsteps((prev) => {
       const list = prev[stepType] ?? []
-      // Dedupe consecutive identical substeps (the backend may emit the same phase twice on retry)
-      if (list.length > 0 && list[list.length - 1]?.text === text) return prev
-      return { ...prev, [stepType]: [...list, { text, at }] }
+      if (list.some((s) => s.text === text && s.at === at)) return prev
+      // Order by `at`, not promise-resolution order, so out-of-order decrypts land
+      // in emission order. Then dedupe consecutive identical phase text.
+      const merged = [...list, { text, at }].sort((a, b) => a.at.localeCompare(b.at))
+      const deduped = merged.filter((s, i) => i === 0 || s.text !== merged[i - 1]?.text)
+      return { ...prev, [stepType]: deduped }
     })
   }, [])
 
@@ -217,6 +231,7 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
     setRealtimeSteps(new Map())
     setStreamingContent({})
     setStreamingSubsteps({})
+    closedAtByTypeRef.current = new Map()
     setTerminalStatus(null)
     setIsSubscribed(false)
     setIsSubscribing(true)

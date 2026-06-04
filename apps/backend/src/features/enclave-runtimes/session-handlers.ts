@@ -349,9 +349,13 @@ export function createEnclaveSessionHandlers({ pool, eventService, io }: Depende
       // browser decrypts step.content → { substeps } exactly as for a finalized
       // step. Skipped when the step row isn't known yet (broadcast-only).
       if (sub.stepId && sub.snapshotCiphertext && sub.snapshotEnvelope) {
+        // `requireRunning` guards the finalize race: a snapshot that lands after
+        // the step's `/steps` finalize (reordering / retry) must not overwrite the
+        // final content with a mid-run partial. Once finalized this no-ops.
         await AgentSessionRepository.updateStep(pool, sub.stepId, {
           contentCiphertext: sub.snapshotCiphertext,
           contentEnvelope: sub.snapshotEnvelope,
+          requireRunning: true,
         })
       }
 
