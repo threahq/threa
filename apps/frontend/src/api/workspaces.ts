@@ -85,6 +85,25 @@ export const workspacesApi = {
     return res.user
   },
 
+  async setStatus(
+    workspaceId: string,
+    data: { emoji: string | null; text: string | null; expiresAt: string | null }
+  ): Promise<User> {
+    const res = await api.put<{ user?: User }>(`/api/workspaces/${workspaceId}/status`, data)
+    if (!res.user) {
+      throw new Error("Status response missing user payload")
+    }
+    return res.user
+  },
+
+  async clearStatus(workspaceId: string): Promise<User> {
+    const res = await api.delete<{ user?: User }>(`/api/workspaces/${workspaceId}/status`)
+    if (!res.user) {
+      throw new Error("Status response missing user payload")
+    }
+    return res.user
+  },
+
   async uploadAvatar(workspaceId: string, file: File): Promise<User> {
     const formData = new FormData()
     formData.append("avatar", file)

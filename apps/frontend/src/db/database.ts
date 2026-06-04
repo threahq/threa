@@ -43,6 +43,13 @@ export interface CachedWorkspaceUser {
   pronouns: string | null
   phone: string | null
   githubUsername: string | null
+  // Cosmetic status. Structurally mirrors the wire `User` (this cache type is
+  // assigned to `User` across the app). Rows cached before this feature lack
+  // the columns at runtime (undefined); a bootstrap refetch backfills them, and
+  // all readers normalize with `?? null`. Not indexed, so no schema bump.
+  statusEmoji: string | null
+  statusText: string | null
+  statusExpiresAt: string | null
   setupCompleted: boolean
   joinedAt: string
   _cachedAt: number

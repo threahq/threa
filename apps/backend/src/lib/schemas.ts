@@ -7,6 +7,9 @@ import {
   AUTHOR_TYPES,
   NOTIFICATION_LEVELS,
   parseHHMM,
+  isStatusContentful,
+  STATUS_TEXT_MAX_LENGTH,
+  MAX_STATUS_PRESETS,
 } from "@threa/types"
 
 export const streamTypeSchema = z.enum(STREAM_TYPES)
@@ -64,3 +67,49 @@ export const botIdentityKeyFields = {
 export function bothOrNeitherBotIdentityKey(v: { publicKey?: string; publicKeyId?: string }): boolean {
   return (v.publicKey === undefined) === (v.publicKeyId === undefined)
 }
+
+// User statuses — shared by the set-status endpoint, workspace-settings
+// (workspace default presets), and user-preferences (per-user presets) so a
+// status preset validates identically wherever it is stored (INV-35).
+// `emoji` is a shortcode (no colons); `defaultDuration` mirrors the scheduling
+// reminder presets. A null duration means "indefinite".
+export const statusDurationSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("duration"),
+    minutes: z
+      .number()
+      .int()
+      .positive()
+      .max(7 * 24 * 60),
+  }),
+  z.object({ kind: z.literal("calendar"), calendar: z.enum(["tomorrow-start", "next-week-start"]) }),
+])
+
+const statusEmojiSchema = z.string().min(1).max(64).nullable()
+const statusTextSchema = z.string().max(STATUS_TEXT_MAX_LENGTH).nullable()
+
+export const statusPresetSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    emoji: statusEmojiSchema,
+    text: statusTextSchema,
+    defaultDuration: statusDurationSchema.nullable(),
+  })
+  .refine((p) => isStatusContentful(p), { message: "A status needs an emoji or text" })
+
+export const statusPresetsSchema = z.array(statusPresetSchema).max(MAX_STATUS_PRESETS)
+
+// Setting an active status: at least one of emoji/text, and an optional
+// absolute expiry the client resolves from its chosen duration. Clearing a
+// status goes through DELETE, so this path always carries content.
+export const setStatusSchema = z
+  .object({
+    emoji: statusEmojiSchema,
+    text: z
+      .string()
+      .max(STATUS_TEXT_MAX_LENGTH)
+      .transform((v) => (v.trim().length === 0 ? null : v.trim()))
+      .nullable(),
+    expiresAt: z.string().datetime().nullable(),
+  })
+  .refine((s) => isStatusContentful(s), { message: "A status needs an emoji or text" })

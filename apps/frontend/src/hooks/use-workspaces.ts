@@ -225,6 +225,27 @@ export function useUpdateProfile(workspaceId: string) {
   })
 }
 
+export function useSetStatus(workspaceId: string) {
+  const workspaceService = useWorkspaceService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: { emoji: string | null; text: string | null; expiresAt: string | null }) =>
+      workspaceService.setStatus(workspaceId, data),
+    onSuccess: (user) => updateUserInBootstrap(queryClient, workspaceId, user),
+  })
+}
+
+export function useClearStatus(workspaceId: string) {
+  const workspaceService = useWorkspaceService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => workspaceService.clearStatus(workspaceId),
+    onSuccess: (user) => updateUserInBootstrap(queryClient, workspaceId, user),
+  })
+}
+
 export function useUploadAvatar(workspaceId: string) {
   const workspaceService = useWorkspaceService()
   const queryClient = useQueryClient()

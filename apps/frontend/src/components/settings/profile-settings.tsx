@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { useParams } from "react-router-dom"
-import { CircleHelp } from "lucide-react"
+import { CircleHelp, Smile } from "lucide-react"
+import { resolveActiveStatus } from "@threa/types"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
@@ -9,7 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useAuth } from "@/auth"
 import { useUpdateProfile } from "@/hooks"
+import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
+import { StatusPicker } from "@/components/status/status-picker"
+import { formatStatusClearLabel } from "@/lib/status"
 import { AvatarSection } from "./avatar-section"
 import { toast } from "sonner"
 
@@ -33,8 +37,18 @@ export function ProfileSettings() {
   const [isCustomPronouns, setIsCustomPronouns] = useState(false)
   const [phone, setPhone] = useState<string | null>(null)
   const [githubUsername, setGithubUsername] = useState<string | null>(null)
+  const [statusOpen, setStatusOpen] = useState(false)
+  const { toEmoji } = useWorkspaceEmoji(workspaceId!)
 
   if (!currentUser) return null
+
+  const activeStatus = resolveActiveStatus({
+    statusEmoji: currentUser.statusEmoji ?? null,
+    statusText: currentUser.statusText ?? null,
+    statusExpiresAt: currentUser.statusExpiresAt ?? null,
+  })
+  const statusGlyph = activeStatus?.emoji ? toEmoji(activeStatus.emoji) : null
+  const statusClearLabel = formatStatusClearLabel(activeStatus?.expiresAt ?? null)
 
   // Use local state if edited, otherwise show server value
   const currentName = name ?? currentUser.name
@@ -143,6 +157,29 @@ export function ProfileSettings() {
       <div>
         <h3 className="text-sm font-medium mb-3">Photo</h3>
         <AvatarSection workspaceId={workspaceId!} userName={currentUser.name} avatarUrl={currentUser.avatarUrl} />
+      </div>
+
+      <div>
+        <Label>Status</Label>
+        <div className="mt-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full justify-start gap-2 font-normal"
+            onClick={() => setStatusOpen(true)}
+          >
+            {statusGlyph ? (
+              <span className="text-base leading-none">{statusGlyph}</span>
+            ) : (
+              <Smile className="h-4 w-4 text-muted-foreground" />
+            )}
+            <span className={activeStatus ? "" : "text-muted-foreground"}>
+              {activeStatus?.text || (statusGlyph ? "" : "Set a status")}
+            </span>
+          </Button>
+          {statusClearLabel && <p className="mt-1 text-xs text-muted-foreground">{statusClearLabel}</p>}
+        </div>
+        {statusOpen && <StatusPicker workspaceId={workspaceId!} open onOpenChange={setStatusOpen} />}
       </div>
 
       <div>

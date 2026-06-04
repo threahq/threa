@@ -62,6 +62,9 @@ interface WorkspaceUserPayload {
   pronouns: string | null
   phone: string | null
   githubUsername: string | null
+  statusEmoji: string | null
+  statusText: string | null
+  statusExpiresAt: string | null
   setupCompleted: boolean
   email: string
   joinedAt: string

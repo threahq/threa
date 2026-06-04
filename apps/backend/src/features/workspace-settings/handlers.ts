@@ -1,10 +1,11 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import type { WorkspaceSettingsService } from "./service"
-import { workScheduleSchema } from "../../lib/schemas"
+import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
 
 const updateWorkspaceSettingsSchema = z.object({
   defaultWorkSchedule: workScheduleSchema.optional(),
+  userStatusPresets: statusPresetsSchema.optional(),
 })
 
 export { updateWorkspaceSettingsSchema }

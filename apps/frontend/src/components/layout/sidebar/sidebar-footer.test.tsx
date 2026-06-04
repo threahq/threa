@@ -100,6 +100,9 @@ describe("SidebarFooter", () => {
           pronouns: null,
           phone: null,
           githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -146,6 +149,9 @@ describe("SidebarFooter", () => {
           pronouns: null,
           phone: null,
           githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -185,6 +191,9 @@ describe("SidebarFooter", () => {
           pronouns: null,
           phone: null,
           githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}

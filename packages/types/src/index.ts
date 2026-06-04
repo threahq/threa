@@ -610,6 +610,19 @@ export {
   type WorkspaceSettingKey,
 } from "./workspace-settings"
 
+// User statuses (cosmetic emoji + text shown beside the avatar)
+export {
+  type StatusDuration,
+  type StatusPreset,
+  type ActiveStatus,
+  type UserStatusFields,
+  isStatusContentful,
+  resolveActiveStatus,
+  SYSTEM_DEFAULT_STATUSES,
+  STATUS_TEXT_MAX_LENGTH,
+  MAX_STATUS_PRESETS,
+} from "./user-status"
+
 // Sidebar configuration
 export {
   SIDEBAR_SECTION_KEYS,

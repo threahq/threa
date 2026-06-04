@@ -56,6 +56,9 @@ const fakeUser = {
   pronouns: null,
   phone: null,
   githubUsername: null,
+  statusEmoji: null,
+  statusText: null,
+  statusExpiresAt: null,
   setupCompleted: true,
   joinedAt: new Date(),
 }

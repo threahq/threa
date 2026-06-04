@@ -12,19 +12,19 @@
 import {
   type WorkSchedule,
   type Weekday,
+  type StatusDuration,
   DEFAULT_WORK_SCHEDULE,
   startOfWorkForDay,
   firstWorkingWeekday,
 } from "@threa/types"
 
 /**
- * Tagged union so "duration" presets (minutes from now) and "calendar" presets
- * (next week at start of work) don't share a field. Adding a new calendar kind
- * is a new tag, not a new magic number.
+ * A labelled {@link StatusDuration}: the shared duration descriptor (minutes
+ * from now, or a calendar anchor) plus the display label for this surface.
+ * Reusing `StatusDuration` keeps the reminder picker and the status picker on
+ * one resolution path (INV-35) — `computeRemindAt` accepts either.
  */
-export type ReminderPreset =
-  | { label: string; kind: "duration"; minutes: number }
-  | { label: string; kind: "calendar"; calendar: "tomorrow-start" | "next-week-start" }
+export type ReminderPreset = { label: string } & StatusDuration
 
 export const REMINDER_PRESETS: ReminderPreset[] = [
   { label: "In 15 minutes", kind: "duration", minutes: 15 },
@@ -131,7 +131,7 @@ function tomorrowStart(now: Date, timezone: string, schedule: WorkSchedule): Dat
 }
 
 export function computeRemindAt(
-  preset: ReminderPreset,
+  preset: StatusDuration,
   now: Date,
   timezone: string,
   schedule: WorkSchedule = DEFAULT_WORK_SCHEDULE

@@ -25,6 +25,14 @@ const FALLBACK_TEXT_CLASSES: Record<ActorAvatarSize, string> = {
   lg: "text-base font-medium",
 }
 
+/** Status-badge glyph size per avatar token. Kept small so it reads as a badge. */
+const STATUS_BADGE_CLASSES: Record<ActorAvatarSize, string> = {
+  xs: "text-[9px] -right-0.5 -bottom-0.5",
+  sm: "text-[11px] -right-0.5 -bottom-0.5",
+  md: "text-xs -right-1 -bottom-1",
+  lg: "text-sm -right-1 -bottom-1",
+}
+
 interface ActorAvatarProps {
   actorId: string | null
   actorType: AuthorType | null
@@ -33,6 +41,12 @@ interface ActorAvatarProps {
   className?: string
   /** alt text for AvatarImage — defaults to "" (decorative). */
   alt?: string
+  /**
+   * Render the user's status emoji as a corner badge when present. On by
+   * default; pass `false` on dense surfaces (e.g. tiny avatar stacks) where the
+   * badge would crowd the glyph.
+   */
+  showStatus?: boolean
 }
 
 /**
@@ -47,7 +61,15 @@ interface ActorAvatarProps {
  * - **System**: always fallback with blue tint (no image).
  * - **User**: image when available, muted fallback with initials.
  */
-export function ActorAvatar({ actorId, actorType, workspaceId, size = "md", className, alt = "" }: ActorAvatarProps) {
+export function ActorAvatar({
+  actorId,
+  actorType,
+  workspaceId,
+  size = "md",
+  className,
+  alt = "",
+  showStatus = true,
+}: ActorAvatarProps) {
   const { getActorAvatar } = useActors(workspaceId)
   const info = getActorAvatar(actorId, actorType)
 
@@ -59,10 +81,31 @@ export function ActorAvatar({ actorId, actorType, workspaceId, size = "md", clas
   if (actorType === "bot") fallbackTint = "bg-emerald-500/10 text-emerald-600"
   else if (actorType === "system") fallbackTint = "bg-blue-500/10 text-blue-500"
 
-  return (
+  const statusEmoji = showStatus ? info.status?.emoji : null
+
+  const avatar = (
     <Avatar className={cn(SIZE_CLASSES[size], "shrink-0", className)}>
       {info.avatarUrl && <AvatarImage src={info.avatarUrl} alt={alt} />}
       <AvatarFallback className={cn(fallbackTint, FALLBACK_TEXT_CLASSES[size])}>{info.fallback}</AvatarFallback>
     </Avatar>
+  )
+
+  // Badge is absolutely positioned over the avatar so it never shifts layout
+  // (INV-21). The wrapper is `inline-flex` with no extra box, matching the
+  // avatar's footprint.
+  if (!statusEmoji) return avatar
+  return (
+    <span className="relative inline-flex shrink-0" title={info.status?.text ?? undefined}>
+      {avatar}
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute flex items-center justify-center rounded-full bg-background leading-none",
+          STATUS_BADGE_CLASSES[size]
+        )}
+      >
+        {statusEmoji}
+      </span>
+    </span>
   )
 }

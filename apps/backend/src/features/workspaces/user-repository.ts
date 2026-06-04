@@ -41,6 +41,9 @@ interface UserRow {
   pronouns: string | null
   phone: string | null
   github_username: string | null
+  status_emoji: string | null
+  status_text: string | null
+  status_expires_at: Date | null
   setup_completed: boolean
   joined_at: Date
   mirror_role_slugs: string[] | null
@@ -65,6 +68,9 @@ export interface User {
   pronouns: string | null
   phone: string | null
   githubUsername: string | null
+  statusEmoji: string | null
+  statusText: string | null
+  statusExpiresAt: Date | null
   setupCompleted: boolean
   joinedAt: Date
 }
@@ -92,13 +98,18 @@ export interface UpdateUserParams {
   pronouns?: string | null
   phone?: string | null
   githubUsername?: string | null
+  statusEmoji?: string | null
+  statusText?: string | null
+  statusExpiresAt?: Date | null
   setupCompleted?: boolean
 }
 
 const SELECT_FIELDS = `
   id, workspace_id, workos_user_id, email, role, slug,
   name, description, avatar_url, timezone, locale,
-  pronouns, phone, github_username, setup_completed, joined_at
+  pronouns, phone, github_username,
+  status_emoji, status_text, status_expires_at,
+  setup_completed, joined_at
 `
 
 // Read paths derive `role` from the WorkOS authz mirror so role changes
@@ -122,7 +133,9 @@ const SELECT_FIELDS_WITH_ALIAS = `
   u.id, u.workspace_id, u.workos_user_id, u.email,
   u.role, u.slug,
   u.name, u.description, u.avatar_url, u.timezone, u.locale,
-  u.pronouns, u.phone, u.github_username, u.setup_completed, u.joined_at,
+  u.pronouns, u.phone, u.github_username,
+  u.status_emoji, u.status_text, u.status_expires_at,
+  u.setup_completed, u.joined_at,
   wup.role_slugs AS mirror_role_slugs
 `
 
@@ -144,6 +157,9 @@ function mapRowToUser(row: UserRow): User {
     pronouns: row.pronouns,
     phone: row.phone,
     githubUsername: row.github_username,
+    statusEmoji: row.status_emoji,
+    statusText: row.status_text,
+    statusExpiresAt: row.status_expires_at,
     setupCompleted: row.setup_completed,
     joinedAt: row.joined_at,
   }
@@ -196,6 +212,9 @@ export const UserRepository = {
         um.pronouns,
         um.phone,
         um.github_username,
+        um.status_emoji,
+        um.status_text,
+        um.status_expires_at,
         um.setup_completed,
         um.joined_at,
         um.mirror_role_slugs
@@ -381,6 +400,18 @@ export const UserRepository = {
     if (params.githubUsername !== undefined) {
       sets.push(`github_username = $${paramIndex++}`)
       values.push(params.githubUsername)
+    }
+    if (params.statusEmoji !== undefined) {
+      sets.push(`status_emoji = $${paramIndex++}`)
+      values.push(params.statusEmoji)
+    }
+    if (params.statusText !== undefined) {
+      sets.push(`status_text = $${paramIndex++}`)
+      values.push(params.statusText)
+    }
+    if (params.statusExpiresAt !== undefined) {
+      sets.push(`status_expires_at = $${paramIndex++}`)
+      values.push(params.statusExpiresAt)
     }
     if (params.setupCompleted !== undefined) {
       sets.push(`setup_completed = $${paramIndex++}`)

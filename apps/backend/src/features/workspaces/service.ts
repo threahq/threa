@@ -435,6 +435,31 @@ export class WorkspaceService {
     })
   }
 
+  /**
+   * Set or clear the caller's cosmetic status. `emoji`/`text`/`expiresAt` are
+   * passed straight through (clearing = all null), so the user-row write and
+   * the `workspace_user:updated` broadcast stay in one transaction (INV-7).
+   */
+  async setUserStatus(
+    userId: string,
+    workspaceId: string,
+    status: { statusEmoji: string | null; statusText: string | null; statusExpiresAt: Date | null }
+  ): Promise<User> {
+    return withTransaction(this.pool, async (client) => {
+      const updated = await UserRepository.update(client, workspaceId, userId, status)
+      if (!updated) {
+        throw new HttpError("User not found", { status: 404, code: "USER_NOT_FOUND" })
+      }
+
+      await OutboxRepository.insert(client, "workspace_user:updated", {
+        workspaceId,
+        user: serializeBigInt(updated),
+      })
+
+      return updated
+    })
+  }
+
   async uploadAvatar(userId: string, workspaceId: string, buffer: Buffer): Promise<User> {
     // Phase 1: Verify user exists and capture current avatar for replacement tracking
     const user = await UserRepository.findById(this.pool, workspaceId, userId)

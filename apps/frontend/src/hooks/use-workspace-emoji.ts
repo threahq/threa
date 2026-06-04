@@ -11,6 +11,8 @@ interface WorkspaceEmojiData {
   toEmoji: (shortcode: string) => string | null
   /** Get full emoji entry by shortcode */
   getEmoji: (shortcode: string) => EmojiEntry | undefined
+  /** Reverse lookup: emoji character → shortcode (no colons). Null when unknown. */
+  toShortcode: (emoji: string) => string | null
 }
 
 /**
@@ -47,13 +49,24 @@ export function useWorkspaceEmoji(workspaceId: string): WorkspaceEmojiData {
     [getEmoji]
   )
 
+  const shortcodeMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const entry of emojis) {
+      map.set(entry.emoji, entry.shortcode)
+    }
+    return map
+  }, [emojis])
+
+  const toShortcode = useCallback((emoji: string): string | null => shortcodeMap.get(emoji) ?? null, [shortcodeMap])
+
   return useMemo(
     () => ({
       emojis,
       emojiWeights,
       toEmoji,
       getEmoji,
+      toShortcode,
     }),
-    [emojis, emojiWeights, toEmoji, getEmoji]
+    [emojis, emojiWeights, toEmoji, getEmoji, toShortcode]
   )
 }
