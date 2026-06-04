@@ -23,7 +23,8 @@ workflow for filling it in, one inventory row at a time.
 - Read `docs/features/README.md` in full: the three buckets, frontmatter schemas,
   document structure, and altitude rules. It is authoritative; this skill doesn't
   restate it.
-- Read one existing doc in the target bucket as the exemplar:
+- Read one existing doc in the target bucket as the exemplar, for its *register* and
+  altitude, not just its headings:
   `public/configurable-sidebar.md`, `concepts/subscribe-then-bootstrap.md`, or
   `architecture/sync-engine.md`.
 
@@ -56,6 +57,17 @@ workflow for filling it in, one inventory row at a time.
   smooth overclaims; an unfinished edge described accurately is a feature of the doc.
 - Tone: plain, casual, clear. Apply the deslopify skill's rules; at minimum
   `grep -c '—' <file>` must return 0, and no hype words or rhetorical flourishes.
+- Register: explain how it works, don't pitch it. These docs are for engineers and
+  agents picking the feature up (and for you later), not customers being sold to,
+  and that holds for `public/` docs too. Describe the machine: lead with the data
+  model or core mechanism, then the behavior, the way `configurable-sidebar` opens
+  on "an ordered list of sections, saved per workspace" and `sync-engine` on "the
+  engine writes server state into IndexedDB." State structure, then behavior. The
+  recurring failure (it took three passes on `ai-companions`) is the product-tour
+  register: a "what you get" capabilities list ("can search the web, read URLs,
+  run…"), benefit phrasing ("for plain capture"), imperative how-to steps, and cute
+  personification of an agent ("she keeps up"). All factually correct, still wrong.
+  Name the surface and how it behaves instead.
 - Watch markdown footguns: a `+` or `-` that wraps to line start becomes a list bullet
   and prettier will lock that in. Re-read after the pre-commit hook rewrites the file.
 
