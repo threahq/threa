@@ -74,8 +74,12 @@ known-missing tally, kept current as gaps close:
   the name shows everywhere even while locked — which means the server can still
   see titles. This is a deliberate trade for display continuity, not full title
   privacy. Server-side AI name polish stays disabled for encrypted streams.
-- **Passphrase only — no PIN.** There is no 6/8-digit PIN unlock (Signal /
-  Messenger style). Unlock is passphrase + Argon2id.
+- **PIN is a device convenience, not a recovery method.** You can set a 6-digit
+  quick-unlock PIN per trusted device (Signal / Messenger style) to reopen without
+  retyping the full passphrase; the PIN never leaves the device and only guards the
+  locally-stored key, with a lockout that falls back to the passphrase after a few
+  wrong tries. The passphrase remains the only recovery root — there's no PIN-based
+  account recovery, by design.
 - **No biometric / WebAuthn unlock.** Device trust today is the "keep me unlocked
   on this device" local-key path, not a fingerprint/passkey-bound key.
 - **Attachments: sending is encrypted; the viewer half is still landing.** When you

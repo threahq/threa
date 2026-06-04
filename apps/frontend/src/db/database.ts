@@ -586,7 +586,25 @@ export interface CachedE2eDeviceKey {
   userId: string
   keyId: string
   publicKey: string // base64 — matched against the server key to detect rotation
-  privateKey: CryptoKey // non-extractable; stored via structured clone
+  /**
+   * Auto-resume key for plain "keep me unlocked": a non-extractable CryptoKey
+   * stored via structured clone. Present only when the device is trusted
+   * WITHOUT a PIN — a reload resumes `unlocked` directly. Mutually exclusive
+   * with the `pin*` fields below.
+   */
+  privateKey?: CryptoKey
+  /**
+   * PIN-gated quick-unlock: the UIK private key wrapped under a PIN-derived KEK
+   * (base64 `wrapPrivate` bundle) + its Argon2id salt/params, plus a local
+   * failed-attempt counter for the lockout. Present only when a device PIN is
+   * set; resuming requires the PIN (see `unlockWithPin`). A non-extractable
+   * CryptoKey can't be re-wrapped, so PIN mode stores the sealed bytes instead
+   * of `privateKey`. The PIN itself is never stored or sent anywhere.
+   */
+  pinWrappedPrivate?: string
+  pinSalt?: string
+  pinKdfParams?: KdfParams
+  pinFailedAttempts?: number
   trustedAt: string
 }
 

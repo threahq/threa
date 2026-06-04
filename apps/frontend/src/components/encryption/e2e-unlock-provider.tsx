@@ -1,8 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { loadE2eKeyForUser } from "@/stores/e2e-session-store"
+import { getE2eSessionState, loadE2eKeyForUser } from "@/stores/e2e-session-store"
 import { PassphraseSetupModal } from "./passphrase-setup-modal"
 import { PassphraseUnlockModal } from "./passphrase-unlock-modal"
+import { PinUnlockModal } from "./pin-unlock-modal"
 
 interface OpenUnlockOptions {
   /** Pre-check the "keep me unlocked on this device" box. Inline entry points
@@ -53,6 +54,7 @@ export function useE2eUnlockOptional(): E2eUnlockContextValue | null {
 export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: string; children: ReactNode }) {
   const userId = useWorkspaceUserId(workspaceId)
   const [unlockOpen, setUnlockOpen] = useState(false)
+  const [pinUnlockOpen, setPinUnlockOpen] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const [unlockDefaultTrust, setUnlockDefaultTrust] = useState(true)
   const [setupDefaultTrust, setSetupDefaultTrust] = useState(true)
@@ -63,11 +65,18 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
     if (userId) void loadE2eKeyForUser(workspaceId, userId)
   }, [workspaceId, userId])
 
-  const openUnlock = useCallback((opts?: OpenUnlockOptions) => {
-    setUnlockDefaultTrust(opts?.defaultTrustDevice ?? true)
-    onUnlockedRef.current = opts?.onUnlocked ?? null
-    setUnlockOpen(true)
-  }, [])
+  const openUnlock = useCallback(
+    (opts?: OpenUnlockOptions) => {
+      setUnlockDefaultTrust(opts?.defaultTrustDevice ?? true)
+      onUnlockedRef.current = opts?.onUnlocked ?? null
+      // A device with a PIN set gets the quick PIN prompt (with a passphrase
+      // fallback inside it); otherwise the passphrase modal.
+      const session = userId ? getE2eSessionState(workspaceId, userId) : null
+      if (session?.pinProtected) setPinUnlockOpen(true)
+      else setUnlockOpen(true)
+    },
+    [workspaceId, userId]
+  )
 
   const openSetup = useCallback((opts?: OpenSetupOptions) => {
     setSetupDefaultTrust(opts?.defaultTrustDevice ?? true)
@@ -89,6 +98,17 @@ export function E2eUnlockProvider({ workspaceId, children }: { workspaceId: stri
             defaultTrustDevice={unlockDefaultTrust}
             onOpenChange={setUnlockOpen}
             onUnlocked={() => onUnlockedRef.current?.()}
+          />
+          <PinUnlockModal
+            open={pinUnlockOpen}
+            workspaceId={workspaceId}
+            userId={userId}
+            onOpenChange={setPinUnlockOpen}
+            onUnlocked={() => onUnlockedRef.current?.()}
+            onUsePassphrase={() => {
+              setPinUnlockOpen(false)
+              setUnlockOpen(true)
+            }}
           />
           <PassphraseSetupModal
             open={setupOpen}
