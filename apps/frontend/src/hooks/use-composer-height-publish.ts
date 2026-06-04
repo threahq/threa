@@ -82,18 +82,6 @@ export function useComposerHeightPublish(
 
     const write = (h: number) => {
       const px = Math.ceil(h)
-      // The composer is sometimes hidden without unmounting: on mobile the
-      // inline message-edit form hides [data-message-composer-root] via
-      // `display:none` (see index.css). A hidden element measures 0, and
-      // writing that would collapse the footer spacer / padding-bottom that
-      // holds the last message above the floating composer — dropping the last
-      // message behind the pill with no scroll slack left to recover it (you
-      // are already at the bottom of the scroll range). Ignore non-positive
-      // measurements and keep the last good height (the same reason cleanup
-      // leaves the variable set), so the reserved space survives the hide and
-      // is already correct the instant the composer returns. Virtuoso guards
-      // its own header/footer measurement the same way (`offsetParent !== null`).
-      if (px <= 0) return
       zone.style.setProperty("--composer-height", `${px}px`)
       persistComposerHeight(px)
       // Notify on any change from the height the footer was last sized for —
