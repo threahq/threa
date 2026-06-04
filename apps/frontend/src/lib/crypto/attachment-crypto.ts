@@ -1,4 +1,12 @@
-import { bytesToBase64, generateStreamKey, sealMessage, utf8Encode } from "@threa/crypto"
+import {
+  base64ToBytes,
+  bytesToBase64,
+  generateStreamKey,
+  openMessage,
+  sealMessage,
+  STREAM_ENVELOPE_VERSION,
+  utf8Encode,
+} from "@threa/crypto"
 
 /**
  * One end-to-end-encrypted attachment, carried inside the SSK-sealed message
@@ -51,6 +59,30 @@ export async function encryptAttachmentBytes(plaintext: Uint8Array): Promise<Enc
     aad: ATTACHMENT_AAD,
   })
   return { ciphertext, key: bytesToBase64(key), iv: envelope.iv }
+}
+
+/**
+ * Decrypt the opaque S3 ciphertext of an E2E attachment back to its bytes, using
+ * the `key`/`iv` carried in the message's `attachmentRef`. Inverse of
+ * `encryptAttachmentBytes` — reconstructs the same single-key envelope (gen 0,
+ * the domain-separation AAD) and opens it. Throws if the key/iv don't match or
+ * the bytes were tampered (AES-GCM tag check).
+ */
+export async function decryptAttachmentBytes(input: {
+  ciphertext: Uint8Array
+  key: string
+  iv: string
+}): Promise<Uint8Array<ArrayBuffer>> {
+  return openMessage({
+    key: base64ToBytes(input.key),
+    envelope: {
+      v: STREAM_ENVELOPE_VERSION,
+      keyGeneration: ATTACHMENT_KEY_GENERATION,
+      iv: input.iv,
+      aad: bytesToBase64(ATTACHMENT_AAD),
+    },
+    ciphertext: input.ciphertext,
+  })
 }
 
 // In-memory bridge from upload time (where the per-attachment key/iv are

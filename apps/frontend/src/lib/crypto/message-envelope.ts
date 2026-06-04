@@ -71,6 +71,25 @@ export interface ParsedSealedPayload {
 }
 
 /**
+ * Validate one decrypted `attachmentRefs` element before it reaches the viewer.
+ * The refs are decrypted text we authored, but a malformed or mixed-version
+ * payload could carry objects missing `key`/`iv`/`filename`/etc. — those must
+ * not flow to the timeline (it would try to fetch/decrypt with `undefined`).
+ */
+function isAttachmentRef(value: unknown): value is AttachmentRef {
+  if (typeof value !== "object" || value === null) return false
+  const r = value as Record<string, unknown>
+  return (
+    typeof r.attachmentId === "string" &&
+    typeof r.key === "string" &&
+    typeof r.iv === "string" &&
+    typeof r.filename === "string" &&
+    typeof r.mimeType === "string" &&
+    typeof r.sizeBytes === "number"
+  )
+}
+
+/**
  * Inverse of `serializeSealedPayload`. A decrypted string is either the bare
  * markdown body (the legacy/no-attachment shape) or the versioned wrapper;
  * anything that doesn't parse as our wrapper is treated as raw markdown so old
@@ -82,9 +101,12 @@ export function parseSealedPayload(raw: string): ParsedSealedPayload {
       const parsed = JSON.parse(raw) as Partial<E2eSealedPayload>
       if (parsed.__e2ePayload === E2E_PAYLOAD_VERSION && typeof parsed.contentMarkdown === "string") {
         // attachmentRefs comes from decrypted text we authored, but guard the
-        // shape anyway so a malformed wrapper degrades to "no attachments"
-        // rather than handing a non-array to the timeline.
-        const attachmentRefs = Array.isArray(parsed.attachmentRefs) ? parsed.attachmentRefs : []
+        // shape anyway so a malformed wrapper degrades to "no attachments" and
+        // any malformed element is dropped, rather than handing junk to the
+        // timeline.
+        const attachmentRefs = Array.isArray(parsed.attachmentRefs)
+          ? parsed.attachmentRefs.filter(isAttachmentRef)
+          : []
         return { contentMarkdown: parsed.contentMarkdown, attachmentRefs }
       }
     } catch {
@@ -185,6 +207,12 @@ export interface DecryptMessagePayload {
 export interface DecryptedMessageContent {
   contentMarkdown: string
   contentJson: JSONContent
+  /**
+   * E2E attachments sealed in the payload. Optional so the many call sites that
+   * construct bare `{contentMarkdown, contentJson}` (and the v1 path) stay valid;
+   * the v2 decrypt always populates it, and readers default to `[]`.
+   */
+  attachmentRefs?: AttachmentRef[]
 }
 
 export interface DecryptMessageOpts {
@@ -242,10 +270,11 @@ async function tryOpenStreamMessage(
       ciphertext: base64ToBytes(payload.ciphertext),
     })
     // The decrypted bytes are either the bare markdown body or the versioned
-    // wrapper carrying attachmentRefs; strip the wrapper so callers always see
-    // the real markdown. (Surfacing the refs to the viewer lands in Slice B2.)
-    const { contentMarkdown } = parseSealedPayload(raw)
-    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown) }
+    // wrapper carrying attachmentRefs. Surface both: the markdown for the body,
+    // the refs (key/iv/filename/mime) so the viewer can fetch + decrypt the
+    // opaque S3 ciphertext on view.
+    const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
+    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown), attachmentRefs }
   } catch {
     return null
   }
@@ -264,7 +293,8 @@ async function tryDecryptFanoutMessage(
       privateKey: opts.privateKey,
       recipientKeyId: opts.recipientKeyId,
     })
-    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown) }
+    // The v1 fan-out path predates E2E attachments — no refs to surface.
+    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown), attachmentRefs: [] }
   } catch {
     return null
   }

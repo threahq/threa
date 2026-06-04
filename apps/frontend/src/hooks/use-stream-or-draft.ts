@@ -646,6 +646,15 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           keyGeneration: streamKey.keyGeneration,
           attachmentRefs,
         })
+        // Carry the refs on the optimistic payload so the server echo's
+        // decrypt-cache seed (stream-sync) can render the sender's own
+        // attachments via `<E2eAttachmentList>` immediately — otherwise the
+        // seeded "decrypted" entry suppresses the real decrypt that would
+        // surface the refs, and the row falls through to the opaque server
+        // placeholder.
+        if (attachmentRefs && attachmentRefs.length > 0) {
+          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = attachmentRefs
+        }
       }
 
       markPending(clientId)

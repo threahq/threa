@@ -12,6 +12,7 @@ import {
   type JSONContent,
 } from "@threa/types"
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
+import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import type { Socket } from "socket.io-client"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
@@ -480,10 +481,16 @@ function contentHasSharedMessage(contentJson: unknown): boolean {
 }
 
 /** Plaintext content carried by an optimistic (self-sent) event payload, if present. */
-function readPlaintextContent(payload: unknown): { contentMarkdown: string; contentJson: JSONContent } | null {
-  const p = payload as { contentMarkdown?: unknown; contentJson?: unknown } | undefined
+function readPlaintextContent(
+  payload: unknown
+): { contentMarkdown: string; contentJson: JSONContent; attachmentRefs: AttachmentRef[] } | null {
+  const p = payload as { contentMarkdown?: unknown; contentJson?: unknown; attachmentRefs?: unknown } | undefined
   if (!p || typeof p.contentMarkdown !== "string" || !p.contentJson) return null
-  return { contentMarkdown: p.contentMarkdown, contentJson: p.contentJson as JSONContent }
+  // The optimistic row carries the sealed attachmentRefs (key/iv/filename) so
+  // the seed below can render the sender's own E2E attachments without waiting
+  // for a decrypt that the seed itself would suppress.
+  const attachmentRefs = Array.isArray(p.attachmentRefs) ? (p.attachmentRefs as AttachmentRef[]) : []
+  return { contentMarkdown: p.contentMarkdown, contentJson: p.contentJson as JSONContent, attachmentRefs }
 }
 
 /** Whether a server event payload is E2E-sealed (ciphertext + envelope on the wire). */
@@ -517,7 +524,11 @@ export function registerStreamSocketHandlers(
     // the plaintext we just encrypted. Capture it so we can seed the decrypt
     // cache for the server event id below — otherwise the encrypted server event
     // would flash "decrypting" as the optimistic row is swapped for the sent row.
-    let optimisticPlaintext: { contentMarkdown: string; contentJson: JSONContent } | null = null
+    let optimisticPlaintext: {
+      contentMarkdown: string
+      contentJson: JSONContent
+      attachmentRefs: AttachmentRef[]
+    } | null = null
 
     await db.transaction("rw", [db.events, db.pendingMessages], async () => {
       // Dedupe by event ID
