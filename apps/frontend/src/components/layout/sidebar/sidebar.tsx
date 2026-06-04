@@ -411,12 +411,21 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   // Drag-and-drop drop onto a label section: tag the stream with that label.
   // A labeled stream lives under its label lens (which trumps the smart/type
-  // buckets), so first unfile it from any custom section — the custom-section
-  // trump would otherwise hide it from the very lens the drop just targeted.
+  // buckets), so once the label lands we unfile it from any custom section — the
+  // custom-section trump would otherwise hide it from the very lens the drop
+  // targeted. The unfile runs in `onSuccess` (not before `mutate`) so a failed
+  // assignment doesn't strand the stream out of the section it was filed into;
+  // `setStreamCustomSection` is a no-op when the stream isn't filed anywhere.
   const handleAssignStreamLabel = (streamId: string, labelId: string) => {
-    const unfiled = setStreamCustomSection(sidebarConfig, streamId, null)
-    if (unfiled !== sidebarConfig) setSidebarConfig(unfiled)
-    assignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
+    assignLabel.mutate(
+      { labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId },
+      {
+        onSuccess: () => {
+          const unfiled = setStreamCustomSection(sidebarConfig, streamId, null)
+          if (unfiled !== sidebarConfig) setSidebarConfig(unfiled)
+        },
+      }
+    )
   }
 
   return (
