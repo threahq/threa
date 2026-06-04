@@ -548,6 +548,7 @@ export async function startServer(): Promise<ServerInstance> {
   registerRoutes(app, {
     pool,
     io,
+    jobQueue,
     poolMonitor,
     authService,
     workspaceService,

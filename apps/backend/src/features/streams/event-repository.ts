@@ -463,6 +463,51 @@ export const StreamEventRepository = {
   },
 
   /**
+   * The most recent USER message that arrived strictly after `afterSequence`,
+   * with its id and sequence — or null if none. Used by the enclave catch-up on
+   * session completion: it dispatches a follow-up turn for the latest message a
+   * just-finished turn never saw (the enclave mirror of `checkForUnseenMessages`).
+   * USER-only, so a persona reply never re-triggers the follow-up.
+   */
+  async getLatestUnseenUserMessage(
+    db: Querier,
+    streamId: string,
+    afterSequence: bigint
+  ): Promise<{ messageId: string; authorId: string; sequence: bigint } | null> {
+    const result = await db.query<{ message_id: string; actor_id: string; sequence: string }>(sql`
+      SELECT payload->>'messageId' AS message_id, actor_id, sequence
+      FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type = 'message_created'
+        AND actor_type = 'user'
+        AND sequence > ${afterSequence.toString()}
+        AND payload->>'messageId' IS NOT NULL
+        AND actor_id IS NOT NULL
+      ORDER BY sequence DESC
+      LIMIT 1
+    `)
+    const row = result.rows[0]
+    return row ? { messageId: row.message_id, authorId: row.actor_id, sequence: BigInt(row.sequence) } : null
+  },
+
+  /**
+   * The sequence of a message's `message_created` event, or null if it has none
+   * (deleted, or never a message event). The enclave uses the trigger's sequence
+   * as the "seen up to here" boundary on completion — the enclave was given
+   * history up to its trigger and nothing after it.
+   */
+  async getMessageSequence(db: Querier, streamId: string, messageId: string): Promise<bigint | null> {
+    const result = await db.query<{ sequence: string }>(sql`
+      SELECT sequence FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type = 'message_created'
+        AND payload->>'messageId' = ${messageId}
+      LIMIT 1
+    `)
+    return result.rows[0] ? BigInt(result.rows[0].sequence) : null
+  },
+
+  /**
    * List message IDs emitted by a specific agent session.
    * Uses message_created event payload.sessionId to include messages sent before
    * session completion (when agent_sessions.sent_message_ids may still be empty).
