@@ -25,6 +25,8 @@ interface SectionHeaderProps {
    * collapse; this is a separate affordance on the right, like the "+" button.
    */
   titleHref?: string
+  /** Called when the `titleHref` link is clicked — e.g. collapse the sidebar on mobile. */
+  onTitleNavigate?: () => void
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -53,6 +55,7 @@ export function SectionHeader({
   icon,
   titleContent,
   titleHref,
+  onTitleNavigate,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -132,6 +135,7 @@ export function SectionHeader({
       {titleHref && (
         <Link
           to={titleHref}
+          onClick={onTitleNavigate}
           // Mirrors the "+" button's reveal: hover-only on desktop, always shown
           // on mobile (no hover). The wrapper above stops propagation, so opening
           // the label never also toggles the section.
@@ -239,6 +243,8 @@ interface StreamSectionProps {
   titleContent?: ReactNode
   /** Optional "open" link for the header (e.g. a label section → its landing page). */
   titleHref?: string
+  /** Click handler for the "open" link (e.g. collapse the sidebar on mobile). */
+  onTitleNavigate?: () => void
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -270,6 +276,7 @@ export function StreamSection({
   icon,
   titleContent,
   titleHref,
+  onTitleNavigate,
   items,
   allStreams,
   workspaceId,
@@ -326,6 +333,7 @@ export function StreamSection({
         icon={icon}
         titleContent={titleContent}
         titleHref={titleHref}
+        onTitleNavigate={onTitleNavigate}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -378,6 +386,7 @@ export function TieredStreamSection({
   icon,
   titleContent,
   titleHref,
+  onTitleNavigate,
   items,
   allStreams,
   workspaceId,
@@ -446,6 +455,7 @@ export function TieredStreamSection({
         icon={icon}
         titleContent={titleContent}
         titleHref={titleHref}
+        onTitleNavigate={onTitleNavigate}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}

@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core"
-import type { CollapseState } from "@/contexts"
+import { useSidebar, type CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -97,6 +97,9 @@ export function SidebarStreamList({
   // gestures (scroll, long-press) untouched by disabling drag entirely.
   const isMobile = useIsMobile()
   const streamDragEnabled = !isMobile
+  // Opening a label from its section header should close the sidebar on mobile,
+  // matching stream rows and quick links (no-op on desktop).
+  const { collapseOnMobile } = useSidebar()
   const [draggingStreamId, setDraggingStreamId] = useState<string | null>(null)
   // Distance constraint so a click still navigates the row's link — a drag only
   // begins once the pointer has moved past the threshold.
@@ -190,6 +193,7 @@ export function SidebarStreamList({
             label={headerLabel}
             titleContent={titleContent}
             titleHref={titleHref}
+            onTitleNavigate={collapseOnMobile}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}
@@ -214,6 +218,7 @@ export function SidebarStreamList({
             label={headerLabel}
             titleContent={titleContent}
             titleHref={titleHref}
+            onTitleNavigate={collapseOnMobile}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}

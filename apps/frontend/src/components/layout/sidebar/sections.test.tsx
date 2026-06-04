@@ -14,6 +14,18 @@ function renderHeader(props: Partial<Parameters<typeof SectionHeader>[0]> = {}) 
   return { onToggle }
 }
 
+describe("SectionHeader open navigation", () => {
+  it("invokes onTitleNavigate (e.g. close the sidebar on mobile) without toggling", async () => {
+    const onTitleNavigate = vi.fn()
+    const { onToggle } = renderHeader({ titleHref: "/w/ws_1/labels/label_1", onTitleNavigate })
+
+    await userEvent.click(screen.getByRole("link", { name: "Open Reading list" }))
+
+    expect(onTitleNavigate).toHaveBeenCalledTimes(1)
+    expect(onToggle).not.toHaveBeenCalled()
+  })
+})
+
 describe("SectionHeader open link", () => {
   it("renders an open link to titleHref without toggling the section", async () => {
     const { onToggle } = renderHeader({ titleHref: "/w/ws_1/labels/label_1" })
