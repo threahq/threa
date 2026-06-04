@@ -19,10 +19,14 @@ describe("setStatusSchema", () => {
   })
 
   it("accepts an ISO expiry and rejects a non-ISO one", () => {
-    expect(
-      setStatusSchema.safeParse({ emoji: "dart", text: null, expiresAt: "2026-06-04T13:00:00.000Z" }).success
-    ).toBe(true)
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    expect(setStatusSchema.safeParse({ emoji: "dart", text: null, expiresAt: soon }).success).toBe(true)
     expect(setStatusSchema.safeParse({ emoji: "dart", text: null, expiresAt: "soon" }).success).toBe(false)
+  })
+
+  it("rejects an expiry absurdly far in the future", () => {
+    const farFuture = new Date(Date.now() + 400 * 24 * 60 * 60 * 1000).toISOString()
+    expect(setStatusSchema.safeParse({ emoji: "dart", text: null, expiresAt: farFuture }).success).toBe(false)
   })
 })
 

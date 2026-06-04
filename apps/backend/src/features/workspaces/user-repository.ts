@@ -1,4 +1,4 @@
-import { WORKSPACE_USER_ROLES, type WorkspaceRoleSlug } from "@threa/types"
+import { WORKSPACE_USER_ROLES, resolveActiveStatus, type WorkspaceRoleSlug } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 import { HttpError } from "../../lib/errors"
@@ -142,6 +142,14 @@ const SELECT_FIELDS_WITH_ALIAS = `
 function mapRowToUser(row: UserRow): User {
   const role = pickMirroredRole(row.mirror_role_slugs, row.role)
   assertWorkspaceRoleSlug(role, row.id)
+  // Mask expired/empty statuses at the read boundary so the wire contract (and
+  // every broadcast) never carries a stale status — the owner's session also
+  // clears it authoritatively, but this keeps fresh reads honest regardless.
+  const status = resolveActiveStatus({
+    statusEmoji: row.status_emoji,
+    statusText: row.status_text,
+    statusExpiresAt: row.status_expires_at ? row.status_expires_at.toISOString() : null,
+  })
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -157,9 +165,9 @@ function mapRowToUser(row: UserRow): User {
     pronouns: row.pronouns,
     phone: row.phone,
     githubUsername: row.github_username,
-    statusEmoji: row.status_emoji,
-    statusText: row.status_text,
-    statusExpiresAt: row.status_expires_at,
+    statusEmoji: status?.emoji ?? null,
+    statusText: status?.text ?? null,
+    statusExpiresAt: status ? row.status_expires_at : null,
     setupCompleted: row.setup_completed,
     joinedAt: row.joined_at,
   }

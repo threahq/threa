@@ -24,6 +24,7 @@ import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
 import { StatusPicker } from "@/components/status/status-picker"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
@@ -197,6 +198,10 @@ export function SidebarFooter({
     setDrawerOpen(false)
     setStatusOpen(true)
   }, [collapseOnMobile])
+
+  // The owner's session clears its own status when it lapses, broadcasting the
+  // clear to every viewer (render-time masking only hides it locally).
+  useStatusAutoExpiry(workspaceId, currentUser)
 
   // Every stream flavor reachable from one always-visible control: the scratchpad
   // creators (Scratchpad / Quick Note / Encrypted) plus channels.

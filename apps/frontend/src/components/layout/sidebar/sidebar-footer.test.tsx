@@ -8,6 +8,7 @@ import { SidebarFooter } from "./sidebar-footer"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as drawerModule from "@/components/ui/drawer"
 
 const logout = vi.fn()
@@ -46,6 +47,12 @@ describe("SidebarFooter", () => {
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobile.value)
+
+    // The footer mounts useStatusAutoExpiry, which resolves the status-clear
+    // mutation through the services context the unit harness doesn't provide.
+    vi.spyOn(useWorkspacesModule, "useClearStatus").mockReturnValue({
+      mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useWorkspacesModule.useClearStatus>)
 
     spyOnExport(drawerModule, "Drawer").mockReturnValue((({
       open,

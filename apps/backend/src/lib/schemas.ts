@@ -99,6 +99,14 @@ export const statusPresetSchema = z
 
 export const statusPresetsSchema = z.array(statusPresetSchema).max(MAX_STATUS_PRESETS)
 
+// Upper bound on how far out a status may be set to expire. The server owns the
+// persisted active status (it broadcasts to the whole workspace), so it bounds
+// the absolute instant a client can send rather than trusting it blindly — the
+// duration presets already cap relative durations at a week, but the custom
+// date/time path produces an arbitrary instant. A past instant is allowed and
+// simply reads as already-cleared (mapRowToUser masks it).
+const MAX_STATUS_EXPIRY_MS = 366 * 24 * 60 * 60 * 1000
+
 // Setting an active status: at least one of emoji/text, and an optional
 // absolute expiry the client resolves from its chosen duration. Clearing a
 // status goes through DELETE, so this path always carries content.
@@ -113,3 +121,7 @@ export const setStatusSchema = z
     expiresAt: z.string().datetime().nullable(),
   })
   .refine((s) => isStatusContentful(s), { message: "A status needs an emoji or text" })
+  .refine((s) => !s.expiresAt || new Date(s.expiresAt).getTime() <= Date.now() + MAX_STATUS_EXPIRY_MS, {
+    message: "Status expiry is too far in the future",
+    path: ["expiresAt"],
+  })
