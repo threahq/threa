@@ -54,13 +54,15 @@ describe("SYSTEM_DEFAULT_STATUSES", () => {
       "Focus mode",
       "Out and about",
       "Out of office",
+      "Sick",
       "Do not disturb",
-      "Parental leave",
+      "VAB",
     ])
-    const focus = SYSTEM_DEFAULT_STATUSES[0]
-    expect(focus.defaultDuration).toEqual({ kind: "duration", minutes: 60 })
-    const ooo = SYSTEM_DEFAULT_STATUSES[2]
-    expect(ooo.defaultDuration).toEqual({ kind: "calendar", calendar: "tomorrow-start" })
-    expect(SYSTEM_DEFAULT_STATUSES[3].defaultDuration).toBeNull()
+    const byId = (id: string) => SYSTEM_DEFAULT_STATUSES.find((p) => p.id === id)
+    expect(byId("focus")?.defaultDuration).toEqual({ kind: "duration", minutes: 60 })
+    expect(byId("out-of-office")?.defaultDuration).toEqual({ kind: "calendar", calendar: "tomorrow-start" })
+    expect(byId("sick")?.defaultDuration).toEqual({ kind: "calendar", calendar: "next-working-day-start" })
+    expect(byId("do-not-disturb")?.defaultDuration).toBeNull()
+    expect(byId("vab")?.defaultDuration).toBeNull()
   })
 })

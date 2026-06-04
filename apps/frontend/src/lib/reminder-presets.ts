@@ -16,6 +16,7 @@ import {
   DEFAULT_WORK_SCHEDULE,
   startOfWorkForDay,
   firstWorkingWeekday,
+  isWorkingDay,
 } from "@threa/types"
 
 /**
@@ -130,6 +131,20 @@ function tomorrowStart(now: Date, timezone: string, schedule: WorkSchedule): Dat
   return startOfWorkInstant(timezone, schedule, shiftCalendarDay(calendarInZone(now, timezone), 1))
 }
 
+/**
+ * Start of the next *working* day — like "tomorrow" but skipping non-working
+ * days, so a status set on Friday under a Mon–Fri schedule clears Monday, not
+ * Saturday. Caps the walk at a week so an all-off schedule still resolves
+ * instead of looping.
+ */
+function nextWorkingDayStart(now: Date, timezone: string, schedule: WorkSchedule): Date {
+  let day = shiftCalendarDay(calendarInZone(now, timezone), 1)
+  for (let i = 0; i < 7 && !isWorkingDay(schedule, day.weekday as Weekday); i++) {
+    day = shiftCalendarDay(day, 1)
+  }
+  return startOfWorkInstant(timezone, schedule, day)
+}
+
 export function computeRemindAt(
   preset: StatusDuration,
   now: Date,
@@ -140,8 +155,8 @@ export function computeRemindAt(
     case "duration":
       return new Date(now.getTime() + preset.minutes * 60_000)
     case "calendar":
-      return preset.calendar === "tomorrow-start"
-        ? tomorrowStart(now, timezone, schedule)
-        : nextWeekStart(now, timezone, schedule)
+      if (preset.calendar === "tomorrow-start") return tomorrowStart(now, timezone, schedule)
+      if (preset.calendar === "next-working-day-start") return nextWorkingDayStart(now, timezone, schedule)
+      return nextWeekStart(now, timezone, schedule)
   }
 }

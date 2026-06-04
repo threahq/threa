@@ -30,6 +30,29 @@ describe("statusDurationToExpiry", () => {
     )
     expect(expiry).toBe(new Date("2026-06-05T09:00:00Z").toISOString())
   })
+
+  it("next-working-day-start matches tomorrow on a weekday", () => {
+    // Thursday → Friday (a working day) under the default Mon–Fri schedule.
+    const expiry = statusDurationToExpiry(
+      { kind: "calendar", calendar: "next-working-day-start" },
+      "UTC",
+      DEFAULT_WORK_SCHEDULE,
+      now
+    )
+    expect(expiry).toBe(new Date("2026-06-05T09:00:00Z").toISOString())
+  })
+
+  it("next-working-day-start skips the weekend", () => {
+    // 2026-06-05 is a Friday; the next working day is Monday 2026-06-08.
+    const friday = new Date("2026-06-05T12:00:00Z")
+    const expiry = statusDurationToExpiry(
+      { kind: "calendar", calendar: "next-working-day-start" },
+      "UTC",
+      DEFAULT_WORK_SCHEDULE,
+      friday
+    )
+    expect(expiry).toBe(new Date("2026-06-08T09:00:00Z").toISOString())
+  })
 })
 
 describe("durationsEqual", () => {

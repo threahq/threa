@@ -82,7 +82,10 @@ export const statusDurationSchema = z.discriminatedUnion("kind", [
       .positive()
       .max(7 * 24 * 60),
   }),
-  z.object({ kind: z.literal("calendar"), calendar: z.enum(["tomorrow-start", "next-week-start"]) }),
+  z.object({
+    kind: z.literal("calendar"),
+    calendar: z.enum(["tomorrow-start", "next-week-start", "next-working-day-start"]),
+  }),
 ])
 
 const statusEmojiSchema = z.string().min(1).max(64).nullable()

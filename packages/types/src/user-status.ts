@@ -25,7 +25,7 @@
  */
 export type StatusDuration =
   | { kind: "duration"; minutes: number }
-  | { kind: "calendar"; calendar: "tomorrow-start" | "next-week-start" }
+  | { kind: "calendar"; calendar: "tomorrow-start" | "next-week-start" | "next-working-day-start" }
 
 /**
  * A selectable status template. At least one of `emoji`/`text` must be set —
@@ -96,8 +96,14 @@ export const SYSTEM_DEFAULT_STATUSES: StatusPreset[] = [
     text: "Out of office",
     defaultDuration: { kind: "calendar", calendar: "tomorrow-start" },
   },
+  {
+    id: "sick",
+    emoji: "face_with_thermometer",
+    text: "Sick",
+    defaultDuration: { kind: "calendar", calendar: "next-working-day-start" },
+  },
   { id: "do-not-disturb", emoji: "no_bell", text: "Do not disturb", defaultDuration: null },
-  { id: "parental-leave", emoji: "baby_bottle", text: "Parental leave", defaultDuration: null },
+  { id: "vab", emoji: "teddy_bear", text: "VAB", defaultDuration: null },
 ]
 
 /** Bounds for status text length, shared by client validation and Zod schemas. */

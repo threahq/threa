@@ -19,6 +19,11 @@ export const STATUS_DURATION_OPTIONS: StatusDurationOption[] = [
   { id: "1h", label: "1 hour", duration: { kind: "duration", minutes: 60 } },
   { id: "4h", label: "4 hours", duration: { kind: "duration", minutes: 240 } },
   { id: "tomorrow", label: "Until tomorrow", duration: { kind: "calendar", calendar: "tomorrow-start" } },
+  {
+    id: "next-workday",
+    label: "Until next workday",
+    duration: { kind: "calendar", calendar: "next-working-day-start" },
+  },
   { id: "week", label: "This week", duration: { kind: "calendar", calendar: "next-week-start" } },
   { id: "never", label: "Don't clear", duration: null },
 ]
