@@ -176,6 +176,8 @@ export function SidebarStreamList({
         const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
         if (section.spec.kind === "label" && !label) return null
         const titleContent = label ? <LabelChip label={label} /> : undefined
+        // Label sections get an "open" affordance to their landing page.
+        const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
         const headerLabel = label ? label.name : presentation.label
 
         const state = getSectionState(section.id, presentation.defaultCollapse)
@@ -187,6 +189,7 @@ export function SidebarStreamList({
             sectionKey={section.id}
             label={headerLabel}
             titleContent={titleContent}
+            titleHref={titleHref}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}
@@ -210,6 +213,7 @@ export function SidebarStreamList({
           <StreamSection
             label={headerLabel}
             titleContent={titleContent}
+            titleHref={titleHref}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}
