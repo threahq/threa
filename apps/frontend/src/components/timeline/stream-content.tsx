@@ -130,6 +130,47 @@ export function classifyDeepLinkScrollTick(args: {
   return "active"
 }
 
+/**
+ * Window (ms) within which a wheel/touch/keydown stamp counts as "the user is
+ * actively scrolling right now". Virtuoso crosses `atBottomThreshold` at the
+ * *onset* of a scroll — right after the gesture — so the freshest stamp marks a
+ * genuine scroll-away; content that grows under a stationary reader crosses it
+ * with no recent gesture. Sized to absorb the small latency between the gesture
+ * and Virtuoso's throttled atBottom callback, not the (much longer) momentum tail
+ * — by the time momentum is coasting, the false transition has already fired.
+ */
+export const TAIL_FOLLOW_USER_SCROLL_WINDOW_MS = 300
+
+/**
+ * Decide what to do when Virtuoso reports an `atBottomStateChange` for the live
+ * (non-jump) timeline.
+ *
+ *  - `repin`      a row grew under a reader parked at the tail — most often an
+ *                 async embed / image in the last message finishing load over
+ *                 the next few seconds, which grows the row past
+ *                 `atBottomThreshold`. Virtuoso reports atBottom=false, and the
+ *                 default handling would disable followOutput and strand the
+ *                 last message behind the floating composer until the next
+ *                 message or manual scroll. Re-pin to the tail and keep
+ *                 following instead.
+ *  - `propagate`  forward to the scroll hook unchanged: atBottom=true (settled
+ *                 at the tail) or a genuine user scroll-away (fresh gesture
+ *                 stamp) that must disable follow so we never yank the reader
+ *                 back down.
+ *
+ * `nowMs` / `userInteractedAtMs` are `performance.now()` readings.
+ */
+export function classifyTailFollowOnAtBottomChange(args: {
+  atBottom: boolean
+  isJumpMode: boolean
+  nowMs: number
+  userInteractedAtMs: number
+}): "repin" | "propagate" {
+  if (args.atBottom || args.isJumpMode) return "propagate"
+  const userDriven = args.nowMs - args.userInteractedAtMs < TAIL_FOLLOW_USER_SCROLL_WINDOW_MS
+  return userDriven ? "propagate" : "repin"
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -1801,6 +1842,23 @@ function VirtuosoMessageList({
   const wrappedHandleAtBottomChange = useCallback(
     (atBottom: boolean) => {
       if (visibleItems.length > 0) hasRangeSettledRef.current = true
+      // Tell a genuine scroll-away apart from a row growing under a stationary
+      // reader at the live tail (an async embed/image in the last message
+      // finishing load, which grows it past atBottomThreshold over a few
+      // seconds). Both surface as atBottom=false, but only the user-driven one
+      // should disable follow; the content-driven one must re-pin so the last
+      // message doesn't sit stranded behind the floating composer. See
+      // classifyTailFollowOnAtBottomChange.
+      const decision = classifyTailFollowOnAtBottomChange({
+        atBottom,
+        isJumpMode,
+        nowMs: performance.now(),
+        userInteractedAtMs: userInteractedAtRef.current,
+      })
+      if (decision === "repin") {
+        virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" })
+        return
+      }
       // In jump mode the user is reading a deep-linked / searched history
       // window. Prepend/append reflow and size measurement make Virtuoso
       // transiently report atBottom; letting that arm followOutput (and the
@@ -1810,7 +1868,7 @@ function VirtuosoMessageList({
       // still propagates so a real scroll-away keeps follow disabled.
       handleAtBottomChange(isJumpMode ? false : atBottom)
     },
-    [handleAtBottomChange, visibleItems.length, isJumpMode]
+    [handleAtBottomChange, visibleItems.length, isJumpMode, userInteractedAtRef, virtuosoRef]
   )
 
   const wrappedHandleRangeChanged = useCallback(
