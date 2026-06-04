@@ -40,16 +40,6 @@ interface UseVirtuosoScrollReturn {
   scrollToBottom: (options?: { behavior?: "auto" | "smooth"; force?: boolean }) => void
   /** Disable auto-scroll (e.g. when navigating to a specific message via jump mode) */
   disableAutoScroll: () => void
-  /**
-   * Re-anchor to the tail when the floating composer's reserved space changes.
-   * Wire this to `MessageInput`'s `onComposerHeightChange`: the footer spacer
-   * that keeps the last message above the composer is sized from
-   * `--composer-height`, but Virtuoso freezes its scrollTop when that spacer
-   * grows, so a composer that settles to a taller height a few frames after a
-   * message arrives covers the bottom of the last message. See the
-   * implementation for why the trailing-edge `isAtBottom` read is unreliable.
-   */
-  handleReservedSpaceChange: (px: number, opts: { initial: boolean }) => void
   /** Called by Virtuoso's atBottomStateChange */
   handleAtBottomChange: (atBottom: boolean) => void
   /** Called by Virtuoso's rangeChanged to track distance from bottom */
@@ -208,56 +198,6 @@ export function useVirtuosoScroll({
     setShouldFollowOutput(false)
   }, [])
 
-  // Re-anchor to the tail when the floating composer reserves a new amount of
-  // space below the timeline. The composer publishes its measured height as
-  // `--composer-height`, which sizes the ComposerFooterSpacer; scrollToIndex
-  // LAST and followOutput both land the last message above that spacer. But
-  // when the composer *grows* after the message is already positioned (its
-  // 200ms height transition, an async encryption notice, attachment chips
-  // settling), Virtuoso freezes scrollTop while the spacer grows under it,
-  // leaving the last message covered by the composer until the next reload.
-  //
-  // We cannot re-anchor by reading isAtBottomRef on the trailing edge of the
-  // resize: the spacer growth itself pushes the viewport off the bottom by more
-  // than atBottomThreshold, so atBottomStateChange flips isAtBottomRef false
-  // before the debounce fires and scrollToBottom's self-guard bails — the exact
-  // failure this re-anchor exists to fix. Instead we snapshot whether the user
-  // was glued to the tail on the LEADING edge of the resize burst (before the
-  // growth flips the state) and force the re-scroll only when they were. A user
-  // scrolled up reading history snapshots false and is left where they are.
-  const reservedSpaceBurstRef = useRef(false)
-  const reservedSpaceWasAtBottomRef = useRef(false)
-  const reservedSpaceTimerRef = useRef<number | undefined>(undefined)
-  // Held in a ref so the handler identity stays stable: scrollToBottom is
-  // rebuilt on every itemCount change, and a changing handler prop would
-  // re-render the memoized MessageInput on every new message.
-  const scrollToBottomRef = useRef(scrollToBottom)
-  scrollToBottomRef.current = scrollToBottom
-
-  const handleReservedSpaceChange = useCallback((_px: number, opts: { initial: boolean }) => {
-    if (opts.initial) {
-      // First composer measurement, fired pre-paint from a layout effect: the
-      // list already scrolled to LAST against the approximate persisted footer
-      // height, so correct it synchronously now that the real composer is
-      // measured. isAtBottomRef still holds the mount default here (true for the
-      // live tail, false for a deep-link jump), so the self-guarded scroll is
-      // correct — no force, so a deep-link landing is never yanked to the tail.
-      scrollToBottomRef.current()
-      return
-    }
-    if (!reservedSpaceBurstRef.current) {
-      reservedSpaceBurstRef.current = true
-      reservedSpaceWasAtBottomRef.current = isAtBottomRef.current
-    }
-    window.clearTimeout(reservedSpaceTimerRef.current)
-    reservedSpaceTimerRef.current = window.setTimeout(() => {
-      reservedSpaceBurstRef.current = false
-      if (reservedSpaceWasAtBottomRef.current) scrollToBottomRef.current({ force: true })
-    }, 120)
-  }, [])
-
-  useEffect(() => () => window.clearTimeout(reservedSpaceTimerRef.current), [])
-
   const handleAtBottomChange = useCallback(
     (atBottom: boolean) => {
       // Ignore atBottomStateChange while the list is empty — Virtuoso reports
@@ -381,7 +321,6 @@ export function useVirtuosoScroll({
     shouldFollowOutput: resetKeyChanged ? !skipInitialScroll : shouldFollowOutput,
     scrollToBottom,
     disableAutoScroll,
-    handleReservedSpaceChange,
     handleAtBottomChange,
     handleRangeChanged,
     handleScrollerRef,
