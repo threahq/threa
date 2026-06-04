@@ -2,6 +2,7 @@ import type { AuthorType } from "@threa/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useActors } from "@/hooks"
+import { formatStatusClearLabel } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
 type ActorAvatarSize = "xs" | "sm" | "md" | "lg"
@@ -94,8 +95,11 @@ export function ActorAvatar({
   // (INV-21). The wrapper is `inline-flex` with no extra box, matching the
   // avatar's footprint.
   if (!statusEmoji) return avatar
+  const statusTitle = [info.status?.text, formatStatusClearLabel(info.status?.expiresAt ?? null)]
+    .filter(Boolean)
+    .join(" · ")
   return (
-    <span className="relative inline-flex shrink-0" title={info.status?.text ?? undefined}>
+    <span className="relative inline-flex shrink-0" title={statusTitle || undefined}>
       {avatar}
       <span
         aria-hidden

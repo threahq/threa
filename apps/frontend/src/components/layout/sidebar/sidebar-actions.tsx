@@ -20,6 +20,10 @@ export interface SidebarActionItem {
   id: string
   label: string
   icon: LucideIcon
+  /** Emoji glyph rendered in place of `icon` (e.g. the user's current status). */
+  emoji?: string | null
+  /** Optional muted second line under the label (e.g. "Clears in 2 hours"). */
+  description?: string | null
   href?: string
   onSelect?: () => void | Promise<void>
   variant?: "default" | "destructive"
@@ -58,8 +62,24 @@ function SidebarActionContent({ action, iconClassName }: { action: SidebarAction
 
   return (
     <>
-      <Icon className={iconClassName} />
-      <span>{action.label}</span>
+      {action.emoji ? (
+        <span
+          className={cn(iconClassName, "inline-flex items-center justify-center text-base leading-none")}
+          aria-hidden
+        >
+          {action.emoji}
+        </span>
+      ) : (
+        <Icon className={iconClassName} />
+      )}
+      {action.description ? (
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate">{action.label}</span>
+          <span className="truncate text-xs font-normal text-muted-foreground">{action.description}</span>
+        </span>
+      ) : (
+        <span>{action.label}</span>
+      )}
     </>
   )
 }

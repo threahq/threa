@@ -254,7 +254,11 @@ describe("useActors", () => {
       const { result } = renderHook(() => useActors(workspaceId), {
         wrapper: createTestWrapper(queryClient),
       })
-      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({ emoji: "🧵", text: "Focusing" })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({
+        emoji: "🧵",
+        text: "Focusing",
+        expiresAt: null,
+      })
     })
 
     it("returns a text-only status with a null glyph", () => {
@@ -263,7 +267,27 @@ describe("useActors", () => {
       const { result } = renderHook(() => useActors(workspaceId), {
         wrapper: createTestWrapper(queryClient),
       })
-      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({ emoji: null, text: "Heads down" })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({
+        emoji: null,
+        text: "Heads down",
+        expiresAt: null,
+      })
+    })
+
+    it("carries a future expiry through", () => {
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      mockUsers = [
+        createMember({ id: "mem_123", statusEmoji: ":thread:", statusText: "Focus", statusExpiresAt: future }),
+      ]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({
+        emoji: "🧵",
+        text: "Focus",
+        expiresAt: future,
+      })
     })
 
     it("masks an expired status", () => {

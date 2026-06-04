@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils"
 import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
+import { formatStatusClearLabel } from "@/lib/status"
 import { StatusPicker } from "@/components/status/status-picker"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
@@ -32,6 +33,7 @@ import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "
 interface FooterStatus {
   glyph: string | null
   text: string | null
+  expiresAt: string | null
 }
 
 interface SidebarFooterProps {
@@ -190,7 +192,7 @@ export function SidebarFooter({
       statusExpiresAt: currentUser.statusExpiresAt ?? null,
     })
     if (!active) return null
-    return { glyph: active.emoji ? toEmoji(active.emoji) : null, text: active.text }
+    return { glyph: active.emoji ? toEmoji(active.emoji) : null, text: active.text, expiresAt: active.expiresAt }
   }, [currentUser, toEmoji])
 
   const openStatus = useCallback(() => {
@@ -283,7 +285,9 @@ export function SidebarFooter({
     () => [
       {
         id: "status",
-        label: status?.text || status?.glyph ? "Update your status" : "Set a status",
+        label: status ? status.text || "Update your status" : "Set a status",
+        emoji: status?.glyph ?? undefined,
+        description: status ? formatStatusClearLabel(status.expiresAt) : undefined,
         icon: Smile,
         onSelect: openStatus,
       },

@@ -9,6 +9,8 @@ export interface ActorStatus {
   /** Emoji glyph for the avatar badge, or null when the status has only text. */
   emoji: string | null
   text: string | null
+  /** ISO instant the status auto-clears at, or null for indefinite. */
+  expiresAt: string | null
 }
 
 interface ActorAvatarInfo {
@@ -166,6 +168,7 @@ function resolveUserStatus(
   return {
     emoji: active.emoji ? toEmoji(active.emoji) : null,
     text: active.text,
+    expiresAt: active.expiresAt,
   }
 }
 

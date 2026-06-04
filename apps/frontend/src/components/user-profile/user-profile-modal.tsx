@@ -18,6 +18,7 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
 import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { getInitials } from "@/lib/initials"
+import { formatStatusClearLabel } from "@/lib/status"
 
 function getRoleBadge(role: User["role"]) {
   switch (role) {
@@ -80,10 +81,15 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
               <h2 className="text-xl font-semibold">{user.name}</h2>
               {user.pronouns && <p className="text-sm text-muted-foreground">{user.pronouns}</p>}
               {activeStatus && (statusGlyph || activeStatus.text) && (
-                <p className="mt-1 flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
-                  {statusGlyph && <span className="leading-none">{statusGlyph}</span>}
-                  {activeStatus.text && <span>{activeStatus.text}</span>}
-                </p>
+                <>
+                  <p className="mt-1 flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
+                    {statusGlyph && <span className="leading-none">{statusGlyph}</span>}
+                    {activeStatus.text && <span>{activeStatus.text}</span>}
+                  </p>
+                  {formatStatusClearLabel(activeStatus.expiresAt) && (
+                    <p className="text-xs text-muted-foreground/70">{formatStatusClearLabel(activeStatus.expiresAt)}</p>
+                  )}
+                </>
               )}
               <div className="mt-1">{getRoleBadge(user.role)}</div>
             </div>
