@@ -239,9 +239,12 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const draftComposerRef = useRef<HTMLDivElement>(null)
   useComposerHeightPublish(draftComposerRef, { active: !draftExpanded })
 
-  // Reset expand state when panel changes
+  // Reset transient panel-local UI when the panel switches to another stream —
+  // otherwise an open label picker would retarget to the new stream and apply
+  // labels to the wrong one.
   useEffect(() => {
     setDraftExpanded(false)
+    setLabelPickerOpen(false)
   }, [panelId])
 
   // Collapse expanded overlay when viewport crosses to mobile (expand is desktop-only)
@@ -572,7 +575,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
           </StreamErrorBoundary>
         )}
       </SidePanelContent>
-      {!isDraft && stream && panelId && (
+      {!isDraft && stream && !stream.archivedAt && panelId && (
         <LabelPicker
           workspaceId={workspaceId}
           resourceType={LabelableResourceTypes.STREAM}

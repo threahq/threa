@@ -110,10 +110,9 @@ describe("LabelDetailPage", () => {
     renderPage()
 
     expect(screen.getByRole("heading", { name: "Reading list", level: 2 })).toBeInTheDocument()
+    // Exact href order so a sort-order regression fails the test (not just presence).
     const links = screen.getAllByRole("link", { name: /note/ })
-    expect(links.map((l) => l.textContent)).toEqual(
-      expect.arrayContaining([expect.stringContaining("Newer note"), expect.stringContaining("Older note")])
-    )
+    expect(links.map((l) => l.getAttribute("href"))).toEqual([`/w/${WS}/s/stream_new`, `/w/${WS}/s/stream_old`])
     // Stream count is summarized in the hero meta.
     expect(screen.getByText("2 streams")).toBeInTheDocument()
   })
