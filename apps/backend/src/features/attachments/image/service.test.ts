@@ -88,6 +88,75 @@ describe("ImageThumbnailService.generateThumbnail", () => {
     })
   })
 
+  async function buildAnimatedGif(frames: number, delayMs: number, width = 1600, height = 800): Promise<Buffer> {
+    const frameBuffers: Buffer[] = []
+    for (let i = 0; i < frames; i++) {
+      const shade = (i * 37) % 256
+      frameBuffers.push(
+        await sharp({ create: { width, height, channels: 3, background: { r: shade, g: shade, b: 255 - shade } } })
+          .png()
+          .toBuffer()
+      )
+    }
+    return sharp(frameBuffers, { join: { animated: true } })
+      .gif({ delay: Array(frames).fill(delayMs), loop: 0 })
+      .toBuffer()
+  }
+
+  it("keeps an animated GIF animated, resizing it to a webp thumbnail", async () => {
+    // 6 frames at 100ms = 10fps, already under the 15fps cap → every frame kept.
+    const gif = await buildAnimatedGif(6, 100)
+
+    spyOn(AttachmentRepository, "findById").mockResolvedValue(
+      buildAttachment({ mimeType: "image/gif", filename: "loop.gif" })
+    )
+    const updateSpy = spyOn(AttachmentRepository, "updateImageVariant").mockResolvedValue(true)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, cb: (c: any) => Promise<any>) =>
+      cb({})) as any)
+
+    const { service, storage } = createService(gif)
+
+    await service.generateThumbnail("attach_1")
+
+    const [key, body, contentType] = storage.putObject.mock.calls[0]
+    expect(key).toBe("ws_1/attach_1/thumbnail.webp")
+    expect(contentType).toBe("image/webp")
+    const meta = await sharp(body, { animated: true }).metadata()
+    expect(meta.format).toBe("webp")
+    expect(meta.pages).toBe(6)
+    expect(Math.max(meta.width ?? 0, meta.pageHeight ?? 0)).toBeLessThanOrEqual(640)
+    expect(updateSpy).toHaveBeenCalledWith(expect.anything(), "attach_1", {
+      thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
+      width: 1600,
+      height: 800,
+    })
+  })
+
+  it("caps a high-framerate GIF, dropping frames while staying animated", async () => {
+    // 12 frames at 25ms = 40fps → downsampled below the 15fps cap.
+    const gif = await buildAnimatedGif(12, 25)
+
+    spyOn(AttachmentRepository, "findById").mockResolvedValue(
+      buildAttachment({ mimeType: "image/gif", filename: "fast.gif" })
+    )
+    spyOn(AttachmentRepository, "updateImageVariant").mockResolvedValue(true)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, cb: (c: any) => Promise<any>) =>
+      cb({})) as any)
+
+    const { service, storage } = createService(gif)
+
+    await service.generateThumbnail("attach_1")
+
+    const body = storage.putObject.mock.calls[0][1] as Buffer
+    const meta = await sharp(body, { animated: true }).metadata()
+    expect(meta.format).toBe("webp")
+    // Still animated, but with fewer frames than the 40fps source.
+    expect(meta.pages ?? 1).toBeGreaterThan(1)
+    expect(meta.pages ?? 1).toBeLessThan(12)
+  })
+
   it("swaps width/height for EXIF orientations that rotate 90°", async () => {
     const rotated = await sharp({
       create: { width: 1200, height: 600, channels: 3, background: { r: 1, g: 2, b: 3 } },
