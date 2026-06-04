@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { planGifThumbnailFrames } from "./config"
+import { IMAGE_THUMBNAIL_GIF_MAX_FPS, planGifThumbnailFrames } from "./config"
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
 
@@ -31,11 +31,12 @@ describe("planGifThumbnailFrames", () => {
     expect(plan.delays).toEqual([100, 100, 100, 100])
   })
 
-  it("respects a custom max framerate", () => {
-    const raw = Array(10).fill(100) // 10fps
-    const slow = planGifThumbnailFrames(raw, 10, 5) // cap at 5fps → 200ms interval
-    expect(slow.dropped).toBe(true)
-    expect(slow.keep.length).toBeLessThan(10)
-    expect(sum(slow.delays)).toBe(sum(raw))
+  it("caps the effective frame rate at the configured maximum", () => {
+    const raw = Array(20).fill(20) // 50fps, well above the cap
+    const plan = planGifThumbnailFrames(raw, 20)
+    expect(plan.dropped).toBe(true)
+    const minInterval = Math.round(1000 / IMAGE_THUMBNAIL_GIF_MAX_FPS)
+    for (const d of plan.delays) expect(d).toBeGreaterThanOrEqual(minInterval)
+    expect(sum(plan.delays)).toBe(sum(raw))
   })
 })

@@ -45,12 +45,8 @@ export interface GifFramePlan {
  * animation duration is preserved exactly. A source already under the cap keeps
  * every frame (`dropped: false`).
  */
-export function planGifThumbnailFrames(
-  rawDelays: readonly number[],
-  pages: number,
-  maxFps: number = IMAGE_THUMBNAIL_GIF_MAX_FPS
-): GifFramePlan {
-  const minInterval = Math.round(1000 / maxFps)
+export function planGifThumbnailFrames(rawDelays: readonly number[], pages: number): GifFramePlan {
+  const minInterval = Math.round(1000 / IMAGE_THUMBNAIL_GIF_MAX_FPS)
 
   const delays: number[] = []
   for (let i = 0; i < pages; i++) {
