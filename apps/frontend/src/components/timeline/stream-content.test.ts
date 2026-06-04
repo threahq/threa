@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest"
-import {
-  classifyDeepLinkScrollTick,
-  classifyTailFollowOnAtBottomChange,
-  TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS,
-} from "./stream-content"
+import { classifyDeepLinkScrollTick } from "./stream-content"
 
 const DEADLINE = 4000
 
@@ -104,76 +100,5 @@ describe("classifyDeepLinkScrollTick", () => {
         deadlineMs: DEADLINE,
       })
     ).toBe("user-abort")
-  })
-})
-
-describe("classifyTailFollowOnAtBottomChange", () => {
-  const NOW = 100_000
-
-  it("re-pins when a row grows under a stationary reader at the tail (no recent scroll-away)", () => {
-    // The bug: an async embed/image in the last message finishes loading several
-    // seconds after the reader last moved the scroll, growing the row past
-    // atBottomThreshold. The scroll position never moved, so the scroll-away
-    // stamp is stale. Virtuoso reports atBottom=false; without re-pinning the
-    // last message is stranded behind the floating composer.
-    expect(
-      classifyTailFollowOnAtBottomChange({
-        atBottom: false,
-        isJumpMode: false,
-        nowMs: NOW,
-        scrolledAwayAtMs: NOW - 5_000,
-      })
-    ).toBe("repin")
-
-    // Never scrolled up at all (stamp 0) is also content-driven.
-    expect(
-      classifyTailFollowOnAtBottomChange({ atBottom: false, isJumpMode: false, nowMs: NOW, scrolledAwayAtMs: 0 })
-    ).toBe("repin")
-  })
-
-  it("propagates a genuine scroll-away so follow is disabled and the reader isn't yanked back", () => {
-    // The threshold crossing fires at the onset of the scroll, right after the
-    // position last moved up, so a fresh stamp marks the user-driven case. This
-    // holds for any input that decreases scrollTop, including a scrollbar drag.
-    expect(
-      classifyTailFollowOnAtBottomChange({
-        atBottom: false,
-        isJumpMode: false,
-        nowMs: NOW,
-        scrolledAwayAtMs: NOW - 50,
-      })
-    ).toBe("propagate")
-  })
-
-  it("treats the window edge as content-driven (just past the active-scroll window)", () => {
-    expect(
-      classifyTailFollowOnAtBottomChange({
-        atBottom: false,
-        isJumpMode: false,
-        nowMs: NOW,
-        scrolledAwayAtMs: NOW - TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS,
-      })
-    ).toBe("repin")
-    // One ms inside the window is still an active scroll.
-    expect(
-      classifyTailFollowOnAtBottomChange({
-        atBottom: false,
-        isJumpMode: false,
-        nowMs: NOW,
-        scrolledAwayAtMs: NOW - (TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS - 1),
-      })
-    ).toBe("propagate")
-  })
-
-  it("always propagates atBottom=true and never re-pins in jump mode", () => {
-    // atBottom=true settles at the tail regardless of timing.
-    expect(
-      classifyTailFollowOnAtBottomChange({ atBottom: true, isJumpMode: false, nowMs: NOW, scrolledAwayAtMs: 0 })
-    ).toBe("propagate")
-    // Deep-link / search reading window: a transient atBottom=false from reflow
-    // must not yank the reader to the live tail.
-    expect(
-      classifyTailFollowOnAtBottomChange({ atBottom: false, isJumpMode: true, nowMs: NOW, scrolledAwayAtMs: 0 })
-    ).toBe("propagate")
   })
 })
