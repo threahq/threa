@@ -104,16 +104,21 @@ describe("Push Notifications", () => {
       const first = await PushSubscriptionRepository.insert(pool, params)
       expect(first.updatedAt).toBeInstanceOf(Date)
 
-      // Backdate so we can prove the re-register moves it forward.
-      await pool.query(`UPDATE push_subscriptions SET updated_at = now() - interval '40 days' WHERE id = $1`, [
-        first.id,
-      ])
+      // Backdate so we can prove the re-register moves it forward. Capture the
+      // backdated DB timestamp and assert against *that* — comparing against the
+      // original insert (also a near-now() value) races on the millisecond when
+      // both inserts land in the same ms, which getTime() then reports as equal.
+      const backdated = await pool.query<{ updated_at: Date }>(
+        `UPDATE push_subscriptions SET updated_at = now() - interval '40 days' WHERE id = $1 RETURNING updated_at`,
+        [first.id]
+      )
+      const backdatedAt = backdated.rows[0].updated_at
 
       const second = await PushSubscriptionRepository.insert(pool, params)
       expect(second.id).toBe(first.id)
-      // Compare against the prior DB timestamp (both DB-clock, monotonic) rather
-      // than the app clock, which would couple the assertion to DB/app skew.
-      expect(second.updatedAt.getTime()).toBeGreaterThan(first.updatedAt.getTime())
+      // Both DB-clock timestamps: the re-register bumps updated_at to a fresh
+      // now(), well past the 40-day-old backdated value.
+      expect(second.updatedAt.getTime()).toBeGreaterThan(backdatedAt.getTime())
     })
 
     test("deleteByEndpoint removes subscription and returns true; false for non-existent", async () => {
