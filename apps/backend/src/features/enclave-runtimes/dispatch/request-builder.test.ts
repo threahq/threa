@@ -107,7 +107,7 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(buildEnclaveSessionAssignment(inputs())!.assignment).not.toHaveProperty("attachmentCiphertexts")
 
     const withFiles = buildEnclaveSessionAssignment(
-      inputs({ triggerAttachmentCiphertexts: [{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }] })
+      inputs({ attachmentCiphertexts: [{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }] })
     )
     expect(withFiles!.assignment.attachmentCiphertexts).toEqual([{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }])
   })

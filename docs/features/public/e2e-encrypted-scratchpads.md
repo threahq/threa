@@ -100,11 +100,14 @@ known-missing tally, kept current as gaps close:
   per-file key recovered from the message — never the server's placeholder row.
   **Ariadne reads them too:** the backend relays the opaque ciphertext to the
   enclave (which can't reach S3), the enclave decrypts in memory with the sealed
-  per-file key, and feeds images/PDFs straight to the (vision-capable) model — so
-  asking Ariadne about an attached PDF or screenshot works, the same as a plaintext
-  scratchpad. Today this covers the attachments on the message you send (not files
-  shared several turns earlier). Server-side processing (image captioning, PDF text,
-  transcoding) stays off by design — the *server* still can't read the content.
+  per-file key, and feeds images/PDFs straight to the (vision-capable) model;
+  text-ish files (markdown, code, CSV — anything valid UTF-8) are inlined as
+  text. The message you send feeds its files eagerly; files from earlier turns
+  surface as `[Attached: …]` notes the model pulls on demand through its
+  in-enclave `load_attachment` tool (same name as the main app's, but sourced
+  from the inline-shipped ciphertext — never S3, never a backend callback).
+  Server-side processing (image captioning, PDF text, transcoding) stays off by
+  design — the *server* still can't read the content.
 - **Interjections are picked up after the current turn, not folded into it.** If you
   send a message while Ariadne is mid-turn, it isn't ignored: when the running turn
   finishes, a follow-up turn automatically runs for the message(s) that arrived

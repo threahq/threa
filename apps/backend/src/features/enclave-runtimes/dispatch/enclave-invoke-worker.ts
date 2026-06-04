@@ -29,6 +29,20 @@ import { buildEnclaveSessionAssignment } from "./request-builder"
 /** How many prior messages of context to forward. */
 const MAX_HISTORY_MESSAGES = 30
 
+/**
+ * Caps on inline attachment shipping (the enclave can't fetch from S3, so
+ * ciphertext rides the assignment as base64). Per-file: ~16MB ciphertext
+ * (≈21MB base64) — past that no model reads it anyway. Total: ~32MB of
+ * base64 across all files, inside the enclave's 48mb `/sessions` body limit
+ * with room for history + system prompt. Files over the cap are dropped with
+ * a warn (no silent cap) and surface to the model as an "unavailable" note.
+ */
+const MAX_INLINE_ATTACHMENT_BYTES = 16 * 1024 * 1024
+const MAX_INLINE_TOTAL_BASE64_CHARS = 32 * 1024 * 1024
+/** Count cap, mirrored by the enclave schema's `MAX_INLINE_ATTACHMENTS` — a
+ *  flood of tiny files must not push the assignment past what it accepts. */
+const MAX_INLINE_ATTACHMENT_COUNT = 64
+
 export interface EnclaveInvokeWorkerDeps {
   pool: Pool
   io: Server
@@ -100,13 +114,22 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     // content stays ciphertext.
     const systemPrompt = await buildEnclaveSystemPrompt({ pool, stream, preferences, persona })
 
-    // Ship the trigger message's attachment ciphertext inline so the enclave can
-    // read files (it can't reach S3 — egress is backend + OpenRouter only). We
-    // can't know which attachmentIds the sealed payload references, so we ship
-    // every E2E row bound to the trigger; the enclave matches them by id to the
-    // refs it decrypts. Best-effort per file: a read failure drops that one
-    // attachment rather than failing the turn.
-    const triggerAttachmentCiphertexts = await loadTriggerAttachmentCiphertexts(pool, storage, triggerId)
+    // Ship attachment ciphertext inline so the enclave can read files (it can't
+    // reach S3 — egress is backend + OpenRouter only): the trigger's files plus
+    // recent history's, so a follow-up like "what does the file say?" still has
+    // the bytes of a file shared a few turns earlier. We can't know which
+    // attachmentIds the sealed payloads reference, so we ship every E2E row
+    // bound to those messages; the enclave matches them by id to the refs it
+    // decrypts. Budget-bounded newest-first (trigger wins), and best-effort per
+    // file: a read failure drops that one attachment rather than failing the turn.
+    const attachmentCiphertextIds = [
+      triggerId,
+      ...surrounding
+        .filter((m) => m.id !== triggerId)
+        .map((m) => m.id)
+        .reverse(),
+    ]
+    const attachmentCiphertexts = await loadAttachmentCiphertexts(pool, storage, attachmentCiphertextIds)
 
     const sid = newSessionId()
     const built = buildEnclaveSessionAssignment({
@@ -125,7 +148,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       },
       replySenderId: ARIADNE_AGENT_ID,
       sessionId: sid,
-      triggerAttachmentCiphertexts,
+      attachmentCiphertexts,
     })
     if (!built) {
       // Park, don't drop: no live EIK can both open the trigger and seal the
@@ -211,22 +234,32 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
 }
 
 /**
- * Read the opaque ciphertext for every E2E attachment bound to the trigger
- * message and base64-encode it for inline shipping. The backend never decrypts:
- * the per-file key is sealed inside the prompt and recovered only in the enclave.
- * Best-effort — a single unreadable object is dropped (the enclave then notes the
- * file as unavailable) rather than failing the whole turn.
+ * Read the opaque ciphertext for every E2E attachment bound to the given
+ * messages (trigger first, then newest history) and base64-encode it for
+ * inline shipping. The backend never decrypts: the per-file keys are sealed
+ * inside the messages and recovered only in the enclave. Best-effort — a
+ * single unreadable object is dropped (the enclave then notes the file as
+ * unavailable) rather than failing the whole turn.
  */
-async function loadTriggerAttachmentCiphertexts(
+async function loadAttachmentCiphertexts(
   pool: Pool,
   storage: StorageProvider,
-  triggerId: string
+  /** Message ids in shipping priority order (trigger first, then newest history). */
+  messageIds: string[]
 ): Promise<{ attachmentId: string; ciphertext: string }[]> {
-  const rows = await AttachmentRepository.findByMessageId(pool, triggerId)
-  const e2eRows = rows.filter((a) => a.e2eOnly)
+  const byMessage = await AttachmentRepository.findByMessageIds(pool, messageIds)
+  const e2eRows = messageIds.flatMap((id) => (byMessage.get(id) ?? []).filter((a) => a.e2eOnly))
   if (e2eRows.length === 0) return []
+
   const results = await Promise.all(
     e2eRows.map(async (a) => {
+      if (a.sizeBytes > MAX_INLINE_ATTACHMENT_BYTES) {
+        logger.warn(
+          { attachmentId: a.id, sizeBytes: a.sizeBytes, cap: MAX_INLINE_ATTACHMENT_BYTES },
+          "enclave dispatch: attachment exceeds inline cap; skipping"
+        )
+        return null
+      }
       try {
         const bytes = await storage.getObject(a.storagePath)
         return { attachmentId: a.id, ciphertext: bytes.toString("base64") }
@@ -236,5 +269,31 @@ async function loadTriggerAttachmentCiphertexts(
       }
     })
   )
-  return results.filter((r): r is { attachmentId: string; ciphertext: string } => r !== null)
+  const loaded = results.filter((r): r is { attachmentId: string; ciphertext: string } => r !== null)
+
+  // Total cap: keep the assignment inside the enclave's body limit. `loaded`
+  // preserves priority order (trigger first, then newest history), so when the
+  // budget runs out it's the oldest files that drop — with a warn, never
+  // silently. A dropped file surfaces to the model as an "unavailable" note.
+  const shipped: { attachmentId: string; ciphertext: string }[] = []
+  let totalChars = 0
+  for (const item of loaded) {
+    if (shipped.length >= MAX_INLINE_ATTACHMENT_COUNT) {
+      logger.warn(
+        { attachmentId: item.attachmentId, cap: MAX_INLINE_ATTACHMENT_COUNT },
+        "enclave dispatch: inline attachment count cap reached; skipping remaining file"
+      )
+      continue
+    }
+    if (totalChars + item.ciphertext.length > MAX_INLINE_TOTAL_BASE64_CHARS) {
+      logger.warn(
+        { attachmentId: item.attachmentId, totalChars, cap: MAX_INLINE_TOTAL_BASE64_CHARS },
+        "enclave dispatch: inline attachment budget exhausted; skipping remaining file"
+      )
+      continue
+    }
+    shipped.push(item)
+    totalChars += item.ciphertext.length
+  }
+  return shipped
 }

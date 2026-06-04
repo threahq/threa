@@ -28,6 +28,7 @@ import type { RawChatFn } from "../llm"
 import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
 import { EnclaveTraceObserver } from "./trace-observer"
 import { buildEnclaveTools } from "./tools"
+import { decodeUtf8 } from "./attachment-tool"
 
 /**
  * The agent turn, run entirely inside the enclave next to decrypted plaintext.
@@ -108,16 +109,21 @@ export async function runEnclaveTurn(
     sskByGeneration.set(wrap.keyGeneration, await unwrap(keyPair, request.streamId, wrap))
   }
 
-  // Inline attachment ciphertext for the trigger, keyed by id. The backend
-  // shipped these because the enclave can't reach S3; the per-file key lives in
-  // the decrypted payload, not here.
+  // Inline attachment ciphertext (trigger + recent history), keyed by id. The
+  // backend shipped these because the enclave can't reach S3; the per-file key
+  // lives in the decrypted payloads, not here.
   const ciphertextById = new Map((request.attachmentCiphertexts ?? []).map((a) => [a.attachmentId, a.ciphertext]))
+  // Every ref the conversation mentions, decrypted out of the sealed payloads —
+  // together with `ciphertextById` this powers the `load_attachment` tool.
+  const refsById = new Map<string, AttachmentRef>()
 
   // Open the history this enclave is entitled to. Generations predating our
   // invite have no wrap; that history is skipped rather than fatal. Strip the
   // sealed-payload wrapper so the model sees clean markdown (not the JSON
-  // envelope) for any message that carried attachments; note the filenames so
-  // the model has context, but we only fetch+feed bytes for the trigger.
+  // envelope) for any message that carried attachments; an `[Attached: …]`
+  // note (with the attachment id) tells the model what's there, and it pulls
+  // the actual bytes on demand via `load_attachment` — only the trigger's
+  // files are fed eagerly.
   const messages: ModelMessage[] = []
   for (const item of request.history) {
     const ssk = sskByGeneration.get(item.envelope.keyGeneration)
@@ -128,6 +134,7 @@ export async function runEnclaveTurn(
       ciphertext: base64ToBytes(item.ciphertext),
     })
     const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
+    for (const ref of attachmentRefs) refsById.set(ref.attachmentId, ref)
     messages.push({ role: item.role, content: withAttachmentNote(contentMarkdown, attachmentRefs) })
   }
 
@@ -139,6 +146,7 @@ export async function runEnclaveTurn(
     ciphertext: base64ToBytes(request.prompt.ciphertext),
   })
   const { contentMarkdown: promptText, attachmentRefs: promptRefs } = parseSealedPayload(promptRaw)
+  for (const ref of promptRefs) refsById.set(ref.attachmentId, ref)
   const promptContent = await buildUserContent(promptText, promptRefs, ciphertextById)
   messages.push({ role: "user", content: promptContent } as ModelMessage)
 
@@ -183,6 +191,9 @@ export async function runEnclaveTurn(
       // Per-stream policy travels on the assignment, not in `deps.tools` (which
       // is the enclave's own capability config, e.g. whether it has a Tavily key).
       allowedCategories: request.allowedToolCategories,
+      // Conversation-local file access for `load_attachment` (ungated; the
+      // refs already ride the messages the model reads).
+      attachments: { refsById, ciphertextById },
     }),
     observers: [traceObserver],
     maxTokens: request.maxTokens,
@@ -270,11 +281,23 @@ async function buildUserContent(
     }
     try {
       const bytes = await decryptAttachmentBytes({ ciphertext: base64ToBytes(ct), key: ref.key, iv: ref.iv })
-      const b64 = bytesToBase64(bytes)
       if (ref.mimeType.startsWith("image/")) {
-        media.push({ type: "image", image: `data:${ref.mimeType};base64,${b64}` })
+        media.push({ type: "image", image: `data:${ref.mimeType};base64,${bytesToBase64(bytes)}` })
+      } else if (ref.mimeType === "application/pdf") {
+        // The one non-image format models read natively as a `file` part.
+        media.push({ type: "file", data: bytesToBase64(bytes), mediaType: ref.mimeType, filename: ref.filename })
       } else {
-        media.push({ type: "file", data: b64, mediaType: ref.mimeType, filename: ref.filename })
+        // Everything else: if it's valid UTF-8 (markdown, code, CSV, logs —
+        // browsers report no MIME for most of these, so the ref often says
+        // `application/octet-stream`), inline it as text. A binary blob the
+        // model can't read degrades to a note instead of a request the
+        // provider would reject.
+        const text = decodeUtf8(bytes)
+        if (text !== null) {
+          notes.push(`Contents of attached file "${ref.filename}":\n\n${text}`)
+        } else {
+          notes.push(`[Attachment "${ref.filename}" (${ref.mimeType}) is a binary format I can't read directly]`)
+        }
       }
     } catch {
       notes.push(`[Attachment "${ref.filename}" could not be decrypted]`)
@@ -289,12 +312,12 @@ async function buildUserContent(
 }
 
 /**
- * History attachments aren't fetched (trigger-only this slice), but the model
- * should still know a file was shared — append the filenames as a text note.
+ * History attachments aren't auto-fed — the model should know a file is there
+ * and pull it on demand: note each filename with the id `load_attachment` takes.
  */
 function withAttachmentNote(contentMarkdown: string, refs: AttachmentRef[]): string {
   if (refs.length === 0) return contentMarkdown
-  const note = `[Attached: ${refs.map((r) => r.filename).join(", ")}]`
+  const note = refs.map((r) => `[Attached: "${r.filename}" (${r.attachmentId})]`).join("\n")
   return contentMarkdown.length > 0 ? `${contentMarkdown}\n\n${note}` : note
 }
 

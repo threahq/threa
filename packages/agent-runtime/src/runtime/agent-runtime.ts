@@ -647,14 +647,21 @@ export class AgentRuntime {
         // Tool result → LLM
         resultParts.push(makeToolResult(tc, protectToolOutputText(toolResult.output)))
 
-        // Multimodal images → injected as user messages
+        // Multimodal media → injected as user messages (tool results are
+        // text-only on the wire; images/files must ride a user turn).
         if (toolResult.multimodal && toolResult.multimodal.length > 0) {
           extraMessages.push({
             role: "user",
-            content: toolResult.multimodal.map((img) => ({
-              type: "image" as const,
-              image: img.url,
-            })),
+            content: toolResult.multimodal.map((m) =>
+              m.type === "image"
+                ? { type: "image" as const, image: m.url }
+                : {
+                    type: "file" as const,
+                    data: m.data,
+                    mediaType: m.mediaType,
+                    ...(m.filename ? { filename: m.filename } : {}),
+                  }
+            ),
           })
         }
       } catch (error) {

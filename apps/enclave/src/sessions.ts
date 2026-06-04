@@ -29,6 +29,13 @@ const MAX_WRAP_RECIPIENTS = 64
 const MAX_SYSTEM_PROMPT_CHARS = 100_000
 const MAX_MODEL_ID_CHARS = 200
 const MAX_COMPLETION_TOKENS = 32_000
+/**
+ * Upper bound on inline-shipped files per assignment (trigger + recent
+ * history). Matches the dispatch worker's own count cap — the byte budget
+ * usually binds first, but a flood of tiny files must not reject the whole
+ * assignment.
+ */
+const MAX_INLINE_ATTACHMENTS = 64
 
 const streamEnvelopeSchema = z.object({
   v: z.number(),
@@ -93,6 +100,20 @@ export const sessionAssignmentSchema = z.object({
       authorType: z.enum(AUTHOR_TYPES),
       createdAt: z.string().min(1),
     })
+    .optional(),
+  /**
+   * Inline ciphertext for the conversation's attachments (base64; the
+   * trigger's plus recent history's), keyed by attachment id — the enclave
+   * can't reach S3 (egress is backend + OpenRouter only), so the backend
+   * relays the opaque bytes and the per-file keys arrive sealed inside the
+   * messages. MUST be declared here: Zod strips unknown keys, and omitting
+   * this is exactly how the first attachment slice shipped broken — the
+   * backend sent the bytes and this parse silently deleted them, so every
+   * file showed up as "unavailable".
+   */
+  attachmentCiphertexts: z
+    .array(z.object({ attachmentId: z.string().min(1), ciphertext: z.string().min(1) }))
+    .max(MAX_INLINE_ATTACHMENTS)
     .optional(),
 })
 

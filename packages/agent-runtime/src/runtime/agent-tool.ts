@@ -9,8 +9,16 @@ import type { AgentStepType, TraceSource, SourceItem } from "@threa/types"
 export interface AgentToolResult {
   /** What the LLM sees as the tool result */
   output: string
-  /** Images for vision models — injected as user messages */
-  multimodal?: Array<{ type: "image"; url: string }>
+  /**
+   * Media for vision/file-capable models — injected as user messages, since
+   * tool results themselves are text-only on the chat-completions wire.
+   * `image` carries a data URL (or https URL); `file` carries raw base64 +
+   * media type (e.g. a PDF the model reads natively).
+   */
+  multimodal?: Array<
+    | { type: "image"; url: string }
+    | { type: "file"; data: string; mediaType: string; filename?: string }
+  >
   /** Citation sources accumulated and attached to sent messages */
   sources?: SourceItem[]
   /** Injected into system prompt on next iteration (workspace research context) */

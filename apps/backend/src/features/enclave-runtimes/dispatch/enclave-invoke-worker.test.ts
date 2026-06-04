@@ -76,7 +76,7 @@ function arrangeDispatch() {
   spyOn(EnclaveRuntimesRepository, "listLive").mockResolvedValue([EIK])
   spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([WRAP])
   spyOn(MessageRepository, "findSurrounding").mockResolvedValue([])
-  spyOn(AttachmentRepository, "findByMessageId").mockResolvedValue([])
+  spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(UserPreferencesService.prototype, "getPreferences").mockResolvedValue({} as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
@@ -121,6 +121,49 @@ describe("createEnclaveInvokeWorker", () => {
     expect(insertOutbox.mock.calls[0]![0]).toBe(tx)
     expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:started")
     expect(assignSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("ships attachment ciphertext for the trigger AND recent history, trigger first", async () => {
+    arrangeDispatch()
+    // One prior message in the window carrying its own E2E attachment.
+    spyOn(MessageRepository, "findSurrounding").mockResolvedValue([
+      {
+        id: "msg_history",
+        authorType: "user",
+        ciphertext: Buffer.from("cipher:earlier"),
+        envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
+      },
+      TRIGGER,
+    ] as never)
+    spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(
+      new Map([
+        ["msg_trigger", [{ id: "attach_t", e2eOnly: true, sizeBytes: 10, storagePath: "p/t" }]],
+        ["msg_history", [{ id: "attach_h", e2eOnly: true, sizeBytes: 10, storagePath: "p/h" }]],
+      ]) as never
+    )
+    const getObject = mock(async (path: string) => Buffer.from(`bytes:${path}`))
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: { getObject } as unknown as StorageProvider,
+    })
+    await worker(JOB)
+
+    const assignment = assignSession.mock.calls[0]![1] as { attachmentCiphertexts?: unknown }
+    expect(assignment.attachmentCiphertexts).toEqual([
+      { attachmentId: "attach_t", ciphertext: Buffer.from("bytes:p/t").toString("base64") },
+      { attachmentId: "attach_h", ciphertext: Buffer.from("bytes:p/h").toString("base64") },
+    ])
   })
 
   it("parks the turn (throws for queue retry) when no live EIK holds the stream's wrap", async () => {

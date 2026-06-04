@@ -602,13 +602,16 @@ export interface EnclaveSessionAssignment {
    */
   allowedToolCategories?: ToolPrivacyCategory[]
   /**
-   * Opaque ciphertext for the trigger message's attachments, shipped INLINE so
-   * the enclave can read files without widening its egress to S3 (it stays pinned
-   * to the backend + OpenRouter). The backend can't read the per-file key — it's
-   * sealed inside the prompt — so it ships every E2E attachment row bound to the
-   * trigger; the enclave matches `attachmentId` to the decrypted `attachmentRefs`,
-   * decrypts with the sealed key/iv, and feeds the bytes to the (vision/PDF-capable)
-   * model. Omitted when the trigger has no attachments.
+   * Opaque ciphertext for the conversation's attachments (the trigger's plus
+   * recent history's, budget-bounded newest-first), shipped INLINE so the
+   * enclave can read files without widening its egress to S3 (it stays pinned
+   * to the backend + OpenRouter). The backend can't read the per-file keys —
+   * they're sealed inside the messages — so it ships every E2E attachment row
+   * bound to those messages; the enclave matches `attachmentId` to the
+   * decrypted `attachmentRefs`, decrypts with the sealed key/iv, and feeds the
+   * trigger's files to the (vision/PDF-capable) model eagerly while history
+   * files load on demand via its `load_attachment` tool. Omitted when there
+   * are none.
    */
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
 }

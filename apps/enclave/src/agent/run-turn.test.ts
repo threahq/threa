@@ -349,6 +349,118 @@ describe("runEnclaveTurn", () => {
     ])
   })
 
+  it("loads a HISTORY attachment on demand via load_attachment (note → tool call → contents)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+
+    // A file shared two turns ago: its ref rides the history message's sealed
+    // payload; the backend shipped its ciphertext inline alongside the trigger's.
+    const fileKey = generateStreamKey()
+    const sealed = await sealMessage({
+      key: fileKey,
+      keyGeneration: ATTACHMENT_KEY_GENERATION,
+      payload: utf8Encode("# Plan\n\nship it"),
+      aad: ATTACHMENT_AAD,
+    })
+    const ref: AttachmentRef = {
+      attachmentId: "attach_hist",
+      key: bytesToBase64(fileKey),
+      iv: sealed.envelope.iv,
+      filename: "plan.md",
+      mimeType: "application/octet-stream",
+      sizeBytes: 16,
+    }
+    const history = [
+      await sealUnder(ssk, serializeSealedPayload("here's the plan", [ref]), "msg_old", "usr_owner"),
+    ].map((m) => ({ ...m, role: "user" as const }))
+    const prompt = await sealUnder(ssk, "what does the plan file say?", "msg_user", "usr_owner")
+
+    // Turn script: the model asks for the file, then replies.
+    const chat = stubChat([
+      toolCallReply("load_attachment", { attachmentId: "attach_hist" }),
+      textReply("It says: ship it."),
+    ])
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        history,
+        attachmentCiphertexts: [{ attachmentId: "attach_hist", ciphertext: bytesToBase64(sealed.ciphertext) }],
+      })
+    )
+
+    // First call: the history message carries the id-bearing note (not the bytes),
+    // and load_attachment is offered even with no web tools configured.
+    const first = chat.seen[0]!
+    const historyMsg = first.messages.find((m) => m.role === "user" && typeof m.content === "string" && m.content.includes("plan"))
+    expect(historyMsg?.content).toBe('here\'s the plan\n\n[Attached: "plan.md" (attach_hist)]')
+    expect(first.tools?.map((t) => t.function.name)).toEqual(expect.arrayContaining(["load_attachment"]))
+
+    // Second call: the tool result carries the decrypted contents (inside the
+    // runtime's untrusted-output trust boundary wrapper).
+    const second = chat.seen[1]!
+    const toolMsg = second.messages.find((m) => m.role === "tool")
+    expect(toolMsg?.content).toContain('Contents of "plan.md":\n\n# Plan\n\nship it')
+  })
+
+  it("inlines a UTF-8 text file as contents and degrades a binary blob to a note", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+
+    const encryptFile = async (bytes: Uint8Array, mimeType: string, filename: string, attachmentId: string) => {
+      const fileKey = generateStreamKey()
+      const sealed = await sealMessage({
+        key: fileKey,
+        keyGeneration: ATTACHMENT_KEY_GENERATION,
+        payload: bytes,
+        aad: ATTACHMENT_AAD,
+      })
+      const ref: AttachmentRef = {
+        attachmentId,
+        key: bytesToBase64(fileKey),
+        iv: sealed.envelope.iv,
+        filename,
+        mimeType,
+        sizeBytes: bytes.length,
+      }
+      return { ref, ciphertext: bytesToBase64(sealed.ciphertext) }
+    }
+
+    // Browsers report no MIME for .md, so the ref says octet-stream — the
+    // enclave must still recognize valid UTF-8 and inline it as text.
+    const md = await encryptFile(utf8Encode("# Notes\n\nremember the milk"), "application/octet-stream", "notes.md", "attach_md")
+    // 0xFF 0xFE… is not valid UTF-8 → genuinely binary, no model-readable form.
+    const bin = await encryptFile(new Uint8Array([0xff, 0xfe, 0x00, 0x01]), "application/octet-stream", "blob.bin", "attach_bin")
+
+    const prompt = await sealUnder(ssk, serializeSealedPayload("read these", [md.ref, bin.ref]), "msg_user", "usr_owner")
+    const chat = stubChat(textReply("done"))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        attachmentCiphertexts: [
+          { attachmentId: "attach_md", ciphertext: md.ciphertext },
+          { attachmentId: "attach_bin", ciphertext: bin.ciphertext },
+        ],
+      })
+    )
+
+    // No media parts → the whole turn collapses to one plain string: the user
+    // text, the inlined file contents, and the binary note.
+    const userMsg = chat.seen[0]?.messages.find((m) => m.role === "user")
+    expect(userMsg?.content).toBe(
+      'read these\n\nContents of attached file "notes.md":\n\n# Notes\n\nremember the milk\n\n[Attachment "blob.bin" (application/octet-stream) is a binary format I can\'t read directly]'
+    )
+  })
+
   it("notes an attachment whose ciphertext the backend couldn't ship, without failing the turn", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()

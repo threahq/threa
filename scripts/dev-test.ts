@@ -229,6 +229,11 @@ async function main() {
         `CONTROL_PLANE_URL:http://localhost:${controlPlanePort}`,
         "--var",
         `REGIONS:${regionsJson}`,
+        // Without this the router's `resolveRegion` control-plane lookup is
+        // skipped entirely and EVERY uncached workspace 404s ("Workspace not
+        // found") — the same shared secret the backend + control-plane get.
+        "--var",
+        `INTERNAL_API_KEY:${backendEnv.INTERNAL_API_KEY ?? "dev-internal-key"}`,
       ],
       {
         cwd: routerDir,
