@@ -1,13 +1,24 @@
 import { useCallback, useMemo } from "react"
-import { getAvatarUrl, getBotAvatarUrl } from "@threa/types"
+import { getAvatarUrl, getBotAvatarUrl, resolveActiveStatus } from "@threa/types"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { useWorkspaceUsers, useWorkspacePersonas, useWorkspaceBots } from "@/stores/workspace-store"
 import type { Persona, Bot, User, AuthorType } from "@threa/types"
+
+/** Resolved, expiry-masked status for an actor (users only today). */
+export interface ActorStatus {
+  /** Emoji glyph for the avatar badge, or null when the status has only text. */
+  emoji: string | null
+  text: string | null
+  /** ISO instant the status auto-clears at, or null for indefinite. */
+  expiresAt: string | null
+}
 
 interface ActorAvatarInfo {
   fallback: string
   slug?: string
   avatarUrl?: string
+  /** Present only when the actor is a user with an active status. */
+  status?: ActorStatus
 }
 
 /**
@@ -125,13 +136,15 @@ export function useActors(workspaceId: string): ActorLookup {
 
       if (actorId) {
         const workspaceUser = userMap.get(actorId)
+        const status = resolveUserStatus(workspaceUser, toEmoji)
         const avatarUrl = getAvatarUrl(workspaceId, workspaceUser?.avatarUrl, 64)
-        if (avatarUrl) return { fallback, avatarUrl }
+        if (avatarUrl) return { fallback, avatarUrl, ...(status ? { status } : {}) }
+        if (status) return { fallback, status }
       }
 
       return { fallback }
     },
-    [getActorInitials, getBot, userMap, workspaceId]
+    [getActorInitials, getBot, userMap, workspaceId, toEmoji]
   )
 
   return useMemo(
@@ -145,6 +158,30 @@ export function useActors(workspaceId: string): ActorLookup {
     }),
     [getActorName, getActorInitials, getActorAvatar, getUser, getPersona, getBot]
   )
+}
+
+/**
+ * Resolve a workspace user's stored status fields into a display status,
+ * masking expired/empty ones and converting the emoji shortcode to a glyph.
+ * Returns undefined when there is nothing to show. `User` carries the status
+ * fields on the wire; cached rows predating the feature simply lack them.
+ */
+function resolveUserStatus(
+  user: User | undefined,
+  toEmoji: (shortcode: string) => string | null
+): ActorStatus | undefined {
+  if (!user) return undefined
+  const active = resolveActiveStatus({
+    statusEmoji: user.statusEmoji ?? null,
+    statusText: user.statusText ?? null,
+    statusExpiresAt: user.statusExpiresAt ?? null,
+  })
+  if (!active) return undefined
+  return {
+    emoji: active.emoji ? toEmoji(active.emoji) : null,
+    text: active.text,
+    expiresAt: active.expiresAt,
+  }
 }
 
 function initialsFrom(name: string | null | undefined): string | undefined {

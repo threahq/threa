@@ -7,6 +7,8 @@ export {
   useAcceptInvitation,
   useRegions,
   useUpdateProfile,
+  useSetStatus,
+  useClearStatus,
   useUploadAvatar,
   useRemoveAvatar,
   workspaceKeys,

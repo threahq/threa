@@ -20,6 +20,8 @@ export interface WorkspaceService {
   markAllAsRead: typeof workspacesApi.markAllAsRead
   acceptInvitation: typeof workspacesApi.acceptInvitation
   updateProfile: typeof workspacesApi.updateProfile
+  setStatus: typeof workspacesApi.setStatus
+  clearStatus: typeof workspacesApi.clearStatus
   uploadAvatar: typeof workspacesApi.uploadAvatar
   removeAvatar: typeof workspacesApi.removeAvatar
 }

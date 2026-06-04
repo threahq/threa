@@ -14,9 +14,11 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { createDmDraftId } from "@/hooks"
 import { useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
+import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
-import { getAvatarUrl, type User } from "@threa/types"
+import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
 import { getInitials } from "@/lib/initials"
+import { formatStatusClearLabel } from "@/lib/status"
 
 function getRoleBadge(role: User["role"]) {
   switch (role) {
@@ -40,10 +42,19 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
   const { user: authUser } = useAuth()
   const idbUsers = useWorkspaceUsers(workspaceId ?? "")
   const idbDmPeers = useWorkspaceDmPeers(workspaceId ?? "")
+  const { toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
 
   const user = idbUsers.find((u) => u.id === userId)
   const isOwnProfile = authUser && user?.workosUserId === authUser.id
   const avatarUrl = user ? getAvatarUrl(workspaceId!, user.avatarUrl, 256) : undefined
+  const activeStatus = user
+    ? resolveActiveStatus({
+        statusEmoji: user.statusEmoji ?? null,
+        statusText: user.statusText ?? null,
+        statusExpiresAt: user.statusExpiresAt ?? null,
+      })
+    : null
+  const statusGlyph = activeStatus?.emoji ? toEmoji(activeStatus.emoji) : null
 
   const existingDmStreamId = idbDmPeers.find((p) => p.userId === userId)?.streamId
   const messageStreamId = existingDmStreamId ?? createDmDraftId(userId)
@@ -69,6 +80,17 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
             <div className="text-center">
               <h2 className="text-xl font-semibold">{user.name}</h2>
               {user.pronouns && <p className="text-sm text-muted-foreground">{user.pronouns}</p>}
+              {activeStatus && (statusGlyph || activeStatus.text) && (
+                <>
+                  <p className="mt-1 flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
+                    {statusGlyph && <span className="leading-none">{statusGlyph}</span>}
+                    {activeStatus.text && <span>{activeStatus.text}</span>}
+                  </p>
+                  {formatStatusClearLabel(activeStatus.expiresAt) && (
+                    <p className="text-xs text-muted-foreground/70">{formatStatusClearLabel(activeStatus.expiresAt)}</p>
+                  )}
+                </>
+              )}
               <div className="mt-1">{getRoleBadge(user.role)}</div>
             </div>
           </div>

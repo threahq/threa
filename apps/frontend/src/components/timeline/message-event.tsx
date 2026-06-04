@@ -19,6 +19,7 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { usePendingMessages, usePanel, createDraftPanelId, useTrace, useMessageService } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { formatStatusClearLabel } from "@/lib/status"
 import { useMessageMarkdownCopy } from "@/hooks/use-message-markdown-copy"
 import { useDecryptedMessageContent, type DecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
 import { useEditLastMessage } from "./edit-last-message-context"
@@ -328,6 +329,7 @@ function BatchSelectionAvatar({
           workspaceId={workspaceId}
           size="md"
           alt={alt}
+          showStatus={false}
         />
       </div>
       <div
@@ -402,6 +404,51 @@ function BatchSelectionDot({ selected }: { selected: boolean }) {
         {selected && <Check className="h-2.5 w-2.5" strokeWidth={3} />}
       </span>
     </div>
+  )
+}
+
+/**
+ * The author's current status emoji, shown in the message header beside the
+ * timestamp with a tooltip carrying the status text and (when finite) when it
+ * clears. Only users have statuses; renders nothing otherwise. Lives in the
+ * header rather than as an avatar badge so it reads at the name/time altitude
+ * and never crowds the avatar. Only mounts on head rows (continuations drop the
+ * header), so it doesn't add a lookup to every grouped row.
+ */
+function MessageAuthorStatus({
+  actorId,
+  actorType,
+  workspaceId,
+}: {
+  actorId: string | null
+  actorType: StreamEvent["actorType"]
+  workspaceId: string
+}) {
+  const { getActorAvatar } = useActors(workspaceId)
+  // Match the rest of this component, which treats a null/undefined actorType as
+  // a user (`event.actorType ?? "user"`), so legacy rows still show status.
+  const resolvedActorType = actorType ?? "user"
+  if (resolvedActorType !== "user" || !actorId) return null
+  const status = getActorAvatar(actorId, resolvedActorType).status
+  if (!status?.emoji) return null
+  const clears = formatStatusClearLabel(status.expiresAt)
+  const glyph = (
+    <span
+      className="text-sm leading-none cursor-default"
+      aria-label={status.text ? `Status: ${status.text}` : "Status"}
+    >
+      {status.emoji}
+    </span>
+  )
+  if (!status.text && !clears) return glyph
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{glyph}</TooltipTrigger>
+      <TooltipContent>
+        {status.text && <div>{status.text}</div>}
+        {clears && <div className="text-muted-foreground">{clears}</div>}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -521,6 +568,8 @@ function MessageLayout({
       size="md"
       alt={actorName}
       className="message-avatar"
+      // Status shows in the header next to the timestamp, not as an avatar badge.
+      showStatus={false}
     />
   )
 
@@ -547,6 +596,7 @@ function MessageLayout({
         </Tooltip>
       )}
       {statusIndicator}
+      <MessageAuthorStatus actorId={event.actorId} actorType={event.actorType} workspaceId={workspaceId} />
       {actions}
     </div>
   )

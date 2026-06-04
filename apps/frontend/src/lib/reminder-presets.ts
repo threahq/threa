@@ -12,19 +12,20 @@
 import {
   type WorkSchedule,
   type Weekday,
+  type StatusDuration,
   DEFAULT_WORK_SCHEDULE,
   startOfWorkForDay,
   firstWorkingWeekday,
+  isWorkingDay,
 } from "@threa/types"
 
 /**
- * Tagged union so "duration" presets (minutes from now) and "calendar" presets
- * (next week at start of work) don't share a field. Adding a new calendar kind
- * is a new tag, not a new magic number.
+ * A labelled {@link StatusDuration}: the shared duration descriptor (minutes
+ * from now, or a calendar anchor) plus the display label for this surface.
+ * Reusing `StatusDuration` keeps the reminder picker and the status picker on
+ * one resolution path (INV-35) — `computeRemindAt` accepts either.
  */
-export type ReminderPreset =
-  | { label: string; kind: "duration"; minutes: number }
-  | { label: string; kind: "calendar"; calendar: "tomorrow-start" | "next-week-start" }
+export type ReminderPreset = { label: string } & StatusDuration
 
 export const REMINDER_PRESETS: ReminderPreset[] = [
   { label: "In 15 minutes", kind: "duration", minutes: 15 },
@@ -130,8 +131,22 @@ function tomorrowStart(now: Date, timezone: string, schedule: WorkSchedule): Dat
   return startOfWorkInstant(timezone, schedule, shiftCalendarDay(calendarInZone(now, timezone), 1))
 }
 
+/**
+ * Start of the next *working* day — like "tomorrow" but skipping non-working
+ * days, so a status set on Friday under a Mon–Fri schedule clears Monday, not
+ * Saturday. Caps the walk at a week so an all-off schedule still resolves
+ * instead of looping.
+ */
+function nextWorkingDayStart(now: Date, timezone: string, schedule: WorkSchedule): Date {
+  let day = shiftCalendarDay(calendarInZone(now, timezone), 1)
+  for (let i = 0; i < 7 && !isWorkingDay(schedule, day.weekday as Weekday); i++) {
+    day = shiftCalendarDay(day, 1)
+  }
+  return startOfWorkInstant(timezone, schedule, day)
+}
+
 export function computeRemindAt(
-  preset: ReminderPreset,
+  preset: StatusDuration,
   now: Date,
   timezone: string,
   schedule: WorkSchedule = DEFAULT_WORK_SCHEDULE
@@ -140,8 +155,8 @@ export function computeRemindAt(
     case "duration":
       return new Date(now.getTime() + preset.minutes * 60_000)
     case "calendar":
-      return preset.calendar === "tomorrow-start"
-        ? tomorrowStart(now, timezone, schedule)
-        : nextWeekStart(now, timezone, schedule)
+      if (preset.calendar === "tomorrow-start") return tomorrowStart(now, timezone, schedule)
+      if (preset.calendar === "next-working-day-start") return nextWorkingDayStart(now, timezone, schedule)
+      return nextWeekStart(now, timezone, schedule)
   }
 }

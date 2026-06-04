@@ -464,6 +464,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   // User profile
   app.patch("/api/workspaces/:workspaceId/profile", ...authed, workspace.updateProfile)
+  app.put("/api/workspaces/:workspaceId/status", ...authed, workspace.setStatus)
+  app.delete("/api/workspaces/:workspaceId/status", ...authed, workspace.clearStatus)
   app.post("/api/workspaces/:workspaceId/profile/avatar", ...authed, avatarUpload, workspace.uploadAvatar)
   app.delete("/api/workspaces/:workspaceId/profile/avatar", ...authed, workspace.removeAvatar)
 

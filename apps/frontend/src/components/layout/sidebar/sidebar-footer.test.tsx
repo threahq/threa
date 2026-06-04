@@ -8,6 +8,7 @@ import { SidebarFooter } from "./sidebar-footer"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
 import * as useMobileModule from "@/hooks/use-mobile"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as drawerModule from "@/components/ui/drawer"
 
 const logout = vi.fn()
@@ -46,6 +47,12 @@ describe("SidebarFooter", () => {
     } as unknown as ReturnType<typeof contextsModule.useSidebar>)
 
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobile.value)
+
+    // The footer mounts useStatusAutoExpiry, which resolves the status-clear
+    // mutation through the services context the unit harness doesn't provide.
+    vi.spyOn(useWorkspacesModule, "useClearStatus").mockReturnValue({
+      mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useWorkspacesModule.useClearStatus>)
 
     spyOnExport(drawerModule, "Drawer").mockReturnValue((({
       open,
@@ -100,6 +107,9 @@ describe("SidebarFooter", () => {
           pronouns: null,
           phone: null,
           githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -108,7 +118,9 @@ describe("SidebarFooter", () => {
 
     await user.click(screen.getByRole("button", { name: /kris/i }))
 
-    expect(screen.getByText("kris@example.com")).toBeInTheDocument()
+    // The identity card at the top of the menu is the status affordance (no
+    // status set in this fixture, so it invites the user to set one).
+    expect(screen.getByRole("button", { name: "Set a status" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "AI Usage" })).toHaveAttribute("href", "/w/workspace_1/admin/ai-usage")
 
     await user.click(screen.getByRole("button", { name: "Settings" }))
@@ -146,6 +158,9 @@ describe("SidebarFooter", () => {
           pronouns: null,
           phone: null,
           githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -185,6 +200,9 @@ describe("SidebarFooter", () => {
           pronouns: null,
           phone: null,
           githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}

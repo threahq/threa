@@ -35,6 +35,9 @@ function createMember(overrides: Partial<User> & { _cachedAt?: number } = {}): C
     pronouns: null,
     phone: null,
     githubUsername: null,
+    statusEmoji: null,
+    statusText: null,
+    statusExpiresAt: null,
     setupCompleted: true,
     joinedAt: "2024-01-01T00:00:00.000Z",
     _cachedAt: Date.now(),
@@ -241,6 +244,71 @@ describe("useActors", () => {
         wrapper: createTestWrapper(queryClient),
       })
       expect(result.current.getPersona("nonexistent")).toBeUndefined()
+    })
+  })
+
+  describe("getActorAvatar status", () => {
+    it("resolves an active status emoji to a glyph and carries the text", () => {
+      mockUsers = [createMember({ id: "mem_123", statusEmoji: ":thread:", statusText: "Focusing" })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({
+        emoji: "🧵",
+        text: "Focusing",
+        expiresAt: null,
+      })
+    })
+
+    it("returns a text-only status with a null glyph", () => {
+      mockUsers = [createMember({ id: "mem_123", statusEmoji: null, statusText: "Heads down" })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({
+        emoji: null,
+        text: "Heads down",
+        expiresAt: null,
+      })
+    })
+
+    it("carries a future expiry through", () => {
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      mockUsers = [
+        createMember({ id: "mem_123", statusEmoji: ":thread:", statusText: "Focus", statusExpiresAt: future }),
+      ]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toEqual({
+        emoji: "🧵",
+        text: "Focus",
+        expiresAt: future,
+      })
+    })
+
+    it("masks an expired status", () => {
+      const expired = new Date(Date.now() - 60_000).toISOString()
+      mockUsers = [
+        createMember({ id: "mem_123", statusEmoji: ":thread:", statusText: "Old", statusExpiresAt: expired }),
+      ]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toBeUndefined()
+    })
+
+    it("omits status for users without one", () => {
+      mockUsers = [createMember({ id: "mem_123" })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").status).toBeUndefined()
     })
   })
 })

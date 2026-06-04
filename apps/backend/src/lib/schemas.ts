@@ -7,6 +7,9 @@ import {
   AUTHOR_TYPES,
   NOTIFICATION_LEVELS,
   parseHHMM,
+  isStatusContentful,
+  STATUS_TEXT_MAX_LENGTH,
+  MAX_STATUS_PRESETS,
 } from "@threa/types"
 
 export const streamTypeSchema = z.enum(STREAM_TYPES)
@@ -64,3 +67,73 @@ export const botIdentityKeyFields = {
 export function bothOrNeitherBotIdentityKey(v: { publicKey?: string; publicKeyId?: string }): boolean {
   return (v.publicKey === undefined) === (v.publicKeyId === undefined)
 }
+
+// User statuses — shared by the set-status endpoint, workspace-settings
+// (workspace default presets), and user-preferences (per-user presets) so a
+// status preset validates identically wherever it is stored (INV-35).
+// `emoji` is a shortcode (no colons); `defaultDuration` mirrors the scheduling
+// reminder presets. A null duration means "indefinite".
+export const statusDurationSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("duration"),
+    minutes: z
+      .number()
+      .int()
+      .positive()
+      .max(7 * 24 * 60),
+  }),
+  z.object({
+    kind: z.literal("calendar"),
+    calendar: z.enum(["tomorrow-start", "next-week-start", "next-working-day-start"]),
+  }),
+])
+
+// Emoji is stored as a shortcode (no surrounding colons), matching
+// personas/bots/labels — reject colon-wrapped values at the boundary so a
+// malformed `:eyes:` can't be persisted.
+const statusEmojiSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((value) => !value.includes(":"), { message: "Emoji shortcode must not include colons" })
+  .nullable()
+const statusTextSchema = z.string().max(STATUS_TEXT_MAX_LENGTH).nullable()
+
+export const statusPresetSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    emoji: statusEmojiSchema,
+    text: statusTextSchema,
+    defaultDuration: statusDurationSchema.nullable(),
+  })
+  .refine((p) => isStatusContentful(p), { message: "A status needs an emoji or text" })
+
+export const statusPresetsSchema = z.array(statusPresetSchema).max(MAX_STATUS_PRESETS)
+
+// Upper bound on how far out a status may be set to expire. The server owns the
+// persisted active status (it broadcasts to the whole workspace), so it bounds
+// the absolute instant a client can send rather than trusting it blindly — the
+// duration presets already cap relative durations at a week, but the custom
+// date/time path produces an arbitrary instant. A past instant is allowed and
+// simply reads as already-cleared (mapRowToUser masks it).
+const MAX_STATUS_EXPIRY_MS = 366 * 24 * 60 * 60 * 1000
+
+// Setting an active status: at least one of emoji/text, and an optional
+// absolute expiry the client resolves from its chosen duration. Clearing a
+// status goes through DELETE, so this path always carries content.
+export const setStatusSchema = z
+  .object({
+    emoji: statusEmojiSchema,
+    text: z
+      .string()
+      .max(STATUS_TEXT_MAX_LENGTH)
+      .transform((v) => (v.trim().length === 0 ? null : v.trim()))
+      .nullable(),
+    expiresAt: z.string().datetime().nullable(),
+  })
+  .refine((s) => isStatusContentful(s), { message: "A status needs an emoji or text" })
+  .refine((s) => !s.expiresAt || new Date(s.expiresAt).getTime() <= Date.now() + MAX_STATUS_EXPIRY_MS, {
+    message: "Status expiry is too far in the future",
+    path: ["expiresAt"],
+  })

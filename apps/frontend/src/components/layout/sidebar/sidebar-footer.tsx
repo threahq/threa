@@ -21,8 +21,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
-import { getAvatarUrl, type User } from "@threa/types"
+import { getAvatarUrl, resolveActiveStatus, type User } from "@threa/types"
+import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
+import { formatStatusClearLabel } from "@/lib/status"
+import { StatusPicker } from "@/components/status/status-picker"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
+
+/** Resolved, expiry-masked status glyph + text for the footer's own user. */
+interface FooterStatus {
+  glyph: string | null
+  text: string | null
+  expiresAt: string | null
+}
 
 interface SidebarFooterProps {
   workspaceId: string
@@ -39,13 +50,57 @@ interface SidebarFooterProps {
   scratchpadAddMenuActions?: SidebarActionItem[]
 }
 
+/**
+ * Avatar + optional corner status-emoji badge; absolutely positioned (no shift,
+ * INV-21). `showBadge` is off on surfaces that already show the status emoji as
+ * text alongside (the menu card), so the glyph never appears twice.
+ */
+function FooterAvatar({
+  avatarSrc,
+  currentUser,
+  status,
+  className,
+  badgeClassName,
+  showBadge = true,
+}: {
+  avatarSrc?: string | null
+  currentUser: User
+  status: FooterStatus | null
+  className: string
+  badgeClassName: string
+  showBadge?: boolean
+}) {
+  return (
+    <span className="relative inline-flex shrink-0">
+      <Avatar className={className}>
+        {avatarSrc && <AvatarImage src={avatarSrc} alt={currentUser.name} />}
+        <AvatarFallback className="text-[10px]">{getInitials(currentUser.name)}</AvatarFallback>
+      </Avatar>
+      {showBadge && status?.glyph && (
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute -right-0.5 -bottom-0.5 flex items-center justify-center rounded-full bg-background leading-none",
+            badgeClassName
+          )}
+        >
+          {status.glyph}
+        </span>
+      )}
+    </span>
+  )
+}
+
 interface SidebarFooterTriggerProps extends Omit<ComponentPropsWithoutRef<"button">, "children"> {
   avatarSrc?: string | null
   currentUser: User
+  status: FooterStatus | null
 }
 
 const SidebarFooterTrigger = forwardRef<HTMLButtonElement, SidebarFooterTriggerProps>(
-  ({ avatarSrc, currentUser, className, type = "button", ...buttonProps }, ref) => {
+  ({ avatarSrc, currentUser, status, className, type = "button", ...buttonProps }, ref) => {
+    // The emoji rides the avatar badge; the subtitle shows only the text so the
+    // glyph never appears twice. Emoji-only statuses surface via the badge alone.
     return (
       <button
         ref={ref}
@@ -57,11 +112,17 @@ const SidebarFooterTrigger = forwardRef<HTMLButtonElement, SidebarFooterTriggerP
         )}
         {...buttonProps}
       >
-        <Avatar className="h-7 w-7">
-          {avatarSrc && <AvatarImage src={avatarSrc} alt={currentUser.name} />}
-          <AvatarFallback className="text-[10px]">{getInitials(currentUser.name)}</AvatarFallback>
-        </Avatar>
-        <span className="truncate flex-1 text-left">{currentUser.name}</span>
+        <FooterAvatar
+          avatarSrc={avatarSrc}
+          currentUser={currentUser}
+          status={status}
+          className="h-7 w-7"
+          badgeClassName="text-[10px]"
+        />
+        <span className="flex-1 min-w-0 flex flex-col text-left">
+          <span className="truncate">{currentUser.name}</span>
+          {status?.text && <span className="truncate text-xs font-normal text-muted-foreground">{status.text}</span>}
+        </span>
         <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
       </button>
     )
@@ -70,22 +131,58 @@ const SidebarFooterTrigger = forwardRef<HTMLButtonElement, SidebarFooterTriggerP
 
 SidebarFooterTrigger.displayName = "SidebarFooterTrigger"
 
-function SidebarFooterHeader({ avatarSrc, currentUser }: { avatarSrc?: string | null; currentUser: User }) {
+/**
+ * The identity card at the top of the account menu. Tapping it opens the status
+ * picker — this is the single "set your status" affordance (there's no separate
+ * status row). Shows the current status (emoji + text + when it clears) or a
+ * "Set a status" hint.
+ */
+function SidebarStatusHeader({
+  avatarSrc,
+  currentUser,
+  status,
+  onClick,
+}: {
+  avatarSrc?: string | null
+  currentUser: User
+  status: FooterStatus | null
+  onClick: () => void
+}) {
+  const clears = status ? formatStatusClearLabel(status.expiresAt) : null
   return (
-    <div className="px-4 pt-1 pb-3">
-      <div className="rounded-xl bg-muted/60 px-3.5 py-3">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={status ? "Update your status" : "Set a status"}
+      className="block w-full p-1 text-left"
+    >
+      <div className="rounded-lg bg-muted/60 px-3 py-2.5 transition-colors hover:bg-muted">
         <div className="flex items-center gap-3">
-          <Avatar className="h-10 w-10">
-            {avatarSrc && <AvatarImage src={avatarSrc} alt={currentUser.name} />}
-            <AvatarFallback>{getInitials(currentUser.name)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
+          <FooterAvatar
+            avatarSrc={avatarSrc}
+            currentUser={currentUser}
+            status={status}
+            className="h-9 w-9"
+            badgeClassName="text-xs"
+            // The status emoji shows in the text line below, so don't badge the
+            // avatar too — one indicator per surface.
+            showBadge={false}
+          />
+          <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-foreground">{currentUser.name}</p>
-            <p className="truncate text-xs text-muted-foreground">{currentUser.email}</p>
+            {status?.text || status?.glyph ? (
+              <p className="truncate text-xs text-muted-foreground">
+                {status.glyph && <span className="mr-1">{status.glyph}</span>}
+                {status.text}
+              </p>
+            ) : (
+              <p className="truncate text-xs text-muted-foreground">Set a status</p>
+            )}
+            {clears && <p className="truncate text-[11px] text-muted-foreground/70">{clears}</p>}
           </div>
         </div>
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -102,7 +199,32 @@ export function SidebarFooter({
   const { collapseOnMobile } = useSidebar()
   const isMobile = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [statusOpen, setStatusOpen] = useState(false)
   const queryClient = useQueryClient()
+  const { toEmoji } = useWorkspaceEmoji(workspaceId)
+
+  const status = useMemo<FooterStatus | null>(() => {
+    if (!currentUser) return null
+    const active = resolveActiveStatus({
+      statusEmoji: currentUser.statusEmoji ?? null,
+      statusText: currentUser.statusText ?? null,
+      statusExpiresAt: currentUser.statusExpiresAt ?? null,
+    })
+    if (!active) return null
+    return { glyph: active.emoji ? toEmoji(active.emoji) : null, text: active.text, expiresAt: active.expiresAt }
+  }, [currentUser, toEmoji])
+
+  const openStatus = useCallback(() => {
+    collapseOnMobile()
+    setDrawerOpen(false)
+    setMenuOpen(false)
+    setStatusOpen(true)
+  }, [collapseOnMobile])
+
+  // The owner's session clears its own status when it lapses, broadcasting the
+  // clear to every viewer (render-time masking only hides it locally).
+  useStatusAutoExpiry(workspaceId, currentUser)
 
   // Every stream flavor reachable from one always-visible control: the scratchpad
   // creators (Scratchpad / Quick Note / Encrypted) plus channels.
@@ -187,6 +309,8 @@ export function SidebarFooter({
         label: "Profile",
         icon: UserIcon,
         onSelect: () => handleOpenSettings("profile"),
+        // Divider between the status header card and the action list.
+        separatorBefore: true,
       },
       {
         id: "settings",
@@ -231,15 +355,23 @@ export function SidebarFooter({
     return (
       <div className="flex flex-col gap-1.5">
         <SidebarCreateButton actions={createActions} isMobile />
-        <SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} onClick={() => setDrawerOpen(true)} />
+        <SidebarFooterTrigger
+          avatarSrc={avatarSrc}
+          currentUser={currentUser}
+          status={status}
+          onClick={() => setDrawerOpen(true)}
+        />
         <SidebarActionDrawer
           open={drawerOpen}
           onOpenChange={setDrawerOpen}
           actions={menuActions}
           title="Account menu"
           description="Choose an account action."
-          header={<SidebarFooterHeader avatarSrc={avatarSrc} currentUser={currentUser} />}
+          header={
+            <SidebarStatusHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} onClick={openStatus} />
+          }
         />
+        {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
       </div>
     )
   }
@@ -252,9 +384,15 @@ export function SidebarFooter({
         ariaLabel="Account menu"
         side="top"
         align="start"
-        contentClassName="w-56"
-        trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} />}
+        contentClassName="w-64"
+        open={menuOpen}
+        onOpenChange={setMenuOpen}
+        header={
+          <SidebarStatusHeader avatarSrc={avatarSrc} currentUser={currentUser} status={status} onClick={openStatus} />
+        }
+        trigger={<SidebarFooterTrigger avatarSrc={avatarSrc} currentUser={currentUser} status={status} />}
       />
+      {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
     </div>
   )
 }

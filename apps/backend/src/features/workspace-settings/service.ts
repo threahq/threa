@@ -28,7 +28,7 @@ function matchesDefault(key: string, value: unknown): boolean {
 
 function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: string; value: unknown }> {
   const pairs: Array<{ key: string; value: unknown }> = []
-  const simpleKeys = ["defaultWorkSchedule"] as const
+  const simpleKeys = ["defaultWorkSchedule", "userStatusPresets"] as const
   for (const key of simpleKeys) {
     if (updates[key] !== undefined) {
       pairs.push({ key, value: updates[key] })

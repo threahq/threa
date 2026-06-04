@@ -15,6 +15,7 @@ import { getEffectiveLevel } from "../streams"
 import { BotRepository, serializeBot } from "../public-api"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
+import { setStatusSchema } from "../../lib/schemas"
 import {
   parseJwtPermissions,
   permissionsForRole,
@@ -314,6 +315,38 @@ export function createWorkspaceHandlers({
       }
 
       const user = await workspaceService.updateUserProfile(userId, workspaceId, result.data)
+      res.json({ user })
+    },
+
+    async setStatus(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const result = setStatusSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: z.flattenError(result.error).fieldErrors,
+        })
+      }
+
+      const user = await workspaceService.setUserStatus(userId, workspaceId, {
+        statusEmoji: result.data.emoji,
+        statusText: result.data.text,
+        statusExpiresAt: result.data.expiresAt ? new Date(result.data.expiresAt) : null,
+      })
+      res.json({ user })
+    },
+
+    async clearStatus(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const user = await workspaceService.setUserStatus(userId, workspaceId, {
+        statusEmoji: null,
+        statusText: null,
+        statusExpiresAt: null,
+      })
       res.json({ user })
     },
 

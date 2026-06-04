@@ -78,6 +78,12 @@ export interface User {
   pronouns: string | null
   phone: string | null
   githubUsername: string | null
+  /** Cosmetic status emoji shortcode (no colons), e.g. `"dart"`. Null when unset. */
+  statusEmoji: string | null
+  /** Cosmetic status text shown beside the avatar. Null when unset. */
+  statusText: string | null
+  /** ISO 8601 instant the status auto-clears at, or null for indefinite. */
+  statusExpiresAt: string | null
   setupCompleted: boolean
   joinedAt: string
 }

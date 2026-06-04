@@ -1,4 +1,5 @@
 import type { WorkSchedule } from "./work-schedule"
+import type { StatusPreset } from "./user-status"
 
 // =============================================================================
 // User Preferences Types
@@ -234,6 +235,11 @@ export interface UserPreferences {
    * user.workSchedule ?? workspaceSettings.defaultWorkSchedule ?? DEFAULT_WORK_SCHEDULE.
    */
   workSchedule: WorkSchedule | null
+  /**
+   * The user's personal status presets, additive to the workspace/system
+   * defaults shown in the status picker. Empty by default.
+   */
+  statusPresets: StatusPreset[]
   createdAt: string
   updatedAt: string
 }
@@ -260,6 +266,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   keyboardShortcuts: {},
   accessibility: DEFAULT_ACCESSIBILITY,
   workSchedule: null,
+  statusPresets: [],
 }
 
 // =============================================================================
@@ -288,6 +295,7 @@ export interface UpdateUserPreferencesInput {
   keyboardShortcuts?: KeyboardShortcuts
   accessibility?: Partial<AccessibilityPreferences>
   workSchedule?: WorkSchedule | null
+  statusPresets?: StatusPreset[]
 }
 
 // =============================================================================
