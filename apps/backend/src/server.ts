@@ -445,6 +445,36 @@ export async function startServer(): Promise<ServerInstance> {
       actorId: params.actorId,
       actorType: "persona",
     })
+  const addReaction = (params: {
+    workspaceId: string
+    streamId: string
+    messageId: string
+    emoji: string
+    actorId: string
+  }) =>
+    eventService.addReaction({
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      messageId: params.messageId,
+      emoji: params.emoji,
+      userId: params.actorId,
+      actorType: "persona",
+    })
+  const removeReaction = (params: {
+    workspaceId: string
+    streamId: string
+    messageId: string
+    emoji: string
+    actorId: string
+  }) =>
+    eventService.removeReaction({
+      workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      messageId: params.messageId,
+      emoji: params.emoji,
+      userId: params.actorId,
+      actorType: "persona",
+    })
   const createThread = (params: Parameters<typeof streamService.createThread>[0]) => streamService.createThread(params)
 
   const activityService = new ActivityService({ pool })
@@ -683,6 +713,8 @@ export async function startServer(): Promise<ServerInstance> {
     createMessage,
     editMessage,
     deleteMessage,
+    addReaction,
+    removeReaction,
     createThread,
   })
   // Tier assignments (see QueueManager `tiers` config above):

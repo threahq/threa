@@ -271,8 +271,9 @@ export class ActivityService {
     messageId: string
     emoji: string
     actorId: string
+    actorType: string
   }): Promise<Activity[]> {
-    const { workspaceId, streamId, messageId, emoji, actorId } = params
+    const { workspaceId, streamId, messageId, emoji, actorId, actorType } = params
 
     return withClient(this.pool, async (client) => {
       const message = await MessageRepository.findById(client, messageId)
@@ -284,7 +285,7 @@ export class ActivityService {
       const rootStream = stream.rootStreamId ? await StreamRepository.findById(client, stream.rootStreamId) : null
       const streamContext = resolveStreamContext(stream, rootStream)
       const contentPreview = (message.contentMarkdown ?? "").slice(0, 200)
-      const actorName = await this.resolveAuthorName(client, workspaceId, actorId, AuthorTypes.USER)
+      const actorName = await this.resolveAuthorName(client, workspaceId, actorId, actorType)
 
       const context = {
         contentPreview,
@@ -318,7 +319,7 @@ export class ActivityService {
               streamId,
               messageId,
               actorId,
-              actorType: AuthorTypes.USER,
+              actorType,
               context,
               emoji,
             })
@@ -327,20 +328,25 @@ export class ActivityService {
         }
       }
 
-      // 2. Self-row for the reactor (always, for the Me feed)
-      const selfRows = await ActivityRepository.insertBatch(client, {
-        workspaceId,
-        userIds: [actorId],
-        activityType: ActivityTypes.REACTION,
-        streamId,
-        messageId,
-        actorId,
-        actorType: AuthorTypes.USER,
-        context,
-        isSelf: true,
-        emoji,
-      })
-      activities.push(...selfRows)
+      // 2. Self-row for the reactor (for the Me feed). Only workspace users have
+      // a Me feed — personas/bots react without one, so skip the self-row for
+      // non-user reactors (the author notification above still fires so the
+      // human whose message was reacted to sees it).
+      if (actorType === AuthorTypes.USER) {
+        const selfRows = await ActivityRepository.insertBatch(client, {
+          workspaceId,
+          userIds: [actorId],
+          activityType: ActivityTypes.REACTION,
+          streamId,
+          messageId,
+          actorId,
+          actorType,
+          context,
+          isSelf: true,
+          emoji,
+        })
+        activities.push(...selfRows)
+      }
 
       return activities
     })

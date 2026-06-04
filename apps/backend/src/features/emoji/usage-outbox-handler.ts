@@ -202,6 +202,13 @@ export class EmojiUsageHandler implements OutboxHandler {
       return
     }
 
+    // Only track reactions from workspace users. Persona/bot reactions (the
+    // agent's react_to_message tool) must not feed a human's emoji
+    // personalization. A missing actorType means a legacy/user reaction.
+    if (payload.actorType && payload.actorType !== AuthorTypes.USER) {
+      return
+    }
+
     // E2E streams: don't record reaction usage. A reaction on a private
     // message is itself sensitive metadata, and Phase 1 keeps these streams
     // opaque to backend personalization.

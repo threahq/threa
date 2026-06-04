@@ -10,6 +10,18 @@ interface ActorAvatarInfo {
   avatarUrl?: string
 }
 
+/**
+ * Infer an actor's type from its prefixed ULID. Used where only the id is
+ * known — notably reactions, which store `Record<emoji, actorId[]>` with no
+ * per-reactor type. Prefixes are stable by convention (`persona_…` for AI
+ * agents, `bot_…` for bots, `usr_…` for workspace users).
+ */
+export function actorTypeFromId(id: string): AuthorType {
+  if (id.startsWith("persona_")) return "persona"
+  if (id.startsWith("bot_")) return "bot"
+  return "user"
+}
+
 export interface ActorLookup {
   getActorName: (actorId: string | null, actorType: AuthorType | null) => string
   getActorInitials: (actorId: string | null, actorType: AuthorType | null) => string

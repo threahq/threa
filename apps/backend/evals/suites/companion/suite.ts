@@ -349,6 +349,30 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       return message ? { id: message.id } : null
     }
 
+    const addReaction: PersonaAgentDeps["addReaction"] = async (params) => {
+      const message = await evalEventService.addReaction({
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        messageId: params.messageId,
+        emoji: params.emoji,
+        userId: params.actorId,
+        actorType: "persona",
+      })
+      return message ? { id: message.id } : null
+    }
+
+    const removeReaction: PersonaAgentDeps["removeReaction"] = async (params) => {
+      const message = await evalEventService.removeReaction({
+        workspaceId: params.workspaceId,
+        streamId: params.streamId,
+        messageId: params.messageId,
+        emoji: params.emoji,
+        userId: params.actorId,
+        actorType: "persona",
+      })
+      return message ? { id: message.id } : null
+    }
+
     const createThread: PersonaAgentDeps["createThread"] = async (params) => {
       // For evals, we don't actually need threads - return a mock
       const threadId = generateStreamId()
@@ -408,6 +432,8 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       createMessage,
       editMessage,
       deleteMessage,
+      addReaction,
+      removeReaction,
       createThread,
     })
 

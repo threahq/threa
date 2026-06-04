@@ -204,6 +204,7 @@ export class ActivityFeedHandler implements OutboxHandler {
       messageId: payload.messageId,
       emoji: payload.emoji,
       actorId: payload.userId,
+      actorType: payload.actorType ?? AuthorTypes.USER,
     })
   }
 

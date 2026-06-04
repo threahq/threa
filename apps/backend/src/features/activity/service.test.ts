@@ -396,6 +396,7 @@ describe("ActivityService.processReactionAdded", () => {
       messageId: MESSAGE_ID,
       emoji: ":eyes:",
       actorId: REACTOR_ID,
+      actorType: AuthorTypes.USER,
     })
 
     expect(activities.length).toBe(2)
@@ -411,6 +412,54 @@ describe("ActivityService.processReactionAdded", () => {
     expect(selfCall).toBeDefined()
     expect(selfCall.isSelf).toBe(true)
     expect(selfCall.emoji).toBe(":eyes:")
+  })
+
+  it("notifies the author with the persona's identity but creates no self-row for a persona reactor", async () => {
+    const service = setupService()
+    const stream = fakeStream({ type: StreamTypes.CHANNEL, visibility: Visibilities.PUBLIC })
+    const PERSONA_ID = "persona_ariadne"
+
+    spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage() as any)
+    spyOn(StreamRepository, "findById").mockResolvedValue(stream)
+    // Resolved via the persona repo, not the user repo, because actorType is "persona".
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: PERSONA_ID, name: "Ariadne" } as any)
+    spyOn(StreamMemberRepository, "findByStreamAndMember").mockResolvedValue({
+      memberId: MESSAGE_AUTHOR_ID,
+    } as any)
+    const resolveModule = await import("../streams")
+    spyOn(resolveModule, "resolveNotificationLevelsForStream").mockResolvedValue([
+      { memberId: MESSAGE_AUTHOR_ID, effectiveLevel: NotificationLevels.ACTIVITY },
+    ] as any)
+
+    const calls: any[] = []
+    spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) => {
+      calls.push(params)
+      return params.userIds.map((uid: string) => ({
+        ...fakeActivity(params.context)[0],
+        userId: uid,
+        isSelf: params.isSelf ?? false,
+      }))
+    })
+
+    await service.processReactionAdded({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      emoji: ":tada:",
+      actorId: PERSONA_ID,
+      actorType: AuthorTypes.PERSONA,
+    })
+
+    // Author notification fires (attributed to the persona); no self-row — a
+    // persona has no Me feed — so there is exactly one insert, targeting the
+    // author.
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({
+      userIds: [MESSAGE_AUTHOR_ID],
+      actorId: PERSONA_ID,
+      actorType: AuthorTypes.PERSONA,
+      context: { authorName: "Ariadne" },
+    })
   })
 
   it("does not notify the author when the reactor is the author — just creates a self-row", async () => {
@@ -437,6 +486,7 @@ describe("ActivityService.processReactionAdded", () => {
       messageId: MESSAGE_ID,
       emoji: "✅",
       actorId: REACTOR_ID,
+      actorType: AuthorTypes.USER,
     })
 
     // Only the self-row gets inserted; the "author" path is skipped because
@@ -477,6 +527,7 @@ describe("ActivityService.processReactionAdded", () => {
       messageId: MESSAGE_ID,
       emoji: "👀",
       actorId: REACTOR_ID,
+      actorType: AuthorTypes.USER,
     })
 
     // MUTED → no author notification. Self-row still created.
@@ -510,6 +561,7 @@ describe("ActivityService.processReactionAdded", () => {
       messageId: MESSAGE_ID,
       emoji: "🚀",
       actorId: REACTOR_ID,
+      actorType: AuthorTypes.USER,
     })
 
     // Bot authors don't get notified (no Activity UI). Self-row still created.
@@ -528,6 +580,7 @@ describe("ActivityService.processReactionAdded", () => {
       messageId: MESSAGE_ID,
       emoji: ":eyes:",
       actorId: REACTOR_ID,
+      actorType: AuthorTypes.USER,
     })
 
     expect(activities).toEqual([])

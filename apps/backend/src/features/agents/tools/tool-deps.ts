@@ -14,3 +14,15 @@ export interface WorkspaceToolDeps {
   attachmentService: AttachmentService
   memoExplorer: MemoExplorerService
 }
+
+/**
+ * Reaction callbacks for the `react_to_message` tool. Separate from
+ * `WorkspaceToolDeps` because only this one tool needs them — the persona
+ * identity and `actorType: "persona"` are bound by the caller, so the tool only
+ * supplies the target message, its stream, and the emoji shortcode. Each
+ * resolves to the updated message, or `null` when the message no longer exists.
+ */
+export interface ReactionToolDeps {
+  addReaction: (params: { streamId: string; messageId: string; emoji: string }) => Promise<{ id: string } | null>
+  removeReaction: (params: { streamId: string; messageId: string; emoji: string }) => Promise<{ id: string } | null>
+}

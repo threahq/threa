@@ -25,7 +25,17 @@ import { formatAttachImageTag, formatAttachTag, formatMsgAuthorTag } from "../..
  *
  * Actual images are loaded on-demand via the load_attachment tool.
  */
-export function formatMessagesWithTemporal(messages: MessageWithAttachments[], context: StreamContext): ModelMessage[] {
+export function formatMessagesWithTemporal(
+  messages: MessageWithAttachments[],
+  context: StreamContext,
+  /**
+   * Resolved actor names (users + personas) for the conversation, used both for
+   * the `[@name]` author prefix in multi-user streams and for naming reactors in
+   * the per-message reactions annotation. Superset of `context.participants`;
+   * when omitted, names fall back to participants only.
+   */
+  actorNames?: Map<string, string>
+): ModelMessage[] {
   const temporal = context.temporal
 
   // Number image attachments in conversation order so the agent can reference
@@ -41,21 +51,27 @@ export function formatMessagesWithTemporal(messages: MessageWithAttachments[], c
     }
   }
 
+  // Build authorId -> name map from participants, overlaid with the richer
+  // resolved names (personas, non-participant reactors) when provided.
+  const names = new Map<string, string>()
+  if (context.participants) {
+    for (const p of context.participants) {
+      names.set(p.id, p.name)
+    }
+  }
+  if (actorNames) {
+    for (const [id, name] of actorNames) names.set(id, name)
+  }
+
   if (!temporal) {
     // No temporal context - return messages with original content + attachment context
     return messages.map((m) => ({
       role: m.authorType === AuthorTypes.USER ? ("user" as const) : ("assistant" as const),
-      content: formatMessageContent(m, `${idTag(m)} `, imageIndexById),
+      content: formatMessageContent(m, `${idTag(m)} `, imageIndexById, names),
     }))
   }
 
-  // Build authorId -> name map from participants (users only)
-  const authorNames = new Map<string, string>()
-  if (context.participants) {
-    for (const p of context.participants) {
-      authorNames.set(p.id, p.name)
-    }
-  }
+  const authorNames = names
 
   const result: ModelMessage[] = []
   let currentDateKey: string | null = null
@@ -82,13 +98,13 @@ export function formatMessagesWithTemporal(messages: MessageWithAttachments[], c
 
       result.push({
         role,
-        content: formatMessageContent(msg, textPrefix, imageIndexById),
+        content: formatMessageContent(msg, textPrefix, imageIndexById, names),
       })
     } else {
       // Assistant/persona messages - no timestamp or date markers to avoid model mimicking
       result.push({
         role,
-        content: formatMessageContent(msg, `${idTag(msg)} `, imageIndexById),
+        content: formatMessageContent(msg, `${idTag(msg)} `, imageIndexById, names),
       })
     }
   }
@@ -167,7 +183,8 @@ function formatAttachmentDescription(att: AttachmentContext, imageIndexById: Map
 function formatMessageContent(
   msg: MessageWithAttachments,
   textPrefix: string = "",
-  imageIndexById: Map<string, number> = new Map()
+  imageIndexById: Map<string, number> = new Map(),
+  actorNames: Map<string, string> = new Map()
 ): string {
   let content = textPrefix + msg.contentMarkdown
 
@@ -176,5 +193,28 @@ function formatMessageContent(
     content += "\n\n" + descriptions.join("\n\n")
   }
 
+  const reactionLine = formatReactions(msg.reactions, actorNames)
+  if (reactionLine) {
+    content += "\n" + reactionLine
+  }
+
   return content
+}
+
+/**
+ * Render a message's reactions as a compact, model-readable annotation so the
+ * agent is aware of how people (and it) have reacted, e.g.
+ * `[Reactions: :+1: by Alice, Bob; :tada: by Ariadne]`. Emoji are kept as their
+ * shortcodes (self-describing) and reactors are named via the resolved actor
+ * map, falling back to "someone" for ids we couldn't resolve.
+ */
+function formatReactions(reactions: Record<string, string[]>, actorNames: Map<string, string>): string | null {
+  const entries = Object.entries(reactions).filter(([, userIds]) => userIds.length > 0)
+  if (entries.length === 0) return null
+
+  const parts = entries.map(([emoji, userIds]) => {
+    const who = userIds.map((id) => actorNames.get(id) ?? "someone").join(", ")
+    return `${emoji} by ${who}`
+  })
+  return `[Reactions: ${parts.join("; ")}]`
 }

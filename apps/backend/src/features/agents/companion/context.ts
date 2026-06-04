@@ -151,10 +151,21 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     }
   }
 
-  const missingAuthorIds = streamContext.conversationHistory
-    .filter((m) => !authorNames.has(m.authorId))
-    .map((m) => m.authorId)
-  const resolvedNames = await resolveActorNames(db, workspaceId, missingAuthorIds)
+  // Collect both message authors and reaction actors that we don't yet have a
+  // name for. Reactors can be users or personas (the agent reacting to a
+  // message) and need not be participants, so they often won't be covered by
+  // the participants pass above — resolve them so the reactions annotation in
+  // the formatted prompt names who reacted instead of "someone".
+  const unresolvedIds = new Set<string>()
+  for (const m of streamContext.conversationHistory) {
+    if (!authorNames.has(m.authorId)) unresolvedIds.add(m.authorId)
+    for (const reactorIds of Object.values(m.reactions)) {
+      for (const reactorId of reactorIds) {
+        if (!authorNames.has(reactorId)) unresolvedIds.add(reactorId)
+      }
+    }
+  }
+  const resolvedNames = await resolveActorNames(db, workspaceId, [...unresolvedIds])
   for (const [id, name] of resolvedNames) authorNames.set(id, name)
 
   let mentionerName: string | undefined
@@ -280,7 +291,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     invokingUserId !== undefined
   )
 
-  const messages = formatMessagesWithTemporal(streamContext.conversationHistory, streamContext)
+  const messages = formatMessagesWithTemporal(streamContext.conversationHistory, streamContext, authorNames)
 
   return {
     systemPrompt,
