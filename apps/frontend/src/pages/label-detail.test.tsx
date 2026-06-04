@@ -1,9 +1,10 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { render, screen } from "@/test"
+import { render, screen, userEvent } from "@/test"
 import { Visibilities } from "@threa/types"
 import { LabelDetailPage } from "./label-detail"
-import { SidebarProvider } from "@/contexts"
+import { ServicesProvider, SidebarProvider, type LabelService } from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks"
@@ -61,14 +62,19 @@ function stream(
 }
 
 function renderPage() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <SidebarProvider>
-      <MemoryRouter initialEntries={[`/w/${WS}/labels/${LABEL_ID}`]}>
-        <Routes>
-          <Route path="/w/:workspaceId/labels/:labelId" element={<LabelDetailPage />} />
-        </Routes>
-      </MemoryRouter>
-    </SidebarProvider>
+    <QueryClientProvider client={queryClient}>
+      <ServicesProvider services={{ labels: {} as unknown as LabelService }}>
+        <SidebarProvider>
+          <MemoryRouter initialEntries={[`/w/${WS}/labels/${LABEL_ID}`]}>
+            <Routes>
+              <Route path="/w/:workspaceId/labels/:labelId" element={<LabelDetailPage />} />
+            </Routes>
+          </MemoryRouter>
+        </SidebarProvider>
+      </ServicesProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -79,6 +85,8 @@ describe("LabelDetailPage", () => {
     vi.spyOn(hooksModule, "useLabelsSync").mockReturnValue({ isFetched: true } as unknown as ReturnType<
       typeof hooksModule.useLabelsSync
     >)
+    // Default viewer is the label's creator, so the edit affordance is present.
+    vi.spyOn(hooksModule, "useWorkspaceUserId").mockReturnValue("user_me")
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue(
       [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>
     )
@@ -150,5 +158,24 @@ describe("LabelDetailPage", () => {
 
     expect(screen.queryByText("Label not found")).not.toBeInTheDocument()
     expect(screen.queryByText("Nothing here yet")).not.toBeInTheDocument()
+  })
+
+  it("lets the creator open an edit form prefilled with the label", async () => {
+    vi.spyOn(hooksModule, "useLabelStreams").mockReturnValue([])
+
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: /edit/i }))
+
+    expect(screen.getByDisplayValue("Reading list")).toBeInTheDocument()
+  })
+
+  it("hides the edit affordance from non-creators", () => {
+    vi.spyOn(hooksModule, "useWorkspaceUserId").mockReturnValue("someone_else")
+    vi.spyOn(hooksModule, "useLabelStreams").mockReturnValue([])
+
+    renderPage()
+
+    expect(screen.queryByRole("button", { name: /edit/i })).not.toBeInTheDocument()
   })
 })

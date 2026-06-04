@@ -129,9 +129,15 @@ describe("StreamLabelStack", () => {
     spyOnExport(drawerModule, "DrawerHeader").mockReturnValue(Passthrough as never)
     spyOnExport(drawerModule, "DrawerTitle").mockReturnValue(Passthrough as never)
 
-    setLabels(["alpha"])
+    setLabels(["alpha", "beta"])
     mount()
 
-    expect(screen.getByRole("link", { name: "alpha" })).toHaveAttribute("href", `/w/${WORKSPACE_ID}/labels/alpha`)
+    const links = screen
+      .getAllByRole("link")
+      .map((link) => ({ name: link.textContent, href: link.getAttribute("href") }))
+    expect(links).toEqual([
+      { name: "alpha", href: `/w/${WORKSPACE_ID}/labels/alpha` },
+      { name: "beta", href: `/w/${WORKSPACE_ID}/labels/beta` },
+    ])
   })
 })

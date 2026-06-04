@@ -1,18 +1,27 @@
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, ChevronRight, Globe, Lock, Tag } from "lucide-react"
+import { ArrowLeft, ChevronRight, Globe, Lock, Pencil, Tag } from "lucide-react"
 import { Visibilities } from "@threa/types"
-import { buttonVariants } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  ResponsiveDialog,
+  ResponsiveDialogBody,
+  ResponsiveDialogContent,
+  ResponsiveDialogDescription,
+  ResponsiveDialogHeader,
+  ResponsiveDialogTitle,
+} from "@/components/ui/responsive-dialog"
 import { SidebarToggle } from "@/components/layout"
 import { LabelGlyph } from "@/components/labels/label-chip"
+import { LabelEditForm } from "@/components/labels/label-edit-form"
 import { cn } from "@/lib/utils"
 import { hexToRgba } from "@/lib/labels"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { truncateContent } from "@/components/layout/sidebar/utils"
-import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
+import { resolveStreamName, streamFallbackLabel, STREAM_ICONS } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
-import { useLabelStreams, useLabelsSync, type CachedLabel } from "@/hooks"
+import { useLabelStreams, useLabelsSync, useWorkspaceUserId, type CachedLabel } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceLabels, useWorkspaceUsers, type CachedStream } from "@/stores/workspace-store"
 
 /**
@@ -37,6 +46,9 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   const streams = useLabelStreams(workspaceId, labelId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const currentUserId = useWorkspaceUserId(workspaceId)
+  const [editOpen, setEditOpen] = useState(false)
+  const canEdit = !!label && label.creatorUserId === currentUserId
 
   // Resolve each stream's viewer-specific name once, here, rather than a hook
   // per row — DM names live in the peer caches, not on the stream object.
@@ -57,7 +69,30 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   } else {
     body = (
       <>
-        <LabelHero label={label} streamCount={namedStreams.length} />
+        <LabelHero label={label} streamCount={namedStreams.length} canEdit={canEdit} onEdit={() => setEditOpen(true)} />
+        {canEdit && (
+          <ResponsiveDialog open={editOpen} onOpenChange={setEditOpen} disableSnapPoints>
+            <ResponsiveDialogContent
+              desktopClassName="sm:max-w-lg p-0 gap-0"
+              drawerClassName="flex max-h-[92dvh] flex-col gap-0"
+            >
+              <ResponsiveDialogHeader className="border-b px-4 py-4 sm:px-6 sm:py-5">
+                <ResponsiveDialogTitle>Edit label</ResponsiveDialogTitle>
+                <ResponsiveDialogDescription className="sr-only">
+                  Edit this label's name, color, emoji, and description.
+                </ResponsiveDialogDescription>
+              </ResponsiveDialogHeader>
+              <ResponsiveDialogBody className="py-4">
+                <LabelEditForm
+                  workspaceId={workspaceId}
+                  label={label}
+                  onDone={() => setEditOpen(false)}
+                  variant="dialog"
+                />
+              </ResponsiveDialogBody>
+            </ResponsiveDialogContent>
+          </ResponsiveDialog>
+        )}
         <section className="mt-8">
           <h2 className="mb-2.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Streams</h2>
           {namedStreams.length === 0 ? (
@@ -115,7 +150,17 @@ function streamCountLabel(count: number): string {
   return `${count} ${count === 1 ? "stream" : "streams"}`
 }
 
-function LabelHero({ label, streamCount }: { label: CachedLabel; streamCount: number }) {
+function LabelHero({
+  label,
+  streamCount,
+  canEdit,
+  onEdit,
+}: {
+  label: CachedLabel
+  streamCount: number
+  canEdit: boolean
+  onEdit: () => void
+}) {
   const isPublic = label.visibility === Visibilities.PUBLIC
   return (
     <div
@@ -148,6 +193,12 @@ function LabelHero({ label, streamCount }: { label: CachedLabel; streamCount: nu
             </p>
           )}
         </div>
+        {canEdit && (
+          <Button size="sm" variant="outline" className="h-8 shrink-0 gap-1.5 px-2.5 text-xs" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Edit</span>
+          </Button>
+        )}
       </div>
     </div>
   )
@@ -179,7 +230,7 @@ function StreamRow({
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">{name ?? "Untitled"}</span>
+          <span className="truncate text-sm font-medium">{name ?? streamFallbackLabel(stream.type, "generic")}</span>
           <time className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
             {formatRelativeTime(new Date(activityAt), undefined, undefined, { terse: true })}
           </time>
