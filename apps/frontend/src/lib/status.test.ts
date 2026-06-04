@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { DEFAULT_WORK_SCHEDULE, SYSTEM_DEFAULT_STATUSES, type StatusPreset } from "@threa/types"
+import { DEFAULT_WORK_SCHEDULE, SYSTEM_DEFAULT_STATUSES, type StatusPreset, type WorkSchedule } from "@threa/types"
 import {
   STATUS_DURATION_OPTIONS,
   durationsEqual,
@@ -52,6 +52,42 @@ describe("statusDurationToExpiry", () => {
       friday
     )
     expect(expiry).toBe(new Date("2026-06-08T09:00:00Z").toISOString())
+  })
+
+  // A user who works Sun–Thu starting at 11:00 — not the Mon–Fri 09:00 default.
+  const sunThuElevenToSeven: WorkSchedule = {
+    days: {
+      0: [{ start: "11:00", end: "19:00" }],
+      1: [{ start: "11:00", end: "19:00" }],
+      2: [{ start: "11:00", end: "19:00" }],
+      3: [{ start: "11:00", end: "19:00" }],
+      4: [{ start: "11:00", end: "19:00" }],
+      5: [],
+      6: [],
+    },
+  }
+
+  it("next-working-day-start follows the viewer's own working days, not Mon–Fri", () => {
+    // Thursday 2026-06-04 under a Sun–Thu week: Fri + Sat are days off, so the
+    // next working day is Sunday 2026-06-07 — not Friday.
+    const expiry = statusDurationToExpiry(
+      { kind: "calendar", calendar: "next-working-day-start" },
+      "UTC",
+      sunThuElevenToSeven,
+      now
+    )
+    expect(expiry).toBe(new Date("2026-06-07T11:00:00Z").toISOString())
+  })
+
+  it("calendar presets land on the viewer's start-of-work time, not a hardcoded 09:00", () => {
+    // Same Thursday, but "until tomorrow": Friday at the schedule's 11:00 start.
+    const expiry = statusDurationToExpiry(
+      { kind: "calendar", calendar: "tomorrow-start" },
+      "UTC",
+      sunThuElevenToSeven,
+      now
+    )
+    expect(expiry).toBe(new Date("2026-06-05T11:00:00Z").toISOString())
   })
 })
 
