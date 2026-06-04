@@ -20,9 +20,10 @@ who can't speak ProseMirror.
 Two rules fall out of that, and they are the two invariants this concept is:
 
 - **INV-58, keep contentJson internal.** Components, stores, optimistic events, and IndexedDB
-  all pass and store `contentJson`. Markdown is produced only when content crosses the boundary
-  (sending to the API), and the backend converts back to `contentJson` on the way in. Nothing
-  internal reads markdown to decide what to render.
+  all pass and store `contentJson`, and rich clients send `contentJson` to the API. Markdown is a
+  derived projection: the backend derives it from the JSON for storage and external consumers, and
+  the frontend derives it locally only for previews. Nothing internal reads markdown to decide what
+  to render.
 - **INV-60, strip markdown before previewing.** Any UI that shows a flattened snippet of
   user-authored content (sidebar stream previews, thread cards, the activity feed, saved and
   scheduled lists, notification text, quoted snippets) routes the markdown through
@@ -57,14 +58,18 @@ broken once a real message with formatting flows through.
 ## What an implementation must do
 
 1. **Hold contentJson internally.** New stores, optimistic events, IDB rows, and components keep
-   `contentJson`, not a markdown string. Serialize to markdown only at the moment you hand content
-   to the API.
+   `contentJson`, not a markdown string. Send `contentJson` to the API; the backend derives the
+   markdown. Derive markdown locally only for an optimistic preview, never to put on the wire.
 2. **Convert through the one shared converter.** `serializeToMarkdown` (JSON to markdown) and
    `parseMarkdown` (markdown to JSON) are the single source of truth, shared by the frontend editor
    and the backend. Don't hand-roll a second serializer.
-3. **Keep both forms in sync at the boundary in.** When content arrives, derive the missing form so
-   `contentJson` and `contentMarkdown` always agree: parse markdown to JSON for external/AI callers,
-   serialize JSON to markdown for rich clients.
+3. **Derive markdown from JSON at the boundary in; never trust client markdown.** When a caller
+   authored `contentJson`, the backend ignores any markdown they send and derives it from the JSON
+   itself, so the two can't diverge. Only the markdown-only path (public API, AI integrations) takes
+   markdown as input, and there it parses markdown to JSON. The reason is a real attack: the stored
+   markdown is what agents, mention-gating, search, and the API wire read, so a client that could
+   pass a divergent `contentMarkdown` alongside benign `contentJson` would spoof the machine-visible
+   content while humans saw something innocent.
 4. **Strip before any preview.** Route every flattened snippet through `stripMarkdownToInline()` or
    `truncateContent()`. If you're adding a surface that shows a content preview, stripping is part
    of the surface, not an optional polish step.
@@ -81,15 +86,17 @@ broken once a real message with formatting flows through.
   `packages/prosemirror/src/markdown.ts`, with a single shared `INLINE_MARKDOWN_PATTERN` so the
   frontend editor and the backend tokenize identically.
 - **Boundary in.** `normalizeContent` (`apps/backend/src/features/messaging/handlers.ts:183`) returns
-  both forms. A rich client sends `contentJson` with `contentMarkdown` optional; the backend keeps the
-  JSON as the canon and currently uses the supplied markdown, falling back to serializing it from the
-  JSON only when absent (`:191`). A markdown-only caller (the public API, AI integrations) sends just a
-  `content` string, which the backend parses to `contentJson` (`:194`).
+  both forms. A rich client sends only `contentJson` (the JSON schemas reject a `contentMarkdown`
+  field); the backend derives the markdown from the JSON via the shared `deriveContentMarkdown`
+  (`messaging/content.ts:21`), which serializes and folds raw emoji to shortcodes (`handlers.ts:197`).
+  A markdown-only caller (the public API, AI integrations) sends just a `content` string, which the
+  backend parses to `contentJson` (`:201`). The scheduled-message create/update handlers derive the
+  same way (`scheduled-messages/handlers.ts:71`, `:137`).
 - **Internal handling out.** The editor and the durable send queue hold `contentJson`: the optimistic
   `message_created` event and the `pendingMessages` IDB row both carry it
-  (`apps/frontend/src/hooks/use-stream-or-draft.ts:559`, `:617`). At the boundary the frontend
-  serializes the JSON to markdown and posts both forms on the wire
-  (`apps/frontend/src/hooks/use-message-queue.ts:238`).
+  (`apps/frontend/src/hooks/use-stream-or-draft.ts:559`, `:617`). At the boundary the frontend posts
+  only `contentJson` (`apps/frontend/src/hooks/use-message-queue.ts:239`); the markdown it derives
+  locally is for optimistic previews, not the wire.
 - **The strippers.** `stripMarkdownToInline()` / `stripMarkdown()`
   (`apps/frontend/src/lib/markdown/strip.ts`) remove markdown and collapse newlines for single-line
   previews; `truncateContent()` (`apps/frontend/src/components/layout/sidebar/utils.ts:79`) accepts
