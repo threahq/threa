@@ -107,7 +107,6 @@ export interface PersonaAgentDeps {
     messageId: string
     emoji: string
     actorId: string
-    actorType: AuthorType
   }) => Promise<{ id: string } | null>
   removeReaction: (params: {
     workspaceId: string
@@ -115,7 +114,6 @@ export interface PersonaAgentDeps {
     messageId: string
     emoji: string
     actorId: string
-    actorType: AuthorType
   }) => Promise<{ id: string } | null>
   createThread: (params: {
     workspaceId: string
@@ -456,19 +454,13 @@ export class PersonaAgent {
         }
 
         // Reaction callbacks for the react_to_message tool, bound to this
-        // persona's identity + actorType so the tool only supplies the target
-        // message, its stream, and the emoji. Reactions are attributed to the
-        // persona, never the invoking user.
+        // persona's identity so the tool only supplies the target message, its
+        // stream, and the emoji. Reactions are attributed to the persona (the
+        // server.ts wrapper fixes actorType to "persona"), never the invoking
+        // user.
         const reactionDeps: import("./tools/tool-deps").ReactionToolDeps = {
           addReaction: ({ streamId: targetStream, messageId: targetMessage, emoji }) =>
-            addReaction({
-              workspaceId,
-              streamId: targetStream,
-              messageId: targetMessage,
-              emoji,
-              actorId: persona.id,
-              actorType: AuthorTypes.PERSONA,
-            }),
+            addReaction({ workspaceId, streamId: targetStream, messageId: targetMessage, emoji, actorId: persona.id }),
           removeReaction: ({ streamId: targetStream, messageId: targetMessage, emoji }) =>
             removeReaction({
               workspaceId,
@@ -476,7 +468,6 @@ export class PersonaAgent {
               messageId: targetMessage,
               emoji,
               actorId: persona.id,
-              actorType: AuthorTypes.PERSONA,
             }),
         }
 

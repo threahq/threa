@@ -451,7 +451,6 @@ export async function startServer(): Promise<ServerInstance> {
     messageId: string
     emoji: string
     actorId: string
-    actorType: AuthorType
   }) =>
     eventService.addReaction({
       workspaceId: params.workspaceId,
@@ -459,7 +458,7 @@ export async function startServer(): Promise<ServerInstance> {
       messageId: params.messageId,
       emoji: params.emoji,
       userId: params.actorId,
-      actorType: params.actorType,
+      actorType: "persona",
     })
   const removeReaction = (params: {
     workspaceId: string
@@ -467,7 +466,6 @@ export async function startServer(): Promise<ServerInstance> {
     messageId: string
     emoji: string
     actorId: string
-    actorType: AuthorType
   }) =>
     eventService.removeReaction({
       workspaceId: params.workspaceId,
@@ -475,7 +473,7 @@ export async function startServer(): Promise<ServerInstance> {
       messageId: params.messageId,
       emoji: params.emoji,
       userId: params.actorId,
-      actorType: params.actorType,
+      actorType: "persona",
     })
   const createThread = (params: Parameters<typeof streamService.createThread>[0]) => streamService.createThread(params)
 

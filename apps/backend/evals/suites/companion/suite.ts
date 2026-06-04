@@ -356,7 +356,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
         messageId: params.messageId,
         emoji: params.emoji,
         userId: params.actorId,
-        actorType: params.actorType,
+        actorType: "persona",
       })
       return message ? { id: message.id } : null
     }
@@ -368,7 +368,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
         messageId: params.messageId,
         emoji: params.emoji,
         userId: params.actorId,
-        actorType: params.actorType,
+        actorType: "persona",
       })
       return message ? { id: message.id } : null
     }

@@ -357,7 +357,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
         messageId: params.messageId,
         emoji: params.emoji,
         userId: params.actorId,
-        actorType: params.actorType,
+        actorType: "persona",
       })
       return message ? { id: message.id } : null
     }
@@ -369,7 +369,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
         messageId: params.messageId,
         emoji: params.emoji,
         userId: params.actorId,
-        actorType: params.actorType,
+        actorType: "persona",
       })
       return message ? { id: message.id } : null
     }

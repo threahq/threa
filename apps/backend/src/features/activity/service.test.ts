@@ -450,15 +450,16 @@ describe("ActivityService.processReactionAdded", () => {
       actorType: AuthorTypes.PERSONA,
     })
 
-    // Author notification fires, attributed to the persona; no self-row (a
-    // persona has no Me feed).
+    // Author notification fires (attributed to the persona); no self-row — a
+    // persona has no Me feed — so there is exactly one insert, targeting the
+    // author.
     expect(calls).toHaveLength(1)
-    const authorCall = calls[0]
-    expect(authorCall.userIds).toEqual([MESSAGE_AUTHOR_ID])
-    expect(authorCall.isSelf).toBeFalsy()
-    expect(authorCall.actorId).toBe(PERSONA_ID)
-    expect(authorCall.actorType).toBe(AuthorTypes.PERSONA)
-    expect(authorCall.context.authorName).toBe("Ariadne")
+    expect(calls[0]).toMatchObject({
+      userIds: [MESSAGE_AUTHOR_ID],
+      actorId: PERSONA_ID,
+      actorType: AuthorTypes.PERSONA,
+      context: { authorName: "Ariadne" },
+    })
   })
 
   it("does not notify the author when the reactor is the author — just creates a self-row", async () => {
