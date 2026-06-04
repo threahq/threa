@@ -440,7 +440,14 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // A stream was dragged out of the label lens it was under. Whether that strips
   // the old label follows the user's `labelRemoveOnMove` preference: act silently
   // for "always"/"never", otherwise prompt (and let the prompt persist a choice).
+  //
+  // Public labels are shared org-wide and unassign broadcasts to everyone, so a
+  // casual drag must never strip one — that would yank the stream out of the
+  // shared lens for the whole workspace. Only private labels (the dragger's own)
+  // are removable this way; the label picker stays the explicit path for public.
   const handleStreamMovedFromLabel = (streamId: string, sourceLabelId: string) => {
+    const label = labelsById.get(sourceLabelId)
+    if (!label || label.visibility !== Visibilities.PRIVATE) return
     const behavior = preferencesContext?.preferences?.labelRemoveOnMove ?? "ask"
     if (behavior === "never") return
     if (behavior === "always") {
