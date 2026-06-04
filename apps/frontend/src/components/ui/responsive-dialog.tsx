@@ -1,5 +1,6 @@
 import * as React from "react"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { ResponsiveModeProvider, useResponsiveMode } from "./responsive-mode"
 import {
   Dialog,
   DialogClose,
@@ -64,17 +65,19 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }:
     [props.onOpenChange, resolvedSnaps]
   )
 
-  if (isMobile) {
-    if (disableSnapPoints) {
-      return (
-        <DisableSnapPointsContext.Provider value={true}>
-          <Drawer open={props.open} onOpenChange={props.onOpenChange}>
-            {children}
-          </Drawer>
-        </DisableSnapPointsContext.Provider>
-      )
-    }
-    return (
+  // Resolve the root once and share the decision via context so the content and
+  // sub-parts can never disagree with the root mid-resize (see responsive-mode.tsx).
+  let root: React.ReactNode
+  if (isMobile && disableSnapPoints) {
+    root = (
+      <DisableSnapPointsContext.Provider value={true}>
+        <Drawer open={props.open} onOpenChange={props.onOpenChange}>
+          {children}
+        </Drawer>
+      </DisableSnapPointsContext.Provider>
+    )
+  } else if (isMobile) {
+    root = (
       <Drawer
         open={props.open}
         onOpenChange={handleOpenChange}
@@ -86,9 +89,11 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, ...props }:
         {children}
       </Drawer>
     )
+  } else {
+    root = <Dialog {...props}>{children}</Dialog>
   }
 
-  return <Dialog {...props}>{children}</Dialog>
+  return <ResponsiveModeProvider isMobile={isMobile}>{root}</ResponsiveModeProvider>
 }
 
 // ── Trigger ─────────────────────────────────────────────────────────────
@@ -97,7 +102,7 @@ const ResponsiveDialogTrigger = React.forwardRef<
   HTMLButtonElement,
   React.ComponentPropsWithoutRef<typeof DialogTrigger>
 >(({ className, ...props }, ref) => {
-  const isMobile = useIsMobile()
+  const isMobile = useResponsiveMode()
   const Comp = isMobile ? DrawerTrigger : DialogTrigger
   return <Comp ref={ref} className={className} {...props} />
 })
@@ -107,7 +112,7 @@ ResponsiveDialogTrigger.displayName = "ResponsiveDialogTrigger"
 
 const ResponsiveDialogClose = React.forwardRef<HTMLButtonElement, React.ComponentPropsWithoutRef<typeof DialogClose>>(
   ({ className, ...props }, ref) => {
-    const isMobile = useIsMobile()
+    const isMobile = useResponsiveMode()
     const Comp = isMobile ? DrawerClose : DialogClose
     return <Comp ref={ref} className={className} {...props} />
   }
@@ -125,7 +130,7 @@ interface ResponsiveDialogContentProps extends React.ComponentPropsWithoutRef<ty
 
 const ResponsiveDialogContent = React.forwardRef<HTMLDivElement, ResponsiveDialogContentProps>(
   ({ className, desktopClassName, drawerClassName, children, hideCloseButton, ...props }, ref) => {
-    const isMobile = useIsMobile()
+    const isMobile = useResponsiveMode()
     const noSnapPoints = React.useContext(DisableSnapPointsContext)
 
     if (isMobile) {
@@ -158,7 +163,7 @@ ResponsiveDialogContent.displayName = "ResponsiveDialogContent"
 // ── Header ──────────────────────────────────────────────────────────────
 
 function ResponsiveDialogHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  const isMobile = useIsMobile()
+  const isMobile = useResponsiveMode()
 
   if (isMobile) {
     // Override DrawerHeader's default p-4 to avoid double padding — callers set their own px/pt
@@ -172,7 +177,7 @@ ResponsiveDialogHeader.displayName = "ResponsiveDialogHeader"
 // ── Footer ──────────────────────────────────────────────────────────────
 
 function ResponsiveDialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  const isMobile = useIsMobile()
+  const isMobile = useResponsiveMode()
 
   if (isMobile) {
     return <DrawerFooter className={cn("pb-[max(16px,env(safe-area-inset-bottom))]", className)} {...props} />
@@ -186,7 +191,7 @@ ResponsiveDialogFooter.displayName = "ResponsiveDialogFooter"
 
 const ResponsiveDialogTitle = React.forwardRef<HTMLHeadingElement, React.ComponentPropsWithoutRef<typeof DialogTitle>>(
   ({ className, ...props }, ref) => {
-    const isMobile = useIsMobile()
+    const isMobile = useResponsiveMode()
 
     if (isMobile) {
       return <DrawerTitle ref={ref} className={className} {...props} />
@@ -203,7 +208,7 @@ const ResponsiveDialogDescription = React.forwardRef<
   HTMLParagraphElement,
   React.ComponentPropsWithoutRef<typeof DialogDescription>
 >(({ className, ...props }, ref) => {
-  const isMobile = useIsMobile()
+  const isMobile = useResponsiveMode()
 
   if (isMobile) {
     return <DrawerDescription ref={ref} className={className} {...props} />
