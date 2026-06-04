@@ -416,8 +416,11 @@ function MessageAuthorStatus({
   workspaceId: string
 }) {
   const { getActorAvatar } = useActors(workspaceId)
-  if (actorType !== "user" || !actorId) return null
-  const status = getActorAvatar(actorId, actorType).status
+  // Match the rest of this component, which treats a null/undefined actorType as
+  // a user (`event.actorType ?? "user"`), so legacy rows still show status.
+  const resolvedActorType = actorType ?? "user"
+  if (resolvedActorType !== "user" || !actorId) return null
+  const status = getActorAvatar(actorId, resolvedActorType).status
   if (!status?.emoji) return null
   const clears = formatStatusClearLabel(status.expiresAt)
   const glyph = (

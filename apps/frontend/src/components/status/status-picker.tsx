@@ -114,6 +114,12 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
 
   const handleSet = async () => {
     if (!contentful) return
+    // A "Custom" choice with an unparseable date/time must not silently fall
+    // back to an indefinite status — abort and prompt for a valid time.
+    if (durationId === CUSTOM_OPTION_ID && resolveExpiry() === null) {
+      toast.error("Pick a valid custom date and time")
+      return
+    }
     try {
       await setStatus.mutateAsync({ emoji, text: text.trim() || null, expiresAt: resolveExpiry() })
       onOpenChange(false)
@@ -155,10 +161,14 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
 
   const handleRemovePreset = async (id: string) => {
     if (!prefs) return
-    await prefs.updatePreference(
-      "statusPresets",
-      userPresets.filter((p) => p.id !== id)
-    )
+    try {
+      await prefs.updatePreference(
+        "statusPresets",
+        userPresets.filter((p) => p.id !== id)
+      )
+    } catch {
+      // updatePreference surfaces its own toast on failure.
+    }
   }
 
   return (

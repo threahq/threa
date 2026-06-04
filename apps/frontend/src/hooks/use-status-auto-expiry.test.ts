@@ -27,7 +27,7 @@ describe("useStatusAutoExpiry", () => {
 
     expect(mutate).not.toHaveBeenCalled()
     vi.advanceTimersByTime(60_000)
-    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(mutate).toHaveBeenCalledWith(undefined, expect.objectContaining({ onError: expect.any(Function) }))
   })
 
   it("does not schedule a clear for an indefinite status", () => {

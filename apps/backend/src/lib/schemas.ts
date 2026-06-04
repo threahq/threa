@@ -88,7 +88,16 @@ export const statusDurationSchema = z.discriminatedUnion("kind", [
   }),
 ])
 
-const statusEmojiSchema = z.string().min(1).max(64).nullable()
+// Emoji is stored as a shortcode (no surrounding colons), matching
+// personas/bots/labels — reject colon-wrapped values at the boundary so a
+// malformed `:eyes:` can't be persisted.
+const statusEmojiSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((value) => !value.includes(":"), { message: "Emoji shortcode must not include colons" })
+  .nullable()
 const statusTextSchema = z.string().max(STATUS_TEXT_MAX_LENGTH).nullable()
 
 export const statusPresetSchema = z
