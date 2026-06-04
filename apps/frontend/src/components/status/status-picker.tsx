@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import { useSetStatus, useClearStatus, workspaceKeys } from "@/hooks"
@@ -30,7 +31,6 @@ import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useAuth } from "@/auth"
 import { toDateInputValue, toTimeInputValue, parseLocalDateTime } from "@/lib/dates"
 import { STATUS_DURATION_OPTIONS, durationsEqual, mergeStatusPresets, statusDurationToExpiry } from "@/lib/status"
-import { cn } from "@/lib/utils"
 
 interface StatusPickerProps {
   workspaceId: string
@@ -40,6 +40,18 @@ interface StatusPickerProps {
 
 const CUSTOM_OPTION_ID = "custom"
 const NEW_PRESET_ID_PREFIX = "status_"
+
+/** Human label for a preset's default duration, shown beside it in the list. */
+function presetDurationLabel(preset: StatusPreset): string {
+  return STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, preset.defaultDuration))?.label ?? "Don't clear"
+}
+
+// "Don't clear" reads best at the top of the menu (matches Slack); the rest
+// keep their declaration order.
+const ORDERED_DURATION_OPTIONS = [
+  ...STATUS_DURATION_OPTIONS.filter((o) => o.id === "never"),
+  ...STATUS_DURATION_OPTIONS.filter((o) => o.id !== "never"),
+]
 
 /**
  * Set, change, or clear the current user's cosmetic status. Reuses the reaction
@@ -67,6 +79,9 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const [emoji, setEmoji] = useState<string | null>(null)
   const [text, setText] = useState("")
   const [durationId, setDurationId] = useState<string>("never")
+  // Whether the user has explicitly chosen a clear-time. Once they have, picking
+  // a different preset must NOT override their choice — only the emoji/text change.
+  const [durationTouched, setDurationTouched] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
 
@@ -76,6 +91,7 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     setEmoji(currentUser?.statusEmoji ?? null)
     setText(currentUser?.statusText ?? "")
     setDurationId("never")
+    setDurationTouched(false)
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
     setCustomDate(toDateInputValue(tomorrow))
     setCustomTime(toTimeInputValue(tomorrow))
@@ -83,6 +99,12 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     // clobber the draft mid-edit when a socket update lands. `currentUser` is
     // read at open time, which is the intended snapshot.
   }, [open])
+
+  /** Manual clear-time change — locks the choice against later preset picks. */
+  const handleDurationChange = (id: string) => {
+    setDurationId(id)
+    setDurationTouched(true)
+  }
 
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const emojiGlyph = emoji ? toEmoji(emoji) : null
@@ -92,8 +114,12 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const applyPreset = (preset: StatusPreset) => {
     setEmoji(preset.emoji)
     setText(preset.text ?? "")
-    const match = STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, preset.defaultDuration))
-    setDurationId(match?.id ?? "never")
+    // Respect a clear-time the user explicitly chose; otherwise adopt the
+    // preset's default duration.
+    if (!durationTouched) {
+      const match = STATUS_DURATION_OPTIONS.find((o) => durationsEqual(o.duration, preset.defaultDuration))
+      setDurationId(match?.id ?? "never")
+    }
   }
 
   const handleEmojiSelect = (picked: string) => {
@@ -180,7 +206,9 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
             Choose an emoji and text to show beside your name.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <ResponsiveDialogBody className="space-y-5 pb-6">
+        {/* pt-1.5 keeps the input's focus ring from being clipped by the body's
+            own overflow-y-auto top edge. */}
+        <ResponsiveDialogBody className="space-y-4 pb-6 pt-1.5">
           <div className="flex items-center gap-2">
             <ReactionEmojiPicker
               workspaceId={workspaceId}
@@ -216,70 +244,60 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
           </div>
 
           {presets.length > 0 && (
-            <div className="flex flex-wrap gap-2">
+            <div className="-mx-1 space-y-0.5">
               {presets.map((preset) => {
                 const glyph = preset.emoji ? toEmoji(preset.emoji) : null
                 const removable = userPresetIds.has(preset.id)
                 return (
-                  <span key={preset.id} className="inline-flex">
+                  <div key={preset.id} className="flex items-center rounded-md hover:bg-muted/50">
                     <button
                       type="button"
                       onClick={() => applyPreset(preset)}
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border border-input px-3 py-1 text-sm hover:bg-muted/50",
-                        removable && "rounded-r-none border-r-0"
-                      )}
+                      className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm"
                     >
-                      {glyph && <span className="leading-none">{glyph}</span>}
-                      {preset.text && <span className="truncate">{preset.text}</span>}
+                      {glyph ? (
+                        <span className="w-5 shrink-0 text-center leading-none">{glyph}</span>
+                      ) : (
+                        <span className="w-5 shrink-0" />
+                      )}
+                      <span className="truncate font-medium">{preset.text}</span>
+                      <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">
+                        {presetDurationLabel(preset)}
+                      </span>
                     </button>
                     {removable && (
                       <button
                         type="button"
                         aria-label={`Remove ${preset.text ?? "status"} preset`}
                         onClick={() => handleRemovePreset(preset.id)}
-                        className="inline-flex items-center rounded-full rounded-l-none border border-input px-1.5 text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        // Always visible — this dialog is a drawer on mobile where
+                        // there is no hover to reveal it.
+                        className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground"
                       >
-                        <X className="h-3 w-3" />
+                        <X className="h-3.5 w-3.5" />
                       </button>
                     )}
-                  </span>
+                  </div>
                 )
               })}
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label>Clear after</Label>
-            <div className="flex flex-wrap gap-2">
-              {STATUS_DURATION_OPTIONS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  onClick={() => setDurationId(option.id)}
-                  className={cn(
-                    "rounded-full border px-3 py-1 text-sm",
-                    durationId === option.id
-                      ? "border-primary bg-primary/10 text-foreground"
-                      : "border-input hover:bg-muted/50"
-                  )}
-                >
-                  {option.label}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setDurationId(CUSTOM_OPTION_ID)}
-                className={cn(
-                  "rounded-full border px-3 py-1 text-sm",
-                  durationId === CUSTOM_OPTION_ID
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-input hover:bg-muted/50"
-                )}
-              >
-                Custom…
-              </button>
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="status-clear-after">Clear after</Label>
+            <Select value={durationId} onValueChange={handleDurationChange}>
+              <SelectTrigger id="status-clear-after" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ORDERED_DURATION_OPTIONS.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+                <SelectItem value={CUSTOM_OPTION_ID}>Custom…</SelectItem>
+              </SelectContent>
+            </Select>
             {durationId === CUSTOM_OPTION_ID && (
               <DateTimeField
                 date={customDate}

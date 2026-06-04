@@ -50,19 +50,25 @@ interface SidebarFooterProps {
   scratchpadAddMenuActions?: SidebarActionItem[]
 }
 
-/** Avatar + small corner status-emoji badge; absolutely positioned (no shift, INV-21). */
+/**
+ * Avatar + optional corner status-emoji badge; absolutely positioned (no shift,
+ * INV-21). `showBadge` is off on surfaces that already show the status emoji as
+ * text alongside (the menu card), so the glyph never appears twice.
+ */
 function FooterAvatar({
   avatarSrc,
   currentUser,
   status,
   className,
   badgeClassName,
+  showBadge = true,
 }: {
   avatarSrc?: string | null
   currentUser: User
   status: FooterStatus | null
   className: string
   badgeClassName: string
+  showBadge?: boolean
 }) {
   return (
     <span className="relative inline-flex shrink-0">
@@ -70,7 +76,7 @@ function FooterAvatar({
         {avatarSrc && <AvatarImage src={avatarSrc} alt={currentUser.name} />}
         <AvatarFallback className="text-[10px]">{getInitials(currentUser.name)}</AvatarFallback>
       </Avatar>
-      {status?.glyph && (
+      {showBadge && status?.glyph && (
         <span
           aria-hidden
           className={cn(
@@ -93,7 +99,8 @@ interface SidebarFooterTriggerProps extends Omit<ComponentPropsWithoutRef<"butto
 
 const SidebarFooterTrigger = forwardRef<HTMLButtonElement, SidebarFooterTriggerProps>(
   ({ avatarSrc, currentUser, status, className, type = "button", ...buttonProps }, ref) => {
-    const statusLine = status?.text ?? (status?.glyph ? "" : null)
+    // The emoji rides the avatar badge; the subtitle shows only the text so the
+    // glyph never appears twice. Emoji-only statuses surface via the badge alone.
     return (
       <button
         ref={ref}
@@ -114,12 +121,7 @@ const SidebarFooterTrigger = forwardRef<HTMLButtonElement, SidebarFooterTriggerP
         />
         <span className="flex-1 min-w-0 flex flex-col text-left">
           <span className="truncate">{currentUser.name}</span>
-          {statusLine !== null && (
-            <span className="truncate text-xs font-normal text-muted-foreground">
-              {status?.glyph && <span className="mr-1">{status.glyph}</span>}
-              {statusLine}
-            </span>
-          )}
+          {status?.text && <span className="truncate text-xs font-normal text-muted-foreground">{status.text}</span>}
         </span>
         <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" />
       </button>
@@ -162,6 +164,9 @@ function SidebarStatusHeader({
             status={status}
             className="h-9 w-9"
             badgeClassName="text-xs"
+            // The status emoji shows in the text line below, so don't badge the
+            // avatar too — one indicator per surface.
+            showBadge={false}
           />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-foreground">{currentUser.name}</p>
