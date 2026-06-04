@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, AtSign, Bell, Globe, Hash, Lock, MessagesSquare, NotebookPen, PanelLeft, Tag } from "lucide-react"
-import { StreamTypes, Visibilities, type StreamType } from "@threa/types"
+import { ArrowLeft, Globe, Lock, PanelLeft, Tag } from "lucide-react"
+import { Visibilities } from "@threa/types"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarToggle } from "@/components/layout"
@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils"
 import { hexToRgba } from "@/lib/labels"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { truncateContent } from "@/components/layout/sidebar/utils"
-import { resolveStreamName } from "@/lib/streams"
+import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
 import { useLabelStreams, useLabelsSync, useSidebarConfig, type CachedLabel } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceLabels, useWorkspaceUsers, type CachedStream } from "@/stores/workspace-store"
@@ -149,17 +149,8 @@ function LabelHero({
   )
 }
 
-// Module-scoped so it isn't a component defined inside a component (INV-18).
-const STREAM_TYPE_ICONS: Record<StreamType, typeof Hash> = {
-  [StreamTypes.CHANNEL]: Hash,
-  [StreamTypes.SCRATCHPAD]: NotebookPen,
-  [StreamTypes.DM]: AtSign,
-  [StreamTypes.THREAD]: MessagesSquare,
-  [StreamTypes.SYSTEM]: Bell,
-}
-
 function StreamRow({ workspaceId, stream, name }: { workspaceId: string; stream: CachedStream; name: string | null }) {
-  const Icon = STREAM_TYPE_ICONS[stream.type] ?? Tag
+  const Icon = STREAM_ICONS[stream.type] ?? Tag
   const preview = stream.lastMessagePreview
   const activityAt = preview?.createdAt ?? stream.createdAt
   return (
@@ -167,7 +158,9 @@ function StreamRow({ workspaceId, stream, name }: { workspaceId: string; stream:
       to={`/w/${workspaceId}/s/${stream.id}`}
       className="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 transition-colors hover:border-border hover:bg-muted/50"
     >
-      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+      <span className="shrink-0 text-muted-foreground" aria-hidden>
+        <Icon className="h-4 w-4" />
+      </span>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="truncate text-sm font-medium">{name ?? "Untitled"}</span>
