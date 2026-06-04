@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   classifyDeepLinkScrollTick,
   classifyTailFollowOnAtBottomChange,
-  TAIL_FOLLOW_USER_SCROLL_WINDOW_MS,
+  TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS,
 } from "./stream-content"
 
 const DEADLINE = 4000
@@ -110,35 +110,37 @@ describe("classifyDeepLinkScrollTick", () => {
 describe("classifyTailFollowOnAtBottomChange", () => {
   const NOW = 100_000
 
-  it("re-pins when a row grows under a stationary reader at the tail (no recent gesture)", () => {
+  it("re-pins when a row grows under a stationary reader at the tail (no recent scroll-away)", () => {
     // The bug: an async embed/image in the last message finishes loading several
-    // seconds after the user last touched anything, growing the row past
-    // atBottomThreshold. Virtuoso reports atBottom=false; without re-pinning the
+    // seconds after the reader last moved the scroll, growing the row past
+    // atBottomThreshold. The scroll position never moved, so the scroll-away
+    // stamp is stale. Virtuoso reports atBottom=false; without re-pinning the
     // last message is stranded behind the floating composer.
     expect(
       classifyTailFollowOnAtBottomChange({
         atBottom: false,
         isJumpMode: false,
         nowMs: NOW,
-        userInteractedAtMs: NOW - 5_000,
+        scrolledAwayAtMs: NOW - 5_000,
       })
     ).toBe("repin")
 
-    // Never interacted at all (stamp 0) is also content-driven.
+    // Never scrolled up at all (stamp 0) is also content-driven.
     expect(
-      classifyTailFollowOnAtBottomChange({ atBottom: false, isJumpMode: false, nowMs: NOW, userInteractedAtMs: 0 })
+      classifyTailFollowOnAtBottomChange({ atBottom: false, isJumpMode: false, nowMs: NOW, scrolledAwayAtMs: 0 })
     ).toBe("repin")
   })
 
   it("propagates a genuine scroll-away so follow is disabled and the reader isn't yanked back", () => {
     // The threshold crossing fires at the onset of the scroll, right after the
-    // gesture, so a fresh stamp marks the user-driven case.
+    // position last moved up, so a fresh stamp marks the user-driven case. This
+    // holds for any input that decreases scrollTop, including a scrollbar drag.
     expect(
       classifyTailFollowOnAtBottomChange({
         atBottom: false,
         isJumpMode: false,
         nowMs: NOW,
-        userInteractedAtMs: NOW - 50,
+        scrolledAwayAtMs: NOW - 50,
       })
     ).toBe("propagate")
   })
@@ -149,7 +151,7 @@ describe("classifyTailFollowOnAtBottomChange", () => {
         atBottom: false,
         isJumpMode: false,
         nowMs: NOW,
-        userInteractedAtMs: NOW - TAIL_FOLLOW_USER_SCROLL_WINDOW_MS,
+        scrolledAwayAtMs: NOW - TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS,
       })
     ).toBe("repin")
     // One ms inside the window is still an active scroll.
@@ -158,7 +160,7 @@ describe("classifyTailFollowOnAtBottomChange", () => {
         atBottom: false,
         isJumpMode: false,
         nowMs: NOW,
-        userInteractedAtMs: NOW - (TAIL_FOLLOW_USER_SCROLL_WINDOW_MS - 1),
+        scrolledAwayAtMs: NOW - (TAIL_FOLLOW_SCROLL_AWAY_WINDOW_MS - 1),
       })
     ).toBe("propagate")
   })
@@ -166,12 +168,12 @@ describe("classifyTailFollowOnAtBottomChange", () => {
   it("always propagates atBottom=true and never re-pins in jump mode", () => {
     // atBottom=true settles at the tail regardless of timing.
     expect(
-      classifyTailFollowOnAtBottomChange({ atBottom: true, isJumpMode: false, nowMs: NOW, userInteractedAtMs: 0 })
+      classifyTailFollowOnAtBottomChange({ atBottom: true, isJumpMode: false, nowMs: NOW, scrolledAwayAtMs: 0 })
     ).toBe("propagate")
     // Deep-link / search reading window: a transient atBottom=false from reflow
     // must not yank the reader to the live tail.
     expect(
-      classifyTailFollowOnAtBottomChange({ atBottom: false, isJumpMode: true, nowMs: NOW, userInteractedAtMs: 0 })
+      classifyTailFollowOnAtBottomChange({ atBottom: false, isJumpMode: true, nowMs: NOW, scrolledAwayAtMs: 0 })
     ).toBe("propagate")
   })
 })
