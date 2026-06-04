@@ -1,7 +1,7 @@
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile.enclave"
-watchPatterns = ["apps/enclave/**", "packages/types/**", "packages/crypto/**", "Dockerfile.enclave", "bun.lock"]
+watchPatterns = ["apps/enclave/**", "packages/types/**", "packages/crypto/**", "packages/agent-runtime/**", "Dockerfile.enclave", "bun.lock"]
 
 [deploy]
 healthcheckPath = "/healthz"
