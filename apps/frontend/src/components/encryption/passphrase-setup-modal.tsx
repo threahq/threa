@@ -165,8 +165,8 @@ export function PassphraseSetupModal({
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={handleOpenChange}>
-      <ResponsiveDialogContent desktopClassName="sm:max-w-md">
+    <ResponsiveDialog open={open} onOpenChange={handleOpenChange} disableSnapPoints>
+      <ResponsiveDialogContent desktopClassName="sm:max-w-md" drawerClassName="flex max-h-[92dvh] flex-col gap-0">
         <ResponsiveDialogHeader className="px-6 pt-6">
           <ResponsiveDialogTitle>Set up encrypted scratchpads</ResponsiveDialogTitle>
           <ResponsiveDialogDescription>
@@ -174,7 +174,7 @@ export function PassphraseSetupModal({
             never sees the passphrase or the unwrapped key.
           </ResponsiveDialogDescription>
         </ResponsiveDialogHeader>
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <ResponsiveDialogBody className="space-y-4 py-4">
             <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
               <p className="font-medium">Save your passphrase now — there is no recovery.</p>
