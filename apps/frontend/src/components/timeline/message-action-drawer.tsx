@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import type { AuthorType } from "@threa/types"
 import { ChevronDown, ChevronLeft, Quote } from "lucide-react"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { Separator } from "@/components/ui/separator"
@@ -9,6 +10,7 @@ import { MarkdownContent } from "@/components/ui/markdown-content"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks/use-message-reactions"
+import { useActors } from "@/hooks"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { buildQuickEmojis } from "@/lib/emoji-picker"
@@ -35,6 +37,12 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
   const groupedActions = useMemo(() => groupVisibleActions(actions), [actions])
   const { emojis, emojiWeights } = useWorkspaceEmoji(context.workspaceId ?? "")
   const { toggleReaction } = useMessageReactions(context.workspaceId ?? "", context.messageId ?? "")
+  // Author's active status (users only; expiry-masked) for the preview byline —
+  // mirrors what the timeline header shows next to the timestamp.
+  const { getActorAvatar } = useActors(context.workspaceId ?? "")
+  const authorStatus = context.authorId
+    ? getActorAvatar(context.authorId, (context.actorType ?? "user") as AuthorType).status
+    : undefined
   const [expanded, setExpanded] = useState(false)
   const [selectedText, setSelectedText] = useState("")
   const contentRef = useRef<HTMLDivElement>(null)
@@ -151,6 +159,8 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
             contentMarkdown={context.contentMarkdown}
             authorName={authorName}
             actorType={context.actorType}
+            statusEmoji={authorStatus?.emoji ?? null}
+            statusText={authorStatus?.text ?? null}
             selectedText={selectedText}
             contentRef={contentRef}
             onBack={handleBack}
@@ -169,7 +179,17 @@ export function MessageActionDrawer({ open, onOpenChange, context, authorName }:
                 onClick={context.onQuoteReplyWithSnippet ? () => setExpanded(true) : undefined}
                 disabled={!context.onQuoteReplyWithSnippet}
               >
-                <p className="text-[13px] font-medium text-muted-foreground mb-0.5">{authorName}</p>
+                <div className="mb-0.5 flex items-center gap-1.5 text-[13px] font-medium text-muted-foreground">
+                  <span className="truncate">{authorName}</span>
+                  {authorStatus?.emoji && (
+                    <span aria-hidden className="text-sm leading-none">
+                      {authorStatus.emoji}
+                    </span>
+                  )}
+                  {authorStatus?.text && (
+                    <span className="truncate font-normal text-muted-foreground/70">{authorStatus.text}</span>
+                  )}
+                </div>
                 <div className="text-sm text-foreground/80 line-clamp-2 leading-snug pr-6">
                   <MarkdownContent content={context.contentMarkdown} />
                 </div>
@@ -228,6 +248,8 @@ interface ExpandedQuoteViewProps {
   contentMarkdown: string
   authorName: string
   actorType: string | null
+  statusEmoji: string | null
+  statusText: string | null
   selectedText: string
   contentRef: React.RefObject<HTMLDivElement | null>
   onBack: () => void
@@ -238,6 +260,8 @@ function ExpandedQuoteView({
   contentMarkdown,
   authorName,
   actorType,
+  statusEmoji,
+  statusText,
   selectedText,
   contentRef,
   onBack,
@@ -306,16 +330,26 @@ function ExpandedQuoteView({
                 {initials}
               </AvatarFallback>
             </Avatar>
-            <p
-              className={cn(
-                "text-sm font-semibold truncate",
-                isPersona && "text-primary",
-                isBot && "text-emerald-600",
-                isSystem && "text-blue-500"
+            <div className="flex min-w-0 items-center gap-1.5">
+              <p
+                className={cn(
+                  "text-sm font-semibold truncate",
+                  isPersona && "text-primary",
+                  isBot && "text-emerald-600",
+                  isSystem && "text-blue-500"
+                )}
+              >
+                {authorName}
+              </p>
+              {statusEmoji && (
+                <span aria-hidden className="text-sm leading-none">
+                  {statusEmoji}
+                </span>
               )}
-            >
-              {authorName}
-            </p>
+              {statusText && (
+                <span className="truncate text-xs font-normal text-muted-foreground/70">{statusText}</span>
+              )}
+            </div>
           </div>
 
           {/* Selectable message content */}
