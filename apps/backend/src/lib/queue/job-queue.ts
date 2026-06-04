@@ -366,4 +366,12 @@ export interface HandlerOptions<T> {
   tier?: QueueTier
   /** Fairness policy for leasing tokens (default: none). */
   fairness?: QueueFairnessMode
+  /**
+   * Per-queue retry budget before a failing job moves to the DLQ, overriding
+   * the manager-wide default. Raise it for queues whose failures are expected
+   * to heal on their own — e.g. an enclave turn parked until the owner's
+   * client revives a stale key wrap — where the default budget (~8s of
+   * exponential backoff) gives the healer no time to act.
+   */
+  maxRetries?: number
 }

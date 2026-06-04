@@ -1,9 +1,10 @@
+import { useEffect, useRef } from "react"
 import { Lock, LockOpen, ShieldPlus, Wrench } from "lucide-react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
-import { provisionOwnerStreamKey } from "@/lib/crypto/stream-key-cache"
+import { provisionOwnerStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useE2eUnlockOptional, type E2eUnlockContextValue } from "./e2e-unlock-provider"
@@ -98,6 +99,66 @@ function useOwnerWrapRepair(workspaceId: string, streamId: string): OwnerWrapRep
 }
 
 /**
+ * Headless self-heal for stale actor wraps: when the unlocked *owner* views an
+ * encrypted stream whose invited actor has a live key with no wrap at the
+ * current generation — an enclave restart minted a fresh EIK after the invite
+ * — silently re-wrap the current SSK to it. Server-side, the turn that hit the
+ * missing wrap is parked on the queue's retry/backoff, so this heal is what
+ * revives it; no dialog, no CTA, the user never learns it happened (a "you
+ * need to fix encryption" prompt would be the UX failure here).
+ *
+ * One attempt per missing-set signature: a server reject (e.g. the key went
+ * stale mid-flight) doesn't loop, and the next refetch recomputes the set.
+ */
+function useActorWrapRevive(workspaceId: string, streamId: string): void {
+  const userId = useWorkspaceUserId(workspaceId)
+  const session = useE2eSession(workspaceId, userId ?? "")
+  const queryClient = useQueryClient()
+  const attemptedRef = useRef<string | null>(null)
+
+  const sessionReady = session.status === "unlocked" && !!session.keyId && !!session.privateKey
+
+  const wrapsQuery = useQuery({
+    queryKey: e2eKeyWrapKeys.list(workspaceId, streamId),
+    queryFn: () => e2eKeyWrapsApi.get(workspaceId, streamId),
+    enabled: sessionReady,
+    staleTime: 60_000,
+  })
+
+  const data = wrapsQuery.data
+  const ownerKeyId = session.keyId
+  const ownerPrivateKey = session.privateKey
+
+  useEffect(() => {
+    if (!sessionReady || !data || !userId || !ownerKeyId || !ownerPrivateKey) return
+    if (data.ownerUserId !== userId) return
+
+    const live = data.liveActorRecipients ?? []
+    const missing = live.filter(
+      (r) => !data.wraps.some((w) => w.keyGeneration === data.currentKeyGeneration && w.recipientKeyId === r.recipientKeyId)
+    )
+    if (missing.length === 0) return
+
+    const signature = `${data.currentKeyGeneration}:${missing
+      .map((r) => r.recipientKeyId)
+      .sort()
+      .join(",")}`
+    if (attemptedRef.current === signature) return
+    attemptedRef.current = signature
+
+    void reviveStaleActorWraps({ workspaceId, streamId, userId, ownerKeyId, ownerPrivateKey })
+      .then((result) => {
+        if (result === "revived") {
+          queryClient.invalidateQueries({ queryKey: e2eKeyWrapKeys.list(workspaceId, streamId) })
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to revive stale actor key wraps", err)
+      })
+  }, [sessionReady, data, userId, ownerKeyId, ownerPrivateKey, workspaceId, streamId, queryClient])
+}
+
+/**
  * Inline unlock affordance for the stream header — sits beside the "Encrypted"
  * pill so a locked stream can be unlocked in place, without detouring through
  * Settings. Renders nothing for unencrypted or already-unlocked streams; an
@@ -144,6 +205,9 @@ export function StreamHeaderEncryptionAction({
 
 function StreamHeaderRepairAction({ workspaceId, streamId }: { workspaceId: string; streamId: string }) {
   const repair = useOwnerWrapRepair(workspaceId, streamId)
+  // Piggybacks on this mount point (every unlocked encrypted stream view) —
+  // the heal is headless, so it renders nothing of its own.
+  useActorWrapRevive(workspaceId, streamId)
   if (!repair) return null
   return (
     <Button

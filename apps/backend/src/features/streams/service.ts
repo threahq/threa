@@ -35,6 +35,7 @@ import {
   type E2eKeyRoll,
   type E2eKeyRollRecipient,
   type E2eKeyRollInput,
+  type E2eActorRewrapInput,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -973,14 +974,97 @@ export class StreamService {
   async listE2eKeyWraps(
     workspaceId: string,
     streamId: string
-  ): Promise<{ currentKeyGeneration: number; wraps: StreamE2eKeyWrap[] }> {
+  ): Promise<{
+    currentKeyGeneration: number
+    wraps: StreamE2eKeyWrap[]
+    ownerUserId: string
+    liveActorRecipients: E2eKeyRollRecipient[]
+  }> {
     return withClient(this.pool, async (client) => {
       const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
       if (!e2e) {
         throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
       }
       const wraps = await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId)
-      return { currentKeyGeneration: e2e.currentKeyGeneration, wraps }
+      // Live actor keys ride along so the owner's client can spot a stale
+      // recipient — a live key with no wrap at `currentKeyGeneration` (e.g.
+      // the enclave restarted with a fresh EIK) — and revive it via
+      // `reviveActorKeyWraps` without a second round-trip.
+      const liveActorRecipients = await this.resolveActorRecipients(client, e2e)
+      return { currentKeyGeneration: e2e.currentKeyGeneration, wraps, ownerUserId: e2e.ownerUserId, liveActorRecipients }
+    })
+  }
+
+  /**
+   * Re-wrap the *current* SSK to invited actors' live keys that lost their
+   * wrap — the revive path for an actor whose key changed after the invite
+   * (an enclave restart mints a fresh EIK, orphaning every stream wrapped to
+   * the old one; until revived, enclave turns for the stream park in the
+   * queue). No fresh SSK and no generation bump: the actor already held this
+   * generation, so re-addressing the same key to its new instance restores
+   * exactly the prior access — and keeps a parked turn (sealed under the
+   * current generation) decryptable, which a roll would strand.
+   *
+   * Owner-only, generation must be exactly current (same advisory lock as
+   * `rollStreamKey` so a concurrent roll can't slip a stale-generation wrap
+   * in), and every wrap must address a currently-live key of a currently-
+   * invited actor — never a `user` wrap, so this can't become a side door
+   * for adding readers.
+   */
+  async reviveActorKeyWraps(
+    workspaceId: string,
+    streamId: string,
+    userId: string,
+    input: E2eActorRewrapInput
+  ): Promise<void> {
+    await withTransaction(this.pool, async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+        `e2e_key_roll:${workspaceId}:${streamId}`,
+      ])
+
+      const e2e = await E2eStreamsRepository.getByStreamId(client, workspaceId, streamId)
+      if (!e2e) {
+        throw new HttpError("Stream is not end-to-end encrypted", { status: 400, code: "STREAM_NOT_E2E" })
+      }
+      if (e2e.ownerUserId !== userId) {
+        throw new HttpError("Only the stream owner can revive actor key wraps", {
+          status: 403,
+          code: "NOT_STREAM_OWNER",
+        })
+      }
+      if (input.keyGeneration !== e2e.currentKeyGeneration) {
+        throw new HttpError("Key generation is stale; refetch before re-wrapping", {
+          status: 409,
+          code: "E2E_STALE_GENERATION",
+        })
+      }
+
+      const live = await this.resolveActorRecipients(client, e2e)
+      const liveKeyIds = new Set(live.map((r) => r.recipientKeyId))
+      for (const wrap of input.wraps) {
+        if (wrap.recipientKind === E2eKeyWrapRecipientKinds.USER || !liveKeyIds.has(wrap.recipientKeyId)) {
+          throw new HttpError("Wrap recipient is not a live key of an invited actor", {
+            status: 400,
+            code: "E2E_RECIPIENT_NOT_LIVE_ACTOR",
+          })
+        }
+      }
+
+      // Idempotent under retries/races: the slot has `ON CONFLICT DO NOTHING`,
+      // so a wrap that already exists (or a concurrent duplicate revive) is a
+      // no-op rather than a displacement.
+      await StreamE2eKeyWrapsRepository.insertMany(
+        client,
+        input.wraps.map((w) => ({
+          workspaceId,
+          streamId,
+          keyGeneration: input.keyGeneration,
+          recipientKeyId: w.recipientKeyId,
+          recipientKind: w.recipientKind,
+          wrapEnc: w.wrapEnc,
+          wrapCt: w.wrapCt,
+        }))
+      )
     })
   }
 

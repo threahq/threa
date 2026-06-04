@@ -125,3 +125,65 @@ describe("QueueManager stuck token warning", () => {
     expect(deleteToken).toHaveBeenCalledTimes(1)
   })
 })
+
+describe("QueueManager per-queue maxRetries override", () => {
+  function createFailureManager() {
+    const fail = mock(async () => {})
+    const failDlq = mock(async () => {})
+    const manager = new QueueManager({
+      pool: {} as any,
+      queueRepository: { fail, failDlq } as any,
+      tokenPoolRepository: {} as any,
+      // Manager-wide default budget.
+      maxRetries: 5,
+    })
+    return { manager, fail, failDlq }
+  }
+
+  const failingHandler = mock(async () => {
+    throw new Error("park me")
+  })
+
+  it("keeps retrying past the manager default when the queue declares a larger budget", async () => {
+    const { manager, fail, failDlq } = createFailureManager()
+    manager.registerHandler("enclave.invoke" as any, failingHandler as any, { maxRetries: 10 })
+
+    // failedCount 5 would DLQ under the default (6 >= 5) but must retry under 10.
+    await (manager as any).processMessage(
+      {
+        id: "qm_1",
+        queueName: "enclave.invoke",
+        workspaceId: "ws_1",
+        payload: {},
+        failedCount: 5,
+        insertedAt: new Date(),
+      },
+      "worker_1",
+      new Set<string>()
+    )
+
+    expect(fail).toHaveBeenCalledTimes(1)
+    expect(failDlq).not.toHaveBeenCalled()
+  })
+
+  it("falls back to the manager default for queues without an override", async () => {
+    const { manager, fail, failDlq } = createFailureManager()
+    manager.registerHandler("persona.agent" as any, failingHandler as any)
+
+    await (manager as any).processMessage(
+      {
+        id: "qm_2",
+        queueName: "persona.agent",
+        workspaceId: "ws_1",
+        payload: {},
+        failedCount: 5,
+        insertedAt: new Date(),
+      },
+      "worker_1",
+      new Set<string>()
+    )
+
+    expect(failDlq).toHaveBeenCalledTimes(1)
+    expect(fail).not.toHaveBeenCalled()
+  })
+})

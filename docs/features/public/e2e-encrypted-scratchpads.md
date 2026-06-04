@@ -36,9 +36,15 @@ The key model, in plain terms:
   so only invited identities can open it. Inviting or removing a participant
   rolls the key generation forward; history stays sealed under the old generation.
 - The built-in **Ariadne** assistant participates as its own encrypted recipient:
-  the SSK is wrapped to a fresh **enclave instance key** at invocation time, the
-  enclave unwraps it in memory, runs the same agent loop the rest of the app uses,
-  and seals each reply (and each AI trace step) back under the SSK.
+  when invited, the SSK is wrapped to the enclave's **instance key** (a fresh
+  keypair each enclave boot, private half memory-only); the enclave unwraps it in
+  memory, runs the same agent loop the rest of the app uses, and seals each reply
+  (and each AI trace step) back under the SSK. When the enclave restarts (every
+  deploy), its new instance key has no wrap yet — the turn **parks** on the
+  queue's retry backoff instead of dropping, and the owner's unlocked client
+  silently re-wraps the current SSK to the new key (on viewing the stream and on
+  every send), at which point the parked turn proceeds. No prompt, no dialog —
+  the heal is invisible.
 
 ## How a user experiences it
 

@@ -133,6 +133,7 @@ export class QueueManager {
   private readonly handlerHooks = new Map<string, HandlerHooks<unknown>>()
   private readonly handlerTiers = new Map<string, QueueTier>()
   private readonly handlerFairness = new Map<string, QueueFairnessMode>()
+  private readonly handlerMaxRetries = new Map<string, number>()
   private readonly managerId: string
   private isStarted = false
   private isStopping = false
@@ -211,6 +212,9 @@ export class QueueManager {
     this.handlers.set(queueName, handler as JobHandler<unknown>)
     this.handlerTiers.set(queueName, options?.tier ?? DEFAULT_TIER)
     this.handlerFairness.set(queueName, options?.fairness ?? QueueFairness.NONE)
+    if (options?.maxRetries !== undefined) {
+      this.handlerMaxRetries.set(queueName, options.maxRetries)
+    }
     if (options?.hooks) {
       this.handlerHooks.set(queueName, options.hooks as HandlerHooks<unknown>)
     }
@@ -835,8 +839,9 @@ export class QueueManager {
 
       // Calculate new failed_count
       const newFailedCount = message.failedCount + 1
+      const maxRetries = this.handlerMaxRetries.get(message.queueName) ?? this.maxRetries
 
-      if (newFailedCount >= this.maxRetries) {
+      if (newFailedCount >= maxRetries) {
         // Move to DLQ
         await this.moveMessageToDlq(message, workerId, error)
         completedMessageIds.add(message.id)

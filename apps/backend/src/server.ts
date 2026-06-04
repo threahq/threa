@@ -709,6 +709,12 @@ export async function startServer(): Promise<ServerInstance> {
     jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
       tier: QueueTiers.INTERACTIVE,
       fairness: QueueFairness.NONE,
+      // A turn with no servable enclave key *parks* (the worker throws) until
+      // the owner's client revives the stream's wrap for a freshly-registered
+      // EIK, or an enclave finishes (re)deploying. The default budget DLQs in
+      // ~8s of backoff — far too short for either healer — so give parked
+      // turns a few minutes (exponential backoff, ~4 min across 10 attempts).
+      maxRetries: 10,
     })
   }
 

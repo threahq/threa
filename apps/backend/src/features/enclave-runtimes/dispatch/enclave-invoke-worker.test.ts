@@ -123,6 +123,31 @@ describe("createEnclaveInvokeWorker", () => {
     expect(assignSession).toHaveBeenCalledTimes(1)
   })
 
+  it("parks the turn (throws for queue retry) when no live EIK holds the stream's wrap", async () => {
+    arrangeDispatch()
+    // The enclave restarted: the only wrap on file addresses a dead EIK, so the
+    // live one can't open the trigger. The turn must park on the queue's
+    // retry/backoff (the owner's client revives the wrap meanwhile) — never a
+    // silent skip, and no session row before a servable enclave exists.
+    spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([
+      { ...WRAP, recipientKeyId: "eik_dead" },
+    ])
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
+    const assignSession = mock(async () => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
+    })
+    await expect(worker(JOB)).rejects.toThrow(/parking turn for retry/)
+
+    expect(insertSession).not.toHaveBeenCalled()
+    expect(assignSession).not.toHaveBeenCalled()
+  })
+
   it("emits no started event when the one-running guard skips the session", async () => {
     arrangeDispatch()
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null)
