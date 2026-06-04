@@ -1,7 +1,7 @@
 import { useSearchParams, useParams } from "react-router-dom"
 import { useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
-import { MessageSquare, ChevronLeft, MoreHorizontal, CornerDownRight, Paperclip, Settings } from "lucide-react"
+import { MessageSquare, ChevronLeft, MoreHorizontal, CornerDownRight, Paperclip, Settings, Tag } from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -48,9 +48,10 @@ import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentMessage } from "./thread-parent-message"
 import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { StreamTypes } from "@threa/types"
+import { LabelableResourceTypes, StreamTypes } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import { streamLabel } from "@/lib/streams"
+import { LabelPicker } from "@/components/labels/label-picker"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -190,6 +191,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   // Draft thread expand state
   const [draftExpanded, setDraftExpanded] = useState(false)
   const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
+  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const draftExpandedRef = useRef<HTMLDivElement>(null)
   const draftPortalTargetRef = useRef<HTMLElement | null>(null)
 
@@ -206,6 +208,12 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     onSelect: () => {
       if (panelId) openStreamSettings(panelId)
     },
+  })
+  panelMenuActions.push({
+    id: "labels",
+    label: "Labels…",
+    icon: Tag,
+    onSelect: () => setLabelPickerOpen(true),
   })
   panelMenuActions.push({
     id: "move-messages",
@@ -564,6 +572,15 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
           </StreamErrorBoundary>
         )}
       </SidePanelContent>
+      {!isDraft && stream && panelId && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.STREAM}
+          resourceId={panelId}
+          open={labelPickerOpen}
+          onOpenChange={setLabelPickerOpen}
+        />
+      )}
     </SidePanel>
   )
 }

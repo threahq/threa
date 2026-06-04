@@ -442,7 +442,7 @@ function OwnedLabelCard({
 
   return (
     <>
-      <LabelSwatchCard label={label}>
+      <LabelSwatchCard workspaceId={workspaceId} label={label}>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <Button
             size="sm"
@@ -611,7 +611,7 @@ function JoinedLabelCard({
   }
 
   return (
-    <LabelSwatchCard label={label}>
+    <LabelSwatchCard workspaceId={workspaceId} label={label}>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"
@@ -633,34 +633,50 @@ function JoinedLabelCard({
 // Shared atoms
 // ---------------------------------------------------------------------------
 
-function LabelSwatchCard({ label, children }: { label: CachedLabel; children?: React.ReactNode }) {
+function LabelSwatchCard({
+  workspaceId,
+  label,
+  children,
+}: {
+  workspaceId: string
+  label: CachedLabel
+  children?: React.ReactNode
+}) {
   return (
     <article
       className="relative flex min-h-[160px] flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-foreground/20"
       style={{ borderLeft: `3px solid ${label.color}` }}
     >
       <div className="flex flex-1 flex-col p-3.5">
-        <div className="flex items-start gap-2.5">
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xl"
-            style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
-            aria-hidden
-          >
-            {label.emoji ?? <Tag className="h-4 w-4" />}
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold leading-tight">{label.name}</h3>
-            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-              {label.visibility === Visibilities.PUBLIC ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              <span>{label.visibility === Visibilities.PUBLIC ? "Public" : "Private"}</span>
+        {/* The identity block opens the label's landing page (INV-40: navigation
+            is a link); the action buttons below stay outside it as buttons. */}
+        <Link to={`/w/${workspaceId}/labels/${label.id}`} className="group flex flex-1 flex-col rounded-md">
+          <div className="flex items-start gap-2.5">
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xl"
+              style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
+              aria-hidden
+            >
+              {label.emoji ?? <Tag className="h-4 w-4" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-semibold leading-tight group-hover:underline">{label.name}</h3>
+              <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                {label.visibility === Visibilities.PUBLIC ? (
+                  <Globe className="h-3 w-3" />
+                ) : (
+                  <Lock className="h-3 w-3" />
+                )}
+                <span>{label.visibility === Visibilities.PUBLIC ? "Public" : "Private"}</span>
+              </div>
             </div>
           </div>
-        </div>
-        {label.description && (
-          <p className="mt-2.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-            {stripMarkdownToInline(label.description)}
-          </p>
-        )}
+          {label.description && (
+            <p className="mt-2.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+              {stripMarkdownToInline(label.description)}
+            </p>
+          )}
+        </Link>
         {children}
       </div>
     </article>
