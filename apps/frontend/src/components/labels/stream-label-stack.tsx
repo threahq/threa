@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom"
 import { LabelableResourceTypes } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { useResourceLabelAssignments } from "@/hooks"
@@ -57,10 +58,18 @@ export function StreamLabelStack({ workspaceId, streamId, className }: StreamLab
     </button>
   )
 
+  // Each chip links to the label's landing page — the fan-out is both the
+  // disclosure of the full set and the way into each label.
   const fanOut = (
     <div className="flex max-h-[50dvh] flex-wrap gap-1.5 overflow-y-auto">
       {labels.map((label) => (
-        <LabelChip key={label.id} label={label} />
+        <Link
+          key={label.id}
+          to={`/w/${workspaceId}/labels/${label.id}`}
+          className="rounded-full transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <LabelChip label={label} />
+        </Link>
       ))}
     </div>
   )

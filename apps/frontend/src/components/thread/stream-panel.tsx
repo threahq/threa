@@ -52,6 +52,7 @@ import { LabelableResourceTypes, StreamTypes } from "@threa/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import { streamLabel } from "@/lib/streams"
 import { LabelPicker } from "@/components/labels/label-picker"
+import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -410,6 +411,9 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
           </Button>
         )}
         {headerContent}
+        {!isDraft && stream && panelId && (
+          <StreamLabelStack workspaceId={workspaceId} streamId={panelId} className="flex-shrink-0" />
+        )}
         {!isDraft &&
           stream &&
           !stream.archivedAt &&

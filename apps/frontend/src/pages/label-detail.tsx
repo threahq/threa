@@ -1,8 +1,8 @@
 import { useMemo } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, ChevronRight, Globe, Lock, PanelLeft, Tag } from "lucide-react"
+import { ArrowLeft, ChevronRight, Globe, Lock, Tag } from "lucide-react"
 import { Visibilities } from "@threa/types"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SidebarToggle } from "@/components/layout"
 import { LabelGlyph } from "@/components/labels/label-chip"
@@ -12,10 +12,8 @@ import { stripMarkdownToInline } from "@/lib/markdown"
 import { truncateContent } from "@/components/layout/sidebar/utils"
 import { resolveStreamName, STREAM_ICONS } from "@/lib/streams"
 import { formatRelativeTime } from "@/lib/dates"
-import { useLabelStreams, useLabelsSync, useSidebarConfig, type CachedLabel } from "@/hooks"
+import { useLabelStreams, useLabelsSync, type CachedLabel } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceLabels, useWorkspaceUsers, type CachedStream } from "@/stores/workspace-store"
-import { hasLabelSection, toggleLabelSection } from "@/components/layout/sidebar/sidebar-config"
-import type { SidebarConfig } from "@threa/types"
 
 /**
  * Route is `/w/:workspaceId/labels/:labelId` — a label's landing page. Opens
@@ -39,7 +37,6 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   const streams = useLabelStreams(workspaceId, labelId)
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
-  const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
 
   // Resolve each stream's viewer-specific name once, here, rather than a hook
   // per row — DM names live in the peer caches, not on the stream object.
@@ -60,12 +57,7 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
   } else {
     body = (
       <>
-        <LabelHero
-          label={label}
-          streamCount={namedStreams.length}
-          config={sidebarConfig}
-          onConfigChange={setSidebarConfig}
-        />
+        <LabelHero label={label} streamCount={namedStreams.length} />
         <section className="mt-8">
           <h2 className="mb-2.5 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Streams</h2>
           {namedStreams.length === 0 ? (
@@ -123,18 +115,7 @@ function streamCountLabel(count: number): string {
   return `${count} ${count === 1 ? "stream" : "streams"}`
 }
 
-function LabelHero({
-  label,
-  streamCount,
-  config,
-  onConfigChange,
-}: {
-  label: CachedLabel
-  streamCount: number
-  config: SidebarConfig
-  onConfigChange: (config: SidebarConfig) => void
-}) {
-  const pinned = hasLabelSection(config, label.id)
+function LabelHero({ label, streamCount }: { label: CachedLabel; streamCount: number }) {
   const isPublic = label.visibility === Visibilities.PUBLIC
   return (
     <div
@@ -167,16 +148,6 @@ function LabelHero({
             </p>
           )}
         </div>
-        <Button
-          size="sm"
-          variant={pinned ? "secondary" : "outline"}
-          aria-pressed={pinned}
-          className="h-8 shrink-0 gap-1.5 px-2.5 text-xs"
-          onClick={() => onConfigChange(toggleLabelSection(config, label.id))}
-        >
-          <PanelLeft className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">{pinned ? "In sidebar" : "Show in sidebar"}</span>
-        </Button>
       </div>
     </div>
   )

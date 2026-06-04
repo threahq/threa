@@ -1,7 +1,7 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import { render, screen } from "@/test"
-import { Visibilities, type SidebarConfig } from "@threa/types"
+import { Visibilities } from "@threa/types"
 import { LabelDetailPage } from "./label-detail"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -60,13 +60,6 @@ function stream(
   }
 }
 
-const SIDEBAR_CONFIG = {
-  workspaceId: WS,
-  userId: "user_me",
-  sections: [],
-  basePreset: "smart",
-} as unknown as SidebarConfig
-
 function renderPage() {
   return render(
     <SidebarProvider>
@@ -86,10 +79,6 @@ describe("LabelDetailPage", () => {
     vi.spyOn(hooksModule, "useLabelsSync").mockReturnValue({ isFetched: true } as unknown as ReturnType<
       typeof hooksModule.useLabelsSync
     >)
-    vi.spyOn(hooksModule, "useSidebarConfig").mockReturnValue({
-      config: SIDEBAR_CONFIG,
-      setConfig: vi.fn(),
-    } as unknown as ReturnType<typeof hooksModule.useSidebarConfig>)
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue(
       [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>
     )
