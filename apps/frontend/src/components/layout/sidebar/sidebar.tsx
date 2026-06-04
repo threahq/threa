@@ -16,6 +16,7 @@ import {
   useSidebarConfig,
   useUnreadCounts,
   useAssignLabel,
+  useUnassignLabel,
 } from "@/hooks"
 import { useSyncStatus } from "@/sync/sync-status"
 import { useSyncEngine } from "@/sync/sync-engine"
@@ -29,7 +30,7 @@ import {
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
-import { useCoordinatedLoading, useSidebar } from "@/contexts"
+import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -41,10 +42,11 @@ import { SidebarFooter } from "./sidebar-footer"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection } from "./sidebar-config"
+import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream } from "./utils"
 import type { StreamItemData } from "./types"
-import { resolveDmDisplayName } from "@/lib/streams"
+import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamTypes, Visibilities, LabelableResourceTypes } from "@threa/types"
 
@@ -84,6 +86,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
   const assignLabel = useAssignLabel(workspaceId)
+  const unassignLabel = useUnassignLabel(workspaceId)
+  const preferencesContext = usePreferencesOptional()
+  const [labelRemovePrompt, setLabelRemovePrompt] = useState<{ streamId: string; labelId: string } | null>(null)
   const navigate = useNavigate()
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
   const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
@@ -428,6 +433,38 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     )
   }
 
+  const removeStreamLabel = (streamId: string, labelId: string) => {
+    unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
+  }
+
+  // A stream was dragged out of the label lens it was under. Whether that strips
+  // the old label follows the user's `labelRemoveOnMove` preference: act silently
+  // for "always"/"never", otherwise prompt (and let the prompt persist a choice).
+  const handleStreamMovedFromLabel = (streamId: string, sourceLabelId: string) => {
+    const behavior = preferencesContext?.preferences?.labelRemoveOnMove ?? "ask"
+    if (behavior === "never") return
+    if (behavior === "always") {
+      removeStreamLabel(streamId, sourceLabelId)
+      return
+    }
+    setLabelRemovePrompt({ streamId, labelId: sourceLabelId })
+  }
+
+  const resolveLabelRemovePrompt = (remove: boolean, remember: boolean) => {
+    const prompt = labelRemovePrompt
+    setLabelRemovePrompt(null)
+    if (!prompt) return
+    if (remove) removeStreamLabel(prompt.streamId, prompt.labelId)
+    if (remember && preferencesContext) {
+      void preferencesContext.updatePreference("labelRemoveOnMove", remove ? "always" : "never")
+    }
+  }
+
+  const promptStream = labelRemovePrompt
+    ? (processedStreams.find((s) => s.id === labelRemovePrompt.streamId) ?? null)
+    : null
+  const promptStreamName = promptStream ? streamLabel(promptStream, "sidebar") : "This stream"
+
   return (
     <>
       <SidebarShell
@@ -458,6 +495,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             scratchpadAddMenuActions={scratchpadAddMenuActions}
             onFileStreamToSection={handleFileStreamToSection}
             onAssignStreamLabel={handleAssignStreamLabel}
+            onStreamMovedFromLabel={handleStreamMovedFromLabel}
             quickLinksSlot={
               hasQuickLinksSection ? (
                 <SidebarQuickLinks
@@ -491,6 +529,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         }
       />
       <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
+      {labelRemovePrompt && (
+        <RemoveLabelDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setLabelRemovePrompt(null)
+          }}
+          labelName={labelsById.get(labelRemovePrompt.labelId)?.name ?? "this label"}
+          streamName={promptStreamName}
+          onResolve={resolveLabelRemovePrompt}
+        />
+      )}
     </>
   )
 }

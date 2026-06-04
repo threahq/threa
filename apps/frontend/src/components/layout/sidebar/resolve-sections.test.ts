@@ -6,7 +6,7 @@ import {
   SMART_SIDEBAR_CONFIG,
   SIDEBAR_CONFIG_VERSION,
 } from "@threa/types"
-import { resolveSections, type ResolveSectionsInput } from "./resolve-sections"
+import { resolveSections, findSourceLabelId, type ResolveSectionsInput } from "./resolve-sections"
 import { customSectionId, labelSectionId } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"
 
@@ -355,5 +355,35 @@ describe("resolveSections — custom sections", () => {
       { id: customSectionId("sec_a"), items: ["s_x"] },
       { id: customSectionId("sec_b"), items: [] },
     ])
+  })
+})
+
+describe("findSourceLabelId", () => {
+  const config = {
+    version: SIDEBAR_CONFIG_VERSION,
+    basePreset: "smart" as const,
+    sections: [
+      { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+      { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+    ],
+    quickLinks: [],
+  }
+
+  it("returns the label id of the label section a stream is shown under", () => {
+    const processedStreams = [
+      makeItem({ id: "s_lab", section: "recent", activity: 5 }),
+      makeItem({ id: "s_plain", section: "recent", activity: 3 }),
+    ]
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["s_lab"])]])
+    const resolved = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel }))
+
+    expect(findSourceLabelId("s_lab", resolved)).toBe("lbl_1")
+  })
+
+  it("returns null for a stream shown in a non-label section", () => {
+    const processedStreams = [makeItem({ id: "s_plain", section: "recent", activity: 3 })]
+    const resolved = resolveSections(config, makeInput({ processedStreams }))
+
+    expect(findSourceLabelId("s_plain", resolved)).toBeNull()
   })
 })

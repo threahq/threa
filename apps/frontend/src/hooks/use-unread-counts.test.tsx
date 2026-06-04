@@ -85,6 +85,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       notificationLevel: "all",
       sidebarCollapsed: false,
       linkPreviewDefault: "open",
+      labelRemoveOnMove: "ask",
       scratchpadCustomPrompt: null,
       codeBlockCollapseThreshold: 10,
       blockquoteCollapseThreshold: 6,

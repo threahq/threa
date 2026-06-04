@@ -30,6 +30,20 @@ export interface ResolvedSection {
 }
 
 /**
+ * The label id of the label section a stream is currently rendered under, or
+ * null when it isn't shown in a label section. Drives the "remove the old
+ * label?" prompt when a stream is dragged out of its label lens — the stream is
+ * placed in exactly one section, so the first match is its visible home.
+ */
+export function findSourceLabelId(streamId: string, resolved: ResolvedSection[]): string | null {
+  for (const { section, items } of resolved) {
+    if (section.spec.kind !== "label") continue
+    if (items.some((item) => item.id === streamId)) return section.spec.labelId
+  }
+  return null
+}
+
+/**
  * Turn a {@link SidebarConfig} into the ordered, capped, sorted stream lists the
  * sidebar renders. Pure — no React, no IO — so it is exercised directly in tests
  * and reused by every view. Each stream appears in the topmost section that

@@ -11,6 +11,7 @@ import {
   FONT_FAMILY_OPTIONS,
   MESSAGE_SEND_MODE_OPTIONS,
   LINK_PREVIEW_DEFAULT_OPTIONS,
+  LABEL_REMOVE_ON_MOVE_OPTIONS,
   VOICE_POLISH_LEVEL_OPTIONS,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
@@ -30,6 +31,7 @@ const updatePreferencesSchema = z.object({
   sidebarCollapsed: z.boolean().optional(),
   messageSendMode: z.enum(MESSAGE_SEND_MODE_OPTIONS).optional(),
   linkPreviewDefault: z.enum(LINK_PREVIEW_DEFAULT_OPTIONS).optional(),
+  labelRemoveOnMove: z.enum(LABEL_REMOVE_ON_MOVE_OPTIONS).optional(),
   scratchpadCustomPrompt: z.string().max(8000).nullable().optional(),
   codeBlockCollapseThreshold: z
     .number()
