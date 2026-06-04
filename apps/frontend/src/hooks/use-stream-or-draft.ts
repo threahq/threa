@@ -6,7 +6,7 @@ import { useStreamService, useMessageService, usePendingMessages } from "@/conte
 import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { sealStreamMessage, sealStreamName } from "@/lib/crypto/message-envelope"
-import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
+import { resolveCurrentStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
@@ -646,6 +646,20 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           keyGeneration: streamKey.keyGeneration,
           attachmentRefs,
         })
+        // Heal-on-send: if an invited actor's key went stale (an enclave
+        // restart mints a fresh EIK), this turn parks server-side on the
+        // missing wrap. Fire the revive now — fire-and-forget, de-duped
+        // in-flight — so the re-wrap lands within the queue's retry window
+        // and the parked turn proceeds. No-ops when nothing is missing.
+        if ((baseStream?.e2eActors?.length ?? 0) > 0) {
+          void reviveStaleActorWraps({
+            workspaceId,
+            streamId,
+            userId: currentUserId,
+            ownerKeyId: session.keyId,
+            ownerPrivateKey: session.privateKey,
+          }).catch((err) => console.error("Failed to revive stale actor key wraps on send", err))
+        }
         // Carry the refs on the optimistic payload so the server echo's
         // decrypt-cache seed (stream-sync) can render the sender's own
         // attachments via `<E2eAttachmentList>` immediately — otherwise the

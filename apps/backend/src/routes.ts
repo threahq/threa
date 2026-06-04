@@ -369,6 +369,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/actors", ...authed, stream.inviteActor)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps", ...authed, stream.getE2eKeyWraps)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps", ...authed, stream.storeE2eKeyWrap)
+  app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/actor-key-wraps", ...authed, stream.reviveE2eActorKeyWraps)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-generations", ...authed, stream.rollE2eKey)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/read", ...authed, stream.markAsRead)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/archive", ...authed, stream.archive)

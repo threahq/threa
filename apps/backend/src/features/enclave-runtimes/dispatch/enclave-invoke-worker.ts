@@ -128,8 +128,17 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       triggerAttachmentCiphertexts,
     })
     if (!built) {
-      logger.info({ workspaceId, streamId }, "enclave dispatch: no live enclave can serve this stream; skipping")
-      return
+      // Park, don't drop: no live EIK can both open the trigger and seal the
+      // reply — either no enclave is running, or every live EIK is missing this
+      // stream's wrap (an enclave restart mints a fresh EIK, orphaning streams
+      // wrapped to the old one). Throwing hands the job to the queue's
+      // retry/backoff; meanwhile the owner's unlocked client — which just sent
+      // the message, so it's looking at the stream — auto-revives the wrap via
+      // `POST …/e2e/actor-key-wraps`, and the next retry succeeds. Exhausted
+      // retries land in the DLQ: visible, never a silent no-reply.
+      throw new Error(
+        `No live enclave key can serve stream ${streamId} (live EIKs: ${liveEiks.length}); parking turn for retry`
+      )
     }
 
     // Create the session row owned by the chosen EIK — skip if another session is

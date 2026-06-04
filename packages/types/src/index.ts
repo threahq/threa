@@ -350,6 +350,7 @@ export type {
   InviteActorResponse,
   E2eKeyWrapInput,
   E2eKeyRollInput,
+  E2eActorRewrapInput,
   EnclaveStreamEnvelope,
   EnclaveSealedMessage,
   EnclaveSskWrap,

@@ -358,6 +358,16 @@ export interface E2eKeyWrapsResponse {
   /** All wrap rows for the stream. The caller selects the one matching its
    *  own `recipientKeyId` and the message's `keyGeneration`. */
   wraps: E2eKeyWrap[]
+  /** The stream's E2E owner — only this user may revive actor wraps. */
+  ownerUserId: string
+  /**
+   * Invited actors' currently-live keys (same shape an invite's key roll
+   * carries). A live key with no `wraps` row at `currentKeyGeneration` is
+   * stale — e.g. the enclave restarted with a fresh EIK after the invite —
+   * and the owner's unlocked client heals it by re-wrapping the current SSK
+   * to that key (`POST …/e2e/actor-key-wraps`).
+   */
+  liveActorRecipients: E2eKeyRollRecipient[]
 }
 
 /**
@@ -407,6 +417,24 @@ export interface E2eKeyWrapInput {
  * present (no self-lockout), and no wrap addresses an unauthorized key id.
  */
 export interface E2eKeyRollInput {
+  keyGeneration: number
+  wraps: E2eKeyWrapInput[]
+}
+
+/**
+ * Body for `POST …/e2e/actor-key-wraps`: re-wraps of the *current* SSK to
+ * invited actors' live keys that are missing a wrap at that generation —
+ * the revive path for an actor whose key changed after the invite (an
+ * enclave restart mints a fresh EIK, orphaning every stream wrapped to the
+ * old one). Unlike a key roll, no fresh SSK is minted and the generation
+ * does not advance: the actor was already granted this generation, so
+ * re-addressing the same key to its new instance preserves exactly the
+ * prior access — and keeps a pending turn (sealed under the current
+ * generation) decryptable, which a roll would strand. `keyGeneration` must
+ * equal the stream's current generation; recipients must be live keys of
+ * currently-invited actors (never `user` wraps).
+ */
+export interface E2eActorRewrapInput {
   keyGeneration: number
   wraps: E2eKeyWrapInput[]
 }

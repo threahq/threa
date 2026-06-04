@@ -205,6 +205,27 @@ const rollKeySchema = z.object({
     .max(64),
 })
 
+/**
+ * Actor-wrap revive body: re-wraps of the *current* SSK (generation 0 is
+ * valid — an owner-only stream that never rolled) to invited actors' live
+ * keys. Same per-wrap caps as `rollKeySchema`; the service rejects `user`
+ * recipients and keys that aren't live actor keys.
+ */
+const actorRewrapSchema = z.object({
+  keyGeneration: z.number().int().min(0),
+  wraps: z
+    .array(
+      z.object({
+        recipientKeyId: z.string().min(1).max(128),
+        recipientKind: z.enum(E2E_KEY_WRAP_RECIPIENT_KINDS),
+        wrapEnc: z.string().min(1).max(1024),
+        wrapCt: z.string().min(1).max(1024),
+      })
+    )
+    .min(1)
+    .max(64),
+})
+
 /** Default number of events returned in bootstrap and event list queries. */
 const EVENTS_DEFAULT_LIMIT = 50
 
@@ -1009,9 +1030,23 @@ export function createStreamHandlers({
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const { currentKeyGeneration, wraps } = await streamService.listE2eKeyWraps(workspaceId, streamId)
-      const body: E2eKeyWrapsResponse = { currentKeyGeneration, wraps }
+      const { currentKeyGeneration, wraps, ownerUserId, liveActorRecipients } = await streamService.listE2eKeyWraps(
+        workspaceId,
+        streamId
+      )
+      const body: E2eKeyWrapsResponse = { currentKeyGeneration, wraps, ownerUserId, liveActorRecipients }
       res.json(body)
+    },
+
+    async reviveE2eActorKeyWraps(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+      const input = actorRewrapSchema.parse(req.body)
+
+      await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      await streamService.reviveActorKeyWraps(workspaceId, streamId, userId, input)
+      res.status(204).send()
     },
 
     async storeE2eKeyWrap(req: Request, res: Response) {

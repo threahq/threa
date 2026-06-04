@@ -1,4 +1,4 @@
-import type { E2eKeyWrapsResponse, E2eOwnerKeyWrapInput, E2eKeyRollInput } from "@threa/types"
+import type { E2eKeyWrapsResponse, E2eOwnerKeyWrapInput, E2eKeyRollInput, E2eActorRewrapInput } from "@threa/types"
 import { api } from "./client"
 
 /**
@@ -30,5 +30,15 @@ export const e2eKeyWrapsApi = {
    */
   async roll(workspaceId: string, streamId: string, input: E2eKeyRollInput): Promise<void> {
     await api.post<void>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/key-generations`, input)
+  },
+
+  /**
+   * Re-wrap the *current* SSK to invited actors' live keys that lost their
+   * wrap (an enclave restart mints a fresh EIK). No generation bump — the
+   * actor already held this generation, so the new instance gets exactly the
+   * prior access, and a turn parked on the missing wrap revives.
+   */
+  async reviveActorWraps(workspaceId: string, streamId: string, input: E2eActorRewrapInput): Promise<void> {
+    await api.post<void>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actor-key-wraps`, input)
   },
 }

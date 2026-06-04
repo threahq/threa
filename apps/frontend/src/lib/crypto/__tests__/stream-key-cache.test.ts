@@ -14,6 +14,7 @@ import {
   rekeyStream,
   resolveCurrentStreamKey,
   resolveStreamKey,
+  reviveStaleActorWraps,
 } from "../stream-key-cache"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
@@ -38,6 +39,8 @@ async function stubWrap(uik: UserIdentityKey, ssk: Uint8Array, currentKeyGenerat
         wrapCt: bytesToBase64(wrap.ct),
       },
     ],
+    ownerUserId: "user_owner",
+    liveActorRecipients: [],
   })
 }
 
@@ -225,7 +228,7 @@ describe("putStreamKey + resolveCurrentStreamKey", () => {
 
     putStreamKey(WS, STREAM, 0, ssk)
     clearStreamKeyCache()
-    spy.mockResolvedValue({ currentKeyGeneration: 0, wraps: [] })
+    spy.mockResolvedValue({ currentKeyGeneration: 0, wraps: [], ownerUserId: "user_owner", liveActorRecipients: [] })
 
     const current = await resolveCurrentStreamKey({
       workspaceId: WS,
@@ -236,5 +239,105 @@ describe("putStreamKey + resolveCurrentStreamKey", () => {
     // Cache was cleared, so it must fetch — and the empty wrap set yields null.
     expect(spy).toHaveBeenCalledTimes(1)
     expect(current).toBeNull()
+  })
+})
+
+describe("reviveStaleActorWraps", () => {
+  it("re-wraps the current SSK to a live actor key that is missing its wrap (enclave restart)", async () => {
+    const owner = await generateUIK()
+    const enclave = await generateUIK() // stands in for the fresh EIK's X25519 pair
+    const ssk = generateStreamKey()
+    const ownerWrap = await wrapStreamKey({
+      key: ssk,
+      recipientPublicKey: owner.publicKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 0, recipientKeyId: KEY_ID }),
+    })
+    vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 0,
+      wraps: [
+        {
+          keyGeneration: 0,
+          recipientKeyId: KEY_ID,
+          recipientKind: "user",
+          wrapEnc: bytesToBase64(ownerWrap.enc),
+          wrapCt: bytesToBase64(ownerWrap.ct),
+        },
+        // The dead EIK's wrap is still on file — it must not mask the missing one.
+        { keyGeneration: 0, recipientKeyId: "eik_dead", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+      ],
+      ownerUserId: "user_owner",
+      liveActorRecipients: [
+        { recipientKeyId: "eik_fresh", recipientKind: "enclave", publicKey: bytesToBase64(enclave.publicKey) },
+      ],
+    })
+    const revive = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps").mockResolvedValue(undefined)
+
+    const result = await reviveStaleActorWraps({
+      workspaceId: WS,
+      streamId: STREAM,
+      userId: "user_owner",
+      ownerKeyId: KEY_ID,
+      ownerPrivateKey: owner.privateKey,
+    })
+
+    expect(result).toBe("revived")
+    const [, , input] = revive.mock.calls[0]!
+    expect(input.keyGeneration).toBe(0)
+    expect(input.wraps.map((w) => `${w.recipientKind}:${w.recipientKeyId}`)).toEqual(["enclave:eik_fresh"])
+
+    // The posted wrap must open to the SAME current SSK under the fresh EIK's
+    // key, bound to (stream, generation, recipient) — i.e. the new enclave
+    // instance gets exactly the access the old one had.
+    const revived = await unwrapStreamKey({
+      enc: base64ToBytes(input.wraps[0]!.wrapEnc),
+      ct: base64ToBytes(input.wraps[0]!.wrapCt),
+      recipientPrivateKey: enclave.privateKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 0, recipientKeyId: "eik_fresh" }),
+    })
+    expect(revived).toEqual(ssk)
+  })
+
+  it("no-ops when every live actor key already has its current-generation wrap", async () => {
+    const owner = await generateUIK()
+    vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 0,
+      wraps: [{ keyGeneration: 0, recipientKeyId: "eik_live", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],
+      ownerUserId: "user_owner",
+      liveActorRecipients: [{ recipientKeyId: "eik_live", recipientKind: "enclave", publicKey: "AA==" }],
+    })
+    const revive = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps")
+
+    const result = await reviveStaleActorWraps({
+      workspaceId: WS,
+      streamId: STREAM,
+      userId: "user_owner",
+      ownerKeyId: KEY_ID,
+      ownerPrivateKey: owner.privateKey,
+    })
+
+    expect(result).toBe("none-missing")
+    expect(revive).not.toHaveBeenCalled()
+  })
+
+  it("short-circuits for a non-owner without touching the SSK", async () => {
+    const viewer = await generateUIK()
+    vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 0,
+      wraps: [],
+      ownerUserId: "user_owner",
+      liveActorRecipients: [{ recipientKeyId: "eik_fresh", recipientKind: "enclave", publicKey: "AA==" }],
+    })
+    const revive = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps")
+
+    const result = await reviveStaleActorWraps({
+      workspaceId: WS,
+      streamId: STREAM,
+      userId: "user_viewer",
+      ownerKeyId: KEY_ID,
+      ownerPrivateKey: viewer.privateKey,
+    })
+
+    expect(result).toBe("not-owner")
+    expect(revive).not.toHaveBeenCalled()
   })
 })

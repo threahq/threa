@@ -797,6 +797,114 @@ describe("StreamService.rollStreamKey", () => {
   })
 })
 
+describe("StreamService.reviveActorKeyWraps", () => {
+  let service: StreamService
+
+  const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
+  const mockInsertManyWraps = spyOn(StreamE2eKeyWrapsRepository, "insertMany")
+  const mockListActors = spyOn(E2eStreamActorsRepository, "listForStream")
+  const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
+
+  // A transaction client that answers the advisory-lock query the revive
+  // issues before any repo call (same serialization as rollStreamKey).
+  const lockClient = { query: mock(async () => ({ rows: [], rowCount: 0 })) } as never
+
+  const ownedStream = {
+    streamId: "stream_e2e",
+    workspaceId: "ws_1",
+    ownerUserId: "usr_owner",
+    ownerUserKeyId: "e2ek_owner",
+    currentKeyGeneration: 1,
+  } as never
+
+  const enclaveWrap = { recipientKeyId: "eik_fresh", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    spyOn(db, "withTransaction").mockImplementation((_pool, fn) => fn(lockClient))
+    mockGetByStreamId.mockReset().mockResolvedValue(ownedStream)
+    mockInsertManyWraps.mockReset().mockResolvedValue(undefined as never)
+    mockListActors.mockReset().mockResolvedValue([{ kind: "enclave", actorId: "enclave", keyId: null }])
+    mockListLiveEiks.mockReset().mockResolvedValue([{ keyId: "eik_fresh", publicKey: new Uint8Array([1]) }] as never)
+  })
+
+  afterAll(() => {
+    spyOn(db, "withTransaction").mockImplementation((_pool, fn) => fn({} as PoolClient))
+  })
+
+  test("stores re-wraps for live actor keys at the current generation, with no generation bump", async () => {
+    // `spyOn` returns the suite-shared spy (rollStreamKey's tests already called
+    // it) — clear so the assertion below sees only this test's calls.
+    const mockBumpGeneration = spyOn(E2eStreamsRepository, "bumpKeyGeneration")
+    mockBumpGeneration.mockClear()
+
+    await service.reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+      keyGeneration: 1,
+      wraps: [enclaveWrap] as never,
+    })
+
+    expect(mockInsertManyWraps).toHaveBeenCalledWith(lockClient, [
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_e2e",
+        keyGeneration: 1,
+        recipientKeyId: "eik_fresh",
+        recipientKind: "enclave",
+        wrapEnc: "ZW5j",
+        wrapCt: "Y3Q=",
+      },
+    ])
+    expect(mockBumpGeneration).not.toHaveBeenCalled()
+  })
+
+  test("throws 403 when the caller is not the owner", async () => {
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_intruder", { keyGeneration: 1, wraps: [enclaveWrap] as never })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(403)
+    expect((error as HttpError).code).toBe("NOT_STREAM_OWNER")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 409 when the generation is not exactly current", async () => {
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", { keyGeneration: 0, wraps: [enclaveWrap] as never })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(409)
+    expect((error as HttpError).code).toBe("E2E_STALE_GENERATION")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when a wrap targets a key that is not live for an invited actor", async () => {
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+        keyGeneration: 1,
+        wraps: [{ ...enclaveWrap, recipientKeyId: "eik_dead" }] as never,
+      })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_RECIPIENT_NOT_LIVE_ACTOR")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when a wrap targets a user key (revive can't add readers)", async () => {
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+        keyGeneration: 1,
+        // Even a key id that happens to be in the live set must be rejected by kind.
+        wraps: [{ ...enclaveWrap, recipientKind: "user" }] as never,
+      })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_RECIPIENT_NOT_LIVE_ACTOR")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+})
+
 describe("StreamService.createScratchpad (E2E)", () => {
   let service: StreamService
 

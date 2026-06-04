@@ -165,6 +165,103 @@ export async function rekeyStream(input: RekeyStreamInput): Promise<void> {
   putStreamKey(input.workspaceId, input.streamId, input.nextGeneration, ssk)
 }
 
+export interface ReviveActorWrapsInput {
+  workspaceId: string
+  streamId: string
+  /** The caller's workspace user id — only the stream owner may revive. */
+  userId: string
+  /** The owner's UIK key id — selects the wrap to recover the SSK from. */
+  ownerKeyId: string
+  /** The owner's unwrapped UIK private key. */
+  ownerPrivateKey: CryptoKey
+}
+
+export type ReviveActorWrapsResult = "revived" | "none-missing" | "not-owner" | "no-key"
+
+/** De-dupes concurrent revives per stream (header probe + send firing together). */
+const reviveInflight = new Map<string, Promise<ReviveActorWrapsResult>>()
+
+/**
+ * Re-wrap the *current* SSK to invited actors' live keys that are missing a
+ * wrap at the current generation — the heal for an enclave restart, whose
+ * fresh EIK orphans every stream wrapped to its predecessor (parking enclave
+ * turns server-side until this runs). Unlike `rekeyStream`, no fresh SSK and
+ * no generation bump: the actor already held this generation, so the new
+ * instance gets exactly the prior access — and a parked turn (sealed under
+ * the current generation) stays decryptable, which a roll would strand.
+ *
+ * Owner-only (the server enforces it; `"not-owner"` short-circuits everyone
+ * else). Returns `"none-missing"` when every live actor key already has its
+ * wrap, `"no-key"` when the owner's own wrap can't be recovered (nothing to
+ * re-wrap), `"revived"` after storing the missing wraps.
+ */
+export async function reviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<ReviveActorWrapsResult> {
+  const slot = streamSlot(input.workspaceId, input.streamId)
+  const pending = reviveInflight.get(slot)
+  if (pending) return pending
+
+  const promise = doReviveStaleActorWraps(input).finally(() => {
+    reviveInflight.delete(slot)
+  })
+  reviveInflight.set(slot, promise)
+  return promise
+}
+
+async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<ReviveActorWrapsResult> {
+  // Always a fresh fetch: the point is to see an EIK that registered after
+  // whatever the UI has cached.
+  const { currentKeyGeneration, wraps, liveActorRecipients, ownerUserId } = await e2eKeyWrapsApi.get(
+    input.workspaceId,
+    input.streamId
+  )
+  currentGenerations.set(streamSlot(input.workspaceId, input.streamId), currentKeyGeneration)
+
+  if (ownerUserId !== input.userId) return "not-owner"
+
+  // `?? []` tolerates a not-yet-redeployed backend that omits the field.
+  const missing = (liveActorRecipients ?? []).filter(
+    (r) => !wraps.some((w) => w.keyGeneration === currentKeyGeneration && w.recipientKeyId === r.recipientKeyId)
+  )
+  if (missing.length === 0) return "none-missing"
+
+  // At send time the seal path has already cached this generation's SSK, so
+  // this is normally a cache hit; on a cold open it unwraps the owner's slot.
+  const ssk = await resolveStreamKey({
+    workspaceId: input.workspaceId,
+    streamId: input.streamId,
+    keyGeneration: currentKeyGeneration,
+    recipientKeyId: input.ownerKeyId,
+    privateKey: input.ownerPrivateKey,
+  })
+  if (!ssk) return "no-key"
+
+  const rewraps = await Promise.all(
+    missing.map(async (r) => {
+      const wrap = await wrapStreamKey({
+        key: ssk,
+        recipientPublicKey: base64ToBytes(r.publicKey),
+        aad: buildWrapAad({
+          streamId: input.streamId,
+          keyGeneration: currentKeyGeneration,
+          recipientKeyId: r.recipientKeyId,
+        }),
+      })
+      return {
+        recipientKeyId: r.recipientKeyId,
+        recipientKind: r.recipientKind,
+        wrapEnc: bytesToBase64(wrap.enc),
+        wrapCt: bytesToBase64(wrap.ct),
+      }
+    })
+  )
+
+  await e2eKeyWrapsApi.reviveActorWraps(input.workspaceId, input.streamId, {
+    keyGeneration: currentKeyGeneration,
+    wraps: rewraps,
+  })
+  return "revived"
+}
+
 /**
  * Resolve the SSK for a specific `(stream, keyGeneration)`. Returns the cached
  * key, or fetches the stream's wraps, unwraps the slot addressed to

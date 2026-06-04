@@ -42,6 +42,8 @@ async function stubOwnerWrap(ssk: Uint8Array, publicKey: Uint8Array, recipientKe
   })
   vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
     currentKeyGeneration: 0,
+    ownerUserId: "user_owner",
+    liveActorRecipients: [],
     wraps: [
       {
         keyGeneration: 0,

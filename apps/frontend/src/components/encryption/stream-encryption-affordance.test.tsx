@@ -3,6 +3,8 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { E2eKeyWrapsResponse } from "@threa/types"
+import { buildWrapAad, bytesToBase64, generateStreamKey, wrapStreamKey } from "@threa/crypto"
+import { generateUIK } from "@/lib/crypto/keys"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
@@ -81,6 +83,8 @@ function nonEmptyWraps(): E2eKeyWrapsResponse {
   return {
     currentKeyGeneration: 0,
     wraps: [{ keyGeneration: 0, recipientKeyId: "e2ek_owner", recipientKind: "user", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],
+    ownerUserId: USER_ID,
+    liveActorRecipients: [],
   }
 }
 
@@ -163,7 +167,7 @@ describe("repair (unlocked stream missing its owner wrap)", () => {
     // After repair stores one, the refetch returns a non-empty set.
     let stored = false
     vi.spyOn(e2eKeyWrapsApi, "get").mockImplementation(async () =>
-      stored ? nonEmptyWraps() : { currentKeyGeneration: 0, wraps: [] }
+      stored ? nonEmptyWraps() : { currentKeyGeneration: 0, wraps: [], ownerUserId: USER_ID, liveActorRecipients: [] }
     )
     const storeSpy = vi.spyOn(e2eKeyWrapsApi, "store").mockImplementation(async () => {
       stored = true
@@ -191,5 +195,69 @@ describe("repair (unlocked stream missing its owner wrap)", () => {
     await waitFor(() => expect(getSpy).toHaveBeenCalled())
     expect(screen.queryByRole("button", { name: /finish setup/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /unlock/i })).not.toBeInTheDocument()
+  })
+})
+
+describe("actor wrap revive (live actor key missing its wrap)", () => {
+  it("silently re-wraps the current SSK to the stale actor key when the unlocked owner views the stream", async () => {
+    const ws = freshWorkspaceId()
+    await setupNewKey(ws, USER_ID, "pp-correct-horse", { params: FAST_PARAMS })
+    await waitFor(() => expect(getE2eSessionState(ws, USER_ID).status).toBe("unlocked"))
+    const session = getE2eSessionState(ws, USER_ID)
+
+    // The owner holds the only wrap; the enclave restarted, so its live EIK
+    // (a fresh X25519 key) has no wrap at the current generation.
+    const ssk = generateStreamKey()
+    const eik = await generateUIK()
+    const ownerWrap = await wrapStreamKey({
+      key: ssk,
+      recipientPublicKey: session.publicKey!,
+      aad: buildWrapAad({ streamId: STREAM_ID, keyGeneration: 0, recipientKeyId: session.keyId! }),
+    })
+    vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 0,
+      wraps: [
+        {
+          keyGeneration: 0,
+          recipientKeyId: session.keyId!,
+          recipientKind: "user",
+          wrapEnc: bytesToBase64(ownerWrap.enc),
+          wrapCt: bytesToBase64(ownerWrap.ct),
+        },
+      ],
+      ownerUserId: USER_ID,
+      liveActorRecipients: [
+        { recipientKeyId: "eik_fresh", recipientKind: "enclave", publicKey: bytesToBase64(eik.publicKey) },
+      ],
+    })
+    const reviveSpy = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps").mockResolvedValue(undefined)
+
+    renderWithProvider(ws, <StreamHeaderEncryptionAction workspaceId={ws} encrypted streamId={STREAM_ID} />)
+
+    // Headless heal: no CTA, no dialog — just the re-wrap POST for the live key.
+    await waitFor(() => expect(reviveSpy).toHaveBeenCalledTimes(1))
+    const [, , input] = reviveSpy.mock.calls[0]!
+    expect(input.keyGeneration).toBe(0)
+    expect(input.wraps.map((w) => w.recipientKeyId)).toEqual(["eik_fresh"])
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+  })
+
+  it("does not revive for a non-owner viewer", async () => {
+    const ws = freshWorkspaceId()
+    await setupNewKey(ws, USER_ID, "pp-correct-horse", { params: FAST_PARAMS })
+    await waitFor(() => expect(getE2eSessionState(ws, USER_ID).status).toBe("unlocked"))
+
+    const getSpy = vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 0,
+      wraps: [],
+      ownerUserId: "usr_someone_else",
+      liveActorRecipients: [{ recipientKeyId: "eik_fresh", recipientKind: "enclave", publicKey: "AA==" }],
+    })
+    const reviveSpy = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps")
+
+    renderWithProvider(ws, <StreamHeaderEncryptionAction workspaceId={ws} encrypted streamId={STREAM_ID} />)
+
+    await waitFor(() => expect(getSpy).toHaveBeenCalled())
+    expect(reviveSpy).not.toHaveBeenCalled()
   })
 })
