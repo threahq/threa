@@ -114,10 +114,10 @@ function useOnlineStatus(): boolean {
 }
 
 /**
- * Registers the mod+L "copy link" shortcut. Must be rendered inside
- * PanelProvider so it can read which pane (main view vs thread panel) the user
- * last interacted with. Copies the thread link when the panel is focused and
- * shows a real (non-draft) thread; otherwise copies the main stream link.
+ * Registers the "copy link" shortcut. Must be rendered inside PanelProvider so
+ * it can read which pane (main view vs thread panel) the user last interacted
+ * with. Copies the thread link when the panel is focused and shows a real
+ * (non-draft) thread; otherwise copies the main stream link.
  */
 function StreamLinkKeyboardHandler({
   workspaceId,
