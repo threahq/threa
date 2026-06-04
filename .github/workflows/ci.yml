@@ -33,6 +33,12 @@ jobs:
       - name: Lint frontend
         run: bun run --cwd apps/frontend lint
 
+      - name: Lint enclave
+        run: bun run --cwd apps/enclave lint
+
+      - name: Typecheck enclave
+        run: bun run --cwd apps/enclave typecheck
+
       - name: Check Dockerfile workspace COPY lines
         run: bun run check:dockerfiles
 
@@ -116,6 +122,9 @@ jobs:
 
       - name: Run frontend tests
         run: bun run --cwd apps/frontend test
+
+      - name: Run enclave tests
+        run: bun run --cwd apps/enclave test
 
   workos-permissions:
     name: WorkOS Permissions
