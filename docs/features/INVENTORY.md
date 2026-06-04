@@ -59,7 +59,7 @@ Two rules for using it:
 | events-and-projections                                                | Append-only `stream_events` is the source of truth; read projections commit in the same transaction | INV-7               |
 | [optimistic-then-reconcile](concepts/optimistic-then-reconcile.md) ✅ | Optimistic events land in IDB with temp ids; server events replace them by `clientMessageId`        | (frontend pattern)  |
 | idb-is-the-client-source-of-truth                                     | The UI reads IndexedDB via live queries; sync writes IDB, never components directly                 | (frontend pattern)  |
-| content-canonical-form                                                | `contentJson` is the internal canon; markdown only at the wire; previews strip markdown at render   | INV-58, INV-60      |
+| [content-canonical-form](concepts/content-canonical-form.md) ✅       | `contentJson` is the internal canon; markdown only at the wire; previews strip markdown at render   | INV-58, INV-60      |
 | language-by-model                                                     | Semantic decisions about language go through a model, never English-only heuristics                 | INV-54              |
 | personas-are-data                                                     | Agents are data-driven personas with declarative tools, not hardcoded implementations               | (domain model)      |
 
