@@ -18,6 +18,11 @@ import {
   type CachedWorkspaceMetadata,
 } from "@/db"
 
+// Re-exported so components/pages can type the values these store hooks return
+// (e.g. `useWorkspaceStreams(): CachedStream[]`) without importing `@/db`
+// directly, which the component layer is barred from (INV-15).
+export type { CachedStream } from "@/db"
+
 // =============================================================================
 // In-memory cache — populated by applyWorkspaceBootstrap, used as the default
 // value for useLiveQuery so the first synchronous render returns real data

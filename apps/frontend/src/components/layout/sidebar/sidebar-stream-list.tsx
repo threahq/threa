@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core"
-import type { CollapseState } from "@/contexts"
+import { useSidebar, type CollapseState } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { LabelChip } from "@/components/labels/label-chip"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -97,6 +97,9 @@ export function SidebarStreamList({
   // gestures (scroll, long-press) untouched by disabling drag entirely.
   const isMobile = useIsMobile()
   const streamDragEnabled = !isMobile
+  // Opening a label from its section header should close the sidebar on mobile,
+  // matching stream rows and quick links (no-op on desktop).
+  const { collapseOnMobile } = useSidebar()
   const [draggingStreamId, setDraggingStreamId] = useState<string | null>(null)
   // Distance constraint so a click still navigates the row's link — a drag only
   // begins once the pointer has moved past the threshold.
@@ -176,6 +179,8 @@ export function SidebarStreamList({
         const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
         if (section.spec.kind === "label" && !label) return null
         const titleContent = label ? <LabelChip label={label} /> : undefined
+        // Label sections get an "open" affordance to their landing page.
+        const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
         const headerLabel = label ? label.name : presentation.label
 
         const state = getSectionState(section.id, presentation.defaultCollapse)
@@ -187,6 +192,8 @@ export function SidebarStreamList({
             sectionKey={section.id}
             label={headerLabel}
             titleContent={titleContent}
+            titleHref={titleHref}
+            onTitleNavigate={collapseOnMobile}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}
@@ -210,6 +217,8 @@ export function SidebarStreamList({
           <StreamSection
             label={headerLabel}
             titleContent={titleContent}
+            titleHref={titleHref}
+            onTitleNavigate={collapseOnMobile}
             icon={presentation.icon}
             items={items}
             allStreams={processedStreams}

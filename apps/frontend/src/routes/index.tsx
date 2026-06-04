@@ -100,6 +100,11 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import("@/pages/labels")).LabelsPage }),
       },
       {
+        path: "labels/:labelId",
+        HydrateFallback: FallbackLoader,
+        lazy: async () => ({ Component: (await import("@/pages/label-detail")).LabelDetailPage }),
+      },
+      {
         path: "files",
         HydrateFallback: FallbackLoader,
         lazy: async () => ({ Component: (await import("@/pages/files")).FilesPage }),

@@ -1,5 +1,6 @@
-import { ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react"
+import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, Plus } from "lucide-react"
 import { Fragment, type ReactNode, type RefObject } from "react"
+import { Link } from "react-router-dom"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { UnreadBadge } from "@/components/unread-badge"
@@ -18,6 +19,14 @@ interface SectionHeaderProps {
    * controls are kept). Used by label sections to show a tinted `LabelChip`.
    */
   titleContent?: ReactNode
+  /**
+   * When set, the header shows a hover-revealed "open" link to this route (e.g. a
+   * label section linking to its landing page). The header click still toggles
+   * collapse; this is a separate affordance on the right, like the "+" button.
+   */
+  titleHref?: string
+  /** Called when the `titleHref` link is clicked — e.g. collapse the sidebar on mobile. */
+  onTitleNavigate?: () => void
   /** Current collapse state. If omitted, header renders as static (non-clickable). */
   state?: CollapseState
   /** Toggle callback. If omitted, header renders as static. */
@@ -45,6 +54,8 @@ export function SectionHeader({
   label,
   icon,
   titleContent,
+  titleHref,
+  onTitleNavigate,
   state,
   onToggle,
   unreadAggregate = 0,
@@ -121,6 +132,20 @@ export function SectionHeader({
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
+      {titleHref && (
+        <Link
+          to={titleHref}
+          onClick={onTitleNavigate}
+          // Mirrors the "+" button's reveal: hover-only on desktop, always shown
+          // on mobile (no hover). The wrapper above stops propagation, so opening
+          // the label never also toggles the section.
+          className="h-5 w-5 max-sm:h-8 max-sm:w-8 flex items-center justify-center rounded sm:opacity-0 sm:group-hover/section:opacity-100 hover:bg-muted transition-all"
+          title={label ? `Open ${label}` : "Open"}
+          aria-label={label ? `Open ${label}` : "Open"}
+        >
+          <ArrowUpRight className="h-3.5 w-3.5" />
+        </Link>
+      )}
       {hasAggregate && (
         <UnreadBadge
           count={unreadAggregate}
@@ -216,6 +241,10 @@ interface StreamSectionProps {
   icon?: string
   /** Custom header title node (e.g. a label chip), forwarded to SectionHeader. */
   titleContent?: ReactNode
+  /** Optional "open" link for the header (e.g. a label section → its landing page). */
+  titleHref?: string
+  /** Click handler for the "open" link (e.g. collapse the sidebar on mobile). */
+  onTitleNavigate?: () => void
   items: StreamItemData[]
   allStreams: StreamItemData[]
   workspaceId: string
@@ -246,6 +275,8 @@ export function StreamSection({
   label,
   icon,
   titleContent,
+  titleHref,
+  onTitleNavigate,
   items,
   allStreams,
   workspaceId,
@@ -301,6 +332,8 @@ export function StreamSection({
         label={label}
         icon={icon}
         titleContent={titleContent}
+        titleHref={titleHref}
+        onTitleNavigate={onTitleNavigate}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}
@@ -352,6 +385,8 @@ export function TieredStreamSection({
   label,
   icon,
   titleContent,
+  titleHref,
+  onTitleNavigate,
   items,
   allStreams,
   workspaceId,
@@ -419,6 +454,8 @@ export function TieredStreamSection({
         label={label}
         icon={icon}
         titleContent={titleContent}
+        titleHref={titleHref}
+        onTitleNavigate={onTitleNavigate}
         state={state}
         onToggle={onToggle}
         unreadAggregate={unreadAggregate}

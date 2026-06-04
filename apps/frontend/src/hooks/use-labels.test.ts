@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest"
-import type { Label, LabelAssignment, LabelMember } from "@threa/types"
+import { LabelableResourceTypes, type Label, type LabelAssignment, type LabelMember } from "@threa/types"
 import { db } from "@/db"
-import { reconcileLabels } from "./use-labels"
+import { reconcileLabels, selectLabelStreams, type CachedLabelAssignment } from "./use-labels"
+import type { CachedStream } from "@/db"
 
 const WORKSPACE_ID = "ws_test"
 
@@ -137,5 +138,102 @@ describe("reconcileLabels", () => {
     const assignments = await db.labelAssignments.where("workspaceId").equals(WORKSPACE_ID).toArray()
     expect(assignments.map((a) => a.resourceId)).toEqual(["strm_live"])
     expect(assignments[0].id).toBe(`${WORKSPACE_ID}:stream:strm_live:lbl_1:user_me`)
+  })
+})
+
+function cachedAssignment(
+  labelId: string,
+  resourceId: string,
+  overrides: Partial<CachedLabelAssignment> = {}
+): CachedLabelAssignment {
+  return {
+    id: `${WORKSPACE_ID}:${LabelableResourceTypes.STREAM}:${resourceId}:${labelId}:user_me`,
+    workspaceId: WORKSPACE_ID,
+    labelId,
+    resourceType: LabelableResourceTypes.STREAM,
+    resourceId,
+    userId: "user_me",
+    assignedAt: "2026-01-01T00:00:00.000Z",
+    _cachedAt: 0,
+    ...overrides,
+  }
+}
+
+function cachedStream(id: string, overrides: Partial<CachedStream> = {}): CachedStream {
+  return {
+    id,
+    workspaceId: WORKSPACE_ID,
+    type: "scratchpad",
+    displayName: id,
+    slug: null,
+    description: null,
+    visibility: "private",
+    parentStreamId: null,
+    parentMessageId: null,
+    rootStreamId: null,
+    companionMode: "off",
+    companionPersonaId: null,
+    createdBy: "user_me",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    archivedAt: null,
+    lastMessagePreview: null,
+    _cachedAt: 0,
+    ...overrides,
+  }
+}
+
+describe("selectLabelStreams", () => {
+  it("returns the streams carrying the label, newest activity first", () => {
+    const assignments = [cachedAssignment("label_a", "stream_old"), cachedAssignment("label_a", "stream_new")]
+    const streams = [
+      cachedStream("stream_old", {
+        lastMessagePreview: {
+          authorId: "user_me",
+          authorType: "user",
+          content: "x",
+          createdAt: "2026-01-02T00:00:00.000Z",
+        },
+      }),
+      cachedStream("stream_new", {
+        lastMessagePreview: {
+          authorId: "user_me",
+          authorType: "user",
+          content: "y",
+          createdAt: "2026-03-01T00:00:00.000Z",
+        },
+      }),
+    ]
+
+    expect(selectLabelStreams(assignments, streams, "label_a").map((s) => s.id)).toEqual(["stream_new", "stream_old"])
+  })
+
+  it("includes threads — a labeled thread is just a stream of type thread", () => {
+    const assignments = [cachedAssignment("label_a", "thread_1")]
+    const streams = [cachedStream("thread_1", { type: "thread", displayName: "A thread" })]
+
+    expect(selectLabelStreams(assignments, streams, "label_a")).toEqual([streams[0]])
+  })
+
+  it("ignores assignments for other labels, other resource types, and archived streams", () => {
+    const assignments = [
+      cachedAssignment("label_a", "stream_keep"),
+      cachedAssignment("label_b", "stream_other_label"),
+      cachedAssignment("label_a", "stream_archived"),
+      cachedAssignment("label_a", "msg_1", { resourceType: "message" as CachedLabelAssignment["resourceType"] }),
+    ]
+    const streams = [
+      cachedStream("stream_keep"),
+      cachedStream("stream_other_label"),
+      cachedStream("stream_archived", { archivedAt: "2026-02-01T00:00:00.000Z" }),
+    ]
+
+    expect(selectLabelStreams(assignments, streams, "label_a").map((s) => s.id)).toEqual(["stream_keep"])
+  })
+
+  it("returns an empty list when nothing carries the label", () => {
+    expect(
+      selectLabelStreams([cachedAssignment("label_a", "stream_1")], [cachedStream("stream_1")], "label_z")
+    ).toEqual([])
   })
 })

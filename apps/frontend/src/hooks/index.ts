@@ -203,6 +203,8 @@ export {
   useLeaveLabel,
   usePromoteLabel,
   useResourceLabelAssignments,
+  useLabelStreams,
+  selectLabelStreams,
   useAssignLabel,
   useUnassignLabel,
   reconcileLabels,

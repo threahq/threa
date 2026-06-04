@@ -119,4 +119,25 @@ describe("StreamLabelStack", () => {
       expect(screen.getByText(name)).toBeInTheDocument()
     }
   })
+
+  it("links each fanned-out chip to the label's landing page", () => {
+    vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(true)
+    const Passthrough = ({ children }: { children?: React.ReactNode }) => <div>{children}</div>
+    spyOnExport(drawerModule, "Drawer").mockReturnValue(Passthrough as never)
+    spyOnExport(drawerModule, "DrawerTrigger").mockReturnValue(Passthrough as never)
+    spyOnExport(drawerModule, "DrawerContent").mockReturnValue(Passthrough as never)
+    spyOnExport(drawerModule, "DrawerHeader").mockReturnValue(Passthrough as never)
+    spyOnExport(drawerModule, "DrawerTitle").mockReturnValue(Passthrough as never)
+
+    setLabels(["alpha", "beta"])
+    mount()
+
+    const links = screen
+      .getAllByRole("link")
+      .map((link) => ({ name: link.textContent, href: link.getAttribute("href") }))
+    expect(links).toEqual([
+      { name: "alpha", href: `/w/${WORKSPACE_ID}/labels/alpha` },
+      { name: "beta", href: `/w/${WORKSPACE_ID}/labels/beta` },
+    ])
+  })
 })

@@ -1,13 +1,12 @@
 import { useMemo, useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, Tag, Plus, Globe, Lock, Trash2, Pencil, LogOut, SmilePlus, X, PanelLeft } from "lucide-react"
+import { ArrowLeft, Tag, Plus, Globe, Lock, Trash2, Pencil, LogOut } from "lucide-react"
 import { toast } from "sonner"
 import { Visibilities } from "@threa/types"
-import type { Visibility, SidebarConfig } from "@threa/types"
+import type { Visibility } from "@threa/types"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Label as UiLabel } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { VisibilityPicker } from "@/components/ui/visibility-picker"
 import {
@@ -29,7 +28,6 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import { SidebarToggle } from "@/components/layout"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { cn } from "@/lib/utils"
@@ -43,29 +41,10 @@ import {
   useLabelsView,
   useLeaveLabel,
   usePromoteLabel,
-  useSidebarConfig,
-  useUpdateLabel,
   type CachedLabel,
   type LabelViewerContext,
 } from "@/hooks"
-import { hasLabelSection, toggleLabelSection } from "@/components/layout/sidebar/sidebar-config"
-
-// A curated palette of saturated, distinct colors that read well as full-bleed
-// swatches. Users can override via hex input; these are the suggestions.
-const PRESET_COLORS = [
-  "#E04F3E",
-  "#F0A030",
-  "#E8C547",
-  "#8AB04F",
-  "#39A07A",
-  "#3A91C7",
-  "#4D5BA8",
-  "#8654C2",
-  "#C04C8E",
-  "#1E1E1E",
-] as const
-
-const PRESET_EMOJIS = ["🏷️", "🌱", "🔥", "🧠", "📚", "🛠️", "🎯", "💡", "✨", "🪐", "🌊", "⚡"] as const
+import { ColorRow, EmojiField, Field, LabelEditForm, PRESET_COLORS } from "@/components/labels/label-edit-form"
 
 /**
  * Route is `/w/:workspaceId/labels`. A single "Your labels" catalog (labels you
@@ -84,9 +63,6 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
   useLabelsSync(workspaceId)
   const view = useLabelsView(workspaceId)
   const { myLabels, currentUserId } = view
-  // One sidebar-config instance for the whole catalog so the per-card pin
-  // buttons share its optimistic-write guard (see SidebarPinButton).
-  const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [addOpen, setAddOpen] = useState(false)
 
   return (
@@ -132,21 +108,13 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
               <AddLabelTile onClick={() => setAddOpen(true)} />
               {myLabels.map((label) =>
                 label.creatorUserId === currentUserId ? (
-                  <OwnedLabelCard
-                    key={label.id}
-                    workspaceId={workspaceId}
-                    label={label}
-                    sidebarConfig={sidebarConfig}
-                    onSidebarConfigChange={setSidebarConfig}
-                  />
+                  <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />
                 ) : (
                   <JoinedLabelCard
                     key={label.id}
                     workspaceId={workspaceId}
                     label={label}
                     userId={currentUserId ?? ""}
-                    sidebarConfig={sidebarConfig}
-                    onSidebarConfigChange={setSidebarConfig}
                   />
                 )
               )}
@@ -368,48 +336,7 @@ function JoinMatchRow({ label, disabled, onJoin }: { label: CachedLabel; disable
 // Catalog cards
 // ---------------------------------------------------------------------------
 
-/**
- * Toggles a `{ kind: "label" }` section for this label in the viewer's sidebar
- * config. One section per label; appended on add, removed on toggle-off. The
- * config + setter are threaded from the page so every card shares one
- * `useSidebarConfig` instance (its optimistic-write guard is per-instance, so
- * per-card instances would race on rapid toggles across labels).
- */
-function SidebarPinButton({
-  config,
-  onConfigChange,
-  labelId,
-}: {
-  config: SidebarConfig
-  onConfigChange: (config: SidebarConfig) => void
-  labelId: string
-}) {
-  const pinned = hasLabelSection(config, labelId)
-  return (
-    <Button
-      size="sm"
-      variant="ghost"
-      aria-pressed={pinned}
-      className={cn("h-7 gap-1.5 px-2 text-xs", pinned && "text-primary")}
-      onClick={() => onConfigChange(toggleLabelSection(config, labelId))}
-    >
-      <PanelLeft className="h-3 w-3" />
-      {pinned ? "In sidebar" : "Show in sidebar"}
-    </Button>
-  )
-}
-
-function OwnedLabelCard({
-  workspaceId,
-  label,
-  sidebarConfig,
-  onSidebarConfigChange,
-}: {
-  workspaceId: string
-  label: CachedLabel
-  sidebarConfig: SidebarConfig
-  onSidebarConfigChange: (config: SidebarConfig) => void
-}) {
+function OwnedLabelCard({ workspaceId, label }: { workspaceId: string; label: CachedLabel }) {
   const isOnline = useIsOnline()
   const [editing, setEditing] = useState(false)
   const [confirmKind, setConfirmKind] = useState<"delete" | "promote" | null>(null)
@@ -437,12 +364,12 @@ function OwnedLabelCard({
   }
 
   if (editing) {
-    return <LabelEditCard workspaceId={workspaceId} label={label} onDone={() => setEditing(false)} />
+    return <LabelEditForm workspaceId={workspaceId} label={label} onDone={() => setEditing(false)} variant="card" />
   }
 
   return (
     <>
-      <LabelSwatchCard label={label}>
+      <LabelSwatchCard workspaceId={workspaceId} label={label}>
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <Button
             size="sm"
@@ -476,7 +403,6 @@ function OwnedLabelCard({
             <Trash2 className="h-3 w-3" />
             Delete
           </Button>
-          <SidebarPinButton config={sidebarConfig} onConfigChange={onSidebarConfigChange} labelId={label.id} />
         </div>
       </LabelSwatchCard>
 
@@ -517,86 +443,7 @@ function OwnedLabelCard({
   )
 }
 
-function LabelEditCard({
-  workspaceId,
-  label,
-  onDone,
-}: {
-  workspaceId: string
-  label: CachedLabel
-  onDone: () => void
-}) {
-  const [name, setName] = useState(label.name)
-  const [color, setColor] = useState(label.color)
-  const [emoji, setEmoji] = useState(label.emoji ?? "")
-  const [description, setDescription] = useState(label.description ?? "")
-  const updateMutation = useUpdateLabel(workspaceId)
-
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault()
-    if (!name.trim()) return
-    updateMutation.mutate(
-      {
-        labelId: label.id,
-        input: {
-          name: name.trim(),
-          color,
-          emoji: emoji.trim() || null,
-          description: description.trim() || null,
-        },
-      },
-      {
-        onSuccess: () => {
-          toast.success("Label updated")
-          onDone()
-        },
-        onError: () => toast.error("Could not update label"),
-      }
-    )
-  }
-
-  return (
-    <form
-      onSubmit={handleSubmit}
-      className="relative flex flex-col overflow-hidden rounded-xl border bg-card"
-      style={{ borderLeft: `3px solid ${color}` }}
-    >
-      <div className="flex flex-col gap-3 p-3.5">
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" autoFocus />
-        <ColorRow value={color} onChange={setColor} />
-        <EmojiField workspaceId={workspaceId} value={emoji} onChange={setEmoji} />
-        <Textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Description (optional)"
-          rows={2}
-        />
-        <div className="flex justify-end gap-2">
-          <Button type="button" size="sm" variant="ghost" onClick={onDone}>
-            Cancel
-          </Button>
-          <Button type="submit" size="sm" disabled={updateMutation.isPending || !name.trim()}>
-            Save
-          </Button>
-        </div>
-      </div>
-    </form>
-  )
-}
-
-function JoinedLabelCard({
-  workspaceId,
-  label,
-  userId,
-  sidebarConfig,
-  onSidebarConfigChange,
-}: {
-  workspaceId: string
-  label: CachedLabel
-  userId: string
-  sidebarConfig: SidebarConfig
-  onSidebarConfigChange: (config: SidebarConfig) => void
-}) {
+function JoinedLabelCard({ workspaceId, label, userId }: { workspaceId: string; label: CachedLabel; userId: string }) {
   const isOnline = useIsOnline()
   const leaveMutation = useLeaveLabel(workspaceId)
 
@@ -611,7 +458,7 @@ function JoinedLabelCard({
   }
 
   return (
-    <LabelSwatchCard label={label}>
+    <LabelSwatchCard workspaceId={workspaceId} label={label}>
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Button
           size="sm"
@@ -623,7 +470,6 @@ function JoinedLabelCard({
           <LogOut className="h-3 w-3" />
           Leave
         </Button>
-        <SidebarPinButton config={sidebarConfig} onConfigChange={onSidebarConfigChange} labelId={label.id} />
       </div>
     </LabelSwatchCard>
   )
@@ -633,34 +479,50 @@ function JoinedLabelCard({
 // Shared atoms
 // ---------------------------------------------------------------------------
 
-function LabelSwatchCard({ label, children }: { label: CachedLabel; children?: React.ReactNode }) {
+function LabelSwatchCard({
+  workspaceId,
+  label,
+  children,
+}: {
+  workspaceId: string
+  label: CachedLabel
+  children?: React.ReactNode
+}) {
   return (
     <article
       className="relative flex min-h-[160px] flex-col overflow-hidden rounded-xl border bg-card transition-colors hover:border-foreground/20"
       style={{ borderLeft: `3px solid ${label.color}` }}
     >
       <div className="flex flex-1 flex-col p-3.5">
-        <div className="flex items-start gap-2.5">
-          <div
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xl"
-            style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
-            aria-hidden
-          >
-            {label.emoji ?? <Tag className="h-4 w-4" />}
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold leading-tight">{label.name}</h3>
-            <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-              {label.visibility === Visibilities.PUBLIC ? <Globe className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              <span>{label.visibility === Visibilities.PUBLIC ? "Public" : "Private"}</span>
+        {/* The identity block opens the label's landing page (INV-40: navigation
+            is a link); the action buttons below stay outside it as buttons. */}
+        <Link to={`/w/${workspaceId}/labels/${label.id}`} className="group flex flex-1 flex-col rounded-md">
+          <div className="flex items-start gap-2.5">
+            <div
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xl"
+              style={{ backgroundColor: hexToRgba(label.color, 0.12), color: label.color }}
+              aria-hidden
+            >
+              {label.emoji ?? <Tag className="h-4 w-4" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-semibold leading-tight group-hover:underline">{label.name}</h3>
+              <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                {label.visibility === Visibilities.PUBLIC ? (
+                  <Globe className="h-3 w-3" />
+                ) : (
+                  <Lock className="h-3 w-3" />
+                )}
+                <span>{label.visibility === Visibilities.PUBLIC ? "Public" : "Private"}</span>
+              </div>
             </div>
           </div>
-        </div>
-        {label.description && (
-          <p className="mt-2.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-            {stripMarkdownToInline(label.description)}
-          </p>
-        )}
+          {label.description && (
+            <p className="mt-2.5 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+              {stripMarkdownToInline(label.description)}
+            </p>
+          )}
+        </Link>
         {children}
       </div>
     </article>
@@ -714,108 +576,6 @@ function EmptyState({
       <h3 className="text-sm font-semibold">{title}</h3>
       <p className="mt-1 max-w-md text-sm text-muted-foreground">{body}</p>
       {action && <div className="mt-4">{action}</div>}
-    </div>
-  )
-}
-
-function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <UiLabel htmlFor={htmlFor} className="text-sm font-medium">
-        {label}
-      </UiLabel>
-      <div className="mt-1.5">{children}</div>
-    </div>
-  )
-}
-
-function ColorRow({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {PRESET_COLORS.map((preset) => {
-        const selected = value.toLowerCase() === preset.toLowerCase()
-        return (
-          <button
-            key={preset}
-            type="button"
-            onClick={() => onChange(preset)}
-            className={cn(
-              "h-8 w-8 rounded-full border-2 transition-transform",
-              selected ? "scale-110 border-foreground" : "border-transparent hover:scale-105"
-            )}
-            style={{ backgroundColor: preset }}
-            aria-label={`Pick color ${preset}`}
-            aria-pressed={selected}
-          />
-        )
-      })}
-      <label className="ml-1 inline-flex items-center gap-1.5 rounded-full border bg-background px-2 py-1 text-xs font-medium text-muted-foreground">
-        <input
-          type="color"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="h-4 w-4 cursor-pointer rounded border-0 bg-transparent p-0"
-          aria-label="Custom color"
-        />
-        <span className="font-mono tracking-tight">{value.toUpperCase()}</span>
-      </label>
-    </div>
-  )
-}
-
-function EmojiField({
-  workspaceId,
-  value,
-  onChange,
-}: {
-  workspaceId: string
-  value: string
-  onChange: (next: string) => void
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <ReactionEmojiPicker
-        workspaceId={workspaceId}
-        onSelect={onChange}
-        trigger={
-          <button
-            type="button"
-            className="flex h-9 w-9 items-center justify-center rounded-lg border text-lg leading-none transition-colors hover:border-foreground/30"
-            aria-label="Search emoji"
-          >
-            {value || <SmilePlus className="h-4 w-4 text-muted-foreground" />}
-          </button>
-        }
-      />
-      <div className="h-5 w-px bg-border" />
-      {PRESET_EMOJIS.map((preset) => {
-        const selected = value === preset
-        return (
-          <button
-            key={preset}
-            type="button"
-            onClick={() => onChange(selected ? "" : preset)}
-            className={cn(
-              "h-9 w-9 rounded-full border text-lg leading-none transition-colors",
-              selected ? "border-foreground bg-foreground/5" : "border-transparent bg-muted hover:border-border"
-            )}
-            aria-label={`Pick emoji ${preset}`}
-            aria-pressed={selected}
-          >
-            {preset}
-          </button>
-        )
-      })}
-      {value && (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          className="inline-flex h-7 items-center gap-1 rounded-full px-2 text-xs text-muted-foreground hover:text-foreground"
-        >
-          <X className="h-3 w-3" />
-          Clear
-        </button>
-      )}
     </div>
   )
 }

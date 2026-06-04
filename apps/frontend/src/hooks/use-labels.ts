@@ -3,14 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { useAuth } from "@/auth"
 import { useLabelService } from "@/contexts"
-import { db, type CachedLabel, type CachedLabelMembership, type CachedLabelAssignment } from "@/db"
+import { db, type CachedLabel, type CachedLabelMembership, type CachedLabelAssignment, type CachedStream } from "@/db"
 import {
   useWorkspaceLabels,
   useWorkspaceLabelMemberships,
   useWorkspaceLabelAssignments,
+  useWorkspaceStreams,
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
-import { Visibilities } from "@threa/types"
+import { LabelableResourceTypes, Visibilities } from "@threa/types"
 import type {
   CreateLabelInput,
   Label,
@@ -173,12 +174,14 @@ export async function reconcileLabels(
  * Refresh-on-mount server fetch. The render source is always IDB via the
  * workspace store; this background fetch keeps it warm and reconciles entries
  * that were created/archived while we were offline. Labels are part of the
- * workspace bootstrap, so first paint never blocks on this.
+ * workspace bootstrap, so first paint never blocks on this. Returns the query
+ * so a detail view can tell "still settling" apart from "genuinely absent"
+ * (a cold deep-link lands before bootstrap populates the cache).
  */
 export function useLabelsSync(workspaceId: string) {
   const labelService = useLabelService()
 
-  useQuery({
+  return useQuery({
     queryKey: labelKeys.list(workspaceId),
     queryFn: async () => {
       const res = await labelService.list(workspaceId)
@@ -444,4 +447,45 @@ export function useUnassignLabel(workspaceId: string) {
     },
     onError: () => toast.error("Failed to remove label"),
   })
+}
+
+/** Most recent activity wins: last message, else stream creation (mirrors the sidebar's "activity" sort). */
+function streamActivityTime(stream: CachedStream): number {
+  return new Date(stream.lastMessagePreview?.createdAt ?? stream.createdAt).getTime()
+}
+
+/**
+ * The streams carrying a label, newest activity first. Pure so it's unit-tested
+ * directly (INV-39). Mirrors the sidebar label section: a stream matches when an
+ * assignment row in the viewer's accessible pool ties it to this label; archived
+ * streams and assignment rows for other resource types are dropped. Threads are
+ * streams, so a labeled thread surfaces here exactly like any other stream — the
+ * landing page is the one place that lists them together.
+ */
+export function selectLabelStreams(
+  assignments: CachedLabelAssignment[],
+  streams: CachedStream[],
+  labelId: string
+): CachedStream[] {
+  const streamIds = new Set<string>()
+  for (const assignment of assignments) {
+    if (assignment.resourceType !== LabelableResourceTypes.STREAM) continue
+    if (assignment.labelId === labelId) streamIds.add(assignment.resourceId)
+  }
+  if (streamIds.size === 0) return []
+  return streams
+    .filter((stream) => streamIds.has(stream.id) && !stream.archivedAt)
+    .sort((a, b) => streamActivityTime(b) - streamActivityTime(a))
+}
+
+/**
+ * Streams in a label, for the label landing page. Reads the same caches the
+ * sidebar label section does (assignments ∩ workspace streams), so the page and
+ * the sidebar can never disagree, and it stays live through the
+ * `label:assigned/unassigned` socket handlers with no extra fetch.
+ */
+export function useLabelStreams(workspaceId: string, labelId: string): CachedStream[] {
+  const assignments = useWorkspaceLabelAssignments(workspaceId)
+  const streams = useWorkspaceStreams(workspaceId)
+  return useMemo(() => selectLabelStreams(assignments, streams, labelId), [assignments, streams, labelId])
 }
