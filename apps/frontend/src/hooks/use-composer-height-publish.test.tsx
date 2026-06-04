@@ -163,6 +163,36 @@ describe("useComposerHeightPublish", () => {
     }
   })
 
+  it("keeps the last good height when the composer is hidden (measures 0)", () => {
+    const ro = installManualResizeObserver()
+    try {
+      const onHeightChange = vi.fn()
+      const { container } = render(<Harness onHeightChange={onHeightChange} />)
+      const zone = container.querySelector<HTMLElement>("[data-editor-zone]")!
+
+      // Composer settles at a real height.
+      ro.fire(120)
+      expect(zone.style.getPropertyValue("--composer-height")).toBe("120px")
+      expect(onHeightChange).toHaveBeenCalledTimes(1)
+
+      // Inline message-edit opens on mobile → [data-message-composer-root] is
+      // `display:none`, so the ResizeObserver reports 0. The footer spacer must
+      // NOT collapse to 0 (that drops the last message behind the composer with
+      // no scroll slack); keep the last good height and don't notify.
+      ro.fire(0)
+      expect(zone.style.getPropertyValue("--composer-height")).toBe("120px")
+      expect(onHeightChange).toHaveBeenCalledTimes(1)
+
+      // Edit closes → composer returns at its real height. Already correct, so
+      // still no spurious re-notify.
+      ro.fire(120)
+      expect(zone.style.getPropertyValue("--composer-height")).toBe("120px")
+      expect(onHeightChange).toHaveBeenCalledTimes(1)
+    } finally {
+      ro.restore()
+    }
+  })
+
   it("flags only the first measurement as initial, even when it drifts", () => {
     const ro = installManualResizeObserver()
     try {
