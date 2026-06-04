@@ -10,6 +10,8 @@ import { UserPreferencesService } from "../../user-preferences"
 import type { EnclaveInvokeJobData, JobHandler } from "../../../lib/queue/job-queue"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
 import { MessageRepository } from "../../messaging"
+import { AttachmentRepository } from "../../attachments"
+import type { StorageProvider } from "../../../lib/storage/s3-client"
 import {
   AgentSessionRepository,
   SessionStatuses,
@@ -31,6 +33,13 @@ export interface EnclaveInvokeWorkerDeps {
   pool: Pool
   io: Server
   enclaveForwarder: EnclaveForwarder
+  /**
+   * Reads attachment ciphertext from S3 to ship inline to the enclave. The
+   * backend can't decrypt it (the per-file key is sealed in the prompt) — it only
+   * relays the opaque bytes so the enclave's egress stays pinned to backend +
+   * OpenRouter.
+   */
+  storage: StorageProvider
 }
 
 /**
@@ -41,7 +50,7 @@ export interface EnclaveInvokeWorkerDeps {
  * Ariadne's replies are written by the `/complete` callback, not here.
  */
 export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHandler<EnclaveInvokeJobData> {
-  const { pool, io, enclaveForwarder } = deps
+  const { pool, io, enclaveForwarder, storage } = deps
   const userPreferencesService = new UserPreferencesService(pool)
 
   return async (job) => {
@@ -91,6 +100,14 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     // content stays ciphertext.
     const systemPrompt = await buildEnclaveSystemPrompt({ pool, stream, preferences, persona })
 
+    // Ship the trigger message's attachment ciphertext inline so the enclave can
+    // read files (it can't reach S3 — egress is backend + OpenRouter only). We
+    // can't know which attachmentIds the sealed payload references, so we ship
+    // every E2E row bound to the trigger; the enclave matches them by id to the
+    // refs it decrypts. Best-effort per file: a read failure drops that one
+    // attachment rather than failing the turn.
+    const triggerAttachmentCiphertexts = await loadTriggerAttachmentCiphertexts(pool, storage, triggerId)
+
     const sid = newSessionId()
     const built = buildEnclaveSessionAssignment({
       e2e,
@@ -108,6 +125,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       },
       replySenderId: ARIADNE_AGENT_ID,
       sessionId: sid,
+      triggerAttachmentCiphertexts,
     })
     if (!built) {
       logger.info({ workspaceId, streamId }, "enclave dispatch: no live enclave can serve this stream; skipping")
@@ -181,4 +199,33 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
 
     logger.info({ workspaceId, streamId, sessionId: sid, keyId: built.keyId }, "Enclave session assigned")
   }
+}
+
+/**
+ * Read the opaque ciphertext for every E2E attachment bound to the trigger
+ * message and base64-encode it for inline shipping. The backend never decrypts:
+ * the per-file key is sealed inside the prompt and recovered only in the enclave.
+ * Best-effort — a single unreadable object is dropped (the enclave then notes the
+ * file as unavailable) rather than failing the whole turn.
+ */
+async function loadTriggerAttachmentCiphertexts(
+  pool: Pool,
+  storage: StorageProvider,
+  triggerId: string
+): Promise<{ attachmentId: string; ciphertext: string }[]> {
+  const rows = await AttachmentRepository.findByMessageId(pool, triggerId)
+  const e2eRows = rows.filter((a) => a.e2eOnly)
+  if (e2eRows.length === 0) return []
+  const results = await Promise.all(
+    e2eRows.map(async (a) => {
+      try {
+        const bytes = await storage.getObject(a.storagePath)
+        return { attachmentId: a.id, ciphertext: bytes.toString("base64") }
+      } catch (err) {
+        logger.warn({ err, attachmentId: a.id }, "enclave dispatch: failed to read attachment ciphertext; skipping")
+        return null
+      }
+    })
+  )
+  return results.filter((r): r is { attachmentId: string; ciphertext: string } => r !== null)
 }

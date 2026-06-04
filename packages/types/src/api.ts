@@ -573,6 +573,16 @@ export interface EnclaveSessionAssignment {
    * all. `messaging` (replies) is always allowed regardless.
    */
   allowedToolCategories?: ToolPrivacyCategory[]
+  /**
+   * Opaque ciphertext for the trigger message's attachments, shipped INLINE so
+   * the enclave can read files without widening its egress to S3 (it stays pinned
+   * to the backend + OpenRouter). The backend can't read the per-file key — it's
+   * sealed inside the prompt — so it ships every E2E attachment row bound to the
+   * trigger; the enclave matches `attachmentId` to the decrypted `attachmentRefs`,
+   * decrypts with the sealed key/iv, and feeds the bytes to the (vision/PDF-capable)
+   * model. Omitted when the trigger has no attachments.
+   */
+  attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
 }
 
 /**

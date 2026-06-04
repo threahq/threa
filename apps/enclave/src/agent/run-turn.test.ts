@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest"
 import {
+  ATTACHMENT_AAD,
+  ATTACHMENT_KEY_GENERATION,
   buildMessageAad,
   buildWrapAad,
   bytesToBase64,
   generateStreamKey,
   openMessageAsString,
   sealMessage,
+  serializeSealedPayload,
+  utf8Encode,
   wrapStreamKey,
+  type AttachmentRef,
 } from "@threa/crypto"
 import type {
   EnclaveSealedReply,
@@ -275,6 +280,99 @@ describe("runEnclaveTurn", () => {
     // The turn still produced its reply, streamed and reported under the same id.
     expect(result.messageIds[0]).toMatch(/^msg_/)
     expect(sent.find((m) => m.messageId === result.messageIds[0])).toBeDefined()
+  })
+
+  it("decrypts the trigger's attachments and feeds them as multimodal content", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+
+    // Encrypt two files exactly as the browser does: a fresh per-file key, the
+    // single-key attachment envelope (gen 0, the domain-separation AAD).
+    const encryptFile = async (bytes: Uint8Array, mimeType: string, filename: string, attachmentId: string) => {
+      const fileKey = generateStreamKey()
+      const sealed = await sealMessage({
+        key: fileKey,
+        keyGeneration: ATTACHMENT_KEY_GENERATION,
+        payload: bytes,
+        aad: ATTACHMENT_AAD,
+      })
+      const ref: AttachmentRef = {
+        attachmentId,
+        key: bytesToBase64(fileKey),
+        iv: sealed.envelope.iv,
+        filename,
+        mimeType,
+        sizeBytes: bytes.length,
+      }
+      return { ref, ciphertext: bytesToBase64(sealed.ciphertext) }
+    }
+
+    const img = await encryptFile(utf8Encode("fake-png-bytes"), "image/png", "shot.png", "attach_img")
+    const pdf = await encryptFile(utf8Encode("fake-pdf-bytes"), "application/pdf", "contract.pdf", "attach_pdf")
+
+    // The prompt seals the versioned wrapper carrying both refs (the per-file keys
+    // ride here, inside the SSK ciphertext — never on the wire).
+    const prompt = await sealUnder(
+      ssk,
+      serializeSealedPayload("review these", [img.ref, pdf.ref]),
+      "msg_user",
+      "usr_owner"
+    )
+    const chat = stubChat(textReply("On it."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        // The backend shipped the opaque ciphertext inline (the enclave can't reach S3).
+        attachmentCiphertexts: [
+          { attachmentId: "attach_img", ciphertext: img.ciphertext },
+          { attachmentId: "attach_pdf", ciphertext: pdf.ciphertext },
+        ],
+      })
+    )
+
+    // The model received the clean markdown (not the JSON wrapper) plus the
+    // decrypted image as an image_url data URL and the PDF as a file part —
+    // exactly what OpenRouter forwards to a vision/PDF-capable model.
+    const userMsg = chat.seen[0]?.messages.find((m) => m.role === "user")
+    expect(userMsg?.content).toEqual([
+      { type: "text", text: "review these" },
+      { type: "image_url", image_url: { url: `data:image/png;base64,${bytesToBase64(utf8Encode("fake-png-bytes"))}` } },
+      {
+        type: "file",
+        file: { filename: "contract.pdf", file_data: `data:application/pdf;base64,${bytesToBase64(utf8Encode("fake-pdf-bytes"))}` },
+      },
+    ])
+  })
+
+  it("notes an attachment whose ciphertext the backend couldn't ship, without failing the turn", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const ref: AttachmentRef = {
+      attachmentId: "attach_missing",
+      key: bytesToBase64(generateStreamKey()),
+      iv: "aXY=",
+      filename: "lost.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 10,
+    }
+    const prompt = await sealUnder(ssk, serializeSealedPayload("see file", [ref]), "msg_user", "usr_owner")
+    const chat = stubChat(textReply("ok"))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    // No attachmentCiphertexts shipped → the file degrades to a text note.
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    const userMsg = chat.seen[0]?.messages.find((m) => m.role === "user")
+    expect(userMsg?.content).toBe('see file\n\n[Attachment "lost.pdf" is unavailable]')
   })
 
   it("rejects when the prompt's generation has no wrap (can't read the trigger)", async () => {

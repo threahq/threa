@@ -19,9 +19,20 @@ export interface OpenAiToolCall {
   function: { name: string; arguments: string }
 }
 
+/**
+ * OpenAI/OpenRouter multimodal content parts. OpenRouter passes `image_url`
+ * (data URL) and `file` (base64 `file_data`) parts through to vision/PDF-capable
+ * models like Claude — that's how the enclave feeds decrypted attachments to the
+ * model without ever giving the server the plaintext.
+ */
+export type OpenAiContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "file"; file: { filename: string; file_data: string } }
+
 export interface OpenAiMessage {
   role: "system" | "user" | "assistant" | "tool"
-  content: string | null
+  content: string | OpenAiContentPart[] | null
   tool_calls?: OpenAiToolCall[]
   tool_call_id?: string
 }
@@ -39,6 +50,42 @@ function contentToText(content: ModelMessage["content"]): string {
     .filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
     .map((part) => part.text)
     .join("")
+}
+
+/** AI-SDK user content part shapes the enclave produces for attachment turns. */
+type UserModelPart =
+  | { type: "text"; text: string }
+  | { type: "image"; image: string }
+  | { type: "file"; data: string; mediaType: string; filename: string }
+
+/**
+ * Convert a user `ModelMessage` content to OpenAI form. A plain string (or a
+ * parts array with only text) stays a string — byte-identical to the old
+ * text-only path. Once an image/file part is present, emit the multimodal parts
+ * array OpenRouter forwards to the model.
+ */
+function toUserContent(content: ModelMessage["content"]): string | OpenAiContentPart[] {
+  if (typeof content === "string") return content
+  if (!Array.isArray(content)) return ""
+  const parts: OpenAiContentPart[] = []
+  let hasMedia = false
+  for (const raw of content) {
+    const part = raw as UserModelPart
+    if (part.type === "text" && typeof part.text === "string") {
+      parts.push({ type: "text", text: part.text })
+    } else if (part.type === "image" && typeof part.image === "string") {
+      parts.push({ type: "image_url", image_url: { url: part.image } })
+      hasMedia = true
+    } else if (part.type === "file" && typeof part.data === "string") {
+      parts.push({
+        type: "file",
+        file: { filename: part.filename, file_data: `data:${part.mediaType};base64,${part.data}` },
+      })
+      hasMedia = true
+    }
+  }
+  if (!hasMedia) return parts.map((p) => (p.type === "text" ? p.text : "")).join("")
+  return parts
 }
 
 /** Split an assistant message into its text and any tool-call parts. */
@@ -86,7 +133,7 @@ export function toOpenAiMessages(system: string | undefined, messages: ModelMess
         out.push({ role: "system", content: contentToText(m.content) })
         break
       case "user":
-        out.push({ role: "user", content: contentToText(m.content) })
+        out.push({ role: "user", content: toUserContent(m.content) })
         break
       case "assistant": {
         const { text, toolCalls } = splitAssistant(m.content)

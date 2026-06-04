@@ -92,8 +92,13 @@ known-missing tally, kept current as gaps close:
   filename/mime/size ride sealed inside the message payload. The timeline decrypts
   on view: images preview inline and other files decrypt on click, using the
   per-file key recovered from the message — never the server's placeholder row.
-  Server-side processing (image captioning, PDF text, transcoding) stays off for
-  these by design (the server can't read the content).
+  **Ariadne reads them too:** the backend relays the opaque ciphertext to the
+  enclave (which can't reach S3), the enclave decrypts in memory with the sealed
+  per-file key, and feeds images/PDFs straight to the (vision-capable) model — so
+  asking Ariadne about an attached PDF or screenshot works, the same as a plaintext
+  scratchpad. Today this covers the attachments on the message you send (not files
+  shared several turns earlier). Server-side processing (image captioning, PDF text,
+  transcoding) stays off by design — the *server* still can't read the content.
 - **Interjections are picked up after the current turn, not folded into it.** If you
   send a message while Ariadne is mid-turn, it isn't ignored: when the running turn
   finishes, a follow-up turn automatically runs for the message(s) that arrived

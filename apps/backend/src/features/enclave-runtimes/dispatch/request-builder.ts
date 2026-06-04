@@ -43,6 +43,13 @@ export interface BuildInvokeInputs {
   replySenderId: string
   /** The server-created agent_sessions id the enclave drives this turn under. */
   sessionId: string
+  /**
+   * Opaque ciphertext for each E2E attachment bound to the trigger message,
+   * base64-encoded. The worker reads these from S3 (the backend can't decrypt
+   * them); the enclave matches them to the decrypted `attachmentRefs` by id and
+   * opens them with the sealed per-file key. Empty/omitted → no attachments.
+   */
+  triggerAttachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
 }
 
 export interface BuiltEnclaveInvoke {
@@ -104,6 +111,11 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
     // NULL = unrestricted → omit the field (the enclave then builds its full
     // web surface, today's behavior).
     ...(e2e.allowedToolCategories ? { allowedToolCategories: e2e.allowedToolCategories } : {}),
+    // Trigger-message attachment ciphertext, shipped inline so the enclave reads
+    // files without an S3 egress. Omitted when there are none.
+    ...(inputs.triggerAttachmentCiphertexts && inputs.triggerAttachmentCiphertexts.length > 0
+      ? { attachmentCiphertexts: inputs.triggerAttachmentCiphertexts }
+      : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
     // Clear metadata for the enclave's "Triggered by" CONTEXT step; the body is
     // the decrypted prompt, sealed enclave-side. Omitted when the author name

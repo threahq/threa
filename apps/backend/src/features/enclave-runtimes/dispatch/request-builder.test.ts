@@ -103,6 +103,15 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(built!.assignment).not.toHaveProperty("trigger")
   })
 
+  it("ships the trigger's attachment ciphertext inline, and omits it when there's none", () => {
+    expect(buildEnclaveSessionAssignment(inputs())!.assignment).not.toHaveProperty("attachmentCiphertexts")
+
+    const withFiles = buildEnclaveSessionAssignment(
+      inputs({ triggerAttachmentCiphertexts: [{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }] })
+    )
+    expect(withFiles!.assignment.attachmentCiphertexts).toEqual([{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }])
+  })
+
   it("returns null when no enclave actor is invited", () => {
     expect(
       buildEnclaveSessionAssignment(inputs({ actors: [{ kind: "bot", actorId: "bot_x", keyId: null }] }))
