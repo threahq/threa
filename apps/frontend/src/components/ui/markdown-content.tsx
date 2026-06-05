@@ -47,6 +47,11 @@ function urlTransform(url: string): string {
   if (url.startsWith("memo:")) {
     return url
   }
+  // Allow giphy: protocol so the link renderer can swap the anchor for the
+  // inline GIF embed. Same reasoning as the pointer protocols above.
+  if (url.startsWith("giphy:")) {
+    return url
+  }
   // For other URLs, use default behavior (returns url as-is for http/https/mailto)
   const protocols = ["http:", "https:", "mailto:", "tel:"]
   const parsed = url.includes(":") ? url.split(":")[0] + ":" : ""

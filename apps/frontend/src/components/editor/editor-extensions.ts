@@ -33,6 +33,7 @@ import HorizontalRule from "@tiptap/extension-horizontal-rule"
 import { QuoteReplyExtension } from "./quote-reply-extension"
 import { SharedMessageExtension } from "./shared-message-extension"
 import { MemoEmbedExtension } from "./memo-embed-extension"
+import { GiphyEmbedExtension } from "./giphy-embed-extension"
 import { MemoSearchExtension, type MemoSearchOptions } from "./triggers/memo-search-extension"
 import { DictationPreview } from "./dictation-preview-extension"
 import { DictationChunkExtension } from "./dictation-chunk-extension"
@@ -137,6 +138,9 @@ export function createEditorExtensions(options: CreateEditorExtensionsOptions | 
 
     // Memo embed pointer blocks (inline memory references)
     MemoEmbedExtension,
+
+    // Giphy GIF embeds (inline, rendered from Giphy's CDN)
+    GiphyEmbedExtension,
 
     // Live dictation hypothesis ghost (inert unless actively dictating)
     DictationPreview,

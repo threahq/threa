@@ -13,7 +13,7 @@ import {
   serializeAttachmentMetadata,
   unescapeMarkdownLinkText,
 } from "./attachment-markdown"
-import { buildMemoHref, buildQuoteHref, buildSharedMessageHref } from "./pointer-urls"
+import { buildGiphyHref, buildMemoHref, buildQuoteHref, buildSharedMessageHref, parseGiphyHref } from "./pointer-urls"
 
 // ============================================================================
 // Shared Inline Pattern
@@ -290,6 +290,17 @@ function getNodeText(node: JSONContent): string {
     const escapedTitle = rawTitle.replace(/\\/g, "\\\\").replace(/\]/g, "\\]")
     return `[${escapedTitle}](${buildMemoHref({ memoId })})`
   }
+  if (node.type === "giphyEmbed") {
+    const giphyUrl = node.attrs?.giphyUrl as string
+    if (!giphyUrl) return ""
+    // Render-from-CDN pointer (no byte copy). The label is a cosmetic fallback
+    // for markdown/preview consumers; strip bracket/backslash chars so it parses
+    // cleanly through the generic link branch (which isn't escape-aware).
+    const title = node.attrs?.title as string | undefined
+    const rawTitle = title && title.length > 0 ? title : "GIF"
+    const safeTitle = rawTitle.replace(/[[\]\\\n]/g, " ").trim() || "GIF"
+    return `[${safeTitle}](${buildGiphyHref({ giphyUrl })})`
+  }
   if (node.type === "text") return node.text ?? ""
   return ""
 }
@@ -305,7 +316,8 @@ function isAtomNode(node: JSONContent): boolean {
     node.type === "command" ||
     node.type === "attachmentReference" ||
     node.type === "emoji" ||
-    node.type === "memoEmbed"
+    node.type === "memoEmbed" ||
+    node.type === "giphyEmbed"
   )
 }
 
@@ -943,6 +955,15 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       // Link: [text](url)
       const linkText = match[9]
       const linkUrl = match[10]
+      // `giphy:` pointer links round-trip back to an inline GIF embed rather
+      // than a plain link. Detected here (inside the generic link branch) so no
+      // dedicated regex group is needed; the encoded URL never contains a `)`.
+      const giphyHref = parseGiphyHref(linkUrl)
+      if (giphyHref) {
+        result.push({ type: "giphyEmbed", attrs: { giphyUrl: giphyHref.giphyUrl, title: linkText } })
+        lastIndex = match.index + match[0].length
+        continue
+      }
       const innerContent = parseInlineMarkdown(linkText, options)
       for (const node of innerContent) {
         result.push({

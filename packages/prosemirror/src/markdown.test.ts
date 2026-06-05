@@ -523,6 +523,70 @@ describe("@threa/prosemirror memo embed round-trip", () => {
   })
 })
 
+describe("@threa/prosemirror giphy embed round-trip", () => {
+  const GIF_URL = "https://media3.giphy.com/media/abc123/200w.gif?cid=xyz&rid=200w.gif"
+
+  it("round-trips an inline giphyEmbed node losslessly", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "happy cat" } }] },
+      ],
+    }
+
+    const markdown = serializeToMarkdown(doc)
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "happy cat" } }],
+    })
+  })
+
+  it("falls back to a 'GIF' title when none is cached", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL } }] }],
+    }
+    const parsed = parseMarkdown(serializeToMarkdown(doc))
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "GIF" } }],
+    })
+  })
+
+  it("parses an inline giphy: link mid-sentence as a giphyEmbed within the paragraph", () => {
+    const markdown = serializeToMarkdown({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "look " },
+            { type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat" } },
+            { type: "text", text: " nice" },
+          ],
+        },
+      ],
+    })
+    const parsed = parseMarkdown(markdown)
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [
+        { type: "text", text: "look " },
+        { type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat" } },
+        { type: "text", text: " nice" },
+      ],
+    })
+  })
+
+  it("does not turn a non-giphy host into a giphy embed", () => {
+    const parsed = parseMarkdown("[evil](giphy:https%3A%2F%2Fevil.example.com%2Fx.gif)")
+    // Falls through to a normal link mark, never a giphyEmbed.
+    const para = parsed.content?.[0]
+    expect(para?.content?.some((n) => n.type === "giphyEmbed")).toBe(false)
+  })
+})
+
 describe("mention/channel whitespace boundary", () => {
   it("should not parse @ as mention in email addresses", () => {
     const result = parseMarkdown("test@gmail.com")

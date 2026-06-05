@@ -554,12 +554,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
 
   // Giphy picker — backend proxy keeps the API key server-side. `config` reports
-  // whether the feature is enabled; `file` streams the chosen GIF's bytes for
-  // re-upload through the normal attachment pipeline.
+  // whether the feature is enabled; the chosen GIF is embedded by its CDN URL
+  // (no byte download), so there's no file-proxy endpoint.
   app.get("/api/workspaces/:workspaceId/giphy/config", ...authed, giphy.getConfig)
   app.get("/api/workspaces/:workspaceId/giphy/search", ...authed, rateLimits.search, giphy.search)
   app.get("/api/workspaces/:workspaceId/giphy/trending", ...authed, rateLimits.search, giphy.trending)
-  app.get("/api/workspaces/:workspaceId/giphy/:gifId/file", ...authed, rateLimits.upload, giphy.file)
 
   // Workspace integrations — gated on workspace:admin
   const requireWorkspaceAdmin = requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)

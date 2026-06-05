@@ -19,10 +19,6 @@ interface GiphyListResponse {
   pagination?: { total_count?: number; count?: number; offset?: number }
 }
 
-interface GiphyByIdResponse {
-  data?: GiphyApiGif
-}
-
 export interface GiphyPage {
   items: GiphyGif[]
   /** Offset for the next page, or null when there are no more results. */
@@ -61,21 +57,6 @@ export class GiphyClient {
     const params = this.baseParams(options)
     const body = await this.getJson<GiphyListResponse>(`/trending?${params.toString()}`)
     return this.toPage(body)
-  }
-
-  /**
-   * Re-resolve a GIF by id and return the URL the byte proxy should download.
-   * Prefers the `downsized` rendition (good quality, small) and falls back
-   * through progressively larger renditions. Returns null when the id is
-   * unknown or carries no usable rendition.
-   */
-  async resolveDownloadUrl(id: string): Promise<string | null> {
-    const params = new URLSearchParams({ api_key: this.apiKey })
-    const body = await this.getJson<GiphyByIdResponse>(`/${encodeURIComponent(id)}?${params.toString()}`)
-    const images = body.data?.images
-    if (!images) return null
-    const rendition = images.downsized ?? images.downsized_medium ?? images.fixed_width ?? images.original
-    return rendition?.url ?? null
   }
 
   private baseParams(options: { limit?: number; offset?: number }): URLSearchParams {

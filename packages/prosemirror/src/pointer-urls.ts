@@ -85,3 +85,39 @@ export function parseMemoHref(href: string): MemoHref | null {
   if (!/^[\w-]+$/.test(memoId)) return null
   return { memoId }
 }
+
+export interface GiphyHref {
+  giphyUrl: string
+}
+
+/**
+ * `giphy:<encoded CDN url>` — the inline pointer a `giphyEmbed` node serialises
+ * to. The URL is percent-encoded (parens included) so it can't contain a `)`
+ * that would truncate the surrounding markdown link, and the cached title rides
+ * on the link text.
+ */
+export function buildGiphyHref(params: GiphyHref): string {
+  const encoded = encodeURIComponent(params.giphyUrl).replace(/\(/g, "%28").replace(/\)/g, "%29")
+  return `giphy:${encoded}`
+}
+
+export function parseGiphyHref(href: string): GiphyHref | null {
+  if (!href.startsWith("giphy:")) return null
+  let giphyUrl: string
+  try {
+    giphyUrl = decodeURIComponent(href.slice("giphy:".length))
+  } catch {
+    return null
+  }
+  // Only ever point at Giphy's own CDN — the embed renders an <img> from this
+  // URL, so an arbitrary origin here would be an open image-embed/SSRF surface.
+  let parsed: URL
+  try {
+    parsed = new URL(giphyUrl)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== "https:") return null
+  if (parsed.hostname !== "giphy.com" && !parsed.hostname.endsWith(".giphy.com")) return null
+  return { giphyUrl }
+}

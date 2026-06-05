@@ -32,7 +32,6 @@ import { useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
 import { GiphyPickerDialog } from "./giphy-picker-dialog"
-import { giphyApi } from "@/api"
 import type { GiphyGif } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
@@ -443,36 +442,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     }
   }, [])
 
-  // Pull the chosen GIF's bytes from the same-origin proxy and run them through
-  // the same insertion path as a pasted/dropped file — so the GIF attaches as a
-  // normal upload (placeholder node → upload → real id) and rides the existing
-  // send pipeline. No new attachment plumbing.
-  const handleGifSelect = useCallback(
-    async (gif: GiphyGif) => {
-      if (!workspaceId) return
-      const editorInstance = editorRef.current
-      if (!editorInstance) return
-      // Capture the scope version before the network await; if the user navigates
-      // to a different stream (or the editor is torn down) while the GIF
-      // downloads, drop it rather than inserting into a stale composer — mirrors
-      // the `isStillTargeting` guard in handleFileInsert.
-      const scopeVersionAtStart = uploadScopeVersionRef.current
-      try {
-        const file = await giphyApi.fetchGifFile(workspaceId, gif.id)
-        if (
-          scopeVersionAtStart !== uploadScopeVersionRef.current ||
-          editorRef.current !== editorInstance ||
-          editorInstance.isDestroyed
-        ) {
-          return
-        }
-        await handleFileInsert(file, editorInstance)
-      } catch (err) {
-        console.warn("Failed to attach GIF", err)
-      }
-    },
-    [workspaceId, handleFileInsert]
-  )
+  // Insert the chosen GIF as an inline embed rendered straight from Giphy's CDN
+  // (no download/upload — that's how Giphy intends embeds to work). Synchronous,
+  // so there's no scope-drift window to guard against.
+  const handleGifSelect = useCallback((gif: GiphyGif) => {
+    const editorInstance = editorRef.current
+    if (!editorInstance || editorInstance.isDestroyed) return
+    editorInstance.chain().focus().insertGiphyEmbed({ giphyUrl: gif.previewUrl, title: gif.title }).run()
+  }, [])
 
   const editor = useEditor({
     extensions,

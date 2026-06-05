@@ -1,10 +1,10 @@
-import { api, API_BASE, parseApiError } from "./client"
+import { api } from "./client"
 import type { GiphyConfigResponse, GiphySearchResponse } from "@threa/types"
 
 /**
- * Giphy picker API. Search/trending/config are JSON; the chosen GIF's bytes are
- * pulled from the same-origin proxy and wrapped in a `File` so they can ride the
- * existing attachment-upload path (no Giphy-CDN CORS, key stays server-side).
+ * Giphy picker API. Search/trending/config proxy through the backend so the API
+ * key stays server-side; the chosen GIF is then embedded by its CDN URL (no byte
+ * download/upload).
  */
 export const giphyApi = {
   getConfig(workspaceId: string, options?: { signal?: AbortSignal }): Promise<GiphyConfigResponse> {
@@ -30,17 +30,5 @@ export const giphyApi = {
     return api.get<GiphySearchResponse>(`/api/workspaces/${workspaceId}/giphy/trending${qs ? `?${qs}` : ""}`, {
       signal: options?.signal,
     })
-  },
-
-  /** Download the chosen GIF's bytes as a `File` ready for the upload pipeline. */
-  async fetchGifFile(workspaceId: string, gifId: string): Promise<File> {
-    const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/giphy/${gifId}/file`, {
-      credentials: "include",
-    })
-    if (!response.ok) {
-      throw await parseApiError(response, { code: "GIPHY_ERROR", message: "Failed to load GIF" })
-    }
-    const blob = await response.blob()
-    return new File([blob], `giphy-${gifId}.gif`, { type: blob.type || "image/gif" })
   },
 }

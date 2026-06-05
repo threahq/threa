@@ -1,6 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
 import { GiphyService } from "./service"
-import { GIPHY_MAX_FILE_BYTES } from "./config"
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })
@@ -10,6 +9,11 @@ describe("GiphyService", () => {
   it("is disabled without an API key", () => {
     const service = new GiphyService({ config: { enabled: false, apiKey: "" } })
     expect(service.isEnabled()).toBe(false)
+  })
+
+  it("is enabled with an API key", () => {
+    const service = new GiphyService({ config: { enabled: true, apiKey: "key" } })
+    expect(service.isEnabled()).toBe(true)
   })
 
   it("maps search results and forwards the query", async () => {
@@ -39,86 +43,13 @@ describe("GiphyService", () => {
     expect(page.nextOffset).toBe(1)
   })
 
-  it("downloads bytes for a resolved GIF and caps them at image/gif", async () => {
-    const gifBytes = Buffer.from([0x47, 0x49, 0x46, 0x38])
-    const fetchImpl = mock((url: string) => {
-      if (url.includes("/abc?")) {
-        return Promise.resolve(
-          jsonResponse({ data: { id: "abc", images: { downsized: { url: "https://media2.giphy.com/abc.gif" } } } })
-        )
-      }
-      return Promise.resolve(new Response(gifBytes, { status: 200 }))
-    }) as unknown as typeof fetch
-
+  it("reports no next offset when the result set is exhausted", async () => {
+    const fetchImpl = mock(() =>
+      Promise.resolve(jsonResponse({ data: [], pagination: { total_count: 0, count: 0, offset: 0 } }))
+    ) as unknown as typeof fetch
     const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
-    const file = await service.fetchGif("abc")
-
-    expect(file).not.toBeNull()
-    expect(file?.mimeType).toBe("image/gif")
-    expect(file?.filename).toBe("giphy-abc.gif")
-    expect(file?.sizeBytes).toBe(gifBytes.byteLength)
-  })
-
-  it("refuses to download media from a non-giphy host (SSRF guard)", async () => {
-    const fetchImpl = mock((url: string) => {
-      if (url.includes("/abc?")) {
-        return Promise.resolve(
-          jsonResponse({ data: { id: "abc", images: { downsized: { url: "https://evil.example.com/x.gif" } } } })
-        )
-      }
-      throw new Error("should not fetch the malicious host")
-    }) as unknown as typeof fetch
-
-    const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
-    await expect(service.fetchGif("abc")).rejects.toThrow(/unexpected host/)
-  })
-
-  it("rejects media whose declared length exceeds the cap", async () => {
-    const fetchImpl = mock((url: string) => {
-      if (url.includes("/abc?")) {
-        return Promise.resolve(
-          jsonResponse({ data: { id: "abc", images: { downsized: { url: "https://media.giphy.com/abc.gif" } } } })
-        )
-      }
-      return Promise.resolve(
-        new Response(Buffer.from([0]), {
-          status: 200,
-          headers: { "content-length": String(GIPHY_MAX_FILE_BYTES + 1) },
-        })
-      )
-    }) as unknown as typeof fetch
-
-    const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
-    await expect(service.fetchGif("abc")).rejects.toThrow(/size cap/)
-  })
-
-  it("enforces the size cap while streaming when content-length is absent", async () => {
-    // Body that exceeds the cap, streamed in 1MB chunks with no content-length
-    // header — so the only thing that can stop it is the streaming guard.
-    const oneMb = new Uint8Array(1024 * 1024)
-    const fetchImpl = mock((url: string) => {
-      if (url.includes("/abc?")) {
-        return Promise.resolve(
-          jsonResponse({ data: { id: "abc", images: { downsized: { url: "https://media.giphy.com/abc.gif" } } } })
-        )
-      }
-      let pulls = 0
-      const stream = new ReadableStream({
-        pull(controller) {
-          if (pulls++ < 16) controller.enqueue(oneMb)
-          else controller.close()
-        },
-      })
-      return Promise.resolve(new Response(stream, { status: 200 }))
-    }) as unknown as typeof fetch
-
-    const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
-    await expect(service.fetchGif("abc")).rejects.toThrow(/size cap/)
-  })
-
-  it("returns null when the GIF id is unknown", async () => {
-    const fetchImpl = mock(() => Promise.resolve(jsonResponse({ data: null }))) as unknown as typeof fetch
-    const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
-    expect(await service.fetchGif("missing")).toBeNull()
+    const page = await service.trending({})
+    expect(page.items).toEqual([])
+    expect(page.nextOffset).toBeNull()
   })
 })
