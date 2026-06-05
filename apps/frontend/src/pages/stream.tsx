@@ -154,8 +154,14 @@ export function StreamPage() {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
 
+  // Pre-fill (and no-op-guard) the rename against the name the header actually
+  // shows: for an encrypted stream that's the client-decrypted name, which can
+  // differ from the server-stored `displayName`. Seeding with `displayName`
+  // would surprise the user with a stale/placeholder value (UX-35).
+  const currentDisplayedName = decryptedStreamName ?? stream?.displayName ?? ""
+
   const handleStartRename = () => {
-    setEditValue(stream?.displayName ?? "")
+    setEditValue(currentDisplayedName)
     setIsEditing(true)
   }
 
@@ -163,7 +169,7 @@ export function StreamPage() {
     const trimmed = editValue.trim()
     setIsEditing(false)
 
-    if (!trimmed || trimmed === stream?.displayName) return
+    if (!trimmed || trimmed === currentDisplayedName) return
 
     await rename(trimmed)
   }
