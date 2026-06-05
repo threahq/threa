@@ -1,6 +1,8 @@
 import { forwardRef, useCallback, useMemo, useState, type ComponentPropsWithoutRef } from "react"
 import {
   ArrowLeftRight,
+  Bell,
+  BellOff,
   ChevronUp,
   DollarSign,
   FileText,
@@ -13,6 +15,7 @@ import {
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
+import { toast } from "sonner"
 import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
 import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
@@ -26,8 +29,10 @@ import { getAvatarUrl, resolveActiveStatus, resolveNotificationPause, type User 
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
 import { useNotificationPauseAutoExpiry } from "@/hooks/use-notification-pause-auto-expiry"
+import { useResumeNotifications } from "@/hooks"
 import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { StatusPicker } from "@/components/status/status-picker"
+import { PauseNotificationsDialog } from "@/components/notifications/pause-notifications-dialog"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
 /** Resolved, expiry-masked status glyph + text for the footer's own user. */
@@ -211,7 +216,9 @@ export function SidebarFooter({
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [statusOpen, setStatusOpen] = useState(false)
+  const [pauseOpen, setPauseOpen] = useState(false)
   const queryClient = useQueryClient()
+  const resumeNotifications = useResumeNotifications(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
 
   const status = useMemo<FooterStatus | null>(() => {
@@ -225,11 +232,12 @@ export function SidebarFooter({
     return { glyph: active.emoji ? toEmoji(active.emoji) : null, text: active.text, expiresAt: active.expiresAt }
   }, [currentUser, toEmoji])
 
-  const dndLabel = useMemo<string | null>(() => {
-    if (!currentUser) return null
-    const pause = resolveNotificationPause(currentUser)
-    return pause ? formatNotificationPauseLabel(pause) : null
-  }, [currentUser])
+  // The current pause (do-not-disturb), if any, drives the sidebar badge label
+  // and the account-menu pause/resume entry. A manual (or status+manual) pause
+  // can be resumed here; a status-only pause is managed through the status.
+  const pause = useMemo(() => (currentUser ? resolveNotificationPause(currentUser) : null), [currentUser])
+  const dndLabel = pause ? formatNotificationPauseLabel(pause) : null
+  const manualPaused = pause !== null && pause.source !== "status"
 
   const openStatus = useCallback(() => {
     collapseOnMobile()
@@ -237,6 +245,20 @@ export function SidebarFooter({
     setMenuOpen(false)
     setStatusOpen(true)
   }, [collapseOnMobile])
+
+  const openPause = useCallback(() => {
+    collapseOnMobile()
+    setDrawerOpen(false)
+    setMenuOpen(false)
+    setPauseOpen(true)
+  }, [collapseOnMobile])
+
+  const resumeNotificationsFromMenu = useCallback(() => {
+    collapseOnMobile()
+    resumeNotifications.mutate(undefined, {
+      onError: (error) => toast.error(error instanceof Error ? error.message : "Failed to resume notifications"),
+    })
+  }, [collapseOnMobile, resumeNotifications])
 
   // The owner's session clears its own status when it lapses, broadcasting the
   // clear to every viewer (render-time masking only hides it locally).
@@ -324,13 +346,30 @@ export function SidebarFooter({
   const avatarSrc = currentUser ? getAvatarUrl(workspaceId, currentUser.avatarUrl, 64) : null
   const menuActions = useMemo<SidebarActionItem[]>(
     () => [
+      // Manual do-not-disturb, one tap from the account menu (independent of
+      // status). Flips to a one-tap resume while a manual pause is active.
+      manualPaused
+        ? {
+            id: "resume-notifications",
+            label: "Resume notifications",
+            description: dndLabel,
+            icon: Bell,
+            onSelect: resumeNotificationsFromMenu,
+            separatorBefore: true,
+          }
+        : {
+            id: "pause-notifications",
+            label: "Pause notifications",
+            description: dndLabel,
+            icon: BellOff,
+            onSelect: openPause,
+            separatorBefore: true,
+          },
       {
         id: "profile",
         label: "Profile",
         icon: UserIcon,
         onSelect: () => handleOpenSettings("profile"),
-        // Divider between the status header card and the action list.
-        separatorBefore: true,
       },
       {
         id: "settings",
@@ -366,7 +405,18 @@ export function SidebarFooter({
         onSelect: handleLogout,
       },
     ],
-    [handleOpenSettings, openWorkspaceSettings, openAccountSwitcher, collapseOnMobile, handleLogout, workspaceId]
+    [
+      manualPaused,
+      dndLabel,
+      openPause,
+      resumeNotificationsFromMenu,
+      handleOpenSettings,
+      openWorkspaceSettings,
+      openAccountSwitcher,
+      collapseOnMobile,
+      handleLogout,
+      workspaceId,
+    ]
   )
 
   if (!currentUser) return null
@@ -398,6 +448,7 @@ export function SidebarFooter({
           }
         />
         {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
+        {pauseOpen && <PauseNotificationsDialog workspaceId={workspaceId} open onOpenChange={setPauseOpen} />}
       </div>
     )
   }

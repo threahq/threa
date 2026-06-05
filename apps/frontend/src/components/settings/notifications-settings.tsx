@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react"
 import { useParams } from "react-router-dom"
 import { Bell, BellOff, CheckCircle2, Loader2, Moon, ServerCrash, TriangleAlert } from "lucide-react"
-import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Button } from "@/components/ui/button"
@@ -13,16 +12,10 @@ import { DateTimeField } from "@/components/forms/date-time-field"
 import { ApiError, api } from "@/api/client"
 import { usePreferences } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
-import { useCurrentWorkspaceUser, usePauseNotifications, useResumeNotifications } from "@/hooks"
-import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
-import { parseLocalDateTime, toDateInputValue, toTimeInputValue } from "@/lib/dates"
-import {
-  NOTIFICATION_PAUSE_OPTIONS,
-  type NotificationPauseOption,
-  formatNotificationPauseLabel,
-  statusDurationToExpiry,
-} from "@/lib/status"
-import { PREF_NOTIFICATION_LEVEL_OPTIONS, resolveNotificationPause, type PrefNotificationLevel } from "@threa/types"
+import { useNotificationPauseControls } from "@/hooks/use-notification-pause-controls"
+import { toDateInputValue, toTimeInputValue } from "@/lib/dates"
+import { NOTIFICATION_PAUSE_OPTIONS, formatNotificationPauseLabel } from "@/lib/status"
+import { PREF_NOTIFICATION_LEVEL_OPTIONS, type PrefNotificationLevel } from "@threa/types"
 
 const NOTIFICATION_LABELS: Record<PrefNotificationLevel, string> = {
   all: "All messages",
@@ -312,33 +305,16 @@ function resolveStatusInfo(args: {
  * this section also surfaces a status-driven pause and explains it.
  */
 function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
-  const currentUser = useCurrentWorkspaceUser(workspaceId)
-  const schedule = useEffectiveWorkSchedule(workspaceId)
-  const pause = usePauseNotifications(workspaceId)
-  const resume = useResumeNotifications(workspaceId)
-
-  const active = currentUser ? resolveNotificationPause(currentUser, new Date()) : null
-  const busy = pause.isPending || resume.isPending
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
-
   // The "Custom…" path reveals an inline date/time field rather than pausing
   // immediately, mirroring the status picker's custom expiry.
   const [customOpen, setCustomOpen] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
 
-  const pauseUntil = async (until: string | null) => {
-    try {
-      await pause.mutateAsync(until)
-      setCustomOpen(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to pause notifications")
-    }
-  }
-
-  const handlePause = (option: NotificationPauseOption) => {
-    void pauseUntil(option.duration ? statusDurationToExpiry(option.duration, timezone, schedule) : null)
-  }
+  const { active, statusOnly, busy, pauseFor, pauseUntilLocal, resume } = useNotificationPauseControls(
+    workspaceId,
+    () => setCustomOpen(false)
+  )
 
   const openCustom = () => {
     const inAnHour = new Date(Date.now() + 60 * 60 * 1000)
@@ -348,25 +324,8 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   }
 
   const handleCustomPause = () => {
-    const when = parseLocalDateTime(customDate, customTime)
-    if (!when || when.getTime() <= Date.now()) {
-      toast.error("Pick a time in the future")
-      return
-    }
-    void pauseUntil(when.toISOString())
+    pauseUntilLocal(customDate, customTime)
   }
-
-  const handleResume = async () => {
-    try {
-      await resume.mutateAsync()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to resume notifications")
-    }
-  }
-
-  // A pause coming purely from a do-not-disturb status can't be lifted from
-  // here without changing the status — explain that instead of a dead button.
-  const statusOnly = active?.source === "status"
 
   // The pause-duration choices, shared by the initial "Pause notifications"
   // trigger and the "Change" trigger on an active pause. Timed options first,
@@ -374,13 +333,13 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   const pauseMenuContent = (
     <DropdownMenuContent align="start">
       {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration !== null).map((option) => (
-        <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+        <DropdownMenuItem key={option.id} onSelect={() => pauseFor(option)}>
           {option.label}
         </DropdownMenuItem>
       ))}
       <DropdownMenuItem onSelect={openCustom}>Until a specific time…</DropdownMenuItem>
       {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null).map((option) => (
-        <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+        <DropdownMenuItem key={option.id} onSelect={() => pauseFor(option)}>
           {option.label}
         </DropdownMenuItem>
       ))}
@@ -435,7 +394,7 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
               </DropdownMenuTrigger>
               {pauseMenuContent}
             </DropdownMenu>
-            <Button onClick={handleResume} variant="outline" size="sm" disabled={busy}>
+            <Button onClick={resume} variant="outline" size="sm" disabled={busy}>
               Resume
             </Button>
           </div>
