@@ -10,6 +10,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import * as db from "../../db"
 import { messagesTotal } from "../../lib/observability"
 import { StreamPersonaParticipantRepository } from "../agents"
+import { E2eStreamsRepository } from "../e2e-streams"
 
 describe("EventService attachment safety checks", () => {
   beforeEach(() => {
@@ -105,6 +106,12 @@ describe("EventService attachment safety checks", () => {
     spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
     // One fresh row to attach → the bind call reports one row updated.
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(1)
+    // Ciphertext send → the sink (INV-E1) requires the target stream to be E2E.
+    spyOn(StreamRepository, "findById").mockResolvedValue({
+      id: "stream_1",
+      type: "scratchpad",
+      e2eEnabled: true,
+    } as any)
 
     const service = new EventService({} as any)
     await service.createMessage({
@@ -361,6 +368,9 @@ describe("EventService.editMessage version capture", () => {
       callback({})) as any)
     findByIdForUpdateSpy = spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue(existingMessage as any)
     spyOn(MessageRepository, "findById").mockResolvedValue(existingMessage as any)
+    // editMessage refuses edits in E2E streams at the sink (INV-E1); default to
+    // non-E2E so the plaintext edit path runs.
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     // editMessage now looks up the stream post-edit to decide whether to
     // publish a thread-summary update to the parent (for reply edits). Default
     // to a non-thread stream so the publishParentThreadUpdate branch short-
@@ -540,6 +550,8 @@ describe("EventService.editMessage attachment_references refresh", () => {
       callback({})) as any)
     spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue(existingMessage as any)
     spyOn(MessageRepository, "findById").mockResolvedValue(existingMessage as any)
+    // editMessage refuses edits in E2E streams at the sink (INV-E1).
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_target",
       type: "scratchpad",
@@ -746,5 +758,74 @@ describe("EventService.createMessage metadata propagation", () => {
 
     const insertParams = (MessageRepository.insert as any).mock.calls[0][1]
     expect(insertParams.metadata).toBeUndefined()
+  })
+})
+
+describe("EventService INV-E1 sink guard", () => {
+  const baseParams = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    authorId: "usr_1",
+    authorType: "user" as const,
+    contentJson: { type: "doc", content: [] },
+    contentMarkdown: "hello",
+  }
+
+  beforeEach(() => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(MessageRepository, "findByClientMessageId").mockResolvedValue(null)
+  })
+
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("rejects a plaintext create into an E2E stream (E2E_STREAM_REQUIRES_CIPHERTEXT)", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", e2eEnabled: true } as any)
+    const insert = spyOn(StreamEventRepository, "insert")
+    const service = new EventService({} as any)
+
+    await expect(service.createMessage(baseParams)).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
+    })
+    // The guard fires before any write — no orphaned event row.
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("rejects a ciphertext create into a non-E2E stream (E2E_PAYLOAD_REQUIRES_E2E_STREAM)", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", e2eEnabled: false } as any)
+    const insert = spyOn(StreamEventRepository, "insert")
+    const service = new EventService({} as any)
+
+    await expect(
+      service.createMessage({
+        ...baseParams,
+        ciphertext: Buffer.from("opaque"),
+        envelope: { v: 2, keyGeneration: 0, iv: "AAAA", aad: "AAAA" },
+        e2eVersion: 2,
+      })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_PAYLOAD_REQUIRES_E2E_STREAM" })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
+  it("refuses to edit a message in an E2E stream (E2E_STREAM_EDIT_UNSUPPORTED)", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    const findForUpdate = spyOn(MessageRepository, "findByIdForUpdate")
+    const service = new EventService({} as any)
+
+    await expect(
+      service.editMessage({
+        workspaceId: "ws_1",
+        messageId: "msg_1",
+        streamId: "stream_1",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "edited",
+        actorId: "usr_1",
+      })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_EDIT_UNSUPPORTED" })
+    // Refused before loading or mutating the message.
+    expect(findForUpdate).not.toHaveBeenCalled()
   })
 })

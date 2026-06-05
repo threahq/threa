@@ -97,6 +97,14 @@ describe("getVisibleActions", () => {
 
       expect(actions.find((a) => a.id === "edit-message")).toBeUndefined()
     })
+
+    it("should not show edit action for own messages in an E2E stream (E2EE-1)", () => {
+      const actions = getVisibleActions(
+        createContext({ authorId: "member_1", currentUserId: "member_1", e2eEnabled: true })
+      )
+
+      expect(actions.find((a) => a.id === "edit-message")).toBeUndefined()
+    })
   })
 
   describe("see revisions action visibility", () => {

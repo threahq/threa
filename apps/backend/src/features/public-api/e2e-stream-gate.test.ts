@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { BotRepository } from "./bot-repository"
+import * as dbModule from "../../db"
 import type { EventService } from "../messaging"
 import type { StreamService } from "../streams"
 
@@ -96,6 +98,41 @@ describe("public API E2E-stream plaintext gate", () => {
       code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
     })
     expect(editMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a bot-invocation completion targeting an E2E stream with 400 (E2EE-2)", async () => {
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", archivedAt: null } as never)
+    const createMessageInTransaction = mock(() => Promise.resolve({ id: "msg_new" }))
+    // withTransaction runs the callback against a sentinel client.
+    spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
+      fn({})) as never)
+    const botRuntimeService = {
+      findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
+      completeInvocationInTransaction: mock(() => Promise.resolve({ id: "inv_1" })),
+    } as unknown as PublicApiDeps["botRuntimeService"]
+    const botChannelService = {
+      isStreamAccessibleForBot: mock(() => Promise.resolve(true)),
+    } as unknown as PublicApiDeps["botChannelService"]
+    const handlers = createHandlers({
+      eventService: { createMessageInTransaction } as unknown as EventService,
+      botRuntimeService,
+      botChannelService,
+    })
+
+    const req = {
+      workspaceId: "ws_1",
+      params: { invocationId: "inv_1" },
+      botApiKey: { botId: "bot_1" },
+      body: { instanceId: "inst_1", claimToken: "tok_1", finalMessageMarkdown: "leaked plaintext" },
+    } as unknown as Request
+
+    await expect(handlers.completeBotInvocation(req, createResponse())).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
+    })
+    // The gate fires before the bot's plaintext reply is written into the sealed stream.
+    expect(createMessageInTransaction).not.toHaveBeenCalled()
   })
 
   it("lets a plaintext sendMessage into a non-E2E stream through to createMessage", async () => {
