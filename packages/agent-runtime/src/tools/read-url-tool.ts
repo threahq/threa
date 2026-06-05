@@ -2,7 +2,7 @@ import { z } from "zod"
 import * as dns from "dns/promises"
 import * as ipaddr from "ipaddr.js"
 import { NodeHtmlMarkdown } from "node-html-markdown"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, threaFetchUserAgent } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
@@ -172,7 +172,7 @@ async function fetchWithRedirectValidation(
   const response = await fetch(url, {
     signal,
     headers: {
-      "User-Agent": "Threa-Agent/1.0 (https://threa.app)",
+      "User-Agent": threaFetchUserAgent("Agent Reader"),
       Accept: "text/html,application/xhtml+xml,application/json;q=0.9,application/xml;q=0.8,*/*;q=0.8",
     },
     redirect: "manual", // Don't follow redirects automatically

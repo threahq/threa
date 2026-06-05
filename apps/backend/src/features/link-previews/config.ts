@@ -1,11 +1,19 @@
+import { threaFetchUserAgent } from "@threa/types"
+
 /** Maximum number of link previews to extract per message */
 export const MAX_PREVIEWS_PER_MESSAGE = 5
 
 /** Timeout for fetching a single URL's metadata (ms) */
 export const FETCH_TIMEOUT_MS = 10_000
 
-/** User-Agent string for metadata fetch requests */
-export const FETCH_USER_AGENT = "Threa/1.0 (Link Preview)"
+/**
+ * User-Agent string for metadata fetch requests.
+ *
+ * Built through the shared {@link threaFetchUserAgent} helper so the `+`-prefixed contact-URL
+ * convention is guaranteed — without it, Amazon-class sites serve a metadata-less captcha page and
+ * previews silently go blank. See `@threa/types`'s outbound-fetch module for the full rationale.
+ */
+export const FETCH_USER_AGENT = threaFetchUserAgent("Link Preview")
 
 /** Maximum HTML bytes to read before stopping (some sites like YouTube put meta tags 600KB+ in) */
 export const MAX_HTML_BYTES = 512 * 1024
