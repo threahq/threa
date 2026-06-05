@@ -805,3 +805,10 @@ export const MAGIC_CODE_LENGTH = 6
 // backend insert, frontend encrypt, and frontend decrypt paths — the explicit
 // \u200B escape keeps the source readable instead of a literal invisible byte.
 export const E2E_PLACEHOLDER_CONTENT_MARKDOWN = "\u200B"
+
+// User-facing label shown wherever a preview of an E2E message is rendered
+// without the key material to decrypt it (sidebar stream preview, Saved list,
+// saved-reminder push). The body itself stays sealed; this is the leak-free
+// stand-in for the zero-width placeholder. Centralized so the backend and
+// frontend surfaces can't drift (INV-33).
+export const ENCRYPTED_MESSAGE_PREVIEW_LABEL = "\uD83D\uDD12 Encrypted message"

@@ -208,6 +208,8 @@ export {
   MAGIC_CODE_LENGTH,
   // E2E placeholder shared between backend insert and frontend encrypt/decrypt
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  // Leak-free label for E2E message previews (sidebar / Saved / push)
+  ENCRYPTED_MESSAGE_PREVIEW_LABEL,
   // E2E actor kinds (bot / enclave)
   E2E_ACTOR_KINDS,
   type E2eActorKind,
@@ -218,6 +220,9 @@ export {
   type E2eKeyWrapRecipientKind,
   E2eKeyWrapRecipientKinds,
 } from "./constants"
+
+// Markdown → plain-text stripping for preview surfaces (shared FE/BE, INV-60)
+export { stripMarkdown, stripMarkdownToInline } from "./markdown-strip"
 
 // Domain entities (wire format)
 export { getAvatarUrl, getBotAvatarUrl } from "./domain"
