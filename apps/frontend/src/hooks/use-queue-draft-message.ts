@@ -7,6 +7,10 @@ import { serializeToMarkdown } from "@threa/prosemirror"
 import { StreamTypes, Visibilities, type JSONContent, type StreamEvent } from "@threa/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { optimisticReplyCountUpdate } from "@/sync/stream-sync"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
+import { sealStreamMessage } from "@/lib/crypto/message-envelope"
+import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
+import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { generateClientId } from "./use-stream-or-draft"
 import type { AttachmentSummary } from "./create-optimistic-bootstrap"
 
@@ -24,6 +28,15 @@ export interface QueueDraftMessageParams {
   streamCreation: PendingStreamCreation
   /** The draft ID to clean up after promotion (may differ from streamId for threads) */
   draftId: string
+  /**
+   * Set when this draft lives under an end-to-end-encrypted root (a thread reply
+   * in an encrypted scratchpad). The promoted stream inherits the root's SSK
+   * server-side (INV-E1), so the body must be sealed here — a plaintext send to
+   * the sealed stream is rejected by the backend's E2E gate. `rootStreamId` is
+   * the encrypted root whose current SSK seals this message; the promoted thread
+   * carries a copy of the same key + wraps, so it opens under the thread id too.
+   */
+  e2e?: { rootStreamId: string }
 }
 
 /**
@@ -58,11 +71,65 @@ export function useQueueDraftMessage(workspaceId: string) {
         payload: {
           messageId: clientId,
           contentMarkdown,
+          // Carry the JSON content so the post-promotion server echo can seed the
+          // decrypt cache from this optimistic row (stream-sync needs both
+          // contentMarkdown + contentJson) — without it an encrypted thread reply
+          // would flash the opaque placeholder for its own author.
+          contentJson: input.contentJson,
           ...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
         },
         actorId: currentUserId,
         actorType: "user",
         createdAt: now,
+      }
+
+      // When the draft lives under an E2E root, seal the body here (with the
+      // owner's UIK held in memory) so the drain loop stays identity-agnostic —
+      // it just forwards the precomputed ciphertext once it has promoted the
+      // draft into the (server-sealed) stream. Mirrors the encrypted send path
+      // in `use-stream-or-draft`. Bind the AAD to the encrypted root: the
+      // promoted thread shares the root's SSK + generation, so it opens under
+      // the thread id all the same (decryption resolves the key by the copied
+      // wraps, not by re-deriving the AAD).
+      let e2eFields: Awaited<ReturnType<typeof sealStreamMessage>> | undefined
+      if (params.e2e) {
+        const session = getE2eSessionState(params.workspaceId, currentUserId)
+        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) {
+          throw new Error("Unlock encrypted scratchpads before sending")
+        }
+        let attachmentRefs: AttachmentRef[] | undefined
+        if (input.attachmentIds && input.attachmentIds.length > 0) {
+          attachmentRefs = input.attachmentIds.map((id) => {
+            const ref = getAttachmentRef(id)
+            if (!ref) {
+              throw new Error("Re-attach the file before sending — its encryption key was lost on reload")
+            }
+            return ref
+          })
+        }
+        const streamKey = await resolveCurrentStreamKey({
+          workspaceId: params.workspaceId,
+          streamId: params.e2e.rootStreamId,
+          recipientKeyId: session.keyId,
+          privateKey: session.privateKey,
+        })
+        if (!streamKey) {
+          throw new Error("You don't have access to this encrypted scratchpad's key")
+        }
+        e2eFields = await sealStreamMessage({
+          contentMarkdown,
+          streamId: params.e2e.rootStreamId,
+          messageId: clientId,
+          senderId: currentUserId,
+          ssk: streamKey.key,
+          keyGeneration: streamKey.keyGeneration,
+          attachmentRefs,
+        })
+        // Carry the refs on the optimistic payload so the sender sees their own
+        // attachments render immediately (mirrors the encrypted send path).
+        if (attachmentRefs && attachmentRefs.length > 0) {
+          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = attachmentRefs
+        }
       }
 
       markPending(clientId)
@@ -79,6 +146,9 @@ export function useQueueDraftMessage(workspaceId: string) {
         retryCount: 0,
         streamCreation: params.streamCreation,
         draftId: params.draftId,
+        ...(e2eFields
+          ? { ciphertext: e2eFields.ciphertext, envelope: e2eFields.envelope, e2eVersion: e2eFields.e2eVersion }
+          : {}),
       })
 
       await db.events.add({
