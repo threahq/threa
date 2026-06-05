@@ -230,8 +230,12 @@ export function useSetStatus(workspaceId: string) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (data: { emoji: string | null; text: string | null; expiresAt: string | null }) =>
-      workspaceService.setStatus(workspaceId, data),
+    mutationFn: (data: {
+      emoji: string | null
+      text: string | null
+      expiresAt: string | null
+      pausesNotifications: boolean
+    }) => workspaceService.setStatus(workspaceId, data),
     onSuccess: (user) => updateUserInBootstrap(queryClient, workspaceId, user),
   })
 }
@@ -242,6 +246,27 @@ export function useClearStatus(workspaceId: string) {
 
   return useMutation({
     mutationFn: () => workspaceService.clearStatus(workspaceId),
+    onSuccess: (user) => updateUserInBootstrap(queryClient, workspaceId, user),
+  })
+}
+
+/** Pause notifications (do-not-disturb): `until` is an ISO instant, or null for indefinite. */
+export function usePauseNotifications(workspaceId: string) {
+  const workspaceService = useWorkspaceService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (until: string | null) => workspaceService.pauseNotifications(workspaceId, until),
+    onSuccess: (user) => updateUserInBootstrap(queryClient, workspaceId, user),
+  })
+}
+
+export function useResumeNotifications(workspaceId: string) {
+  const workspaceService = useWorkspaceService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => workspaceService.resumeNotifications(workspaceId),
     onSuccess: (user) => updateUserInBootstrap(queryClient, workspaceId, user),
   })
 }

@@ -1,5 +1,14 @@
 import { describe, it, expect } from "bun:test"
-import { resolveActiveStatus, isStatusContentful, SYSTEM_DEFAULT_STATUSES, STATUS_TEXT_MAX_LENGTH } from "./user-status"
+import {
+  resolveActiveStatus,
+  resolveNotificationPause,
+  presetPausesNotifications,
+  isStatusContentful,
+  SYSTEM_DEFAULT_STATUSES,
+  STATUS_TEXT_MAX_LENGTH,
+  type UserStatusFields,
+  type UserNotificationPauseFields,
+} from "./user-status"
 
 describe("isStatusContentful", () => {
   it("requires an emoji or non-empty text", () => {
@@ -38,6 +47,114 @@ describe("resolveActiveStatus", () => {
   })
 })
 
+describe("resolveNotificationPause", () => {
+  const now = new Date("2026-06-04T12:00:00Z")
+  const future = new Date(now.getTime() + 60 * 60_000).toISOString()
+  const past = new Date(now.getTime() - 60_000).toISOString()
+
+  const fields = (
+    over: Partial<UserStatusFields & UserNotificationPauseFields> = {}
+  ): UserStatusFields & UserNotificationPauseFields => ({
+    statusEmoji: null,
+    statusText: null,
+    statusExpiresAt: null,
+    statusPausesNotifications: false,
+    notificationsPausedUntil: null,
+    notificationsPausedIndefinitely: false,
+    ...over,
+  })
+
+  it("returns null when nothing is paused", () => {
+    expect(resolveNotificationPause(fields(), now)).toBeNull()
+    // A status that does not pause notifications never silences them.
+    expect(
+      resolveNotificationPause(fields({ statusEmoji: "dart", statusText: "Focus", statusExpiresAt: future }), now)
+    ).toBeNull()
+  })
+
+  it("pauses for the status window when the active status pauses notifications", () => {
+    expect(
+      resolveNotificationPause(
+        fields({
+          statusEmoji: "no_bell",
+          statusText: "Do not disturb",
+          statusExpiresAt: future,
+          statusPausesNotifications: true,
+        }),
+        now
+      )
+    ).toEqual({ until: future, source: "status" })
+  })
+
+  it("ignores the pause flag once the status itself has expired", () => {
+    expect(
+      resolveNotificationPause(
+        fields({
+          statusEmoji: "no_bell",
+          statusText: "Do not disturb",
+          statusExpiresAt: past,
+          statusPausesNotifications: true,
+        }),
+        now
+      )
+    ).toBeNull()
+  })
+
+  it("honors a manual timed pause and masks an elapsed one", () => {
+    expect(resolveNotificationPause(fields({ notificationsPausedUntil: future }), now)).toEqual({
+      until: future,
+      source: "manual",
+    })
+    expect(resolveNotificationPause(fields({ notificationsPausedUntil: past }), now)).toBeNull()
+  })
+
+  it("treats an indefinite manual pause as no end", () => {
+    expect(resolveNotificationPause(fields({ notificationsPausedIndefinitely: true }), now)).toEqual({
+      until: null,
+      source: "manual",
+    })
+  })
+
+  it("reports both sources and keeps the later end", () => {
+    const later = new Date(now.getTime() + 120 * 60_000).toISOString()
+    expect(
+      resolveNotificationPause(
+        fields({
+          statusEmoji: "no_bell",
+          statusText: "DND",
+          statusExpiresAt: future,
+          statusPausesNotifications: true,
+          notificationsPausedUntil: later,
+        }),
+        now
+      )
+    ).toEqual({ until: later, source: "both" })
+  })
+
+  it("an indefinite source outlasts any concrete end when both are active", () => {
+    expect(
+      resolveNotificationPause(
+        fields({
+          statusEmoji: "no_bell",
+          statusText: "DND",
+          statusExpiresAt: future,
+          statusPausesNotifications: true,
+          notificationsPausedIndefinitely: true,
+        }),
+        now
+      )
+    ).toEqual({ until: null, source: "both" })
+  })
+})
+
+describe("presetPausesNotifications", () => {
+  it("defaults to false when the flag is absent", () => {
+    expect(presetPausesNotifications({ pausesNotifications: undefined })).toBe(false)
+    expect(presetPausesNotifications({ pausesNotifications: true })).toBe(true)
+    expect(presetPausesNotifications({ pausesNotifications: false })).toBe(false)
+  })
+})
+
 describe("SYSTEM_DEFAULT_STATUSES", () => {
   it("are all contentful, uniquely identified, and within the text bound", () => {
     const ids = new Set<string>()
@@ -72,5 +189,10 @@ describe("SYSTEM_DEFAULT_STATUSES", () => {
       doNotDisturb: null,
       vab: null,
     })
+  })
+
+  it("only the do-not-disturb preset pauses notifications by default", () => {
+    const pausing = SYSTEM_DEFAULT_STATUSES.filter((p) => presetPausesNotifications(p)).map((p) => p.id)
+    expect(pausing).toEqual(["do-not-disturb"])
   })
 })

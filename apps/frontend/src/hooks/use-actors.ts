@@ -1,5 +1,11 @@
 import { useCallback, useMemo } from "react"
-import { getAvatarUrl, getBotAvatarUrl, resolveActiveStatus } from "@threa/types"
+import {
+  getAvatarUrl,
+  getBotAvatarUrl,
+  resolveActiveStatus,
+  resolveNotificationPause,
+  type ActiveNotificationPause,
+} from "@threa/types"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { useWorkspaceUsers, useWorkspacePersonas, useWorkspaceBots } from "@/stores/workspace-store"
 import type { Persona, Bot, User, AuthorType } from "@threa/types"
@@ -19,6 +25,11 @@ interface ActorAvatarInfo {
   avatarUrl?: string
   /** Present only when the actor is a user with an active status. */
   status?: ActorStatus
+  /**
+   * The user's active notification pause (do-not-disturb), when present —
+   * carries the end instant so callers can show "paused until …".
+   */
+  dnd?: ActiveNotificationPause
 }
 
 /**
@@ -137,9 +148,13 @@ export function useActors(workspaceId: string): ActorLookup {
       if (actorId) {
         const workspaceUser = userMap.get(actorId)
         const status = resolveUserStatus(workspaceUser, toEmoji)
+        const dnd = resolveUserDnd(workspaceUser)
         const avatarUrl = getAvatarUrl(workspaceId, workspaceUser?.avatarUrl, 64)
-        if (avatarUrl) return { fallback, avatarUrl, ...(status ? { status } : {}) }
-        if (status) return { fallback, status }
+        const info: ActorAvatarInfo = { fallback }
+        if (avatarUrl) info.avatarUrl = avatarUrl
+        if (status) info.status = status
+        if (dnd) info.dnd = dnd
+        return info
       }
 
       return { fallback }
@@ -182,6 +197,23 @@ function resolveUserStatus(
     text: active.text,
     expiresAt: active.expiresAt,
   }
+}
+
+/**
+ * The workspace user's active notification pause (do-not-disturb), from either a
+ * do-not-disturb status or a manual pause, or null when notifications are
+ * flowing. Tolerant of cached rows predating the feature, which lack the fields.
+ */
+function resolveUserDnd(user: User | undefined): ActiveNotificationPause | null {
+  if (!user) return null
+  return resolveNotificationPause({
+    statusEmoji: user.statusEmoji ?? null,
+    statusText: user.statusText ?? null,
+    statusExpiresAt: user.statusExpiresAt ?? null,
+    statusPausesNotifications: user.statusPausesNotifications ?? false,
+    notificationsPausedUntil: user.notificationsPausedUntil ?? null,
+    notificationsPausedIndefinitely: user.notificationsPausedIndefinitely ?? false,
+  })
 }
 
 function initialsFrom(name: string | null | undefined): string | undefined {

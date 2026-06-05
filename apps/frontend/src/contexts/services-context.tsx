@@ -22,6 +22,8 @@ export interface WorkspaceService {
   updateProfile: typeof workspacesApi.updateProfile
   setStatus: typeof workspacesApi.setStatus
   clearStatus: typeof workspacesApi.clearStatus
+  pauseNotifications: typeof workspacesApi.pauseNotifications
+  resumeNotifications: typeof workspacesApi.resumeNotifications
   uploadAvatar: typeof workspacesApi.uploadAvatar
   removeAvatar: typeof workspacesApi.removeAvatar
 }

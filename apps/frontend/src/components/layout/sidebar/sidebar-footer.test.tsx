@@ -48,11 +48,15 @@ describe("SidebarFooter", () => {
 
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobile.value)
 
-    // The footer mounts useStatusAutoExpiry, which resolves the status-clear
-    // mutation through the services context the unit harness doesn't provide.
+    // The footer mounts useStatusAutoExpiry and useNotificationPauseAutoExpiry,
+    // which resolve their mutations through the services context the unit
+    // harness doesn't provide.
     vi.spyOn(useWorkspacesModule, "useClearStatus").mockReturnValue({
       mutate: vi.fn(),
     } as unknown as ReturnType<typeof useWorkspacesModule.useClearStatus>)
+    vi.spyOn(useWorkspacesModule, "useResumeNotifications").mockReturnValue({
+      mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useWorkspacesModule.useResumeNotifications>)
 
     spyOnExport(drawerModule, "Drawer").mockReturnValue((({
       open,
@@ -110,6 +114,9 @@ describe("SidebarFooter", () => {
           statusEmoji: null,
           statusText: null,
           statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -161,6 +168,9 @@ describe("SidebarFooter", () => {
           statusEmoji: null,
           statusText: null,
           statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -203,6 +213,9 @@ describe("SidebarFooter", () => {
           statusEmoji: null,
           statusText: null,
           statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
           setupCompleted: true,
           joinedAt: "2026-03-03T10:00:00Z",
         }}
@@ -213,5 +226,90 @@ describe("SidebarFooter", () => {
     await user.click(screen.getByText("Settings"))
 
     expect(openSettings).toHaveBeenCalledWith("appearance")
+  })
+
+  it("surfaces a do-not-disturb label in the account header when notifications are paused", async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        currentUser={{
+          id: "user_1",
+          workspaceId: "workspace_1",
+          workosUserId: "workos_user_1",
+          email: "kris@example.com",
+          role: "member",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en-SE",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: true,
+          setupCompleted: true,
+          joinedAt: "2026-03-03T10:00:00Z",
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+
+    // The pause label appears both in the identity header and on the account
+    // menu's resume entry's description line.
+    expect(screen.getAllByText(/Notifications paused/i).length).toBeGreaterThan(0)
+    // While paused, the menu offers a one-tap resume rather than a pause entry.
+    expect(screen.getByText("Resume notifications")).toBeInTheDocument()
+  })
+
+  it("offers a pause-notifications entry in the account menu when not paused", async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        currentUser={{
+          id: "user_1",
+          workspaceId: "workspace_1",
+          workosUserId: "workos_user_1",
+          email: "kris@example.com",
+          role: "member",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en-SE",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
+          setupCompleted: true,
+          joinedAt: "2026-03-03T10:00:00Z",
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+
+    expect(screen.getByText("Pause notifications")).toBeInTheDocument()
+    expect(screen.queryByText("Resume notifications")).not.toBeInTheDocument()
   })
 })

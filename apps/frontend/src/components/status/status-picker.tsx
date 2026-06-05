@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { Smile, X } from "lucide-react"
+import { BellOff, Smile, X } from "lucide-react"
 import { toast } from "sonner"
 import {
   type StatusPreset,
@@ -8,6 +8,7 @@ import {
   MAX_STATUS_PRESETS,
   STATUS_TEXT_MAX_LENGTH,
   isStatusContentful,
+  presetPausesNotifications,
 } from "@threa/types"
 import {
   ResponsiveDialog,
@@ -21,6 +22,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { DateTimeField } from "@/components/forms/date-time-field"
 import { ReactionEmojiPicker } from "@/components/timeline/reaction-emoji-picker"
 import { useSetStatus, useClearStatus, workspaceKeys } from "@/hooks"
@@ -84,6 +86,8 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const [durationTouched, setDurationTouched] = useState(false)
   const [customDate, setCustomDate] = useState("")
   const [customTime, setCustomTime] = useState("")
+  // Whether this status should also silence notifications for its lifetime.
+  const [pausesNotifications, setPausesNotifications] = useState(false)
 
   // Seed the editor from the user's current status each time the dialog opens.
   useEffect(() => {
@@ -92,6 +96,7 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
     setText(currentUser?.statusText ?? "")
     setDurationId("never")
     setDurationTouched(false)
+    setPausesNotifications(currentUser?.statusPausesNotifications ?? false)
     const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
     setCustomDate(toDateInputValue(tomorrow))
     setCustomTime(toTimeInputValue(tomorrow))
@@ -114,6 +119,7 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
   const applyPreset = (preset: StatusPreset) => {
     setEmoji(preset.emoji)
     setText(preset.text ?? "")
+    setPausesNotifications(presetPausesNotifications(preset))
     // Respect a clear-time the user explicitly chose; otherwise adopt the
     // preset's default duration.
     if (!durationTouched) {
@@ -147,7 +153,7 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
       return
     }
     try {
-      await setStatus.mutateAsync({ emoji, text: text.trim() || null, expiresAt: resolveExpiry() })
+      await setStatus.mutateAsync({ emoji, text: text.trim() || null, expiresAt: resolveExpiry(), pausesNotifications })
       onOpenChange(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to set status")
@@ -177,6 +183,7 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
       // Custom absolute times don't translate to a reusable preset duration, so
       // a preset saved from a custom time is indefinite.
       defaultDuration: option?.duration ?? null,
+      pausesNotifications,
     }
     try {
       await prefs.updatePreference("statusPresets", [...userPresets, preset])
@@ -309,6 +316,24 @@ export function StatusPicker({ workspaceId, open, onOpenChange }: StatusPickerPr
               />
             )}
           </div>
+
+          <label
+            htmlFor="status-pause-notifications"
+            className="flex items-center justify-between gap-3 rounded-md border border-input px-3 py-2"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <BellOff className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0">
+                <span className="block text-sm font-medium">Pause notifications</span>
+                <span className="block text-xs text-muted-foreground">Don't notify me while this status is set</span>
+              </span>
+            </span>
+            <Switch
+              id="status-pause-notifications"
+              checked={pausesNotifications}
+              onCheckedChange={setPausesNotifications}
+            />
+          </label>
 
           <div className="flex items-center justify-between gap-2">
             <div className="flex gap-2">

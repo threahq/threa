@@ -15,7 +15,7 @@ import { getEffectiveLevel } from "../streams"
 import { BotRepository, serializeBot } from "../public-api"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
-import { setStatusSchema } from "../../lib/schemas"
+import { setStatusSchema, setNotificationPauseSchema } from "../../lib/schemas"
 import {
   parseJwtPermissions,
   permissionsForRole,
@@ -334,6 +334,7 @@ export function createWorkspaceHandlers({
         statusEmoji: result.data.emoji,
         statusText: result.data.text,
         statusExpiresAt: result.data.expiresAt ? new Date(result.data.expiresAt) : null,
+        statusPausesNotifications: result.data.pausesNotifications,
       })
       res.json({ user })
     },
@@ -346,7 +347,34 @@ export function createWorkspaceHandlers({
         statusEmoji: null,
         statusText: null,
         statusExpiresAt: null,
+        statusPausesNotifications: false,
       })
+      res.json({ user })
+    },
+
+    async pauseNotifications(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const result = setNotificationPauseSchema.safeParse(req.body)
+      if (!result.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: z.flattenError(result.error).fieldErrors,
+        })
+      }
+
+      const user = await workspaceService.setNotificationPause(userId, workspaceId, {
+        until: result.data.until ? new Date(result.data.until) : null,
+      })
+      res.json({ user })
+    },
+
+    async resumeNotifications(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+
+      const user = await workspaceService.clearNotificationPause(userId, workspaceId)
       res.json({ user })
     },
 

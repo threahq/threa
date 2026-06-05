@@ -475,6 +475,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.patch("/api/workspaces/:workspaceId/profile", ...authed, workspace.updateProfile)
   app.put("/api/workspaces/:workspaceId/status", ...authed, workspace.setStatus)
   app.delete("/api/workspaces/:workspaceId/status", ...authed, workspace.clearStatus)
+  app.put("/api/workspaces/:workspaceId/notifications/pause", ...authed, workspace.pauseNotifications)
+  app.delete("/api/workspaces/:workspaceId/notifications/pause", ...authed, workspace.resumeNotifications)
   app.post("/api/workspaces/:workspaceId/profile/avatar", ...authed, avatarUpload, workspace.uploadAvatar)
   app.delete("/api/workspaces/:workspaceId/profile/avatar", ...authed, workspace.removeAvatar)
 

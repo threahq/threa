@@ -44,6 +44,9 @@ interface UserRow {
   status_emoji: string | null
   status_text: string | null
   status_expires_at: Date | null
+  status_pauses_notifications: boolean
+  notifications_paused_until: Date | null
+  notifications_paused_indefinitely: boolean
   setup_completed: boolean
   joined_at: Date
   mirror_role_slugs: string[] | null
@@ -71,6 +74,9 @@ export interface User {
   statusEmoji: string | null
   statusText: string | null
   statusExpiresAt: Date | null
+  statusPausesNotifications: boolean
+  notificationsPausedUntil: Date | null
+  notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   joinedAt: Date
 }
@@ -101,6 +107,9 @@ export interface UpdateUserParams {
   statusEmoji?: string | null
   statusText?: string | null
   statusExpiresAt?: Date | null
+  statusPausesNotifications?: boolean
+  notificationsPausedUntil?: Date | null
+  notificationsPausedIndefinitely?: boolean
   setupCompleted?: boolean
 }
 
@@ -109,6 +118,7 @@ const SELECT_FIELDS = `
   name, description, avatar_url, timezone, locale,
   pronouns, phone, github_username,
   status_emoji, status_text, status_expires_at,
+  status_pauses_notifications, notifications_paused_until, notifications_paused_indefinitely,
   setup_completed, joined_at
 `
 
@@ -135,6 +145,7 @@ const SELECT_FIELDS_WITH_ALIAS = `
   u.name, u.description, u.avatar_url, u.timezone, u.locale,
   u.pronouns, u.phone, u.github_username,
   u.status_emoji, u.status_text, u.status_expires_at,
+  u.status_pauses_notifications, u.notifications_paused_until, u.notifications_paused_indefinitely,
   u.setup_completed, u.joined_at,
   wup.role_slugs AS mirror_role_slugs
 `
@@ -150,6 +161,11 @@ function mapRowToUser(row: UserRow): User {
     statusText: row.status_text,
     statusExpiresAt: row.status_expires_at ? row.status_expires_at.toISOString() : null,
   })
+  // Mask an elapsed manual pause at the read boundary, mirroring how the status
+  // above is masked, so the wire (and every broadcast) never reports a pause
+  // that has already lifted. Truthy-guard the timestamp the same way the status
+  // line does, so a partial row (e.g. a narrowed test fixture) is tolerated.
+  const pausedUntilActive = !!row.notifications_paused_until && row.notifications_paused_until.getTime() > Date.now()
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -168,6 +184,10 @@ function mapRowToUser(row: UserRow): User {
     statusEmoji: status?.emoji ?? null,
     statusText: status?.text ?? null,
     statusExpiresAt: status ? row.status_expires_at : null,
+    // A pause flag only matters while its status is live, so drop it with the status.
+    statusPausesNotifications: status ? Boolean(row.status_pauses_notifications) : false,
+    notificationsPausedUntil: pausedUntilActive ? row.notifications_paused_until : null,
+    notificationsPausedIndefinitely: Boolean(row.notifications_paused_indefinitely),
     setupCompleted: row.setup_completed,
     joinedAt: row.joined_at,
   }
@@ -223,6 +243,9 @@ export const UserRepository = {
         um.status_emoji,
         um.status_text,
         um.status_expires_at,
+        um.status_pauses_notifications,
+        um.notifications_paused_until,
+        um.notifications_paused_indefinitely,
         um.setup_completed,
         um.joined_at,
         um.mirror_role_slugs
@@ -420,6 +443,18 @@ export const UserRepository = {
     if (params.statusExpiresAt !== undefined) {
       sets.push(`status_expires_at = $${paramIndex++}`)
       values.push(params.statusExpiresAt)
+    }
+    if (params.statusPausesNotifications !== undefined) {
+      sets.push(`status_pauses_notifications = $${paramIndex++}`)
+      values.push(params.statusPausesNotifications)
+    }
+    if (params.notificationsPausedUntil !== undefined) {
+      sets.push(`notifications_paused_until = $${paramIndex++}`)
+      values.push(params.notificationsPausedUntil)
+    }
+    if (params.notificationsPausedIndefinitely !== undefined) {
+      sets.push(`notifications_paused_indefinitely = $${paramIndex++}`)
+      values.push(params.notificationsPausedIndefinitely)
     }
     if (params.setupCompleted !== undefined) {
       sets.push(`setup_completed = $${paramIndex++}`)
