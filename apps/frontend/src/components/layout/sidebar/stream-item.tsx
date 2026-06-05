@@ -26,6 +26,7 @@ import { useUrgencyTracking } from "./use-urgency-tracking"
 import { StreamLabelDots } from "./sidebar-labels"
 import { truncateContent } from "./utils"
 import {
+  ENCRYPTED_MESSAGE_PREVIEW_LABEL,
   LabelableResourceTypes,
   StreamTypes,
   Visibilities,
@@ -165,7 +166,7 @@ export function StreamItemPreview({
     >
       <span className="truncate flex-1">
         {e2eEnabled
-          ? `${getActorName(preview.authorId, preview.authorType)}: 🔒 Encrypted message`
+          ? `${getActorName(preview.authorId, preview.authorType)}: ${ENCRYPTED_MESSAGE_PREVIEW_LABEL}`
           : `${getActorName(preview.authorId, preview.authorType)}: ${truncateContent(preview.content, 50, toEmoji)}`}
       </span>
       <RelativeTime date={preview.createdAt} className="flex-shrink-0" />
