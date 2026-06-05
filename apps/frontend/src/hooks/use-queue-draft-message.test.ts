@@ -106,6 +106,12 @@ describe("useQueueDraftMessage", () => {
         streamCreation: threadCreation,
       })
     )
+    // The optimistic event must carry contentJson so the post-promotion server
+    // echo can seed the decrypt cache (stream-sync needs both markdown + JSON) —
+    // otherwise an encrypted reply flashes the placeholder for its own author.
+    expect(mockEventsAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: expect.objectContaining({ contentJson: CONTENT }) })
+    )
   })
 
   it("heals the encrypted root's actor wraps on send when the root has invited actors", async () => {

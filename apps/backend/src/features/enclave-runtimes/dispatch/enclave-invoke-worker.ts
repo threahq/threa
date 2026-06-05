@@ -163,9 +163,11 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       replySenderId: ARIADNE_AGENT_ID,
       sessionId: sid,
       attachmentCiphertexts,
-      // Ask the enclave to seal a title only for an untitled root scratchpad
-      // (threads aren't titled; an already-named scratchpad isn't re-titled).
-      autoTitle: stream.type === StreamTypes.SCRATCHPAD && !e2e.hasSealedName,
+      // Ask the enclave to seal a title only for an untitled scratchpad: gate on
+      // the *trigger's own* stream (a top-level scratchpad message titles it; a
+      // thread reply never does), while `e2e.hasSealedName` is the root's — the
+      // scratchpad that owns the title. (`e2e` resolves to the root for threads.)
+      autoTitle: triggerStream.type === StreamTypes.SCRATCHPAD && !e2e.hasSealedName,
     })
     if (!built) {
       // Park, don't drop: no live EIK can both open the trigger and seal the
