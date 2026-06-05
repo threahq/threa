@@ -1,4 +1,5 @@
-import { base64ToBytes, bytesToBase64, exportPrivateKey, importRecipientPrivateKey } from "@threa/crypto"
+import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
+import { unwrapPrivate, wrapPrivate } from "./keys"
 
 /**
  * "Keep me unlocked on this device" at-rest sealing.
@@ -11,52 +12,45 @@ import { base64ToBytes, bytesToBase64, exportPrivateKey, importRecipientPrivateK
  * start reads the row back without the key and forces a re-unlock. That made
  * "keep me unlocked" effectively a no-op across app restarts.
  *
- * Instead we seal the raw X25519 private bytes under a freshly generated,
- * NON-EXTRACTABLE AES-GCM key. AES-GCM keys have round-tripped through on-disk
- * IndexedDB on every engine for a decade, so this survives a cold start.
+ * Instead we seal the private key under a freshly generated, NON-EXTRACTABLE
+ * AES-GCM key, reusing the same `wrapPrivate` / `unwrapPrivate` primitives the
+ * PIN and biometric device-unlock paths use — here the generated AES key is
+ * itself the KEK. AES-GCM keys round-trip through on-disk IndexedDB on every
+ * engine, so this survives a cold start.
  *
- * Security posture is unchanged from the previous design: the AES key is
- * non-extractable (`crypto.subtle.exportKey` rejects), so an attacker with the
- * IDB record alone still cannot recover the raw private bytes — the row's mere
- * presence IS the "this device is trusted" state, exactly as before.
+ * Security posture is unchanged: the AES key is non-extractable
+ * (`crypto.subtle.exportKey` rejects), so an attacker with the IDB record alone
+ * still cannot recover the raw private bytes — the row's mere presence IS the
+ * "this device is trusted" state.
  */
 
-const IV_LENGTH = 12
-
 export interface DeviceWrappedKey {
-  /** Non-extractable AES-GCM key. Lives only in IndexedDB; never exportable. */
+  /** Non-extractable AES-GCM KEK. Lives only in IndexedDB; never exportable. */
   deviceWrapKey: CryptoKey
-  /** base64 of `iv || AES-GCM(ciphertext)` over the raw X25519 private bytes. */
+  /** base64 `wrapPrivate` bundle (version + iv + AES-GCM ciphertext). */
   deviceWrappedPrivate: string
+}
+
+/** A non-extractable AES-GCM key used as the KEK that seals the private key. */
+function generateDeviceKek(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
 }
 
 /**
  * Seal a private key for device persistence. The caller must hold an
- * EXTRACTABLE key — we export the raw bytes to seal them under the generated
- * AES-GCM key.
+ * EXTRACTABLE key — `wrapPrivate` exports the raw bytes to seal them.
  */
 export async function wrapPrivateKeyForDevice(privateKey: CryptoKey): Promise<DeviceWrappedKey> {
-  const privBytes = await exportPrivateKey(privateKey)
-  const deviceWrapKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"])
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH))
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, deviceWrapKey, privBytes))
-  const blob = new Uint8Array(IV_LENGTH + ciphertext.length)
-  blob.set(iv, 0)
-  blob.set(ciphertext, IV_LENGTH)
-  return { deviceWrapKey, deviceWrappedPrivate: bytesToBase64(blob) }
+  const deviceWrapKey = await generateDeviceKek()
+  const bundle = await wrapPrivate(privateKey, deviceWrapKey)
+  return { deviceWrapKey, deviceWrappedPrivate: bytesToBase64(bundle) }
 }
 
 /**
  * Recover the UIK private key from a device-wrapped bundle on cold start. Throws
- * if the AES key and ciphertext don't match (corruption / tampering) so the
- * caller can fall back to the unlock prompt.
+ * if the AES key and bundle don't match (corruption / tampering) so the caller
+ * can fall back to the unlock prompt.
  */
 export async function unwrapPrivateKeyFromDevice(wrapped: DeviceWrappedKey): Promise<CryptoKey> {
-  const blob = base64ToBytes(wrapped.deviceWrappedPrivate)
-  const iv = blob.slice(0, IV_LENGTH)
-  const ciphertext = blob.slice(IV_LENGTH)
-  const privBytes = new Uint8Array(
-    await crypto.subtle.decrypt({ name: "AES-GCM", iv }, wrapped.deviceWrapKey, ciphertext)
-  )
-  return importRecipientPrivateKey(privBytes, { extractable: true })
+  return unwrapPrivate(base64ToBytes(wrapped.deviceWrappedPrivate), wrapped.deviceWrapKey)
 }

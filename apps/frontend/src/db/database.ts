@@ -593,10 +593,10 @@ export interface CachedLabelAssignment {
  * sign-out delete it. `keyId` is stored so a server-side key rotation can be
  * detected and the now-stale device key discarded.
  *
- * We previously stored the X25519 private key directly as a `CryptoKey`, but
- * some browsers (Android Chrome) drop newer X25519 keys when IndexedDB is
- * flushed to disk, so it never survived a cold start. The AES-GCM device key
- * round-trips reliably; see `device-wrap-key.ts` for the full rationale.
+ * The X25519 private key is sealed under the AES key rather than stored as a
+ * `CryptoKey` because some browsers (Android Chrome) drop newer X25519 keys
+ * when IndexedDB is flushed to disk; AES-GCM keys round-trip reliably. See
+ * `device-wrap-key.ts` for the full rationale.
  */
 export interface CachedE2eDeviceKey {
   id: string // `${workspaceId}:${userId}` — deterministic, one trusted key per user
