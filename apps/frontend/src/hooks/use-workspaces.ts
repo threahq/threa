@@ -8,7 +8,7 @@ import { getQueryLoadState, isTerminalBootstrapError } from "@/lib/query-load-st
 import { db } from "@/db"
 import { joinRoomBestEffort } from "@/lib/socket-room"
 import { applyWorkspaceBootstrap } from "@/sync/workspace-sync"
-import { useWorkspaceUsers } from "@/stores/workspace-store"
+import { useWorkspaceUsers, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import type { WorkspaceBootstrap, User } from "@threa/types"
 import type { WorkspaceListResult } from "@/api/workspaces"
 
@@ -206,7 +206,9 @@ function updateUserInBootstrap(queryClient: ReturnType<typeof useQueryClient>, w
     }
   })
 
-  db.workspaceUsers.put({ ...updatedUser, _cachedAt: Date.now() })
+  const cachedUser = { ...updatedUser, _cachedAt: Date.now() }
+  db.workspaceUsers.put(cachedUser)
+  upsertWorkspaceUserInCache(workspaceId, cachedUser)
 }
 
 export function useUpdateProfile(workspaceId: string) {
