@@ -1,5 +1,5 @@
 import { db, type CachedStream, type CachedStreamMembership, type CachedUnreadState } from "@/db"
-import { seedWorkspaceCache } from "@/stores/workspace-store"
+import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
 import type { QueryClient } from "@tanstack/react-query"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
@@ -726,11 +726,11 @@ export function registerWorkspaceSocketHandlers(
       return withWorkspaceUsers(bootstrap, updatedUsers)
     })
 
-    // Update IndexedDB
-    db.workspaceUsers.put({
-      ...toWorkspaceUser(user),
-      _cachedAt: now,
-    })
+    // Update IndexedDB and the in-memory cache so a freshly-mounted reader's
+    // first synchronous render (before useLiveQuery resolves) sees this update.
+    const cachedUser = { ...toWorkspaceUser(user), _cachedAt: now }
+    db.workspaceUsers.put(cachedUser)
+    upsertWorkspaceUserInCache(workspaceId, cachedUser)
   }
 
   // Handle stream read (from other sessions of the same user)

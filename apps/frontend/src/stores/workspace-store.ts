@@ -243,6 +243,28 @@ export function seedWorkspaceCache(
   emitWorkspaceCacheChange(workspaceId)
 }
 
+/**
+ * Patch a single user into the in-memory cache after an out-of-band write to
+ * IDB (a local status/profile mutation or a socket-pushed update).
+ *
+ * The in-memory cache otherwise only refreshes on a full bootstrap, while
+ * useLiveQuery is undefined on a component's first synchronous render — so a
+ * freshly-mounted reader (e.g. the status picker, which remounts each time it
+ * opens and seeds its editor once from `currentUser`) would read a stale row
+ * until the next page load. Keeping the cache in step with IDB closes that gap.
+ *
+ * No-op when the workspace's users aren't cached yet: the pending bootstrap/seed
+ * will carry the fresh row, and we must not partially populate the cache.
+ */
+export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWorkspaceUser): void {
+  const current = cache.users.get(workspaceId)
+  if (!current) return
+  const exists = current.some((u) => u.id === user.id)
+  cache.users.set(workspaceId, exists ? current.map((u) => (u.id === user.id ? user : u)) : [...current, user])
+  cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
+  emitWorkspaceCacheChange(workspaceId)
+}
+
 // =============================================================================
 // Store hooks — useLiveQuery for reactivity, in-memory cache for first render
 // =============================================================================
