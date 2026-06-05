@@ -18,7 +18,7 @@ import { scorePassphrase, type PassphraseScore } from "./passphrase-strength"
 import { RevealablePassphraseInput } from "./revealable-passphrase-input"
 import { PinInput, PIN_LENGTH } from "./pin-input"
 import { isValidPin } from "@/lib/crypto/pin-device-key"
-import { isWebAuthnAvailable, registerPrfCredential, type PrfRegistration } from "@/lib/crypto/webauthn-device-key"
+import { isPlatformAuthenticatorAvailable, registerPrfCredential, type PrfRegistration } from "@/lib/crypto/webauthn-device-key"
 import { Fingerprint } from "lucide-react"
 
 interface PassphraseSetupModalProps {
@@ -82,11 +82,27 @@ export function PassphraseSetupModal({
   const [biometric, setBiometric] = useState<PrfRegistration | null>(null)
   const [registeringBiometric, setRegisteringBiometric] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  // Offer biometric only when a real platform authenticator exists (UX-30) —
+  // probed async on open, so the option never appears as a button that can
+  // only fail on devices that merely expose the WebAuthn API.
+  const [biometricAvailable, setBiometricAvailable] = useState(false)
 
   // Reset the toggle to the caller's default each time the modal opens.
   useEffect(() => {
     if (open) setTrustDevice(defaultTrustDevice)
   }, [open, defaultTrustDevice])
+
+  // Probe platform-authenticator availability when the modal opens.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void isPlatformAuthenticatorAvailable().then((ok) => {
+      if (!cancelled) setBiometricAvailable(ok)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   const passphraseTooShort = passphrase.length > 0 && passphrase.length < MIN_PASSPHRASE_LENGTH
   const mismatched = confirm.length > 0 && passphrase !== confirm
@@ -258,7 +274,7 @@ export function PassphraseSetupModal({
                     )}
                   </div>
                 )}
-                {isWebAuthnAvailable() && (
+                {biometricAvailable && (
                   <div className="space-y-1.5 border-t border-border pt-3 first:border-t-0 first:pt-0">
                     <Label className="font-normal">
                       Biometric unlock <span className="text-muted-foreground">(optional)</span>

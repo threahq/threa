@@ -55,6 +55,23 @@ export function isWebAuthnAvailable(): boolean {
   return typeof window !== "undefined" && !!window.PublicKeyCredential && !!navigator.credentials?.create
 }
 
+/**
+ * True only when a *platform* authenticator (Touch ID / Face / Windows Hello /
+ * Android biometrics) is actually present and usable. `isWebAuthnAvailable()`
+ * only proves the WebAuthn API exists — which many desktop browsers expose with
+ * no platform authenticator attached, so gating the biometric affordance on it
+ * offers a button that can only fail (UX-30). This is async (a browser probe)
+ * and resolves false on any error or where the API is absent.
+ */
+export async function isPlatformAuthenticatorAvailable(): Promise<boolean> {
+  if (!isWebAuthnAvailable()) return false
+  try {
+    return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+  } catch {
+    return false
+  }
+}
+
 export interface PrfRegistration {
   /** base64 of the credential's raw id — stored to address it on unlock. */
   credentialId: string
