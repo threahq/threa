@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
-import { GiphyImage } from "@/components/giphy/giphy-image"
+import { GifChip } from "@/components/giphy/gif-chip"
 import { ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
 import { useLinkPreviewContext } from "./link-preview-context"
@@ -139,11 +139,11 @@ function MarkdownLink({ href, children }: { href?: string; children: ReactNode }
   // `memo:` reference — render the inline memo chip. The hydrated preview card
   // renders separately below the message (`MemoPreviewList`). The chip links to
   // the memo in the memory explorer.
-  // `giphy:` reference — render the GIF inline straight from Giphy's CDN
-  // (served the way Giphy intends; not copied into our storage).
+  // `giphy:` reference — render the inline chip; the GIF preview surfaces below
+  // the message (`GiphyPreviewList`), like memo cards and attachments.
   const giphyHref = href ? parseGiphyHref(href) : null
   if (giphyHref) {
-    return <GiphyImage url={giphyHref.giphyUrl} title={extractTextFromChildren(children)} />
+    return <GifChip label={<ProcessedChildren>{children}</ProcessedChildren>} />
   }
 
   const memoHref = href ? parseMemoHref(href) : null

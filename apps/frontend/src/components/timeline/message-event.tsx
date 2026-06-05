@@ -43,6 +43,7 @@ import { E2eAttachmentList } from "./e2e-attachment-list"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 import { LinkPreviewList } from "./link-preview-list"
 import { MemoPreviewList } from "./memo-preview-list"
+import { GiphyPreviewList } from "./giphy-preview-list"
 import { LinkPreviewProvider, useLinkPreviewContext } from "@/lib/markdown/link-preview-context"
 import { MessageContextMenu } from "./message-context-menu"
 import { SaveMessageButton } from "./save-message-button"
@@ -535,6 +536,7 @@ function MessageLayout({
           hydrateFromApi={!deferSecondaryHydration}
         />
         <MemoPreviewList contentMarkdown={payload.contentMarkdown} />
+        <GiphyPreviewList contentMarkdown={payload.contentMarkdown} />
       </AttachmentProvider>
     </LinkPreviewProvider>
   )

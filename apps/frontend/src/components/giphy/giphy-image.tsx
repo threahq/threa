@@ -15,12 +15,7 @@ interface GiphyImageProps {
 export function GiphyImage({ url, title, className }: GiphyImageProps) {
   return (
     <span className={cn("relative inline-block max-w-full align-bottom", className)} data-type="giphy-embed">
-      <img
-        src={url}
-        alt={title || "GIF"}
-        loading="lazy"
-        className="block max-h-60 max-w-full rounded-md border border-border"
-      />
+      <img src={url} alt={title || "GIF"} loading="lazy" className="block max-h-60 max-w-full rounded" />
       <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 px-1 text-[9px] font-semibold uppercase tracking-wide text-white/90">
         GIPHY
       </span>

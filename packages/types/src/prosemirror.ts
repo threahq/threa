@@ -431,10 +431,22 @@ const memoEmbedNodeSchema = z.object({
   }),
 })
 
+// Embeds may only point at Giphy's own CDN — the node renders an <img> from this
+// URL, so an arbitrary origin would be an open image-embed surface. Enforced at
+// the persistence boundary too, not just at parse/render time.
+const isGiphyMediaUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "https:" && (parsed.hostname === "giphy.com" || parsed.hostname.endsWith(".giphy.com"))
+  } catch {
+    return false
+  }
+}
+
 const giphyEmbedNodeSchema = z.object({
   type: z.literal("giphyEmbed"),
   attrs: z.object({
-    giphyUrl: z.string(),
+    giphyUrl: z.string().refine(isGiphyMediaUrl, "giphyUrl must be an https URL on a *.giphy.com host"),
     title: z.string().optional(),
   }),
 })

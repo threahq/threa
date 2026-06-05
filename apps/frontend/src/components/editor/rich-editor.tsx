@@ -238,10 +238,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
   const { workspaceId } = useParams<{ workspaceId: string }>()
 
-  // `/giphy` is available wherever the composer accepts uploads and the backend
-  // has a Giphy key configured. The picker opens from the slash palette; the
-  // chosen GIF is attached as an upload, so it rides the normal send pipeline.
-  const giphyEnabled = useGiphyEnabled(workspaceId) && enableCommands && !!onFileUpload
+  // `/giphy` is available wherever slash commands are enabled and the backend
+  // has a Giphy key configured. The picker opens from the slash palette and
+  // inserts an inline embed rendered from Giphy's CDN (no upload involved).
+  const giphyEnabled = useGiphyEnabled(workspaceId) && enableCommands
   const [giphyOpen, setGiphyOpen] = useState(false)
 
   // Mention, channel, command, and emoji autocomplete
