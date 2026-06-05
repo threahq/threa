@@ -40,10 +40,10 @@ describe("wrapPrivateKeyWithPin / unwrapPrivateKeyWithPin", () => {
     expect(wrapped.pinSalt.length).toBeGreaterThan(0)
 
     // The recovered key opens HPKE for our own public key — i.e. it's the same
-    // private key, usable for decryption (non-extractable is fine for that).
+    // private key, usable for decryption.
     const recovered = await unwrapPrivateKeyWithPin(wrapped, "135790")
     expect(recovered).toBeDefined()
-    expect(recovered.extractable).toBe(false)
+    expect(recovered.extractable).toBe(true)
   })
 
   it("rejects the wrong PIN (AES-GCM tag check fails)", async () => {

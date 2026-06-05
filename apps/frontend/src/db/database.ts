@@ -581,17 +581,22 @@ export interface CachedLabelAssignment {
 }
 
 /**
- * "Keep me unlocked on this device" record. Persists the UNWRAPPED X25519
- * private key as a NON-EXTRACTABLE `CryptoKey` (structured-clone-serializable
- * native key) so a page reload can resume the unlocked session without the
- * passphrase / Argon2id step.
+ * "Keep me unlocked on this device" record. Persists the UIK private key sealed
+ * for at-rest storage so a cold start can resume the unlocked session without
+ * the passphrase / Argon2id step.
  *
- * Security note: the key is non-extractable — even an attacker with this IDB
- * record cannot read the raw private bytes back out (`crypto.subtle.exportKey`
- * rejects); it stays usable only for in-process HPKE decryption. The presence
- * of a row here IS the "this device is trusted" state. `lock()` / sign-out
- * delete it. `keyId` is stored so a server-side key rotation can be detected
- * and the now-stale device key discarded.
+ * Security note: the private key is never stored in the clear. For the plain
+ * (no PIN/biometric) case it's sealed under a NON-EXTRACTABLE AES-GCM device
+ * key (see `device-wrap-key.ts`) — even an attacker with this IDB record cannot
+ * recover the raw private bytes, because that AES key can't be exported. The
+ * presence of a row here IS the "this device is trusted" state. `lock()` /
+ * sign-out delete it. `keyId` is stored so a server-side key rotation can be
+ * detected and the now-stale device key discarded.
+ *
+ * The X25519 private key is sealed under the AES key rather than stored as a
+ * `CryptoKey` because some browsers (Android Chrome) drop newer X25519 keys
+ * when IndexedDB is flushed to disk; AES-GCM keys round-trip reliably. See
+ * `device-wrap-key.ts` for the full rationale.
  */
 export interface CachedE2eDeviceKey {
   id: string // `${workspaceId}:${userId}` — deterministic, one trusted key per user
@@ -600,12 +605,15 @@ export interface CachedE2eDeviceKey {
   keyId: string
   publicKey: string // base64 — matched against the server key to detect rotation
   /**
-   * Auto-resume key for plain "keep me unlocked": a non-extractable CryptoKey
-   * stored via structured clone. Present only when the device is trusted
-   * WITHOUT a PIN — a reload resumes `unlocked` directly. Mutually exclusive
-   * with the `pin*` fields below.
+   * Auto-resume material for plain "keep me unlocked": a non-extractable
+   * AES-GCM `CryptoKey` (`deviceWrapKey`) plus the X25519 private key sealed
+   * under it (`deviceWrappedPrivate`, base64 `iv || ciphertext`). Present only
+   * when the device is trusted WITHOUT a PIN/biometric — a cold start unwraps
+   * these and resumes `unlocked` directly. Mutually exclusive with the
+   * `pin*` / `webauthn*` fields below.
    */
-  privateKey?: CryptoKey
+  deviceWrapKey?: CryptoKey
+  deviceWrappedPrivate?: string
   /**
    * PIN-gated quick-unlock: the UIK private key wrapped under a PIN-derived KEK
    * (base64 `wrapPrivate` bundle) + its Argon2id salt/params, plus a local
@@ -1046,9 +1054,9 @@ export async function clearAllCachedData(): Promise<void> {
       db.labelMemberships.clear(),
       db.labelAssignments.clear(),
       db.sidebarConfigs.clear(),
-      // The persisted device key IS the unwrapped (non-extractable) private
-      // key — sign-out must drop it so the next account can't resume this
-      // identity's unlocked session.
+      // The persisted device key seals this identity's private key for
+      // auto-resume — sign-out must drop it so the next account can't resume
+      // this identity's unlocked session.
       db.e2eDeviceKeys.clear(),
       // Note: we keep pendingMessages to retry sending after re-login
     ])

@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest"
 import { generateUIK } from "../keys"
-import { isPlatformAuthenticatorAvailable, unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "../webauthn-device-key"
+import {
+  isPlatformAuthenticatorAvailable,
+  unwrapPrivateKeyWithPrf,
+  wrapPrivateKeyWithPrf,
+} from "../webauthn-device-key"
 
 // The PRF secret is a uniformly-random 32 bytes the authenticator would return;
 // the ceremony itself (navigator.credentials) is covered by the Playwright
@@ -20,7 +24,7 @@ describe("wrapPrivateKeyWithPrf / unwrapPrivateKeyWithPrf", () => {
 
     const recovered = await unwrapPrivateKeyWithPrf(bundle, secret)
     expect(recovered).toBeDefined()
-    expect(recovered.extractable).toBe(false)
+    expect(recovered.extractable).toBe(true)
   })
 
   it("fails to unwrap under a different PRF secret (AES-GCM tag check)", async () => {

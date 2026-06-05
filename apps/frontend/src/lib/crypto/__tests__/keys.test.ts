@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { fingerprintPublicKey, generateUIK, toNonExtractable, unwrapPrivate, wrapPrivate } from "../keys"
+import { fingerprintPublicKey, generateUIK, unwrapPrivate, wrapPrivate } from "../keys"
 import { deriveKEK, generateSalt, DEFAULT_KDF_PARAMS } from "../passphrase"
 import { encryptPayload, decryptPayloadAsString } from "@threa/crypto"
 
@@ -53,51 +53,23 @@ describe("UIK lifecycle", () => {
     await expect(unwrapPrivate(tampered, kek)).rejects.toThrow(/Unsupported private bundle version/)
   })
 
-  it("unwraps a non-extractable key by default that still decrypts but cannot be exported", async () => {
+  it("unwraps an extractable key that decrypts and can be re-wrapped", async () => {
     const uik = await generateUIK()
     const salt = generateSalt()
     const kek = await deriveKEK("pp", salt, FAST_PARAMS)
     const wrapped = await wrapPrivate(uik.privateKey, kek)
 
     const priv = await unwrapPrivate(wrapped, await deriveKEK("pp", salt, FAST_PARAMS))
-    expect(priv.extractable).toBe(false)
-    await expect(crypto.subtle.exportKey("pkcs8", priv)).rejects.toThrow()
+    // Extractable so the rotation / device-trust paths can re-export the bytes.
+    expect(priv.extractable).toBe(true)
+    const rewrapped = await wrapPrivate(priv, kek)
+    expect(rewrapped[0]).toBe(1)
 
     const { envelope } = await encryptPayload({
       payload: "secret",
       recipients: [{ recipientKeyId: "e2ek_self", publicKey: uik.publicKey }],
     })
     expect(await decryptPayloadAsString({ envelope, privateKey: priv, recipientKeyId: "e2ek_self" })).toBe("secret")
-  })
-
-  it("unwraps an extractable key when asked (the rotation path needs the raw bytes)", async () => {
-    const uik = await generateUIK()
-    const salt = generateSalt()
-    const kek = await deriveKEK("pp", salt, FAST_PARAMS)
-    const wrapped = await wrapPrivate(uik.privateKey, kek)
-
-    const priv = await unwrapPrivate(wrapped, await deriveKEK("pp", salt, FAST_PARAMS), { extractable: true })
-    expect(priv.extractable).toBe(true)
-    // Re-wrapping (what rotation does) requires the bytes to be exportable.
-    const rewrapped = await wrapPrivate(priv, kek)
-    expect(rewrapped[0]).toBe(1)
-  })
-
-  it("toNonExtractable hardens an extractable key while preserving decryption", async () => {
-    const uik = await generateUIK()
-    expect(uik.privateKey.extractable).toBe(true)
-
-    const hardened = await toNonExtractable(uik.privateKey)
-    expect(hardened.extractable).toBe(false)
-    await expect(crypto.subtle.exportKey("pkcs8", hardened)).rejects.toThrow()
-
-    const { envelope } = await encryptPayload({
-      payload: "still-decodes",
-      recipients: [{ recipientKeyId: "e2ek_self", publicKey: uik.publicKey }],
-    })
-    expect(await decryptPayloadAsString({ envelope, privateKey: hardened, recipientKeyId: "e2ek_self" })).toBe(
-      "still-decodes"
-    )
   })
 })
 

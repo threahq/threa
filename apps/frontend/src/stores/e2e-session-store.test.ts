@@ -228,15 +228,22 @@ describe("e2e session store — keep me unlocked on this device", () => {
     expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
   })
 
-  it("setupNewKey with trustDevice persists a usable, non-extractable device key", async () => {
+  it("setupNewKey with trustDevice seals the key under a non-extractable AES device key", async () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, trustDevice: true })
     const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
     expect(row).toBeDefined()
-    const privateKey = row!.privateKey!
-    expect(privateKey).toBeInstanceOf(CryptoKey)
-    expect(privateKey.extractable).toBe(false)
-    // Non-extractable means the raw bytes can never be read back out.
-    await expect(crypto.subtle.exportKey("pkcs8", privateKey)).rejects.toThrow()
+    // We must NOT persist the X25519 CryptoKey directly — some browsers drop it
+    // on disk, which is the bug this design avoids. Store the sealed bytes plus
+    // a non-extractable AES key instead. (The row type no longer carries a
+    // `privateKey` field at all, so that regression can't recur.)
+    expect(row!.deviceWrappedPrivate).toBeTruthy()
+    const wrapKey = row!.deviceWrapKey!
+    expect(wrapKey).toBeInstanceOf(CryptoKey)
+    expect(wrapKey.algorithm.name).toBe("AES-GCM")
+    expect(wrapKey.extractable).toBe(false)
+    // The non-extractable AES key can never be read back out — so the IDB row
+    // alone can't yield the raw private bytes.
+    await expect(crypto.subtle.exportKey("raw", wrapKey)).rejects.toThrow()
   })
 
   it("lock forgets the device key so a reload requires the passphrase again", async () => {
@@ -251,16 +258,28 @@ describe("e2e session store — keep me unlocked on this device", () => {
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("locked")
   })
 
+  it("a corrupt device key falls back to the passphrase prompt and is forgotten", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS, trustDevice: true })
+    // Tamper with the sealed bytes so the AES-GCM unwrap fails on the next load.
+    await db.e2eDeviceKeys.update(`${WORKSPACE_ID}:${USER_ID}`, { deviceWrappedPrivate: "not-valid-base64-ciphertext" })
+
+    await reload()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("locked")
+    // The unreadable device key is dropped so it can't wedge future loads.
+    expect(await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)).toBeUndefined()
+  })
+
   describe("device PIN quick-unlock", () => {
     const PIN = "135790"
 
     it("setup with a PIN resumes pin-locked, and the right PIN unlocks", async () => {
       await setupNewKey(WORKSPACE_ID, USER_ID, "pp-correct", { params: FAST_PARAMS, pin: PIN })
       expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
-      // PIN mode stores the sealed bundle, not an auto-resume CryptoKey.
+      // PIN mode stores the sealed bundle, not auto-resume device material.
       const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
       expect(row!.pinWrappedPrivate).toBeTruthy()
-      expect(row!.privateKey).toBeUndefined()
+      expect(row!.deviceWrapKey).toBeUndefined()
+      expect(row!.deviceWrappedPrivate).toBeUndefined()
 
       await reload()
       const locked = getE2eSessionState(WORKSPACE_ID, USER_ID)
@@ -331,7 +350,8 @@ describe("e2e session store — keep me unlocked on this device", () => {
       expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
       const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
       expect(row!.webauthnWrappedPrivate).toBeTruthy()
-      expect(row!.privateKey).toBeUndefined()
+      expect(row!.deviceWrapKey).toBeUndefined()
+      expect(row!.deviceWrappedPrivate).toBeUndefined()
 
       await reload()
       const locked = getE2eSessionState(WORKSPACE_ID, USER_ID)
