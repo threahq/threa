@@ -39,7 +39,12 @@ describe("buildEnclaveSystemPrompt", () => {
     await buildEnclaveSystemPrompt({ pool: {} as Pool, stream: STREAM, preferences: PREFS, persona: PERSONA })
 
     const [personaArg, , , , , rollingSummary, workspaceResearch] = build.mock.calls[0]!
-    expect((personaArg as { enabledTools: string[] }).enabledTools).toEqual(["web_search", "read_url", "general_research"])
+    expect((personaArg as { enabledTools: string[] }).enabledTools).toEqual([
+      "web_search",
+      "read_url",
+      "general_research",
+      "load_attachment",
+    ])
     expect(rollingSummary).toBeNull() // no plaintext history to summarize
     expect(workspaceResearch).toBe(false) // no DB in the enclave
   })
