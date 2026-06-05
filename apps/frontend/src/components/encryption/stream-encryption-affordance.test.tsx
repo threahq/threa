@@ -6,6 +6,7 @@ import type { E2eKeyWrapsResponse } from "@threa/types"
 import { buildWrapAad, bytesToBase64, generateStreamKey, wrapStreamKey } from "@threa/crypto"
 import { generateUIK } from "@/lib/crypto/keys"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
+import * as streamStoreModule from "@/stores/stream-store"
 import { e2eKeysApi } from "@/api/e2e-keys"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 import { DEFAULT_KDF_PARAMS } from "@/lib/crypto/passphrase"
@@ -58,7 +59,22 @@ beforeEach(() => {
   })
   // The affordance + provider both resolve the workspace user id via this hook.
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue(USER_ID)
+  // The repair/revive probes resolve the stream's root from the store to scope
+  // themselves to the top-level scratchpad. Default every stream to a hydrated
+  // top-level row; thread cases override with a row carrying `rootStreamId`.
+  mockStreamRow(null)
 })
+
+/**
+ * Stub `useStreamFromStore` so a probed stream resolves to a hydrated row.
+ * `rootStreamId === null` is a top-level scratchpad (its own root); a non-null
+ * value marks a thread whose key lives on that root.
+ */
+function mockStreamRow(rootStreamId: string | null): void {
+  vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation((id) =>
+    id ? ({ id, rootStreamId } as unknown as ReturnType<typeof streamStoreModule.useStreamFromStore>) : undefined
+  )
+}
 
 afterEach(() => {
   resetE2eSessionStoreCache()
@@ -196,6 +212,32 @@ describe("repair (unlocked stream missing its owner wrap)", () => {
     expect(screen.queryByRole("button", { name: /finish setup/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /unlock/i })).not.toBeInTheDocument()
   })
+
+  it("never offers Finish setup in a thread, whose empty wrap set is by design", async () => {
+    const ws = freshWorkspaceId()
+    await setupNewKey(ws, USER_ID, "pp-correct-horse", { params: FAST_PARAMS })
+    await waitFor(() => expect(getE2eSessionState(ws, USER_ID).status).toBe("unlocked"))
+
+    // A thread shares the root's SSK and carries no wraps of its own — an empty
+    // set here is expected, not a broken setup. The probe must not fire (and so
+    // must not even query the thread's wraps).
+    mockStreamRow("stream_root")
+    const getSpy = vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 1,
+      wraps: [],
+      ownerUserId: USER_ID,
+      liveActorRecipients: [],
+    })
+    const storeSpy = vi.spyOn(e2eKeyWrapsApi, "store").mockResolvedValue(undefined)
+
+    renderWithProvider(ws, <ComposerEncryptionNotice workspaceId={ws} encrypted streamId="stream_thread" />)
+
+    // Give the (disabled) query a chance to fire before asserting it didn't.
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByRole("button", { name: /finish setup/i })).not.toBeInTheDocument()
+    expect(getSpy).not.toHaveBeenCalled()
+    expect(storeSpy).not.toHaveBeenCalled()
+  })
 })
 
 describe("actor wrap revive (live actor key missing its wrap)", () => {
@@ -240,6 +282,52 @@ describe("actor wrap revive (live actor key missing its wrap)", () => {
     expect(input.keyGeneration).toBe(0)
     expect(input.wraps.map((w) => w.recipientKeyId)).toEqual(["eik_fresh"])
     expect(screen.queryByRole("button")).not.toBeInTheDocument()
+  })
+
+  it("heals against the root when the owner is viewing a thread", async () => {
+    const ws = freshWorkspaceId()
+    await setupNewKey(ws, USER_ID, "pp-correct-horse", { params: FAST_PARAMS })
+    await waitFor(() => expect(getE2eSessionState(ws, USER_ID).status).toBe("unlocked"))
+    const session = getE2eSessionState(ws, USER_ID)
+
+    const ROOT_ID = "stream_root_heal"
+    mockStreamRow(ROOT_ID)
+
+    // The owner's wrap lives on the ROOT; its AAD binds to the root id, so the
+    // heal must resolve the SSK (and re-wrap) against the root, not the thread.
+    const ssk = generateStreamKey()
+    const eik = await generateUIK()
+    const ownerWrap = await wrapStreamKey({
+      key: ssk,
+      recipientPublicKey: session.publicKey!,
+      aad: buildWrapAad({ streamId: ROOT_ID, keyGeneration: 0, recipientKeyId: session.keyId! }),
+    })
+    const getSpy = vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 0,
+      wraps: [
+        {
+          keyGeneration: 0,
+          recipientKeyId: session.keyId!,
+          recipientKind: "user",
+          wrapEnc: bytesToBase64(ownerWrap.enc),
+          wrapCt: bytesToBase64(ownerWrap.ct),
+        },
+      ],
+      ownerUserId: USER_ID,
+      liveActorRecipients: [
+        { recipientKeyId: "eik_fresh", recipientKind: "enclave", publicKey: bytesToBase64(eik.publicKey) },
+      ],
+    })
+    const reviveSpy = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps").mockResolvedValue(undefined)
+
+    renderWithProvider(ws, <StreamHeaderEncryptionAction workspaceId={ws} encrypted streamId="stream_thread_heal" />)
+
+    await waitFor(() => expect(reviveSpy).toHaveBeenCalledTimes(1))
+    // Both the probe fetch and the re-wrap POST target the root id, never the thread.
+    expect(getSpy.mock.calls.every(([, streamId]) => streamId === ROOT_ID)).toBe(true)
+    const [, reviveStreamId, input] = reviveSpy.mock.calls[0]!
+    expect(reviveStreamId).toBe(ROOT_ID)
+    expect(input.wraps.map((w) => w.recipientKeyId)).toEqual(["eik_fresh"])
   })
 
   it("does not revive for a non-owner viewer", async () => {

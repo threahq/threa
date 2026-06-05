@@ -48,7 +48,14 @@ export function useDecryptedStepContent(
   const session = useE2eSession(workspaceId, userId ?? "")
   const cacheKey = step.id
   // A thread shares its root scratchpad's SSK; resolve the key against the root.
-  const rootStreamId = useStreamFromStore(streamId)?.rootStreamId ?? undefined
+  // Until the stream row hydrates the root is unknown, and `undefined` is
+  // indistinguishable from a top-level stream — resolving a thread step against
+  // the bare thread id finds no wrap, fails, and caches that failure forever. So
+  // gate on the row being present (mirrors `useDecryptedMessageContent`): hold
+  // at `pending` rather than attempt a doomed decrypt.
+  const stream = useStreamFromStore(streamId)
+  const streamHydrated = stream !== undefined
+  const rootStreamId = stream?.rootStreamId ?? undefined
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => subscribeToDecryption(cacheKey, listener),
@@ -60,7 +67,8 @@ export function useDecryptedStepContent(
   // `useDecryptedMessageContent`'s `readEnvelopePayload` memo, giving `sealed` a
   // stable identity it can enter the dep array with directly.
   const sealed = useMemo(() => readSealedStep(step), [step])
-  const canDecrypt = !!sealed && session.status === "unlocked" && !!session.privateKey && !!session.keyId
+  const sessionUnlocked = session.status === "unlocked" && !!session.privateKey && !!session.keyId
+  const canDecrypt = !!sealed && sessionUnlocked && streamHydrated
   const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
 
   useEffect(() => {
@@ -73,7 +81,10 @@ export function useDecryptedStepContent(
   }, [needsDecrypt, sealed, session.privateKey, session.keyId, cacheKey, workspaceId, streamId, rootStreamId])
 
   if (!sealed) return { status: "plaintext", content: step.content }
-  if (!canDecrypt) return { status: "locked", content: undefined }
+  // `locked` means the session isn't unlocked. Unlocked-but-not-yet-hydrated
+  // falls through to `pending`: the decrypt fires once the row lands and the
+  // root is known, never against the bare thread id.
+  if (!sessionUnlocked) return { status: "locked", content: undefined }
   if (cached?.status === "decrypted" && cached.content) {
     return { status: "decrypted", content: cached.content.contentMarkdown }
   }

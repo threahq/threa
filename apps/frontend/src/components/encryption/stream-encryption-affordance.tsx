@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 import { provisionOwnerStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useE2eUnlockOptional, type E2eUnlockContextValue } from "./e2e-unlock-provider"
 
@@ -63,18 +64,29 @@ interface OwnerWrapRepair {
  * `QueryClientProvider`. Re-provisioning is only offered when the wrap set is
  * empty: a non-empty set means ciphertext may already be sealed under an SSK we
  * must not replace.
+ *
+ * Scoped to a *top-level* scratchpad. A thread carries no wraps of its own by
+ * design — it shares the root's SSK and readers resolve the key against the
+ * root — so an empty wrap set on a thread is expected, not a broken setup.
+ * Probing the thread's (always-empty) set would surface a spurious "Finish
+ * setup", and acting on it would mint a stray thread-bound SSK that no reader
+ * resolves against (corrupting the thread). We therefore only probe once the
+ * stream row confirms this is the root (`rootStreamId == null`); while the row
+ * is unhydrated we stay silent rather than risk that false positive.
  */
 function useOwnerWrapRepair(workspaceId: string, streamId: string): OwnerWrapRepair | null {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
+  const stream = useStreamFromStore(streamId)
   const queryClient = useQueryClient()
 
+  const isRootScratchpad = stream != null && stream.rootStreamId == null
   const sessionReady = session.status === "unlocked" && !!session.keyId && !!session.publicKey
 
   const wrapsQuery = useQuery({
     queryKey: e2eKeyWrapKeys.list(workspaceId, streamId),
     queryFn: () => e2eKeyWrapsApi.get(workspaceId, streamId),
-    enabled: sessionReady,
+    enabled: sessionReady && isRootScratchpad,
     staleTime: 60_000,
   })
 
@@ -91,7 +103,7 @@ function useOwnerWrapRepair(workspaceId: string, streamId: string): OwnerWrapRep
     onSuccess: () => queryClient.invalidateQueries({ queryKey: e2eKeyWrapKeys.list(workspaceId, streamId) }),
   })
 
-  if (!sessionReady) return null
+  if (!sessionReady || !isRootScratchpad) return null
   if (repairMutation.isPending || wrapsQuery.data?.wraps.length === 0) {
     return { repair: () => repairMutation.mutate(), pending: repairMutation.isPending }
   }
@@ -109,19 +121,28 @@ function useOwnerWrapRepair(workspaceId: string, streamId: string): OwnerWrapRep
  *
  * One attempt per missing-set signature: a server reject (e.g. the key went
  * stale mid-flight) doesn't loop, and the next refetch recomputes the set.
+ *
+ * The wraps (and the SSK to re-wrap) live on the *root*, so a thread shares its
+ * root's actor wraps and carries none of its own. Resolve against the root —
+ * via the stream row's `rootStreamId`, falling back to self for a top-level
+ * stream — so the heal fires correctly even when the owner is viewing a thread.
+ * Gate on the row being hydrated so we never probe a bare thread id whose root
+ * we don't yet know.
  */
 function useActorWrapRevive(workspaceId: string, streamId: string): void {
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
+  const stream = useStreamFromStore(streamId)
   const queryClient = useQueryClient()
   const attemptedRef = useRef<string | null>(null)
 
+  const rootStreamId = stream ? (stream.rootStreamId ?? streamId) : undefined
   const sessionReady = session.status === "unlocked" && !!session.keyId && !!session.privateKey
 
   const wrapsQuery = useQuery({
-    queryKey: e2eKeyWrapKeys.list(workspaceId, streamId),
-    queryFn: () => e2eKeyWrapsApi.get(workspaceId, streamId),
-    enabled: sessionReady,
+    queryKey: e2eKeyWrapKeys.list(workspaceId, rootStreamId ?? streamId),
+    queryFn: () => e2eKeyWrapsApi.get(workspaceId, rootStreamId!),
+    enabled: sessionReady && !!rootStreamId,
     staleTime: 60_000,
   })
 
@@ -130,12 +151,13 @@ function useActorWrapRevive(workspaceId: string, streamId: string): void {
   const ownerPrivateKey = session.privateKey
 
   useEffect(() => {
-    if (!sessionReady || !data || !userId || !ownerKeyId || !ownerPrivateKey) return
+    if (!sessionReady || !data || !userId || !ownerKeyId || !ownerPrivateKey || !rootStreamId) return
     if (data.ownerUserId !== userId) return
 
     const live = data.liveActorRecipients ?? []
     const missing = live.filter(
-      (r) => !data.wraps.some((w) => w.keyGeneration === data.currentKeyGeneration && w.recipientKeyId === r.recipientKeyId)
+      (r) =>
+        !data.wraps.some((w) => w.keyGeneration === data.currentKeyGeneration && w.recipientKeyId === r.recipientKeyId)
     )
     if (missing.length === 0) return
 
@@ -146,16 +168,16 @@ function useActorWrapRevive(workspaceId: string, streamId: string): void {
     if (attemptedRef.current === signature) return
     attemptedRef.current = signature
 
-    void reviveStaleActorWraps({ workspaceId, streamId, userId, ownerKeyId, ownerPrivateKey })
+    void reviveStaleActorWraps({ workspaceId, streamId: rootStreamId, userId, ownerKeyId, ownerPrivateKey })
       .then((result) => {
         if (result === "revived") {
-          queryClient.invalidateQueries({ queryKey: e2eKeyWrapKeys.list(workspaceId, streamId) })
+          queryClient.invalidateQueries({ queryKey: e2eKeyWrapKeys.list(workspaceId, rootStreamId) })
         }
       })
       .catch((err) => {
         console.error("Failed to revive stale actor key wraps", err)
       })
-  }, [sessionReady, data, userId, ownerKeyId, ownerPrivateKey, workspaceId, streamId, queryClient])
+  }, [sessionReady, data, userId, ownerKeyId, ownerPrivateKey, workspaceId, rootStreamId, queryClient])
 }
 
 /**

@@ -64,9 +64,15 @@ export function useDecryptedMessageContent(
   const eventId = event.id
   // A thread shares its root scratchpad's SSK and carries no wraps of its own,
   // so the key must be resolved against the root (the wrap AAD is bound to the
-  // root id). The thread row is in IDB once it's been opened; null root means a
-  // top-level stream, which is its own root.
-  const rootStreamId = useStreamFromStore(event.streamId)?.rootStreamId ?? undefined
+  // root id). `undefined` here is ambiguous: a top-level stream (its own root,
+  // resolve against self) reads the same as a thread whose row hasn't hydrated
+  // yet (root unknown). Resolving the latter against the thread id finds no
+  // wrap and fails — and the failure is cached permanently. So gate the decrypt
+  // on the stream row being present: until then we don't know the root and hold
+  // at `pending` rather than poison the cache with a doomed attempt.
+  const stream = useStreamFromStore(event.streamId)
+  const streamHydrated = stream !== undefined
+  const rootStreamId = stream?.rootStreamId ?? undefined
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => subscribeToDecryption(eventId, listener),
@@ -77,7 +83,8 @@ export function useDecryptedMessageContent(
   // Memoize so useEffect deps don't churn on every render — a fresh wrapper
   // object every render would re-fire the effect even though nothing changed.
   const envelopePayload = useMemo(() => readEnvelopePayload(event), [event])
-  const canDecrypt = !!envelopePayload && session.status === "unlocked" && !!session.privateKey && !!session.keyId
+  const sessionUnlocked = session.status === "unlocked" && !!session.privateKey && !!session.keyId
+  const canDecrypt = !!envelopePayload && sessionUnlocked && streamHydrated
   const needsDecrypt = canDecrypt && (cached === undefined || cached.status === "pending")
 
   useEffect(() => {
@@ -117,7 +124,11 @@ export function useDecryptedMessageContent(
     }
   }
 
-  if (!canDecrypt) return { status: "locked" }
+  // `locked` is specifically "session not unlocked". When the session is
+  // unlocked but the stream row hasn't hydrated (root still unknown), fall
+  // through to `pending` — the decrypt fires once the row lands and `rootStreamId`
+  // is trustworthy, never against the bare thread id.
+  if (!sessionUnlocked) return { status: "locked" }
   if (cached?.status === "decrypted" && cached.content) {
     return {
       status: "decrypted",
