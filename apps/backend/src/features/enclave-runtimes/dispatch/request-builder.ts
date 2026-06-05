@@ -50,6 +50,8 @@ export interface BuildInvokeInputs {
    * opens them with the sealed per-file key. Empty/omitted → no attachments.
    */
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
+  /** Ask the enclave to generate + seal a title for this (untitled) scratchpad. */
+  autoTitle?: boolean
 }
 
 export interface BuiltEnclaveInvoke {
@@ -116,6 +118,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
     ...(inputs.attachmentCiphertexts && inputs.attachmentCiphertexts.length > 0
       ? { attachmentCiphertexts: inputs.attachmentCiphertexts }
       : {}),
+    ...(inputs.autoTitle ? { autoTitle: true } : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
     // Clear metadata for the enclave's "Triggered by" CONTEXT step; the body is
     // the decrypted prompt, sealed enclave-side. Omitted when the author name

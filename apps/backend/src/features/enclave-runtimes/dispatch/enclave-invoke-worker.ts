@@ -25,6 +25,7 @@ import { EnclaveRuntimesRepository } from "../repository"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "../service"
 import type { EnclaveForwarder } from "../forwarder"
 import { buildEnclaveSessionAssignment } from "./request-builder"
+import { StreamTypes } from "@threa/types"
 
 /** How many prior messages of context to forward. */
 const MAX_HISTORY_MESSAGES = 30
@@ -149,6 +150,9 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       replySenderId: ARIADNE_AGENT_ID,
       sessionId: sid,
       attachmentCiphertexts,
+      // Ask the enclave to seal a title only for an untitled root scratchpad
+      // (threads aren't titled; an already-named scratchpad isn't re-titled).
+      autoTitle: stream.type === StreamTypes.SCRATCHPAD && !e2e.hasSealedName,
     })
     if (!built) {
       // Park, don't drop: no live EIK can both open the trigger and seal the

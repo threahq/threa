@@ -12,6 +12,7 @@ const E2E: E2eStream = {
   ownerUserKeyId: "e2ek_owner",
   currentKeyGeneration: 1,
   allowedToolCategories: null,
+  hasSealedName: false,
 }
 
 const ENCLAVE_ACTOR: E2eStreamActor = { kind: "enclave", actorId: "enclave", keyId: null }

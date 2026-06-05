@@ -10,6 +10,8 @@ interface E2eStreamRow {
   owner_user_key_id: string
   current_key_generation: number
   allowed_tool_categories: string[] | null
+  /** Computed in getByStreamId only; absent (→ false) on RETURNING rows. */
+  has_sealed_name?: boolean
 }
 
 export interface E2eStream {
@@ -26,6 +28,12 @@ export interface E2eStream {
    * assignment and enforced there (the server never builds the tools itself).
    */
   allowedToolCategories: ToolPrivacyPolicy
+  /**
+   * Whether a sealed display name is already stored. Lets the enclave dispatch
+   * decide whether to ask the enclave to auto-title this scratchpad (only when
+   * it has no name yet). Populated by `getByStreamId`; false elsewhere.
+   */
+  hasSealedName: boolean
 }
 
 export interface MarkStreamE2eParams {
@@ -54,6 +62,7 @@ function mapRow(row: E2eStreamRow): E2eStream {
     ownerUserKeyId: row.owner_user_key_id,
     currentKeyGeneration: row.current_key_generation,
     allowedToolCategories: (row.allowed_tool_categories as ToolPrivacyPolicy) ?? null,
+    hasSealedName: row.has_sealed_name ?? false,
   }
 }
 
@@ -117,12 +126,38 @@ export const E2eStreamsRepository = {
 
   async getByStreamId(db: Querier, workspaceId: string, streamId: string): Promise<E2eStream | null> {
     const result = await db.query<E2eStreamRow>(sql`
-      SELECT ${sql.raw(COLUMNS)}
+      SELECT ${sql.raw(COLUMNS)}, (name_ciphertext IS NOT NULL) AS has_sealed_name
       FROM e2e_streams
       WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
       LIMIT 1
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
+  /**
+   * Store a sealed display name only if the stream doesn't already have one
+   * (race-safe first-write-wins, INV-20). Used by the enclave auto-title path:
+   * the enclave only generates a title for an untitled scratchpad, and the
+   * `name_ciphertext IS NULL` guard means a second concurrent first-turn can't
+   * clobber the title the first one set. Returns true when this call set it.
+   * No-op (false) for a plaintext stream or one already named.
+   */
+  async setSealedNameIfAbsent(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    sealed: { ciphertext: string; envelope: unknown }
+  ): Promise<boolean> {
+    if (Buffer.from(sealed.ciphertext, "base64").toString("base64") !== sealed.ciphertext) {
+      throw new Error("setSealedNameIfAbsent: ciphertext is not canonical base64")
+    }
+    const result = await db.query(sql`
+      UPDATE e2e_streams
+      SET name_ciphertext = ${Buffer.from(sealed.ciphertext, "base64")},
+          name_envelope = ${JSON.stringify(sealed.envelope)}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND name_ciphertext IS NULL
+    `)
+    return (result.rowCount ?? 0) > 0
   },
 
   /**

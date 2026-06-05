@@ -140,6 +140,7 @@ describe("createSessionsHandler", () => {
       stepStarted: async () => {},
       step: async () => {},
       substep: async () => {},
+      sealedName: async () => {},
       complete: async (sessionId, result) => {
         completed = { sessionId, result }
       },
@@ -184,6 +185,7 @@ describe("createSessionsHandler", () => {
       stepStarted: async () => {},
       step: async () => {},
       substep: async () => {},
+      sealedName: async () => {},
       complete: async () => {
         completed = true
       },
@@ -217,6 +219,7 @@ describe("createSessionsHandler", () => {
         stepStarted: async () => {},
         step: async () => {},
         substep: async () => {},
+        sealedName: async () => {},
         complete: async () => {},
       },
       inFlight: new Set([assignment.sessionId]), // already running

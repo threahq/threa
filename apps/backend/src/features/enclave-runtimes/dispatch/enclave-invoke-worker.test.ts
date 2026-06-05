@@ -29,6 +29,7 @@ const E2E: E2eStream = {
   ownerUserKeyId: "e2ek_owner",
   currentKeyGeneration: 1,
   allowedToolCategories: null,
+  hasSealedName: false,
 }
 const ENCLAVE_ACTOR: E2eStreamActor = { kind: "enclave", actorId: "enclave", keyId: null }
 const EIK: EnclaveRuntime = {
@@ -172,9 +173,7 @@ describe("createEnclaveInvokeWorker", () => {
     // live one can't open the trigger. The turn must park on the queue's
     // retry/backoff (the owner's client revives the wrap meanwhile) — never a
     // silent skip, and no session row before a servable enclave exists.
-    spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([
-      { ...WRAP, recipientKeyId: "eik_dead" },
-    ])
+    spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([{ ...WRAP, recipientKeyId: "eik_dead" }])
     const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
     const assignSession = mock(async () => {})
     const { io } = fakeIo()

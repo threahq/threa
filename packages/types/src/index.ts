@@ -363,6 +363,7 @@ export type {
   EnclaveSealedMessage,
   EnclaveSskWrap,
   EnclaveSealedReply,
+  EnclaveSealedName,
   EnclaveSealedStep,
   EnclaveSealedStepStart,
   EnclaveSealedSubstep,

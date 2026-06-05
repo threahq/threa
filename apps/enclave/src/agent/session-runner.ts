@@ -60,6 +60,8 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
         onStepStarted: (step) => deps.callbacks.stepStarted(sessionId, step),
         onStep: (step) => deps.callbacks.step(sessionId, step),
         onSubstep: (substep) => deps.callbacks.substep(sessionId, substep),
+        // Persist a sealed auto-title when the backend flagged this turn for it.
+        onSealedName: (sealed) => deps.callbacks.sealedName(sessionId, sealed),
         tools: deps.toolConfig ? { tavilyApiKey: deps.toolConfig.tavilyApiKey } : undefined,
         abortSignal: abortController.signal,
       },

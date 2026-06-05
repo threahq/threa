@@ -85,6 +85,7 @@ describe("E2eStreamsRepository.getByStreamId", () => {
       ownerUserKeyId: "e2ek_01",
       currentKeyGeneration: 0,
       allowedToolCategories: ["web"],
+      hasSealedName: false,
     })
   })
 
