@@ -4,8 +4,17 @@ export const MAX_PREVIEWS_PER_MESSAGE = 5
 /** Timeout for fetching a single URL's metadata (ms) */
 export const FETCH_TIMEOUT_MS = 10_000
 
-/** User-Agent string for metadata fetch requests */
-export const FETCH_USER_AGENT = "Threa/1.0 (Link Preview)"
+/**
+ * User-Agent string for metadata fetch requests.
+ *
+ * The `+`-prefixed contact URL is the long-standing polite-crawler convention (cf. Googlebot's
+ * `+http://www.google.com/bot.html`, facebookexternalhit, Slackbot). Several large sites — Amazon
+ * notably — gate their bot detection on it: a bare token like `Threa/1.0 (Link Preview)` (or even a
+ * normal browser UA from a datacenter IP) is served a metadata-less captcha page, while the same
+ * request carrying `(+https://…)` is served the real HTML. Keep the `+URL` form or Amazon-class
+ * pages silently lose their previews.
+ */
+export const FETCH_USER_AGENT = "Threa/1.0 (Link Preview; +https://threa.io/bot)"
 
 /** Maximum HTML bytes to read before stopping (some sites like YouTube put meta tags 600KB+ in) */
 export const MAX_HTML_BYTES = 512 * 1024

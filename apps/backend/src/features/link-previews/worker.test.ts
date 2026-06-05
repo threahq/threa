@@ -395,6 +395,67 @@ describe("createLinkPreviewWorker", () => {
     )
   })
 
+  test("sends a polite-crawler User-Agent (+contact URL) so bot-gated sites serve real HTML", async () => {
+    // Amazon-class sites serve a metadata-less captcha page to bare or browser-like UAs and only
+    // return the real HTML when the UA carries the conventional `+`-prefixed contact URL. Guard the
+    // format so a future edit to FETCH_USER_AGENT can't silently break previews for those pages.
+    let capturedUserAgent: string | null = null
+    const fetchMock = mock(async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUserAgent = new Headers(init?.headers).get("User-Agent")
+      return new Response(
+        '<html><head><title>Product</title><meta name="description" content="A product"></head></html>',
+        { status: 200, headers: { "content-type": "text/html; charset=utf-8" } }
+      )
+    })
+    globalThis.fetch = fetchMock as unknown as typeof fetch
+
+    const worker = createLinkPreviewWorker({
+      linkPreviewService: {
+        extractAndCreatePending: mock(async () => [{ id: "lp_ua", url: "https://shop.example.com/dp/ABC123" }]),
+        getPreviewById: mock(async () => ({
+          id: "lp_ua",
+          workspaceId: "ws_123",
+          url: "https://shop.example.com/dp/ABC123",
+          normalizedUrl: "https://shop.example.com/dp/ABC123",
+          title: null,
+          description: null,
+          imageUrl: null,
+          faviconUrl: null,
+          siteName: null,
+          contentType: "website",
+          status: "pending",
+          previewType: null,
+          previewData: null,
+          targetWorkspaceId: null,
+          targetStreamId: null,
+          targetMessageId: null,
+          fetchedAt: null,
+          expiresAt: null,
+          createdAt: new Date("2026-05-29T10:00:00.000Z"),
+        })),
+        completePreviewsAndPublish: mock(async () => {}),
+        replacePreviewsForMessage: mock(async () => []),
+        publishEmptyPreviews: mock(async () => {}),
+      } as any,
+      workspaceIntegrationService: {
+        getGithubClient: mock(async () => null),
+      } as any,
+    })
+
+    await worker({
+      id: "job_ua",
+      name: "link_preview.extract",
+      data: {
+        workspaceId: "ws_123",
+        streamId: "stream_123",
+        messageId: "msg_ua",
+        contentMarkdown: "https://shop.example.com/dp/ABC123",
+      },
+    })
+
+    expect(capturedUserAgent).toMatch(/\+https?:\/\//)
+  })
+
   test('ignores body attributes like name="descriptionField" and still captures real metadata', async () => {
     // A body attribute whose value merely starts with "description" must not flip the early-stop
     // gate: if it did, the loop would stop at </head> and drop the real og:* tags streamed after it.
