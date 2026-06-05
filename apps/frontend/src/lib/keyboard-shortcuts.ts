@@ -76,6 +76,16 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     category: "navigation",
     global: true,
   },
+  {
+    id: "copyStreamLink",
+    label: "Copy Link",
+    // Default avoids plain mod+L — browsers reserve that to focus the address
+    // bar and won't surrender it. Rebindable in keyboard settings like the rest.
+    description: "Copy a link to the focused stream or thread",
+    defaultKey: "mod+shift+l",
+    category: "navigation",
+    global: true,
+  },
   // Editor formatting shortcuts (not global — only active when editor is focused)
   {
     id: "formatBold",

@@ -15,6 +15,7 @@ import {
   Moon,
   Lock,
   Tag,
+  Link2,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
@@ -45,6 +46,7 @@ import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
 import { CompanionModes, LabelableResourceTypes, StreamTypes, type StreamType } from "@threa/types"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
+import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 
@@ -68,7 +70,7 @@ export function StreamPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { stream, isDraft, error, rename, archive, unarchive } = useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, closePanel } = usePanel()
+  const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
   const {
     containerRef,
     panelWidth,
@@ -194,6 +196,12 @@ export function StreamPage() {
     label: "Labels…",
     icon: Tag,
     onSelect: () => setLabelPickerOpen(true),
+  })
+  streamMenuActions.push({
+    id: "copy-link",
+    label: "Copy link",
+    icon: Link2,
+    onSelect: () => void copyStreamLink(workspaceId, streamId),
   })
   if (!isArchived && !isSystem) {
     streamMenuActions.push({
@@ -535,7 +543,13 @@ export function StreamPage() {
   return (
     <>
       <div ref={containerRef} className="flex h-full">
-        <div className="flex-1 min-w-0 overflow-hidden">{mainStreamContent}</div>
+        <div
+          className="flex-1 min-w-0 overflow-hidden"
+          onPointerDownCapture={() => setFocusedPane("main")}
+          onFocusCapture={() => setFocusedPane("main")}
+        >
+          {mainStreamContent}
+        </div>
 
         <ThreadPanelSlot
           displayWidth={displayWidth}
