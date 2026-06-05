@@ -7,6 +7,7 @@ import {
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
 
 /**
@@ -61,6 +62,11 @@ export function useDecryptedMessageContent(
 ): DecryptedMessageContent {
   const session = useE2eSession(workspaceId, userId ?? "")
   const eventId = event.id
+  // A thread shares its root scratchpad's SSK and carries no wraps of its own,
+  // so the key must be resolved against the root (the wrap AAD is bound to the
+  // root id). The thread row is in IDB once it's been opened; null root means a
+  // top-level stream, which is its own root.
+  const rootStreamId = useStreamFromStore(event.streamId)?.rootStreamId ?? undefined
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => subscribeToDecryption(eventId, listener),
@@ -88,9 +94,19 @@ export function useDecryptedMessageContent(
         recipientKeyId: session.keyId,
         workspaceId,
         streamId: event.streamId,
+        rootStreamId,
       }
     )
-  }, [needsDecrypt, envelopePayload, session.privateKey, session.keyId, eventId, workspaceId, event.streamId])
+  }, [
+    needsDecrypt,
+    envelopePayload,
+    session.privateKey,
+    session.keyId,
+    eventId,
+    workspaceId,
+    event.streamId,
+    rootStreamId,
+  ])
 
   if (!envelopePayload) {
     const payload = event.payload as { contentMarkdown?: unknown; contentJson?: unknown } | undefined

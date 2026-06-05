@@ -71,7 +71,17 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
   return async (job) => {
     const { workspaceId, streamId, messageId: triggerId } = job.data
 
-    const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, streamId)
+    // A thread shares its root scratchpad's E2E identity (SSK wraps, owner, tool
+    // policy, custom instructions); it carries no wraps of its own. Resolve all
+    // key material against the root: the SSK wraps are HPKE-bound to the root's
+    // id, so the enclave must unwrap under it (assignment.streamId = e2e.streamId
+    // = root). The reply still lands in the thread — the session row below is
+    // keyed by the thread `streamId`, independent of the assignment's streamId.
+    const triggerStream = await StreamRepository.findById(pool, streamId)
+    if (!triggerStream) return
+    const e2eStreamId = triggerStream.rootStreamId ?? streamId
+
+    const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, e2eStreamId)
     if (!e2e) return
 
     const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
@@ -93,15 +103,18 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const trigger = await MessageRepository.findById(pool, triggerId)
     if (!trigger || !trigger.ciphertext) return // gone, or not an E2E message
 
-    const [liveEiks, wraps, surrounding, stream, preferences, authors] = await Promise.all([
+    const [liveEiks, wraps, surrounding, rootStream, preferences, authors] = await Promise.all([
       EnclaveRuntimesRepository.listLive(pool, ENCLAVE_RUNTIME_STALENESS_MS),
-      StreamE2eKeyWrapsRepository.listForStream(pool, workspaceId, streamId),
+      // Root's wraps — the thread shares the root's SSK and has no wraps of its own.
+      StreamE2eKeyWrapsRepository.listForStream(pool, workspaceId, e2eStreamId),
       MessageRepository.findSurrounding(pool, triggerId, streamId, MAX_HISTORY_MESSAGES, 0),
-      StreamRepository.findById(pool, streamId),
+      triggerStream.rootStreamId
+        ? StreamRepository.findById(pool, triggerStream.rootStreamId)
+        : Promise.resolve(triggerStream),
       userPreferencesService.getPreferences(workspaceId, trigger.authorId),
       UserRepository.findByIds(pool, workspaceId, [trigger.authorId]),
     ])
-    if (!stream) return
+    if (!rootStream) return
     // Display name for the enclave's "Triggered by" CONTEXT step (metadata only).
     // Left undefined when unresolved → the enclave suppresses the row rather than
     // rendering a misleading "Unknown" author.
@@ -113,7 +126,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     // toolset is reduced. The enclave runs the same loop on the same prompt; just
     // the I/O is encrypted. This is the raw text the backend ships; the message
     // content stays ciphertext.
-    const systemPrompt = await buildEnclaveSystemPrompt({ pool, stream, preferences, persona })
+    const systemPrompt = await buildEnclaveSystemPrompt({ pool, stream: rootStream, preferences, persona })
 
     // Ship attachment ciphertext inline so the enclave can read files (it can't
     // reach S3 — egress is backend + OpenRouter only): the trigger's files plus

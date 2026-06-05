@@ -607,10 +607,13 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       const e2eEnabled = baseStream?.e2eEnabled === true
       let e2eFields: SealStreamMessageResult | undefined
       if (e2eEnabled) {
+        // A thread shares its root scratchpad's SSK and carries no wraps of its
+        // own; seal (and heal) against the root, whose wraps hold the key.
+        const e2eStreamId = baseStream?.rootStreamId ?? streamId
         const sealed = await sealOutgoingMessage({
           workspaceId,
           senderId: currentUserId,
-          streamId,
+          streamId: e2eStreamId,
           messageId: clientId,
           contentMarkdown,
           attachmentIds: input.attachmentIds,
@@ -624,7 +627,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         if ((baseStream?.e2eActors?.length ?? 0) > 0) {
           void reviveStaleActorWraps({
             workspaceId,
-            streamId,
+            streamId: e2eStreamId,
             userId: currentUserId,
             ownerKeyId: sealed.owner.keyId,
             ownerPrivateKey: sealed.owner.privateKey,

@@ -7,6 +7,7 @@ import {
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 
 /**
  * Render-time decryption for E2E (enclave) trace steps.
@@ -46,6 +47,8 @@ export function useDecryptedStepContent(
 ): DecryptedStepContent {
   const session = useE2eSession(workspaceId, userId ?? "")
   const cacheKey = step.id
+  // A thread shares its root scratchpad's SSK; resolve the key against the root.
+  const rootStreamId = useStreamFromStore(streamId)?.rootStreamId ?? undefined
 
   const cached = useSyncExternalStore<DecryptCacheEntry | undefined>(
     (listener) => subscribeToDecryption(cacheKey, listener),
@@ -65,9 +68,9 @@ export function useDecryptedStepContent(
     void requestDecryption(
       cacheKey,
       { contentMarkdown: "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
-      { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId }
+      { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId, rootStreamId }
     )
-  }, [needsDecrypt, sealed, session.privateKey, session.keyId, cacheKey, workspaceId, streamId])
+  }, [needsDecrypt, sealed, session.privateKey, session.keyId, cacheKey, workspaceId, streamId, rootStreamId])
 
   if (!sealed) return { status: "plaintext", content: step.content }
   if (!canDecrypt) return { status: "locked", content: undefined }

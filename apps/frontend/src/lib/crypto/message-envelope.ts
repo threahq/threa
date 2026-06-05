@@ -113,7 +113,7 @@ export async function tryOpenStreamName(
   try {
     const ssk = await resolveStreamKey({
       workspaceId: opts.workspaceId,
-      streamId: opts.streamId,
+      streamId: opts.rootStreamId ?? opts.streamId,
       keyGeneration: env.keyGeneration,
       recipientKeyId: opts.recipientKeyId,
       privateKey: opts.privateKey,
@@ -152,6 +152,13 @@ export interface DecryptMessageOpts {
   recipientKeyId: string
   workspaceId: string
   streamId: string
+  /**
+   * The stream whose SSK wraps seal this message — the root for a thread, which
+   * shares its root scratchpad's key. A thread carries no wraps of its own, so
+   * the SSK is resolved against the root (the wrap AAD is bound to the root id).
+   * Defaults to `streamId` (a top-level stream is its own root).
+   */
+  rootStreamId?: string
 }
 
 /**
@@ -188,7 +195,7 @@ async function tryOpenStreamMessage(
   try {
     const ssk = await resolveStreamKey({
       workspaceId: opts.workspaceId,
-      streamId: opts.streamId,
+      streamId: opts.rootStreamId ?? opts.streamId,
       keyGeneration: env.keyGeneration,
       recipientKeyId: opts.recipientKeyId,
       privateKey: opts.privateKey,
