@@ -15,9 +15,19 @@ import { useWorkspaceStreams, useWorkspaceStreamMemberships, useWorkspaceUnreadS
 import { streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { compareStreamEntries, scoreStreamMatch, useStoredStreamSortMode } from "@/lib/stream-sort"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
-import { queueShareHandoff } from "@/stores/share-handoff-store"
+import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/share-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
 import { useIsMobile } from "@/hooks/use-mobile"
+import {
+  ResponsiveAlertDialog,
+  ResponsiveAlertDialogAction,
+  ResponsiveAlertDialogCancel,
+  ResponsiveAlertDialogContent,
+  ResponsiveAlertDialogDescription,
+  ResponsiveAlertDialogFooter,
+  ResponsiveAlertDialogHeader,
+  ResponsiveAlertDialogTitle,
+} from "@/components/ui/responsive-alert-dialog"
 import type { SharedMessageAttrs } from "@/components/editor/shared-message-extension"
 
 const TARGET_GROUPS: { id: "channel" | "dm" | "scratchpad"; heading: string; type: StreamType }[] = [
@@ -35,6 +45,14 @@ interface ShareMessageModalProps {
   onOpenChange: (open: boolean) => void
   workspaceId: string
   attrs: SharedMessageAttrs
+  /**
+   * Decrypted source content when the message lives in an E2E scratchpad. A
+   * sealed message can't be shared as a pointer (recipients hold no key), so
+   * sharing it decrypts it and inserts the plaintext as a public quote — gated
+   * by an explicit confirmation. Undefined/null for normal (plaintext) sources,
+   * which share as a pointer.
+   */
+  sourcePlaintext?: string | null
 }
 
 /**
@@ -57,8 +75,12 @@ interface ShareMessageModalProps {
  * `SHARE_PRIVACY_CONFIRMATION_REQUIRED` and the queue surfaces a
  * "Share anyway / Cancel" toast (`surfacePrivacyBlockToast`).
  */
-export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: ShareMessageModalProps) {
+export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs, sourcePlaintext }: ShareMessageModalProps) {
   const [search, setSearch] = useState("")
+  // When sharing an E2E message, the picked target waits here for confirmation
+  // (sharing decrypts it to plaintext) before the hand-off is queued.
+  const [confirmTargetId, setConfirmTargetId] = useState<string | null>(null)
+  const isE2eSource = typeof sourcePlaintext === "string"
   const [sortMode, setSortMode] = useStoredStreamSortMode()
   const navigate = useNavigate()
   const location = useLocation()
@@ -123,13 +145,30 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: Sh
     onOpenChange(next)
   }
 
-  const handleSelect = (targetStreamId: string) => {
-    queueShareHandoff(targetStreamId, attrs)
+  const goToTarget = (targetStreamId: string) => {
     handleOpenChange(false)
     // Same navigation contract as the fast-path entries in
     // `message-event.tsx` — strip search params on mobile so the panel
     // doesn't shadow the parent composer, no-op when target === current.
     navigateAfterShareHandoff({ workspaceId, targetStreamId, location, navigate, isMobile })
+  }
+
+  const handleSelect = (targetStreamId: string) => {
+    // E2E source: sharing makes it public (decrypts it), so confirm first.
+    if (isE2eSource) {
+      setConfirmTargetId(targetStreamId)
+      return
+    }
+    queueShareHandoff(targetStreamId, attrs)
+    goToTarget(targetStreamId)
+  }
+
+  const handleConfirmShare = () => {
+    if (confirmTargetId === null || !isE2eSource) return
+    queuePlaintextShareHandoff(confirmTargetId, sourcePlaintext!, attrs)
+    const target = confirmTargetId
+    setConfirmTargetId(null)
+    goToTarget(target)
   }
 
   return (
@@ -194,6 +233,27 @@ export function ShareMessageModal({ open, onOpenChange, workspaceId, attrs }: Sh
           </CommandList>
         </Command>
       </ResponsiveDialogContent>
+
+      <ResponsiveAlertDialog
+        open={confirmTargetId !== null}
+        onOpenChange={(next) => {
+          if (!next) setConfirmTargetId(null)
+        }}
+      >
+        <ResponsiveAlertDialogContent>
+          <ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogTitle>Share this encrypted message?</ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogDescription>
+              This message is end-to-end encrypted. Sharing it will decrypt it and post the contents as a normal message
+              — everyone in the destination will be able to read it, and it won’t be end-to-end encrypted anymore.
+            </ResponsiveAlertDialogDescription>
+          </ResponsiveAlertDialogHeader>
+          <ResponsiveAlertDialogFooter>
+            <ResponsiveAlertDialogCancel onClick={() => setConfirmTargetId(null)}>Cancel</ResponsiveAlertDialogCancel>
+            <ResponsiveAlertDialogAction onClick={handleConfirmShare}>Share &amp; decrypt</ResponsiveAlertDialogAction>
+          </ResponsiveAlertDialogFooter>
+        </ResponsiveAlertDialogContent>
+      </ResponsiveAlertDialog>
     </ResponsiveDialog>
   )
 }
