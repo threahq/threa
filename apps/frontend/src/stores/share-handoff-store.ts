@@ -16,9 +16,23 @@ export interface ShareHandoffEntry {
   expiresAt: number
 }
 
+/**
+ * Hand-off for a message shared OUT of an E2E scratchpad. A sealed source can't
+ * be a pointer (recipients hold no key), so the share is the decrypted plaintext
+ * itself — made public as a quote in the target — captured at share time behind
+ * an explicit confirmation. `attrs` is carried for author attribution.
+ */
+export interface PlaintextShareHandoffEntry {
+  /** The decrypted source content, to insert as a public blockquote. */
+  markdown: string
+  attrs: SharedMessageAttrs
+  expiresAt: number
+}
+
 const HANDOFF_TTL_MS = 5 * 60 * 1000
 
 const cache = new Map<string, ShareHandoffEntry>()
+const plaintextCache = new Map<string, PlaintextShareHandoffEntry>()
 const listeners = new Map<string, Set<() => void>>()
 
 /**
@@ -37,6 +51,28 @@ export function queueShareHandoff(targetStreamId: string, attrs: SharedMessageAt
   if (subs) {
     for (const listener of subs) listener()
   }
+}
+
+/**
+ * Queue a decrypted E2E message to be shared as a public plaintext quote in the
+ * target stream's composer. Same hop + TTL + subscriber notification as the
+ * pointer hand-off; consumed via {@link consumePlaintextShareHandoff}.
+ */
+export function queuePlaintextShareHandoff(targetStreamId: string, markdown: string, attrs: SharedMessageAttrs): void {
+  plaintextCache.set(targetStreamId, { markdown, attrs, expiresAt: Date.now() + HANDOFF_TTL_MS })
+  const subs = listeners.get(targetStreamId)
+  if (subs) {
+    for (const listener of subs) listener()
+  }
+}
+
+/** Read + clear a pending plaintext (decrypted E2E) share for the stream. */
+export function consumePlaintextShareHandoff(targetStreamId: string): PlaintextShareHandoffEntry | null {
+  const entry = plaintextCache.get(targetStreamId)
+  if (!entry) return null
+  plaintextCache.delete(targetStreamId)
+  if (entry.expiresAt < Date.now()) return null
+  return entry
 }
 
 /**
@@ -95,6 +131,7 @@ export function peekShareHandoff(targetStreamId: string): SharedMessageAttrs | n
  */
 export function resetShareHandoffStoreCache(): void {
   cache.clear()
+  plaintextCache.clear()
   listeners.clear()
 }
 

@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   __resetShareHandoffStoreForTesting,
   consumeShareHandoff,
+  consumePlaintextShareHandoff,
   peekShareHandoff,
   queueShareHandoff,
+  queuePlaintextShareHandoff,
   subscribeShareHandoff,
 } from "./share-handoff-store"
 
@@ -29,6 +31,15 @@ describe("share handoff store", () => {
     queueShareHandoff("stream_a", sampleAttrs)
     expect(consumeShareHandoff("stream_a")).toEqual(sampleAttrs)
     expect(consumeShareHandoff("stream_a")).toBeNull()
+  })
+
+  it("queues + consumes a decrypted E2E plaintext share on its own channel", () => {
+    queuePlaintextShareHandoff("stream_a", "the secret plan", sampleAttrs)
+    // The pointer channel is untouched by a plaintext queue.
+    expect(consumeShareHandoff("stream_a")).toBeNull()
+    expect(consumePlaintextShareHandoff("stream_a")).toMatchObject({ markdown: "the secret plan", attrs: sampleAttrs })
+    // Cleared after consume.
+    expect(consumePlaintextShareHandoff("stream_a")).toBeNull()
   })
 
   it("queues independently per target stream", () => {
