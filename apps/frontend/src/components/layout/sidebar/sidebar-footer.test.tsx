@@ -48,11 +48,15 @@ describe("SidebarFooter", () => {
 
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobile.value)
 
-    // The footer mounts useStatusAutoExpiry, which resolves the status-clear
-    // mutation through the services context the unit harness doesn't provide.
+    // The footer mounts useStatusAutoExpiry and useNotificationPauseAutoExpiry,
+    // which resolve their mutations through the services context the unit
+    // harness doesn't provide.
     vi.spyOn(useWorkspacesModule, "useClearStatus").mockReturnValue({
       mutate: vi.fn(),
     } as unknown as ReturnType<typeof useWorkspacesModule.useClearStatus>)
+    vi.spyOn(useWorkspacesModule, "useResumeNotifications").mockReturnValue({
+      mutate: vi.fn(),
+    } as unknown as ReturnType<typeof useWorkspacesModule.useResumeNotifications>)
 
     spyOnExport(drawerModule, "Drawer").mockReturnValue((({
       open,

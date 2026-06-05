@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils"
 import { getAvatarUrl, resolveActiveStatus, resolveNotificationPause, type User } from "@threa/types"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
+import { useNotificationPauseAutoExpiry } from "@/hooks/use-notification-pause-auto-expiry"
 import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { StatusPicker } from "@/components/status/status-picker"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
@@ -240,6 +241,10 @@ export function SidebarFooter({
   // The owner's session clears its own status when it lapses, broadcasting the
   // clear to every viewer (render-time masking only hides it locally).
   useStatusAutoExpiry(workspaceId, currentUser)
+  // Same for a manual timed notification pause, so the do-not-disturb badge
+  // clears for every viewer when the window ends rather than lingering on an
+  // idle page until its next render.
+  useNotificationPauseAutoExpiry(workspaceId, currentUser)
 
   // Every stream flavor reachable from one always-visible control: the scratchpad
   // creators (Scratchpad / Quick Note / Encrypted) plus channels.
