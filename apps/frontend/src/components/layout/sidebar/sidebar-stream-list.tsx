@@ -16,9 +16,16 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamSection, TieredStreamSection } from "./sections"
-import { CustomSectionDropZone, customSectionIdFromDropData, streamIdFromDragData } from "./sidebar-dnd"
+import {
+  CustomSectionDropZone,
+  LabelSectionDropZone,
+  customSectionIdFromDropData,
+  labelIdFromDropData,
+  streamIdFromDragData,
+} from "./sidebar-dnd"
 import { sectionPresentation, type SidebarSectionSpec } from "./sidebar-config"
-import type { ResolvedSection } from "./resolve-sections"
+import { findSourceLabelId, type ResolvedSection } from "./resolve-sections"
+import { SidebarLabelsProvider } from "./sidebar-labels"
 import type { SidebarActionItem } from "./sidebar-actions"
 import type { StreamItemData } from "./types"
 
@@ -70,6 +77,18 @@ interface SidebarStreamListProps {
    * parent owns the sidebar config, so the membership write lives there.
    */
   onFileStreamToSection: (streamId: string, customSectionId: string) => void
+  /**
+   * Apply a label to a stream dragged onto its label section (drag-and-drop
+   * drop). The parent owns the label mutation and the unfile-from-custom write.
+   */
+  onAssignStreamLabel: (streamId: string, labelId: string) => void
+  /**
+   * A stream was dragged out of the label section it was sitting under (into a
+   * custom section or a different label). The parent decides — per the user's
+   * `labelRemoveOnMove` preference — whether to strip the old label, prompting
+   * when set to "ask".
+   */
+  onStreamMovedFromLabel: (streamId: string, sourceLabelId: string) => void
   scrollContainerRef: RefObject<HTMLDivElement | null>
 }
 
@@ -90,6 +109,8 @@ export function SidebarStreamList({
   scratchpadAddMenuActions,
   quickLinksSlot,
   onFileStreamToSection,
+  onAssignStreamLabel,
+  onStreamMovedFromLabel,
   scrollContainerRef,
 }: SidebarStreamListProps) {
   // Dragging streams into sections is a desktop interaction; on mobile the same
@@ -112,8 +133,23 @@ export function SidebarStreamList({
   const handleDragEnd = (event: DragEndEvent) => {
     setDraggingStreamId(null)
     const streamId = streamIdFromDragData(event.active.data.current)
+    if (!streamId) return
+    // The label section the stream is currently shown under (if any) — dropping
+    // it elsewhere may strip this label, per the user's preference.
+    const sourceLabelId = findSourceLabelId(streamId, resolvedSections)
+    // A drop lands on exactly one zone; file into a custom section or, when the
+    // target is a label section, apply that label instead.
     const customSectionId = customSectionIdFromDropData(event.over?.data.current)
-    if (streamId && customSectionId) onFileStreamToSection(streamId, customSectionId)
+    if (customSectionId) {
+      onFileStreamToSection(streamId, customSectionId)
+      if (sourceLabelId) onStreamMovedFromLabel(streamId, sourceLabelId)
+      return
+    }
+    const labelId = labelIdFromDropData(event.over?.data.current)
+    if (labelId) {
+      onAssignStreamLabel(streamId, labelId)
+      if (sourceLabelId && sourceLabelId !== labelId) onStreamMovedFromLabel(streamId, sourceLabelId)
+    }
   }
 
   if (hasError) {
@@ -156,106 +192,116 @@ export function SidebarStreamList({
   const draggingStream = draggingStreamId ? processedStreams.find((s) => s.id === draggingStreamId) : null
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={pointerWithin}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragCancel={() => setDraggingStreamId(null)}
-    >
-      {resolvedSections.map(({ section, items }) => {
-        // The Quick Links block renders its own link list at this position. The
-        // slot owns its spacing (and may render null when every link is hidden),
-        // so it's not wrapped — a wrapper would leave a stray margin when empty.
-        if (section.spec.kind === "quicklinks") {
-          return quickLinksSlot ? <Fragment key={section.id}>{quickLinksSlot}</Fragment> : null
-        }
+    <SidebarLabelsProvider workspaceId={workspaceId}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={pointerWithin}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onDragCancel={() => setDraggingStreamId(null)}
+      >
+        {resolvedSections.map(({ section, items }) => {
+          // The Quick Links block renders its own link list at this position. The
+          // slot owns its spacing (and may render null when every link is hidden),
+          // so it's not wrapped — a wrapper would leave a stray margin when empty.
+          if (section.spec.kind === "quicklinks") {
+            return quickLinksSlot ? <Fragment key={section.id}>{quickLinksSlot}</Fragment> : null
+          }
 
-        const presentation = sectionPresentation(section.spec)
-        if (presentation.hideWhenEmpty && items.length === 0) return null
+          const presentation = sectionPresentation(section.spec)
+          if (presentation.hideWhenEmpty && items.length === 0) return null
 
-        // Label sections render a tinted chip header resolved from the labels
-        // cache; a section whose label was archived/deleted is an orphan — skip it.
-        const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
-        if (section.spec.kind === "label" && !label) return null
-        const titleContent = label ? <LabelChip label={label} /> : undefined
-        // Label sections get an "open" affordance to their landing page.
-        const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
-        const headerLabel = label ? label.name : presentation.label
+          // Label sections render a tinted chip header resolved from the labels
+          // cache; a section whose label was archived/deleted is an orphan — skip it.
+          const label = section.spec.kind === "label" ? labelsById.get(section.spec.labelId) : undefined
+          if (section.spec.kind === "label" && !label) return null
+          const titleContent = label ? <LabelChip label={label} /> : undefined
+          // Label sections get an "open" affordance to their landing page.
+          const titleHref = label ? `/w/${workspaceId}/labels/${label.id}` : undefined
+          const headerLabel = label ? label.name : presentation.label
 
-        const state = getSectionState(section.id, presentation.defaultCollapse)
-        const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
-        const add = addWiringFor(section.spec)
+          const state = getSectionState(section.id, presentation.defaultCollapse)
+          const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
+          const add = addWiringFor(section.spec)
 
-        const sectionEl = presentation.tiered ? (
-          <TieredStreamSection
-            sectionKey={section.id}
-            label={headerLabel}
-            titleContent={titleContent}
-            titleHref={titleHref}
-            onTitleNavigate={collapseOnMobile}
-            icon={presentation.icon}
-            items={items}
-            allStreams={processedStreams}
-            workspaceId={workspaceId}
-            activeStreamId={activeStreamId}
-            getUnreadCount={getUnreadCount}
-            getMentionCount={getMentionCount}
-            state={state}
-            onToggle={onToggle}
-            moreState={getSectionState(moreKey(section.id), MORE_DEFAULT)}
-            onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
-            compact={presentation.compact}
-            showPreviewOnHover={presentation.showPreviewOnHover}
-            scrollContainerRef={scrollContainerRef}
-            onAdd={add?.onAdd}
-            addTooltip={add?.addTooltip}
-            addMenuActions={add?.addMenuActions}
-            streamDragEnabled={streamDragEnabled}
-          />
-        ) : (
-          <StreamSection
-            label={headerLabel}
-            titleContent={titleContent}
-            titleHref={titleHref}
-            onTitleNavigate={collapseOnMobile}
-            icon={presentation.icon}
-            items={items}
-            allStreams={processedStreams}
-            workspaceId={workspaceId}
-            activeStreamId={activeStreamId}
-            getUnreadCount={getUnreadCount}
-            getMentionCount={getMentionCount}
-            state={state}
-            onToggle={onToggle}
-            compact={presentation.compact}
-            showPreviewOnHover={presentation.showPreviewOnHover}
-            scrollContainerRef={scrollContainerRef}
-            streamDragEnabled={streamDragEnabled}
-          />
-        )
-
-        // Custom sections are drop targets — a stream dragged onto one is filed
-        // there. Other section kinds render as-is.
-        if (section.spec.kind === "custom") {
-          return (
-            <CustomSectionDropZone key={section.id} sectionId={section.spec.sectionId} enabled={streamDragEnabled}>
-              {sectionEl}
-            </CustomSectionDropZone>
+          const sectionEl = presentation.tiered ? (
+            <TieredStreamSection
+              sectionKey={section.id}
+              label={headerLabel}
+              titleContent={titleContent}
+              titleHref={titleHref}
+              onTitleNavigate={collapseOnMobile}
+              icon={presentation.icon}
+              items={items}
+              allStreams={processedStreams}
+              workspaceId={workspaceId}
+              activeStreamId={activeStreamId}
+              getUnreadCount={getUnreadCount}
+              getMentionCount={getMentionCount}
+              state={state}
+              onToggle={onToggle}
+              moreState={getSectionState(moreKey(section.id), MORE_DEFAULT)}
+              onToggleMore={() => toggleSectionState(moreKey(section.id), MORE_DEFAULT)}
+              compact={presentation.compact}
+              showPreviewOnHover={presentation.showPreviewOnHover}
+              scrollContainerRef={scrollContainerRef}
+              onAdd={add?.onAdd}
+              addTooltip={add?.addTooltip}
+              addMenuActions={add?.addMenuActions}
+              streamDragEnabled={streamDragEnabled}
+            />
+          ) : (
+            <StreamSection
+              label={headerLabel}
+              titleContent={titleContent}
+              titleHref={titleHref}
+              onTitleNavigate={collapseOnMobile}
+              icon={presentation.icon}
+              items={items}
+              allStreams={processedStreams}
+              workspaceId={workspaceId}
+              activeStreamId={activeStreamId}
+              getUnreadCount={getUnreadCount}
+              getMentionCount={getMentionCount}
+              state={state}
+              onToggle={onToggle}
+              compact={presentation.compact}
+              showPreviewOnHover={presentation.showPreviewOnHover}
+              scrollContainerRef={scrollContainerRef}
+              streamDragEnabled={streamDragEnabled}
+            />
           )
-        }
-        return <Fragment key={section.id}>{sectionEl}</Fragment>
-      })}
 
-      {/* A small chip trails the cursor while filing a stream, so the drag reads
+          // Custom and label sections are drop targets — a stream dragged onto a
+          // custom section is filed there; one dragged onto a label section is
+          // tagged with that label. Other section kinds render as-is.
+          if (section.spec.kind === "custom") {
+            return (
+              <CustomSectionDropZone key={section.id} sectionId={section.spec.sectionId} enabled={streamDragEnabled}>
+                {sectionEl}
+              </CustomSectionDropZone>
+            )
+          }
+          if (section.spec.kind === "label") {
+            return (
+              <LabelSectionDropZone key={section.id} labelId={section.spec.labelId} enabled={streamDragEnabled}>
+                {sectionEl}
+              </LabelSectionDropZone>
+            )
+          }
+          return <Fragment key={section.id}>{sectionEl}</Fragment>
+        })}
+
+        {/* A small chip trails the cursor while filing a stream, so the drag reads
           as intentional even though the source row stays put (dimmed). */}
-      <DragOverlay dropAnimation={null}>
-        {draggingStream ? (
-          <div className="pointer-events-none rounded-md border bg-card px-2.5 py-1.5 text-sm font-medium shadow-md">
-            {streamLabel(draggingStream, "sidebar")}
-          </div>
-        ) : null}
-      </DragOverlay>
-    </DndContext>
+        <DragOverlay dropAnimation={null}>
+          {draggingStream ? (
+            <div className="pointer-events-none rounded-md border bg-card px-2.5 py-1.5 text-sm font-medium shadow-md">
+              {streamLabel(draggingStream, "sidebar")}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    </SidebarLabelsProvider>
   )
 }

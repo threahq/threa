@@ -22,6 +22,7 @@ import {
 } from "./sidebar-actions"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { useUrgencyTracking } from "./use-urgency-tracking"
+import { StreamLabelDots } from "./sidebar-labels"
 import { truncateContent } from "./utils"
 import {
   LabelableResourceTypes,
@@ -383,7 +384,10 @@ export function StreamItem({
                 {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
                   <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
                 )}
-                <MentionIndicator count={mentionCount} className="ml-auto" />
+                <div className="ml-auto flex items-center gap-1.5">
+                  <StreamLabelDots streamId={stream.id} />
+                  <MentionIndicator count={mentionCount} />
+                </div>
               </div>
               <StreamItemPreview
                 preview={preview}

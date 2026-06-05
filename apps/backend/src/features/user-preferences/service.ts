@@ -83,6 +83,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "sidebarCollapsed",
     "messageSendMode",
     "linkPreviewDefault",
+    "labelRemoveOnMove",
     "scratchpadCustomPrompt",
     "codeBlockCollapseThreshold",
     "blockquoteCollapseThreshold",

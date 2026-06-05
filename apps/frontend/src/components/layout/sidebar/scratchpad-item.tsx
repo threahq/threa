@@ -19,6 +19,7 @@ import {
   type SidebarActionPreview,
 } from "./sidebar-actions"
 import { UrgencyStrip, StreamItemAvatar, StreamItemPreview } from "./stream-item"
+import { StreamLabelDots } from "./sidebar-labels"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
 import { truncateContent } from "./utils"
 import type { StreamItemData } from "./types"
@@ -180,7 +181,10 @@ export function ScratchpadItem({
                   {name}
                   {isDraft && <span className="ml-1.5 text-xs text-muted-foreground font-normal">(draft)</span>}
                 </span>
-                <MentionIndicator count={mentionCount} className="ml-auto" />
+                <div className="ml-auto flex items-center gap-1.5">
+                  <StreamLabelDots streamId={streamWithPreview.id} />
+                  <MentionIndicator count={mentionCount} />
+                </div>
               </div>
               <StreamItemPreview
                 preview={preview}

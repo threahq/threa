@@ -15,6 +15,8 @@ import {
   useLiveScheduledCount,
   useSidebarConfig,
   useUnreadCounts,
+  useAssignLabel,
+  useUnassignLabel,
 } from "@/hooks"
 import { useSyncStatus } from "@/sync/sync-status"
 import { useSyncEngine } from "@/sync/sync-engine"
@@ -28,7 +30,7 @@ import {
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
 } from "@/stores/workspace-store"
-import { useCoordinatedLoading, useSidebar } from "@/contexts"
+import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -40,10 +42,11 @@ import { SidebarFooter } from "./sidebar-footer"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection } from "./sidebar-config"
+import { RemoveLabelDialog } from "./remove-label-dialog"
 import type { SidebarActionItem } from "./sidebar-actions"
 import { calculateUrgency, categorizeStream } from "./utils"
 import type { StreamItemData } from "./types"
-import { resolveDmDisplayName } from "@/lib/streams"
+import { resolveDmDisplayName, streamLabel } from "@/lib/streams"
 import type { CachedLabel } from "@/hooks"
 import { StreamTypes, Visibilities, LabelableResourceTypes } from "@threa/types"
 
@@ -82,6 +85,10 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { drafts: allDrafts } = useAllDrafts(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
+  const assignLabel = useAssignLabel(workspaceId)
+  const unassignLabel = useUnassignLabel(workspaceId)
+  const preferencesContext = usePreferencesOptional()
+  const [labelRemovePrompt, setLabelRemovePrompt] = useState<{ streamId: string; labelId: string } | null>(null)
   const navigate = useNavigate()
   const currentUser = workspaceUsers.find((u) => u.workosUserId === user?.id) ?? null
   const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUser?.id ?? null)
@@ -407,6 +414,64 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     setSidebarConfig(setStreamCustomSection(sidebarConfig, streamId, customSectionId))
   }
 
+  // Drag-and-drop drop onto a label section: tag the stream with that label.
+  // A labeled stream lives under its label lens (which trumps the smart/type
+  // buckets), so once the label lands we unfile it from any custom section — the
+  // custom-section trump would otherwise hide it from the very lens the drop
+  // targeted. The unfile runs in `onSuccess` (not before `mutate`) so a failed
+  // assignment doesn't strand the stream out of the section it was filed into;
+  // `setStreamCustomSection` is a no-op when the stream isn't filed anywhere.
+  const handleAssignStreamLabel = (streamId: string, labelId: string) => {
+    assignLabel.mutate(
+      { labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId },
+      {
+        onSuccess: () => {
+          const unfiled = setStreamCustomSection(sidebarConfig, streamId, null)
+          if (unfiled !== sidebarConfig) setSidebarConfig(unfiled)
+        },
+      }
+    )
+  }
+
+  const removeStreamLabel = (streamId: string, labelId: string) => {
+    unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
+  }
+
+  // A stream was dragged out of the label lens it was under. Whether that strips
+  // the old label follows the user's `labelRemoveOnMove` preference: act silently
+  // for "always"/"never", otherwise prompt (and let the prompt persist a choice).
+  //
+  // Public labels are shared org-wide and unassign broadcasts to everyone, so a
+  // casual drag must never strip one — that would yank the stream out of the
+  // shared lens for the whole workspace. Only private labels (the dragger's own)
+  // are removable this way; the label picker stays the explicit path for public.
+  const handleStreamMovedFromLabel = (streamId: string, sourceLabelId: string) => {
+    const label = labelsById.get(sourceLabelId)
+    if (!label || label.visibility !== Visibilities.PRIVATE) return
+    const behavior = preferencesContext?.preferences?.labelRemoveOnMove ?? "ask"
+    if (behavior === "never") return
+    if (behavior === "always") {
+      removeStreamLabel(streamId, sourceLabelId)
+      return
+    }
+    setLabelRemovePrompt({ streamId, labelId: sourceLabelId })
+  }
+
+  const resolveLabelRemovePrompt = (remove: boolean, remember: boolean) => {
+    const prompt = labelRemovePrompt
+    setLabelRemovePrompt(null)
+    if (!prompt) return
+    if (remove) removeStreamLabel(prompt.streamId, prompt.labelId)
+    if (remember && preferencesContext) {
+      void preferencesContext.updatePreference("labelRemoveOnMove", remove ? "always" : "never")
+    }
+  }
+
+  const promptStream = labelRemovePrompt
+    ? (processedStreams.find((s) => s.id === labelRemovePrompt.streamId) ?? null)
+    : null
+  const promptStreamName = promptStream ? streamLabel(promptStream, "sidebar") : "This stream"
+
   return (
     <>
       <SidebarShell
@@ -436,6 +501,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onCreateChannel={handleCreateChannel}
             scratchpadAddMenuActions={scratchpadAddMenuActions}
             onFileStreamToSection={handleFileStreamToSection}
+            onAssignStreamLabel={handleAssignStreamLabel}
+            onStreamMovedFromLabel={handleStreamMovedFromLabel}
             quickLinksSlot={
               hasQuickLinksSection ? (
                 <SidebarQuickLinks
@@ -469,6 +536,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         }
       />
       <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
+      {labelRemovePrompt && (
+        <RemoveLabelDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setLabelRemovePrompt(null)
+          }}
+          labelName={labelsById.get(labelRemovePrompt.labelId)?.name ?? "this label"}
+          streamName={promptStreamName}
+          onResolve={resolveLabelRemovePrompt}
+        />
+      )}
     </>
   )
 }

@@ -92,6 +92,19 @@ export const MessageSendModes = {
   CMD_ENTER: "cmdEnter",
 } as const satisfies Record<string, MessageSendMode>
 
+// Label-remove-on-move behavior — when a labeled stream is dragged out of its
+// label section in the sidebar (into a custom section or a different label),
+// whether to also strip the label it was sitting under. "ask" prompts each time
+// (with a remember-my-choice option that flips this preference to always/never).
+export const LABEL_REMOVE_ON_MOVE_OPTIONS = ["ask", "always", "never"] as const
+export type LabelRemoveOnMove = (typeof LABEL_REMOVE_ON_MOVE_OPTIONS)[number]
+
+export const LabelRemoveOnMoveOptions = {
+  ASK: "ask",
+  ALWAYS: "always",
+  NEVER: "never",
+} as const satisfies Record<string, LabelRemoveOnMove>
+
 // Code block collapse threshold - line count above which blocks start collapsed.
 // Blocks with fewer lines render expanded by default. A user can always toggle
 // an individual block; this preference only controls the initial state.
@@ -210,6 +223,11 @@ export interface UserPreferences {
   sidebarCollapsed: boolean
   messageSendMode: MessageSendMode
   linkPreviewDefault: LinkPreviewDefault
+  /**
+   * What dragging a labeled stream out of its sidebar label section does to that
+   * label. "ask" prompts each time; "always"/"never" act without prompting.
+   */
+  labelRemoveOnMove: LabelRemoveOnMove
   scratchpadCustomPrompt: string | null
   codeBlockCollapseThreshold: number
   blockquoteCollapseThreshold: number
@@ -258,6 +276,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   sidebarCollapsed: false,
   messageSendMode: "enter",
   linkPreviewDefault: "open",
+  labelRemoveOnMove: "ask",
   scratchpadCustomPrompt: null,
   codeBlockCollapseThreshold: DEFAULT_CODE_BLOCK_COLLAPSE_THRESHOLD,
   blockquoteCollapseThreshold: DEFAULT_BLOCKQUOTE_COLLAPSE_THRESHOLD,
@@ -287,6 +306,7 @@ export interface UpdateUserPreferencesInput {
   sidebarCollapsed?: boolean
   messageSendMode?: MessageSendMode
   linkPreviewDefault?: LinkPreviewDefault
+  labelRemoveOnMove?: LabelRemoveOnMove
   scratchpadCustomPrompt?: string | null
   codeBlockCollapseThreshold?: number
   blockquoteCollapseThreshold?: number

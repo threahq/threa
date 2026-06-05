@@ -6,7 +6,7 @@ import {
   SMART_SIDEBAR_CONFIG,
   SIDEBAR_CONFIG_VERSION,
 } from "@threa/types"
-import { resolveSections, type ResolveSectionsInput } from "./resolve-sections"
+import { resolveSections, findSourceLabelId, type ResolveSectionsInput } from "./resolve-sections"
 import { customSectionId, labelSectionId } from "./sidebar-config"
 import type { SectionKey, StreamItemData, UrgencyLevel } from "./types"
 
@@ -187,7 +187,7 @@ describe("resolveSections — label sections", () => {
     ])
   })
 
-  it("keeps a stream in the bucket above and drops it from the label section below", () => {
+  it("a pinned label lens trumps a bucket above it: labeled streams leave the bucket", () => {
     const recentFirst = {
       version: SIDEBAR_CONFIG_VERSION,
       basePreset: "smart" as const,
@@ -210,10 +210,40 @@ describe("resolveSections — label sections", () => {
     }))
 
     expect(result).toEqual([
-      // Recent (topmost) keeps s_new; s_old is read but within the cap.
-      { id: "recent", items: ["s_new", "s_old"] },
-      // Label section only keeps s_other; s_new was claimed by Recent above.
-      { id: labelSectionId("lbl_1"), items: ["s_other"] },
+      // Recent loses s_new to the label lens even though it is ordered above —
+      // a pinned label claims its streams out of the automatic buckets.
+      { id: "recent", items: ["s_old"] },
+      // Label lens shows both labeled streams, by activity.
+      { id: labelSectionId("lbl_1"), items: ["s_new", "s_other"] },
+    ])
+  })
+
+  it("surfaces a labeled thread under its label instead of its smart bucket", () => {
+    const recentFirst = {
+      version: SIDEBAR_CONFIG_VERSION,
+      basePreset: "smart" as const,
+      sections: [
+        { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+        { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+      ],
+      quickLinks: [],
+    }
+    // A thread is just another stream: it lands in a smart bucket by activity,
+    // but a pinned label claims it the same as any other type.
+    const processedStreams = [
+      makeItem({ id: "thr_1", type: StreamTypes.THREAD, section: "recent", activity: 7 }),
+      makeItem({ id: "ch_1", type: StreamTypes.CHANNEL, section: "recent", activity: 3 }),
+    ]
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["thr_1"])]])
+
+    const result = resolveSections(recentFirst, makeInput({ processedStreams, streamIdsByLabel })).map((r) => ({
+      id: r.section.id,
+      items: r.items.map((i) => i.id),
+    }))
+
+    expect(result).toEqual([
+      { id: "recent", items: ["ch_1"] },
+      { id: labelSectionId("lbl_1"), items: ["thr_1"] },
     ])
   })
 
@@ -325,5 +355,35 @@ describe("resolveSections — custom sections", () => {
       { id: customSectionId("sec_a"), items: ["s_x"] },
       { id: customSectionId("sec_b"), items: [] },
     ])
+  })
+})
+
+describe("findSourceLabelId", () => {
+  const config = {
+    version: SIDEBAR_CONFIG_VERSION,
+    basePreset: "smart" as const,
+    sections: [
+      { id: labelSectionId("lbl_1"), spec: { kind: "label" as const, labelId: "lbl_1" } },
+      { id: "recent", spec: { kind: "smart" as const, bucket: "recent" as const } },
+    ],
+    quickLinks: [],
+  }
+
+  it("returns the label id of the label section a stream is shown under", () => {
+    const processedStreams = [
+      makeItem({ id: "s_lab", section: "recent", activity: 5 }),
+      makeItem({ id: "s_plain", section: "recent", activity: 3 }),
+    ]
+    const streamIdsByLabel = new Map([["lbl_1", new Set(["s_lab"])]])
+    const resolved = resolveSections(config, makeInput({ processedStreams, streamIdsByLabel }))
+
+    expect(findSourceLabelId("s_lab", resolved)).toBe("lbl_1")
+  })
+
+  it("returns null for a stream shown in a non-label section", () => {
+    const processedStreams = [makeItem({ id: "s_plain", section: "recent", activity: 3 })]
+    const resolved = resolveSections(config, makeInput({ processedStreams }))
+
+    expect(findSourceLabelId("s_plain", resolved)).toBeNull()
   })
 })

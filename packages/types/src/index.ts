@@ -558,6 +558,10 @@ export {
   LINK_PREVIEW_DEFAULT_OPTIONS,
   type LinkPreviewDefault,
   LinkPreviewDefaults,
+  // Label-remove-on-move behavior
+  LABEL_REMOVE_ON_MOVE_OPTIONS,
+  type LabelRemoveOnMove,
+  LabelRemoveOnMoveOptions,
   // Code block collapse threshold
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
