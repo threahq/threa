@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it } from "vitest"
 import { generateUIK } from "../keys"
-import { unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "../webauthn-device-key"
+import { isPlatformAuthenticatorAvailable, unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "../webauthn-device-key"
 
 // The PRF secret is a uniformly-random 32 bytes the authenticator would return;
 // the ceremony itself (navigator.credentials) is covered by the Playwright
@@ -32,5 +32,44 @@ describe("wrapPrivateKeyWithPrf / unwrapPrivateKeyWithPrf", () => {
   it("rejects a too-short PRF secret", async () => {
     const uik = await generateUIK()
     await expect(wrapPrivateKeyWithPrf(uik.privateKey, new Uint8Array(16))).rejects.toThrow(/at least 32/)
+  })
+})
+
+describe("isPlatformAuthenticatorAvailable (UX-30)", () => {
+  const originalPkc = Object.getOwnPropertyDescriptor(window, "PublicKeyCredential")
+  const originalCreds = Object.getOwnPropertyDescriptor(navigator, "credentials")
+
+  function setGlobals(pkc: unknown, hasCredentialsCreate: boolean) {
+    Object.defineProperty(window, "PublicKeyCredential", { value: pkc, configurable: true, writable: true })
+    Object.defineProperty(navigator, "credentials", {
+      value: hasCredentialsCreate ? { create: () => Promise.resolve(null) } : undefined,
+      configurable: true,
+      writable: true,
+    })
+  }
+
+  afterEach(() => {
+    if (originalPkc) Object.defineProperty(window, "PublicKeyCredential", originalPkc)
+    else Reflect.deleteProperty(window, "PublicKeyCredential")
+    if (originalCreds) Object.defineProperty(navigator, "credentials", originalCreds)
+    else Reflect.deleteProperty(navigator, "credentials")
+  })
+
+  it("is false when the WebAuthn API is absent", async () => {
+    setGlobals(undefined, false)
+    expect(await isPlatformAuthenticatorAvailable()).toBe(false)
+  })
+
+  it("reflects the platform-authenticator probe when the API exists", async () => {
+    setGlobals({ isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(true) }, true)
+    expect(await isPlatformAuthenticatorAvailable()).toBe(true)
+
+    setGlobals({ isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.resolve(false) }, true)
+    expect(await isPlatformAuthenticatorAvailable()).toBe(false)
+  })
+
+  it("is false (never throws) when the probe rejects", async () => {
+    setGlobals({ isUserVerifyingPlatformAuthenticatorAvailable: () => Promise.reject(new Error("nope")) }, true)
+    expect(await isPlatformAuthenticatorAvailable()).toBe(false)
   })
 })
