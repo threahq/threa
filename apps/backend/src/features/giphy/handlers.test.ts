@@ -33,7 +33,14 @@ function createResponse() {
   return res
 }
 
-const noopNext = mock(() => {})
+/** Captures the error forwarded to Express's error middleware via `next(err)`. */
+function createNext() {
+  const calls: unknown[] = []
+  const next = mock((err?: unknown) => {
+    calls.push(err)
+  })
+  return { next, errorStatus: () => (calls[0] as { status?: number } | undefined)?.status }
+}
 
 describe("giphy handlers", () => {
   it("reports enabled state from the service", () => {
@@ -46,31 +53,33 @@ describe("giphy handlers", () => {
     expect(res.body).toEqual({ enabled: true })
   })
 
-  it("404s search when the feature is disabled", async () => {
+  it("forwards a 404 HttpError for search when the feature is disabled", async () => {
     const giphyService = {
       isEnabled: mock(() => false),
       search: mock(() => Promise.resolve({ items: [], nextOffset: null })),
     } as unknown as GiphyService
     const handlers = createGiphyHandlers({ giphyService })
     const res = createResponse()
+    const { next, errorStatus } = createNext()
 
-    await handlers.search({ query: { q: "cats" } } as never, res as never, noopNext as never)
+    await handlers.search({ query: { q: "cats" } } as never, res as never, next as never)
 
-    expect(res.statusCode).toBe(404)
+    expect(errorStatus()).toBe(404)
     expect(giphyService.search).not.toHaveBeenCalled()
   })
 
-  it("400s search when the query is missing", async () => {
+  it("forwards a 400 HttpError for search when the query is missing", async () => {
     const giphyService = {
       isEnabled: mock(() => true),
       search: mock(() => Promise.resolve({ items: [], nextOffset: null })),
     } as unknown as GiphyService
     const handlers = createGiphyHandlers({ giphyService })
     const res = createResponse()
+    const { next, errorStatus } = createNext()
 
-    await handlers.search({ query: {} } as never, res as never, noopNext as never)
+    await handlers.search({ query: {} } as never, res as never, next as never)
 
-    expect(res.statusCode).toBe(400)
+    expect(errorStatus()).toBe(400)
     expect(giphyService.search).not.toHaveBeenCalled()
   })
 
@@ -85,10 +94,45 @@ describe("giphy handlers", () => {
     } as unknown as GiphyService
     const handlers = createGiphyHandlers({ giphyService })
     const res = createResponse()
+    const { next } = createNext()
 
-    await handlers.search({ query: { q: "cats", offset: "0" } } as never, res as never, noopNext as never)
+    await handlers.search({ query: { q: "cats", offset: "0" } } as never, res as never, next as never)
 
     expect(giphyService.search).toHaveBeenCalledWith("cats", { offset: 0, limit: 24 })
+    expect(res.body).toEqual(page)
+  })
+
+  it("forwards a 404 HttpError for trending when the feature is disabled", async () => {
+    const giphyService = {
+      isEnabled: mock(() => false),
+      trending: mock(() => Promise.resolve({ items: [], nextOffset: null })),
+    } as unknown as GiphyService
+    const handlers = createGiphyHandlers({ giphyService })
+    const res = createResponse()
+    const { next, errorStatus } = createNext()
+
+    await handlers.trending({ query: {} } as never, res as never, next as never)
+
+    expect(errorStatus()).toBe(404)
+    expect(giphyService.trending).not.toHaveBeenCalled()
+  })
+
+  it("returns trending results and forwards pagination params", async () => {
+    const page = {
+      items: [{ id: "xyz", title: "dog", previewUrl: "https://media.giphy.com/d.gif", width: 200, height: 150 }],
+      nextOffset: null,
+    }
+    const giphyService = {
+      isEnabled: mock(() => true),
+      trending: mock(() => Promise.resolve(page)),
+    } as unknown as GiphyService
+    const handlers = createGiphyHandlers({ giphyService })
+    const res = createResponse()
+    const { next } = createNext()
+
+    await handlers.trending({ query: { offset: "24" } } as never, res as never, next as never)
+
+    expect(giphyService.trending).toHaveBeenCalledWith({ offset: 24, limit: 24 })
     expect(res.body).toEqual(page)
   })
 
@@ -102,25 +146,42 @@ describe("giphy handlers", () => {
     } as unknown as GiphyService
     const handlers = createGiphyHandlers({ giphyService })
     const res = createResponse()
+    const { next } = createNext()
 
-    await handlers.file({ params: { gifId: "abc" } } as never, res as never, noopNext as never)
+    await handlers.file({ params: { gifId: "abc" } } as never, res as never, next as never)
 
     expect(res.headers["Content-Type"]).toBe("image/gif")
     expect(res.headers["Content-Length"]).toBe("3")
     expect(res.body).toBe(buffer)
   })
 
-  it("400s the file endpoint for a malformed id", async () => {
+  it("forwards a 404 HttpError when the GIF id resolves to no media", async () => {
     const giphyService = {
       isEnabled: mock(() => true),
       fetchGif: mock(() => Promise.resolve(null)),
     } as unknown as GiphyService
     const handlers = createGiphyHandlers({ giphyService })
     const res = createResponse()
+    const { next, errorStatus } = createNext()
 
-    await handlers.file({ params: { gifId: "../../etc/passwd" } } as never, res as never, noopNext as never)
+    await handlers.file({ params: { gifId: "missing" } } as never, res as never, next as never)
 
-    expect(res.statusCode).toBe(400)
+    expect(errorStatus()).toBe(404)
+    expect(giphyService.fetchGif).toHaveBeenCalledWith("missing")
+  })
+
+  it("forwards a 400 HttpError for the file endpoint with a malformed id", async () => {
+    const giphyService = {
+      isEnabled: mock(() => true),
+      fetchGif: mock(() => Promise.resolve(null)),
+    } as unknown as GiphyService
+    const handlers = createGiphyHandlers({ giphyService })
+    const res = createResponse()
+    const { next, errorStatus } = createNext()
+
+    await handlers.file({ params: { gifId: "../../etc/passwd" } } as never, res as never, next as never)
+
+    expect(errorStatus()).toBe(400)
     expect(giphyService.fetchGif).not.toHaveBeenCalled()
   })
 })

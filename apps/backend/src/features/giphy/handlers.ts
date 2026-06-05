@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express"
 import { z } from "zod"
 import type { GiphyConfigResponse, GiphySearchResponse } from "@threa/types"
+import { HttpError } from "../../lib/errors"
 import type { GiphyService } from "./service"
 import { GIPHY_MAX_PAGE_SIZE, GIPHY_MAX_QUERY_LENGTH, GIPHY_PAGE_SIZE } from "./config"
 
@@ -24,6 +25,12 @@ const GifIdSchema = z
   .regex(/^[A-Za-z0-9]+$/)
   .max(64)
 
+function requireEnabled(giphyService: GiphyService): void {
+  if (!giphyService.isEnabled()) {
+    throw new HttpError("Giphy is not configured", { status: 404, code: "GIPHY_NOT_CONFIGURED" })
+  }
+}
+
 export function createGiphyHandlers({ giphyService }: HandlerDeps) {
   return {
     /** GET /api/workspaces/:workspaceId/giphy/config */
@@ -35,14 +42,10 @@ export function createGiphyHandlers({ giphyService }: HandlerDeps) {
     /** GET /api/workspaces/:workspaceId/giphy/search?q=&offset=&limit= */
     async search(req: Request, res: Response, next: NextFunction) {
       try {
-        if (!giphyService.isEnabled()) {
-          res.status(404).json({ error: "Giphy is not configured" })
-          return
-        }
+        requireEnabled(giphyService)
         const parsed = SearchQuerySchema.safeParse(req.query)
         if (!parsed.success) {
-          res.status(400).json({ error: "Invalid search parameters", details: parsed.error.format() })
-          return
+          throw new HttpError("Invalid search parameters", { status: 400, code: "VALIDATION_ERROR" })
         }
         const { q, offset, limit } = parsed.data
         const page = await giphyService.search(q, { offset, limit: limit ?? GIPHY_PAGE_SIZE })
@@ -56,14 +59,10 @@ export function createGiphyHandlers({ giphyService }: HandlerDeps) {
     /** GET /api/workspaces/:workspaceId/giphy/trending?offset=&limit= */
     async trending(req: Request, res: Response, next: NextFunction) {
       try {
-        if (!giphyService.isEnabled()) {
-          res.status(404).json({ error: "Giphy is not configured" })
-          return
-        }
+        requireEnabled(giphyService)
         const parsed = TrendingQuerySchema.safeParse(req.query)
         if (!parsed.success) {
-          res.status(400).json({ error: "Invalid parameters", details: parsed.error.format() })
-          return
+          throw new HttpError("Invalid parameters", { status: 400, code: "VALIDATION_ERROR" })
         }
         const { offset, limit } = parsed.data
         const page = await giphyService.trending({ offset, limit: limit ?? GIPHY_PAGE_SIZE })
@@ -83,19 +82,14 @@ export function createGiphyHandlers({ giphyService }: HandlerDeps) {
      */
     async file(req: Request, res: Response, next: NextFunction) {
       try {
-        if (!giphyService.isEnabled()) {
-          res.status(404).json({ error: "Giphy is not configured" })
-          return
-        }
+        requireEnabled(giphyService)
         const parsedId = GifIdSchema.safeParse(req.params.gifId)
         if (!parsedId.success) {
-          res.status(400).json({ error: "Invalid GIF id" })
-          return
+          throw new HttpError("Invalid GIF id", { status: 400, code: "VALIDATION_ERROR" })
         }
         const file = await giphyService.fetchGif(parsedId.data)
         if (!file) {
-          res.status(404).json({ error: "GIF not found" })
-          return
+          throw new HttpError("GIF not found", { status: 404, code: "GIF_NOT_FOUND" })
         }
         res.setHeader("Content-Type", file.mimeType)
         res.setHeader("Content-Length", String(file.sizeBytes))

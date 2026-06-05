@@ -452,8 +452,20 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       if (!workspaceId) return
       const editorInstance = editorRef.current
       if (!editorInstance) return
+      // Capture the scope version before the network await; if the user navigates
+      // to a different stream (or the editor is torn down) while the GIF
+      // downloads, drop it rather than inserting into a stale composer — mirrors
+      // the `isStillTargeting` guard in handleFileInsert.
+      const scopeVersionAtStart = uploadScopeVersionRef.current
       try {
         const file = await giphyApi.fetchGifFile(workspaceId, gif.id)
+        if (
+          scopeVersionAtStart !== uploadScopeVersionRef.current ||
+          editorRef.current !== editorInstance ||
+          editorInstance.isDestroyed
+        ) {
+          return
+        }
         await handleFileInsert(file, editorInstance)
       } catch (err) {
         console.warn("Failed to attach GIF", err)

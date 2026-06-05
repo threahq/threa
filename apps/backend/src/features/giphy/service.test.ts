@@ -92,6 +92,30 @@ describe("GiphyService", () => {
     await expect(service.fetchGif("abc")).rejects.toThrow(/size cap/)
   })
 
+  it("enforces the size cap while streaming when content-length is absent", async () => {
+    // Body that exceeds the cap, streamed in 1MB chunks with no content-length
+    // header — so the only thing that can stop it is the streaming guard.
+    const oneMb = new Uint8Array(1024 * 1024)
+    const fetchImpl = mock((url: string) => {
+      if (url.includes("/abc?")) {
+        return Promise.resolve(
+          jsonResponse({ data: { id: "abc", images: { downsized: { url: "https://media.giphy.com/abc.gif" } } } })
+        )
+      }
+      let pulls = 0
+      const stream = new ReadableStream({
+        pull(controller) {
+          if (pulls++ < 16) controller.enqueue(oneMb)
+          else controller.close()
+        },
+      })
+      return Promise.resolve(new Response(stream, { status: 200 }))
+    }) as unknown as typeof fetch
+
+    const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
+    await expect(service.fetchGif("abc")).rejects.toThrow(/size cap/)
+  })
+
   it("returns null when the GIF id is unknown", async () => {
     const fetchImpl = mock(() => Promise.resolve(jsonResponse({ data: null }))) as unknown as typeof fetch
     const service = new GiphyService({ config: { enabled: true, apiKey: "key" }, fetchImpl })
