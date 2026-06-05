@@ -163,10 +163,9 @@ function mapRowToUser(row: UserRow): User {
   })
   // Mask an elapsed manual pause at the read boundary, mirroring how the status
   // above is masked, so the wire (and every broadcast) never reports a pause
-  // that has already lifted. The shared `resolveNotificationPause` still applies
-  // `now` at use, but masking here keeps fresh reads honest.
-  const pausedUntilActive =
-    row.notifications_paused_until !== null && row.notifications_paused_until.getTime() > Date.now()
+  // that has already lifted. Truthy-guard the timestamp the same way the status
+  // line does, so a partial row (e.g. a narrowed test fixture) is tolerated.
+  const pausedUntilActive = !!row.notifications_paused_until && row.notifications_paused_until.getTime() > Date.now()
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -186,9 +185,9 @@ function mapRowToUser(row: UserRow): User {
     statusText: status?.text ?? null,
     statusExpiresAt: status ? row.status_expires_at : null,
     // A pause flag only matters while its status is live, so drop it with the status.
-    statusPausesNotifications: status ? row.status_pauses_notifications : false,
+    statusPausesNotifications: status ? Boolean(row.status_pauses_notifications) : false,
     notificationsPausedUntil: pausedUntilActive ? row.notifications_paused_until : null,
-    notificationsPausedIndefinitely: row.notifications_paused_indefinitely,
+    notificationsPausedIndefinitely: Boolean(row.notifications_paused_indefinitely),
     setupCompleted: row.setup_completed,
     joinedAt: row.joined_at,
   }
