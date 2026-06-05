@@ -124,6 +124,44 @@ describe("createEnclaveInvokeWorker", () => {
     expect(assignSession).toHaveBeenCalledTimes(1)
   })
 
+  it("resolves the SSK + wraps from the root for a thread message (reply still lands in the thread)", async () => {
+    arrangeDispatch()
+    // The trigger lives in a THREAD whose root is stream_root; the thread shares
+    // the root's SSK and carries no wraps of its own.
+    spyOn(StreamRepository, "findById").mockImplementation((async (_p: unknown, id: string) =>
+      id === "stream_1"
+        ? { id: "stream_1", workspaceId: "ws_1", rootStreamId: "stream_root" }
+        : { id: "stream_root", workspaceId: "ws_1", rootStreamId: null }) as never)
+    const getE2e = spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({ ...E2E, streamId: "stream_root" })
+    const listWraps = spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([WRAP])
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
+    })
+    await worker(JOB)
+
+    // Key material (e2e row + wraps) is fetched against the root...
+    expect(getE2e).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
+    expect(listWraps).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
+    // ...the assignment carries the root id, so the enclave unwraps under the
+    // AAD the wraps were sealed with...
+    const assignment = assignSession.mock.calls[0]![1] as { streamId: string }
+    expect(assignment.streamId).toBe("stream_root")
+    // ...but the session (and therefore Ariadne's reply) lands in the thread.
+    expect(insertSession.mock.calls[0]![1]).toMatchObject({ streamId: "stream_1" })
+  })
+
   it("ships attachment ciphertext for the trigger AND recent history, trigger first", async () => {
     arrangeDispatch()
     // One prior message in the window carrying its own E2E attachment.

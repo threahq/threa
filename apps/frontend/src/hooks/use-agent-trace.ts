@@ -7,6 +7,7 @@ import { joinRoomWithAck } from "@/lib/socket-room"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
+import { db } from "@/db"
 import type {
   AgentSessionStep,
   AgentSession,
@@ -189,15 +190,18 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
       if (typeof payload.ciphertext === "string" && payload.envelope) {
         const session = getE2eSessionState(workspaceId, userId ?? "")
         if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return
-        void tryDecryptMessagePayload(
-          { contentMarkdown: "", ciphertext: payload.ciphertext, envelope: payload.envelope },
-          { privateKey: session.privateKey, recipientKeyId: session.keyId, workspaceId, streamId: payload.streamId }
-        )
-          .then((decrypted) => {
-            if (decrypted?.contentMarkdown)
-              appendSubstep(payload.stepType, decrypted.contentMarkdown, payload.updatedAt)
-          })
-          .catch(() => {})
+        const { privateKey, keyId } = session
+        const { ciphertext, envelope, streamId: substepStreamId, stepType, updatedAt } = payload
+        void (async () => {
+          // The substep's stream may be a thread, which shares its root's SSK —
+          // resolve the key against the root.
+          const rootStreamId = (await db.streams.get(substepStreamId))?.rootStreamId ?? undefined
+          const decrypted = await tryDecryptMessagePayload(
+            { contentMarkdown: "", ciphertext, envelope },
+            { privateKey, recipientKeyId: keyId, workspaceId, streamId: substepStreamId, rootStreamId }
+          ).catch(() => null)
+          if (decrypted?.contentMarkdown) appendSubstep(stepType, decrypted.contentMarkdown, updatedAt)
+        })()
       }
     },
     [sessionId, workspaceId, userId, appendSubstep]

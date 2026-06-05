@@ -568,7 +568,6 @@ describe("StreamService.createThread (via create)", () => {
       enabledAt: new Date(),
     } as never)
     mockMarkStreamE2e.mockReset().mockResolvedValue({} as never)
-    const copyWraps = spyOn(StreamE2eKeyWrapsRepository, "copyToStream").mockResolvedValue(undefined as never)
     const copyActors = spyOn(E2eStreamActorsRepository, "copyToStream").mockResolvedValue(undefined as never)
 
     const result = await service.create({
@@ -590,14 +589,15 @@ describe("StreamService.createThread (via create)", () => {
         currentKeyGeneration: 2,
       })
     )
-    expect(copyWraps).toHaveBeenCalledWith(
-      {},
-      { workspaceId: "ws_1", fromStreamId: "stream_root", toStreamId: e2eThread.id }
-    )
+    // Actors are copied (so the enclave-actor dispatch gate fires for the thread)
+    // but key-WRAPS are NOT — the thread shares the root's SSK and resolves it
+    // against the root's wraps (a copied wrap is HPKE-bound to the root id and
+    // can't be unwrapped under the thread id).
     expect(copyActors).toHaveBeenCalledWith(
       {},
       { workspaceId: "ws_1", fromStreamId: "stream_root", toStreamId: e2eThread.id }
     )
+    expect(StreamE2eKeyWrapsRepository).not.toHaveProperty("copyToStream")
     // The returned/broadcast thread reflects the sealed state.
     expect(result.e2eEnabled).toBe(true)
   })

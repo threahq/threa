@@ -3,6 +3,7 @@ import { searchMessages, type SearchFilters, type SearchResultItem } from "@/api
 import { db, type CachedEvent } from "@/db"
 import { requestDecryption } from "@/lib/crypto/decrypt-cache"
 import { useE2eSession } from "@/stores/e2e-session-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 
 interface UseStreamSearchOptions {
   workspaceId: string
@@ -185,6 +186,11 @@ export function useStreamSearch({
   const session = useE2eSession(workspaceId, userId ?? "")
   const sessionRef = useRef(session)
   sessionRef.current = session
+  // A thread shares its root's SSK; resolve the key against the root (the search
+  // is scoped to this one stream, so every result carries `streamId`).
+  const rootStreamId = useStreamFromStore(streamId)?.rootStreamId ?? undefined
+  const rootStreamIdRef = useRef(rootStreamId)
+  rootStreamIdRef.current = rootStreamId
 
   // Resolve an event's searchable body. Sealed rows decrypt on demand (warming
   // the shared decrypt cache the timeline also reads); plaintext rows return
@@ -203,7 +209,13 @@ export function useStreamSearch({
       const entry = await requestDecryption(
         event.id,
         { contentMarkdown: sealed.contentMarkdown ?? "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
-        { privateKey: s.privateKey, recipientKeyId: s.keyId, workspaceId, streamId: event.streamId }
+        {
+          privateKey: s.privateKey,
+          recipientKeyId: s.keyId,
+          workspaceId,
+          streamId: event.streamId,
+          rootStreamId: rootStreamIdRef.current,
+        }
       )
       return entry.status === "decrypted" && entry.content ? entry.content.contentMarkdown : null
     },

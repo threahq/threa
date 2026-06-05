@@ -578,10 +578,18 @@ export class StreamService {
 
       // INV-E1: a thread under an E2E scratchpad must itself be E2E, or its
       // replies would be stored server-readable plaintext (the encryption
-      // guarantee silently breaks one reply deep). Inherit the root's E2E state
-      // — same SSK, same recipients (owner + enclave + bots) — onto the new
-      // thread in this same transaction, so `e2eEnabled` is true the instant the
-      // thread is and the composer/sink/dispatch all treat it like the root.
+      // guarantee silently breaks one reply deep). The thread shares the root's
+      // SSK: mark it E2E (so `e2eEnabled` is true the instant the thread is, and
+      // the composer/sink/dispatch all treat it like the root) and copy the
+      // actors (so the enclave-actor dispatch gate fires for the thread).
+      //
+      // The key-WRAPS are deliberately NOT copied. A wrap is HPKE-sealed bound by
+      // AAD to its `(streamId, generation, recipientKeyId)` slot (buildWrapAad),
+      // so a wrap copied onto the thread's id can't be unwrapped under the thread
+      // id — and it would also go stale on the next root key-roll. Instead, every
+      // reader resolves the thread's SSK against the ROOT's wraps (frontend
+      // decrypt + seal pass the root; the enclave worker fetches the root's
+      // wraps). The thread therefore needs no wraps of its own.
       // Only on first creation: a found-existing thread already carries it.
       if (created && rootStream?.e2eEnabled === true) {
         const rootE2e = await E2eStreamsRepository.getByStreamId(client, params.workspaceId, rootStreamId)
@@ -596,11 +604,6 @@ export class StreamService {
           ownerUserId: rootE2e.ownerUserId,
           ownerUserKeyId: rootE2e.ownerUserKeyId,
           currentKeyGeneration: rootE2e.currentKeyGeneration,
-        })
-        await StreamE2eKeyWrapsRepository.copyToStream(client, {
-          workspaceId: params.workspaceId,
-          fromStreamId: rootStreamId,
-          toStreamId: stream.id,
         })
         await E2eStreamActorsRepository.copyToStream(client, {
           workspaceId: params.workspaceId,

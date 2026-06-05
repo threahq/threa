@@ -164,11 +164,15 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
 
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", parentMessageId: draftInfo.parentMessageId }) : ""
+  // A draft thread has no stream row of its own yet — its E2E state is the
+  // parent's (threads inherit the root's SSK server-side, INV-E1). Read the flag
+  // off the parent so the composer encrypts attachments before upload and skips
+  // plaintext draft persistence, exactly as it would in the sealed thread.
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: draftInfo?.parentMessageId ?? "",
-    e2eEnabled: stream?.e2eEnabled === true,
+    e2eEnabled: (stream ?? parentStream)?.e2eEnabled === true,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
@@ -330,6 +334,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   // Handle draft thread submission
   const handleSubmit = useCallback(async () => {
     if (!draftInfo || !composer.canSend || !currentUserId || !panelId) return
+    // Fail closed: until the parent resolves we can't tell whether this thread
+    // inherits an encrypted root, and queuing a plaintext reply into a stream
+    // the server seals would jam the outbox on INV-E1 (400, retried forever).
+    // The parent loads from cache almost immediately; the user just retries.
+    if (!parentStream) return
 
     composer.setIsSending(true)
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
@@ -349,6 +358,16 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
       composer.clearDraft()
       composer.clearAttachments()
 
+      // Seal the reply under the encrypted root when the parent is E2E — the
+      // promoted thread inherits the root's SSK, so a plaintext send would be
+      // rejected by the backend's INV-E1 gate. The root is the parent's root
+      // (or the parent itself when it is the root).
+      const rootStreamId = parentStream.rootStreamId ?? parentStream.id
+      const e2e =
+        parentStream.e2eEnabled === true
+          ? { rootStreamId, hasActors: (parentStream.e2eActors?.length ?? 0) > 0 }
+          : undefined
+
       await queueDraftMessage(
         {
           contentJson,
@@ -364,6 +383,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
             parentMessageId: draftInfo.parentMessageId,
           },
           draftId: panelId,
+          e2e,
         }
       )
     } catch {
@@ -372,7 +392,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     } finally {
       composer.setIsSending(false)
     }
-  }, [draftInfo, composer, currentUserId, panelId, workspaceId, queueDraftMessage])
+  }, [draftInfo, composer, currentUserId, panelId, workspaceId, queueDraftMessage, parentStream])
 
   // Build the full ancestor chain for draft breadcrumbs: hook ancestors + parent stream
   const fullChain = useMemo(() => {

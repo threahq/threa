@@ -166,6 +166,85 @@ describe("sealStreamMessage + tryDecryptMessagePayload (v2 SSK loopback)", () =>
   })
 })
 
+describe("tryDecryptMessagePayload — thread inherits the root's SSK (resolve against root)", () => {
+  const THREAD = "stream_thread_01"
+
+  /**
+   * Stub the wraps endpoint so the SSK is wrapped under the ROOT's id (as the
+   * owner provisioned it) and the THREAD has no wraps of its own — exactly the
+   * post-#793-fix layout. The wrap AAD is bound to the root, so it can only be
+   * unwrapped when resolution targets the root.
+   */
+  async function stubRootOnlyWrap(ssk: Uint8Array, publicKey: Uint8Array): Promise<void> {
+    const wrap = await wrapStreamKey({
+      key: ssk,
+      recipientPublicKey: publicKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 0, recipientKeyId: KEY_ID }),
+    })
+    vi.spyOn(e2eKeyWrapsApi, "get").mockImplementation(async (_ws: string, sid: string) => ({
+      currentKeyGeneration: 0,
+      ownerUserId: "user_owner",
+      liveActorRecipients: [],
+      wraps:
+        sid === STREAM
+          ? [
+              {
+                keyGeneration: 0,
+                recipientKeyId: KEY_ID,
+                recipientKind: "user" as const,
+                wrapEnc: bytesToBase64(wrap.enc),
+                wrapCt: bytesToBase64(wrap.ct),
+              },
+            ]
+          : [],
+    }))
+  }
+
+  it("decrypts a thread message when rootStreamId points at the key-bearing root", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    await stubRootOnlyWrap(ssk, uik.publicKey)
+
+    const sealed = await sealStreamMessage({
+      contentMarkdown: "sealed in a thread",
+      streamId: STREAM,
+      messageId: MSG,
+      senderId: SENDER,
+      ssk,
+      keyGeneration: 0,
+    })
+
+    const result = await tryDecryptMessagePayload(
+      { contentMarkdown: "​", ciphertext: sealed.ciphertext, envelope: sealed.envelope },
+      { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: THREAD, rootStreamId: STREAM }
+    )
+    expect(result?.contentMarkdown).toBe("sealed in a thread")
+  })
+
+  it("returns null for a thread message when resolved against the thread id (the #793 bug)", async () => {
+    const uik = await generateUIK()
+    const ssk = generateStreamKey()
+    await stubRootOnlyWrap(ssk, uik.publicKey)
+
+    const sealed = await sealStreamMessage({
+      contentMarkdown: "sealed in a thread",
+      streamId: STREAM,
+      messageId: MSG,
+      senderId: SENDER,
+      ssk,
+      keyGeneration: 0,
+    })
+
+    // No rootStreamId → resolution falls back to the thread id, which has no
+    // wraps (and a copied wrap's AAD wouldn't match anyway) → undecryptable.
+    const result = await tryDecryptMessagePayload(
+      { contentMarkdown: "​", ciphertext: sealed.ciphertext, envelope: sealed.envelope },
+      { privateKey: uik.privateKey, recipientKeyId: KEY_ID, workspaceId: WS, streamId: THREAD }
+    )
+    expect(result).toBeNull()
+  })
+})
+
 describe("sealStreamName + tryOpenStreamName (sealed stream name loopback)", () => {
   it("round-trips a name sealed under the SSK and opened via the resolved wrap", async () => {
     const uik = await generateUIK()
