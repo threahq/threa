@@ -13,10 +13,11 @@ interface CompanionTabProps {
 export function CompanionTab({ workspaceId, stream }: CompanionTabProps) {
   const { mutateAsync: updateCompanionMode, isPending } = useUpdateCompanionMode(workspaceId, stream.id)
 
-  // INV-E1: E2E streams can't speak plaintext through the companion, so this
-  // surface is purely informational for them.
+  // On encrypted scratchpads Ariadne runs in the enclave (never the plaintext
+  // companion path), so the toggle is a real control here too: Companion =
+  // she replies via the enclave, Quiet = silent encrypted storage.
   const isE2e = stream.e2eEnabled === true
-  const disabled = isPending || isE2e
+  const disabled = isPending
 
   const handleChange = async (next: CompanionMode) => {
     if (next === stream.companionMode) return
@@ -64,8 +65,8 @@ export function CompanionTab({ workspaceId, stream }: CompanionTabProps) {
 
       {isE2e && (
         <p className="text-xs text-muted-foreground">
-          Companion mode stays off on encrypted scratchpads — it would reply in plaintext. Ariadne still replies here,
-          running in the encryption enclave so your content stays end-to-end encrypted.
+          On encrypted scratchpads Ariadne replies from inside the encryption enclave, so your content stays end-to-end
+          encrypted either way. Companion lets her reply; Quiet keeps this a silent, encrypted dump.
         </p>
       )}
     </div>

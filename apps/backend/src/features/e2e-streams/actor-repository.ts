@@ -52,6 +52,25 @@ export const E2eStreamActorsRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
+  /**
+   * Copy every actor (enclave + bots) from `fromStreamId` onto `toStreamId` in
+   * one set-based, idempotent insert (INV-56). Used when a thread inherits its
+   * root scratchpad's E2E state so the enclave (and any invited bots) are
+   * present on the thread and its turns dispatch the same way the root's do.
+   */
+  async copyToStream(
+    db: Querier,
+    params: { workspaceId: string; fromStreamId: string; toStreamId: string }
+  ): Promise<void> {
+    await db.query(sql`
+      INSERT INTO e2e_stream_actors (workspace_id, stream_id, kind, actor_id, key_id, added_at)
+      SELECT workspace_id, ${params.toStreamId}, kind, actor_id, key_id, added_at
+      FROM e2e_stream_actors
+      WHERE workspace_id = ${params.workspaceId} AND stream_id = ${params.fromStreamId}
+      ON CONFLICT (workspace_id, stream_id, kind, actor_id) DO NOTHING
+    `)
+  },
+
   async remove(db: Querier, workspaceId: string, streamId: string, kind: E2eActorKind, actorId: string): Promise<void> {
     await db.query(sql`
       DELETE FROM e2e_stream_actors
