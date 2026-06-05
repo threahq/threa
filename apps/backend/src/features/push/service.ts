@@ -8,6 +8,7 @@ import {
   ActivityTypes,
   StreamTypes,
   PRESENCE_INTERACTION_WINDOW_MS,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   type PrefNotificationLevel,
   type StreamType,
 } from "@threa/types"
@@ -86,6 +87,19 @@ interface PushServiceDeps {
  * The VAPID config is optional — when null, delivery methods are no-ops
  * (push feature is disabled but the service can still be constructed).
  */
+
+/**
+ * Resolve the `contentPreview` for a saved-reminder push. E2E messages store a
+ * zero-width placeholder on the wire (the server holds no key), so surfacing
+ * the raw markdown produces a blank notification — substitute a generic,
+ * leak-free label instead (E2EE-19), mirroring the saved-list/sidebar
+ * treatment. Normal messages get their body truncated; missing content → null.
+ */
+export function resolveSavedReminderPreview(contentMarkdown: string | null | undefined): string | null {
+  if (contentMarkdown === E2E_PLACEHOLDER_CONTENT_MARKDOWN) return "🔒 Encrypted message"
+  return contentMarkdown?.slice(0, 200) ?? null
+}
+
 export class PushService {
   private readonly pool: Pool
   private readonly vapidPublicKey: string
@@ -375,7 +389,7 @@ export class PushService {
         streamId,
         messageId,
         streamName: saved.message?.streamName ?? null,
-        contentPreview: saved.message?.contentMarkdown?.slice(0, 200) ?? null,
+        contentPreview: resolveSavedReminderPreview(saved.message?.contentMarkdown),
         unavailableReason: saved.unavailableReason ?? null,
       },
     })
