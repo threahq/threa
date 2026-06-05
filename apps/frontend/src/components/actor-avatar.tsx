@@ -3,7 +3,7 @@ import { Moon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useActors } from "@/hooks"
-import { formatStatusClearLabel } from "@/lib/status"
+import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
 type ActorAvatarSize = "xs" | "sm" | "md" | "lg"
@@ -106,7 +106,7 @@ export function ActorAvatar({
   return (
     <span
       className="relative inline-flex shrink-0"
-      title={statusTitle || (showDnd ? "Notifications paused" : undefined)}
+      title={statusTitle || (showDnd && info.dnd ? formatNotificationPauseLabel(info.dnd) : undefined)}
     >
       {avatar}
       <span

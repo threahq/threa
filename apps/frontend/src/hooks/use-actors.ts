@@ -1,5 +1,11 @@
 import { useCallback, useMemo } from "react"
-import { getAvatarUrl, getBotAvatarUrl, resolveActiveStatus, resolveNotificationPause } from "@threa/types"
+import {
+  getAvatarUrl,
+  getBotAvatarUrl,
+  resolveActiveStatus,
+  resolveNotificationPause,
+  type ActiveNotificationPause,
+} from "@threa/types"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { useWorkspaceUsers, useWorkspacePersonas, useWorkspaceBots } from "@/stores/workspace-store"
 import type { Persona, Bot, User, AuthorType } from "@threa/types"
@@ -19,8 +25,11 @@ interface ActorAvatarInfo {
   avatarUrl?: string
   /** Present only when the actor is a user with an active status. */
   status?: ActorStatus
-  /** True when the user currently has notifications paused (do-not-disturb). */
-  dnd?: boolean
+  /**
+   * The user's active notification pause (do-not-disturb), when present —
+   * carries the end instant so callers can show "paused until …".
+   */
+  dnd?: ActiveNotificationPause
 }
 
 /**
@@ -139,12 +148,12 @@ export function useActors(workspaceId: string): ActorLookup {
       if (actorId) {
         const workspaceUser = userMap.get(actorId)
         const status = resolveUserStatus(workspaceUser, toEmoji)
-        const dnd = isUserDnd(workspaceUser)
+        const dnd = resolveUserDnd(workspaceUser)
         const avatarUrl = getAvatarUrl(workspaceId, workspaceUser?.avatarUrl, 64)
         const info: ActorAvatarInfo = { fallback }
         if (avatarUrl) info.avatarUrl = avatarUrl
         if (status) info.status = status
-        if (dnd) info.dnd = true
+        if (dnd) info.dnd = dnd
         return info
       }
 
@@ -191,22 +200,20 @@ function resolveUserStatus(
 }
 
 /**
- * Whether a workspace user currently has notifications paused (do-not-disturb),
- * from either a do-not-disturb status or a manual pause. Tolerant of cached rows
- * predating the feature, which simply lack the fields.
+ * The workspace user's active notification pause (do-not-disturb), from either a
+ * do-not-disturb status or a manual pause, or null when notifications are
+ * flowing. Tolerant of cached rows predating the feature, which lack the fields.
  */
-function isUserDnd(user: User | undefined): boolean {
-  if (!user) return false
-  return (
-    resolveNotificationPause({
-      statusEmoji: user.statusEmoji ?? null,
-      statusText: user.statusText ?? null,
-      statusExpiresAt: user.statusExpiresAt ?? null,
-      statusPausesNotifications: user.statusPausesNotifications ?? false,
-      notificationsPausedUntil: user.notificationsPausedUntil ?? null,
-      notificationsPausedIndefinitely: user.notificationsPausedIndefinitely ?? false,
-    }) !== null
-  )
+function resolveUserDnd(user: User | undefined): ActiveNotificationPause | null {
+  if (!user) return null
+  return resolveNotificationPause({
+    statusEmoji: user.statusEmoji ?? null,
+    statusText: user.statusText ?? null,
+    statusExpiresAt: user.statusExpiresAt ?? null,
+    statusPausesNotifications: user.statusPausesNotifications ?? false,
+    notificationsPausedUntil: user.notificationsPausedUntil ?? null,
+    notificationsPausedIndefinitely: user.notificationsPausedIndefinitely ?? false,
+  })
 }
 
 function initialsFrom(name: string | null | undefined): string | undefined {

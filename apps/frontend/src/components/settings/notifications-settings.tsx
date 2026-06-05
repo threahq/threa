@@ -368,28 +368,29 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
   // here without changing the status — explain that instead of a dead button.
   const statusOnly = active?.source === "status"
 
+  // The pause-duration choices, shared by the initial "Pause notifications"
+  // trigger and the "Change" trigger on an active pause. Timed options first,
+  // then the custom-time path, then the indefinite option.
+  const pauseMenuContent = (
+    <DropdownMenuContent align="start">
+      {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration !== null).map((option) => (
+        <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+          {option.label}
+        </DropdownMenuItem>
+      ))}
+      <DropdownMenuItem onSelect={openCustom}>Until a specific time…</DropdownMenuItem>
+      {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null).map((option) => (
+        <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
+          {option.label}
+        </DropdownMenuItem>
+      ))}
+    </DropdownMenuContent>
+  )
+
   // One ternary level (INV-47): pick the control via if/else, render it once.
+  // `customOpen` wins so the picker can adjust an already-active pause in place.
   let control: ReactNode
-  if (active) {
-    control = (
-      <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <Moon className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{formatNotificationPauseLabel(active)}</p>
-            {statusOnly && (
-              <p className="text-xs text-muted-foreground">Set by your status — clear your status to resume.</p>
-            )}
-          </div>
-        </div>
-        {!statusOnly && (
-          <Button onClick={handleResume} variant="outline" size="sm" disabled={busy}>
-            Resume
-          </Button>
-        )}
-      </div>
-    )
-  } else if (customOpen) {
+  if (customOpen) {
     control = (
       <div className="space-y-3 rounded-lg border bg-card p-4">
         <DateTimeField
@@ -410,6 +411,37 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
     )
+  } else if (active) {
+    control = (
+      <div className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <Moon className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{formatNotificationPauseLabel(active)}</p>
+            {statusOnly ? (
+              <p className="text-xs text-muted-foreground">Set by your status — clear your status to resume.</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Overrides your notification level while paused.</p>
+            )}
+          </div>
+        </div>
+        {!statusOnly && (
+          <div className="flex shrink-0 items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" disabled={busy}>
+                  Change
+                </Button>
+              </DropdownMenuTrigger>
+              {pauseMenuContent}
+            </DropdownMenu>
+            <Button onClick={handleResume} variant="outline" size="sm" disabled={busy}>
+              Resume
+            </Button>
+          </div>
+        )}
+      </div>
+    )
   } else {
     control = (
       <DropdownMenu>
@@ -419,19 +451,7 @@ function PauseNotificationsSection({ workspaceId }: { workspaceId: string }) {
             Pause notifications
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
-          {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration !== null).map((option) => (
-            <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
-              {option.label}
-            </DropdownMenuItem>
-          ))}
-          <DropdownMenuItem onSelect={openCustom}>Until a specific time…</DropdownMenuItem>
-          {NOTIFICATION_PAUSE_OPTIONS.filter((o) => o.duration === null).map((option) => (
-            <DropdownMenuItem key={option.id} onSelect={() => handlePause(option)}>
-              {option.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
+        {pauseMenuContent}
       </DropdownMenu>
     )
   }

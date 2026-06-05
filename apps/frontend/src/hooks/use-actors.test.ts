@@ -331,7 +331,7 @@ describe("useActors", () => {
       const { result } = renderHook(() => useActors(workspaceId), {
         wrapper: createTestWrapper(queryClient),
       })
-      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBe(true)
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toEqual({ until: future, source: "status" })
     })
 
     it("flags do-not-disturb for an indefinite manual pause", () => {
@@ -340,7 +340,7 @@ describe("useActors", () => {
       const { result } = renderHook(() => useActors(workspaceId), {
         wrapper: createTestWrapper(queryClient),
       })
-      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBe(true)
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toEqual({ until: null, source: "manual" })
     })
 
     it("flags do-not-disturb for a manual pause still in its window", () => {
@@ -350,7 +350,7 @@ describe("useActors", () => {
       const { result } = renderHook(() => useActors(workspaceId), {
         wrapper: createTestWrapper(queryClient),
       })
-      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBe(true)
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toEqual({ until: future, source: "manual" })
     })
 
     it("does not flag do-not-disturb for an elapsed manual pause", () => {
