@@ -56,7 +56,10 @@ test.describe("E2E encrypted scratchpads", () => {
     await expect(page.getByRole("button", { name: /^Unlock$/ }).first()).toBeVisible()
 
     // Unlock from the gate → the gate clears and the timeline returns.
-    await page.getByRole("button", { name: /^Unlock$/ }).first().click()
+    await page
+      .getByRole("button", { name: /^Unlock$/ })
+      .first()
+      .click()
     const unlock = page.getByRole("dialog")
     await expect(unlock.getByText("Unlock encrypted scratchpads")).toBeVisible({ timeout: 10_000 })
     await unlock.locator("input[type='password'], input[type='text']").first().fill(PASSPHRASE)
@@ -159,5 +162,48 @@ test.describe("E2E encrypted scratchpads", () => {
     const image = page.locator('img[alt="pasted-image-1.png"]')
     await expect(image).toBeVisible({ timeout: 30_000 })
     expect(await image.getAttribute("src")).toMatch(/^blob:/)
+  })
+
+  test("in-stream search matches the DECRYPTED body of an unlocked encrypted message (E2EE-15)", async ({ page }) => {
+    await loginAndCreateWorkspace(page, "e2e-enc-search")
+
+    // Create an encrypted scratchpad and stay unlocked (we search within the
+    // same session, so the body is decryptable on demand).
+    await page.getByRole("button", { name: "New", exact: true }).click()
+    await page.getByRole("menuitem", { name: /New Encrypted Scratchpad/i }).click()
+    const setup = page.getByRole("dialog")
+    await expect(setup.getByText("Set up encrypted scratchpads")).toBeVisible({ timeout: 10_000 })
+    await setup.locator("#e2e-passphrase").fill(PASSPHRASE)
+    await setup.locator("#e2e-passphrase-confirm").fill(PASSPHRASE)
+    await setup.locator("#e2e-acknowledged").check()
+    const trustDevice = setup.locator("#e2e-setup-trust-device")
+    if (await trustDevice.isChecked()) await trustDevice.uncheck()
+    await setup.getByRole("button", { name: "Enable encryption" }).click()
+    await expect(page.getByText("Encrypted", { exact: true })).toBeVisible({ timeout: 15_000 })
+
+    // Send a message. On the wire this is sealed — the server stores ciphertext
+    // plus a zero-width placeholder, never this token — so any later search hit
+    // can ONLY come from decrypting locally. That's the documented promise the
+    // old code broke (Cmd-F returned zero matches because both phases saw the
+    // placeholder): E2EE-15 / UX-21.
+    const token = "VELVET-OTTER-SEARCHME"
+    const editor = page.locator("[contenteditable='true']")
+    await editor.click()
+    await page.keyboard.type(`the launch codename is ${token}`)
+    await page.getByRole("button", { name: "Send", exact: true }).first().click()
+    // The row renders decrypted in the timeline (composer clears on send).
+    await expect(page.getByText(token).first()).toBeVisible({ timeout: 20_000 })
+
+    // Open in-stream search via the same DOM event the header search button
+    // dispatches — deterministic across Cmd/Ctrl platforms — and query the token
+    // in lowercase to also prove the match is case-insensitive.
+    await page.evaluate(() => document.dispatchEvent(new Event("threa:open-stream-search")))
+    const searchInput = page.getByPlaceholder("Search in conversation...")
+    await expect(searchInput).toBeVisible({ timeout: 10_000 })
+    await searchInput.fill(token.toLowerCase())
+
+    // The match counter (activeMatchIndex+1 / matchCount) only renders once the
+    // local decrypted search found the body. One message, one occurrence → 1/1.
+    await expect(page.getByText("1/1")).toBeVisible({ timeout: 10_000 })
   })
 })

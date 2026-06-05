@@ -1,10 +1,74 @@
 import { useState, useCallback, useRef, useMemo } from "react"
 import { searchMessages, type SearchFilters, type SearchResultItem } from "@/api"
-import { db } from "@/db"
+import { db, type CachedEvent } from "@/db"
+import { requestDecryption } from "@/lib/crypto/decrypt-cache"
+import { useE2eSession } from "@/stores/e2e-session-store"
 
 interface UseStreamSearchOptions {
   workspaceId: string
   streamId: string
+  /**
+   * When the stream is end-to-end encrypted, in-stream search matches against
+   * the *decrypted* message bodies (the server only stores ciphertext + a
+   * zero-width placeholder), and the server-side ILIKE phase is skipped because
+   * it can only ever match the placeholder. Plaintext streams are unaffected.
+   */
+  e2eEnabled?: boolean
+  /** Current workspace user id — needed to resolve the E2E session for decryption. */
+  userId?: string | null
+}
+
+/**
+ * Resolve an event's searchable plaintext body: the bare `contentMarkdown` for
+ * a plaintext row, or the decrypted markdown for a sealed row. Returns `null`
+ * when a sealed row can't be read (locked session / decrypt failure) so it is
+ * simply skipped rather than matched against its zero-width placeholder.
+ */
+export type SearchContentResolver = (event: CachedEvent) => Promise<string | null>
+
+/** Extract the sealed payload off a cached event, or null when it's plaintext. */
+function readSealedEventPayload(
+  event: CachedEvent
+): { ciphertext: string; envelope: unknown; contentMarkdown?: string } | null {
+  if (event.eventType !== "message_created") return null
+  const payload = event.payload as Record<string, unknown> | undefined
+  if (!payload || typeof payload.ciphertext !== "string" || !payload.envelope) return null
+  return {
+    ciphertext: payload.ciphertext,
+    envelope: payload.envelope,
+    contentMarkdown: typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : undefined,
+  }
+}
+
+/**
+ * Pure matcher: given loaded events (any order) and a content resolver, return
+ * the chronologically-ordered `SearchResultItem`s whose resolved body contains
+ * `query` (case-insensitive). Shared by the plaintext and E2E search paths and
+ * unit-tested directly.
+ */
+export async function collectLocalMatches(
+  events: CachedEvent[],
+  query: string,
+  resolve: SearchContentResolver
+): Promise<SearchResultItem[]> {
+  const lowerQuery = query.toLowerCase()
+  const sorted = [...events].sort((a, b) => a._sequenceNum - b._sequenceNum)
+  const resolved = await Promise.all(sorted.map(async (e) => ({ e, content: await resolve(e) })))
+  const out: SearchResultItem[] = []
+  for (const { e, content } of resolved) {
+    if (!content || !content.toLowerCase().includes(lowerQuery)) continue
+    const payload = e.payload as { messageId?: string }
+    out.push({
+      id: payload.messageId ?? e.id,
+      streamId: e.streamId,
+      content,
+      authorId: e.actorId ?? "",
+      authorType: (e.actorType ?? "user") as "user" | "persona",
+      createdAt: e.createdAt,
+      rank: 0,
+    })
+  }
+  return out
 }
 
 /** A single navigable match: one text occurrence within one message */
@@ -70,33 +134,22 @@ function buildFlatMatches(results: SearchResultItem[], query: string): FlatMatch
   return matches
 }
 
-/** Search local IDB events for a text match (case-insensitive substring) */
-async function searchLocalEvents(streamId: string, query: string): Promise<SearchResultItem[]> {
-  const lowerQuery = query.toLowerCase()
+/**
+ * Search local IDB events for a text match (case-insensitive substring),
+ * resolving each event's body through `resolve` — bare markdown for plaintext
+ * streams, decrypted markdown for E2E streams.
+ */
+async function searchLocalEvents(
+  streamId: string,
+  query: string,
+  resolve: SearchContentResolver
+): Promise<SearchResultItem[]> {
   const events = await db.events
     .where("streamId")
     .equals(streamId)
-    .filter((e) => {
-      if (e.eventType !== "message_created" && e.eventType !== "companion_response") return false
-      const payload = e.payload as { contentMarkdown?: string }
-      return !!payload.contentMarkdown && payload.contentMarkdown.toLowerCase().includes(lowerQuery)
-    })
+    .filter((e) => e.eventType === "message_created" || e.eventType === "companion_response")
     .toArray()
-
-  return events
-    .sort((a, b) => a._sequenceNum - b._sequenceNum)
-    .map((e) => {
-      const payload = e.payload as { messageId?: string; contentMarkdown?: string }
-      return {
-        id: payload.messageId ?? e.id,
-        streamId: e.streamId,
-        content: payload.contentMarkdown ?? "",
-        authorId: e.actorId ?? "",
-        authorType: (e.actorType ?? "user") as "user" | "persona",
-        createdAt: e.createdAt,
-        rank: 0,
-      }
-    })
+  return collectLocalMatches(events, query, resolve)
 }
 
 /** Merge local and server results, dedup by id, sort chronologically (oldest first) */
@@ -107,7 +160,12 @@ function mergeAndSort(local: SearchResultItem[], server: SearchResultItem[]): Se
   return Array.from(seen.values()).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
 }
 
-export function useStreamSearch({ workspaceId, streamId }: UseStreamSearchOptions): UseStreamSearchReturn {
+export function useStreamSearch({
+  workspaceId,
+  streamId,
+  e2eEnabled = false,
+  userId = null,
+}: UseStreamSearchOptions): UseStreamSearchReturn {
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -120,6 +178,37 @@ export function useStreamSearch({ workspaceId, streamId }: UseStreamSearchOption
   const inputRef = useRef<HTMLInputElement>(null)
   const activeMatchIndexRef = useRef(activeMatchIndex)
   activeMatchIndexRef.current = activeMatchIndex
+
+  // E2E search reads decrypted bodies on demand. For a plaintext stream the
+  // session is irrelevant (sealed-payload resolution returns null and the row
+  // falls through to its plaintext `contentMarkdown`), so this is a no-op there.
+  const session = useE2eSession(workspaceId, userId ?? "")
+  const sessionRef = useRef(session)
+  sessionRef.current = session
+
+  // Resolve an event's searchable body. Sealed rows decrypt on demand (warming
+  // the shared decrypt cache the timeline also reads); plaintext rows return
+  // their stored markdown. A sealed row that can't be opened resolves to null
+  // and is skipped — matching the documented "search over already-decrypted
+  // content" behavior rather than matching the zero-width placeholder.
+  const resolveContent = useCallback<SearchContentResolver>(
+    async (event) => {
+      const sealed = readSealedEventPayload(event)
+      if (!sealed) {
+        const payload = event.payload as { contentMarkdown?: string }
+        return typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : null
+      }
+      const s = sessionRef.current
+      if (s.status !== "unlocked" || !s.privateKey || !s.keyId) return null
+      const entry = await requestDecryption(
+        event.id,
+        { contentMarkdown: sealed.contentMarkdown ?? "", envelope: sealed.envelope, ciphertext: sealed.ciphertext },
+        { privateKey: s.privateKey, recipientKeyId: s.keyId, workspaceId, streamId: event.streamId }
+      )
+      return entry.status === "decrypted" && entry.content ? entry.content.contentMarkdown : null
+    },
+    [workspaceId]
+  )
 
   // Build flat matches from results + current query
   const flatMatches = useMemo(() => buildFlatMatches(results, query), [results, query])
@@ -138,8 +227,9 @@ export function useStreamSearch({ workspaceId, streamId }: UseStreamSearchOption
     let localResults: SearchResultItem[] = []
 
     try {
-      // Phase 1: instant local IDB substring search
-      localResults = await searchLocalEvents(streamId, trimmed)
+      // Phase 1: instant local IDB substring search (decrypting sealed rows on
+      // demand for E2E streams).
+      localResults = await searchLocalEvents(streamId, trimmed, resolveContent)
       if (searchId !== searchIdRef.current) return
 
       if (localResults.length > 0) {
@@ -147,6 +237,17 @@ export function useStreamSearch({ workspaceId, streamId }: UseStreamSearchOption
         const localFlat = buildFlatMatches(localResults, trimmed)
         setActiveMatchIndex(localFlat.length > 0 ? localFlat.length - 1 : 0)
         setHasSearched(true)
+      }
+
+      // E2E streams: the server only holds ciphertext + a zero-width placeholder,
+      // so the ILIKE phase can never match the real body. The local decrypted
+      // search above is authoritative — finalize (even when empty) and stop.
+      if (e2eEnabled) {
+        const localFlat = buildFlatMatches(localResults, trimmed)
+        setResults(localResults)
+        setActiveMatchIndex(localFlat.length > 0 ? localFlat.length - 1 : -1)
+        setHasSearched(true)
+        return
       }
 
       // Phase 2: server exact search (ILIKE) — covers events not in IDB.
@@ -190,7 +291,7 @@ export function useStreamSearch({ workspaceId, streamId }: UseStreamSearchOption
         setIsSearching(false)
       }
     }
-  }, [workspaceId, streamId])
+  }, [workspaceId, streamId, e2eEnabled, resolveContent])
 
   const prevResult = useCallback(() => {
     if (flatMatches.length === 0) return
