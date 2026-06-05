@@ -58,16 +58,12 @@ export async function wrapPrivate(privateKey: CryptoKey, kek: CryptoKey): Promis
  * `hpke.open`. Throws if the bundle was tampered with (GCM tag mismatch) or
  * the KEK is wrong.
  *
- * Defaults to a NON-EXTRACTABLE key: the unlock path never needs the raw bytes
- * again, and a non-extractable key is what we persist for "keep me unlocked on
- * this device". Rotation passes `{ extractable: true }` because it must
- * re-export the bytes to wrap them under the new passphrase.
+ * Returns an EXTRACTABLE key. The in-memory session key never needs to be
+ * non-extractable: at-rest protection comes from wrapping (the server bundle,
+ * the device key — see `device-wrap-key.ts`), not from the live key's flag, and
+ * the rotation / device-trust paths must be able to re-export the raw bytes.
  */
-export async function unwrapPrivate(
-  bundle: Uint8Array,
-  kek: CryptoKey,
-  opts?: { extractable?: boolean }
-): Promise<CryptoKey> {
+export async function unwrapPrivate(bundle: Uint8Array, kek: CryptoKey): Promise<CryptoKey> {
   if (bundle.length < 1 + IV_LENGTH + 1) {
     throw new Error("Wrapped private bundle is too short")
   }
@@ -78,17 +74,7 @@ export async function unwrapPrivate(
   const iv = bundle.slice(1, 1 + IV_LENGTH)
   const ciphertext = bundle.slice(1 + IV_LENGTH)
   const privBytes = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, kek, ciphertext))
-  return importRecipientPrivateKey(privBytes, { extractable: opts?.extractable ?? false })
-}
-
-/**
- * Re-import a private key as a non-extractable CryptoKey. Used when we hold an
- * extractable key (e.g. straight from `generateUIK` during first-time setup)
- * but want to persist the hardened, non-extractable form to the device store.
- */
-export async function toNonExtractable(privateKey: CryptoKey): Promise<CryptoKey> {
-  const raw = await exportPrivateKey(privateKey)
-  return importRecipientPrivateKey(raw, { extractable: false })
+  return importRecipientPrivateKey(privBytes, { extractable: true })
 }
 
 /**

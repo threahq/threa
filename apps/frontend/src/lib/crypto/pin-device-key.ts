@@ -40,9 +40,9 @@ export interface PinWrappedKey {
 }
 
 /**
- * Wrap the UIK private key under a PIN-derived KEK. The caller must hold an
- * *extractable* private key (e.g. straight from setup, or `unwrapPrivate(...,
- * { extractable: true })`) — `wrapPrivate` exports the raw bytes to seal them.
+ * Wrap the UIK private key under a PIN-derived KEK. `wrapPrivate` exports the
+ * raw bytes to seal them, so the caller must hold an extractable private key —
+ * which is what setup and `unwrapPrivate` both return.
  */
 export async function wrapPrivateKeyWithPin(
   privateKey: CryptoKey,
@@ -57,10 +57,9 @@ export async function wrapPrivateKeyWithPin(
 }
 
 /**
- * Recover the UIK private key from a PIN-wrapped bundle. Returns a
- * NON-EXTRACTABLE key (the unlock path never needs the raw bytes again).
- * Throws on the wrong PIN — the AES-GCM tag check fails — so callers can count
- * the failure toward the lockout.
+ * Recover the UIK private key from a PIN-wrapped bundle. Throws on the wrong
+ * PIN — the AES-GCM tag check fails — so callers can count the failure toward
+ * the lockout.
  */
 export async function unwrapPrivateKeyWithPin(wrapped: PinWrappedKey, pin: string): Promise<CryptoKey> {
   const kek = await deriveKEK(pin, base64ToBytes(wrapped.pinSalt), wrapped.pinKdfParams)

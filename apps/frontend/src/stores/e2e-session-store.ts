@@ -4,7 +4,8 @@ import { clearDecryptCache } from "@/lib/crypto/decrypt-cache"
 import { clearStreamKeyCache } from "@/lib/crypto/stream-key-cache"
 import { clearAttachmentRefCache } from "@/lib/crypto/attachment-crypto"
 import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
-import { generateUIK, toNonExtractable, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
+import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
+import { unwrapPrivateKeyFromDevice, wrapPrivateKeyForDevice } from "@/lib/crypto/device-wrap-key"
 import {
   MAX_PIN_ATTEMPTS,
   unwrapPrivateKeyWithPin,
@@ -18,11 +19,12 @@ import { db, type CachedE2eDeviceKey, type CachedE2eKey } from "@/db"
 /**
  * In-memory session store for the user's unwrapped E2E identity key.
  *
- * The unwrapped private key never leaves this module: it's held as a
- * non-extractable `CryptoKey` for the life of the session and discarded on
- * lock / sign-out. The wrapped bundle (encrypted by the passphrase-derived
- * KEK) lives in IDB for offline unlock and on the server for cross-device
- * recovery; the bare private key never persists anywhere.
+ * The unwrapped private key never leaves this module: it's held as a live
+ * `CryptoKey` for the life of the session and discarded on lock / sign-out.
+ * The wrapped bundle (encrypted by the passphrase-derived KEK) lives in IDB
+ * for offline unlock and on the server for cross-device recovery; the bare
+ * private key is never persisted in the clear (the "keep me unlocked" device
+ * key seals it under a non-extractable AES key — see `device-wrap-key.ts`).
  *
  * The status machine:
  *   - `unknown`   — initial state before we've checked for a cached key
@@ -177,10 +179,11 @@ function readDeviceKey(workspaceId: string, userId: string): Promise<CachedE2eDe
 }
 
 /**
- * Persist the unwrapped private key for "keep me unlocked on this device".
- * The key MUST already be non-extractable — we never write extractable key
- * material to disk. Callers holding an extractable key (fresh from setup)
- * convert it via `toNonExtractable` first.
+ * Persist the private key for "keep me unlocked on this device". The key is
+ * sealed under a freshly generated, non-extractable AES-GCM device key before
+ * it touches disk — see `device-wrap-key.ts` for why we don't store the X25519
+ * `CryptoKey` directly. `privateKey` must be extractable so its bytes can be
+ * exported for sealing; all in-memory session keys are.
  */
 async function persistDeviceKey(
   workspaceId: string,
@@ -189,13 +192,15 @@ async function persistDeviceKey(
   publicKey: Uint8Array,
   privateKey: CryptoKey
 ): Promise<void> {
+  const { deviceWrapKey, deviceWrappedPrivate } = await wrapPrivateKeyForDevice(privateKey)
   const row: CachedE2eDeviceKey = {
     id: `${workspaceId}:${userId}`,
     workspaceId,
     userId,
     keyId,
     publicKey: bytesToBase64(publicKey),
-    privateKey,
+    deviceWrapKey,
+    deviceWrappedPrivate,
     trustedAt: new Date().toISOString(),
   }
   await db.e2eDeviceKeys.put(row)
@@ -204,10 +209,9 @@ async function persistDeviceKey(
 /**
  * Best-effort variant of `persistDeviceKey` that never throws. Returns `true`
  * when the key was written, `false` when the IDB put failed (e.g. private
- * browsing, quota, or a browser that won't structured-clone a non-extractable
- * CryptoKey). A failure here means "unlocked for this session but not kept
- * unlocked" — never a failed unlock — so callers must not surface it as a
- * wrong-passphrase error.
+ * browsing, quota, or a blocked database). A failure here means "unlocked for
+ * this session but not kept unlocked" — never a failed unlock — so callers must
+ * not surface it as a wrong-passphrase error.
  */
 async function tryPersistDeviceKey(
   workspaceId: string,
@@ -309,9 +313,10 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
   // Already unlocked — bootstrap is a no-op once we're holding the key.
   if (scope.state.status === "unlocked") return
 
-  // "Keep me unlocked on this device": if a persisted private key exists, jump
-  // straight to `unlocked` (no passphrase, no Argon2id). The stored key is
-  // non-extractable, so even reading it from IDB doesn't leak raw bytes.
+  // "Keep me unlocked on this device": if a persisted device key exists, jump
+  // straight to `unlocked` (no passphrase, no Argon2id) by unwrapping the
+  // sealed private bytes with the non-extractable AES device key. Reading the
+  // row doesn't leak raw bytes — that AES key can't be exported.
   const [deviceKey, cachedRow] = await Promise.all([
     readDeviceKey(workspaceId, userId),
     db.e2eKeys.get(`${workspaceId}:${userId}`),
@@ -320,16 +325,39 @@ export async function loadE2eKeyForUser(workspaceId: string, userId: string): Pr
   if (cachedRow) {
     scope.cachedKey = toCachedKeyView(cachedRow)
   }
-  if (deviceKey?.privateKey) {
-    setState(workspaceId, userId, {
-      status: "unlocked",
-      keyId: deviceKey.keyId,
-      publicKey: base64ToBytes(deviceKey.publicKey),
-      privateKey: deviceKey.privateKey,
-      deviceTrusted: true,
-      ...NO_UNLOCK_PROMPT,
-      error: null,
-    })
+  if (deviceKey?.deviceWrapKey && deviceKey.deviceWrappedPrivate) {
+    let privateKey: CryptoKey | null = null
+    try {
+      privateKey = await unwrapPrivateKeyFromDevice({
+        deviceWrapKey: deviceKey.deviceWrapKey,
+        deviceWrappedPrivate: deviceKey.deviceWrappedPrivate,
+      })
+    } catch {
+      // Corrupt / unreadable device key — forget it and fall through to the
+      // passphrase prompt rather than wedging in a half-resumed state.
+      await deleteDeviceKey(workspaceId, userId).catch(() => {})
+    }
+    if (scope.loadGeneration !== generation) return
+    if (privateKey) {
+      setState(workspaceId, userId, {
+        status: "unlocked",
+        keyId: deviceKey.keyId,
+        publicKey: base64ToBytes(deviceKey.publicKey),
+        privateKey,
+        deviceTrusted: true,
+        ...NO_UNLOCK_PROMPT,
+        error: null,
+      })
+    } else if (cachedRow) {
+      setState(workspaceId, userId, {
+        status: "locked",
+        ...NO_UNLOCK_PROMPT,
+        keyId: scope.cachedKey!.keyId,
+        publicKey: scope.cachedKey!.publicKey,
+        deviceTrusted: false,
+        error: null,
+      })
+    }
   } else if (deviceKey?.pinWrappedPrivate) {
     // PIN-gated: the key is here but sealed under the PIN, so resume `locked`
     // and flag `pinProtected` so the unlock surface prompts for the PIN.
@@ -519,12 +547,11 @@ export async function setupNewKey(
     trustPersisted = await tryPersistPinDeviceKey(workspaceId, userId, view.keyId, view.publicKey, wrapped)
     if (scope.loadGeneration !== generation) return
   } else if (trustDevice) {
-    // The freshly generated key is extractable; persist the hardened
-    // non-extractable form so the raw bytes never touch disk. Best-effort: a
-    // failed device-key write must not fail setup — the key is already on the
-    // server and cached, the user is just not kept unlocked on this device.
-    const hardened = await toNonExtractable(uik.privateKey)
-    trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, hardened)
+    // Seal the fresh key under a non-extractable AES device key so the raw
+    // bytes never touch disk. Best-effort: a failed device-key write must not
+    // fail setup — the key is already on the server and cached, the user is
+    // just not kept unlocked on this device.
+    trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, uik.privateKey)
     if (scope.loadGeneration !== generation) return
   }
   scope.cachedKey = view
@@ -570,10 +597,7 @@ export async function unlock(
   let privateKey: CryptoKey
   try {
     const kek = await deriveKEK(passphrase, cached.kdfSalt, cached.kdfParams)
-    // Non-extractable by default — the session never needs the raw bytes back.
-    // Setting a device PIN or biometric is the exception: it must re-seal the
-    // private key under the new KEK, which requires an extractable key to export.
-    privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek, { extractable: !!pin || !!webauthn })
+    privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, kek)
   } catch (err) {
     // Only a derive/unwrap failure is the wrong-passphrase (or tampered-bundle)
     // case — the one condition the modal surfaces as "try again". Failures in
@@ -790,8 +814,7 @@ export async function rotatePassphrase(
   const generation = ++scope.loadGeneration
 
   const oldKek = await deriveKEK(oldPassphrase, cached.kdfSalt, cached.kdfParams)
-  // Extractable: rotation re-exports the raw bytes to re-wrap under the new KEK.
-  const privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, oldKek, { extractable: true })
+  const privateKey = await unwrapPrivate(cached.encryptedPrivateBundle, oldKek)
 
   const newSalt = generateSalt()
   const newKek = await deriveKEK(newPassphrase, newSalt, params)
@@ -828,8 +851,7 @@ export async function rotatePassphrase(
     if (existing?.pinWrappedPrivate || existing?.webauthnWrappedPrivate) {
       await deleteDeviceKey(workspaceId, userId).catch(() => {})
     } else {
-      const hardened = await toNonExtractable(privateKey)
-      trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, hardened)
+      trustPersisted = await tryPersistDeviceKey(workspaceId, userId, view.keyId, view.publicKey, privateKey)
     }
     if (scope.loadGeneration !== generation) return
   }
@@ -904,9 +926,9 @@ export async function lock(workspaceId: string, userId: string): Promise<void> {
 
 /**
  * Toggle "keep me unlocked on this device" from settings without re-entering
- * the passphrase. Enabling persists the current (already unwrapped) private
- * key as a non-extractable device key; disabling forgets it. Only meaningful
- * while `unlocked`.
+ * the passphrase. Enabling seals the current (already unwrapped) private key
+ * under a non-extractable AES device key and persists it; disabling forgets it.
+ * Only meaningful while `unlocked`.
  */
 export async function setDeviceTrust(workspaceId: string, userId: string, trust: boolean): Promise<void> {
   const scope = getOrCreateScope(workspaceId, userId)
@@ -915,8 +937,7 @@ export async function setDeviceTrust(workspaceId: string, userId: string, trust:
     if (status !== "unlocked" || !privateKey || !keyId || !publicKey) {
       throw new Error("Unlock encrypted scratchpads before trusting this device")
     }
-    // The in-memory key may be extractable (e.g. right after setup); harden it.
-    await persistDeviceKey(workspaceId, userId, keyId, publicKey, await toNonExtractable(privateKey))
+    await persistDeviceKey(workspaceId, userId, keyId, publicKey, privateKey)
     setState(workspaceId, userId, { deviceTrusted: true })
     return
   }

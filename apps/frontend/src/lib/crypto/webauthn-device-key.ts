@@ -44,7 +44,7 @@ export async function wrapPrivateKeyWithPrf(privateKey: CryptoKey, prfSecret: Ui
   return bytesToBase64(await wrapPrivate(privateKey, kek))
 }
 
-/** Recover the (non-extractable) UIK private key from a PRF-wrapped bundle. */
+/** Recover the UIK private key from a PRF-wrapped bundle. */
 export async function unwrapPrivateKeyWithPrf(bundleB64: string, prfSecret: Uint8Array): Promise<CryptoKey> {
   const kek = await importPrfKek(prfSecret)
   return unwrapPrivate(base64ToBytes(bundleB64), kek)
