@@ -57,6 +57,13 @@ export interface LinearOAuthConfig {
   integrationSecret: string
 }
 
+export interface GiphyConfig {
+  /** Whether the `/giphy` picker is available — true when GIPHY_API_KEY is set. */
+  enabled: boolean
+  /** Giphy API key. Empty string disables the feature. */
+  apiKey: string
+}
+
 export interface MediaConvertConfig {
   /** IAM role ARN that MediaConvert assumes to access S3 */
   roleArn: string
@@ -88,6 +95,7 @@ export interface Config {
   s3: S3Config
   attachments: AttachmentSafetyConfig
   push: PushConfig
+  giphy: GiphyConfig
   github: GitHubAppConfig
   linear: LinearOAuthConfig
   mediaConvert: MediaConvertConfig
@@ -177,6 +185,10 @@ export function loadConfig(): Config {
       vapidPrivateKey: process.env.VAPID_PRIVATE_KEY || "",
       vapidSubject: process.env.VAPID_SUBJECT || "",
       enabled: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT),
+    },
+    giphy: {
+      enabled: !!process.env.GIPHY_API_KEY,
+      apiKey: process.env.GIPHY_API_KEY || "",
     },
     github: {
       enabled: !!(

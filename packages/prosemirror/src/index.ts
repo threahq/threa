@@ -31,9 +31,12 @@ export {
   parseSharedMessageHref,
   buildMemoHref,
   parseMemoHref,
+  buildGiphyHref,
+  parseGiphyHref,
   type QuoteHref,
   type SharedMessageHref,
   type MemoHref,
+  type GiphyHref,
 } from "./pointer-urls"
 export { collectAttachmentReferenceIds } from "./extractors"
 

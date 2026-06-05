@@ -26,6 +26,7 @@ import {
   createEnclaveInvokeWorker,
 } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
+import { GiphyService } from "./features/giphy"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
 import { WorkspaceAuthzService } from "./features/workspace-authz"
 import {
@@ -562,6 +563,7 @@ export async function startServer(): Promise<ServerInstance> {
     linear: config.linear,
   })
   const linkPreviewService = new LinkPreviewService({ pool, streamService })
+  const giphyService = new GiphyService({ config: config.giphy })
 
   const isProduction = process.env.NODE_ENV === "production"
   const app = createApp({ corsAllowedOrigins: config.corsAllowedOrigins, isProduction })
@@ -609,6 +611,7 @@ export async function startServer(): Promise<ServerInstance> {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    giphyService,
     workspaceIntegrationService,
     workspaceAuthzService,
     workosOrgService,

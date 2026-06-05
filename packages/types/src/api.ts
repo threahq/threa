@@ -835,6 +835,32 @@ export interface CommandInfo {
   args?: CommandArgumentInfo[]
 }
 
+// ── Giphy ───────────────────────────────────────────────────────────────
+// Contract for the `/giphy` picker. The backend proxies Giphy so the API key
+// stays server-side; these shapes are the wire format between the two.
+
+export interface GiphyGif {
+  /** Giphy's stable id; the byte proxy re-resolves the canonical media URL from it server-side. */
+  id: string
+  title: string
+  /** Preview rendition rendered in the picker grid (served directly from Giphy's CDN). */
+  previewUrl: string
+  /** Intrinsic pixel size of the preview rendition, so the masonry grid lays out without reflow. */
+  width: number
+  height: number
+}
+
+export interface GiphySearchResponse {
+  items: GiphyGif[]
+  /** Offset to request for the next page, or null when the result set is exhausted. */
+  nextOffset: number | null
+}
+
+export interface GiphyConfigResponse {
+  /** True when the backend has a Giphy API key configured (feature stays dark otherwise). */
+  enabled: boolean
+}
+
 export interface WorkspaceBootstrap {
   workspace: Workspace
   users: User[]

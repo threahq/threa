@@ -38,6 +38,7 @@ import { createInternalHandlers } from "./handlers/internal-handlers"
 import { createAuthStubHandlers } from "./auth/auth-stub-handlers"
 import { createAgentSessionHandlers, createContextBagHandlers } from "./features/agents"
 import { createLinkPreviewHandlers } from "./features/link-previews"
+import { createGiphyHandlers } from "./features/giphy"
 import { createWorkspaceIntegrationHandlers } from "./features/workspace-integrations"
 import { createPublicApiHandlers, createBotHandlers } from "./features/public-api"
 import { BotRuntimeService } from "./features/bot-runtimes"
@@ -80,6 +81,7 @@ import type { UserE2eKeysService } from "./features/user-e2e-keys"
 import type { AvatarService } from "./features/workspaces"
 import type { BotChannelService } from "./features/api-keys"
 import type { LinkPreviewService } from "./features/link-previews"
+import type { GiphyService } from "./features/giphy"
 import type { WorkspaceIntegrationService } from "./features/workspace-integrations"
 import type { WorkosOrgService } from "@threa/backend-common"
 import type { BotApiKeyService } from "./features/public-api"
@@ -120,6 +122,7 @@ interface Dependencies {
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
   linkPreviewService: LinkPreviewService
+  giphyService: GiphyService
   workspaceIntegrationService: WorkspaceIntegrationService
   workspaceAuthzService: WorkspaceAuthzService
   workosOrgService: WorkosOrgService
@@ -168,6 +171,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     apiKeyService,
     botChannelService,
     linkPreviewService,
+    giphyService,
     workspaceIntegrationService,
     workspaceAuthzService,
     workosOrgService,
@@ -247,6 +251,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const agentSession = createAgentSessionHandlers({ pool })
   const contextBag = createContextBagHandlers({ pool, ai })
   const linkPreview = createLinkPreviewHandlers({ linkPreviewService })
+  const giphy = createGiphyHandlers({ giphyService })
   const workspaceIntegration = createWorkspaceIntegrationHandlers({
     workspaceIntegrationService,
     allowedFrontendOrigins: corsAllowedOrigins,
@@ -369,7 +374,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/actors", ...authed, stream.inviteActor)
   app.get("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps", ...authed, stream.getE2eKeyWraps)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-wraps", ...authed, stream.storeE2eKeyWrap)
-  app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/actor-key-wraps", ...authed, stream.reviveE2eActorKeyWraps)
+  app.post(
+    "/api/workspaces/:workspaceId/streams/:streamId/e2e/actor-key-wraps",
+    ...authed,
+    stream.reviveE2eActorKeyWraps
+  )
   app.post("/api/workspaces/:workspaceId/streams/:streamId/e2e/key-generations", ...authed, stream.rollE2eKey)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/read", ...authed, stream.markAsRead)
   app.post("/api/workspaces/:workspaceId/streams/:streamId/archive", ...authed, stream.archive)
@@ -543,6 +552,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     ...authed,
     linkPreview.resolveMessageLink
   )
+
+  // Giphy picker — backend proxy keeps the API key server-side. `config` reports
+  // whether the feature is enabled; the chosen GIF is embedded by its CDN URL
+  // (no byte download), so there's no file-proxy endpoint.
+  app.get("/api/workspaces/:workspaceId/giphy/config", ...authed, giphy.getConfig)
+  app.get("/api/workspaces/:workspaceId/giphy/search", ...authed, rateLimits.search, giphy.search)
+  app.get("/api/workspaces/:workspaceId/giphy/trending", ...authed, rateLimits.search, giphy.trending)
 
   // Workspace integrations — gated on workspace:admin
   const requireWorkspaceAdmin = requireWorkspacePermission(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)

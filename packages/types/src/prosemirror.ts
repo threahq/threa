@@ -189,6 +189,7 @@ export type ThreaInlineNode =
   | ThreaEmoji
   | ThreaAttachmentReference
   | ThreaMemoEmbed
+  | ThreaGiphyEmbed
   | ThreaHardBreak
 
 /**
@@ -273,6 +274,23 @@ export interface ThreaMemoEmbed {
     /** The ID of the referenced memo */
     memoId: string
     /** Memo title cached at insert time so the chip can render before hydration */
+    title?: string
+  }
+}
+
+/**
+ * Inline reference to a Giphy GIF, rendered directly from Giphy's CDN. We store
+ * the CDN URL (not a copy of the bytes) so the GIF is served the way Giphy
+ * intends; the `title` is a cosmetic fallback label for markdown/preview
+ * surfaces. `giphyUrl` is validated to a `*.giphy.com` host at the render/parse
+ * boundary so the embed can't point at an arbitrary origin.
+ */
+export interface ThreaGiphyEmbed {
+  type: "giphyEmbed"
+  attrs: {
+    /** Giphy CDN URL of the rendition to display (e.g. the fixed-width GIF). */
+    giphyUrl: string
+    /** Cached Giphy title; cosmetic fallback for markdown/preview text. */
     title?: string
   }
 }
@@ -413,6 +431,26 @@ const memoEmbedNodeSchema = z.object({
   }),
 })
 
+// Embeds may only point at Giphy's own CDN — the node renders an <img> from this
+// URL, so an arbitrary origin would be an open image-embed surface. Enforced at
+// the persistence boundary too, not just at parse/render time.
+const isGiphyMediaUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === "https:" && (parsed.hostname === "giphy.com" || parsed.hostname.endsWith(".giphy.com"))
+  } catch {
+    return false
+  }
+}
+
+const giphyEmbedNodeSchema = z.object({
+  type: z.literal("giphyEmbed"),
+  attrs: z.object({
+    giphyUrl: z.string().refine(isGiphyMediaUrl, "giphyUrl must be an https URL on a *.giphy.com host"),
+    title: z.string().optional(),
+  }),
+})
+
 // Inline node union
 const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   textNodeSchema,
@@ -422,6 +460,7 @@ const inlineNodeSchema: z.ZodType<ThreaInlineNode> = z.union([
   emojiNodeSchema,
   attachmentReferenceNodeSchema,
   memoEmbedNodeSchema,
+  giphyEmbedNodeSchema,
   hardBreakNodeSchema,
 ])
 

@@ -16,7 +16,13 @@ const MEMO: CommandItem = {
   clientActionId: "memo-search",
   placement: "inline",
 }
-const ALL = [MEMO, INVITE, DISCUSS]
+const GIPHY: CommandItem = {
+  name: "giphy",
+  description: "Search and attach a GIF",
+  clientActionId: "giphy",
+  placement: "inline",
+}
+const ALL = [MEMO, GIPHY, INVITE, DISCUSS]
 
 const editors: Editor[] = []
 
@@ -47,13 +53,19 @@ describe("filterCommands placement gating", () => {
   it("shows whole-message and inline commands when the slash opens the message", () => {
     const editor = makeEditor()
     typeText(editor, "/")
-    expect(names(filterCommands(ALL, "", editor))).toEqual(["discuss-with-ariadne", "invite", "memo"])
+    expect(names(filterCommands(ALL, "", editor))).toEqual(["discuss-with-ariadne", "giphy", "invite", "memo"])
   })
 
   it("hides whole-message commands mid-sentence but keeps inline ones", () => {
     const editor = makeEditor()
     typeText(editor, "hello /")
-    expect(names(filterCommands(ALL, "", editor))).toEqual(["memo"])
+    expect(names(filterCommands(ALL, "", editor))).toEqual(["giphy", "memo"])
+  })
+
+  it("matches the giphy command mid-sentence by query (available everywhere)", () => {
+    const editor = makeEditor()
+    typeText(editor, "look at this /gif")
+    expect(names(filterCommands(ALL, "gif", editor))).toEqual(["giphy"])
   })
 
   it("still narrows by query when the slash opens the message", () => {
@@ -71,6 +83,6 @@ describe("filterCommands placement gating", () => {
   it("returns whole-message commands when no editor context is available", () => {
     // Defensive fallback: without an editor we can't tell where the slash is, so
     // we don't hide message-level commands (the prior behavior).
-    expect(names(filterCommands(ALL, ""))).toEqual(["discuss-with-ariadne", "invite", "memo"])
+    expect(names(filterCommands(ALL, ""))).toEqual(["discuss-with-ariadne", "giphy", "invite", "memo"])
   })
 })

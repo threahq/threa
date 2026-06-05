@@ -30,6 +30,9 @@ import {
 } from "./multiline-blocks"
 import { useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
+import { useGiphyEnabled } from "@/hooks/use-giphy-enabled"
+import { GiphyPickerDialog } from "./giphy-picker-dialog"
+import type { GiphyGif } from "@threa/types"
 import { cn } from "@/lib/utils"
 import { usePreferences } from "@/contexts"
 import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
@@ -233,6 +236,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     return { ...streamContext, inviteMode: isInviteMode }
   }, [streamContext, isInviteMode])
 
+  const { workspaceId } = useParams<{ workspaceId: string }>()
+
+  // `/giphy` is available wherever slash commands are enabled and the backend
+  // has a Giphy key configured. The picker opens from the slash palette and
+  // inserts an inline embed rendered from Giphy's CDN (no upload involved).
+  const giphyEnabled = useGiphyEnabled(workspaceId) && enableCommands
+  const [giphyOpen, setGiphyOpen] = useState(false)
+
   // Mention, channel, command, and emoji autocomplete
   // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
@@ -241,11 +252,12 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
   const { suggestionConfig: commandConfig, renderCommandList } = useCommandSuggestion({
     includeMemoSearch: enableMemoEmbed,
+    includeGiphy: giphyEnabled,
+    onOpenGiphy: () => setGiphyOpen(true),
   })
   const { suggestionConfig: memoConfig, renderMemoList } = useMemoSuggestion(memoAnchorStreamId)
 
   // Emoji autocomplete
-  const { workspaceId } = useParams<{ workspaceId: string }>()
   const { emojis, emojiWeights, toEmoji } = useWorkspaceEmoji(workspaceId ?? "")
   const { suggestionConfig: emojiConfig, renderEmojiGrid } = useEmojiSuggestion({ emojis, emojiWeights })
 
@@ -428,6 +440,15 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         error: err instanceof Error ? err.message : "Upload failed",
       })
     }
+  }, [])
+
+  // Insert the chosen GIF as an inline embed rendered straight from Giphy's CDN
+  // (no download/upload — that's how Giphy intends embeds to work). Synchronous,
+  // so there's no scope-drift window to guard against.
+  const handleGifSelect = useCallback((gif: GiphyGif) => {
+    const editorInstance = editorRef.current
+    if (!editorInstance || editorInstance.isDestroyed) return
+    editorInstance.chain().focus().insertGiphyEmbed({ giphyUrl: gif.previewUrl, title: gif.title }).run()
   }, [])
 
   const editor = useEditor({
@@ -973,6 +994,14 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       {enableCommands ? renderCommandList() : null}
       {enableEmoji ? renderEmojiGrid() : null}
       {enableMemoEmbed ? renderMemoList() : null}
+      {giphyEnabled && workspaceId ? (
+        <GiphyPickerDialog
+          open={giphyOpen}
+          onOpenChange={setGiphyOpen}
+          workspaceId={workspaceId}
+          onSelect={handleGifSelect}
+        />
+      ) : null}
     </div>
   )
 })

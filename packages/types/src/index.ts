@@ -435,6 +435,10 @@ export type {
   LabelUnassignedPayload,
   // Emojis
   EmojiEntry,
+  // Giphy
+  GiphyGif,
+  GiphySearchResponse,
+  GiphyConfigResponse,
   // Commands
   CommandInfo,
   CommandKind,

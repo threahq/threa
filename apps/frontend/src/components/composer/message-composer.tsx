@@ -75,6 +75,11 @@ function getPreviewText(doc: JSONContent): string {
       return title ? `Memo: ${title}` : "Memo"
     }
 
+    if (node.type === "giphyEmbed") {
+      const title = typeof node.attrs?.title === "string" ? node.attrs.title : ""
+      return title ? `GIF: ${title}` : "GIF"
+    }
+
     if (node.type === "codeBlock") {
       const text = (node.content ?? []).map((c) => c.text ?? "").join("")
       return text.split("\n")[0] ?? ""
