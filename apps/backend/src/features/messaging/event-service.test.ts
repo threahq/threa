@@ -794,6 +794,20 @@ describe("EventService INV-E1 sink guard", () => {
     expect(insert).not.toHaveBeenCalled()
   })
 
+  it("rejects a half-formed sealed create (ciphertext, no envelope/e2eVersion) into an E2E stream", async () => {
+    // A ciphertext row with no envelope is undecryptable — the sink must require
+    // the full E2E triple, not just the presence of ciphertext.
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", e2eEnabled: true } as any)
+    const insert = spyOn(StreamEventRepository, "insert")
+    const service = new EventService({} as any)
+
+    await expect(service.createMessage({ ...baseParams, ciphertext: Buffer.from("opaque") })).rejects.toMatchObject({
+      status: 400,
+      code: "E2E_STREAM_REQUIRES_CIPHERTEXT",
+    })
+    expect(insert).not.toHaveBeenCalled()
+  })
+
   it("rejects a ciphertext create into a non-E2E stream (E2E_PAYLOAD_REQUIRES_E2E_STREAM)", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", e2eEnabled: false } as any)
     const insert = spyOn(StreamEventRepository, "insert")

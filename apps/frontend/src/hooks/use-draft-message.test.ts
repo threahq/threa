@@ -187,6 +187,33 @@ describe("useDraftMessage", () => {
       expect(mockDelete).toHaveBeenCalledWith(draftKey)
     })
 
+    it("cancels a debounced plaintext save when the stream becomes encrypted mid-flight (E2EE-4 race)", async () => {
+      seededDraftCache = true
+
+      const { result, rerender } = renderHook(
+        ({ e2e }: { e2e: boolean }) => useDraftMessage(workspaceId, draftKey, e2e),
+        {
+          initialProps: { e2e: false },
+        }
+      )
+
+      // Queue a debounced save while the stream is still plaintext...
+      act(() => {
+        result.current.saveDraftDebounced(makeDoc("typed before the stream was encrypted"))
+      })
+      // ...then the stream becomes encrypted before the debounce window elapses.
+      rerender({ e2e: true })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+
+      // The in-flight save must NOT re-persist plaintext after the purge.
+      expect(mockPut).not.toHaveBeenCalled()
+      // The encrypt transition purged any on-disk draft.
+      expect(mockDelete).toHaveBeenCalledWith(draftKey)
+    })
+
     it("should delete draft when content is empty and no attachments", async () => {
       seededDraftCache = true
       mockGet.mockResolvedValue({ attachments: [] })

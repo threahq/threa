@@ -33,8 +33,22 @@ const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.
  */
 export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnabled = false) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Read inside the debounced timer so a save scheduled while the stream was
+  // plaintext can't write after the stream becomes encrypted (E2EE-4).
+  const e2eEnabledRef = useRef(e2eEnabled)
   const draftMessages = useDraftMessagesFromStore(workspaceId)
   const resolvedDraft = e2eEnabled ? undefined : draftMessages.find((draft) => draft.id === draftKey)
+
+  // When a stream becomes encrypted, cancel any debounced plaintext save still
+  // in flight — otherwise it fires after the purge below and re-persists the
+  // very plaintext we just deleted (write-after-purge race, E2EE-4).
+  useEffect(() => {
+    e2eEnabledRef.current = e2eEnabled
+    if (e2eEnabled && debounceRef.current) {
+      clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+  }, [e2eEnabled])
 
   // Purge any pre-existing on-disk draft for an E2E stream (e.g. one written
   // before this gate landed, or carried over when a stream is encrypted).
@@ -92,8 +106,11 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
       }
 
       debounceRef.current = setTimeout(() => {
-        saveDraft(contentJson)
         debounceRef.current = null
+        // The stream may have been encrypted between scheduling and firing;
+        // never write plaintext to disk in that case (E2EE-4).
+        if (e2eEnabledRef.current) return
+        saveDraft(contentJson)
       }, DEBOUNCE_MS)
     },
     [saveDraft, e2eEnabled]
