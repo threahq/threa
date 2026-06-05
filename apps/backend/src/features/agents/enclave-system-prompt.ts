@@ -55,7 +55,7 @@ export async function buildEnclaveSystemPrompt(params: {
     updatedAt: new Date(),
   }
 
-  return buildSystemPrompt(
+  const prompt = buildSystemPrompt(
     enclavePersona,
     context,
     preferences.scratchpadCustomPrompt,
@@ -67,4 +67,18 @@ export async function buildEnclaveSystemPrompt(params: {
     // workspace_research needs the DB; the enclave has none.
     false
   )
+
+  // The shared prompt advertises the reduced toolset but never explains *why*
+  // capabilities are missing. Without this, asked to recall something from the
+  // workspace, Ariadne either hallucinates or refuses confusingly (UX-7). Tell
+  // her plainly so she can voice the boundary gracefully — kept as a
+  // natural-language instruction (the model handles phrasing/locale), not a
+  // code-level heuristic.
+  return `${prompt}
+
+## Encrypted scratchpad limits
+
+You are running inside an end-to-end-encrypted scratchpad. You can read this conversation and do web research, but the rest of the workspace never enters this encrypted context: you have no access to workspace memory (GAM), other channels or scratchpads, saved knowledge, or any cross-stream search. This is a deliberate privacy boundary, not an error.
+
+If the user asks you to recall, summarize, or look something up from their workspace or another conversation, do not guess or invent it. Briefly explain that you can't see anything outside this encrypted scratchpad, and offer what you *can* do here (work with what's in this conversation, or research the web).`
 }
