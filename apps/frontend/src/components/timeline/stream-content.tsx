@@ -331,7 +331,14 @@ export function StreamContent({
   const agentActivity = useAgentActivity(events, socket, workspaceId, currentWorkspaceUserId)
 
   // --- In-stream search ---
-  const streamSearch = useStreamSearch({ workspaceId, streamId })
+  // E2E streams search decrypted bodies client-side (the server only holds
+  // ciphertext); pass the flag + viewer id so the hook can resolve the session.
+  const streamSearch = useStreamSearch({
+    workspaceId,
+    streamId,
+    e2eEnabled: stream?.e2eEnabled === true,
+    userId: currentWorkspaceUserId,
+  })
   const clearSearch = streamSearch.clear
   const openOrFocusSearch = useCallback(() => {
     if (isSearchOpen) {
