@@ -386,6 +386,38 @@ describe("e2e session store — keep me unlocked on this device", () => {
     expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
   })
 
+  it("setDeviceTrust(true) works after a plain unlock and survives a reload", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
+    // Unlock WITHOUT trustDevice, then enable "keep me unlocked" from settings.
+    // Regression: the in-memory key must be exportable so sealing it doesn't
+    // throw "key is not extractable" (it did when unlock produced a
+    // non-extractable key and setDeviceTrust tried to re-export it).
+    await unlock(WORKSPACE_ID, USER_ID, "pp")
+    await expect(setDeviceTrust(WORKSPACE_ID, USER_ID, true)).resolves.toBeUndefined()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(true)
+    expect((await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`))!.deviceWrappedPrivate).toBeTruthy()
+
+    await reload()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+  })
+
+  it("setDeviceTrust(true) works after a plain unlock and survives a reload", async () => {
+    await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+    await lock(WORKSPACE_ID, USER_ID)
+    // Unlock WITHOUT trustDevice, then enable "keep me unlocked" from settings.
+    // Regression: the in-memory key must be exportable so sealing it doesn't
+    // throw "key is not extractable" (it did when unlock produced a
+    // non-extractable key and setDeviceTrust tried to re-export it).
+    await unlock(WORKSPACE_ID, USER_ID, "pp")
+    await expect(setDeviceTrust(WORKSPACE_ID, USER_ID, true)).resolves.toBeUndefined()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(true)
+    expect((await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`))!.deviceWrappedPrivate).toBeTruthy()
+
+    await reload()
+    expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+  })
+
   it("setDeviceTrust(true) throws when the session is locked", async () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
     await lock(WORKSPACE_ID, USER_ID)
