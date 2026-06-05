@@ -17,8 +17,8 @@ export function GiphyEmbedBlock({ giphyUrl, title }: GiphyEmbedBlockProps) {
   return (
     <div
       className={cn(
-        "inline-block rounded-md border border-border bg-card p-1",
-        "transition-colors hover:border-primary/70 hover:bg-primary/[0.04]"
+        "group inline-block rounded-xl border border-border bg-card p-1",
+        "transition-[border-color,background-color,box-shadow] hover:border-primary/40 hover:bg-primary/[0.04] hover:shadow-sm"
       )}
       data-type="giphy-embed"
     >
