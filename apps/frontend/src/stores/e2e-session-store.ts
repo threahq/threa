@@ -7,12 +7,18 @@ import { base64ToBytes, bytesToBase64 } from "@threa/crypto"
 import { generateUIK, unwrapPrivate, wrapPrivate } from "@/lib/crypto/keys"
 import { unwrapPrivateKeyFromDevice, wrapPrivateKeyForDevice } from "@/lib/crypto/device-wrap-key"
 import {
+  isValidPin,
   MAX_PIN_ATTEMPTS,
   unwrapPrivateKeyWithPin,
   wrapPrivateKeyWithPin,
   type PinWrappedKey,
 } from "@/lib/crypto/pin-device-key"
-import { getPrfSecret, unwrapPrivateKeyWithPrf, wrapPrivateKeyWithPrf } from "@/lib/crypto/webauthn-device-key"
+import {
+  getPrfSecret,
+  unwrapPrivateKeyWithPrf,
+  wrapPrivateKeyWithPrf,
+  type PrfRegistration,
+} from "@/lib/crypto/webauthn-device-key"
 import { DEFAULT_KDF_PARAMS, deriveKEK, generateSalt, type KdfParams } from "@/lib/crypto/passphrase"
 import { db, type CachedE2eDeviceKey, type CachedE2eKey } from "@/db"
 
@@ -943,6 +949,72 @@ export async function setDeviceTrust(workspaceId: string, userId: string, trust:
   }
   await deleteDeviceKey(workspaceId, userId)
   setState(workspaceId, userId, { deviceTrusted: false })
+}
+
+/**
+ * How this device's trusted ("keep me unlocked") key is gated, for the settings
+ * UI to render and manage without reaching into IDB itself (INV-15):
+ *   - `none`       — no device key; the passphrase is required every reload
+ *   - `remembered` — auto-resumes unlocked, no prompt
+ *   - `pin`        — resumes locked, unlocked by the 6-digit PIN
+ *   - `biometric`  — resumes locked, unlocked by a WebAuthn PRF assertion
+ */
+export type DeviceUnlockMethod = "none" | "remembered" | "pin" | "biometric"
+
+/** Classify this device's trusted-key row. Async (an IDB read) like its siblings. */
+export async function getDeviceUnlockMethod(workspaceId: string, userId: string): Promise<DeviceUnlockMethod> {
+  const row = await readDeviceKey(workspaceId, userId)
+  if (!row) return "none"
+  if (row.webauthnWrappedPrivate) return "biometric"
+  if (row.pinWrappedPrivate) return "pin"
+  if (row.deviceWrappedPrivate) return "remembered"
+  return "none"
+}
+
+/**
+ * Add (or switch to) a PIN-gated quick-unlock on this device, re-sealing the
+ * already-unlocked key under the PIN. Replaces any existing device-key method
+ * (remembered / biometric) — the single device-key row holds one method at a
+ * time. Unlike the best-effort persists during setup/unlock, an explicit
+ * settings action throws on a failed write so the UI can surface it rather than
+ * silently leaving the old method in place.
+ */
+export async function enrollDevicePin(workspaceId: string, userId: string, pin: string): Promise<void> {
+  const { status, privateKey, keyId, publicKey } = getOrCreateScope(workspaceId, userId).state
+  if (status !== "unlocked" || !privateKey || !keyId || !publicKey) {
+    throw new Error("Unlock encrypted scratchpads before setting a PIN")
+  }
+  if (!isValidPin(pin)) throw new Error("PIN must be 6–8 digits")
+  const wrapped = await wrapPrivateKeyWithPin(privateKey, pin)
+  const persisted = await tryPersistPinDeviceKey(workspaceId, userId, keyId, publicKey, wrapped)
+  if (!persisted) throw new Error("Couldn't save the PIN on this device")
+  setState(workspaceId, userId, { deviceTrusted: true })
+}
+
+/**
+ * Add (or switch to) biometric (WebAuthn PRF) quick-unlock on this device. The
+ * caller runs the registration ceremony (`registerDeviceBiometric`) and passes
+ * the result; we re-seal the already-unlocked key under its PRF secret. Replaces
+ * any existing device-key method and throws on a failed write (see
+ * `enrollDevicePin`).
+ */
+export async function enrollDeviceBiometric(
+  workspaceId: string,
+  userId: string,
+  registration: PrfRegistration
+): Promise<void> {
+  const { status, privateKey, keyId, publicKey } = getOrCreateScope(workspaceId, userId).state
+  if (status !== "unlocked" || !privateKey || !keyId || !publicKey) {
+    throw new Error("Unlock encrypted scratchpads before adding biometric unlock")
+  }
+  const wrappedPrivate = await wrapPrivateKeyWithPrf(privateKey, registration.prfSecret)
+  const persisted = await tryPersistWebAuthnDeviceKey(workspaceId, userId, keyId, publicKey, {
+    credentialId: registration.credentialId,
+    prfSalt: registration.prfSalt,
+    wrappedPrivate,
+  })
+  if (!persisted) throw new Error("Couldn't save biometric unlock on this device")
+  setState(workspaceId, userId, { deviceTrusted: true })
 }
 
 /**

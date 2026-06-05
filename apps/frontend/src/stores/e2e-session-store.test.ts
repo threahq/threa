@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  enrollDeviceBiometric,
+  enrollDevicePin,
+  getDeviceUnlockMethod,
   getE2eSessionState,
   loadE2eKeyForUser,
   lock,
@@ -390,6 +393,75 @@ describe("e2e session store — keep me unlocked on this device", () => {
     await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
     await lock(WORKSPACE_ID, USER_ID)
     await expect(setDeviceTrust(WORKSPACE_ID, USER_ID, true)).rejects.toThrow()
+  })
+
+  describe("post-setup quick-unlock enrollment", () => {
+    const PIN = "246810"
+    const PRF_SECRET = new Uint8Array(32).fill(5)
+    const REGISTRATION = { credentialId: "cred_enroll", prfSalt: "c2FsdHk=", prfSecret: PRF_SECRET }
+
+    it("reports the device unlock method as it changes", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+      expect(await getDeviceUnlockMethod(WORKSPACE_ID, USER_ID)).toBe("none")
+
+      await setDeviceTrust(WORKSPACE_ID, USER_ID, true)
+      expect(await getDeviceUnlockMethod(WORKSPACE_ID, USER_ID)).toBe("remembered")
+
+      await enrollDevicePin(WORKSPACE_ID, USER_ID, PIN)
+      expect(await getDeviceUnlockMethod(WORKSPACE_ID, USER_ID)).toBe("pin")
+
+      // Switching back to plain auto-resume drops the PIN gate.
+      await setDeviceTrust(WORKSPACE_ID, USER_ID, true)
+      expect(await getDeviceUnlockMethod(WORKSPACE_ID, USER_ID)).toBe("remembered")
+    })
+
+    it("enrolls a PIN on an unlocked key, and a reload then needs that PIN", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+      await enrollDevicePin(WORKSPACE_ID, USER_ID, PIN)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).deviceTrusted).toBe(true)
+
+      await reload()
+      const locked = getE2eSessionState(WORKSPACE_ID, USER_ID)
+      expect(locked.status).toBe("locked")
+      expect(locked.pinProtected).toBe(true)
+
+      await unlockWithPin(WORKSPACE_ID, USER_ID, PIN)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+    })
+
+    it("enrolls biometrics on an unlocked key, and a reload then needs the PRF secret", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+      await enrollDeviceBiometric(WORKSPACE_ID, USER_ID, REGISTRATION)
+      const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+      expect(row!.webauthnWrappedPrivate).toBeTruthy()
+      expect(row!.pinWrappedPrivate).toBeUndefined()
+
+      await reload()
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).webauthnProtected).toBe(true)
+
+      await unlockWithWebAuthn(WORKSPACE_ID, USER_ID, PRF_SECRET)
+      expect(getE2eSessionState(WORKSPACE_ID, USER_ID).status).toBe("unlocked")
+    })
+
+    it("replaces an existing method rather than stacking (PIN then biometric)", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+      await enrollDevicePin(WORKSPACE_ID, USER_ID, PIN)
+      await enrollDeviceBiometric(WORKSPACE_ID, USER_ID, REGISTRATION)
+
+      const row = await db.e2eDeviceKeys.get(`${WORKSPACE_ID}:${USER_ID}`)
+      expect(row!.webauthnWrappedPrivate).toBeTruthy()
+      expect(row!.pinWrappedPrivate).toBeUndefined()
+      expect(await getDeviceUnlockMethod(WORKSPACE_ID, USER_ID)).toBe("biometric")
+    })
+
+    it("rejects a malformed PIN and enrolling while locked", async () => {
+      await setupNewKey(WORKSPACE_ID, USER_ID, "pp", { params: FAST_PARAMS })
+      await expect(enrollDevicePin(WORKSPACE_ID, USER_ID, "12")).rejects.toThrow()
+
+      await lock(WORKSPACE_ID, USER_ID)
+      await expect(enrollDevicePin(WORKSPACE_ID, USER_ID, PIN)).rejects.toThrow(/Unlock/)
+      await expect(enrollDeviceBiometric(WORKSPACE_ID, USER_ID, REGISTRATION)).rejects.toThrow(/Unlock/)
+    })
   })
 
   it("a server-side rotation discards the stale device key and relocks", async () => {
