@@ -365,6 +365,7 @@ describe("Push Notifications", () => {
         },
         lookups: {
           getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+          isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
         },
@@ -515,6 +516,7 @@ describe("Push Notifications", () => {
 
     function createServiceWithLookups(overrides?: {
       notificationLevel?: PrefNotificationLevel
+      notificationPaused?: boolean
       streamType?: StreamType | null
       workosUserId?: string | null
     }) {
@@ -527,6 +529,7 @@ describe("Push Notifications", () => {
         },
         lookups: {
           getUserNotificationLevel: async () => overrides?.notificationLevel ?? PrefNotificationLevels.ALL,
+          isNotificationPaused: async () => overrides?.notificationPaused ?? false,
           getStreamType: async (_workspaceId) => overrides?.streamType ?? StreamTypes.CHANNEL,
           getWorkosUserId: async () => overrides?.workosUserId ?? null,
         },
@@ -1240,6 +1243,7 @@ describe("Push Notifications", () => {
         },
         lookups: {
           getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+          isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
         },
@@ -1324,6 +1328,7 @@ describe("Push Notifications", () => {
         vapidConfig: null,
         lookups: {
           getUserNotificationLevel: async () => PrefNotificationLevels.ALL,
+          isNotificationPaused: async () => false,
           getStreamType: async () => StreamTypes.CHANNEL,
           getWorkosUserId: async () => null,
         },
