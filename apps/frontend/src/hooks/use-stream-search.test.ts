@@ -58,8 +58,7 @@ describe("collectLocalMatches", () => {
 
     const matches = await collectLocalMatches(events, "velvet-otter", resolver)
 
-    expect(matches).toHaveLength(1)
-    expect(matches[0]).toMatchObject({ id: "m1", content: "the launch codename is VELVET-OTTER" })
+    expect(matches).toEqual([expect.objectContaining({ id: "m1", content: "the launch codename is VELVET-OTTER" })])
   })
 
   it("never matches the placeholder when a sealed row can't be decrypted (locked → null)", async () => {
@@ -110,9 +109,7 @@ describe("useStreamSearch hook integration", () => {
       privateKey: {} as CryptoKey,
       keyId: "e2ek_self",
     } as never)
-    searchMessagesSpy = vi
-      .spyOn(api, "searchMessages")
-      .mockResolvedValue({ results: [] } as never)
+    searchMessagesSpy = vi.spyOn(api, "searchMessages").mockResolvedValue({ results: [] } as never)
   })
 
   afterEach(() => vi.restoreAllMocks())
@@ -159,7 +156,9 @@ describe("useStreamSearch hook integration", () => {
   })
 
   it("plaintext stream still calls the server phase (no behavior change)", async () => {
-    fakeEvents = [event({ id: "e1", _sequenceNum: 1, payload: { messageId: "m1", contentMarkdown: "hello plaintext" } })]
+    fakeEvents = [
+      event({ id: "e1", _sequenceNum: 1, payload: { messageId: "m1", contentMarkdown: "hello plaintext" } }),
+    ]
     mockEventsTable(fakeEvents)
 
     const { result } = renderHook(() =>
