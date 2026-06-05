@@ -143,7 +143,7 @@ export function GiphyPickerDialog({ open, onOpenChange, workspaceId, onSelect }:
     body = (
       <div className="columns-2 gap-2 sm:columns-3" aria-busy="true" aria-label="Loading GIFs">
         {SKELETON_RATIOS.map((ratio, i) => (
-          <Skeleton key={i} className="mb-2 w-full rounded-lg" style={{ aspectRatio: String(ratio) }} />
+          <Skeleton key={i} className="mb-2 w-full rounded-item" style={{ aspectRatio: String(ratio) }} />
         ))}
       </div>
     )
@@ -173,7 +173,7 @@ export function GiphyPickerDialog({ open, onOpenChange, workspaceId, onSelect }:
               type="button"
               onClick={() => handleSelect(gif)}
               className={cn(
-                "group mb-2 block w-full overflow-hidden rounded-lg border border-border/60 bg-muted/40",
+                "group mb-2 block w-full overflow-hidden rounded-item border border-border/60 bg-muted/40",
                 "transition-[border-color,box-shadow] hover:border-primary hover:shadow-sm",
                 "focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               )}
