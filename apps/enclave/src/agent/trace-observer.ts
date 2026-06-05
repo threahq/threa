@@ -6,13 +6,19 @@ import {
   type EnclaveSealedStepStart,
   type EnclaveSealedSubstep,
 } from "@threa/types"
-import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
+import type { AgentEvent, AgentObserver, TraceStepHandle, TraceStepSink } from "@threa/agent-runtime/runtime"
+import { TraceMapper } from "@threa/agent-runtime/runtime"
 
 /**
  * Observes the agent loop and ships each user-facing trace step back to the
  * backend, sealed under the stream's SSK — so the regional backend persists a
  * trace it can't read (INV-E7) and the owner's browser decrypts it exactly as
  * it decrypts message ciphertext.
+ *
+ * The event→step lifecycle is the shared `TraceMapper` — the *same* state
+ * machine the backend's SessionTraceObserver runs, so the two traces cannot
+ * drift on which events they handle or what step content they persist. This
+ * file only supplies the sink: seal + POST instead of DB + socket.
  *
  * Each step's content is sealed under the *reply* SSK (the current generation),
  * bound by AAD to `streamId|stepId|senderId` — the same message-AAD scheme,
@@ -21,15 +27,11 @@ import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
  * Plaintext exists only here, for the duration of the loop, and is never logged
  * or persisted in the clear.
  *
- * This mirrors the backend `SessionTraceObserver`'s event→step lifecycle exactly
- * — only the sink differs (seal + POST instead of DB + socket). Every step opens
- * with a `step:started` (so a refresh / open trace dialog sees the in-flight step
- * and hangs its live substeps under it) and closes with the finalized step:
- * - `thinking` / `message:sent`: started + finalized back-to-back (content known up front)
- * - `tool:start` → `tool:progress`* → `tool:complete`/`tool:error`: the real
- *   in-flight window — started carries no content (the result isn't known yet),
- *   substeps stream the phase text, and the finalize seals the tool's result.
- * Hidden tools (trace.hidden) are skipped entirely (OTEL-only), same as the backend.
+ * Every step opens with a `step:started` (so a refresh / open trace dialog sees
+ * the in-flight step and hangs its live substeps under it) and closes with the
+ * finalized step. When the finalize carries no new content (thinking,
+ * reconsider/context steps), the seal produced at open is reused — one seal per
+ * step, not two.
  */
 export interface EnclaveTraceObserverDeps {
   streamId: string
@@ -47,129 +49,16 @@ export interface EnclaveTraceObserverDeps {
 }
 
 export class EnclaveTraceObserver implements AgentObserver {
-  /** Maps an in-flight tool call to the step id minted at tool:start, so completion finalizes the same row. */
-  private readonly stepIdByToolCallId = new Map<string, string>()
-  /** Running substep log per in-flight tool call — sealed and persisted on each progress so a refresh replays it. */
-  private readonly substepsByToolCallId = new Map<string, Array<{ text: string; at: string }>>()
-  /** Tool calls hidden at tool:start — distinguishes "hidden, skip" from "unknown, synthesize error step". */
-  private readonly hiddenToolCallIds = new Set<string>()
+  private readonly mapper: TraceMapper
+  private readonly sink: EnclaveSealingStepSink
 
-  constructor(private readonly deps: EnclaveTraceObserverDeps) {}
+  constructor(deps: EnclaveTraceObserverDeps) {
+    this.sink = new EnclaveSealingStepSink(deps)
+    this.mapper = new TraceMapper(this.sink)
+  }
 
   async handle(event: AgentEvent): Promise<void> {
-    switch (event.type) {
-      case "thinking": {
-        // Content is known up front: open + finalize the same step back-to-back,
-        // mirroring the backend's startStep(content) → complete(). One seal,
-        // AAD-bound to this step's id, reused for both the start and the finalize.
-        const stepId = mintStepId()
-        const sealed = await this.seal(event.content, stepId)
-        await this.openStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed })
-        await this.deps.sendStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed, durationMs: event.durationMs })
-        return
-      }
-
-      case "tool:start": {
-        // Hidden tools are recorded in OTEL but never surface in the trace.
-        if (event.hidden) {
-          this.hiddenToolCallIds.add(event.toolCallId)
-          return
-        }
-        // Open the in-flight step with no content (the result isn't known yet);
-        // cache the minted id so tool:complete/tool:error finalizes the same row.
-        const stepId = mintStepId()
-        this.stepIdByToolCallId.set(event.toolCallId, stepId)
-        this.substepsByToolCallId.set(event.toolCallId, [])
-        await this.openStep({ stepId, stepType: event.stepType })
-        return
-      }
-
-      case "tool:progress": {
-        // Mid-run phase text (e.g. the research sub-agent's "Searching the web: …").
-        // Derived from the encrypted prompt, so seal it under the SSK like a step.
-        // Two sealed payloads travel in one POST, mirroring the unencrypted
-        // observer's emitSubstep + updateSubsteps: the single new phase (ephemeral,
-        // drives the live "Ariadne is …" indicator) and the running snapshot
-        // (persisted onto the step row so a refresh / open mid-run replays it).
-        const text = event.substep?.trim()
-        if (!text) return
-        const stepId = this.stepIdByToolCallId.get(event.toolCallId)
-        // Bind the seal AAD to the in-flight step (fall back to a fresh id only when
-        // there's no opened step to bind to — a hidden/never-started tool).
-        const sealed = await this.seal(text, stepId ?? mintStepId())
-        const log = this.substepsByToolCallId.get(event.toolCallId)
-        let snapshot: { ciphertext: string; envelope: EnclaveSealedStep["envelope"] } | undefined
-        if (stepId && log) {
-          log.push({ text, at: new Date().toISOString() })
-          snapshot = await this.seal(JSON.stringify({ substeps: [...log] }), stepId)
-        }
-        await this.deps.sendSubstep({
-          stepType: event.stepType,
-          ...sealed,
-          stepId,
-          snapshotCiphertext: snapshot?.ciphertext,
-          snapshotEnvelope: snapshot?.envelope,
-        })
-        return
-      }
-
-      case "tool:complete": {
-        const stepId = this.stepIdByToolCallId.get(event.toolCallId)
-        // Clear all per-tool-call state up front (matches SessionTraceObserver,
-        // which deletes the hidden marker on complete too) so nothing leaks.
-        this.stepIdByToolCallId.delete(event.toolCallId)
-        this.substepsByToolCallId.delete(event.toolCallId)
-        this.hiddenToolCallIds.delete(event.toolCallId)
-        if (!stepId) return // hidden tool — no step row was opened
-        const sealed = await this.seal(event.trace.content, stepId)
-        await this.deps.sendStep({ stepId, stepType: event.trace.stepType, ...sealed, durationMs: event.durationMs })
-        return
-      }
-
-      case "tool:error": {
-        const content = `${event.toolName} failed: ${event.error}`
-        const cachedId = this.stepIdByToolCallId.get(event.toolCallId)
-        if (cachedId) {
-          // Finalize the in-flight step with the error.
-          this.stepIdByToolCallId.delete(event.toolCallId)
-          this.substepsByToolCallId.delete(event.toolCallId)
-          const sealed = await this.seal(content, cachedId)
-          await this.deps.sendStep({
-            stepId: cachedId,
-            stepType: AgentStepTypes.TOOL_ERROR,
-            ...sealed,
-            durationMs: event.durationMs,
-          })
-        } else if (!this.hiddenToolCallIds.has(event.toolCallId)) {
-          // Unknown tool: the runtime emits tool:error with no preceding tool:start.
-          // Synthesize a started + finalized error step so it's still visible.
-          const stepId = mintStepId()
-          const sealed = await this.seal(content, stepId)
-          await this.openStep({ stepId, stepType: AgentStepTypes.TOOL_ERROR, ...sealed })
-          await this.deps.sendStep({
-            stepId,
-            stepType: AgentStepTypes.TOOL_ERROR,
-            ...sealed,
-            durationMs: event.durationMs,
-          })
-        }
-        this.hiddenToolCallIds.delete(event.toolCallId)
-        return
-      }
-
-      case "message:sent": {
-        const stepId = mintStepId()
-        const sealed = await this.seal(event.content, stepId)
-        await this.openStep({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
-        await this.deps.sendStep({
-          stepId,
-          stepType: AgentStepTypes.MESSAGE_SENT,
-          messageId: event.messageId,
-          ...sealed,
-        })
-        return
-      }
-    }
+    await this.mapper.handle(event)
   }
 
   /**
@@ -188,9 +77,9 @@ export class EnclaveTraceObserver implements AgentObserver {
     createdAt: string
     content: string
   }): Promise<void> {
-    const stepId = mintStepId()
-    const sealed = await this.seal(
-      JSON.stringify({
+    const step = await this.sink.openStep({
+      stepType: AgentStepTypes.CONTEXT_RECEIVED,
+      content: JSON.stringify({
         messages: [
           {
             messageId: trigger.messageId,
@@ -202,29 +91,83 @@ export class EnclaveTraceObserver implements AgentObserver {
           },
         ],
       }),
-      stepId
-    )
-    await this.openStep({ stepId, stepType: AgentStepTypes.CONTEXT_RECEIVED, ...sealed })
-    await this.deps.sendStep({ stepId, stepType: AgentStepTypes.CONTEXT_RECEIVED, ...sealed })
+    })
+    await step.finalize({ stepType: AgentStepTypes.CONTEXT_RECEIVED })
   }
+}
 
-  /**
-   * Open an in-flight step — best-effort. The `step:started` frame is live-UX
-   * only (it lets an open trace dialog render the in-progress step); the durable
-   * record is the *finalize* (`sendStep`), which has its own persistence fallback.
-   * So a failed/unsupported start POST must NOT abort the handler and drop the
-   * finalize — swallow it. (This is why a backend missing the `/steps/started`
-   * route still records every step, just without the live in-flight frame.)
-   */
-  private async openStep(step: EnclaveSealedStepStart): Promise<void> {
-    // Swallow both a rejected promise AND a synchronous throw — a bad
-    // `sendStepStarted` must never abort the handler and drop the durable
-    // finalize. `.catch()` alone misses a sync throw before the promise exists.
+/**
+ * The sealing sink: mints a `step_…` id per opened step, seals every payload
+ * under the reply SSK AAD-bound to that id, and POSTs the started / finalized /
+ * substep frames to the backend session callbacks.
+ */
+class EnclaveSealingStepSink implements TraceStepSink {
+  constructor(private readonly deps: EnclaveTraceObserverDeps) {}
+
+  async openStep(op: Parameters<TraceStepSink["openStep"]>[0]): Promise<TraceStepHandle> {
+    const stepId = mintStepId()
+    // Seal once when the content is known up front; the finalize reuses it
+    // unless it carries different content (tool results arrive at finalize).
+    const opened =
+      op.content !== undefined ? { plaintext: op.content, sealed: await this.seal(op.content, stepId) } : undefined
+
+    // The `step:started` frame is live-UX only (it lets an open trace dialog
+    // render the in-progress step); the durable record is the *finalize*,
+    // which has its own persistence fallback. So a failed/unsupported start
+    // POST must NOT abort the handler and drop the finalize — swallow it.
+    // (This is why a backend missing the `/steps/started` route still records
+    // every step, just without the live in-flight frame.)
     try {
-      await this.deps.sendStepStarted(step)
+      await this.deps.sendStepStarted({ stepId, stepType: op.stepType, ...opened?.sealed })
     } catch {
       // best-effort: the live `step:started` frame is UX-only (see above)
     }
+
+    return {
+      substep: async ({ stepType, text, snapshot }) => {
+        // Mid-run phase text is derived from the encrypted prompt, so seal it
+        // under the SSK like a step. Two sealed payloads travel in one POST:
+        // the single new phase (ephemeral, drives the live "Ariadne is …"
+        // indicator) and the running snapshot (persisted onto the step row so
+        // a refresh / open mid-run replays it).
+        const sealed = await this.seal(text, stepId)
+        const snapshotSealed = await this.seal(JSON.stringify({ substeps: snapshot }), stepId)
+        await this.deps.sendSubstep({
+          stepType,
+          ...sealed,
+          stepId,
+          snapshotCiphertext: snapshotSealed.ciphertext,
+          snapshotEnvelope: snapshotSealed.envelope,
+        })
+      },
+      finalize: async (fin) => {
+        let sealed: { ciphertext: string; envelope: EnclaveSealedStep["envelope"] }
+        if (opened && (fin.content === undefined || fin.content === opened.plaintext)) {
+          sealed = opened.sealed
+        } else if (fin.content !== undefined) {
+          sealed = await this.seal(fin.content, stepId)
+        } else {
+          // Can't finalize a contentless step that was also opened contentless —
+          // the mapper never does this; fail loudly rather than seal "".
+          throw new Error(`Enclave step ${stepId} (${fin.stepType}) finalized without content`)
+        }
+        await this.deps.sendStep({
+          stepId,
+          stepType: fin.stepType,
+          ...sealed,
+          durationMs: fin.durationMs,
+          messageId: fin.messageId,
+        })
+      },
+    }
+  }
+
+  async emitDetachedSubstep(sub: Parameters<TraceStepSink["emitDetachedSubstep"]>[0]): Promise<void> {
+    // No opened step to bind to (hidden tool) — broadcast the phase text alone,
+    // sealed under a fresh id, with no snapshot (there is no step row to replay
+    // it onto).
+    const sealed = await this.seal(sub.text, mintStepId())
+    await this.deps.sendSubstep({ stepType: sub.stepType, ...sealed, stepId: undefined })
   }
 
   /**
