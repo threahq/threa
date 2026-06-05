@@ -117,6 +117,28 @@ describe("ScheduledMessagesService.schedule", () => {
     ).rejects.toThrow(/not found/i)
   })
 
+  it("refuses to schedule into an E2E stream (server can't seal at fire time) — E2EE-3", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ e2eEnabled: true }))
+    const insertSpy = spyOn(ScheduledMessagesRepository, "insert")
+
+    await expect(
+      service.schedule({
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        streamId: STREAM_ID,
+        parentMessageId: null,
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "x",
+        attachmentIds: [],
+        metadata: null,
+        scheduledFor: FUTURE,
+        clientMessageId: null,
+      })
+    ).rejects.toMatchObject({ status: 400, code: "E2E_STREAM_SCHEDULING_UNSUPPORTED" })
+    expect(insertSpy).not.toHaveBeenCalled()
+  })
+
   it("requires stream membership for private streams", async () => {
     const service = setupService()
     spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PRIVATE }))

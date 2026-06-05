@@ -1104,6 +1104,13 @@ export function createPublicApiHandlers({
         })
         if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
         await assertStreamAccessible(req, claim.responseStreamId)
+        // E2EE-2: the public API has no sealed-write path, so a bot completion
+        // targeting an E2E stream would persist a plaintext reply into a sealed
+        // timeline. E2EE-11 stops these invocations from being created at all;
+        // this rejects any pre-existing claim loudly (and is the same gate
+        // send/update use) rather than letting the INV-E1 sink throw a less
+        // specific error deeper in.
+        await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)
         const message = contentMarkdown
           ? await eventService.createMessageInTransaction(client, {
               workspaceId: req.workspaceId!,

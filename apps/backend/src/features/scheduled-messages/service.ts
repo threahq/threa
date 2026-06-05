@@ -645,6 +645,18 @@ export class ScheduledMessagesService {
       })
     }
 
+    // E2EE-3: the server holds no stream key, so it can never seal a future
+    // message at fire time. Refuse at schedule time with a loud error rather
+    // than accepting plaintext that would either leak into the sealed stream
+    // (now backstopped by the INV-E1 sink) or silently fail to send much later.
+    // `findById` already populates `e2eEnabled` off the e2e_streams join.
+    if (stream.e2eEnabled === true) {
+      throw new HttpError("Cannot schedule messages to an end-to-end-encrypted stream", {
+        status: 400,
+        code: "E2E_STREAM_SCHEDULING_UNSUPPORTED",
+      })
+    }
+
     const accessStreamId = stream.rootStreamId ?? stream.id
     let accessStream: Stream | null = stream
     if (stream.rootStreamId) {

@@ -87,6 +87,15 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const stream = await StreamRepository.findById(this.pool, message.streamId)
     if (!stream || stream.workspaceId !== message.workspaceId || stream.archivedAt) return
 
+    // E2EE-11: E2E streams route AI through the enclave only. The outbox payload
+    // here carries the placeholder (mentions ride in the ciphertext, never the
+    // cleartext markdown), so mention extraction can't see @-bots and the
+    // active-scratchpad branch would otherwise dispatch an empty-prompt turn to
+    // an external bot whose plaintext reply would then violate INV-E1. Skip all
+    // external bot invocation for E2E streams, mirroring the companion handler.
+    // `findById` already populates `e2eEnabled` off the e2e_streams join.
+    if (stream.e2eEnabled === true) return
+
     const rootStreamId = stream.rootStreamId ?? stream.id
     const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(this.pool, rootStreamId)
     const invocationRootStreamId = rootStream?.id ?? stream.id

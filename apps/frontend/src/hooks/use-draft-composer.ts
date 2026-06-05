@@ -89,7 +89,7 @@ export function useDraftComposer({
     addAttachment: addDraftAttachment,
     removeAttachment: removeDraftAttachment,
     clearDraft,
-  } = useDraftMessage(workspaceId, draftKey)
+  } = useDraftMessage(workspaceId, draftKey, e2eEnabled)
 
   // Attachment handling
   const {

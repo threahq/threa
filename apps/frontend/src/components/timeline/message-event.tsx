@@ -772,6 +772,8 @@ interface MessageEventInnerProps {
   isFirstMessage?: boolean
   /** Decrypted E2E attachment refs, threaded to the body's `<E2eAttachmentList>`. */
   attachmentRefs?: AttachmentRef[]
+  /** True when the message lives in an E2E stream — hides the Edit affordance (E2EE-1). */
+  e2eEnabled?: boolean
   batch?: BatchTimelineState
 }
 
@@ -813,6 +815,7 @@ function SentMessageEvent({
   groupContinuation,
   isFirstMessage,
   attachmentRefs,
+  e2eEnabled,
   batch,
 }: MessageEventInnerProps) {
   const { panelId, getPanelUrl } = usePanel()
@@ -1039,6 +1042,7 @@ function SentMessageEvent({
       authorId: event.actorId ?? undefined,
       currentUserId: currentUserId ?? undefined,
       editedAt: payload.editedAt,
+      e2eEnabled,
       onEdit: startEditing,
       onDelete: () => setDeleteDialogOpen(true),
       // Deferred to next tick so the DropdownMenu/ActionDrawer fully unmounts
@@ -1129,6 +1133,7 @@ function SentMessageEvent({
       payload.messageId,
       payload.editedAt,
       payload.reactions,
+      e2eEnabled,
       event.actorType,
       event.actorId,
       panelId,
@@ -1762,6 +1767,7 @@ export function MessageEvent({
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}
           attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
+          e2eEnabled={decrypted.status !== "plaintext"}
           batch={batch}
         />
       )

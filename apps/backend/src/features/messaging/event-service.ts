@@ -15,6 +15,7 @@ import {
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { attachmentReferenceId, eventId, messageId, messageVersionId, streamId as generateStreamId } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
 import { serializeBigInt } from "@threa/backend-common"
@@ -316,6 +317,25 @@ class DuplicateMessageError extends Error {
   }
 }
 
+/**
+ * INV-E1: an E2E stream must carry ciphertext and a plaintext stream must not.
+ * Either mismatch would persist a row that violates the encryption guarantee.
+ * Throws the same error codes the messaging create handler uses so the wire
+ * contract stays identical whether the check fires at the handler or the sink.
+ */
+function assertE2eContentMatch(streamIsE2e: boolean, hasCiphertext: boolean): void {
+  if (streamIsE2e === hasCiphertext) return
+  throw new HttpError(
+    streamIsE2e
+      ? "Stream is end-to-end encrypted; send ciphertext, envelope, and e2eVersion"
+      : "Stream is not end-to-end encrypted; send plaintext content",
+    {
+      status: 400,
+      code: streamIsE2e ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
+    }
+  )
+}
+
 export class EventService {
   constructor(private pool: Pool) {}
 
@@ -397,6 +417,16 @@ export class EventService {
 
     // 0. Get stream for thread handling (metrics deferred until after conflict check)
     const stream = await StreamRepository.findById(client, params.streamId)
+
+    // INV-E1 enforced at the write sink (E2EE-5): an E2E stream stores only
+    // ciphertext, and a plaintext stream never carries an E2E envelope. The
+    // messaging create handler checks this too (with caller-friendly copy off
+    // the resolved stream), but the sink is the backstop so no other caller —
+    // the scheduled-message worker, public-API bot-invocation completion, any
+    // future adapter — can persist plaintext into a sealed stream. `findById`
+    // already LEFT JOINs `e2e_streams`, so this reads `e2eEnabled` off the row
+    // we just loaded rather than issuing a second SELECT.
+    assertE2eContentMatch(stream?.e2eEnabled === true, params.ciphertext !== undefined)
 
     // 1. Validate and prepare attachments FIRST (before creating event).
     //    Two flavors are allowed:
@@ -648,6 +678,19 @@ export class EventService {
 
   async editMessage(params: EditMessageParams): Promise<Message | null> {
     return withTransaction(this.pool, async (client) => {
+      // INV-E1 (E2EE-1): there is no sealed-edit path yet, so editing a message
+      // in an E2E stream would overwrite the sealed projection with plaintext,
+      // snapshot a plaintext version row, and broadcast plaintext over
+      // `message:edited`. Refuse loudly at the sink until a ciphertext edit
+      // payload exists; the frontend also hides the Edit affordance for E2E
+      // messages so this never surfaces as a dead button.
+      if (await E2eStreamsRepository.isE2eStream(client, params.workspaceId, params.streamId)) {
+        throw new HttpError("Cannot edit a message in an end-to-end-encrypted stream", {
+          status: 400,
+          code: "E2E_STREAM_EDIT_UNSUPPORTED",
+        })
+      }
+
       // Returns null if the message was concurrently deleted — prevents phantom edits
       const existing = await MessageRepository.findByIdForUpdate(client, params.messageId)
       if (!existing || existing.deletedAt) return null

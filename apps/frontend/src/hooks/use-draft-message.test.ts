@@ -170,6 +170,23 @@ describe("useDraftMessage", () => {
       )
     })
 
+    it("never persists a draft for an E2E stream and purges any on disk (E2EE-4)", async () => {
+      seededDraftCache = true
+
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, true))
+
+      await act(async () => {
+        await result.current.saveDraft(makeDoc("secret plaintext"))
+        result.current.saveDraftDebounced(makeDoc("more secret plaintext"))
+        await result.current.addAttachment({ id: "att_1", filename: "f", mimeType: "text/plain", sizeBytes: 1 })
+      })
+
+      // Nothing written to disk through any persistence entry point...
+      expect(mockPut).not.toHaveBeenCalled()
+      // ...and a pre-existing on-disk draft is cleared on mount.
+      expect(mockDelete).toHaveBeenCalledWith(draftKey)
+    })
+
     it("should delete draft when content is empty and no attachments", async () => {
       seededDraftCache = true
       mockGet.mockResolvedValue({ attachments: [] })

@@ -24,13 +24,29 @@ export function getDraftMessageKey(
 
 const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.env.VITE_DRAFT_DEBOUNCE_MS) : 500
 
-export function useDraftMessage(workspaceId: string, draftKey: string) {
+/**
+ * @param e2eEnabled When the draft belongs to an end-to-end-encrypted stream,
+ *   persistence and restore are disabled (E2EE-4): the composer keeps content in
+ *   memory for the session only, so no plaintext draft for a sealed scratchpad
+ *   ever touches IndexedDB or survives lock/reload. Any draft persisted before
+ *   this gate existed is purged on mount.
+ */
+export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnabled = false) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const draftMessages = useDraftMessagesFromStore(workspaceId)
-  const resolvedDraft = draftMessages.find((draft) => draft.id === draftKey)
+  const resolvedDraft = e2eEnabled ? undefined : draftMessages.find((draft) => draft.id === draftKey)
+
+  // Purge any pre-existing on-disk draft for an E2E stream (e.g. one written
+  // before this gate landed, or carried over when a stream is encrypted).
+  useEffect(() => {
+    if (!e2eEnabled) return
+    void db.draftMessages.delete(draftKey).then(() => deleteDraftMessageFromCache(workspaceId, draftKey))
+  }, [e2eEnabled, draftKey, workspaceId])
 
   const saveDraft = useCallback(
     async (contentJson: JSONContent, attachments?: DraftAttachment[]) => {
+      // E2EE-4: encrypted-stream drafts are never written to disk.
+      if (e2eEnabled) return
       // Clear any pending debounced save
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
@@ -63,11 +79,13 @@ export function useDraftMessage(workspaceId: string, draftKey: string) {
       await db.draftMessages.put(nextDraft)
       upsertDraftMessageInCache(workspaceId, nextDraft)
     },
-    [draftKey, workspaceId, resolvedDraft]
+    [draftKey, workspaceId, resolvedDraft, e2eEnabled]
   )
 
   const saveDraftDebounced = useCallback(
     (contentJson: JSONContent) => {
+      // E2EE-4: encrypted-stream drafts are never written to disk.
+      if (e2eEnabled) return
       // Clear any pending debounced save
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
@@ -78,7 +96,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string) {
         debounceRef.current = null
       }, DEBOUNCE_MS)
     },
-    [saveDraft]
+    [saveDraft, e2eEnabled]
   )
 
   /**
@@ -86,6 +104,8 @@ export function useDraftMessage(workspaceId: string, draftKey: string) {
    */
   const addAttachment = useCallback(
     async (attachment: DraftAttachment) => {
+      // E2EE-4: encrypted-stream drafts (incl. attachment metadata) stay in memory.
+      if (e2eEnabled) return
       const currentDraft = await db.draftMessages.get(draftKey)
       const currentAttachments = currentDraft?.attachments ?? []
 
@@ -109,7 +129,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string) {
       await db.draftMessages.put(nextDraft)
       upsertDraftMessageInCache(workspaceId, nextDraft)
     },
-    [draftKey, workspaceId]
+    [draftKey, workspaceId, e2eEnabled]
   )
 
   /**
@@ -118,6 +138,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string) {
    */
   const removeAttachment = useCallback(
     async (attachmentId: string) => {
+      if (e2eEnabled) return
       const currentDraft = await db.draftMessages.get(draftKey)
       if (!currentDraft) return
 

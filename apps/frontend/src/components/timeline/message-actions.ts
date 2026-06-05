@@ -44,6 +44,12 @@ export interface MessageActionContext {
   currentUserId?: string
   /** Whether this message has been edited */
   editedAt?: string
+  /**
+   * Whether this message lives in an end-to-end-encrypted stream. There is no
+   * sealed-edit path (the backend rejects plaintext edits via INV-E1), so the
+   * Edit affordance is hidden rather than shown-then-failing (E2EE-1).
+   */
+  e2eEnabled?: boolean
   /** Callback to enter edit mode */
   onEdit?: () => void
   /** Callback to open delete confirmation */
@@ -221,7 +227,8 @@ export const messageActions: MessageAction[] = [
     id: "edit-message",
     label: "Edit message",
     icon: Pencil,
-    when: (ctx) => ctx.actorType === "user" && !!ctx.authorId && ctx.authorId === ctx.currentUserId,
+    when: (ctx) =>
+      ctx.actorType === "user" && !!ctx.authorId && ctx.authorId === ctx.currentUserId && ctx.e2eEnabled !== true,
     action: (ctx) => ctx.onEdit?.(),
   },
   {
