@@ -318,20 +318,38 @@ class DuplicateMessageError extends Error {
 }
 
 /**
- * INV-E1: an E2E stream must carry ciphertext and a plaintext stream must not.
- * Either mismatch would persist a row that violates the encryption guarantee.
- * Throws the same error codes the messaging create handler uses so the wire
- * contract stays identical whether the check fires at the handler or the sink.
+ * INV-E1: an E2E stream must carry a *complete* E2E payload (ciphertext +
+ * envelope + e2eVersion), and a plaintext stream must carry none of them.
+ * Either mismatch would persist a row that violates the encryption guarantee —
+ * including a half-formed sealed row (ciphertext with no envelope is
+ * undecryptable). The messaging create handler's Zod schema already requires
+ * the three together; this sink backstops every other caller (scheduled-message
+ * worker, public-API bot completion, future adapters) that bypasses it. Throws
+ * the same error codes/copy the handler uses so the wire contract is identical
+ * wherever the check fires.
  */
-function assertE2eContentMatch(streamIsE2e: boolean, hasCiphertext: boolean): void {
-  if (streamIsE2e === hasCiphertext) return
+function assertE2eContentMatch(params: {
+  streamIsE2e: boolean
+  ciphertext?: Buffer
+  envelope?: unknown
+  e2eVersion?: number
+}): void {
+  const hasCiphertext = params.ciphertext !== undefined
+  const hasEnvelope = params.envelope !== undefined
+  const hasE2eVersion = params.e2eVersion !== undefined
+  const hasAnyE2ePayload = hasCiphertext || hasEnvelope || hasE2eVersion
+
+  // E2E stream: the full triple, or nothing valid. Plaintext stream: no E2E payload at all.
+  if (params.streamIsE2e && hasCiphertext && hasEnvelope && hasE2eVersion) return
+  if (!params.streamIsE2e && !hasAnyE2ePayload) return
+
   throw new HttpError(
-    streamIsE2e
+    params.streamIsE2e
       ? "Stream is end-to-end encrypted; send ciphertext, envelope, and e2eVersion"
       : "Stream is not end-to-end encrypted; send plaintext content",
     {
       status: 400,
-      code: streamIsE2e ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
+      code: params.streamIsE2e ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
     }
   )
 }
@@ -426,7 +444,12 @@ export class EventService {
     // future adapter — can persist plaintext into a sealed stream. `findById`
     // already LEFT JOINs `e2e_streams`, so this reads `e2eEnabled` off the row
     // we just loaded rather than issuing a second SELECT.
-    assertE2eContentMatch(stream?.e2eEnabled === true, params.ciphertext !== undefined)
+    assertE2eContentMatch({
+      streamIsE2e: stream?.e2eEnabled === true,
+      ciphertext: params.ciphertext,
+      envelope: params.envelope,
+      e2eVersion: params.e2eVersion,
+    })
 
     // 1. Validate and prepare attachments FIRST (before creating event).
     //    Two flavors are allowed:
