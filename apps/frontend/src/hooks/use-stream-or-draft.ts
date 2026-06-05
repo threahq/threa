@@ -5,9 +5,9 @@ import { db, sequenceToNum, type CachedStream } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { sealStreamMessage, sealStreamName } from "@/lib/crypto/message-envelope"
+import { sealStreamName, type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
 import { resolveCurrentStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
-import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { sealOutgoingMessage } from "@/lib/crypto/seal-send"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
@@ -605,47 +605,17 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // arrives before the per-stream IDB row mirrors the workspace-bootstrap
       // row still encrypts instead of writing plaintext that INV-E1 rejects.
       const e2eEnabled = baseStream?.e2eEnabled === true
-      let e2eFields: Awaited<ReturnType<typeof sealStreamMessage>> | undefined
+      let e2eFields: SealStreamMessageResult | undefined
       if (e2eEnabled) {
-        const session = getE2eSessionState(workspaceId, currentUserId)
-        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) {
-          throw new Error("Unlock encrypted scratchpads before sending")
-        }
-        // Resolve each attachment's per-file key/iv (minted at upload) and seal
-        // them into the payload as `attachmentRefs`. The key lives only in
-        // memory by design, so a reload between upload and send drops it — fail
-        // loud rather than ship a row the owner can never decrypt.
-        let attachmentRefs: AttachmentRef[] | undefined
-        if (input.attachmentIds && input.attachmentIds.length > 0) {
-          attachmentRefs = input.attachmentIds.map((id) => {
-            const ref = getAttachmentRef(id)
-            if (!ref) {
-              throw new Error("Re-attach the file before sending — its encryption key was lost on reload")
-            }
-            return ref
-          })
-        }
-        // Seal under the stream's symmetric key (SSK, v2). The SSK is resolved
-        // from the stream's wraps and unwrapped with the viewer's UIK — a
-        // viewer who isn't a recipient of the current generation can't seal.
-        const streamKey = await resolveCurrentStreamKey({
+        const sealed = await sealOutgoingMessage({
           workspaceId,
-          streamId,
-          recipientKeyId: session.keyId,
-          privateKey: session.privateKey,
-        })
-        if (!streamKey) {
-          throw new Error("You don't have access to this encrypted scratchpad's key")
-        }
-        e2eFields = await sealStreamMessage({
-          contentMarkdown,
+          senderId: currentUserId,
           streamId,
           messageId: clientId,
-          senderId: currentUserId,
-          ssk: streamKey.key,
-          keyGeneration: streamKey.keyGeneration,
-          attachmentRefs,
+          contentMarkdown,
+          attachmentIds: input.attachmentIds,
         })
+        e2eFields = sealed.e2eFields
         // Heal-on-send: if an invited actor's key went stale (an enclave
         // restart mints a fresh EIK), this turn parks server-side on the
         // missing wrap. Fire the revive now — fire-and-forget, de-duped
@@ -656,8 +626,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
             workspaceId,
             streamId,
             userId: currentUserId,
-            ownerKeyId: session.keyId,
-            ownerPrivateKey: session.privateKey,
+            ownerKeyId: sealed.owner.keyId,
+            ownerPrivateKey: sealed.owner.privateKey,
           }).catch((err) => console.error("Failed to revive stale actor key wraps on send", err))
         }
         // Carry the refs on the optimistic payload so the server echo's
@@ -666,8 +636,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         // seeded "decrypted" entry suppresses the real decrypt that would
         // surface the refs, and the row falls through to the opaque server
         // placeholder.
-        if (attachmentRefs && attachmentRefs.length > 0) {
-          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = attachmentRefs
+        if (sealed.attachmentRefs && sealed.attachmentRefs.length > 0) {
+          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = sealed.attachmentRefs
         }
       }
 

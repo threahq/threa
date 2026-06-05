@@ -35,6 +35,23 @@ const threadCreation = {
   parentMessageId: "msg_parent",
 }
 
+function mockUnlockedSession() {
+  vi.spyOn(e2eSessionModule, "getE2eSessionState").mockReturnValue({
+    status: "unlocked",
+    keyId: "key_1",
+    privateKey: {} as CryptoKey,
+  } as unknown as ReturnType<typeof e2eSessionModule.getE2eSessionState>)
+  vi.spyOn(streamKeyCacheModule, "resolveCurrentStreamKey").mockResolvedValue({
+    key: new Uint8Array(32),
+    keyGeneration: 3,
+  })
+  vi.spyOn(messageEnvelopeModule, "sealStreamMessage").mockResolvedValue({
+    ciphertext: "CT",
+    envelope: { v: 2, keyGeneration: 3, iv: "iv", aad: "aad" },
+    e2eVersion: 2,
+  })
+}
+
 describe("useQueueDraftMessage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -60,22 +77,8 @@ describe("useQueueDraftMessage", () => {
   })
 
   it("seals the body under the encrypted root and stores ciphertext on the pending message", async () => {
-    vi.spyOn(e2eSessionModule, "getE2eSessionState").mockReturnValue({
-      status: "unlocked",
-      keyId: "key_1",
-      privateKey: {} as CryptoKey,
-    } as unknown as ReturnType<typeof e2eSessionModule.getE2eSessionState>)
-    vi.spyOn(streamKeyCacheModule, "resolveCurrentStreamKey").mockResolvedValue({
-      key: new Uint8Array(32),
-      keyGeneration: 3,
-    })
-    const sealSpy = vi
-      .spyOn(messageEnvelopeModule, "sealStreamMessage")
-      .mockResolvedValue({
-        ciphertext: "CT",
-        envelope: { v: 2, keyGeneration: 3, iv: "iv", aad: "aad" },
-        e2eVersion: 2,
-      })
+    mockUnlockedSession()
+    const sealSpy = vi.spyOn(messageEnvelopeModule, "sealStreamMessage")
 
     const { result } = setup()
     await act(async () => {
@@ -86,21 +89,46 @@ describe("useQueueDraftMessage", () => {
           streamId: PANEL_ID,
           streamCreation: threadCreation,
           draftId: PANEL_ID,
-          e2e: { rootStreamId: ROOT_STREAM_ID },
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
         }
       )
     })
 
     // The SSK and AAD are bound to the encrypted root, not the (not-yet-created) thread.
-    expect(sealSpy).toHaveBeenCalledTimes(1)
-    expect(sealSpy.mock.calls[0][0]).toMatchObject({ streamId: ROOT_STREAM_ID, keyGeneration: 3 })
+    expect(sealSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ streamId: ROOT_STREAM_ID, messageId: expect.any(String), keyGeneration: 3 })
+    )
+    expect(mockPendingAdd).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ciphertext: "CT",
+        envelope: { v: 2, keyGeneration: 3, iv: "iv", aad: "aad" },
+        e2eVersion: 2,
+        streamCreation: threadCreation,
+      })
+    )
+  })
 
-    expect(mockPendingAdd).toHaveBeenCalledTimes(1)
-    expect(mockPendingAdd.mock.calls[0][0]).toMatchObject({
-      ciphertext: "CT",
-      e2eVersion: 2,
-      streamCreation: threadCreation,
+  it("heals the encrypted root's actor wraps on send when the root has invited actors", async () => {
+    mockUnlockedSession()
+    const reviveSpy = vi.spyOn(streamKeyCacheModule, "reviveStaleActorWraps").mockResolvedValue("none-missing")
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.queueDraftMessage(
+        { contentJson: CONTENT },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: threadCreation,
+          draftId: PANEL_ID,
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: true },
+        }
+      )
     })
+
+    expect(reviveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: WORKSPACE_ID, streamId: ROOT_STREAM_ID, userId: USER_ID })
+    )
   })
 
   it("queues plaintext (no ciphertext) when the draft has no encrypted root", async () => {
@@ -120,10 +148,12 @@ describe("useQueueDraftMessage", () => {
     })
 
     expect(sealSpy).not.toHaveBeenCalled()
-    expect(mockPendingAdd).toHaveBeenCalledTimes(1)
     const pending = mockPendingAdd.mock.calls[0][0]
-    expect(pending.ciphertext).toBeUndefined()
-    expect(pending.e2eVersion).toBeUndefined()
+    expect({ ciphertext: pending.ciphertext, envelope: pending.envelope, e2eVersion: pending.e2eVersion }).toEqual({
+      ciphertext: undefined,
+      envelope: undefined,
+      e2eVersion: undefined,
+    })
   })
 
   it("refuses to queue an encrypted draft when the session is locked", async () => {
@@ -142,7 +172,7 @@ describe("useQueueDraftMessage", () => {
           streamId: PANEL_ID,
           streamCreation: threadCreation,
           draftId: PANEL_ID,
-          e2e: { rootStreamId: ROOT_STREAM_ID },
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
         }
       )
     ).rejects.toThrow(/Unlock encrypted scratchpads/)

@@ -7,10 +7,8 @@ import { serializeToMarkdown } from "@threa/prosemirror"
 import { StreamTypes, Visibilities, type JSONContent, type StreamEvent } from "@threa/types"
 import { createDraftPanelId } from "@/contexts/panel-context"
 import { optimisticReplyCountUpdate } from "@/sync/stream-sync"
-import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { sealStreamMessage } from "@/lib/crypto/message-envelope"
-import { resolveCurrentStreamKey } from "@/lib/crypto/stream-key-cache"
-import { getAttachmentRef, type AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypto/seal-send"
+import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { generateClientId } from "./use-stream-or-draft"
 import type { AttachmentSummary } from "./create-optimistic-bootstrap"
 
@@ -35,8 +33,10 @@ export interface QueueDraftMessageParams {
    * the sealed stream is rejected by the backend's E2E gate. `rootStreamId` is
    * the encrypted root whose current SSK seals this message; the promoted thread
    * carries a copy of the same key + wraps, so it opens under the thread id too.
+   * `hasActors` is true when the root has invited actors (the enclave / bots),
+   * gating the best-effort heal-on-send.
    */
-  e2e?: { rootStreamId: string }
+  e2e?: { rootStreamId: string; hasActors: boolean }
 }
 
 /**
@@ -86,49 +86,40 @@ export function useQueueDraftMessage(workspaceId: string) {
       // When the draft lives under an E2E root, seal the body here (with the
       // owner's UIK held in memory) so the drain loop stays identity-agnostic —
       // it just forwards the precomputed ciphertext once it has promoted the
-      // draft into the (server-sealed) stream. Mirrors the encrypted send path
-      // in `use-stream-or-draft`. Bind the AAD to the encrypted root: the
+      // draft into the (server-sealed) stream. Shares `sealOutgoingMessage` with
+      // the live send path (INV-35). Bind the AAD to the encrypted root: the
       // promoted thread shares the root's SSK + generation, so it opens under
       // the thread id all the same (decryption resolves the key by the copied
       // wraps, not by re-deriving the AAD).
-      let e2eFields: Awaited<ReturnType<typeof sealStreamMessage>> | undefined
+      let e2eFields: SealOutgoingMessageResult["e2eFields"] | undefined
       if (params.e2e) {
-        const session = getE2eSessionState(params.workspaceId, currentUserId)
-        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) {
-          throw new Error("Unlock encrypted scratchpads before sending")
-        }
-        let attachmentRefs: AttachmentRef[] | undefined
-        if (input.attachmentIds && input.attachmentIds.length > 0) {
-          attachmentRefs = input.attachmentIds.map((id) => {
-            const ref = getAttachmentRef(id)
-            if (!ref) {
-              throw new Error("Re-attach the file before sending — its encryption key was lost on reload")
-            }
-            return ref
-          })
-        }
-        const streamKey = await resolveCurrentStreamKey({
+        const sealed = await sealOutgoingMessage({
           workspaceId: params.workspaceId,
-          streamId: params.e2e.rootStreamId,
-          recipientKeyId: session.keyId,
-          privateKey: session.privateKey,
-        })
-        if (!streamKey) {
-          throw new Error("You don't have access to this encrypted scratchpad's key")
-        }
-        e2eFields = await sealStreamMessage({
-          contentMarkdown,
+          senderId: currentUserId,
           streamId: params.e2e.rootStreamId,
           messageId: clientId,
-          senderId: currentUserId,
-          ssk: streamKey.key,
-          keyGeneration: streamKey.keyGeneration,
-          attachmentRefs,
+          contentMarkdown,
+          attachmentIds: input.attachmentIds,
         })
+        e2eFields = sealed.e2eFields
+        // Heal-on-send, best-effort: keep the root's actor wraps fresh so the
+        // thread copies live wraps when the server seals it. Without this, an
+        // enclave whose EIK rotated would have the first thread turn park
+        // server-side; it self-heals on the next reply (the live send path
+        // revives on the thread itself), so fire-and-forget is enough here.
+        if (params.e2e.hasActors) {
+          void reviveStaleActorWraps({
+            workspaceId: params.workspaceId,
+            streamId: params.e2e.rootStreamId,
+            userId: currentUserId,
+            ownerKeyId: sealed.owner.keyId,
+            ownerPrivateKey: sealed.owner.privateKey,
+          }).catch((err) => console.error("Failed to revive stale actor key wraps on encrypted thread send", err))
+        }
         // Carry the refs on the optimistic payload so the sender sees their own
         // attachments render immediately (mirrors the encrypted send path).
-        if (attachmentRefs && attachmentRefs.length > 0) {
-          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = attachmentRefs
+        if (sealed.attachmentRefs && sealed.attachmentRefs.length > 0) {
+          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = sealed.attachmentRefs
         }
       }
 

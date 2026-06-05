@@ -334,6 +334,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   // Handle draft thread submission
   const handleSubmit = useCallback(async () => {
     if (!draftInfo || !composer.canSend || !currentUserId || !panelId) return
+    // Fail closed: until the parent resolves we can't tell whether this thread
+    // inherits an encrypted root, and queuing a plaintext reply into a stream
+    // the server seals would jam the outbox on INV-E1 (400, retried forever).
+    // The parent loads from cache almost immediately; the user just retries.
+    if (!parentStream) return
 
     composer.setIsSending(true)
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
@@ -357,8 +362,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
       // promoted thread inherits the root's SSK, so a plaintext send would be
       // rejected by the backend's INV-E1 gate. The root is the parent's root
       // (or the parent itself when it is the root).
-      const rootStreamId = parentStream ? (parentStream.rootStreamId ?? parentStream.id) : undefined
-      const e2e = parentStream?.e2eEnabled === true && rootStreamId ? { rootStreamId } : undefined
+      const rootStreamId = parentStream.rootStreamId ?? parentStream.id
+      const e2e =
+        parentStream.e2eEnabled === true
+          ? { rootStreamId, hasActors: (parentStream.e2eActors?.length ?? 0) > 0 }
+          : undefined
 
       await queueDraftMessage(
         {
