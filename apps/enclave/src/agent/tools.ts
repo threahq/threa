@@ -8,6 +8,7 @@ import {
 import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
 import { isToolCategoryAllowed, type ToolPrivacyCategory } from "@threa/types"
 import type { LanguageModel } from "ai"
+import { createEnclaveLoadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
 
 /**
  * The enclave-safe tool surface for an E2E turn.
@@ -41,13 +42,24 @@ export interface EnclaveToolDeps {
    * — a pure model turn that can still reply (`send_message` is never gated).
    */
   allowedCategories?: ToolPrivacyCategory[]
+  /**
+   * This turn's attachment refs + inline ciphertext, powering `load_attachment`.
+   * The tool is NOT behind the privacy gate: the files are the conversation's
+   * own content (their refs already ride the messages the model reads), not
+   * workspace reads or web egress.
+   */
+  attachments?: EnclaveAttachmentStore
 }
 
 export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
-  // The owner's policy may forbid web egress for this scratchpad. Since the
-  // enclave's entire surface (web_search, read_url, general_research) is web,
-  // that collapses to "no tools" — honest about the privacy the stream keeps.
-  if (!isToolCategoryAllowed(deps.allowedCategories, "web")) return []
+  // Conversation-local tools live outside the privacy gate (see `attachments`).
+  const localTools: AgentTool[] = deps.attachments ? [createEnclaveLoadAttachmentTool(deps.attachments)] : []
+
+  // The owner's policy may forbid web egress for this scratchpad. The enclave's
+  // entire *web* surface (web_search, read_url, general_research) then drops,
+  // leaving only the conversation-local tools — honest about the privacy the
+  // stream keeps without crippling files the model was already shown.
+  if (!isToolCategoryAllowed(deps.allowedCategories, "web")) return localTools
 
   // The web primitives, built fresh on demand. The top-level loop and the
   // research sub-loop each get their OWN instances (the sub-loop runs the same
@@ -74,5 +86,5 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
       ),
   })
 
-  return [...webTools(), research]
+  return [...localTools, ...webTools(), research]
 }

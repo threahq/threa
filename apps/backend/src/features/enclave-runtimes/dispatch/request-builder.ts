@@ -49,7 +49,7 @@ export interface BuildInvokeInputs {
    * them); the enclave matches them to the decrypted `attachmentRefs` by id and
    * opens them with the sealed per-file key. Empty/omitted → no attachments.
    */
-  triggerAttachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
+  attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
 }
 
 export interface BuiltEnclaveInvoke {
@@ -111,10 +111,10 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
     // NULL = unrestricted → omit the field (the enclave then builds its full
     // web surface, today's behavior).
     ...(e2e.allowedToolCategories ? { allowedToolCategories: e2e.allowedToolCategories } : {}),
-    // Trigger-message attachment ciphertext, shipped inline so the enclave reads
-    // files without an S3 egress. Omitted when there are none.
-    ...(inputs.triggerAttachmentCiphertexts && inputs.triggerAttachmentCiphertexts.length > 0
-      ? { attachmentCiphertexts: inputs.triggerAttachmentCiphertexts }
+    // Attachment ciphertext (trigger + recent history), shipped inline so the
+    // enclave reads files without an S3 egress. Omitted when there are none.
+    ...(inputs.attachmentCiphertexts && inputs.attachmentCiphertexts.length > 0
+      ? { attachmentCiphertexts: inputs.attachmentCiphertexts }
       : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
     // Clear metadata for the enclave's "Triggered by" CONTEXT step; the body is

@@ -23,6 +23,9 @@ const ENCLAVE_ENABLED_TOOLS: string[] = [
   AgentToolNames.WEB_SEARCH,
   AgentToolNames.READ_URL,
   AgentToolNames.GENERAL_RESEARCH,
+  // Conversation-local file reads: the enclave's in-process variant decrypts
+  // inline-shipped ciphertext (no S3, no backend callback).
+  AgentToolNames.LOAD_ATTACHMENT,
 ]
 
 export async function buildEnclaveSystemPrompt(params: {

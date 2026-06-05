@@ -18,7 +18,7 @@ import {
 import { createEnclaveKeyPair, type EnclaveKeyPair } from "./keystore"
 import type { BackendCallbacks } from "./agent/backend-callbacks"
 import type { RawChatFn } from "./llm"
-import { createCancelHandler, createSessionsHandler, requireInternalKey } from "./sessions"
+import { createCancelHandler, createSessionsHandler, requireInternalKey, sessionAssignmentSchema } from "./sessions"
 
 const STREAM_ID = "stream_x"
 const GEN = 0
@@ -258,5 +258,23 @@ describe("createCancelHandler validation", () => {
     const res = fakeRes()
     handler({ params: {} } as unknown as Request, res)
     expect(res.statusCode).toBe(400)
+  })
+})
+
+describe("sessionAssignmentSchema", () => {
+  it("preserves attachmentCiphertexts through parse (zod strips undeclared keys)", async () => {
+    // Regression: the first attachment slice shipped with this field missing
+    // from the schema — the backend sent the bytes and this parse silently
+    // deleted them, so every file reached the model as "unavailable".
+    const keyPair = await createEnclaveKeyPair()
+    const assignment = await assignmentFor(keyPair, generateStreamKey(), "read the file")
+    const withAttachments = {
+      ...assignment,
+      attachmentCiphertexts: [{ attachmentId: "attach_1", ciphertext: "b64bytes" }],
+    }
+
+    const parsed = sessionAssignmentSchema.parse(withAttachments)
+
+    expect(parsed.attachmentCiphertexts).toEqual([{ attachmentId: "attach_1", ciphertext: "b64bytes" }])
   })
 })

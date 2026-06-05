@@ -52,7 +52,10 @@ async function main() {
   app.post(
     "/sessions",
     requireInternalKey(config.internalApiKey),
-    express.json({ limit: "4mb" }),
+    // Sized for inline attachment ciphertext: the dispatch worker caps what it
+    // ships at ~32MB of base64 (per-file + total caps in
+    // `loadAttachmentCiphertexts`), plus history + system prompt.
+    express.json({ limit: "48mb" }),
     createSessionsHandler({
       keyPair,
       rawChat,
