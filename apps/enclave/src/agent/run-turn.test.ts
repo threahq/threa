@@ -180,6 +180,65 @@ describe("runEnclaveTurn", () => {
     expect(stepText).toBe("Paris.")
   })
 
+  it("seals an auto-title the owner's SSK can recover when autoTitle is set", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Help me plan a trip to France.", "msg_user", "usr_owner")
+    // First chat = the turn's reply; second = the title generation call.
+    const chat = stubChat([textReply("Sure, where to?"), textReply('"Trip planning to France."')])
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    let sealedName: { ciphertext: string; envelope: { keyGeneration: number } } | null = null
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        onSealedName: async (s) => void (sealedName = s),
+      },
+      baseRequest({ wraps: [wrap], prompt, autoTitle: true })
+    )
+
+    expect(sealedName).not.toBeNull()
+    expect(sealedName!.envelope.keyGeneration).toBe(GEN)
+    // The sealed title decrypts under the same SSK (quotes/period stripped).
+    const title = await openMessageAsString({
+      key: ssk,
+      envelope: sealedName!.envelope as never,
+      ciphertext: Buffer.from(sealedName!.ciphertext, "base64"),
+    })
+    expect(title).toBe("Trip planning to France")
+  })
+
+  it("does not title when autoTitle is unset", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Just a note.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Noted."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    let titled = false
+    await runEnclaveTurn(
+      {
+        keyPair,
+        rawChat: chat.fn,
+        onMessage,
+        onStepStarted,
+        onStep,
+        onSubstep,
+        onSealedName: async () => void (titled = true),
+      },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    expect(titled).toBe(false)
+  })
+
   it("seals every message when the loop sends more than one", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()
@@ -344,7 +403,10 @@ describe("runEnclaveTurn", () => {
       { type: "image_url", image_url: { url: `data:image/png;base64,${bytesToBase64(utf8Encode("fake-png-bytes"))}` } },
       {
         type: "file",
-        file: { filename: "contract.pdf", file_data: `data:application/pdf;base64,${bytesToBase64(utf8Encode("fake-pdf-bytes"))}` },
+        file: {
+          filename: "contract.pdf",
+          file_data: `data:application/pdf;base64,${bytesToBase64(utf8Encode("fake-pdf-bytes"))}`,
+        },
       },
     ])
   })
@@ -396,7 +458,9 @@ describe("runEnclaveTurn", () => {
     // First call: the history message carries the id-bearing note (not the bytes),
     // and load_attachment is offered even with no web tools configured.
     const first = chat.seen[0]!
-    const historyMsg = first.messages.find((m) => m.role === "user" && typeof m.content === "string" && m.content.includes("plan"))
+    const historyMsg = first.messages.find(
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("plan")
+    )
     expect(historyMsg?.content).toBe('here\'s the plan\n\n[Attached: "plan.md" (attach_hist)]')
     expect(first.tools?.map((t) => t.function.name)).toEqual(expect.arrayContaining(["load_attachment"]))
 
@@ -433,11 +497,26 @@ describe("runEnclaveTurn", () => {
 
     // Browsers report no MIME for .md, so the ref says octet-stream — the
     // enclave must still recognize valid UTF-8 and inline it as text.
-    const md = await encryptFile(utf8Encode("# Notes\n\nremember the milk"), "application/octet-stream", "notes.md", "attach_md")
+    const md = await encryptFile(
+      utf8Encode("# Notes\n\nremember the milk"),
+      "application/octet-stream",
+      "notes.md",
+      "attach_md"
+    )
     // 0xFF 0xFE… is not valid UTF-8 → genuinely binary, no model-readable form.
-    const bin = await encryptFile(new Uint8Array([0xff, 0xfe, 0x00, 0x01]), "application/octet-stream", "blob.bin", "attach_bin")
+    const bin = await encryptFile(
+      new Uint8Array([0xff, 0xfe, 0x00, 0x01]),
+      "application/octet-stream",
+      "blob.bin",
+      "attach_bin"
+    )
 
-    const prompt = await sealUnder(ssk, serializeSealedPayload("read these", [md.ref, bin.ref]), "msg_user", "usr_owner")
+    const prompt = await sealUnder(
+      ssk,
+      serializeSealedPayload("read these", [md.ref, bin.ref]),
+      "msg_user",
+      "usr_owner"
+    )
     const chat = stubChat(textReply("done"))
     const { onMessage, onStepStarted, onStep, onSubstep } = collector()
 

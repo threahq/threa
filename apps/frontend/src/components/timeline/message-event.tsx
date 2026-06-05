@@ -776,6 +776,12 @@ interface MessageEventInnerProps {
   attachmentRefs?: AttachmentRef[]
   /** True when the message lives in an E2E stream — hides the Edit affordance (E2EE-1). */
   e2eEnabled?: boolean
+  /**
+   * Decrypted markdown for an unlocked E2E message — set only when actually
+   * decrypted (not locked). Powers "share decrypts to public": the share modal
+   * uses it to post the plaintext instead of a sealed pointer recipients can't open.
+   */
+  e2eDecryptedMarkdown?: string
   batch?: BatchTimelineState
 }
 
@@ -818,6 +824,7 @@ function SentMessageEvent({
   isFirstMessage,
   attachmentRefs,
   e2eEnabled,
+  e2eDecryptedMarkdown,
   batch,
 }: MessageEventInnerProps) {
   const { panelId, getPanelUrl } = usePanel()
@@ -1373,6 +1380,7 @@ function SentMessageEvent({
             authorId: event.actorId ?? "",
             actorType: event.actorType ?? "user",
           }}
+          sourcePlaintext={e2eDecryptedMarkdown}
         />
       )}
       {moveDetailsOpen && movedTombstoneEvent && (
@@ -1770,6 +1778,7 @@ export function MessageEvent({
           isFirstMessage={isFirstMessage}
           attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
           e2eEnabled={decrypted.status !== "plaintext"}
+          e2eDecryptedMarkdown={decrypted.status === "decrypted" ? decrypted.contentMarkdown : undefined}
           batch={batch}
         />
       )

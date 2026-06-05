@@ -115,6 +115,9 @@ export const sessionAssignmentSchema = z.object({
     .array(z.object({ attachmentId: z.string().min(1), ciphertext: z.string().min(1) }))
     .max(MAX_INLINE_ATTACHMENTS)
     .optional(),
+  // Whether to auto-title this scratchpad (declared so Zod doesn't strip it —
+  // the same failure mode the attachment slice hit).
+  autoTitle: z.boolean().optional(),
 })
 
 export interface SessionsDeps {

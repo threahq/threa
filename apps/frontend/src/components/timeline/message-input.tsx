@@ -23,10 +23,10 @@ import { useScheduleMessage } from "@/hooks"
 import { toast } from "sonner"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractCommandNode } from "@/lib/commands"
-import { serializeToMarkdown } from "@threa/prosemirror"
+import { serializeToMarkdown, parseMarkdown } from "@threa/prosemirror"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, type QuoteReplyData } from "./quote-reply-context"
-import { consumeShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
+import { consumeShareHandoff, consumePlaintextShareHandoff, subscribeShareHandoff } from "@/stores/share-handoff-store"
 import { useDiscussWithAriadne } from "@/hooks/use-discuss-with-ariadne"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { DISCUSS_WITH_ARIADNE_COMMAND, type JSONContent } from "@threa/types"
@@ -324,6 +324,15 @@ function MessageInputComponent({
           type: "sharedMessage",
           attrs: pending as unknown as Record<string, unknown>,
         })
+      }
+      // A message shared OUT of an E2E scratchpad: the decrypted plaintext was
+      // captured (behind a confirmation) and is inserted as a public blockquote,
+      // not a sealed pointer recipients couldn't open.
+      const pendingPlaintext = consumePlaintextShareHandoff(streamId)
+      if (pendingPlaintext) {
+        const parsed = parseMarkdown(pendingPlaintext.markdown)
+        const inner = parsed.content && parsed.content.length > 0 ? parsed.content : [{ type: "paragraph" }]
+        buffered.push({ type: "blockquote", content: inner })
       }
       if (buffered.length === 0) return
 

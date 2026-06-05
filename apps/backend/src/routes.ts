@@ -288,6 +288,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     const enclaveSession = createEnclaveSessionHandlers({ pool, eventService, io: deps.io, jobQueue: deps.jobQueue })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
     app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
+    app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", internalAuth, enclaveSession.sealedName)
     app.post("/internal/enclave-runtimes/sessions/:id/steps/started", internalAuth, enclaveSession.stepStarted)
     app.post("/internal/enclave-runtimes/sessions/:id/steps", internalAuth, enclaveSession.steps)
     app.post("/internal/enclave-runtimes/sessions/:id/substeps", internalAuth, enclaveSession.substep)

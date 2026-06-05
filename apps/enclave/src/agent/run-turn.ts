@@ -3,6 +3,7 @@ import { ulid } from "ulid"
 import {
   base64ToBytes,
   buildMessageAad,
+  buildNameAad,
   buildWrapAad,
   bytesToBase64,
   decryptAttachmentBytes,
@@ -20,6 +21,7 @@ import type {
   EnclaveSealedStep,
   EnclaveSealedStepStart,
   EnclaveSealedSubstep,
+  EnclaveSealedName,
   EnclaveSskWrap,
 } from "@threa/types"
 import { AgentRuntime } from "@threa/agent-runtime/runtime"
@@ -29,6 +31,7 @@ import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
 import { EnclaveTraceObserver } from "./trace-observer"
 import { buildEnclaveTools } from "./tools"
 import { decodeUtf8 } from "./attachment-tool"
+import { generateTitle } from "./auto-title"
 
 /**
  * The agent turn, run entirely inside the enclave next to decrypted plaintext.
@@ -78,6 +81,13 @@ export interface EnclaveTurnDeps {
   /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
   onSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
   /**
+   * Persist a sealed auto-generated title for the scratchpad. Called best-effort
+   * after the turn when `request.autoTitle` is set and the turn produced a reply;
+   * a throw here is swallowed (titling never blocks or fails the turn). Omitted →
+   * no titling.
+   */
+  onSealedName?: (sealed: EnclaveSealedName) => Promise<void>
+  /**
    * Cooperative cancellation for long-running tools (research). Wired to the
    * runtime's `toolSignalProvider`, so the user's "Stop research" aborts the web
    * sub-loop gracefully — it returns partial findings and the turn still replies,
@@ -100,7 +110,7 @@ export async function runEnclaveTurn(
   deps: EnclaveTurnDeps,
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
-  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, tools, abortSignal } = deps
+  const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, onSealedName, tools, abortSignal } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -155,6 +165,9 @@ export async function runEnclaveTurn(
 
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
   const messageIds: string[] = []
+  // First reply's plaintext, kept only to seed the auto-title below (never logged
+  // or persisted; lives in-process for the turn like all other plaintext here).
+  let firstReplyText: string | null = null
 
   // Construct the enclave AI once so the turn loop and any in-process research
   // sub-loop accumulate token usage into the same total. The enclave AI keys off
@@ -212,6 +225,7 @@ export async function runEnclaveTurn(
     // to that id, and stream it back now (awaited, so it's delivered before the
     // loop moves on). The backend stores ciphertext under this id.
     sendMessage: async ({ content }) => {
+      if (firstReplyText === null) firstReplyText = content
       const messageId = `msg_${ulid()}`
       const sealed = await sealMessage({
         key: replySsk,
@@ -238,6 +252,28 @@ export async function runEnclaveTurn(
   }
 
   await runtime.run()
+
+  // Auto-title an untitled encrypted scratchpad from the decrypted turn. The
+  // server can't do this (it only holds ciphertext), so the enclave generates a
+  // short title here, seals it under the reply SSK bound to the name slot
+  // (`buildNameAad`), and hands the ciphertext back. Best-effort and last —
+  // never block or fail the turn over a title.
+  if (request.autoTitle && firstReplyText && onSealedName) {
+    try {
+      const title = await generateTitle({ rawChat, model: request.model, promptText, replyText: firstReplyText })
+      if (title) {
+        const sealed = await sealMessage({
+          key: replySsk,
+          keyGeneration: request.reply.keyGeneration,
+          payload: title,
+          aad: buildNameAad({ streamId: request.streamId, keyGeneration: request.reply.keyGeneration }),
+        })
+        await onSealedName({ ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope })
+      }
+    } catch {
+      // Titling is non-essential; a failure must never affect the reply.
+    }
+  }
 
   return {
     messageIds,

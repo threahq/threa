@@ -1,6 +1,7 @@
 import {
   INTERNAL_API_KEY_HEADER,
   type EnclaveSealedReply,
+  type EnclaveSealedName,
   type EnclaveSealedStep,
   type EnclaveSealedStepStart,
   type EnclaveSealedSubstep,
@@ -28,6 +29,8 @@ export interface BackendCallbacks {
   substep(sessionId: string, substep: EnclaveSealedSubstep): Promise<void>
   /** Mark the session complete once the loop finishes (replies already streamed). */
   complete(sessionId: string, result: EnclaveSessionResult): Promise<void>
+  /** Persist a sealed auto-generated stream title (best-effort; for untitled E2E scratchpads). */
+  sealedName(sessionId: string, sealed: EnclaveSealedName): Promise<void>
 }
 
 const HEARTBEAT_TIMEOUT_MS = 10_000
@@ -100,6 +103,16 @@ export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks 
         signal: AbortSignal.timeout(COMPLETE_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session complete failed: ${res.status}`)
+    },
+
+    async sealedName(sessionId, sealed) {
+      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/sealed-name`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(sealed),
+        signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session sealed-name failed: ${res.status}`)
     },
   }
 }

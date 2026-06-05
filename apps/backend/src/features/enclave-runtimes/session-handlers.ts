@@ -11,6 +11,7 @@ import { JobQueues, type QueueManager } from "../../lib/queue"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses, getBuiltInAgentConfig, type AgentSession } from "../agents"
 import { StreamRepository, StreamEventRepository } from "../streams"
+import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
 import type { EventService } from "../messaging"
 
@@ -45,6 +46,13 @@ const streamEnvelopeSchema = z.object({
 
 const messageSchema = z.object({
   messageId: z.string().min(1),
+  ciphertext: z.base64().min(1),
+  envelope: streamEnvelopeSchema,
+})
+
+// A sealed auto-generated stream name. Like a reply but without a messageId — a
+// name is a single per-stream slot, not a message. Same base64 validation.
+const sealedNameSchema = z.object({
   ciphertext: z.base64().min(1),
   envelope: streamEnvelopeSchema,
 })
@@ -193,6 +201,44 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue 
         // stream so a reply can't post twice (keyed by the enclave-minted id).
         accessibleStreamIds: [session.streamId],
         clientMessageId: `enclave-reply:${id}:${reply.messageId}`,
+      })
+
+      res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/sessions/:id/sealed-name
+     * Persist the enclave's sealed auto-title for an untitled E2E scratchpad
+     * (the server can't title it — it only holds ciphertext). First-write-wins
+     * (`setSealedNameIfAbsent`), and on a real change we re-read the e2e-joined
+     * stream and broadcast `stream:updated` so the sidebar/header pick up the
+     * name and decrypt it live. We never set a plaintext display name — the
+     * title exists only as ciphertext.
+     */
+    async sealedName(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = sealedNameSchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
+      await withTransaction(pool, async (client) => {
+        const set = await E2eStreamsRepository.setSealedNameIfAbsent(client, stream.workspaceId, session.streamId, {
+          ciphertext: parsed.data.ciphertext,
+          envelope: parsed.data.envelope,
+        })
+        if (!set) return
+        const updated = (await StreamRepository.findById(client, session.streamId)) ?? stream
+        await OutboxRepository.insert(client, "stream:updated", {
+          workspaceId: updated.workspaceId,
+          streamId: updated.id,
+          stream: updated,
+        })
       })
 
       res.status(204).end()

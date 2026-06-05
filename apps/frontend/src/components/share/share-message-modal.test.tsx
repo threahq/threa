@@ -176,6 +176,62 @@ describe("ShareMessageModal — picker filtering", () => {
   })
 })
 
+describe("ShareMessageModal — E2E source confirms before decrypt-to-public", () => {
+  const TARGET = [
+    {
+      id: "ch_target",
+      type: "channel",
+      visibility: "public",
+      displayName: "#general",
+      slug: "general",
+      archivedAt: null,
+      rootStreamId: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+  ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
+
+  it("requires confirmation, then queues the decrypted plaintext (not a pointer)", () => {
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(TARGET)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamMemberships").mockReturnValue(
+      [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreamMemberships>
+    )
+    const queuePointer = vi.spyOn(shareHandoffStoreModule, "queueShareHandoff").mockImplementation(() => {})
+    const queuePlaintext = vi.spyOn(shareHandoffStoreModule, "queuePlaintextShareHandoff").mockImplementation(() => {})
+
+    render(
+      <MemoryRouter initialEntries={["/w/ws_1/s/current"]}>
+        <Routes>
+          <Route
+            path="/w/:workspaceId/s/:streamId"
+            element={
+              <ShareMessageModal
+                open
+                onOpenChange={() => {}}
+                workspaceId="ws_1"
+                attrs={SAMPLE_ATTRS}
+                sourcePlaintext="the launch codename is VELVET-OTTER"
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    // Picking a target does NOT immediately queue — a confirmation appears first.
+    fireEvent.click(document.querySelector<HTMLElement>('[cmdk-item][data-value="ch_target"]')!)
+    expect(queuePlaintext).not.toHaveBeenCalled()
+    expect(queuePointer).not.toHaveBeenCalled()
+
+    // Confirm → the decrypted plaintext is queued as a public share, never a pointer.
+    const confirm = [...document.querySelectorAll("button")].find((b) => /Share & decrypt/i.test(b.textContent ?? ""))
+    expect(confirm).toBeTruthy()
+    fireEvent.click(confirm!)
+
+    expect(queuePlaintext).toHaveBeenCalledWith("ch_target", "the launch codename is VELVET-OTTER", SAMPLE_ATTRS)
+    expect(queuePointer).not.toHaveBeenCalled()
+  })
+})
+
 describe("ShareMessageModal — surface selection", () => {
   it("renders as a centered Dialog on desktop", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
