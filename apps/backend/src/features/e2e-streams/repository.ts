@@ -33,6 +33,13 @@ export interface MarkStreamE2eParams {
   workspaceId: string
   ownerUserId: string
   ownerUserKeyId: string
+  /**
+   * SSK generation the stream starts at. Defaults to 0 (a fresh owner-only
+   * stream). A thread that inherits its root's key passes the root's current
+   * generation so new thread messages seal under the same generation the
+   * copied wraps cover.
+   */
+  currentKeyGeneration?: number
 }
 
 const COLUMNS =
@@ -144,13 +151,14 @@ export const E2eStreamsRepository = {
   async markStreamE2e(db: Querier, params: MarkStreamE2eParams): Promise<E2eStream> {
     const result = await db.query<E2eStreamRow>(sql`
       INSERT INTO e2e_streams (
-        stream_id, workspace_id, owner_user_id, owner_user_key_id
+        stream_id, workspace_id, owner_user_id, owner_user_key_id, current_key_generation
       )
       VALUES (
         ${params.streamId},
         ${params.workspaceId},
         ${params.ownerUserId},
-        ${params.ownerUserKeyId}
+        ${params.ownerUserKeyId},
+        ${params.currentKeyGeneration ?? 0}
       )
       RETURNING ${sql.raw(COLUMNS)}
     `)

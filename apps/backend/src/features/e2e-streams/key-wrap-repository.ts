@@ -85,6 +85,34 @@ export const StreamE2eKeyWrapsRepository = {
   },
 
   /**
+   * Copy every wrap from `fromStreamId` onto `toStreamId` (same workspace),
+   * minting fresh row ids. Used when a thread inherits its root scratchpad's
+   * SSK: the thread reuses the same key, so it carries the same per-recipient
+   * wraps (owner + enclave + any bots) under its own stream id. Idempotent via
+   * the slot conflict, so a re-run (or a racing thread create) is a no-op.
+   * Wrap counts are tiny (a handful of recipients), so a list + batch insert is
+   * fine — no hot path.
+   */
+  async copyToStream(
+    db: Querier,
+    params: { workspaceId: string; fromStreamId: string; toStreamId: string }
+  ): Promise<void> {
+    const wraps = await this.listForStream(db, params.workspaceId, params.fromStreamId)
+    await this.insertMany(
+      db,
+      wraps.map((w) => ({
+        workspaceId: params.workspaceId,
+        streamId: params.toStreamId,
+        keyGeneration: w.keyGeneration,
+        recipientKeyId: w.recipientKeyId,
+        recipientKind: w.recipientKind,
+        wrapEnc: w.wrapEnc,
+        wrapCt: w.wrapCt,
+      }))
+    )
+  },
+
+  /**
    * All wraps for a stream, across recipients and generations. Wrap bytes are
    * HPKE ciphertext (decryptable only by the matching private key), so it is
    * safe to return the full set to any stream member; the caller selects its

@@ -1,9 +1,10 @@
 import type { Pool } from "pg"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes, CompanionModes, StreamTypes } from "@threa/types"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../../lib/outbox"
 import { JobQueues, type QueueManager } from "../../../lib/queue"
 import { E2eStreamActorsRepository, E2eStreamsRepository } from "../../e2e-streams"
+import { StreamRepository } from "../../streams"
 import { logger } from "../../../lib/logger"
 
 const DEFAULT_CONFIG = {
@@ -92,6 +93,33 @@ export class EnclaveDispatchHandler implements OutboxHandler {
           }
           const actors = await E2eStreamActorsRepository.listForStream(this.db, workspaceId, streamId)
           if (!actors.some((a) => a.kind === "enclave")) {
+            seen.push(event.id)
+            continue
+          }
+
+          // Honest companion toggle: the enclave only auto-replies when the
+          // scratchpad's companion mode is ON. "Quiet" means a silent encrypted
+          // dump — the enclave actor stays invited (so flipping to Companion
+          // works instantly) but no turn is dispatched. Threads inherit the
+          // root scratchpad's mode live, mirroring CompanionHandler, so a root
+          // toggled after the thread was created is still respected.
+          const stream = await StreamRepository.findById(this.db, streamId)
+          if (!stream) {
+            seen.push(event.id)
+            continue
+          }
+          let companionSource = stream
+          if (stream.companionMode !== CompanionModes.ON && stream.rootStreamId) {
+            const rootStream = await StreamRepository.findById(this.db, stream.rootStreamId)
+            if (
+              rootStream &&
+              rootStream.type === StreamTypes.SCRATCHPAD &&
+              rootStream.companionMode === CompanionModes.ON
+            ) {
+              companionSource = rootStream
+            }
+          }
+          if (companionSource.companionMode !== CompanionModes.ON) {
             seen.push(event.id)
             continue
           }

@@ -528,6 +528,79 @@ describe("StreamService.createThread (via create)", () => {
       })
     )
   })
+
+  test("seals a thread created under an E2E scratchpad root (INV-E1: inherit key, wraps, actors)", async () => {
+    // Root scratchpad is E2E; the thread must inherit its E2E state in the same
+    // transaction so replies can't land as server-readable plaintext.
+    const e2eRoot = {
+      id: "stream_root",
+      workspaceId: "ws_1",
+      type: "scratchpad",
+      visibility: "private",
+      rootStreamId: null,
+      companionMode: "on",
+      companionPersonaId: null,
+      e2eEnabled: true,
+    }
+    const e2eThread = { ...thread, parentStreamId: "stream_root", rootStreamId: "stream_root" }
+    const sealedThread = { ...e2eThread, e2eEnabled: true, e2eOwnerKeyId: "uik_owner" }
+
+    mockMessageFindById.mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_root",
+      authorType: "user",
+      authorId: "member_author",
+    } as never)
+    // findById: parent/root → e2eRoot; the post-copy re-read of the thread → sealed.
+    mockFindById
+      .mockReset()
+      .mockImplementation(((_c: unknown, id: string) =>
+        Promise.resolve(id === e2eThread.id ? sealedThread : e2eRoot)) as never)
+    mockInsertThreadOrFind.mockResolvedValue({ stream: { ...e2eThread }, created: true } as never)
+
+    const getByStreamId = spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({
+      streamId: "stream_root",
+      workspaceId: "ws_1",
+      ownerUserId: "usr_owner",
+      ownerUserKeyId: "uik_owner",
+      currentKeyGeneration: 2,
+      allowedToolCategories: null,
+      enabledAt: new Date(),
+    } as never)
+    mockMarkStreamE2e.mockReset().mockResolvedValue({} as never)
+    const copyWraps = spyOn(StreamE2eKeyWrapsRepository, "copyToStream").mockResolvedValue(undefined as never)
+    const copyActors = spyOn(E2eStreamActorsRepository, "copyToStream").mockResolvedValue(undefined as never)
+
+    const result = await service.create({
+      workspaceId: "ws_1",
+      type: "thread",
+      parentStreamId: "stream_root",
+      parentMessageId: "msg_1",
+      createdBy: "member_creator",
+    })
+
+    expect(getByStreamId).toHaveBeenCalledWith({}, "ws_1", "stream_root")
+    expect(mockMarkStreamE2e).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        streamId: e2eThread.id,
+        workspaceId: "ws_1",
+        ownerUserId: "usr_owner",
+        ownerUserKeyId: "uik_owner",
+        currentKeyGeneration: 2,
+      })
+    )
+    expect(copyWraps).toHaveBeenCalledWith(
+      {},
+      { workspaceId: "ws_1", fromStreamId: "stream_root", toStreamId: e2eThread.id }
+    )
+    expect(copyActors).toHaveBeenCalledWith(
+      {},
+      { workspaceId: "ws_1", fromStreamId: "stream_root", toStreamId: e2eThread.id }
+    )
+    // The returned/broadcast thread reflects the sealed state.
+    expect(result.e2eEnabled).toBe(true)
+  })
 })
 
 describe("StreamService.inviteActor", () => {

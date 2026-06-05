@@ -522,11 +522,14 @@ export function createStreamHandlers({
       let resolvedCompanionMode = companionMode
       let resolvedPersonaId = companionPersonaId
       if (e2eEnabled) {
-        // INV-E1: companion mode would broadcast plaintext from Ariadne into
-        // an encrypted stream. Force-off rather than rejecting so the
-        // Quickswitcher entry point doesn't have to coordinate with whatever
-        // companion default the workspace ships with.
-        resolvedCompanionMode = CompanionModes.OFF
+        // Encrypted scratchpads run Ariadne in the *enclave* (sealed), never the
+        // plaintext companion path — CompanionHandler skips E2E, so companion
+        // mode here can't leak plaintext. It's a real setting: it gates the
+        // enclave auto-reply (EnclaveDispatchHandler). Default ON so encrypted
+        // Ariadne works out of the box; an explicit "off" means a silent
+        // encrypted dump. Persona stays unset — the enclave always runs the
+        // built-in Ariadne regardless of `companionPersonaId`.
+        resolvedCompanionMode = companionMode ?? CompanionModes.ON
         resolvedPersonaId = undefined
       }
       if (contextBag) {

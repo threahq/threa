@@ -576,6 +576,43 @@ export class StreamService {
         createdBy: params.createdBy,
       })
 
+      // INV-E1: a thread under an E2E scratchpad must itself be E2E, or its
+      // replies would be stored server-readable plaintext (the encryption
+      // guarantee silently breaks one reply deep). Inherit the root's E2E state
+      // — same SSK, same recipients (owner + enclave + bots) — onto the new
+      // thread in this same transaction, so `e2eEnabled` is true the instant the
+      // thread is and the composer/sink/dispatch all treat it like the root.
+      // Only on first creation: a found-existing thread already carries it.
+      if (created && rootStream?.e2eEnabled === true) {
+        const rootE2e = await E2eStreamsRepository.getByStreamId(client, params.workspaceId, rootStreamId)
+        if (!rootE2e) {
+          // The stream row says e2eEnabled but the e2e_streams row is gone:
+          // refuse rather than create a plaintext thread under a sealed root.
+          throw new Error(`E2E root ${rootStreamId} has no e2e_streams row; cannot seal thread ${stream.id}`)
+        }
+        await E2eStreamsRepository.markStreamE2e(client, {
+          streamId: stream.id,
+          workspaceId: params.workspaceId,
+          ownerUserId: rootE2e.ownerUserId,
+          ownerUserKeyId: rootE2e.ownerUserKeyId,
+          currentKeyGeneration: rootE2e.currentKeyGeneration,
+        })
+        await StreamE2eKeyWrapsRepository.copyToStream(client, {
+          workspaceId: params.workspaceId,
+          fromStreamId: rootStreamId,
+          toStreamId: stream.id,
+        })
+        await E2eStreamActorsRepository.copyToStream(client, {
+          workspaceId: params.workspaceId,
+          fromStreamId: rootStreamId,
+          toStreamId: stream.id,
+        })
+        // Re-read so the returned/broadcast stream carries e2eEnabled + actors
+        // in the canonical shape (StreamRepository LEFT JOINs e2e_streams).
+        const sealed = await StreamRepository.findById(client, stream.id)
+        if (sealed) Object.assign(stream, sealed)
+      }
+
       // Add creator as member (idempotent - handles existing membership)
       const isMember = await StreamMemberRepository.isMember(client, stream.id, params.createdBy)
       if (!isMember) {
@@ -991,7 +1028,12 @@ export class StreamService {
       // the enclave restarted with a fresh EIK) — and revive it via
       // `reviveActorKeyWraps` without a second round-trip.
       const liveActorRecipients = await this.resolveActorRecipients(client, e2e)
-      return { currentKeyGeneration: e2e.currentKeyGeneration, wraps, ownerUserId: e2e.ownerUserId, liveActorRecipients }
+      return {
+        currentKeyGeneration: e2e.currentKeyGeneration,
+        wraps,
+        ownerUserId: e2e.ownerUserId,
+        liveActorRecipients,
+      }
     })
   }
 
