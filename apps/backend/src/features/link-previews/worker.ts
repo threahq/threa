@@ -222,6 +222,15 @@ async function fetchGenericMetadata(url: string): Promise<UpdateLinkPreviewParam
       return { status: "failed", expiresAt: minutesFromNow(1) }
     }
 
+    // Non-2xx responses (403/503 hard-blocks, dead links, transient 5xx) carry no usable metadata.
+    // Mark failed with a short expiry so it retries, rather than caching the error page's fallback
+    // as a "completed" preview for 24h — that silently turns a transient block into a permanent miss.
+    if (!response.ok) {
+      log.warn({ url, status: response.status }, "Link preview fetch returned non-2xx; will retry")
+      response.body?.cancel()
+      return { status: "failed", expiresAt: minutesFromNow(1) }
+    }
+
     const contentTypeHeader = response.headers.get("content-type") ?? ""
 
     // For images, we don't need to parse HTML

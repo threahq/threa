@@ -71,7 +71,10 @@ describe("read-url-tool", () => {
     await tool.config.execute({ url: "https://example.com" }, toolOpts)
 
     expect(capturedHeaders).not.toBeNull()
-    expect(capturedHeaders!["User-Agent"]).toContain("Threa-Agent")
+    // Must carry the shared polite-crawler identity (the +-prefixed contact URL is what keeps
+    // Amazon-class bot gates from serving a captcha page instead of the real content).
+    expect(capturedHeaders!["User-Agent"]).toContain("+https://threa.io/bot")
+    expect(capturedHeaders!["User-Agent"]).toContain("Agent Reader")
   })
 
   it("should return error for non-HTML content types", async () => {

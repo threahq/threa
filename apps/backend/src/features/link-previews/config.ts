@@ -1,3 +1,5 @@
+import { threaFetchUserAgent } from "@threa/types"
+
 /** Maximum number of link previews to extract per message */
 export const MAX_PREVIEWS_PER_MESSAGE = 5
 
@@ -7,14 +9,11 @@ export const FETCH_TIMEOUT_MS = 10_000
 /**
  * User-Agent string for metadata fetch requests.
  *
- * The `+`-prefixed contact URL is the long-standing polite-crawler convention (cf. Googlebot's
- * `+http://www.google.com/bot.html`, facebookexternalhit, Slackbot). Several large sites — Amazon
- * notably — gate their bot detection on it: a bare token like `Threa/1.0 (Link Preview)` (or even a
- * normal browser UA from a datacenter IP) is served a metadata-less captcha page, while the same
- * request carrying `(+https://…)` is served the real HTML. Keep the `+URL` form or Amazon-class
- * pages silently lose their previews.
+ * Built through the shared {@link threaFetchUserAgent} helper so the `+`-prefixed contact-URL
+ * convention is guaranteed — without it, Amazon-class sites serve a metadata-less captcha page and
+ * previews silently go blank. See `@threa/types`'s outbound-fetch module for the full rationale.
  */
-export const FETCH_USER_AGENT = "Threa/1.0 (Link Preview; +https://threa.io/bot)"
+export const FETCH_USER_AGENT = threaFetchUserAgent("Link Preview")
 
 /** Maximum HTML bytes to read before stopping (some sites like YouTube put meta tags 600KB+ in) */
 export const MAX_HTML_BYTES = 512 * 1024
