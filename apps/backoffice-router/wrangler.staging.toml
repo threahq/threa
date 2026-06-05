@@ -2,13 +2,18 @@ name = "backoffice-router-staging"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 
-# Route binding for the staging backoffice. The DNS record `admin-staging.threa.io`
-# must exist as a Cloudflare-proxied record in the `threa.io` zone for traffic
-# to actually hit the edge; the route just tells Cloudflare "when a request
-# matching this pattern arrives, hand it to this worker".
+# Custom-domain binding for the staging backoffice. Unlike a plain route
+# (`pattern` + `zone_name`), a custom domain makes wrangler provision the
+# proxied DNS record for `admin-staging.threa.io` itself on every deploy, so
+# the deploy is self-contained and idempotent. A plain route instead requires
+# the DNS record to already exist in the zone — it never did for staging, so
+# the routes API rejected the assignment (surfaced as the opaque Cloudflare
+# error 10013) even though the script uploaded fine. A custom domain covers
+# the whole hostname, which matches this worker owning every path on
+# `admin-staging.threa.io`.
 [[routes]]
-pattern = "admin-staging.threa.io/*"
-zone_name = "threa.io"
+pattern = "admin-staging.threa.io"
+custom_domain = true
 
 [vars]
 # Staging control-plane (separate Railway project from prod).
