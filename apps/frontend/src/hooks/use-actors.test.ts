@@ -314,4 +314,62 @@ describe("useActors", () => {
       expect(result.current.getActorAvatar("mem_123", "user").status).toBeUndefined()
     })
   })
+
+  describe("getActorAvatar dnd", () => {
+    it("flags do-not-disturb for an active status that pauses notifications", () => {
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      mockUsers = [
+        createMember({
+          id: "mem_123",
+          statusEmoji: ":no_bell:",
+          statusText: "Do not disturb",
+          statusExpiresAt: future,
+          statusPausesNotifications: true,
+        }),
+      ]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBe(true)
+    })
+
+    it("flags do-not-disturb for an indefinite manual pause", () => {
+      mockUsers = [createMember({ id: "mem_123", notificationsPausedIndefinitely: true })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBe(true)
+    })
+
+    it("flags do-not-disturb for a manual pause still in its window", () => {
+      const future = new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      mockUsers = [createMember({ id: "mem_123", notificationsPausedUntil: future })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBe(true)
+    })
+
+    it("does not flag do-not-disturb for an elapsed manual pause", () => {
+      const past = new Date(Date.now() - 60_000).toISOString()
+      mockUsers = [createMember({ id: "mem_123", notificationsPausedUntil: past })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBeUndefined()
+    })
+
+    it("does not flag do-not-disturb when a status carries no pause flag", () => {
+      mockUsers = [createMember({ id: "mem_123", statusEmoji: ":thread:", statusText: "Focus" })]
+
+      const { result } = renderHook(() => useActors(workspaceId), {
+        wrapper: createTestWrapper(queryClient),
+      })
+      expect(result.current.getActorAvatar("mem_123", "user").dnd).toBeUndefined()
+    })
+  })
 })
