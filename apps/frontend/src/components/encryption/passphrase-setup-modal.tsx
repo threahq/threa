@@ -252,7 +252,8 @@ export function PassphraseSetupModal({
               <Label htmlFor="e2e-setup-trust-device" className="cursor-pointer font-normal leading-snug">
                 Keep me unlocked on this device
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  Skips the passphrase next time on this device. Don't use on shared or public computers.
+                  Stores an encrypted copy of your key on this device so it skips the passphrase next time — it never
+                  leaves this device. Don't use on shared or public computers.
                 </span>
               </Label>
             </div>
