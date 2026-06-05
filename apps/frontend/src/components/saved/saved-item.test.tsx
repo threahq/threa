@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
-import type { SavedMessageView } from "@threa/types"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView } from "@threa/types"
 import { SavedItem } from "./saved-item"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -122,5 +122,24 @@ describe("SavedItem stream label", () => {
     )
 
     expect(getByText("Unknown")).toBeTruthy()
+  })
+})
+
+describe("SavedItem preview (E2EE-16)", () => {
+  it("renders an 'Encrypted message' placeholder for a saved E2E message", () => {
+    mockStore()
+    const { getByText, queryByText } = mount(
+      makeView({ message: { ...makeView().message!, contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN } })
+    )
+
+    expect(getByText("🔒 Encrypted message")).toBeTruthy()
+    // The invisible zero-width placeholder is never rendered as the body.
+    expect(queryByText(E2E_PLACEHOLDER_CONTENT_MARKDOWN)).toBeNull()
+  })
+
+  it("renders the plaintext body for a normal saved message", () => {
+    mockStore()
+    const { getByText } = mount(makeView({ message: { ...makeView().message!, contentMarkdown: "hello there" } }))
+    expect(getByText("hello there")).toBeTruthy()
   })
 })
