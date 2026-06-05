@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
 import { Archive, Bell, Check, CircleAlert, Trash2, Undo2 } from "lucide-react"
-import type { SavedMessageView, SavedStatus } from "@threa/types"
+import { E2E_PLACEHOLDER_CONTENT_MARKDOWN, type SavedMessageView, type SavedStatus } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
@@ -190,7 +190,14 @@ function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore,
 }
 
 function resolvePreview(saved: SavedMessageView): string {
-  if (saved.message) return stripMarkdownToInline(saved.message.contentMarkdown)
+  if (saved.message) {
+    // E2E messages store a zero-width placeholder on the wire and ship no
+    // ciphertext to the Saved surface, so there's nothing to decrypt here —
+    // render the same "Encrypted message" treatment the sidebar uses (E2EE-16)
+    // rather than a blank/invisible preview.
+    if (saved.message.contentMarkdown === E2E_PLACEHOLDER_CONTENT_MARKDOWN) return "🔒 Encrypted message"
+    return stripMarkdownToInline(saved.message.contentMarkdown)
+  }
   if (saved.unavailableReason === "deleted") return "Original message was deleted"
   return "You no longer have access to this message"
 }
