@@ -40,6 +40,7 @@ interface GiphyPickerDialogProps {
 const SEARCH_DEBOUNCE_MS = 350
 
 export function GiphyPickerDialog({ open, onOpenChange, workspaceId, onSelect }: GiphyPickerDialogProps) {
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   const [items, setItems] = useState<GiphyGif[]>([])
@@ -215,6 +216,17 @@ export function GiphyPickerDialog({ open, onOpenChange, workspaceId, onSelect }:
         desktopClassName="max-w-2xl max-h-[85vh] sm:flex flex-col gap-0 p-0"
         drawerClassName="flex flex-col"
         aria-describedby={undefined}
+        onOpenAutoFocus={(e) => {
+          // The picker opens from the slash palette, whose command handler
+          // focuses the editor (`.focus().deleteRange(...)`) just before we
+          // open. That focus grab races with the input's `autoFocus` and wins,
+          // leaving the search field unfocused. Take over: focus the input
+          // ourselves once the dialog has settled.
+          e.preventDefault()
+          requestAnimationFrame(() => {
+            searchInputRef.current?.focus()
+          })
+        }}
       >
         <ResponsiveDialogHeader className="border-b px-4 py-3 sm:px-6">
           <ResponsiveDialogTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
@@ -224,7 +236,7 @@ export function GiphyPickerDialog({ open, onOpenChange, workspaceId, onSelect }:
           <div className="relative mt-2.5">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              autoFocus
+              ref={searchInputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search GIPHY"

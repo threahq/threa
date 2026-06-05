@@ -400,18 +400,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
           desktopClassName="overflow-hidden p-0 gap-0 shadow-lg sm:!fixed sm:!top-[20%] sm:!translate-y-0 sm:max-w-[600px] sm:rounded-2xl sm:border"
           drawerClassName="overflow-hidden p-0"
           hideCloseButton
-          onOpenAutoFocus={(e) => {
-            // Radix's FocusScope runs its own mount auto-focus, which races
-            // with — and overrides — TipTap's lazily-created contenteditable,
-            // leaving the search field unfocused. Take over: focus the rich
-            // input ourselves once it's mounted. Skip on mobile, where opening
-            // the keyboard shifts the drawer layout.
-            if (isMobile) return
-            e.preventDefault()
-            requestAnimationFrame(() => {
-              richInputRef.current?.focus()
-            })
-          }}
           onPointerDownOutside={(e) => {
             // Prevent closing when clicking on suggestion popover (rendered via portal)
             const target = e.target as HTMLElement
