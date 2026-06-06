@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
-import { Lock, LockOpen, ShieldAlert, ShieldCheck } from "lucide-react"
+import { Fingerprint, KeyRound, Lock, LockOpen, ShieldAlert, ShieldCheck } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth } from "@/auth"
 import { Button } from "@/components/ui/button"
@@ -17,8 +17,27 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
-import { lock, revokeKeyForUser, setDeviceTrust, useE2eSession } from "@/stores/e2e-session-store"
+import {
+  enrollDeviceBiometric,
+  enrollDevicePin,
+  getDeviceUnlockMethod,
+  lock,
+  revokeKeyForUser,
+  setDeviceTrust,
+  useE2eSession,
+  type DeviceUnlockMethod,
+} from "@/stores/e2e-session-store"
+import { isValidPin } from "@/lib/crypto/pin-device-key"
+import { isPlatformAuthenticatorAvailable, registerDeviceBiometric } from "@/lib/crypto/webauthn-device-key"
+import { PinInput } from "./pin-input"
 import { useE2eUnlock } from "./e2e-unlock-provider"
+
+const UNLOCK_METHOD_LABEL: Record<DeviceUnlockMethod, string> = {
+  none: "You'll enter your passphrase each time on this device.",
+  remembered: "Unlocks automatically on this device — no passphrase prompt.",
+  pin: "Unlocks with your 6-digit PIN on this device.",
+  biometric: "Unlocks with this device's fingerprint or face.",
+}
 
 interface EncryptedScratchpadsSectionProps {
   workspaceId: string
@@ -31,16 +50,95 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
   const [revokeOpen, setRevokeOpen] = useState(false)
   const [revoking, setRevoking] = useState(false)
   const [trustPending, setTrustPending] = useState(false)
+  // Quick-unlock method management (only meaningful while unlocked + trusted).
+  const [unlockMethod, setUnlockMethod] = useState<DeviceUnlockMethod>("none")
+  const [biometricAvailable, setBiometricAvailable] = useState(false)
+  const [pinEditorOpen, setPinEditorOpen] = useState(false)
+  const [pin, setPin] = useState("")
+  const [methodPending, setMethodPending] = useState(false)
+
+  const isUnlocked = session.status === "unlocked"
+
+  const refreshUnlockMethod = useCallback(async () => {
+    setUnlockMethod(await getDeviceUnlockMethod(workspaceId, userId))
+  }, [workspaceId, userId])
+
+  // Load the current device method + probe biometric availability whenever the
+  // session becomes unlocked (the only state where the method block renders).
+  useEffect(() => {
+    if (!isUnlocked) return
+    let cancelled = false
+    void getDeviceUnlockMethod(workspaceId, userId).then((m) => {
+      if (!cancelled) setUnlockMethod(m)
+    })
+    void isPlatformAuthenticatorAvailable().then((ok) => {
+      if (!cancelled) setBiometricAvailable(ok)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [isUnlocked, workspaceId, userId])
 
   const handleTrustChange = async (next: boolean) => {
     setTrustPending(true)
     try {
       await setDeviceTrust(workspaceId, userId, next)
+      await refreshUnlockMethod()
+      if (!next) setPinEditorOpen(false)
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update device trust"
       toast.error(message)
     } finally {
       setTrustPending(false)
+    }
+  }
+
+  const handleSetPin = async () => {
+    if (methodPending || !isValidPin(pin)) return
+    setMethodPending(true)
+    try {
+      await enrollDevicePin(workspaceId, userId, pin)
+      toast.success("PIN set for this device")
+      setPin("")
+      setPinEditorOpen(false)
+      await refreshUnlockMethod()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't set the PIN")
+    } finally {
+      setMethodPending(false)
+    }
+  }
+
+  const handleUseBiometric = async () => {
+    if (methodPending) return
+    setMethodPending(true)
+    try {
+      const registration = await registerDeviceBiometric(userId)
+      await enrollDeviceBiometric(workspaceId, userId, registration)
+      toast.success("Biometric unlock enabled for this device")
+      setPinEditorOpen(false)
+      await refreshUnlockMethod()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't set up biometric unlock")
+    } finally {
+      setMethodPending(false)
+    }
+  }
+
+  // Drop a PIN/biometric gate back to plain auto-resume without re-entering the
+  // passphrase — the in-memory key is re-sealed under the device AES key.
+  const handleUseAutomatic = async () => {
+    if (methodPending) return
+    setMethodPending(true)
+    try {
+      await setDeviceTrust(workspaceId, userId, true)
+      toast.success("This device will unlock automatically")
+      setPinEditorOpen(false)
+      await refreshUnlockMethod()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update the unlock method")
+    } finally {
+      setMethodPending(false)
     }
   }
 
@@ -143,6 +241,66 @@ function EncryptedScratchpadsSectionInner({ workspaceId, userId }: EncryptedScra
               onCheckedChange={(next) => void handleTrustChange(next)}
             />
           </div>
+
+          {session.deviceTrusted && (
+            <div className="space-y-2.5 rounded-md border border-border px-3 py-2.5">
+              <div>
+                <p className="text-sm font-medium">Unlock method on this device</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">{UNLOCK_METHOD_LABEL[unlockMethod]}</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  disabled={methodPending}
+                  onClick={() => setPinEditorOpen((open) => !open)}
+                >
+                  <KeyRound className="h-4 w-4" />
+                  {unlockMethod === "pin" ? "Change PIN" : "Set a PIN"}
+                </Button>
+                {biometricAvailable && unlockMethod !== "biometric" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={methodPending}
+                    onClick={() => void handleUseBiometric()}
+                  >
+                    <Fingerprint className="h-4 w-4" />
+                    Use biometrics
+                  </Button>
+                )}
+                {unlockMethod !== "remembered" && (
+                  <Button size="sm" variant="ghost" disabled={methodPending} onClick={() => void handleUseAutomatic()}>
+                    Unlock automatically
+                  </Button>
+                )}
+              </div>
+              {pinEditorOpen && (
+                <div className="space-y-2 pt-1">
+                  <PinInput value={pin} onChange={setPin} disabled={methodPending} ariaLabel="New device PIN" />
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={methodPending || !isValidPin(pin)} onClick={() => void handleSetPin()}>
+                      {methodPending ? "Saving…" : "Save PIN"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={methodPending}
+                      onClick={() => {
+                        setPinEditorOpen(false)
+                        setPin("")
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => void lock(workspaceId, userId)}>
               <Lock className="mr-1 h-4 w-4" />

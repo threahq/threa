@@ -18,7 +18,11 @@ import { scorePassphrase, type PassphraseScore } from "./passphrase-strength"
 import { RevealablePassphraseInput } from "./revealable-passphrase-input"
 import { PinInput, PIN_LENGTH } from "./pin-input"
 import { isValidPin } from "@/lib/crypto/pin-device-key"
-import { isPlatformAuthenticatorAvailable, registerPrfCredential, type PrfRegistration } from "@/lib/crypto/webauthn-device-key"
+import {
+  isPlatformAuthenticatorAvailable,
+  registerDeviceBiometric,
+  type PrfRegistration,
+} from "@/lib/crypto/webauthn-device-key"
 import { Fingerprint } from "lucide-react"
 
 interface PassphraseSetupModalProps {
@@ -134,12 +138,7 @@ export function PassphraseSetupModal({
     if (registeringBiometric) return
     setRegisteringBiometric(true)
     try {
-      const registration = await registerPrfCredential({
-        rpId: window.location.hostname,
-        rpName: "Threa",
-        userId: new TextEncoder().encode(userId),
-        userName: userId,
-      })
+      const registration = await registerDeviceBiometric(userId)
       setBiometric(registration)
       toast.success("Biometric unlock ready")
     } catch (err) {

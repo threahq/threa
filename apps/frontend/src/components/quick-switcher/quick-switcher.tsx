@@ -25,6 +25,8 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { useSettings } from "@/contexts"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
+import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
+import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useCreateChannel } from "@/components/create-channel"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
@@ -160,7 +162,35 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     setInputValue("")
   }, [])
 
-  const createEncryptedScratchpad = useCreateEncryptedScratchpad(workspaceId, currentUserId)
+  const createEncryptedScratchpadRaw = useCreateEncryptedScratchpad(workspaceId, currentUserId)
+  const e2eUnlock = useE2eUnlockOptional()
+
+  // Asking for an encrypted scratchpad IS the onboarding trigger (mirrors the
+  // sidebar): if the user has no key yet, or is locked, open the shared
+  // setup/unlock modal and finish the create the moment they're unlocked —
+  // rather than letting the create hook throw "called without an unlocked E2E
+  // session" and dead-ending the command on a toast. The palette closes first
+  // so the modal isn't stacked on top of it; the command then navigates to the
+  // returned stream id. Falls back to a direct create outside the provider
+  // (unit harnesses) or when the session is already unlocked.
+  const createEncryptedScratchpad = useCallback(
+    (withAriadne: boolean): Promise<string> => {
+      const session = currentUserId ? getE2eSessionState(workspaceId, currentUserId) : null
+      if (!e2eUnlock || !session || session.status === "unlocked") {
+        return createEncryptedScratchpadRaw(withAriadne)
+      }
+      return new Promise<string>((resolve, reject) => {
+        handleClose()
+        const finish = () => createEncryptedScratchpadRaw(withAriadne).then(resolve, reject)
+        if (session.status === "no-key") {
+          e2eUnlock.openSetup({ onComplete: finish })
+        } else {
+          e2eUnlock.openUnlock({ onUnlocked: finish })
+        }
+      })
+    },
+    [workspaceId, currentUserId, e2eUnlock, createEncryptedScratchpadRaw, handleClose]
+  )
 
   const clearInputRequest = useCallback(() => {
     setInputRequest(null)

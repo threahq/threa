@@ -10,8 +10,9 @@ type RevealablePassphraseInputProps = Omit<React.ComponentProps<"input">, "type"
  * passphrase need to see what they're entering to avoid lockout from typos
  * they can't see — the masked default still wins on shoulder-surfing surfaces.
  *
- * The toggle is `tabIndex={-1}` so keyboard users tab straight from passphrase
- * to confirm without a detour through the reveal button.
+ * The reveal button sits in the natural tab order right after the input, so a
+ * keyboard user can Tab from the passphrase straight onto the toggle (to flip
+ * visibility) before moving on to the rest of the form.
  */
 export const RevealablePassphraseInput = forwardRef<HTMLInputElement, RevealablePassphraseInputProps>(
   ({ className, ...props }, ref) => {
@@ -21,7 +22,6 @@ export const RevealablePassphraseInput = forwardRef<HTMLInputElement, Revealable
         <Input ref={ref} type={revealed ? "text" : "password"} className={cn("pr-10", className)} {...props} />
         <button
           type="button"
-          tabIndex={-1}
           onClick={() => setRevealed((v) => !v)}
           aria-label={revealed ? "Hide passphrase" : "Show passphrase"}
           aria-pressed={revealed}

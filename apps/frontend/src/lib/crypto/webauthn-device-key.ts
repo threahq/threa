@@ -116,6 +116,21 @@ export async function registerPrfCredential(opts: {
 }
 
 /**
+ * Convenience wrapper that fills in the relying-party fields from the current
+ * origin and the workspace user id. Both first-run setup and post-setup
+ * enrollment register biometrics the same way, so they share this rather than
+ * each repeating the `rpId` / `userId` boilerplate.
+ */
+export function registerDeviceBiometric(userId: string): Promise<PrfRegistration> {
+  return registerPrfCredential({
+    rpId: window.location.hostname,
+    rpName: "Threa",
+    userId: new TextEncoder().encode(userId),
+    userName: userId,
+  })
+}
+
+/**
  * Run a WebAuthn assertion (user verification = biometric) and read the PRF
  * secret for `prfSalt`. Throws if cancelled or the authenticator returns no PRF
  * result — callers fall back to the passphrase.

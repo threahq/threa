@@ -12,6 +12,8 @@ import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
 import * as createEncryptedScratchpadModule from "@/hooks/use-create-encrypted-scratchpad"
+import * as e2eUnlockModule from "@/components/encryption/e2e-unlock-provider"
+import * as e2eSessionStoreModule from "@/stores/e2e-session-store"
 import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamsApiModule from "@/api/streams"
@@ -37,6 +39,12 @@ const mockSearchState = {
 const mockArchiveMutateAsync = vi.fn()
 const mockDeleteDraft = vi.fn()
 const mockOpenStreamSettings = vi.fn()
+
+// The encrypted-scratchpad create hook is stubbed (it reaches into the sync
+// engine). Kept at module scope so the onboarding tests can assert whether the
+// palette created the scratchpad directly or routed through the unlock modal
+// first.
+const mockCreateEncryptedScratchpad = vi.fn(async () => "stream_e2e_test")
 
 const mockWorkspaceBootstrap = {
   data: {} as {
@@ -148,7 +156,7 @@ function installSpies() {
   // outside a SyncEngineProvider. The QuickSwitcher tests don't mount one, so
   // stub the hook out instead of wiring a sync engine into the test harness.
   vi.spyOn(createEncryptedScratchpadModule, "useCreateEncryptedScratchpad").mockReturnValue(
-    vi.fn(async () => "stream_e2e_test") as unknown as ReturnType<
+    mockCreateEncryptedScratchpad as unknown as ReturnType<
       typeof createEncryptedScratchpadModule.useCreateEncryptedScratchpad
     >
   )
@@ -247,6 +255,7 @@ describe("QuickSwitcher Integration Tests", () => {
     mockArchiveMutateAsync.mockReset()
     mockDeleteDraft.mockReset()
     mockOpenStreamSettings.mockReset()
+    mockCreateEncryptedScratchpad.mockClear()
     mockWorkspaceBootstrap.data = {
       streams: mockStreamsList,
       streamMemberships: [],
@@ -1822,6 +1831,83 @@ describe("QuickSwitcher Integration Tests", () => {
       // not in QuickSwitcher. Testing that shortcut requires mounting WorkspaceLayout.
       // The test above (should not respond to cmd+f) verifies QuickSwitcher
       // doesn't intercept cmd+f - which is the important behavior to test here.
+    })
+  })
+
+  // Asking for an encrypted scratchpad from the palette IS the onboarding
+  // trigger (mirrors the sidebar): a locked / not-yet-set-up session must open
+  // the shared unlock/setup modal and finish the create afterwards — not throw
+  // the "called without an unlocked E2E session" error and dead-end on a toast.
+  describe("encrypted scratchpad onboarding", () => {
+    const mockOpenUnlock = vi.fn()
+    const mockOpenSetup = vi.fn()
+
+    const stubSession = (status: string) =>
+      vi
+        .spyOn(e2eSessionStoreModule, "getE2eSessionState")
+        .mockReturnValue({ status } as unknown as ReturnType<typeof e2eSessionStoreModule.getE2eSessionState>)
+
+    const stubUnlockProvider = () =>
+      vi.spyOn(e2eUnlockModule, "useE2eUnlockOptional").mockReturnValue({
+        openUnlock: mockOpenUnlock,
+        openSetup: mockOpenSetup,
+      })
+
+    beforeEach(() => {
+      mockOpenUnlock.mockReset()
+      mockOpenSetup.mockReset()
+    })
+
+    it("opens the unlock modal (not an error toast) when the session is locked, then creates after unlock", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      stubSession("locked")
+      stubUnlockProvider()
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+
+      await user.click(await screen.findByText("New Encrypted Scratchpad"))
+
+      // Routed through the unlock modal; the create is deferred, not thrown.
+      expect(mockOpenUnlock).toHaveBeenCalledTimes(1)
+      expect(mockOpenSetup).not.toHaveBeenCalled()
+      expect(mockCreateEncryptedScratchpad).not.toHaveBeenCalled()
+
+      // Completing the unlock runs the deferred create and navigates to it.
+      const onUnlocked = mockOpenUnlock.mock.calls[0][0]?.onUnlocked as () => void
+      onUnlocked()
+
+      await waitFor(() => {
+        expect(mockCreateEncryptedScratchpad).toHaveBeenCalledWith(true)
+        expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_e2e_test")
+      })
+    })
+
+    it("opens the setup modal when the user has no key yet", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      stubSession("no-key")
+      stubUnlockProvider()
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+
+      await user.click(await screen.findByText("New Encrypted Scratchpad"))
+
+      expect(mockOpenSetup).toHaveBeenCalledTimes(1)
+      expect(mockOpenUnlock).not.toHaveBeenCalled()
+      expect(mockCreateEncryptedScratchpad).not.toHaveBeenCalled()
+    })
+
+    it("creates directly when the session is already unlocked", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      stubSession("unlocked")
+      stubUnlockProvider()
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+
+      await user.click(await screen.findByText("New Encrypted Scratchpad"))
+
+      await waitFor(() => {
+        expect(mockCreateEncryptedScratchpad).toHaveBeenCalledWith(true)
+        expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_e2e_test")
+      })
+      expect(mockOpenUnlock).not.toHaveBeenCalled()
+      expect(mockOpenSetup).not.toHaveBeenCalled()
     })
   })
 })
