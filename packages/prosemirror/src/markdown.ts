@@ -299,7 +299,9 @@ function getNodeText(node: JSONContent): string {
     const title = node.attrs?.title as string | undefined
     const rawTitle = title && title.length > 0 ? title : "GIF"
     const safeTitle = rawTitle.replace(/[[\]\\\n]/g, " ").trim() || "GIF"
-    return `[${safeTitle}](${buildGiphyHref({ giphyUrl })})`
+    const width = node.attrs?.width as number | undefined
+    const height = node.attrs?.height as number | undefined
+    return `[${safeTitle}](${buildGiphyHref({ giphyUrl, width, height })})`
   }
   if (node.type === "text") return node.text ?? ""
   return ""
@@ -960,7 +962,15 @@ function parseInlineMarkdown(text: string, options: ParseOptions = {}): JSONCont
       // dedicated regex group is needed; the encoded URL never contains a `)`.
       const giphyHref = parseGiphyHref(linkUrl)
       if (giphyHref) {
-        result.push({ type: "giphyEmbed", attrs: { giphyUrl: giphyHref.giphyUrl, title: linkText } })
+        const attrs: { giphyUrl: string; title: string; width?: number; height?: number } = {
+          giphyUrl: giphyHref.giphyUrl,
+          title: linkText,
+        }
+        if (giphyHref.width && giphyHref.height) {
+          attrs.width = giphyHref.width
+          attrs.height = giphyHref.height
+        }
+        result.push({ type: "giphyEmbed", attrs })
         lastIndex = match.index + match[0].length
         continue
       }

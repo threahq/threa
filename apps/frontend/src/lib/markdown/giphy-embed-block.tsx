@@ -5,6 +5,9 @@ interface GiphyEmbedBlockProps {
   giphyUrl: string
   /** Pre-render label parsed from the markdown link text. */
   title: string
+  /** Intrinsic pixel size of the rendition, when known, to reserve space. */
+  width?: number
+  height?: number
 }
 
 /**
@@ -13,7 +16,7 @@ interface GiphyEmbedBlockProps {
  * stays in the rendered markdown; this surfaces the actual GIF (from Giphy's
  * CDN), highlighted on hover the way attachment cards are.
  */
-export function GiphyEmbedBlock({ giphyUrl, title }: GiphyEmbedBlockProps) {
+export function GiphyEmbedBlock({ giphyUrl, title, width, height }: GiphyEmbedBlockProps) {
   return (
     <div
       className={cn(
@@ -22,7 +25,7 @@ export function GiphyEmbedBlock({ giphyUrl, title }: GiphyEmbedBlockProps) {
       )}
       data-type="giphy-embed"
     >
-      <GiphyImage url={giphyUrl} title={title} />
+      <GiphyImage url={giphyUrl} title={title} width={width} height={height} />
     </div>
   )
 }

@@ -585,6 +585,33 @@ describe("@threa/prosemirror giphy embed round-trip", () => {
     const para = parsed.content?.[0]
     expect(para?.content?.some((n) => n.type === "giphyEmbed")).toBe(false)
   })
+
+  it("round-trips intrinsic dimensions so the renderer can reserve the box", () => {
+    const doc: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat", width: 480, height: 270 } }],
+        },
+      ],
+    }
+    const parsed = parseMarkdown(serializeToMarkdown(doc))
+    expect(parsed.content?.[0]).toEqual({
+      type: "paragraph",
+      content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat", width: 480, height: 270 } }],
+    })
+  })
+
+  it("omits the dimension suffix when dimensions are absent (no width/height keys)", () => {
+    const markdown = serializeToMarkdown({
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat" } }] }],
+    })
+    expect(markdown).not.toContain("?w=")
+    const node = parseMarkdown(markdown).content?.[0]?.content?.[0]
+    expect(node).toEqual({ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat" } })
+  })
 })
 
 describe("mention/channel whitespace boundary", () => {

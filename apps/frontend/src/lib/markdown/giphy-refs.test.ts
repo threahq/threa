@@ -39,4 +39,17 @@ describe("extractGiphyRefs", () => {
   it("skips non-Giphy hosts", () => {
     expect(extractGiphyRefs("[evil](giphy:https%3A%2F%2Fevil.example.com%2Fx.gif)")).toEqual([])
   })
+
+  it("carries intrinsic dimensions through so the card can reserve its box", () => {
+    const md = serializeToMarkdown({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "giphyEmbed", attrs: { giphyUrl: GIF_URL, title: "cat", width: 480, height: 270 } }],
+        },
+      ],
+    })
+    expect(extractGiphyRefs(md)).toEqual([{ giphyUrl: GIF_URL, title: "cat", width: 480, height: 270 }])
+  })
 })

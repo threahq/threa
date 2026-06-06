@@ -448,7 +448,11 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const handleGifSelect = useCallback((gif: GiphyGif) => {
     const editorInstance = editorRef.current
     if (!editorInstance || editorInstance.isDestroyed) return
-    editorInstance.chain().focus().insertGiphyEmbed({ giphyUrl: gif.previewUrl, title: gif.title }).run()
+    editorInstance
+      .chain()
+      .focus()
+      .insertGiphyEmbed({ giphyUrl: gif.previewUrl, title: gif.title, width: gif.width, height: gif.height })
+      .run()
   }, [])
 
   const editor = useEditor({
