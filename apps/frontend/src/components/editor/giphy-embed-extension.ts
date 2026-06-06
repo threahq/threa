@@ -7,15 +7,26 @@ export interface GiphyEmbedAttrs {
   giphyUrl: string
   /** Cached Giphy title; cosmetic fallback label. */
   title: string
+  /** Intrinsic pixel size of the rendition, so the renderer reserves an
+   *  aspect-ratio box before the GIF loads (no layout shift). */
+  width: number | null
+  height: number | null
 }
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     giphyEmbed: {
       /** Insert an inline GIF embed rendered straight from Giphy's CDN. */
-      insertGiphyEmbed: (attrs: { giphyUrl: string; title?: string }) => ReturnType
+      insertGiphyEmbed: (attrs: { giphyUrl: string; title?: string; width?: number; height?: number }) => ReturnType
     }
   }
+}
+
+/** Coerce a `data-*` attribute to a positive integer, or null when absent/invalid. */
+function parseDimensionAttr(raw: string | null): number | null {
+  if (raw === null) return null
+  const value = Number(raw)
+  return Number.isInteger(value) && value > 0 ? value : null
 }
 
 /**
@@ -43,6 +54,16 @@ export const GiphyEmbedExtension = Node.create({
         default: "",
         parseHTML: (element) => element.getAttribute("data-title"),
         renderHTML: (attrs) => ({ "data-title": attrs.title }),
+      },
+      width: {
+        default: null,
+        parseHTML: (element) => parseDimensionAttr(element.getAttribute("data-width")),
+        renderHTML: (attrs) => (attrs.width ? { "data-width": String(attrs.width) } : {}),
+      },
+      height: {
+        default: null,
+        parseHTML: (element) => parseDimensionAttr(element.getAttribute("data-height")),
+        renderHTML: (attrs) => (attrs.height ? { "data-height": String(attrs.height) } : {}),
       },
     }
   },
@@ -73,7 +94,16 @@ export const GiphyEmbedExtension = Node.create({
           const marks = currentMarks.map((mark) => ({ type: mark.type.name, attrs: mark.attrs }))
           return chain()
             .insertContent([
-              { type: this.name, attrs: { giphyUrl: attrs.giphyUrl, title: attrs.title ?? "" }, marks },
+              {
+                type: this.name,
+                attrs: {
+                  giphyUrl: attrs.giphyUrl,
+                  title: attrs.title ?? "",
+                  width: attrs.width ?? null,
+                  height: attrs.height ?? null,
+                },
+                marks,
+              },
               { type: "text", text: " ", marks },
             ])
             .run()

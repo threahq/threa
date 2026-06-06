@@ -15,7 +15,13 @@ export function GiphyPreviewList({ contentMarkdown }: { contentMarkdown: string 
   return (
     <div className="mt-2 flex flex-col items-start gap-2">
       {refs.map((ref) => (
-        <GiphyEmbedBlock key={ref.giphyUrl} giphyUrl={ref.giphyUrl} title={ref.title} />
+        <GiphyEmbedBlock
+          key={ref.giphyUrl}
+          giphyUrl={ref.giphyUrl}
+          title={ref.title}
+          width={ref.width}
+          height={ref.height}
+        />
       ))}
     </div>
   )

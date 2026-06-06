@@ -292,6 +292,13 @@ export interface ThreaGiphyEmbed {
     giphyUrl: string
     /** Cached Giphy title; cosmetic fallback for markdown/preview text. */
     title?: string
+    /**
+     * Intrinsic pixel size of the rendition, carried so the renderer can
+     * reserve an aspect-ratio box before the GIF loads — without it the row
+     * grows from ~0 to the decoded height and shifts the timeline.
+     */
+    width?: number
+    height?: number
   }
 }
 
@@ -448,6 +455,8 @@ const giphyEmbedNodeSchema = z.object({
   attrs: z.object({
     giphyUrl: z.string().refine(isGiphyMediaUrl, "giphyUrl must be an https URL on a *.giphy.com host"),
     title: z.string().optional(),
+    width: z.number().int().positive().optional(),
+    height: z.number().int().positive().optional(),
   }),
 })
 

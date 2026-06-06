@@ -88,24 +88,38 @@ export function parseMemoHref(href: string): MemoHref | null {
 
 export interface GiphyHref {
   giphyUrl: string
+  /** Intrinsic pixel size of the rendition, when known, so the renderer can
+   *  reserve an aspect-ratio box before the GIF loads. */
+  width?: number
+  height?: number
 }
 
 /**
- * `giphy:<encoded CDN url>` — the inline pointer a `giphyEmbed` node serialises
- * to. The URL is percent-encoded (parens included) so it can't contain a `)`
- * that would truncate the surrounding markdown link, and the cached title rides
- * on the link text.
+ * `giphy:<encoded CDN url>[?w=<n>&h=<n>]` — the inline pointer a `giphyEmbed`
+ * node serialises to. The URL is percent-encoded (parens included) so it can't
+ * contain a `)` that would truncate the surrounding markdown link, and the
+ * cached title rides on the link text. Intrinsic dimensions ride as a trailing
+ * `?w=&h=` query: `encodeURIComponent` escapes `?`/`&`/`=`, so the encoded URL
+ * can never contain those literally and the suffix is unambiguous on parse.
  */
 export function buildGiphyHref(params: GiphyHref): string {
   const encoded = encodeURIComponent(params.giphyUrl).replace(/\(/g, "%28").replace(/\)/g, "%29")
+  if (isPositiveInt(params.width) && isPositiveInt(params.height)) {
+    return `giphy:${encoded}?w=${params.width}&h=${params.height}`
+  }
   return `giphy:${encoded}`
 }
 
 export function parseGiphyHref(href: string): GiphyHref | null {
   if (!href.startsWith("giphy:")) return null
+  const body = href.slice("giphy:".length)
+  // The encoded CDN url can't contain a literal `?` (encodeURIComponent escapes
+  // it), so the first `?` cleanly separates the url from the dimension query.
+  const queryIndex = body.indexOf("?")
+  const encodedUrl = queryIndex >= 0 ? body.slice(0, queryIndex) : body
   let giphyUrl: string
   try {
-    giphyUrl = decodeURIComponent(href.slice("giphy:".length))
+    giphyUrl = decodeURIComponent(encodedUrl)
   } catch {
     return null
   }
@@ -119,5 +133,21 @@ export function parseGiphyHref(href: string): GiphyHref | null {
   }
   if (parsed.protocol !== "https:") return null
   if (parsed.hostname !== "giphy.com" && !parsed.hostname.endsWith(".giphy.com")) return null
-  return { giphyUrl }
+
+  const dims = queryIndex >= 0 ? parseGiphyDimensions(body.slice(queryIndex + 1)) : undefined
+  return dims ? { giphyUrl, ...dims } : { giphyUrl }
+}
+
+function isPositiveInt(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+}
+
+/** Parse the `w=<n>&h=<n>` dimension suffix; returns undefined unless both are
+ *  present as positive integers, so a malformed suffix degrades to "no dims". */
+function parseGiphyDimensions(query: string): { width: number; height: number } | undefined {
+  const params = new URLSearchParams(query)
+  const width = Number(params.get("w"))
+  const height = Number(params.get("h"))
+  if (!isPositiveInt(width) || !isPositiveInt(height)) return undefined
+  return { width, height }
 }

@@ -96,4 +96,20 @@ describe("GiphyImage — load reliability", () => {
     rerender(<GiphyImage url={nextUrl} title="wave" />)
     expect(getImg().getAttribute("src")).toBe(nextUrl)
   })
+
+  it("reserves an aspect-ratio box from intrinsic dimensions to avoid load reflow", () => {
+    render(<GiphyImage url={GIF_URL} title="dance" width={480} height={270} />)
+    const img = getImg()
+    expect(img.getAttribute("width")).toBe("480")
+    expect(img.getAttribute("height")).toBe("270")
+    expect(img.style.aspectRatio).toBe("480 / 270")
+  })
+
+  it("omits dimension hints when none are known (legacy embeds) so nothing distorts", () => {
+    render(<GiphyImage url={GIF_URL} title="dance" />)
+    const img = getImg()
+    expect(img.getAttribute("width")).toBeNull()
+    expect(img.getAttribute("height")).toBeNull()
+    expect(img.style.aspectRatio).toBe("")
+  })
 })

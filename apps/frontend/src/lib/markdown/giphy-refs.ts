@@ -8,6 +8,10 @@ import { parseGiphyHref } from "@threa/prosemirror"
 export interface GiphyRef {
   giphyUrl: string
   title: string
+  /** Intrinsic pixel size of the rendition, when the wire carried it, so the
+   *  preview card reserves an aspect-ratio box before the GIF loads. */
+  width?: number
+  height?: number
 }
 
 // Mirrors the giphy branch of the serializer: `[title](giphy:<encoded-url>)`.
@@ -28,7 +32,7 @@ export function extractGiphyRefs(markdown: string): GiphyRef[] {
     if (!parsed || seen.has(parsed.giphyUrl)) continue
     seen.add(parsed.giphyUrl)
     const title = match[1].replace(/\\([\]\\])/g, "$1")
-    refs.push({ giphyUrl: parsed.giphyUrl, title })
+    refs.push({ giphyUrl: parsed.giphyUrl, title, width: parsed.width, height: parsed.height })
   }
   return refs
 }

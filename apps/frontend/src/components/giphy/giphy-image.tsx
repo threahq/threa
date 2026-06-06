@@ -8,6 +8,10 @@ interface GiphyImageProps {
   url: string
   title?: string
   className?: string
+  /** Intrinsic pixel size of the rendition, when known. Used to reserve an
+   *  aspect-ratio box before the GIF decodes so the timeline doesn't reflow. */
+  width?: number
+  height?: number
 }
 
 // A transient CDN/network blip must not leave a GIF permanently broken until the
@@ -37,7 +41,13 @@ function withReloadParam(url: string, token: number): string {
  * looks the same wherever it appears. Failed loads are retried with backoff so a
  * transient CDN hiccup doesn't drop the asset until the next page refresh.
  */
-export function GiphyImage({ url, title, className }: GiphyImageProps) {
+export function GiphyImage({ url, title, className, width, height }: GiphyImageProps) {
+  // Reserve the GIF's box before its bytes decode. Without intrinsic dimensions
+  // the <img> lays out at ~0 height and grows to the decoded height on load,
+  // shifting every message below it — the "timeline jumps on load" report. With
+  // the width/height attributes plus an explicit aspect-ratio the browser
+  // reserves the (height-capped) box up front, so load is a no-reflow swap.
+  const hasDimensions = typeof width === "number" && typeof height === "number" && width > 0 && height > 0
   // Monotonic token: drives the <img> key and cache-bust param so every reload
   // is a genuinely fresh request rather than a reuse of the failed response.
   const [reloadToken, setReloadToken] = useState(0)
@@ -119,8 +129,11 @@ export function GiphyImage({ url, title, className }: GiphyImageProps) {
         src={withReloadParam(url, reloadToken)}
         alt={title || "GIF"}
         loading="lazy"
+        width={hasDimensions ? width : undefined}
+        height={hasDimensions ? height : undefined}
         onError={handleError}
         className="block max-h-64 w-auto max-w-full rounded-item"
+        style={hasDimensions ? { aspectRatio: `${width} / ${height}` } : undefined}
       />
       <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-white/85 backdrop-blur-sm">
         GIPHY
