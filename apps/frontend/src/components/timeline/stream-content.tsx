@@ -1776,7 +1776,7 @@ function VirtuosoMessageList({
 
   const itemContent = useCallback(
     (_index: number, item: TimelineItem) => (
-      <div className="mx-auto max-w-[800px]">
+      <div className="relative mx-auto max-w-[800px]">
         <TimelineItemContent item={item} ctx={renderCtx} />
       </div>
     ),
