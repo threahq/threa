@@ -130,6 +130,33 @@ export function classifyDeepLinkScrollTick(args: {
   return "active"
 }
 
+/**
+ * Whether the `?m=` highlight fade-out countdown may start.
+ *
+ * The highlight param is stripped from the URL a few seconds after a deep-link
+ * lands, fading the highlight ring and returning the URL to its canonical form.
+ * The countdown must NOT start at mount. On a cold push-notification open the
+ * jump window (auth + workspace bootstrap + the events-around fetch) can take
+ * longer than the fade delay to load. If the param clears before <Virtuoso>
+ * mounts, the mount loses its `highlightMessageId` anchor
+ * (`effectiveInitialTopMostItemIndex` falls back to the hook's `undefined`) and
+ * the list mounts at index 0 — the *top* of the loaded window — leaving the
+ * user "dumped way up high" instead of centered on the linked message.
+ *
+ * Gate the countdown on the deep-link having actually landed (the target is in
+ * the loaded window) or conclusively failed (`deepLinkGaveUp`), so a slow load
+ * keeps the param — and thus the mount anchor — alive until the message is
+ * really there.
+ */
+export function shouldStartHighlightClear(args: {
+  highlightMessageId: string | null | undefined
+  deepLinkTargetLoaded: boolean
+  deepLinkGaveUp: boolean
+}): boolean {
+  if (!args.highlightMessageId) return false
+  return args.deepLinkTargetLoaded || args.deepLinkGaveUp
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -194,22 +221,6 @@ export function StreamContent({
     dragging: boolean
     wasSelected: boolean
   } | null>(null)
-
-  // Clear highlight param after delay (works for both main view and panels)
-  useEffect(() => {
-    if (highlightMessageId) {
-      const timer = setTimeout(() => {
-        setSearchParams(
-          (prev) => {
-            prev.delete("m")
-            return prev
-          },
-          { replace: true }
-        )
-      }, 3000)
-      return () => clearTimeout(timer)
-    }
-  }, [highlightMessageId, setSearchParams])
 
   const idbStreams = useWorkspaceStreams(workspaceId)
   const idbMemberships = useWorkspaceStreamMemberships(workspaceId)
@@ -1278,7 +1289,8 @@ export function StreamContent({
   // to hell"). Holding the skeleton until the target is actually in the loaded
   // window makes the single keyed mount land already-anchored on it. Uses the
   // raw ?m= id (not the search-active id) so in-stream search is unaffected,
-  // and releases via deepLinkGaveUp / the 3s ?m= clear so it never hangs.
+  // and releases when the target loads (deepLinkTargetLoaded) or the jump
+  // conclusively fails (deepLinkGaveUp) so it never hangs.
   const deepLinkTargetLoaded = useMemo(
     () =>
       !highlightMessageId ||
@@ -1298,6 +1310,32 @@ export function StreamContent({
     prevHoldForDeepLinkRef.current = holdForDeepLink
     deepLinkDebug("holdForDeepLink ->", holdForDeepLink, "for", highlightMessageId)
   }
+
+  // Strip the `?m=` highlight param a few seconds after the deep-link lands,
+  // fading the highlight and restoring the canonical URL. Works for both the
+  // main view and panels. The countdown is gated on the deep-link having
+  // actually landed (or given up) rather than firing blindly from mount —
+  // otherwise a slow cold-boot (push-notification) open clears the param
+  // before <Virtuoso> mounts, dropping the mount anchor and dumping the user at
+  // the top of the window. See shouldStartHighlightClear.
+  const canStartHighlightClear = shouldStartHighlightClear({
+    highlightMessageId,
+    deepLinkTargetLoaded,
+    deepLinkGaveUp,
+  })
+  useEffect(() => {
+    if (!canStartHighlightClear) return
+    const timer = setTimeout(() => {
+      setSearchParams(
+        (prev) => {
+          prev.delete("m")
+          return prev
+        },
+        { replace: true }
+      )
+    }, 3000)
+    return () => clearTimeout(timer)
+  }, [canStartHighlightClear, setSearchParams])
 
   return (
     <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>

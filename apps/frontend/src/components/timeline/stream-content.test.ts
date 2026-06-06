@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { classifyDeepLinkScrollTick } from "./stream-content"
+import { classifyDeepLinkScrollTick, shouldStartHighlightClear } from "./stream-content"
 
 const DEADLINE = 4000
 
@@ -100,5 +100,53 @@ describe("classifyDeepLinkScrollTick", () => {
         deadlineMs: DEADLINE,
       })
     ).toBe("user-abort")
+  })
+})
+
+describe("shouldStartHighlightClear", () => {
+  it("never starts the countdown without a highlight target", () => {
+    for (const highlightMessageId of [null, undefined, ""] as const) {
+      expect(
+        shouldStartHighlightClear({
+          highlightMessageId,
+          deepLinkTargetLoaded: true,
+          deepLinkGaveUp: true,
+        })
+      ).toBe(false)
+    }
+  })
+
+  it("holds the param while a slow (cold push-notification) jump is still loading", () => {
+    // This is the regression guard: the old timer fired 3s from mount, so a
+    // cold boot whose jump window loads after that window cleared `?m=` before
+    // <Virtuoso> mounted, dropping the anchor and dumping the user at the top.
+    // The countdown must NOT start until the target is in the loaded window.
+    expect(
+      shouldStartHighlightClear({
+        highlightMessageId: "msg_1",
+        deepLinkTargetLoaded: false,
+        deepLinkGaveUp: false,
+      })
+    ).toBe(false)
+  })
+
+  it("starts the countdown once the deep-link target is in the loaded window", () => {
+    expect(
+      shouldStartHighlightClear({
+        highlightMessageId: "msg_1",
+        deepLinkTargetLoaded: true,
+        deepLinkGaveUp: false,
+      })
+    ).toBe(true)
+  })
+
+  it("starts the countdown once the jump conclusively fails so the param can't hang", () => {
+    expect(
+      shouldStartHighlightClear({
+        highlightMessageId: "msg_1",
+        deepLinkTargetLoaded: false,
+        deepLinkGaveUp: true,
+      })
+    ).toBe(true)
   })
 })
