@@ -101,6 +101,12 @@ export interface GiphyHref {
  * cached title rides on the link text. Intrinsic dimensions ride as a trailing
  * `?w=&h=` query: `encodeURIComponent` escapes `?`/`&`/`=`, so the encoded URL
  * can never contain those literally and the suffix is unambiguous on parse.
+ *
+ * Unlike attachments — whose metadata rides the markdown link *title* slot
+ * (`[text](attachment:id "threa-attachment:...")`, see `attachment-markdown.ts`)
+ * via a dedicated regex group — a `giphy:` link is detected inside the generic
+ * link branch, which has no title capture. Keeping the dimensions on the
+ * pseudo-URI that `parseGiphyHref` already owns is the cohesive fit here.
  */
 export function buildGiphyHref(params: GiphyHref): string {
   const encoded = encodeURIComponent(params.giphyUrl).replace(/\(/g, "%28").replace(/\)/g, "%29")

@@ -1102,6 +1102,12 @@ export function StreamContent({
       if (phase === "deadline") {
         deepLinkDebug("post-jump: deadline exceeded, giving up", target)
         pendingScrollTarget.current = null
+        // The jump window loaded but the target never became placeable (e.g. a
+        // mid-flight window swap). Mark the deep-link as conclusively failed so
+        // the holdForDeepLink skeleton releases and the gated ?m= clear can
+        // fire — without this the skeleton/param would hang now that the clear
+        // no longer runs on a blind mount timer.
+        setDeepLinkGaveUp(true)
         return
       }
 
@@ -1126,7 +1132,7 @@ export function StreamContent({
         pendingScrollRafRef.current = 0
       }
     }
-  }, [events, isLoading, scrollToMessage, useVirtualized])
+  }, [events, isLoading, scrollToMessage, useVirtualized, setDeepLinkGaveUp])
 
   // Jump to highlighted message if it's not in the current event window.
   // The guard uses location.key so repeat clicks on the same message link
@@ -1265,16 +1271,6 @@ export function StreamContent({
     }
   }, [isJumpMode, exitJumpMode, resetPrependState, scrollToBottom])
 
-  if (error && !isDraft && events.length === 0 && !idbStream) {
-    return (
-      <ErrorView
-        className="h-full border-0"
-        title="Failed to Load Messages"
-        description="We couldn't load the messages for this stream. Please refresh the page or try again later."
-      />
-    )
-  }
-
   const editLastMessageCtxWithScroll = useMemo(
     () => ({ ...editLastMessageCtx, scrollToMessage }),
     [editLastMessageCtx, scrollToMessage]
@@ -1336,6 +1332,21 @@ export function StreamContent({
     }, 3000)
     return () => clearTimeout(timer)
   }, [canStartHighlightClear, setSearchParams])
+
+  // Hard load error with nothing cached to fall back on. Placed after every
+  // hook so the hook order stays stable: `error`/`idbStream` can toggle (a
+  // failed fetch that later succeeds, or IDB resolving a beat after first
+  // paint), and an early return above the hooks would change the hook count
+  // between renders and crash the route.
+  if (error && !isDraft && events.length === 0 && !idbStream) {
+    return (
+      <ErrorView
+        className="h-full border-0"
+        title="Failed to Load Messages"
+        description="We couldn't load the messages for this stream. Please refresh the page or try again later."
+      />
+    )
+  }
 
   return (
     <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
