@@ -232,8 +232,11 @@ describe("repair (unlocked stream missing its owner wrap)", () => {
 
     renderWithProvider(ws, <ComposerEncryptionNotice workspaceId={ws} encrypted streamId="stream_thread" />)
 
-    // Give the (disabled) query a chance to fire before asserting it didn't.
-    await new Promise((r) => setTimeout(r, 50))
+    // The probe gates synchronously on `isRootScratchpad`, so a disabled query
+    // never schedules its fetch — flush microtasks (deterministic, no timer
+    // race) and assert nothing fired.
+    await Promise.resolve()
+    await Promise.resolve()
     expect(screen.queryByRole("button", { name: /finish setup/i })).not.toBeInTheDocument()
     expect(getSpy).not.toHaveBeenCalled()
     expect(storeSpy).not.toHaveBeenCalled()

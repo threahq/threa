@@ -71,8 +71,11 @@ describe("useDecryptedMessageContent", () => {
 
     expect(result.current).toEqual({ status: "pending" })
     // The bug this guards: a doomed decrypt against the bare thread id, cached as
-    // a permanent failure that never retries once the root is known.
-    await new Promise((r) => setTimeout(r, 20))
+    // a permanent failure that never retries once the root is known. The decrypt
+    // effect runs synchronously on mount, so flushing microtasks (no timer race)
+    // is enough to prove it never fired.
+    await Promise.resolve()
+    await Promise.resolve()
     expect(requestSpy).not.toHaveBeenCalled()
   })
 

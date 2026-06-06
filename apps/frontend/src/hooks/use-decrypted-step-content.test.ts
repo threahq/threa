@@ -131,8 +131,11 @@ describe("useDecryptedStepContent", () => {
     )
 
     expect(result.current).toEqual({ status: "pending", content: undefined })
-    // Critically: no doomed decrypt fired against the bare thread id.
-    await new Promise((r) => setTimeout(r, 20))
+    // Critically: no doomed decrypt fired against the bare thread id. The decrypt
+    // effect runs synchronously on mount, so flushing microtasks (no timer race)
+    // is enough to prove it never fired.
+    await Promise.resolve()
+    await Promise.resolve()
     expect(requestSpy).not.toHaveBeenCalled()
   })
 
