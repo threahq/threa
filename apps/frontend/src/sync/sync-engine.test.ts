@@ -636,4 +636,29 @@ describe("SyncEngine.handlePageResume", () => {
 
     expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
   })
+
+  it("does not write the bootstrap if the engine is torn down during the reveal wait", async () => {
+    // Account/workspace switch destroys the engine and repoints the shared db
+    // proxy + queryClient while bootstrapWorkspace is parked on the reveal wait.
+    // The stale bootstrap must not be committed into the now-foreign account.
+    await seedRevealableWorkspace("ws_1")
+
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    const connectPromise = engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    })
+
+    // Torn down mid-wait, then the reveal fires (e.g. the timeout, or the new
+    // subtree's gate). The resumed write must bail.
+    engine.destroy()
+    markInitialRevealComplete("ws_1")
+    await connectPromise
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeUndefined()
+  })
 })

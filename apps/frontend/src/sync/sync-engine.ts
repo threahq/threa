@@ -385,6 +385,13 @@ export class SyncEngine {
           if (canRevealFromCache) await waitForInitialReveal(workspaceId)
         }
 
+        // An account/workspace switch tears this engine down (isDestroyed) and
+        // repoints the shared `db` proxy + queryClient before the new subtree
+        // mounts. Any await above (the fetch, the cache probe, the reveal wait)
+        // can outlive that switch, so bail before writing — otherwise this stale
+        // bootstrap lands in the newly-active account's IDB and cache.
+        if (this.isDestroyed) return
+
         // Write to IDB (source of truth)
         await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
 
