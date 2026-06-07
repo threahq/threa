@@ -26,6 +26,7 @@ import {
 } from "@/lib/query-load-state"
 import { StreamContentSkeleton } from "@/components/loading"
 import { ApiError } from "@/api/client"
+import { markInitialRevealComplete } from "@/sync/reveal-gate"
 import { getAvatarUrl } from "@threa/types"
 
 /**
@@ -77,11 +78,20 @@ interface CoordinatedLoadingProviderProps {
 }
 
 /**
- * Delay before the loading skeleton becomes visible in the global
- * initial-load gate (`CoordinatedLoadingProvider`) so fast switches
- * never flash a skeleton.
+ * Delay before the top-bar loading indicator becomes visible in the global
+ * initial-load gate (`CoordinatedLoadingProvider`) so fast switches never
+ * flash it.
  */
 export const LOADING_DELAY_MS = 300
+
+/**
+ * Delay before the loading skeleton becomes visible. Deliberately longer than
+ * `LOADING_DELAY_MS`: a slightly-slow load that finishes within this window
+ * should go blank → content with no skeleton at all, because a skeleton that
+ * shows for a frame and is immediately replaced reads as a flicker. Only a
+ * genuinely slow load — still loading past this delay — earns a skeleton.
+ */
+export const SKELETON_DELAY_MS = 600
 
 export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }: CoordinatedLoadingProviderProps) {
   const [showSkeleton, setShowSkeleton] = useState(false)
@@ -303,6 +313,14 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     }
   }, [isLoading, revealReady])
 
+  // Tell the background sync the cached content has painted, so its first
+  // bootstrap can commit to IndexedDB without starving the reads that gate this
+  // reveal (see reveal-gate.ts). Harmless on a cold load — the sync doesn't wait
+  // there — and idempotent across re-renders / StrictMode double-mounts.
+  useEffect(() => {
+    if (isReady) markInitialRevealComplete(workspaceId)
+  }, [isReady, workspaceId])
+
   // Once the content is revealed AND the initial background sync has gone quiet,
   // any future "syncing" is a reconnect resync — that one is worth surfacing on
   // the topbar indicator (see `isLoading`). The initial freshness pass that
@@ -311,22 +329,28 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     if (isReady && !isAnySyncing) hasSettledInitialSyncRef.current = true
   }, [isReady, isAnySyncing])
 
-  // Show skeleton after delay if still loading during initial load
+  // Show the skeleton only if the initial load is still going after
+  // SKELETON_DELAY_MS. Once shown, it stays up until the content is ready — we
+  // deliberately do NOT drop back to blank when `isLoading` flips false ahead of
+  // `isReady` (a common race online, where the network query resolves a beat
+  // before the cached reveal settles). Blanking there produced a
+  // skeleton → blank → content flicker.
   useEffect(() => {
-    // Once ready, never show skeleton again
+    // Once ready, the content shows and the skeleton is no longer needed.
     if (isReady) {
       setShowSkeleton(false)
       return
     }
 
-    if (!isLoading) {
-      setShowSkeleton(false)
-      return
-    }
+    // Loading finished but the reveal hasn't settled yet: hold whatever we're
+    // showing (sticky) rather than blanking between skeleton and content. The
+    // cleanup below already cleared any armed timer, so a fast load that
+    // finishes before the delay never flips the skeleton on.
+    if (!isLoading) return
 
     const timer = setTimeout(() => {
       setShowSkeleton(true)
-    }, LOADING_DELAY_MS)
+    }, SKELETON_DELAY_MS)
 
     return () => clearTimeout(timer)
   }, [isLoading, isReady])

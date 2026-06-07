@@ -3,6 +3,8 @@ import type { Socket } from "socket.io-client"
 import { QueryClient } from "@tanstack/react-query"
 import { SyncEngine } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
+import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
@@ -205,8 +207,49 @@ async function primeConnectedEngine(engine: SyncEngine, socket: MockSocket): Pro
   await engine.onConnect(asSocket(socket))
 }
 
+/**
+ * Seed the full set of IDB rows the coordinated-loading gate requires to reveal
+ * from cache: the workspace row plus the unread / metadata / sidebar singletons.
+ * Mirrors `workspaceDataReady` in coordinated-loading-context.tsx so the engine's
+ * write-deferral check sees a complete cache.
+ */
+async function seedRevealableWorkspace(workspaceId: string): Promise<void> {
+  const now = new Date().toISOString()
+  const cachedAt = Date.now()
+  await Promise.all([
+    db.workspaces.put({
+      id: workspaceId,
+      name: "Cached",
+      slug: "cached",
+      createdAt: now,
+      updatedAt: now,
+      _cachedAt: cachedAt,
+    }),
+    db.unreadState.put({
+      id: workspaceId,
+      workspaceId,
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      mutedStreamIds: [],
+      _cachedAt: cachedAt,
+    }),
+    db.workspaceMetadata.put({
+      id: workspaceId,
+      workspaceId,
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      _cachedAt: cachedAt,
+    }),
+    db.sidebarConfigs.put({ id: workspaceId, workspaceId, config: DEFAULT_SIDEBAR_CONFIG, _cachedAt: cachedAt }),
+  ])
+}
+
 describe("SyncEngine.handlePageResume", () => {
   beforeEach(async () => {
+    resetRevealGate()
     await Promise.all([
       db.workspaces.clear(),
       db.workspaceUsers.clear(),
@@ -218,6 +261,7 @@ describe("SyncEngine.handlePageResume", () => {
       db.unreadState.clear(),
       db.userPreferences.clear(),
       db.workspaceMetadata.clear(),
+      db.sidebarConfigs.clear(),
       db.events.clear(),
       db.pendingMessages.clear(),
     ])
@@ -526,5 +570,95 @@ describe("SyncEngine.handlePageResume", () => {
       const joinedRooms = socket.emittedEvents.filter((event) => event.event === "join").map((event) => event.args[0])
       expect(joinedRooms).toContain("ws:ws_1:stream:stream_42")
     })
+  })
+
+  it("fetches immediately on the first warm connect but holds the IDB write until the cached reveal paints", async () => {
+    // Online-slower-than-offline regression: the network fetch must run right
+    // away, but applyWorkspaceBootstrap's IndexedDB write has to wait for the
+    // cached reveal so it doesn't starve the reveal's reads.
+    await seedRevealableWorkspace("ws_1")
+
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    // Don't await — the write is parked behind the reveal until we signal it.
+    const connectPromise = engine.onConnect(asSocket(socket))
+
+    // The fetch fires immediately, in parallel with the (not-yet-signalled) reveal.
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    })
+    // ...but the bootstrap has not been committed to the query cache yet.
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeUndefined()
+
+    // Cached content painted → the write is released.
+    markInitialRevealComplete("ws_1")
+    await connectPromise
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
+  })
+
+  it("commits the write without waiting on a cold first connect (nothing cached to reveal)", async () => {
+    // No cached workspace row: there's nothing to reveal, so the bootstrap must
+    // commit without waiting — otherwise a first-ever load would stall on the
+    // reveal timeout.
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    await engine.onConnect(asSocket(socket))
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
+  })
+
+  it("does not wait when the cache is partial (workspace row present, gating singleton missing)", async () => {
+    // Deadlock guard: the gate only reveals once the workspace row AND the
+    // unread/metadata/sidebar singletons are all cached. A partial cache (e.g.
+    // an interrupted prior session, or a schema upgrade that added a gating
+    // singleton) can only become ready once THIS write lands — so the engine
+    // must NOT wait on the reveal, or it would stall until the timeout. Here
+    // the sidebar config is missing, so the write commits immediately even
+    // though no reveal is ever signalled.
+    await seedRevealableWorkspace("ws_1")
+    await db.sidebarConfigs.delete("ws_1")
+
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    // Awaiting onConnect would hang for the full reveal timeout if the write
+    // were (incorrectly) gated — instead it resolves promptly.
+    await engine.onConnect(asSocket(socket))
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
+  })
+
+  it("does not write the bootstrap if the engine is torn down during the reveal wait", async () => {
+    // Account/workspace switch destroys the engine and repoints the shared db
+    // proxy + queryClient while bootstrapWorkspace is parked on the reveal wait.
+    // The stale bootstrap must not be committed into the now-foreign account.
+    await seedRevealableWorkspace("ws_1")
+
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    const connectPromise = engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    })
+
+    // Torn down mid-wait, then the reveal fires (e.g. the timeout, or the new
+    // subtree's gate). The resumed write must bail.
+    engine.destroy()
+    markInitialRevealComplete("ws_1")
+    await connectPromise
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeUndefined()
   })
 })

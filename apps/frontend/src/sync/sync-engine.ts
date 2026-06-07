@@ -18,6 +18,7 @@ import {
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
+import { waitForInitialReveal } from "./reveal-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -352,7 +353,44 @@ export class SyncEngine {
           syncStatus.set(`stream:${streamId}`, status)
         }
       } else {
+        // Fire the fetch immediately — freshness is never deferred over the wire.
         bootstrap = await workspaceService.bootstrap(workspaceId)
+
+        // On the very first connect of a warm start, hold the IndexedDB write
+        // until the cached reveal has painted. applyWorkspaceBootstrap writes the
+        // same stores the reveal reads, and IndexedDB serializes readwrite
+        // against readonly, so an un-gated write here queues the reveal's reads
+        // behind it — the reason an online start lagged an offline one. The fetch
+        // above already ran in parallel with the reveal, so this only delays the
+        // write by the (bounded) time the paint needs. Skipped on reconnects
+        // (content already on screen), where the write must land promptly. See
+        // reveal-gate.ts.
+        if (!_isReconnect) {
+          // Only defer when the cache is complete enough for the gate to reveal
+          // WITHOUT this write. The coordinated-loading gate holds its reveal
+          // until the workspace row plus the unread / metadata / sidebar
+          // singletons are all present (see coordinated-loading-context.tsx's
+          // `workspaceDataReady`). If any are missing — a cold start, or a
+          // partial cache from an interrupted/upgraded prior session — the gate
+          // can only become ready once THIS write lands, so waiting on the
+          // reveal would deadlock until the timeout. In that case we write
+          // immediately and let the gate reveal off the fresh write.
+          const [workspace, unreadState, metadata, sidebarConfig] = await Promise.all([
+            db.workspaces.get(workspaceId),
+            db.unreadState.get(workspaceId),
+            db.workspaceMetadata.get(workspaceId),
+            db.sidebarConfigs.get(workspaceId),
+          ])
+          const canRevealFromCache = !!workspace && !!unreadState && !!metadata && !!sidebarConfig
+          if (canRevealFromCache) await waitForInitialReveal(workspaceId)
+        }
+
+        // An account/workspace switch tears this engine down (isDestroyed) and
+        // repoints the shared `db` proxy + queryClient before the new subtree
+        // mounts. Any await above (the fetch, the cache probe, the reveal wait)
+        // can outlive that switch, so bail before writing — otherwise this stale
+        // bootstrap lands in the newly-active account's IDB and cache.
+        if (this.isDestroyed) return
 
         // Write to IDB (source of truth)
         await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
