@@ -3,6 +3,8 @@ import type { Socket } from "socket.io-client"
 import { QueryClient } from "@tanstack/react-query"
 import { SyncEngine } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
+import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { db } from "@/db"
 import {
   DEFAULT_USER_PREFERENCES,
@@ -207,6 +209,7 @@ async function primeConnectedEngine(engine: SyncEngine, socket: MockSocket): Pro
 
 describe("SyncEngine.handlePageResume", () => {
   beforeEach(async () => {
+    resetRevealGate()
     await Promise.all([
       db.workspaces.clear(),
       db.workspaceUsers.clear(),
@@ -526,5 +529,55 @@ describe("SyncEngine.handlePageResume", () => {
       const joinedRooms = socket.emittedEvents.filter((event) => event.event === "join").map((event) => event.args[0])
       expect(joinedRooms).toContain("ws:ws_1:stream:stream_42")
     })
+  })
+
+  it("fetches immediately on the first warm connect but holds the IDB write until the cached reveal paints", async () => {
+    // Online-slower-than-offline regression: the network fetch must run right
+    // away, but applyWorkspaceBootstrap's IndexedDB write has to wait for the
+    // cached reveal so it doesn't starve the reveal's reads.
+    const now = new Date().toISOString()
+    await db.workspaces.put({
+      id: "ws_1",
+      name: "Cached",
+      slug: "cached",
+      createdAt: now,
+      updatedAt: now,
+      _cachedAt: Date.now(),
+    })
+
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    // Don't await — the write is parked behind the reveal until we signal it.
+    const connectPromise = engine.onConnect(asSocket(socket))
+
+    // The fetch fires immediately, in parallel with the (not-yet-signalled) reveal.
+    await vi.waitFor(() => {
+      expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    })
+    // ...but the bootstrap has not been committed to the query cache yet.
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeUndefined()
+
+    // Cached content painted → the write is released.
+    markInitialRevealComplete("ws_1")
+    await connectPromise
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
+  })
+
+  it("commits the write without waiting on a cold first connect (nothing cached to reveal)", async () => {
+    // No cached workspace row: there's nothing to reveal, so the bootstrap must
+    // commit without waiting — otherwise a first-ever load would stall on the
+    // reveal timeout.
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    await engine.onConnect(asSocket(socket))
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
   })
 })

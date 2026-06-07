@@ -178,7 +178,7 @@ describe("CoordinatedLoadingProvider", () => {
     expect(screen.getByTestId("phase").textContent).toBe("loading")
   })
 
-  it("transitions to skeleton after 300ms if still loading", async () => {
+  it("stays blank through a slightly-slow load and only shows the skeleton after 600ms", async () => {
     render(
       <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
         <TestConsumer />
@@ -188,8 +188,9 @@ describe("CoordinatedLoadingProvider", () => {
     await flushEffects()
     expect(screen.getByTestId("phase").textContent).toBe("loading")
 
+    // A slightly-slow load (under 600ms) must not flash a skeleton.
     act(() => {
-      vi.advanceTimersByTime(299)
+      vi.advanceTimersByTime(599)
     })
     expect(screen.getByTestId("phase").textContent).toBe("loading")
 
@@ -197,6 +198,61 @@ describe("CoordinatedLoadingProvider", () => {
       vi.advanceTimersByTime(1)
     })
     expect(screen.getByTestId("phase").textContent).toBe("skeleton")
+  })
+
+  it("holds the skeleton until ready instead of blanking when loading finishes first", async () => {
+    // Flicker regression: online, the network query can flip `isLoading` false a
+    // beat before the cached reveal settles `isReady`. The old gate reset the
+    // skeleton on that transition, producing skeleton → blank → content. The
+    // skeleton must stay up until the content is actually ready.
+    mockHasSeededWorkspaceCache = true
+    mockWorkspace = { id: "workspace_1" }
+    mockUsers = [{ id: "user_1", avatarUrl: "https://cdn.example/avatar.png" }]
+    mockStreams = [{ id: "stream_1" }]
+    mockUnreadState = { id: "workspace_1" }
+    mockMetadata = { id: "workspace_1" }
+    mockSidebarConfig = { id: "workspace_1" }
+    mockStreamsLoadState = QUERY_LOAD_STATE.READY
+    // Not primed from a prior session and avatars still preloading, so the
+    // reveal can't settle yet (revealReady stays false).
+    mockSeedCacheFromIdbResult = false
+    const preloadSpy = vi.spyOn(usePreloadImagesModule, "usePreloadImages").mockReturnValue(false)
+    // Drafts still loading keeps the initial load going so the skeleton arms.
+    mockHasSeededDraftCache = false
+
+    const { rerender } = render(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+
+    await flushEffects()
+    act(() => {
+      vi.advanceTimersByTime(600)
+    })
+    expect(screen.getByTestId("phase").textContent).toBe("skeleton")
+
+    // Loading finishes (drafts seeded) but the reveal still can't settle
+    // (avatars not preloaded, cache not primed) — phase must hold on skeleton,
+    // never regress to the blank "loading" phase.
+    mockHasSeededDraftCache = true
+    rerender(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+    await flushEffects()
+    expect(screen.getByTestId("phase").textContent).toBe("skeleton")
+
+    // Once the reveal can settle, it goes straight to content.
+    preloadSpy.mockReturnValue(true)
+    rerender(
+      <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+        <TestConsumer />
+      </CoordinatedLoadingProvider>
+    )
+    await flushEffects()
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
   })
 
   it("is ready when IDB is primed and stream record exists (no per-stream cache needed)", async () => {
@@ -594,7 +650,7 @@ describe("CoordinatedLoadingGate", () => {
 
     await flushEffects()
     act(() => {
-      vi.advanceTimersByTime(300)
+      vi.advanceTimersByTime(600)
     })
 
     expect(screen.getByTestId("content")).toBeInTheDocument()

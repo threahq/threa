@@ -18,6 +18,7 @@ import {
   type CachedStreamBootstrap,
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
+import { waitForInitialReveal } from "./reveal-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -352,7 +353,22 @@ export class SyncEngine {
           syncStatus.set(`stream:${streamId}`, status)
         }
       } else {
+        // Fire the fetch immediately — freshness is never deferred over the wire.
         bootstrap = await workspaceService.bootstrap(workspaceId)
+
+        // On the very first connect of a warm start, hold the IndexedDB write
+        // until the cached reveal has painted. applyWorkspaceBootstrap writes the
+        // same stores the reveal reads, and IndexedDB serializes readwrite
+        // against readonly, so an un-gated write here queues the reveal's reads
+        // behind it — the reason an online start lagged an offline one. The fetch
+        // above already ran in parallel with the reveal, so this only delays the
+        // write by the (bounded) time the paint needs. Skipped on a cold start
+        // (nothing cached to reveal) and on reconnects (content already on
+        // screen), where the write must land promptly. See reveal-gate.ts.
+        if (!_isReconnect) {
+          const hasCachedData = (await db.workspaces.get(workspaceId)) !== undefined
+          if (hasCachedData) await waitForInitialReveal(workspaceId)
+        }
 
         // Write to IDB (source of truth)
         await applyWorkspaceBootstrap(workspaceId, bootstrap, fetchStartedAt)
