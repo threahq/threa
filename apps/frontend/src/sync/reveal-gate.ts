@@ -15,6 +15,16 @@
  * indefinitely delayed, and only ever engaged on a warm first connect — a cold
  * start has nothing cached to reveal, and reconnects already have content on
  * screen.
+ *
+ * INV-9 exception: the per-workspace state lives in a module-level Map by
+ * design. The producer (`markInitialRevealComplete`, from a React effect in
+ * `CoordinatedLoadingProvider`) and the consumer (`waitForInitialReveal`, in
+ * the plain `SyncEngine` class) sit on opposite sides of the React/non-React
+ * seam, so a context would have to thread a promise from the gate into the sync
+ * engine for no benefit. Keys are globally-unique workspace ULIDs (INV-2), so
+ * there is no cross-workspace collision; `resetRevealGate` is wired into
+ * `flushModuleStoreCaches` (auth/account-scope.tsx) so an account switch clears
+ * it alongside every other module-level store cache.
  */
 
 const REVEAL_TIMEOUT_MS = 2000
@@ -72,7 +82,11 @@ export function waitForInitialReveal(workspaceId: string, timeoutMs = REVEAL_TIM
   })
 }
 
-/** Test-only: clear all reveal state between cases. */
+/**
+ * Clear all reveal state. Called on account switch via `flushModuleStoreCaches`
+ * (so a parked account's reveal flags never bleed into the next), and by tests
+ * between cases.
+ */
 export function resetRevealGate(): void {
   states.clear()
 }

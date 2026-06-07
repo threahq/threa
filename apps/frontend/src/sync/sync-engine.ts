@@ -362,12 +362,27 @@ export class SyncEngine {
         // against readonly, so an un-gated write here queues the reveal's reads
         // behind it — the reason an online start lagged an offline one. The fetch
         // above already ran in parallel with the reveal, so this only delays the
-        // write by the (bounded) time the paint needs. Skipped on a cold start
-        // (nothing cached to reveal) and on reconnects (content already on
-        // screen), where the write must land promptly. See reveal-gate.ts.
+        // write by the (bounded) time the paint needs. Skipped on reconnects
+        // (content already on screen), where the write must land promptly. See
+        // reveal-gate.ts.
         if (!_isReconnect) {
-          const hasCachedData = (await db.workspaces.get(workspaceId)) !== undefined
-          if (hasCachedData) await waitForInitialReveal(workspaceId)
+          // Only defer when the cache is complete enough for the gate to reveal
+          // WITHOUT this write. The coordinated-loading gate holds its reveal
+          // until the workspace row plus the unread / metadata / sidebar
+          // singletons are all present (see coordinated-loading-context.tsx's
+          // `workspaceDataReady`). If any are missing — a cold start, or a
+          // partial cache from an interrupted/upgraded prior session — the gate
+          // can only become ready once THIS write lands, so waiting on the
+          // reveal would deadlock until the timeout. In that case we write
+          // immediately and let the gate reveal off the fresh write.
+          const [workspace, unreadState, metadata, sidebarConfig] = await Promise.all([
+            db.workspaces.get(workspaceId),
+            db.unreadState.get(workspaceId),
+            db.workspaceMetadata.get(workspaceId),
+            db.sidebarConfigs.get(workspaceId),
+          ])
+          const canRevealFromCache = !!workspace && !!unreadState && !!metadata && !!sidebarConfig
+          if (canRevealFromCache) await waitForInitialReveal(workspaceId)
         }
 
         // Write to IDB (source of truth)

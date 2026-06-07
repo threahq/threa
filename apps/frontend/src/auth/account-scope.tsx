@@ -12,6 +12,7 @@ import { resetStreamStoreCache } from "@/stores/stream-store"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetShareHandoffStoreCache } from "@/stores/share-handoff-store"
 import { resetE2eSessionStoreCache } from "@/stores/e2e-session-store"
+import { resetRevealGate } from "@/sync/reveal-gate"
 import { useAuth } from "./hooks"
 
 const NO_ACCOUNT_KEY = "__no_account__"
@@ -68,6 +69,7 @@ function flushModuleStoreCaches(): void {
   resetDraftStoreCache()
   resetShareHandoffStoreCache()
   resetE2eSessionStoreCache()
+  resetRevealGate()
 }
 
 interface AccountScopeProviderProps {

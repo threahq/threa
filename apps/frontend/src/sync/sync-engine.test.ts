@@ -207,6 +207,46 @@ async function primeConnectedEngine(engine: SyncEngine, socket: MockSocket): Pro
   await engine.onConnect(asSocket(socket))
 }
 
+/**
+ * Seed the full set of IDB rows the coordinated-loading gate requires to reveal
+ * from cache: the workspace row plus the unread / metadata / sidebar singletons.
+ * Mirrors `workspaceDataReady` in coordinated-loading-context.tsx so the engine's
+ * write-deferral check sees a complete cache.
+ */
+async function seedRevealableWorkspace(workspaceId: string): Promise<void> {
+  const now = new Date().toISOString()
+  const cachedAt = Date.now()
+  await Promise.all([
+    db.workspaces.put({
+      id: workspaceId,
+      name: "Cached",
+      slug: "cached",
+      createdAt: now,
+      updatedAt: now,
+      _cachedAt: cachedAt,
+    }),
+    db.unreadState.put({
+      id: workspaceId,
+      workspaceId,
+      unreadCounts: {},
+      mentionCounts: {},
+      activityCounts: {},
+      unreadActivityCount: 0,
+      mutedStreamIds: [],
+      _cachedAt: cachedAt,
+    }),
+    db.workspaceMetadata.put({
+      id: workspaceId,
+      workspaceId,
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      _cachedAt: cachedAt,
+    }),
+    db.sidebarConfigs.put({ id: workspaceId, workspaceId, config: DEFAULT_SIDEBAR_CONFIG, _cachedAt: cachedAt }),
+  ])
+}
+
 describe("SyncEngine.handlePageResume", () => {
   beforeEach(async () => {
     resetRevealGate()
@@ -221,6 +261,7 @@ describe("SyncEngine.handlePageResume", () => {
       db.unreadState.clear(),
       db.userPreferences.clear(),
       db.workspaceMetadata.clear(),
+      db.sidebarConfigs.clear(),
       db.events.clear(),
       db.pendingMessages.clear(),
     ])
@@ -535,15 +576,7 @@ describe("SyncEngine.handlePageResume", () => {
     // Online-slower-than-offline regression: the network fetch must run right
     // away, but applyWorkspaceBootstrap's IndexedDB write has to wait for the
     // cached reveal so it doesn't starve the reveal's reads.
-    const now = new Date().toISOString()
-    await db.workspaces.put({
-      id: "ws_1",
-      name: "Cached",
-      slug: "cached",
-      createdAt: now,
-      updatedAt: now,
-      _cachedAt: Date.now(),
-    })
+    await seedRevealableWorkspace("ws_1")
 
     const deps = makeDeps()
     const engine = new SyncEngine(deps)
@@ -576,6 +609,29 @@ describe("SyncEngine.handlePageResume", () => {
     const socket = new MockSocket()
     socket.ackBehavior = "immediate"
 
+    await engine.onConnect(asSocket(socket))
+
+    expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
+  })
+
+  it("does not wait when the cache is partial (workspace row present, gating singleton missing)", async () => {
+    // Deadlock guard: the gate only reveals once the workspace row AND the
+    // unread/metadata/sidebar singletons are all cached. A partial cache (e.g.
+    // an interrupted prior session, or a schema upgrade that added a gating
+    // singleton) can only become ready once THIS write lands — so the engine
+    // must NOT wait on the reveal, or it would stall until the timeout. Here
+    // the sidebar config is missing, so the write commits immediately even
+    // though no reveal is ever signalled.
+    await seedRevealableWorkspace("ws_1")
+    await db.sidebarConfigs.delete("ws_1")
+
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    socket.ackBehavior = "immediate"
+
+    // Awaiting onConnect would hang for the full reveal timeout if the write
+    // were (incorrectly) gated — instead it resolves promptly.
     await engine.onConnect(asSocket(socket))
 
     expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeDefined()
