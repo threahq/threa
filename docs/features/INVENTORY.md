@@ -71,20 +71,21 @@ this tree. See Decisions below.
 
 ## Architecture
 
-| Doc                                                 | Covers                                                                                        | Where to look                                               |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| [outbox-pattern](architecture/outbox-pattern.md) ✅ | Transactional events, dispatcher, gap-safe cursors                                            | done                                                        |
-| [sync-engine](architecture/sync-engine.md) ✅       | Client sync lifecycle, reconnect, IDB reconciliation                                          | done                                                        |
-| job-queue                                           | PG-backed queue: fair-share scheduling, priorities, DLQ, the job-type catalog                 | `apps/backend/src/lib/queue/`                               |
-| ai-wrapper                                          | `createAI` over the AI SDK and OpenRouter, Langfuse/OTEL telemetry, cost tracking and budgets | `packages/agent-runtime/src/ai/`                            |
-| socket-rooms                                        | Room naming (`ws:*`), cookie auth, user socket registry, connection metrics                   | `apps/backend/src/socket.ts`                                |
-| agent-runtime                                       | Persona sessions, tool execution, traces, per-stream tool privacy policies                    | `packages/agent-runtime/`, `features/agents`                |
-| bot-runtimes                                        | External bot runtime connections and session links                                            | `features/bot-runtimes`                                     |
-| e2e-encryption                                      | SSK wraps, enclave instance keys, HPKE, the sealed AI loop                                    | `packages/crypto/`, `features/e2e-streams`, `apps/enclave/` |
-| push-pipeline                                       | Subscriptions, device/session suppression logic, outbox-driven delivery                       | `features/push`                                             |
-| attachment-pipeline                                 | Per-region S3, extraction (PDF/OCR), thumbnails, video transcoding                            | `features/attachments`, `lib/storage/`                      |
-| search-architecture                                 | Hybrid full-text and pgvector search, embedding jobs, access control                          | `features/search`                                           |
-| memo-pipeline                                       | The GAM machinery: boundary extraction, classification, memo accumulation                     | `features/memos` and its outbox handlers                    |
+| Doc                                                           | Covers                                                                                        | Where to look                                               |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [outbox-pattern](architecture/outbox-pattern.md) ✅           | Transactional events, dispatcher, gap-safe cursors                                            | done                                                        |
+| [sync-engine](architecture/sync-engine.md) ✅                 | Client sync lifecycle, reconnect, IDB reconciliation                                          | done                                                        |
+| [coordinated-loading](architecture/coordinated-loading.md) ✅ | First-paint gate: cached IDB reveal, skeleton phases, reveal-before-write                     | done                                                        |
+| job-queue                                                     | PG-backed queue: fair-share scheduling, priorities, DLQ, the job-type catalog                 | `apps/backend/src/lib/queue/`                               |
+| ai-wrapper                                                    | `createAI` over the AI SDK and OpenRouter, Langfuse/OTEL telemetry, cost tracking and budgets | `packages/agent-runtime/src/ai/`                            |
+| socket-rooms                                                  | Room naming (`ws:*`), cookie auth, user socket registry, connection metrics                   | `apps/backend/src/socket.ts`                                |
+| agent-runtime                                                 | Persona sessions, tool execution, traces, per-stream tool privacy policies                    | `packages/agent-runtime/`, `features/agents`                |
+| bot-runtimes                                                  | External bot runtime connections and session links                                            | `features/bot-runtimes`                                     |
+| e2e-encryption                                                | SSK wraps, enclave instance keys, HPKE, the sealed AI loop                                    | `packages/crypto/`, `features/e2e-streams`, `apps/enclave/` |
+| push-pipeline                                                 | Subscriptions, device/session suppression logic, outbox-driven delivery                       | `features/push`                                             |
+| attachment-pipeline                                           | Per-region S3, extraction (PDF/OCR), thumbnails, video transcoding                            | `features/attachments`, `lib/storage/`                      |
+| search-architecture                                           | Hybrid full-text and pgvector search, embedding jobs, access control                          | `features/search`                                           |
+| memo-pipeline                                                 | The GAM machinery: boundary extraction, classification, memo accumulation                     | `features/memos` and its outbox handlers                    |
 
 ## Probably skip, or covered elsewhere
 
