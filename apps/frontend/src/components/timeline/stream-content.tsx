@@ -1628,7 +1628,7 @@ export function StreamContent({
               </AlertDialogContent>
             </AlertDialog>
             {membershipResolved && !isMember && isPublicChannel && (
-              <div className="absolute inset-x-0 z-10" style={{ bottom: "var(--composer-height, 0px)" }}>
+              <div className="absolute inset-x-0 bottom-0 z-10">
                 <JoinChannelBar
                   workspaceId={workspaceId}
                   streamId={streamId}

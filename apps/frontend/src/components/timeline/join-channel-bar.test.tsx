@@ -86,4 +86,26 @@ describe("JoinChannelBar", () => {
     })
     expect(defaultProps.onJoined).not.toHaveBeenCalled()
   })
+
+  // The composer is not rendered for non-members, so the join bar must own
+  // `--composer-height` while it is mounted. Otherwise the timeline footer
+  // spacer keeps a stale height and the bar floats over the messages instead
+  // of docking flush at the bottom (the "join channel is fucked" bug).
+  it("should publish its height as --composer-height on the editor zone", () => {
+    const original = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      return { height: 96, width: 0, top: 0, left: 0, right: 0, bottom: 96, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+    }
+    try {
+      const { container } = render(
+        <div data-editor-zone="main">
+          <JoinChannelBar {...defaultProps} />
+        </div>
+      )
+      const zone = container.querySelector<HTMLElement>("[data-editor-zone]")!
+      expect(zone.style.getPropertyValue("--composer-height")).toBe("96px")
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = original
+    }
+  })
 })
