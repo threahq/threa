@@ -191,7 +191,9 @@ describe("loadStreamEvents", () => {
     // index's, not insertion order.
     const streamId = "stream_big"
     const seqs = Array.from({ length: 250 }, (_, i) => i + 1)
-    const shuffled = [...seqs].sort(() => Math.random() - 0.5)
+    // Reverse (worst-case out-of-order) so the input order is deterministic and
+    // can never coincidentally match the expected ASC output.
+    const shuffled = [...seqs].reverse()
     await db.events.bulkPut(shuffled.map((n) => makeRealEvent(streamId, String(n))))
 
     const events = await loadStreamEvents(streamId, 1)
