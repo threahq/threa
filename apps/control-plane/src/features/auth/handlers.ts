@@ -10,7 +10,7 @@ import {
   setSessionCookie,
   type AuthService,
 } from "@threa/backend-common"
-import { MAGIC_CODE_LENGTH, SOCIAL_PROVIDERS } from "@threa/types"
+import { MAGIC_CODE_LENGTH, ORIGINAL_HOST_HEADER, SOCIAL_PROVIDERS } from "@threa/types"
 import type { AccountsService } from "../accounts"
 import { parseCallbackState, splitInnerState } from "./callback-state"
 
@@ -70,6 +70,23 @@ interface Dependencies {
   dedicatedRedirectHosts: string[]
 }
 
+/**
+ * The original client-facing host the request arrived on.
+ *
+ * Prefer the router-set `ORIGINAL_HOST_HEADER`: Railway's edge proxy fronts the
+ * control-plane and overwrites the standard `X-Forwarded-Host` with its own
+ * ingress hostname, so that header can't be trusted to name the real client
+ * host here. The custom header survives Railway. Fall back to `X-Forwarded-Host`
+ * for local dev / tests, where the request reaches the control-plane directly
+ * (no Railway) and the standard header is accurate.
+ */
+function readForwardedHost(req: Request): string | undefined {
+  const original = req.headers[ORIGINAL_HOST_HEADER.toLowerCase()]
+  if (typeof original === "string" && original.length > 0) return original
+  const xForwardedHost = req.headers["x-forwarded-host"]
+  return typeof xForwardedHost === "string" && xForwardedHost.length > 0 ? xForwardedHost : undefined
+}
+
 /** Is `host` a trusted redirect target? */
 function isTrustedHost(host: string, allowedDomain: string, dedicatedHosts: string[]): boolean {
   if (dedicatedHosts.includes(host)) return true
@@ -89,9 +106,9 @@ export function createControlPlaneAuthHandlers({
       const redirectTo = req.query.redirect_to as string | undefined
 
       // Capture the forwarded host so the callback can redirect back to the correct origin.
-      // The workspace-router (and backoffice-router) set X-Forwarded-Host on all proxied
+      // The workspace-router (and backoffice-router) set ORIGINAL_HOST_HEADER on all proxied
       // requests; we cross-check against the allow-list before trusting it.
-      const forwardedHost = req.headers["x-forwarded-host"] as string | undefined
+      const forwardedHost = readForwardedHost(req)
       const hostTrusted = !!forwardedHost && isTrustedHost(forwardedHost, allowedRedirectDomain, dedicatedRedirectHosts)
 
       const isAdd = typeof req.query.intent === "string" && req.query.intent === "add"
@@ -193,7 +210,7 @@ export function createControlPlaneAuthHandlers({
 
     async logout(req: Request, res: Response) {
       const session = req.cookies[SESSION_COOKIE_NAME]
-      const forwardedHost = req.headers["x-forwarded-host"] as string | undefined
+      const forwardedHost = readForwardedHost(req)
       const queryParse = logoutQuerySchema.safeParse(req.query)
       const scope = queryParse.success ? queryParse.data.scope : undefined
 

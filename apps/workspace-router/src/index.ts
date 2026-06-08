@@ -1,4 +1,4 @@
-import { INTERNAL_API_KEY_HEADER } from "@threa/types"
+import { INTERNAL_API_KEY_HEADER, ORIGINAL_HOST_HEADER } from "@threa/types"
 
 interface Env {
   WORKSPACE_REGIONS: KVNamespace
@@ -318,6 +318,10 @@ async function proxyRequest(request: Request, targetBaseUrl: string): Promise<Re
   const forwardedPort = preserveUpstreamForwardedHeaders ? request.headers.get("X-Forwarded-Port") : null
 
   headers.set("X-Forwarded-Host", forwardedHost ?? url.host)
+  // Railway's edge overwrites X-Forwarded-Host with its own ingress host before
+  // the control-plane sees it, so the standard header can't carry the real
+  // client host through. Mirror it onto a custom header that survives Railway.
+  headers.set(ORIGINAL_HOST_HEADER, forwardedHost ?? url.host)
   headers.set("X-Forwarded-Proto", forwardedProto ?? url.protocol.replace(":", ""))
 
   if (forwardedPort) {

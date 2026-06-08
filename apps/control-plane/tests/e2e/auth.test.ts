@@ -1,4 +1,5 @@
 import { describe, test, expect } from "bun:test"
+import { ORIGINAL_HOST_HEADER } from "@threa/types"
 import { TestClient, loginAs } from "../client"
 
 describe("Auth", () => {
@@ -89,6 +90,33 @@ describe("Auth", () => {
       expect(state).toBeTruthy()
       const decoded = Buffer.from(state!, "base64").toString("utf-8")
       expect(decoded).toBe("admin.threa.io|/")
+    })
+
+    test("GET /api/auth/login uses dedicated redirect URI from the custom host header", async () => {
+      // Railway overwrites X-Forwarded-Host before the control-plane sees it, so
+      // in production the routers carry the real client host on ORIGINAL_HOST_HEADER.
+      const client = new TestClient()
+      const res = await client.request("GET", "/api/auth/login?redirect_to=%2Fworkspaces", undefined, {
+        [ORIGINAL_HOST_HEADER]: "admin.threa.io",
+      })
+      expect(res.status).toBe(302)
+      const url = new URL(res.headers.get("location")!, "http://localhost")
+      expect(url.searchParams.get("redirect_uri")).toBe("https://admin.threa.io/api/auth/callback")
+      const decoded = Buffer.from(url.searchParams.get("state")!, "base64").toString("utf-8")
+      expect(decoded).toBe("admin.threa.io|/workspaces")
+    })
+
+    test("GET /api/auth/login prefers the custom host header over X-Forwarded-Host", async () => {
+      // X-Forwarded-Host carries Railway's (untrusted) ingress host in prod; the
+      // custom header is the source of truth and must win.
+      const client = new TestClient()
+      const res = await client.request("GET", "/api/auth/login?redirect_to=%2F", undefined, {
+        [ORIGINAL_HOST_HEADER]: "admin.threa.io",
+        "X-Forwarded-Host": "control-plane.up.railway.app",
+      })
+      expect(res.status).toBe(302)
+      const url = new URL(res.headers.get("location")!, "http://localhost")
+      expect(url.searchParams.get("redirect_uri")).toBe("https://admin.threa.io/api/auth/callback")
     })
 
     test("GET /api/auth/login does NOT override redirect URI for unrelated forwarded hosts", async () => {

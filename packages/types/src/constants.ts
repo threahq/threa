@@ -635,6 +635,17 @@ export const ShareErrorCodes = {
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
 export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 
+// Original client-facing host (e.g. `admin.threa.io`, `pr-204-staging.threa.io`)
+// carried from the Cloudflare routers to the control-plane.
+//
+// We can't reuse the standard `X-Forwarded-Host` for this: Railway's edge proxy
+// fronts the control-plane and overwrites every `X-Forwarded-*` header with its
+// own ingress hostname before the app sees it, so the real client host is lost.
+// A custom header outside the `X-Forwarded-*` namespace passes through Railway
+// untouched. The control-plane uses it to build per-host WorkOS redirect URIs
+// and to validate post-auth redirect targets.
+export const ORIGINAL_HOST_HEADER = "X-Threa-Host"
+
 // Kinds of non-human actor that can be invited into an E2E stream. Each invited
 // actor gets the stream key (SSK) wrapped to it and may reply. Humans are not
 // actors here — they live in `stream_members` with a different identity and

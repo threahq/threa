@@ -1,4 +1,5 @@
 import { describe, test, expect, mock } from "bun:test"
+import { ORIGINAL_HOST_HEADER } from "@threa/types"
 import worker from "./index"
 
 const REGIONS_JSON = JSON.stringify({
@@ -449,6 +450,7 @@ describe("workspace-router", () => {
         await worker.fetch(makeRequest("/api/workspaces/ws_123/messages"), makeEnvWithKv())
         const headers = new Headers(getProxiedInit(fn).headers as Record<string, string>)
         expect(headers.get("X-Forwarded-Host")).toBe("localhost:3001")
+        expect(headers.get(ORIGINAL_HOST_HEADER)).toBe("localhost:3001")
         expect(headers.get("X-Forwarded-Proto")).toBe("http")
       } finally {
         globalThis.fetch = originalFetch
@@ -469,6 +471,7 @@ describe("workspace-router", () => {
         await worker.fetch(req, makeEnvWithKv())
         const headers = new Headers(getProxiedInit(fn).headers as Record<string, string>)
         expect(headers.get("X-Forwarded-Host")).toBe("100.112.117.108:3000")
+        expect(headers.get(ORIGINAL_HOST_HEADER)).toBe("100.112.117.108:3000")
         expect(headers.get("X-Forwarded-Proto")).toBe("http")
         expect(headers.get("X-Forwarded-Port")).toBe("3000")
       } finally {
@@ -490,6 +493,7 @@ describe("workspace-router", () => {
         await worker.fetch(req, makeEnvWithKv("eu-north-1"))
         const headers = new Headers(getProxiedInit(fn).headers as Record<string, string>)
         expect(headers.get("X-Forwarded-Host")).toBe("app.threa.io")
+        expect(headers.get(ORIGINAL_HOST_HEADER)).toBe("app.threa.io")
         expect(headers.get("X-Forwarded-Proto")).toBe("https")
         expect(headers.get("X-Forwarded-Port")).toBeNull()
       } finally {
