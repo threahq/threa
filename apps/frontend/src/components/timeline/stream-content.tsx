@@ -2057,7 +2057,7 @@ function VirtuosoMessageList({
       // budget, not a row count, so the mounted-DOM ceiling stays
       // viewport + top + bottom regardless of stream length — large streams keep
       // their OOM protection. Upthread reading dominates, so top is larger.
-      increaseViewportBy={{ top: 2400, bottom: 1200 }}
+      increaseViewportBy={{ top: 4800, bottom: 2400 }}
       components={components}
       {...batchPointerHandlers}
     />
