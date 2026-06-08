@@ -25,38 +25,47 @@ export function resetStreamStoreCache(): void {}
  * by `_sequenceNum` rather than being appended at the end of the array.
  */
 export async function loadStreamEvents(streamId: string, fromSequenceNum: number | null): Promise<CachedEvent[]> {
-  // Iterate the index in DESC so the count cap (when applied) keeps the
-  // newest events; flip to ASC at the end for rendering.
-  const lowerBound: [string, number] | [string, typeof Dexie.minKey] =
-    fromSequenceNum != null ? [streamId, fromSequenceNum] : [streamId, Dexie.minKey]
-  const collection = db.events
-    .where("[streamId+_sequenceNum]")
-    .between(lowerBound, [streamId, Dexie.maxKey], true, true)
-    .reverse()
-  const reversed =
-    fromSequenceNum != null ? await collection.toArray() : await collection.limit(DEFAULT_IDB_EVENT_LIMIT).toArray()
+  const hasFloor = fromSequenceNum != null
+  const lowerBound: [string, number] | [string, typeof Dexie.minKey] = hasFloor
+    ? [streamId, fromSequenceNum]
+    : [streamId, Dexie.minKey]
+  const range = db.events.where("[streamId+_sequenceNum]").between(lowerBound, [streamId, Dexie.maxKey], true, true)
 
-  // Merge in pending/failed optimistic events that fell outside the window
-  // (defensive — the current placeholder scheme uses `Date.now()` so they
-  // sort to the very top and are already in-window). Re-sort the full list
-  // so order is determined solely by `_sequenceNum`, not insertion path.
-  //
-  // Drive this off the `_status` index (Dexie only indexes rows where the
-  // value is present, so pending/failed is the entire keyspace here — a
-  // handful of unsent rows app-wide), then narrow to this stream in JS.
-  // The obvious `.where("streamId").equals(streamId).filter(...)` instead
-  // materialises and walks the stream's *entire* cached history on every
-  // call; `useLiveQuery` re-runs this on every write to `db.events`, so on
-  // a long chat that O(history) scan — paid repeatedly during the
-  // bootstrap/sync write burst when a chat opens — is what stalls the
-  // cached-events read past the skeleton delay.
-  const loadedIds = new Set(reversed.map((e) => e.id))
-  const unsent = (await db.events.where("_status").anyOf(["pending", "failed"]).toArray()).filter(
-    (e) =>
-      e.streamId === streamId && !loadedIds.has(e.id) && (fromSequenceNum == null || e._sequenceNum >= fromSequenceNum)
+  // The compound index already yields rows in `_sequenceNum` order, so the base
+  // window needs no comparison sort:
+  //   - With a floor: scan ASC directly — already in render order.
+  //   - Without a floor: scan DESC + cap to the newest N (memory bound on the
+  //     pre-bootstrap load), then flip to ASC with an O(n) reverse.
+  // This matters because `useLiveQuery` re-runs this on every write to
+  // `db.events`; a deep scrolled-back window must not pay an O(n log n) sort
+  // per incoming message.
+  let base: CachedEvent[]
+  if (hasFloor) {
+    base = await range.toArray()
+  } else {
+    base = await range.reverse().limit(DEFAULT_IDB_EVENT_LIMIT).toArray()
+    base.reverse()
+  }
+
+  // Pending/failed optimistic events may have placeholder sequences outside the
+  // scanned window (the current scheme uses `Date.now()`, so they sort to the
+  // very top and are usually already in `base`). Drive this off the `_status`
+  // index — Dexie only indexes rows where the value is present, so this is the
+  // handful of unsent rows app-wide, not an O(history) scan of the stream.
+  const unsentForStream = (await db.events.where("_status").anyOf(["pending", "failed"]).toArray()).filter(
+    (e) => e.streamId === streamId && (!hasFloor || e._sequenceNum >= fromSequenceNum)
   )
+  if (unsentForStream.length === 0) return base
 
-  const merged = unsent.length > 0 ? [...reversed, ...unsent] : reversed
+  // Only now pay for de-duplication: a pending row inside the scanned range is
+  // already present in `base`, so drop those before merging.
+  const loadedIds = new Set(base.map((e) => e.id))
+  const extra = unsentForStream.filter((e) => !loadedIds.has(e.id))
+  if (extra.length === 0) return base
+
+  // Re-sort the spliced list so order is determined solely by `_sequenceNum`,
+  // not by which path a row arrived on.
+  const merged = [...base, ...extra]
   merged.sort((a, b) => a._sequenceNum - b._sequenceNum)
   return merged
 }

@@ -184,6 +184,21 @@ describe("loadStreamEvents", () => {
     expect(ids[0]).toBe("temp_low")
   })
 
+  it("returns a large floored window fully ASC without an unsent merge", async () => {
+    // Exercises the fast path: a floor is known and there are no pending/failed
+    // rows, so the result comes straight off the compound index in ASC order
+    // with no comparison sort. Insert out of order to prove the order is the
+    // index's, not insertion order.
+    const streamId = "stream_big"
+    const seqs = Array.from({ length: 250 }, (_, i) => i + 1)
+    const shuffled = [...seqs].sort(() => Math.random() - 0.5)
+    await db.events.bulkPut(shuffled.map((n) => makeRealEvent(streamId, String(n))))
+
+    const events = await loadStreamEvents(streamId, 1)
+
+    expect(events.map((e) => e._sequenceNum)).toEqual(seqs)
+  })
+
   it("excludes pending events below the floor when one is provided", async () => {
     // Floor-bounded reads must not pull in unsent events with
     // `_sequenceNum < fromSequenceNum`, or the window contract breaks.
