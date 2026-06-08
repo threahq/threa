@@ -85,7 +85,7 @@ this tree. See Decisions below.
 | push-pipeline                                                 | Subscriptions, device/session suppression logic, outbox-driven delivery                              | `features/push`                                             |
 | attachment-pipeline                                           | Per-region S3, extraction (PDF/OCR), thumbnails, video transcoding                                   | `features/attachments`, `lib/storage/`                      |
 | search-architecture                                           | Hybrid full-text and pgvector search, embedding jobs, access control                                 | `features/search`                                           |
-| memo-pipeline                                                 | The GAM machinery: boundary extraction, classification, memo accumulation                            | `features/memos` and its outbox handlers                    |
+| [memo-pipeline](architecture/memo-pipeline.md) ✅             | The GAM machinery: boundary extraction, classification, memo accumulation                            | done                                                        |
 
 ## Probably skip, or covered elsewhere
 
