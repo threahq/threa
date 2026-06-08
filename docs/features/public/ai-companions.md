@@ -8,6 +8,7 @@ public_site: true
 summary: >
   A per-stream on/off setting; when it's on, Ariadne reads each new message and
   replies in the thread. An activity card and a step-by-step trace show what it did.
+related: [architecture/agent-runtime.md]
 ---
 
 ## What it does
@@ -72,5 +73,7 @@ that has it on runs the companion too, without being switched on per thread.
 
 ## Related
 
+- [`architecture/agent-runtime.md`](../architecture/agent-runtime.md) is the
+  subsystem that runs a companion: the loop, the session lifecycle, tools, and traces.
 - [`docs/core-concepts.md`](../../core-concepts.md) describes personas as data at
   the domain level.
