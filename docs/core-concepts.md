@@ -74,45 +74,54 @@ This approach:
 
 ### Memo Pipeline
 
-The memo creation pipeline is fully automated:
+Memo creation is fully automated and runs off conversations, not raw messages.
+Implementation detail lives in
+[`docs/features/architecture/memo-pipeline.md`](features/architecture/memo-pipeline.md).
 
-#### 1. Message Arrival
+#### 1. Boundary extraction (message to conversation)
 
-- Message sent to stream
-- Outbox event `message:created` published
+- Each user `message:created` event triggers a boundary-extraction job
+- **Model**: `openrouter:openai/gpt-5.4-nano` (temperature 0.2)
+- Decides which conversation(s) the message joins, can move earlier messages it
+  now sees were misfiled, and names a new conversation when one starts
+- Creating or updating a conversation emits a `conversation:created` /
+  `conversation:updated` event
+- Lives in `features/conversations/boundary-extraction/`, separate from memos
 
-#### 2. MemoAccumulator
+#### 2. Accumulation (per-stream debounce)
 
-- Queues related messages together
-- **Debounce**: 30 seconds (waits for conversation to settle)
-- **Max wait**: 5 minutes (processes even if conversation continues)
-- Groups messages that should be analyzed together
+- `MemoAccumulatorHandler` listens for conversation events and queues the
+  conversation in `memo_pending_items`
+- **Quiet**: process after 30s of no activity in the stream
+- **Cap**: process at most once every 5 minutes under sustained activity
+- A `memo.batch-check` job (every 30s) dispatches a per-stream
+  `memo.batch-process` job once the debounce has elapsed
 
 #### 3. Classifier
 
-- **Model**: Claude Haiku 4.5 (fast, cost-effective)
-- **Temperature**: 0.1 (deterministic)
-- **Task**: Determines if messages contain knowledge worth preserving
-- **Output**: Binary decision + reasoning
+- **Model**: `openrouter:openai/gpt-5.4-nano` (temperature 0.1)
+- **Task**: decide whether a conversation holds durable knowledge, and whether
+  existing memos for it need revision
+- **Output**: `isKnowledgeWorthy`, `shouldReviseExisting`, `confidence`
+- Conversations below the 0.7 confidence floor are skipped
 
 #### 4. Memorizer
 
-- **Model**: Claude Sonnet 4.5 (high quality reasoning)
-- **Temperature**: 0.3 (slightly creative)
-- **Task**: Extracts structured knowledge from messages
-- **Output**:
-  - `title`: Short, descriptive title
-  - `abstract`: 1-3 paragraph summary
-  - `keyPoints`: Bullet list of key insights
-  - `tags`: Relevant topic tags
-  - `sourceMessageIds`: Array of message IDs
-  - `type`: Memo type classification
+- **Model**: `openrouter:openai/gpt-5.4-nano` (temperature 0.3)
+- **Task**: extract structured knowledge from the conversation (capped at 5 memos)
+- **Output** per memo:
+  - `title`: short, descriptive title
+  - `abstract`: one-paragraph summary
+  - `keyPoints`: up to 3 supporting points
+  - `tags`: up to 5 topic tags
+  - `sourceMessageIds`: ids of the messages that informed the memo
+  - `knowledgeType`: one of the five knowledge types
 
 #### 5. Enrichment
 
-- Generates embeddings for semantic search
-- Uses OpenAI `text-embedding-3-small` model
-- Enables similarity-based retrieval
+- Embeds each abstract for semantic search (one batched call per conversation)
+- **Model**: `openrouter:openai/text-embedding-3-small`, stored in a `vector(1536)`
+  column with an HNSW index
 
 ### Memo Types
 
@@ -132,6 +141,11 @@ draft → active → archived | superseded
 - **active**: Published and current
 - **archived**: Superseded by newer version or no longer relevant
 - **superseded**: Replaced by a newer memo (tracks versioning)
+
+Today the write path only creates memos as `active`. When a conversation gains new
+knowledge, revision adds fresh memos rather than superseding the old ones; the
+`draft` / `archived` / `superseded` states and the `version` column are supported by
+the schema but not yet exercised.
 
 ### Use Cases
 

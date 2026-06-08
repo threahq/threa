@@ -159,11 +159,8 @@ INV-57 asks for.
   `useStubBoundaryExtraction` are set. Those flags gate test and local runs, not
   production. In production the pipeline runs unconditionally.
 
-> Drift note: `docs/core-concepts.md` still describes an earlier design (a message-queuing
-> "MemoAccumulator", Claude Haiku 4.5 / Sonnet 4.5, a 30-second message debounce). The
-> shipped pipeline is conversation-centric and runs `gpt-5.4-nano` for both the classifier
-> and the memorizer. This doc reflects the code; core-concepts.md is scheduled to migrate
-> into `concepts/` per the inventory.
+`docs/core-concepts.md` carries the higher-level domain framing of GAM and points here for
+the implementation. It is scheduled to migrate into `concepts/` per the inventory.
 
 ## Invariants
 
