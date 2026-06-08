@@ -2052,7 +2052,12 @@ function VirtuosoMessageList({
       startReached={handleStartReached}
       endReached={handleEndReached}
       atBottomThreshold={30}
-      increaseViewportBy={{ top: 600, bottom: 600 }}
+      // Overscan budget (px) of off-screen rows kept mounted so fast scrolling
+      // doesn't outrun mount+measure and flash blank rows. This is a fixed pixel
+      // budget, not a row count, so the mounted-DOM ceiling stays
+      // viewport + top + bottom regardless of stream length — large streams keep
+      // their OOM protection. Upthread reading dominates, so top is larger.
+      increaseViewportBy={{ top: 4800, bottom: 2400 }}
       components={components}
       {...batchPointerHandlers}
     />
