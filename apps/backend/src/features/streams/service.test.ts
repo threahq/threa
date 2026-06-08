@@ -79,8 +79,6 @@ describe("StreamService.joinPublicChannel", () => {
     mockInsertMember.mockReset().mockResolvedValue({
       streamId: "stream_1",
       memberId: "member_1",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: null,
       lastReadEventId: null,
       lastReadAt: null,
@@ -414,8 +412,6 @@ describe("StreamService.createThread (via create)", () => {
     mockInsertMember.mockReset().mockResolvedValue({
       streamId: thread.id,
       memberId: "member_creator",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: null,
       lastReadEventId: null,
       lastReadAt: null,

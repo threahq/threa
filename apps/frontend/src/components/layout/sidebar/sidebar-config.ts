@@ -377,7 +377,7 @@ export function sectionPresentation(spec: SidebarSectionSpec): SectionPresentati
   return {
     label: config.label,
     icon: config.icon,
-    // Important / Recent / Pinned are simple binary sections; "Everything Else"
+    // Important / Recent are simple binary sections; "Everything Else"
     // gets the tiered "N more" reveal for its long quiet tail.
     tiered: spec.bucket === "other",
     compact: config.compact,

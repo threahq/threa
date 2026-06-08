@@ -10,8 +10,6 @@ const mockJoin = vi.fn()
 const mockMembership: StreamMember = {
   streamId: "stream_1",
   memberId: "member_1",
-  pinned: false,
-  pinnedAt: null,
   notificationLevel: null,
   lastReadEventId: null,
   lastReadAt: null,

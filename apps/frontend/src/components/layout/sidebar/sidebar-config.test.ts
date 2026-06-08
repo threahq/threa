@@ -137,9 +137,9 @@ describe("custom sections", () => {
 
 describe("addSectionAt", () => {
   it("inserts the section at the given index, shifting the rest", () => {
-    // Drop a Pinned bucket at the front of the All preset.
-    const added = addSectionAt(ALL_SIDEBAR_CONFIG, { kind: "smart", bucket: "pinned" }, 0)
-    expect(added.sections[0]).toEqual({ id: "pinned", spec: { kind: "smart", bucket: "pinned" } })
+    // Drop a Recent bucket at the front of the All preset.
+    const added = addSectionAt(ALL_SIDEBAR_CONFIG, { kind: "smart", bucket: "recent" }, 0)
+    expect(added.sections[0]).toEqual({ id: "recent", spec: { kind: "smart", bucket: "recent" } })
     expect(added.sections.slice(1)).toEqual(ALL_SIDEBAR_CONFIG.sections)
   })
 
@@ -219,9 +219,9 @@ describe("moveQuickLink", () => {
 
 describe("moveSection", () => {
   it("moves a section to another's position, shifting the rest", () => {
-    // Move "pinned" over "important" (after the quick-links block the preset leads with).
-    const moved = moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important")
-    expect(moved.sections.map((s) => s.id)).toEqual(["quick-links", "pinned", "important", "recent", "other"])
+    // Move "other" over "important" (after the quick-links block the preset leads with).
+    const moved = moveSection(SMART_SIDEBAR_CONFIG, "other", "important")
+    expect(moved.sections.map((s) => s.id)).toEqual(["quick-links", "other", "important", "recent"])
   })
 
   it("is a no-op when ids match or are missing", () => {
@@ -235,7 +235,7 @@ describe("isPristinePreset", () => {
     expect(isPristinePreset(SMART_SIDEBAR_CONFIG)).toBe("smart")
     expect(isPristinePreset(ALL_SIDEBAR_CONFIG)).toBe("all")
     // Order matters: a reordered Smart layout is custom.
-    expect(isPristinePreset(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))).toBeNull()
+    expect(isPristinePreset(moveSection(SMART_SIDEBAR_CONFIG, "other", "important"))).toBeNull()
     // So does membership: a pinned label makes it custom.
     expect(isPristinePreset(toggleLabelSection(SMART_SIDEBAR_CONFIG, "lbl_1"))).toBeNull()
     // And so does a quick-link change, even with the sections untouched.

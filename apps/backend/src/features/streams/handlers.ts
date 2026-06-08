@@ -139,10 +139,6 @@ const updateCompanionModeSchema = z.object({
   companionPersonaId: z.string().nullable().optional(),
 })
 
-const pinSchema = z.object({
-  pinned: z.boolean(),
-})
-
 const setNotificationLevelSchema = z.object({
   notificationLevel: notificationLevelSchema.nullable(),
 })
@@ -299,7 +295,6 @@ export {
   createStreamSchema,
   updateStreamSchema,
   updateCompanionModeSchema,
-  pinSchema,
   setNotificationLevelSchema,
   markAsReadSchema,
 }
@@ -727,29 +722,6 @@ export function createStreamHandlers({
       const updated = await streamService.updateCompanionMode(streamId, companionMode, companionPersonaId)
 
       res.json({ stream: updated })
-    },
-
-    async pin(req: Request, res: Response) {
-      const userId = req.user!.id
-      const workspaceId = req.workspaceId!
-      const { streamId } = req.params
-
-      const result = pinSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      await streamService.validateStreamAccess(streamId, workspaceId, userId)
-
-      const membership = await streamService.pinStream(streamId, userId, result.data.pinned)
-      if (!membership) {
-        return res.status(404).json({ error: "Not a member of this stream" })
-      }
-
-      res.json({ membership })
     },
 
     async setNotificationLevel(req: Request, res: Response) {

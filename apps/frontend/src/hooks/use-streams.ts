@@ -139,8 +139,6 @@ export function useCreateStream(workspaceId: string) {
       const membership: StreamMember = {
         streamId: newStream.id,
         memberId: newStream.createdBy,
-        pinned: false,
-        pinnedAt: null,
         notificationLevel: null,
         lastReadEventId: null,
         lastReadAt: null,
@@ -175,8 +173,6 @@ export function useCreateStream(workspaceId: string) {
           workspaceId,
           streamId: newStream.id,
           memberId: newStream.createdBy,
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: null,
           lastReadAt: null,

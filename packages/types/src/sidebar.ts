@@ -13,7 +13,7 @@
  */
 
 /** Smart-view buckets a stream can be sorted into. */
-export const SIDEBAR_SECTION_KEYS = ["important", "recent", "pinned", "other"] as const
+export const SIDEBAR_SECTION_KEYS = ["important", "recent", "other"] as const
 export type SidebarSectionKey = (typeof SIDEBAR_SECTION_KEYS)[number]
 
 /** Stream types that can back a type-driven section ("All" view). */
@@ -307,7 +307,6 @@ export const SMART_SIDEBAR_CONFIG: SidebarConfig = {
     { id: QUICK_LINKS_SECTION_ID, spec: { kind: "quicklinks" } },
     { id: "important", spec: { kind: "smart", bucket: "important" } },
     { id: "recent", spec: { kind: "smart", bucket: "recent" } },
-    { id: "pinned", spec: { kind: "smart", bucket: "pinned" } },
     { id: "other", spec: { kind: "smart", bucket: "other" } },
   ],
   quickLinks: DEFAULT_QUICK_LINKS,

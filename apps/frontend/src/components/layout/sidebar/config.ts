@@ -44,13 +44,6 @@ export const SMART_SECTIONS: Record<SectionKey, SmartSectionConfig> = {
     showPreviewOnHover: true,
     sortType: "activity",
   },
-  pinned: {
-    label: "Pinned",
-    icon: "📌",
-    compact: true,
-    showPreviewOnHover: true,
-    sortType: "activity",
-  },
   other: {
     label: "Everything Else",
     icon: "📂",

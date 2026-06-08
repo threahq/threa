@@ -1521,10 +1521,6 @@ export class StreamService {
     return false
   }
 
-  async pinStream(streamId: string, memberId: string, pinned: boolean): Promise<StreamMember | null> {
-    return withTransaction(this.pool, (client) => StreamMemberRepository.update(client, streamId, memberId, { pinned }))
-  }
-
   async setNotificationLevel(
     streamId: string,
     memberId: string,

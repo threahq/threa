@@ -273,8 +273,8 @@ async function prefetchStreamBootstrap(workspaceId: string, streamId: string): P
     // The stream bootstrap endpoint returns a plain Stream without
     // lastMessagePreview — a blind put would wipe the sidebar preview and
     // sink the stream into "Other". Merge via update() so lastMessagePreview
-    // and membership-derived fields (pinned, notificationLevel,
-    // lastReadEventId) from applyWorkspaceBootstrap survive.
+    // and membership-derived fields (notificationLevel, lastReadEventId)
+    // from applyWorkspaceBootstrap survive.
     await db.transaction("rw", [db.events, db.streams], async () => {
       await db.events.bulkPut(
         events.map((e) => ({

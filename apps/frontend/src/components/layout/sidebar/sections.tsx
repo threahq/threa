@@ -270,7 +270,7 @@ interface StreamSectionProps {
   streamDragEnabled?: boolean
 }
 
-/** Simple binary collapsible section used for Important / Recent / Pinned. */
+/** Simple binary collapsible section used for Important / Recent. */
 export function StreamSection({
   label,
   icon,

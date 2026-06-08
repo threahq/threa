@@ -131,8 +131,6 @@ describe("useStreamOrDraft real stream send", () => {
           workspaceId: "ws_1",
           streamId: "stream_socket_seen",
           memberId: "member_1",
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: null,
           lastReadAt: null,

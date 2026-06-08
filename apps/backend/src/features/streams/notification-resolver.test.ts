@@ -31,8 +31,6 @@ function makeMembership(overrides: Partial<StreamMember> = {}): StreamMember {
   return {
     streamId: "stream_thread",
     memberId: "member_1",
-    pinned: false,
-    pinnedAt: null,
     notificationLevel: null,
     lastReadEventId: null,
     lastReadAt: null,
