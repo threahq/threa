@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest"
-import { classifyDeepLinkScrollTick, shouldStartHighlightClear } from "./stream-content"
+import { classifyDeepLinkScrollTick, shouldStartHighlightClear, computePaginationEdges } from "./stream-content"
 
 const DEADLINE = 4000
 
@@ -148,5 +148,61 @@ describe("shouldStartHighlightClear", () => {
         deepLinkGaveUp: true,
       })
     ).toBe(true)
+  })
+})
+
+describe("computePaginationEdges", () => {
+  // Virtuoso assigns data[0] a high virtual index that decrements as older
+  // pages prepend. Model a 100-item window: indices FIRST..FIRST+99.
+  const FIRST = 1_000_000
+  const COUNT = 100
+  const DISTANCE = 15
+
+  it("stays idle while the rendered range sits in the middle of the loaded window", () => {
+    expect(
+      computePaginationEdges({
+        range: { startIndex: FIRST + 40, endIndex: FIRST + 60 },
+        firstItemIndex: FIRST,
+        itemCount: COUNT,
+        prefetchDistance: DISTANCE,
+      })
+    ).toEqual({ reachedStart: false, reachedEnd: false })
+  })
+
+  it("leads the older fetch by prefetchDistance — fires before the range reaches index 0", () => {
+    // This is the regression guard for the "loading older messages" thrash:
+    // the older page must start loading while DISTANCE items still remain above
+    // the rendered range, not only when it lands on the boundary.
+    expect(
+      computePaginationEdges({
+        range: { startIndex: FIRST + DISTANCE, endIndex: FIRST + DISTANCE + 20 },
+        firstItemIndex: FIRST,
+        itemCount: COUNT,
+        prefetchDistance: DISTANCE,
+      })
+    ).toEqual({ reachedStart: true, reachedEnd: false })
+  })
+
+  it("does not fire the older fetch while the range is still beyond the lead distance", () => {
+    expect(
+      computePaginationEdges({
+        range: { startIndex: FIRST + DISTANCE + 1, endIndex: FIRST + DISTANCE + 21 },
+        firstItemIndex: FIRST,
+        itemCount: COUNT,
+        prefetchDistance: DISTANCE,
+      }).reachedStart
+    ).toBe(false)
+  })
+
+  it("leads the newer fetch by prefetchDistance near the bottom of the loaded window", () => {
+    const lastIndex = FIRST + COUNT - 1
+    expect(
+      computePaginationEdges({
+        range: { startIndex: lastIndex - 20, endIndex: lastIndex - DISTANCE },
+        firstItemIndex: FIRST,
+        itemCount: COUNT,
+        prefetchDistance: DISTANCE,
+      })
+    ).toEqual({ reachedStart: false, reachedEnd: true })
   })
 })
