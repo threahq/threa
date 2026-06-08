@@ -831,16 +831,13 @@ export function createStreamHandlers({
       // value. See `writeBootstrapEventsAndStream` in stream-sync.ts.
       const snapshotAt = new Date().toISOString()
 
-      const [members, botMemberIds, membership, threadDataMap, threadSummaryMap, latestSequence, activityCounts] =
-        await Promise.all([
-          streamService.getMembers(streamId),
-          streamService.getBotMemberIds(workspaceId, streamId),
-          streamService.getMembership(streamId, userId),
-          streamService.getThreadsWithReplyCounts(streamId),
-          streamService.getThreadSummaries(streamId),
-          eventService.getLatestSequence(streamId),
-          activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
-        ])
+      const [members, botMemberIds, membership, latestSequence, activityCounts] = await Promise.all([
+        streamService.getMembers(streamId),
+        streamService.getBotMemberIds(workspaceId, streamId),
+        streamService.getMembership(streamId, userId),
+        eventService.getLatestSequence(streamId),
+        activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
+      ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
       const botRuntimeLinkByBotId =
@@ -879,6 +876,19 @@ export function createStreamHandlers({
       } else if (afterSequence === undefined) {
         hasOlderEvents = events.length === EVENTS_DEFAULT_LIMIT
       }
+
+      // Thread enrichment only applies to messages in this bootstrap window, so
+      // scope the (otherwise whole-stream) thread queries to the loaded message
+      // IDs. Runs after the event window is finalized rather than in the upfront
+      // Promise.all — keeps deep streams from scanning every thread they own.
+      const parentMessageIds = events
+        .filter((e) => e.eventType === "message_created")
+        .map((e) => (e.payload as { messageId?: string }).messageId)
+        .filter((id): id is string => !!id)
+      const [threadDataMap, threadSummaryMap] = await Promise.all([
+        streamService.getThreadsWithReplyCounts(streamId, parentMessageIds),
+        streamService.getThreadSummaries(streamId, parentMessageIds),
+      ])
 
       const enrichedEvents = await eventService.enrichBootstrapEvents(events, threadDataMap, threadSummaryMap)
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(

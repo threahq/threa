@@ -917,8 +917,13 @@ export const StreamRepository = {
    */
   async findThreadsWithReplyCounts(
     db: Querier,
-    parentStreamId: string
+    parentStreamId: string,
+    parentMessageIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
+    // `parentMessageIds === undefined` keeps the whole-stream behavior; passing a
+    // list scopes the scan to those parents (bootstrap only needs summaries for
+    // the messages in its window, not every thread in the stream). An empty list
+    // matches nothing, returning an empty map without scanning.
     const result = await db.query<{ parent_message_id: string; id: string; reply_count: string }>(sql`
       SELECT
         s.parent_message_id,
@@ -928,6 +933,7 @@ export const StreamRepository = {
       LEFT JOIN messages m ON m.stream_id = s.id AND m.deleted_at IS NULL
       WHERE s.parent_stream_id = ${parentStreamId}
         AND s.parent_message_id IS NOT NULL
+        AND (${parentMessageIds === undefined} OR s.parent_message_id = ANY(${parentMessageIds ?? []}))
       GROUP BY s.id, s.parent_message_id
     `)
     const map = new Map<string, { threadId: string; replyCount: number }>()
@@ -957,7 +963,14 @@ export const StreamRepository = {
    * (`threadSummaryFromRow`) with `findThreadSummaryByParentMessage` so the
    * two entry points cannot drift on their output shape.
    */
-  async findThreadSummaries(db: Querier, parentStreamId: string): Promise<Map<string, ThreadSummary>> {
+  async findThreadSummaries(
+    db: Querier,
+    parentStreamId: string,
+    parentMessageIds?: string[]
+  ): Promise<Map<string, ThreadSummary>> {
+    // `parentMessageIds === undefined` keeps the whole-stream behavior; passing a
+    // list scopes the (potentially large) reply scan to just those parents so a
+    // bootstrap of a deep stream doesn't summarize every thread it has ever had.
     const result = await db.query<ThreadSummaryRow>(sql`
       WITH thread_messages AS (
         SELECT
@@ -972,6 +985,7 @@ export const StreamRepository = {
         WHERE s.parent_stream_id = ${parentStreamId}
           AND s.parent_message_id IS NOT NULL
           AND m.deleted_at IS NULL
+          AND (${parentMessageIds === undefined} OR s.parent_message_id = ANY(${parentMessageIds ?? []}))
       ),
       latest AS (
         SELECT DISTINCT ON (parent_message_id)
