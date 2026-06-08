@@ -4,7 +4,7 @@ import { AlertTriangle, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription, EmptyContent } from "@/components/ui/empty"
 import { ErrorDetails } from "./error-details"
-import { isChunkLoadError, runSwRecovery } from "@/lib/sw-recovery"
+import { chunkUrlFromError, isChunkLoadError, runSwRecovery } from "@/lib/sw-recovery"
 
 function formatError(error: unknown): string | null {
   if (error instanceof Error) {
@@ -41,10 +41,14 @@ export function ErrorBoundary() {
   // (see lib/sw-recovery.ts) so we can't loop past the cap.
   useEffect(() => {
     if (!chunkLoadFailed) return
-    void runSwRecovery().then((triggered) => {
+    // Pass the failing chunk URL so recovery force-refetches it past the
+    // browser HTTP cache — an immutable-cached bad response (HTML served as JS
+    // at an /assets/* URL) is what unregister + caches.delete can't evict.
+    const bustUrl = chunkUrlFromError(error)
+    void runSwRecovery({ bustUrls: bustUrl ? [bustUrl] : undefined }).then((triggered) => {
       if (!triggered) setRecoveryDeclined(true)
     })
-  }, [chunkLoadFailed])
+  }, [chunkLoadFailed, error])
 
   let title = "Something Went Wrong"
   let description = "The labyrinth has shifted unexpectedly. We encountered an error while navigating your path."

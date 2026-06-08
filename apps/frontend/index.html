@@ -189,6 +189,29 @@
               )
             })
           )
+          // Missing styles can also mean an immutable-cached bad /assets/*.css
+          // (the SPA index.html fallback served as text/html and pinned for a
+          // year — see public/_headers). That lives in the browser HTTP cache,
+          // which the unregister + caches.delete above can't evict and
+          // location.reload() won't revalidate. Re-fetch the shell and its
+          // asset URLs with `cache: "reload"` to bypass and overwrite them.
+          tasks.push(
+            fetch("/index.html", { cache: "reload" })
+              .then(function (res) {
+                return res.text()
+              })
+              .then(function (html) {
+                var urls = (html.match(/\/assets\/[^"')\s]+/g) || []).filter(function (u, i, a) {
+                  return a.indexOf(u) === i
+                })
+                return Promise.all(
+                  urls.map(function (u) {
+                    return fetch(u, { cache: "reload" }).catch(function () {})
+                  })
+                )
+              })
+              .catch(function () {})
+          )
           Promise.all(tasks).then(function () {
             location.reload()
           })

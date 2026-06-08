@@ -43,6 +43,23 @@ export function isChunkLoadError(error: unknown): boolean {
 }
 
 /**
+ * Pull the asset URL out of a dynamic-import failure message, e.g.
+ *   "Failed to fetch dynamically imported module: https://app.threa.io/assets/x-AbC123.js"
+ * Returns null when the message carries no URL (some Safari variants).
+ *
+ * The URL is what recovery force-refetches with `cache: "reload"` — see the
+ * `bustUrls` rationale in runSwRecovery.
+ */
+export function chunkUrlFromError(error: unknown): string | null {
+  let message = ""
+  if (error instanceof Error) message = error.message
+  else if (typeof error === "string") message = error
+  if (!message) return null
+  const match = message.match(/https?:\/\/[^\s"')]+\.(?:m?js|css)/)
+  return match ? match[0] : null
+}
+
+/**
  * Unregister the service worker, clear all Cache Storage buckets, then
  * hard-reload. Returns true if recovery was kicked off (a reload will
  * follow), false if the per-session cap has been reached and the caller
@@ -51,8 +68,16 @@ export function isChunkLoadError(error: unknown): boolean {
  * Pass `force: true` for user-initiated clicks — the attempt cap only
  * exists to prevent auto-recovery loops when recovery itself is broken,
  * not to limit the user's ability to ask for a clean reload.
+ *
+ * `bustUrls` are force-refetched with `cache: "reload"` before the reload.
+ * The poison this recovers from often lives in the *browser HTTP cache*, not
+ * CacheStorage: a hashed `/assets/*.js` URL requested while the edge was
+ * mid-deploy gets the SPA `index.html` fallback (200 text/html) stamped with
+ * our `immutable, max-age=1yr` header (see public/_headers). That entry never
+ * revalidates, so unregister + caches.delete + location.reload() can't shift
+ * it — only a `cache: "reload"` fetch bypasses and overwrites it.
  */
-export async function runSwRecovery(options?: { force?: boolean }): Promise<boolean> {
+export async function runSwRecovery(options?: { force?: boolean; bustUrls?: string[] }): Promise<boolean> {
   if (!options?.force) {
     const attempts = Number.parseInt(sessionStorage.getItem(ATTEMPTS_KEY) ?? "0", 10)
     if (attempts >= MAX_ATTEMPTS) return false
@@ -66,6 +91,12 @@ export async function runSwRecovery(options?: { force?: boolean }): Promise<bool
   }
   if ("caches" in window) {
     tasks.push(caches.keys().then((names) => Promise.all(names.map((n) => caches.delete(n)))))
+  }
+  // Overwrite any immutable-cached bad responses in the browser HTTP cache.
+  // Always bust the app shell; bust the specific failing chunk when we have it.
+  const bustUrls = new Set(["/index.html", ...(options?.bustUrls ?? [])])
+  for (const url of bustUrls) {
+    tasks.push(fetch(url, { cache: "reload" }).catch(() => {}))
   }
   await Promise.all(tasks).catch(() => {})
   window.location.reload()
