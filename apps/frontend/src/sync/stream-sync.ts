@@ -229,7 +229,6 @@ async function writeBootstrapEventsAndStream(
   const stream = preserveDmDisplayName(bootstrap.stream)
   const fullStreamData = {
     ...stream,
-    pinned: bootstrap.membership?.pinned,
     notificationLevel: bootstrap.membership?.notificationLevel,
     lastReadEventId: bootstrap.membership?.lastReadEventId,
     // Mirror the persisted ContextBag into IDB so the timeline can read it

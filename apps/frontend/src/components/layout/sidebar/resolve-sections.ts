@@ -172,10 +172,6 @@ function resolveSmartBucket(
       return [...unreads, ...reads.slice(0, RECENT_LIMIT - unreads.length)]
     }
 
-    case "pinned":
-      sortStreams(items, SMART_SECTIONS.pinned.sortType, getUnreadCount)
-      return items
-
     case "other":
       sortStreams(items, SMART_SECTIONS.other.sortType, getUnreadCount)
       return items

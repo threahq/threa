@@ -91,8 +91,6 @@ describe("createOptimisticBootstrap", () => {
     expect(result.membership).toEqual({
       streamId: mockStream.id,
       memberId: mockStream.createdBy,
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: null,
       lastReadEventId: result.events[0].id,
       lastReadAt: "2024-01-01T00:00:00Z",

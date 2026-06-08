@@ -62,8 +62,6 @@ export function createOptimisticBootstrap({
   const membership: StreamMember = {
     streamId: stream.id,
     memberId: stream.createdBy,
-    pinned: false,
-    pinnedAt: null,
     notificationLevel: null,
     lastReadEventId: event.id,
     lastReadAt: message.createdAt,

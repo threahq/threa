@@ -173,8 +173,6 @@ function makeStreamBootstrap(streamId = "stream_1", sequence = "2"): StreamBoots
     membership: {
       streamId,
       memberId: "user_1",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: null,
       lastReadEventId: null,
       lastReadAt: null,
@@ -512,8 +510,6 @@ describe("SyncEngine.handlePageResume", () => {
       {
         streamId: "stream_7",
         memberId: "user_1",
-        pinned: false,
-        pinnedAt: null,
         notificationLevel: null,
         lastReadEventId: null,
         lastReadAt: null,
@@ -550,8 +546,6 @@ describe("SyncEngine.handlePageResume", () => {
       workspaceId: "ws_1",
       streamId: "stream_42",
       memberId: "user_1",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: null,
       lastReadEventId: null,
       lastReadAt: null,

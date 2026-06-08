@@ -73,11 +73,10 @@ function unreadFrom(unreadIds: Set<string>) {
 }
 
 describe("resolveSections — Smart preset", () => {
-  it("partitions streams into important / recent / pinned / other buckets", () => {
+  it("partitions streams into important / recent / other buckets", () => {
     const processedStreams = [
       makeItem({ id: "imp_1", section: "important", urgency: "mentions" }),
       makeItem({ id: "rec_1", section: "recent", activity: 10 }),
-      makeItem({ id: "pin_1", section: "pinned", activity: 5 }),
       makeItem({ id: "oth_1", section: "other", activity: 1 }),
     ]
     const virtualDmStreams = [makeItem({ id: "vdm_1", section: "other", type: StreamTypes.DM, activity: 2 })]
@@ -85,7 +84,6 @@ describe("resolveSections — Smart preset", () => {
     expect(shape({ processedStreams, virtualDmStreams, getUnreadCount: () => 0 })).toEqual([
       { id: "important", items: ["imp_1"] },
       { id: "recent", items: ["rec_1"] },
-      { id: "pinned", items: ["pin_1"] },
       // virtual DMs carry section "other", so they join the Everything Else bucket,
       // sorted by activity (vdm_1 @2 before oth_1 @1).
       { id: "other", items: ["vdm_1", "oth_1"] },
@@ -169,7 +167,7 @@ describe("resolveSections — label sections", () => {
     const processedStreams = [
       makeItem({ id: "s_old", section: "recent", activity: 1 }),
       makeItem({ id: "s_new", section: "recent", activity: 9 }),
-      makeItem({ id: "s_other", section: "pinned", activity: 5 }),
+      makeItem({ id: "s_other", section: "other", activity: 5 }),
     ]
     // s_new and s_other carry the label; s_old does not.
     const streamIdsByLabel = new Map([["lbl_1", new Set(["s_new", "s_other"])]])
@@ -200,7 +198,7 @@ describe("resolveSections — label sections", () => {
     const processedStreams = [
       makeItem({ id: "s_old", section: "recent", activity: 1 }),
       makeItem({ id: "s_new", section: "recent", activity: 9 }),
-      makeItem({ id: "s_other", section: "pinned", activity: 5 }),
+      makeItem({ id: "s_other", section: "other", activity: 5 }),
     ]
     const streamIdsByLabel = new Map([["lbl_1", new Set(["s_new", "s_other"])]])
 

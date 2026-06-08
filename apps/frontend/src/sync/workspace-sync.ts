@@ -209,8 +209,6 @@ function toWorkspaceBootstrapMembership(membership: CachedStreamMembership): Str
   return {
     streamId: membership.streamId,
     memberId: membership.memberId,
-    pinned: membership.pinned,
-    pinnedAt: membership.pinnedAt,
     notificationLevel: membership.notificationLevel,
     lastReadEventId: membership.lastReadEventId,
     lastReadAt: membership.lastReadAt,
@@ -489,8 +487,6 @@ export function registerWorkspaceSocketHandlers(
               {
                 streamId: payload.stream.id,
                 memberId: currentUserId!,
-                pinned: false,
-                pinnedAt: null,
                 notificationLevel: null,
                 lastReadEventId: null,
                 lastReadAt: null,
@@ -525,8 +521,6 @@ export function registerWorkspaceSocketHandlers(
           workspaceId,
           streamId: payload.stream.id,
           memberId: currentUserId,
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: null,
           lastReadAt: null,
@@ -605,7 +599,7 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // Update IndexedDB — use update() (partial merge) instead of put() (full replace)
-    // to preserve fields not on the Stream payload: lastMessagePreview, pinned,
+    // to preserve fields not on the Stream payload: lastMessagePreview,
     // notificationLevel, lastReadEventId (merged from membership during bootstrap).
     // For DMs, also preserve the resolved displayName since the backend sends null.
     const idbUpdate =
@@ -1034,8 +1028,6 @@ export function registerWorkspaceSocketHandlers(
           {
             streamId: payload.streamId,
             memberId: payload.memberId,
-            pinned: false,
-            pinnedAt: null,
             notificationLevel: null,
             lastReadEventId: null,
             lastReadAt: null,
@@ -1063,8 +1055,6 @@ export function registerWorkspaceSocketHandlers(
           workspaceId,
           streamId: payload.streamId,
           memberId: payload.memberId,
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: null,
           lastReadAt: null,
@@ -1085,8 +1075,6 @@ export function registerWorkspaceSocketHandlers(
               {
                 streamId: payload.streamId,
                 memberId: payload.memberId,
-                pinned: false,
-                pinnedAt: null,
                 notificationLevel: null,
                 lastReadEventId: null,
                 lastReadAt: null,
@@ -1724,7 +1712,6 @@ export async function applyWorkspaceBootstrap(
         const existing = existingByStreamId.get(s.id)
         return {
           ...s,
-          pinned: membership?.pinned,
           notificationLevel: membership?.notificationLevel,
           lastReadEventId: membership?.lastReadEventId,
           // Preserve fields workspace-bootstrap doesn't carry but stream-
@@ -1837,7 +1824,6 @@ export async function applyWorkspaceBootstrap(
     users: bootstrap.users.map((u) => ({ ...u, _cachedAt: now })),
     streams: bootstrap.streams.map((s) => ({
       ...s,
-      pinned: membershipByStream.get(s.id)?.pinned,
       notificationLevel: membershipByStream.get(s.id)?.notificationLevel,
       lastReadEventId: membershipByStream.get(s.id)?.lastReadEventId,
       _cachedAt: now,
@@ -1967,7 +1953,6 @@ export async function applyReconnectBootstrapBatch(
             const local = localStreams.find((s) => s.id === stream.id)
             return {
               ...stream,
-              pinned: membership?.pinned,
               notificationLevel: membership?.notificationLevel,
               lastReadEventId: membership?.lastReadEventId,
               // Preserve fields workspace-bootstrap doesn't carry but
@@ -2072,7 +2057,6 @@ export async function applyReconnectBootstrapBatch(
     users: finalBootstrap.users.map((user) => ({ ...user, _cachedAt: now })),
     streams: finalBootstrap.streams.map((stream) => ({
       ...stream,
-      pinned: membershipByStream.get(stream.id)?.pinned,
       notificationLevel: membershipByStream.get(stream.id)?.notificationLevel,
       lastReadEventId: membershipByStream.get(stream.id)?.lastReadEventId,
       _cachedAt: now,

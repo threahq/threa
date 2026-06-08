@@ -60,8 +60,6 @@ export function useCreateEncryptedScratchpad(workspaceId: string, currentUserId:
       const membership: StreamMember = {
         streamId: stream.id,
         memberId: stream.createdBy,
-        pinned: false,
-        pinnedAt: null,
         notificationLevel: null,
         lastReadEventId: null,
         lastReadAt: null,
@@ -88,8 +86,6 @@ export function useCreateEncryptedScratchpad(workspaceId: string, currentUserId:
           workspaceId,
           streamId: stream.id,
           memberId: stream.createdBy,
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: null,
           lastReadAt: null,

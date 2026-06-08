@@ -81,7 +81,6 @@ export interface CachedStream {
   // Sidebar preview (from workspace bootstrap StreamWithPreview)
   lastMessagePreview?: { authorId: string; authorType: AuthorType; content: string; createdAt: string } | null
   // User-specific state (from membership)
-  pinned?: boolean
   notificationLevel?: string | null
   lastReadEventId?: string | null
   /**
@@ -115,8 +114,6 @@ export interface CachedStreamMembership {
   workspaceId: string
   streamId: string
   memberId: string
-  pinned: boolean
-  pinnedAt: string | null
   notificationLevel: NotificationLevel | null
   lastReadEventId: string | null
   lastReadAt: string | null

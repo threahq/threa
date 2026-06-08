@@ -122,10 +122,9 @@ describe("ShareMessageModal — picker filtering", () => {
         workspaceId: "ws_1",
         streamId: "ch_priv_member",
         memberId: "usr_self",
-        pinned: false,
       },
-      { id: "ws_1:dm_self", workspaceId: "ws_1", streamId: "dm_self", memberId: "usr_self", pinned: false },
-      { id: "ws_1:scratch_self", workspaceId: "ws_1", streamId: "scratch_self", memberId: "usr_self", pinned: false },
+      { id: "ws_1:dm_self", workspaceId: "ws_1", streamId: "dm_self", memberId: "usr_self" },
+      { id: "ws_1:scratch_self", workspaceId: "ws_1", streamId: "scratch_self", memberId: "usr_self" },
     ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreamMemberships>)
 
     mountModal()

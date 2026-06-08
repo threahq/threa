@@ -48,8 +48,6 @@ function makeBootstrap(): WorkspaceBootstrap {
       {
         streamId: "stream_1",
         memberId: "member_1",
-        pinned: false,
-        pinnedAt: null,
         notificationLevel: "everything",
         lastReadEventId: "event_old",
         lastReadAt: null,
@@ -147,8 +145,6 @@ describe("useUnreadCounts", () => {
       workspaceId: "ws_1",
       streamId: "stream_1",
       memberId: "member_1",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: "everything",
       lastReadEventId: "event_old",
       lastReadAt: null,
@@ -169,8 +165,6 @@ describe("useUnreadCounts", () => {
     mockMarkAsRead.mockResolvedValue({
       streamId: "stream_1",
       memberId: "member_1",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: "everything",
       lastReadEventId: "event_new",
       lastReadAt: new Date().toISOString(),

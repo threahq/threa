@@ -5,8 +5,6 @@ import type { NotificationLevel } from "@threa/types"
 interface StreamMemberRow {
   stream_id: string
   member_id: string
-  pinned: boolean
-  pinned_at: Date | null
   notification_level: string | null
   last_read_event_id: string | null
   last_read_at: Date | null
@@ -16,8 +14,6 @@ interface StreamMemberRow {
 export interface StreamMember {
   streamId: string
   memberId: string
-  pinned: boolean
-  pinnedAt: Date | null
   notificationLevel: NotificationLevel | null
   lastReadEventId: string | null
   lastReadAt: Date | null
@@ -25,7 +21,6 @@ export interface StreamMember {
 }
 
 export interface UpdateStreamMemberParams {
-  pinned?: boolean
   notificationLevel?: NotificationLevel | null
   lastReadEventId?: string
 }
@@ -34,8 +29,6 @@ function mapRowToMember(row: StreamMemberRow): StreamMember {
   return {
     streamId: row.stream_id,
     memberId: row.member_id,
-    pinned: row.pinned,
-    pinnedAt: row.pinned_at,
     notificationLevel: row.notification_level as NotificationLevel | null,
     lastReadEventId: row.last_read_event_id,
     lastReadAt: row.last_read_at,
@@ -46,7 +39,7 @@ function mapRowToMember(row: StreamMemberRow): StreamMember {
 export const StreamMemberRepository = {
   async findByStreamAndMember(db: Querier, streamId: string, memberId: string): Promise<StreamMember | null> {
     const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+      SELECT stream_id, member_id, notification_level,
              last_read_event_id, last_read_at, joined_at
       FROM stream_members
       WHERE stream_id = ${streamId} AND member_id = ${memberId}
@@ -58,7 +51,7 @@ export const StreamMemberRepository = {
     if (streamIds.length === 0) return []
 
     const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+      SELECT stream_id, member_id, notification_level,
              last_read_event_id, last_read_at, joined_at
       FROM stream_members
       WHERE stream_id = ANY(${streamIds}) AND member_id = ${memberId}
@@ -72,18 +65,18 @@ export const StreamMemberRepository = {
   ): Promise<StreamMember[]> {
     if (filters.memberId && !filters.streamId && !filters.streamIds) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+        SELECT stream_id, member_id, notification_level,
                last_read_event_id, last_read_at, joined_at
         FROM stream_members
         WHERE member_id = ${filters.memberId}
-        ORDER BY pinned DESC, pinned_at DESC NULLS LAST, joined_at DESC
+        ORDER BY joined_at DESC
       `)
       return result.rows.map(mapRowToMember)
     }
 
     if (filters.streamId && !filters.memberId) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+        SELECT stream_id, member_id, notification_level,
                last_read_event_id, last_read_at, joined_at
         FROM stream_members
         WHERE stream_id = ${filters.streamId}
@@ -94,7 +87,7 @@ export const StreamMemberRepository = {
 
     if (filters.streamIds && filters.streamIds.length > 0 && !filters.memberId) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+        SELECT stream_id, member_id, notification_level,
                last_read_event_id, last_read_at, joined_at
         FROM stream_members
         WHERE stream_id = ANY(${filters.streamIds})
@@ -115,7 +108,7 @@ export const StreamMemberRepository = {
 
     if (options?.cursorJoinedAt && options?.cursorMemberId) {
       const result = await db.query<StreamMemberRow>(sql`
-        SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+        SELECT stream_id, member_id, notification_level,
                last_read_event_id, last_read_at, joined_at
         FROM stream_members
         WHERE stream_id = ${streamId}
@@ -127,7 +120,7 @@ export const StreamMemberRepository = {
     }
 
     const result = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+      SELECT stream_id, member_id, notification_level,
              last_read_event_id, last_read_at, joined_at
       FROM stream_members
       WHERE stream_id = ${streamId}
@@ -142,7 +135,7 @@ export const StreamMemberRepository = {
       INSERT INTO stream_members (stream_id, member_id)
       VALUES (${streamId}, ${memberId})
       ON CONFLICT (stream_id, member_id) DO NOTHING
-      RETURNING stream_id, member_id, pinned, pinned_at, notification_level,
+      RETURNING stream_id, member_id, notification_level,
                 last_read_event_id, last_read_at, joined_at
     `)
     if (result.rows.length === 0) {
@@ -162,7 +155,7 @@ export const StreamMemberRepository = {
       SELECT ${streamId}, members.member_id
       FROM unnest(${uniqueMemberIds}::text[]) AS members(member_id)
       ON CONFLICT (stream_id, member_id) DO NOTHING
-      RETURNING stream_id, member_id, pinned, pinned_at, notification_level,
+      RETURNING stream_id, member_id, notification_level,
                 last_read_event_id, last_read_at, joined_at
     `)
 
@@ -176,7 +169,7 @@ export const StreamMemberRepository = {
     }
 
     const existing = await db.query<StreamMemberRow>(sql`
-      SELECT stream_id, member_id, pinned, pinned_at, notification_level,
+      SELECT stream_id, member_id, notification_level,
              last_read_event_id, last_read_at, joined_at
       FROM stream_members
       WHERE stream_id = ${streamId} AND member_id = ANY(${uniqueMemberIds})
@@ -200,15 +193,6 @@ export const StreamMemberRepository = {
     const values: unknown[] = []
     let paramIndex = 1
 
-    if (params.pinned !== undefined) {
-      sets.push(`pinned = $${paramIndex++}`)
-      values.push(params.pinned)
-      if (params.pinned) {
-        sets.push(`pinned_at = NOW()`)
-      } else {
-        sets.push(`pinned_at = NULL`)
-      }
-    }
     if (params.notificationLevel !== undefined) {
       sets.push(`notification_level = $${paramIndex++}`)
       values.push(params.notificationLevel)
@@ -226,7 +210,7 @@ export const StreamMemberRepository = {
     const query = `
       UPDATE stream_members SET ${sets.join(", ")}
       WHERE stream_id = $${paramIndex++} AND member_id = $${paramIndex}
-      RETURNING stream_id, member_id, pinned, pinned_at, notification_level,
+      RETURNING stream_id, member_id, notification_level,
                 last_read_event_id, last_read_at, joined_at
     `
     const result = await db.query<StreamMemberRow>(query, values)

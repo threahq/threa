@@ -40,10 +40,6 @@ export function calculateUrgency(
 
 /** Categorize stream into smart section */
 export function categorizeStream(stream: StreamWithPreview, unreadCount: number, urgency: UrgencyLevel): SectionKey {
-  // TODO: Add pinned support when backend implements it
-  // if (stream.isPinned && unreadCount > 0) return "important"
-  // if (stream.isPinned) return "pinned"
-
   // Important: mentions or AI activity with unread
   if (urgency === "mentions" || (urgency === "ai" && unreadCount > 0)) {
     return "important"

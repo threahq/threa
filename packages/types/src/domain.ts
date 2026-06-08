@@ -310,8 +310,6 @@ export interface BotInvocation {
 export interface StreamMember {
   streamId: string
   memberId: string
-  pinned: boolean
-  pinnedAt: string | null
   notificationLevel: NotificationLevel | null
   lastReadEventId: string | null
   lastReadAt: string | null

@@ -76,7 +76,7 @@ export async function loginAndCreateWorkspace(
  * Pin the type-based ("All") sidebar layout for a workspace+viewer.
  *
  * The product default is the "Smart" preset (urgency buckets: Important / Recent
- * / Pinned / Everything Else), where a brand-new channel with no activity lands
+ * / Everything Else), where a brand-new channel with no activity lands
  * in the collapsed "Everything Else" bucket and isn't visible in the sidebar.
  * The E2E suite navigates via the always-open Channels / Scratchpads / DMs
  * sections, so it pins the deterministic All preset at setup. Smart-bucket
@@ -120,7 +120,6 @@ export async function setSmartSidebarPreset(page: Page): Promise<void> {
       sections: [
         { id: "important", spec: { kind: "smart", bucket: "important" } },
         { id: "recent", spec: { kind: "smart", bucket: "recent" } },
-        { id: "pinned", spec: { kind: "smart", bucket: "pinned" } },
         { id: "other", spec: { kind: "smart", bucket: "other" } },
       ],
     },

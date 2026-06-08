@@ -74,7 +74,6 @@ describe("SidebarEditorDialog", () => {
       "Reorder Activity",
       "Reorder Important",
       "Reorder Recent",
-      "Reorder Pinned",
       "Reorder Everything Else",
     ])
   })
@@ -144,7 +143,7 @@ describe("SidebarEditorDialog", () => {
 
   it("highlights neither preset once the layout is customized", () => {
     // A reordered Smart layout matches no preset.
-    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))
+    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "other", "important"))
     mount()
 
     expect(screen.getByRole("button", { name: "Smart" })).toHaveAttribute("aria-pressed", "false")
@@ -153,7 +152,7 @@ describe("SidebarEditorDialog", () => {
 
   it("resets a customized layout back to its base preset", async () => {
     // A reordered Smart layout — diverged from the preset, so Reset is enabled.
-    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "pinned", "important"))
+    useConfig(moveSection(SMART_SIDEBAR_CONFIG, "other", "important"))
     mount()
 
     await userEvent.click(screen.getByRole("button", { name: "Reset preset" }))

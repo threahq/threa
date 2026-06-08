@@ -316,8 +316,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
         {
           streamId: "stream_visible",
           memberId: "user_1",
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: "evt_old",
           lastReadAt: null,
@@ -339,8 +337,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
             membership: {
               streamId: "stream_visible",
               memberId: "user_1",
-              pinned: true,
-              pinnedAt: new Date().toISOString(),
               notificationLevel: "activity",
               lastReadEventId: "evt_new",
               lastReadAt: null,
@@ -411,8 +407,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
           workspaceId: "ws_1",
           streamId: "stream_failed",
           memberId: "user_1",
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: "evt_cached",
           lastReadAt: null,
@@ -469,8 +463,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
         {
           streamId: "stream_terminal",
           memberId: "user_1",
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: "muted",
           lastReadEventId: "evt_terminal",
           lastReadAt: null,
@@ -548,8 +540,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
         {
           streamId: "stream_unmuted",
           memberId: "user_1",
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: "muted",
           lastReadEventId: null,
           lastReadAt: null,
@@ -558,8 +548,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
         {
           streamId: "stream_muted",
           memberId: "user_1",
-          pinned: false,
-          pinnedAt: null,
           notificationLevel: null,
           lastReadEventId: null,
           lastReadAt: null,
@@ -578,8 +566,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
             membership: {
               streamId: "stream_unmuted",
               memberId: "user_1",
-              pinned: false,
-              pinnedAt: null,
               notificationLevel: null,
               lastReadEventId: null,
               lastReadAt: null,
@@ -593,8 +579,6 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
             membership: {
               streamId: "stream_muted",
               memberId: "user_1",
-              pinned: false,
-              pinnedAt: null,
               notificationLevel: "muted",
               lastReadEventId: null,
               lastReadAt: null,
@@ -897,8 +881,6 @@ describe("registerWorkspaceSocketHandlers", () => {
           {
             streamId: "stream_1",
             memberId: "member_1",
-            pinned: false,
-            pinnedAt: null,
             notificationLevel: "everything",
             lastReadEventId: "event_old",
             lastReadAt: null,
@@ -936,8 +918,6 @@ describe("registerWorkspaceSocketHandlers", () => {
       workspaceId: "ws_1",
       streamId: "stream_1",
       memberId: "member_1",
-      pinned: false,
-      pinnedAt: null,
       notificationLevel: "everything",
       lastReadEventId: "event_old",
       lastReadAt: null,
