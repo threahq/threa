@@ -282,28 +282,33 @@ describe("Thread Summary", () => {
       const { channelId, parentA, parentB } = await seedTwoThreadsInOneChannel()
       const summaries = await StreamRepository.findThreadSummaries(pool, channelId)
       const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId)
-      expect(summaries.has(parentA)).toBe(true)
-      expect(summaries.has(parentB)).toBe(true)
-      expect(counts.has(parentA)).toBe(true)
-      expect(counts.has(parentB)).toBe(true)
+      expect({
+        summaries: [...summaries.keys()].sort(),
+        counts: [...counts.keys()].sort(),
+      }).toEqual({
+        summaries: [parentA, parentB].sort(),
+        counts: [parentA, parentB].sort(),
+      })
     })
 
     test("a scoped list returns only the requested parents", async () => {
-      const { channelId, parentA, parentB } = await seedTwoThreadsInOneChannel()
+      const { channelId, parentA } = await seedTwoThreadsInOneChannel()
       const summaries = await StreamRepository.findThreadSummaries(pool, channelId, [parentA])
       const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId, [parentA])
-      expect(summaries.has(parentA)).toBe(true)
-      expect(summaries.has(parentB)).toBe(false)
-      expect(counts.has(parentA)).toBe(true)
-      expect(counts.has(parentB)).toBe(false)
+      expect({
+        summaries: [...summaries.keys()],
+        counts: [...counts.keys()],
+      }).toEqual({ summaries: [parentA], counts: [parentA] })
     })
 
     test("an empty scope returns an empty map without scanning the stream", async () => {
       const { channelId } = await seedTwoThreadsInOneChannel()
       const summaries = await StreamRepository.findThreadSummaries(pool, channelId, [])
       const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId, [])
-      expect(summaries.size).toBe(0)
-      expect(counts.size).toBe(0)
+      expect({ summaries: [...summaries.keys()], counts: [...counts.keys()] }).toEqual({
+        summaries: [],
+        counts: [],
+      })
     })
   })
 

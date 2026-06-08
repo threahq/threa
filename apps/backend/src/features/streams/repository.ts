@@ -920,6 +920,10 @@ export const StreamRepository = {
     parentStreamId: string,
     parentMessageIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
+    // An empty scope matches nothing — skip the round-trip entirely.
+    if (parentMessageIds !== undefined && parentMessageIds.length === 0) {
+      return new Map<string, { threadId: string; replyCount: number }>()
+    }
     // `parentMessageIds === undefined` keeps the whole-stream behavior; passing a
     // list scopes the scan to those parents (bootstrap only needs summaries for
     // the messages in its window, not every thread in the stream). An empty list
@@ -968,6 +972,10 @@ export const StreamRepository = {
     parentStreamId: string,
     parentMessageIds?: string[]
   ): Promise<Map<string, ThreadSummary>> {
+    // An empty scope matches nothing — skip the round-trip entirely.
+    if (parentMessageIds !== undefined && parentMessageIds.length === 0) {
+      return new Map<string, ThreadSummary>()
+    }
     // `parentMessageIds === undefined` keeps the whole-stream behavior; passing a
     // list scopes the (potentially large) reply scan to just those parents so a
     // bootstrap of a deep stream doesn't summarize every thread it has ever had.
