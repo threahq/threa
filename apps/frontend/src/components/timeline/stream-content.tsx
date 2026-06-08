@@ -50,6 +50,7 @@ import {
   type StreamBootstrap,
 } from "@threa/types"
 import { isAbortableStepType } from "@/lib/step-config"
+import { EVENT_PREFETCH_DISTANCE } from "@/lib/constants"
 import {
   EventList,
   TimelineItemContent,
@@ -155,6 +156,29 @@ export function shouldStartHighlightClear(args: {
 }): boolean {
   if (!args.highlightMessageId) return false
   return args.deepLinkTargetLoaded || args.deepLinkGaveUp
+}
+
+/**
+ * Decide whether the rendered range is close enough to either edge of the
+ * loaded window to prefetch the next page. `range` indices and `firstItemIndex`
+ * are Virtuoso's virtual indices (firstItemIndex decrements as older pages are
+ * prepended). `prefetchDistance` is the lead in items — a larger value starts
+ * the fetch sooner so the page lands before a fast scroll reaches the boundary.
+ */
+export function computePaginationEdges(args: {
+  range: { startIndex: number; endIndex: number }
+  firstItemIndex: number
+  itemCount: number
+  prefetchDistance: number
+}): { reachedStart: boolean; reachedEnd: boolean } {
+  const { range, firstItemIndex, itemCount, prefetchDistance } = args
+  const distFromStart = range.startIndex - firstItemIndex
+  const lastVirtualIndex = firstItemIndex + itemCount - 1
+  const distFromEnd = lastVirtualIndex - range.endIndex
+  return {
+    reachedStart: distFromStart <= prefetchDistance,
+    reachedEnd: distFromEnd <= prefetchDistance,
+  }
 }
 
 interface StreamContentProps {
@@ -1917,11 +1941,14 @@ function VirtuosoMessageList({
       // be user-scroll driven; the loop aborts on real interaction, after
       // which these fire normally.
       if (scrollAbortRef.current !== null) return
-      const distFromStart = range.startIndex - firstItemIndex
-      if (distFromStart <= 3) handleStartReached()
-      const lastVirtualIndex = firstItemIndex + visibleItems.length - 1
-      const distFromEnd = lastVirtualIndex - range.endIndex
-      if (distFromEnd <= 3) handleEndReached()
+      const { reachedStart, reachedEnd } = computePaginationEdges({
+        range,
+        firstItemIndex,
+        itemCount: visibleItems.length,
+        prefetchDistance: EVENT_PREFETCH_DISTANCE,
+      })
+      if (reachedStart) handleStartReached()
+      if (reachedEnd) handleEndReached()
     },
     [handleRangeChanged, firstItemIndex, visibleItems.length, handleStartReached, handleEndReached]
   )
@@ -2057,7 +2084,11 @@ function VirtuosoMessageList({
       // budget, not a row count, so the mounted-DOM ceiling stays
       // viewport + top + bottom regardless of stream length — large streams keep
       // their OOM protection. Upthread reading dominates, so top is larger.
-      increaseViewportBy={{ top: 4800, bottom: 2400 }}
+      // Deliberately small: a larger window mounts more heavy message DOM
+      // (ProseMirror content, link previews) than fast scrolling can absorb and
+      // janks on real-world data. Smooth fast-scroll comes from prefetching
+      // older pages early (EVENT_PREFETCH_DISTANCE), not a huge mounted window.
+      increaseViewportBy={{ top: 2400, bottom: 1200 }}
       components={components}
       {...batchPointerHandlers}
     />
