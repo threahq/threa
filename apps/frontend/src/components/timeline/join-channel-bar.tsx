@@ -1,7 +1,8 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { Hash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { streamsApi } from "@/api"
+import { useComposerHeightPublish } from "@/hooks"
 import type { StreamMember } from "@threa/types"
 
 interface JoinChannelBarProps {
@@ -14,6 +15,14 @@ interface JoinChannelBarProps {
 export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined }: JoinChannelBarProps) {
   const [isJoining, setIsJoining] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The join bar stands in for the composer for non-members, so it must own
+  // `--composer-height` while it's mounted: the timeline's footer spacer sizes
+  // the gap below the last message from that variable, and the composer that
+  // would otherwise set it is not rendered for non-members. Without this the
+  // spacer keeps the stale height a prior composer left behind and the bar
+  // floats over the messages instead of docking flush at the bottom.
+  const selfRef = useRef<HTMLDivElement | null>(null)
+  useComposerHeightPublish(selfRef)
 
   const handleJoin = async () => {
     setIsJoining(true)
@@ -29,7 +38,7 @@ export function JoinChannelBar({ workspaceId, streamId, channelName, onJoined }:
   }
 
   return (
-    <div className="flex flex-col items-center gap-3 border-t px-4 py-6">
+    <div ref={selfRef} className="flex flex-col items-center gap-3 border-t bg-background px-4 py-6">
       <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <span>You're viewing</span>
         <span className="inline-flex items-center gap-0.5 font-medium text-foreground">
