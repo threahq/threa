@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
-import { isChunkLoadError, runSwRecovery } from "./sw-recovery"
+import { chunkUrlFromError, isChunkLoadError, runSwRecovery } from "./sw-recovery"
 
 describe("isChunkLoadError", () => {
   it("detects Chromium/Firefox dynamic-import failures", () => {
@@ -32,6 +32,26 @@ describe("isChunkLoadError", () => {
   })
 })
 
+describe("chunkUrlFromError", () => {
+  it("extracts the asset URL from a Chromium/Firefox import failure", () => {
+    const err = new TypeError(
+      "Failed to fetch dynamically imported module: https://app.threa.io/assets/workspace-layout-D6MDsthX.js"
+    )
+    expect(chunkUrlFromError(err)).toBe("https://app.threa.io/assets/workspace-layout-D6MDsthX.js")
+  })
+
+  it("extracts a .css asset URL", () => {
+    expect(chunkUrlFromError("error loading module https://app.threa.io/assets/index-AbC123.css")).toBe(
+      "https://app.threa.io/assets/index-AbC123.css"
+    )
+  })
+
+  it("returns null when the message carries no URL", () => {
+    expect(chunkUrlFromError(new TypeError("error loading dynamically imported module"))).toBeNull()
+    expect(chunkUrlFromError(null)).toBeNull()
+  })
+})
+
 describe("runSwRecovery", () => {
   const originalLocation = window.location
 
@@ -42,11 +62,16 @@ describe("runSwRecovery", () => {
       configurable: true,
       value: { ...originalLocation, reload: vi.fn() },
     })
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(new Response("")))
+    )
   })
 
   afterEach(() => {
     Object.defineProperty(window, "location", { configurable: true, value: originalLocation })
     sessionStorage.clear()
+    vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
@@ -85,6 +110,28 @@ describe("runSwRecovery", () => {
     const result = await runSwRecovery({ force: true })
     expect(result).toBe(true)
     expect(sessionStorage.getItem("sw-recovery-attempts")).toBe("2")
+    expect(window.location.reload).toHaveBeenCalledOnce()
+  })
+
+  it("force-refetches the app shell past the browser HTTP cache", async () => {
+    await runSwRecovery({ force: true })
+    expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload" })
+  })
+
+  it("force-refetches the failing chunk URL so an immutable-cached bad response is overwritten", async () => {
+    const bad = "https://app.threa.io/assets/workspace-layout-D6MDsthX.js"
+    await runSwRecovery({ force: true, bustUrls: [bad] })
+    expect(fetch).toHaveBeenCalledWith(bad, { cache: "reload" })
+    expect(fetch).toHaveBeenCalledWith("/index.html", { cache: "reload" })
+  })
+
+  it("reloads even if the cache-busting refetch rejects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline")))
+    )
+    const result = await runSwRecovery({ force: true })
+    expect(result).toBe(true)
     expect(window.location.reload).toHaveBeenCalledOnce()
   })
 })
