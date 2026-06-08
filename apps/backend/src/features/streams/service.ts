@@ -1626,11 +1626,15 @@ export class StreamService {
   }
 
   /**
-   * Get a map of messageId -> { threadId, replyCount } for all messages in a stream that have threads.
+   * Get a map of messageId -> { threadId, replyCount } for messages in a stream that have threads.
    * This is an optimized version that fetches threads and counts in a single query.
+   * Pass `parentMessageIds` to scope the scan to a specific bootstrap window.
    */
-  async getThreadsWithReplyCounts(streamId: string): Promise<Map<string, { threadId: string; replyCount: number }>> {
-    return StreamRepository.findThreadsWithReplyCounts(this.pool, streamId)
+  async getThreadsWithReplyCounts(
+    streamId: string,
+    parentMessageIds?: string[]
+  ): Promise<Map<string, { threadId: string; replyCount: number }>> {
+    return StreamRepository.findThreadsWithReplyCounts(this.pool, streamId, parentMessageIds)
   }
 
   /**
@@ -1643,8 +1647,10 @@ export class StreamService {
    * transaction; wrapping it in a service method would force that caller to
    * either break out of its existing `client` transaction or duplicate the
    * pool accessor, so it stays as a repository call.
+   *
+   * Pass `parentMessageIds` to scope the scan to a specific bootstrap window.
    */
-  async getThreadSummaries(streamId: string): Promise<Map<string, ThreadSummary>> {
-    return StreamRepository.findThreadSummaries(this.pool, streamId)
+  async getThreadSummaries(streamId: string, parentMessageIds?: string[]): Promise<Map<string, ThreadSummary>> {
+    return StreamRepository.findThreadSummaries(this.pool, streamId, parentMessageIds)
   }
 }

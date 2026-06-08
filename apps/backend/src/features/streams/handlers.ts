@@ -20,7 +20,6 @@ import {
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
-import { serializeBigInt } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
 
@@ -330,10 +329,6 @@ async function hydrateSharedMessagesForEvents(
   }
   if (ids.size === 0) return {}
   return hydrateSharedMessageIds(pool, workspaceId, viewerId, ids)
-}
-
-function serializeEvent(event: StreamEvent) {
-  return serializeBigInt(event)
 }
 
 function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, next: LinkPreviewSummary[]): boolean {
@@ -654,7 +649,7 @@ export function createStreamHandlers({
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(linkPreviewService, workspaceId, userId, events)
       const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
-      res.json({ events: eventsWithLinkPreviews.map(serializeEvent), sharedMessages })
+      res.json({ events: eventsWithLinkPreviews, sharedMessages })
     },
 
     async listEventsAround(req: Request, res: Response) {
@@ -690,7 +685,7 @@ export function createStreamHandlers({
       const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
       res.json({
-        events: eventsWithLinkPreviews.map(serializeEvent),
+        events: eventsWithLinkPreviews,
         sharedMessages,
         hasOlder: result.hasOlder,
         hasNewer: result.hasNewer,
@@ -836,16 +831,13 @@ export function createStreamHandlers({
       // value. See `writeBootstrapEventsAndStream` in stream-sync.ts.
       const snapshotAt = new Date().toISOString()
 
-      const [members, botMemberIds, membership, threadDataMap, threadSummaryMap, latestSequence, activityCounts] =
-        await Promise.all([
-          streamService.getMembers(streamId),
-          streamService.getBotMemberIds(workspaceId, streamId),
-          streamService.getMembership(streamId, userId),
-          streamService.getThreadsWithReplyCounts(streamId),
-          streamService.getThreadSummaries(streamId),
-          eventService.getLatestSequence(streamId),
-          activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
-        ])
+      const [members, botMemberIds, membership, latestSequence, activityCounts] = await Promise.all([
+        streamService.getMembers(streamId),
+        streamService.getBotMemberIds(workspaceId, streamId),
+        streamService.getMembership(streamId, userId),
+        eventService.getLatestSequence(streamId),
+        activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
+      ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
       const botRuntimeLinkByBotId =
@@ -885,6 +877,19 @@ export function createStreamHandlers({
         hasOlderEvents = events.length === EVENTS_DEFAULT_LIMIT
       }
 
+      // Thread enrichment only applies to messages in this bootstrap window, so
+      // scope the (otherwise whole-stream) thread queries to the loaded message
+      // IDs. Runs after the event window is finalized rather than in the upfront
+      // Promise.all — keeps deep streams from scanning every thread they own.
+      const parentMessageIds = events
+        .filter((e) => e.eventType === "message_created")
+        .map((e) => (e.payload as { messageId?: string }).messageId)
+        .filter((id): id is string => !!id)
+      const [threadDataMap, threadSummaryMap] = await Promise.all([
+        streamService.getThreadsWithReplyCounts(streamId, parentMessageIds),
+        streamService.getThreadSummaries(streamId, parentMessageIds),
+      ])
+
       const enrichedEvents = await eventService.enrichBootstrapEvents(events, threadDataMap, threadSummaryMap)
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(
         linkPreviewService,
@@ -905,7 +910,7 @@ export function createStreamHandlers({
       res.json({
         data: {
           stream,
-          events: eventsWithLinkPreviews.map(serializeEvent),
+          events: eventsWithLinkPreviews,
           sharedMessages,
           members,
           botMemberIds,

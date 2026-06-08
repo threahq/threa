@@ -225,6 +225,93 @@ describe("Thread Summary", () => {
     })
   })
 
+  describe("findThreadSummaries / findThreadsWithReplyCounts scoped to parentMessageIds", () => {
+    // Two parents with threaded replies in the SAME channel so we can assert the
+    // scoping filter narrows to a bootstrap window instead of the whole stream.
+    async function seedTwoThreadsInOneChannel() {
+      const ownerId = userId()
+      const wsId = workspaceId()
+
+      await withTestTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "Scoped Thread Summary WS",
+          slug: `scoped-thread-${wsId}`,
+          createdBy: ownerId,
+        })
+        await addTestMember(client, wsId, ownerId)
+      })
+
+      const channel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `scoped-thread-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        createdBy: ownerId,
+        visibility: Visibilities.PUBLIC,
+      })
+
+      async function parentWithReply(markdown: string) {
+        const parent = await eventService.createMessage({
+          workspaceId: wsId,
+          streamId: channel.id,
+          authorId: ownerId,
+          authorType: "user",
+          ...testMessageContent(markdown),
+        })
+        const thread = await streamService.createThread({
+          workspaceId: wsId,
+          parentStreamId: channel.id,
+          parentMessageId: parent.id,
+          createdBy: ownerId,
+        })
+        await eventService.createMessage({
+          workspaceId: wsId,
+          streamId: thread.id,
+          authorId: ownerId,
+          authorType: "user",
+          ...testMessageContent(`reply to ${markdown}`),
+        })
+        return parent.id
+      }
+
+      const parentA = await parentWithReply("Parent A")
+      const parentB = await parentWithReply("Parent B")
+      return { channelId: channel.id, parentA, parentB }
+    }
+
+    test("undefined scope returns every thread in the stream", async () => {
+      const { channelId, parentA, parentB } = await seedTwoThreadsInOneChannel()
+      const summaries = await StreamRepository.findThreadSummaries(pool, channelId)
+      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId)
+      expect({
+        summaries: [...summaries.keys()].sort(),
+        counts: [...counts.keys()].sort(),
+      }).toEqual({
+        summaries: [parentA, parentB].sort(),
+        counts: [parentA, parentB].sort(),
+      })
+    })
+
+    test("a scoped list returns only the requested parents", async () => {
+      const { channelId, parentA } = await seedTwoThreadsInOneChannel()
+      const summaries = await StreamRepository.findThreadSummaries(pool, channelId, [parentA])
+      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId, [parentA])
+      expect({
+        summaries: [...summaries.keys()],
+        counts: [...counts.keys()],
+      }).toEqual({ summaries: [parentA], counts: [parentA] })
+    })
+
+    test("an empty scope returns an empty map without scanning the stream", async () => {
+      const { channelId } = await seedTwoThreadsInOneChannel()
+      const summaries = await StreamRepository.findThreadSummaries(pool, channelId, [])
+      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId, [])
+      expect({ summaries: [...summaries.keys()], counts: [...counts.keys()] }).toEqual({
+        summaries: [],
+        counts: [],
+      })
+    })
+  })
+
   describe("thread-summary reactivity", () => {
     test("editing the latest thread reply emits a parent-stream refresh with updated threadSummary", async () => {
       const f = await seedThread(1, 1, { markdown: "Original latest reply" })

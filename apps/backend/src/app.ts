@@ -1,4 +1,5 @@
 import express, { type Express } from "express"
+import compression from "compression"
 import cors from "cors"
 import helmet from "helmet"
 import cookieParser from "cookie-parser"
@@ -30,6 +31,12 @@ export function createApp(options: CreateAppOptions): Express {
 
   // Metrics middleware (before everything else to capture all requests)
   app.use(createMetricsMiddleware({ ignoredPaths: metricsIgnoredPaths }))
+
+  // Compress responses before they leave the origin. Event/message list payloads
+  // are large JSON (full ProseMirror docs per message) and travel an extra
+  // origin->edge hop through the Cloudflare workspace-router, which forwards our
+  // Content-Encoding unchanged. The default 1KB threshold skips tiny responses.
+  app.use(compression())
 
   app.use(
     helmet({

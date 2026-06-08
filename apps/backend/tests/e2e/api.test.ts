@@ -202,6 +202,10 @@ describe("API E2E Tests", () => {
       const events = await listEvents(client, workspace.id, scratchpad.id, ["message_created"])
       expect(events.length).toBe(1)
       expect((events[0].payload as { messageId: string }).messageId).toBe(message.id)
+      // The events response no longer pre-serializes via serializeBigInt and relies
+      // on the app-level json replacer; the bigint sequence must still cross the
+      // wire as a string (a raw bigint would 500 in res.json).
+      expect(events[0].sequence).toBe("1")
     })
 
     test("should maintain message sequence", async () => {
