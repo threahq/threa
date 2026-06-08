@@ -11,6 +11,30 @@ const FIRST_ITEM_INDEX = 1_000_000
 /** Items from the bottom before showing "Jump to latest" */
 const JUMP_TO_LATEST_ITEM_THRESHOLD = 10
 
+/**
+ * The row at the top of the viewport: the first `[data-item-key]` element whose
+ * bottom edge is still below the scroller's top edge. Returns its key and its
+ * offset from the viewport top (negative when the row straddles the top edge).
+ *
+ * This is the row we keep visually fixed across content-height changes. Pinning
+ * the *top* row means content growing/shrinking below it (appends, in-view media)
+ * leaves its offset unchanged, so the viewport only ever moves to compensate for
+ * changes ABOVE the fold — the "off-screen content must not move anything" rule.
+ */
+export function readTopAnchor(scrollerEl: HTMLElement): { key: string; offset: number } | null {
+  const scrollerTop = scrollerEl.getBoundingClientRect().top
+  const rows = scrollerEl.querySelectorAll<HTMLElement>("[data-item-key]")
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect()
+    if (rect.bottom > scrollerTop) {
+      const key = row.dataset.itemKey
+      if (key === undefined) continue
+      return { key, offset: rect.top - scrollerTop }
+    }
+  }
+  return null
+}
+
 interface UseVirtuosoScrollOptions {
   /** Total item count */
   itemCount: number
@@ -86,6 +110,15 @@ export function useVirtuosoScroll({
   const prevKeyIndexMapRef = useRef<Map<string, number>>(new Map())
   const lastResetKeyRef = useRef(resetKey)
 
+  // Content scroll-anchoring state. `anchorRef` holds the row at the top of the
+  // viewport (key + offset from the viewport top); it is refreshed as the user
+  // scrolls and used to re-pin the viewport when the list's content height
+  // changes. `isProgrammaticScrollRef` suppresses anchor re-capture for our own
+  // corrective scrollTop writes.
+  const anchorRef = useRef<{ key: string; offset: number } | null>(null)
+  const isProgrammaticScrollRef = useRef(false)
+  const anchorRafRef = useRef<number | undefined>(undefined)
+
   // Scroller element stored in state (not a ref) so the ResizeObserver effect
   // re-runs when Virtuoso mounts its scroller asynchronously (e.g. after an
   // isLoading skeleton is replaced).
@@ -107,6 +140,8 @@ export function useVirtuosoScroll({
     prevKeyIndexMapRef.current = new Map()
     hasSettledRef.current = false
     isAtBottomRef.current = !skipInitialScroll
+    // The previous stream's anchored row is meaningless for the new stream.
+    anchorRef.current = null
   }
 
   // Reset React-visible state when the stream changes. The ref-backed state
@@ -262,7 +297,8 @@ export function useVirtuosoScroll({
     let prevHeight = scrollerEl.clientHeight
     let isInitialFire = true
 
-    const observer = new ResizeObserver(() => {
+    // VIEWPORT height changes (mobile keyboard open/close, cold-boot reveal).
+    const handleViewportResize = () => {
       const newHeight = scrollerEl.clientHeight
       const delta = prevHeight - newHeight
       prevHeight = newHeight
@@ -293,12 +329,72 @@ export function useVirtuosoScroll({
           behavior: "auto",
         })
       }, 100)
-    })
+    }
 
+    // CONTENT height changes (older page prepended, off-screen media finishing
+    // its async load). Re-pin the top-of-viewport row by shifting scrollTop by
+    // exactly how far it moved. This is the authoritative guard against the
+    // prepend jump: react-virtuoso's firstItemIndex preservation is unreliable
+    // with un-measured (estimated) item heights, so we never depend on it. The
+    // correction is idempotent — when the row hasn't moved (growth was below
+    // the fold, or Virtuoso already preserved) the delta is ~0 and we no-op.
+    // Skipped while following the live tail (followOutput owns that) and before
+    // the list has settled (the initial scroll / deep-link jump is positioning).
+    const correctAnchor = () => {
+      if (isAtBottomRef.current || !hasSettledRef.current) return
+      const anchor = anchorRef.current
+      if (!anchor) return
+      const row = scrollerEl.querySelector<HTMLElement>(`[data-item-key="${CSS.escape(anchor.key)}"]`)
+      if (!row) return
+      const scrollerTop = scrollerEl.getBoundingClientRect().top
+      const currentOffset = row.getBoundingClientRect().top - scrollerTop
+      const delta = currentOffset - anchor.offset
+      if (Math.abs(delta) < 0.5) return
+      isProgrammaticScrollRef.current = true
+      scrollerEl.scrollTop += delta
+      window.requestAnimationFrame(() => {
+        isProgrammaticScrollRef.current = false
+      })
+    }
+
+    let prevContentHeight = -1
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === scrollerEl) {
+          handleViewportResize()
+          continue
+        }
+        // The Virtuoso item-list element: its border-box height (rendered rows
+        // plus the top/bottom padding that stands in for off-screen rows) is the
+        // total content height, so it changes on every prepend/append/resize.
+        const height = entry.contentRect.height
+        if (height === prevContentHeight) continue
+        prevContentHeight = height
+        correctAnchor()
+      }
+    })
     observer.observe(scrollerEl)
+    const listEl = scrollerEl.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
+    if (listEl) observer.observe(listEl)
+
+    // Refresh the anchored row as the user scrolls so a later content change
+    // knows where to re-pin. rAF-throttled to one rect read per frame; our own
+    // corrective writes are suppressed via isProgrammaticScrollRef.
+    const handleScroll = () => {
+      if (isProgrammaticScrollRef.current) return
+      if (anchorRafRef.current !== undefined) return
+      anchorRafRef.current = window.requestAnimationFrame(() => {
+        anchorRafRef.current = undefined
+        anchorRef.current = isAtBottomRef.current ? null : readTopAnchor(scrollerEl)
+      })
+    }
+    scrollerEl.addEventListener("scroll", handleScroll, { passive: true })
+
     return () => {
       observer.disconnect()
+      scrollerEl.removeEventListener("scroll", handleScroll)
       window.clearTimeout(resizeTimerRef.current)
+      if (anchorRafRef.current !== undefined) window.cancelAnimationFrame(anchorRafRef.current)
     }
   }, [scrollerEl])
 

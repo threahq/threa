@@ -1,25 +1,40 @@
 import { describe, it, expect, vi } from "vitest"
 import { useLayoutEffect } from "react"
 import { act, render } from "@testing-library/react"
-import { useVirtuosoScroll } from "./use-virtuoso-scroll"
+import { useVirtuosoScroll, readTopAnchor } from "./use-virtuoso-scroll"
 import type { VirtuosoHandle } from "react-virtuoso"
 
 type ResizeCallback = (entries: ResizeObserverEntry[], observer: ResizeObserver) => void
 
-function installManualResizeObserver(): { trigger: () => void; restore: () => void } {
+function installManualResizeObserver(): {
+  observed: Element[]
+  trigger: (target?: Element, height?: number) => void
+  restore: () => void
+} {
   let lastCallback: ResizeCallback | null = null
+  const observed: Element[] = []
   const original = global.ResizeObserver
   class ManualResizeObserver {
     constructor(cb: ResizeCallback) {
       lastCallback = cb
     }
-    observe() {}
+    observe(el: Element) {
+      observed.push(el)
+    }
     unobserve() {}
     disconnect() {}
   }
   global.ResizeObserver = ManualResizeObserver as unknown as typeof ResizeObserver
   return {
-    trigger: () => lastCallback?.([], {} as ResizeObserver),
+    observed,
+    // Default to the first observed element (the scroller) so existing
+    // viewport-resize tests keep working; pass a target + height to exercise
+    // the content-height (anchor-correction) branch.
+    trigger: (target?: Element, height = 0) =>
+      lastCallback?.(
+        [{ target: target ?? observed[0], contentRect: { height } } as unknown as ResizeObserverEntry],
+        {} as ResizeObserver
+      ),
     restore: () => {
       global.ResizeObserver = original
     },
@@ -269,4 +284,139 @@ describe("useVirtuosoScroll", () => {
       restore()
     }
   })
+
+  it("readTopAnchor returns the first row straddling/below the viewport top", () => {
+    const scroller = document.createElement("div")
+    mockRect(scroller, { top: 100, bottom: 900 })
+    const list = document.createElement("div")
+    list.setAttribute("data-testid", "virtuoso-item-list")
+    scroller.appendChild(list)
+    // e0 sits entirely above the fold (bottom 80 < scroller top 100) — skipped.
+    list.appendChild(makeRow("e0", { top: -40, bottom: 80 }))
+    // e1 straddles the top edge — the anchor, with a negative offset.
+    list.appendChild(makeRow("e1", { top: 80, bottom: 240 }))
+    list.appendChild(makeRow("e2", { top: 240, bottom: 400 }))
+
+    expect(readTopAnchor(scroller)).toEqual({ key: "e1", offset: -20 })
+  })
+
+  it("re-pins the top row when content grows ABOVE the fold (prepend jump fix)", async () => {
+    const { trigger, restore } = installManualResizeObserver()
+    try {
+      const { scrollable, list, rows } = makeAnchoredScroller([{ key: "e10", top: 0, bottom: 120 }])
+      const apiRef = renderHookWithScroller(
+        { itemCount: 50, getItemKey: (i) => String(i), resetKey: "stream_1", skipInitialScroll: false },
+        scrollable.el,
+        { scrollToIndex: vi.fn() } as unknown as VirtuosoHandle
+      )
+
+      // Settle and leave the live tail so the anchor path is active.
+      act(() => apiRef.current.handleAtBottomChange(false))
+      // A user scroll captures the anchor: e10 at offset 0.
+      act(() => scrollable.el.dispatchEvent(new Event("scroll")))
+      await flushRaf()
+
+      // A 300px older page lands above e10 — it is pushed down to offset 300
+      // while scrollTop is unchanged (the jump). The content resize fires.
+      rows.e10.top = 300
+      rows.e10.bottom = 420
+      act(() => trigger(list, 999))
+
+      // scrollTop shifts by exactly the 300px the row moved — back to offset 0.
+      expect(scrollable.scrollTop).toBe(1300)
+    } finally {
+      restore()
+    }
+  })
+
+  it("does NOT move the viewport when content changes BELOW the fold (off-screen load)", async () => {
+    const { trigger, restore } = installManualResizeObserver()
+    try {
+      const { scrollable, list, rows } = makeAnchoredScroller([
+        { key: "e10", top: 0, bottom: 120 },
+        { key: "e11", top: 120, bottom: 240 },
+      ])
+      const apiRef = renderHookWithScroller(
+        { itemCount: 50, getItemKey: (i) => String(i), resetKey: "stream_1", skipInitialScroll: false },
+        scrollable.el,
+        { scrollToIndex: vi.fn() } as unknown as VirtuosoHandle
+      )
+
+      act(() => apiRef.current.handleAtBottomChange(false))
+      act(() => scrollable.el.dispatchEvent(new Event("scroll")))
+      await flushRaf()
+
+      // A below-the-fold image in e11 finishes loading and grows — the anchor
+      // (top row e10) does not move, so the viewport must stay put.
+      rows.e11.bottom = 540
+      act(() => trigger(list, 999))
+
+      expect(scrollable.scrollTop).toBe(1000)
+    } finally {
+      restore()
+    }
+  })
 })
+
+function flushRaf(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+function mockRect(el: Element, rect: { top: number; bottom: number }) {
+  el.getBoundingClientRect = () =>
+    ({
+      top: rect.top,
+      bottom: rect.bottom,
+      height: rect.bottom - rect.top,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: rect.top,
+      toJSON: () => ({}),
+    }) as DOMRect
+}
+
+function makeRow(key: string, rect: { top: number; bottom: number }): HTMLElement {
+  const el = document.createElement("div")
+  el.setAttribute("data-item-key", key)
+  const live = { ...rect }
+  el.getBoundingClientRect = () =>
+    ({
+      top: live.top,
+      bottom: live.bottom,
+      height: live.bottom - live.top,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: live.top,
+      toJSON: () => ({}),
+    }) as DOMRect
+  ;(el as unknown as { __rect: { top: number; bottom: number } }).__rect = live
+  return el
+}
+
+/**
+ * Build a scroller (viewport top at 0, 800px tall, scrolled to 1000) wrapping a
+ * Virtuoso item-list with the given rows, each row's rect live-mutable via the
+ * returned `rows` map so a test can simulate content growth.
+ */
+function makeAnchoredScroller(rowSpecs: Array<{ key: string; top: number; bottom: number }>): {
+  scrollable: ReturnType<typeof makeScrollableDiv>
+  list: HTMLElement
+  rows: Record<string, { top: number; bottom: number }>
+} {
+  const scrollable = makeScrollableDiv({ clientHeight: 800, scrollTop: 1000 })
+  mockRect(scrollable.el, { top: 0, bottom: 800 })
+  const list = document.createElement("div")
+  list.setAttribute("data-testid", "virtuoso-item-list")
+  scrollable.el.appendChild(list)
+  const rows: Record<string, { top: number; bottom: number }> = {}
+  for (const spec of rowSpecs) {
+    const row = makeRow(spec.key, { top: spec.top, bottom: spec.bottom })
+    list.appendChild(row)
+    rows[spec.key] = (row as unknown as { __rect: { top: number; bottom: number } }).__rect
+  }
+  return { scrollable, list, rows }
+}
