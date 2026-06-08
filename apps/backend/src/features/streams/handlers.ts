@@ -20,7 +20,6 @@ import {
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
-import { serializeBigInt } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
 
@@ -330,10 +329,6 @@ async function hydrateSharedMessagesForEvents(
   }
   if (ids.size === 0) return {}
   return hydrateSharedMessageIds(pool, workspaceId, viewerId, ids)
-}
-
-function serializeEvent(event: StreamEvent) {
-  return serializeBigInt(event)
 }
 
 function areLinkPreviewArraysEqual(current: LinkPreviewSummary[] | undefined, next: LinkPreviewSummary[]): boolean {
@@ -654,7 +649,7 @@ export function createStreamHandlers({
       const eventsWithLinkPreviews = await enrichEventsWithLinkPreviews(linkPreviewService, workspaceId, userId, events)
       const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
-      res.json({ events: eventsWithLinkPreviews.map(serializeEvent), sharedMessages })
+      res.json({ events: eventsWithLinkPreviews, sharedMessages })
     },
 
     async listEventsAround(req: Request, res: Response) {
@@ -690,7 +685,7 @@ export function createStreamHandlers({
       const sharedMessages = await hydrateSharedMessagesForEvents(pool, workspaceId, userId, eventsWithLinkPreviews)
 
       res.json({
-        events: eventsWithLinkPreviews.map(serializeEvent),
+        events: eventsWithLinkPreviews,
         sharedMessages,
         hasOlder: result.hasOlder,
         hasNewer: result.hasNewer,
@@ -905,7 +900,7 @@ export function createStreamHandlers({
       res.json({
         data: {
           stream,
-          events: eventsWithLinkPreviews.map(serializeEvent),
+          events: eventsWithLinkPreviews,
           sharedMessages,
           members,
           botMemberIds,
