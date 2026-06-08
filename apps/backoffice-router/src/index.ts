@@ -16,6 +16,8 @@
  * project convention of one router worker per concern, and avoids coupling
  * workspace routing logic to the backoffice surface.
  */
+import { ORIGINAL_HOST_HEADER } from "@threa/types"
+
 interface Env {
   /** Base URL for the control-plane service (handles backoffice + auth). */
   CONTROL_PLANE_URL: string
@@ -61,6 +63,12 @@ async function proxyRequest(request: Request, targetBaseUrl: string): Promise<Re
 
   const headers = new Headers(request.headers)
   headers.set("X-Forwarded-Host", url.host)
+  // Railway's edge overwrites X-Forwarded-Host with its own ingress host before
+  // the control-plane sees it, so the standard header can't carry the real
+  // client host (e.g. admin.threa.io) through. Mirror it onto a custom header
+  // that survives Railway, which the control-plane uses to pick the per-host
+  // WorkOS redirect URI and trust the post-auth redirect target.
+  headers.set(ORIGINAL_HOST_HEADER, url.host)
   headers.set("X-Forwarded-Proto", url.protocol.replace(":", ""))
 
   // Trust only CF-Connecting-IP (set by Cloudflare). Strip any client-supplied

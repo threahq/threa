@@ -168,6 +168,8 @@ export {
   ShareErrorCodes,
   // Inter-service authentication
   INTERNAL_API_KEY_HEADER,
+  // Original client host forwarded through the CF routers (survives Railway)
+  ORIGINAL_HOST_HEADER,
   // Socket heartbeat
   HEARTBEAT_INTERACTION_THROTTLE_MS,
   // Push presence (attended-device interaction window)

@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test"
+import { ORIGINAL_HOST_HEADER } from "@threa/types"
 import worker from "./index"
 
 interface EnvOverrides {
@@ -84,6 +85,25 @@ describe("backoffice-router", () => {
       const headers = new Headers(init.headers)
       expect(headers.get("X-Forwarded-Host")).toBe("admin.threa.io")
       expect(headers.get("X-Forwarded-Proto")).toBe("http")
+    })
+
+    test("proxied request mirrors the client host onto the Railway-safe custom header", async () => {
+      const fetchMock = mockFetchFn()
+      await worker.fetch(makeRequest("/api/backoffice/me"), makeEnv())
+      const headers = new Headers(getProxiedInit(fetchMock).headers)
+      // Railway overwrites X-Forwarded-Host with its own ingress host, so the
+      // control-plane reads the original client host from this custom header.
+      expect(headers.get(ORIGINAL_HOST_HEADER)).toBe("admin.threa.io")
+    })
+
+    test("client-supplied custom host header cannot spoof the original host", async () => {
+      const fetchMock = mockFetchFn()
+      await worker.fetch(
+        makeRequest("/api/backoffice/me", { headers: { [ORIGINAL_HOST_HEADER]: "evil.example" } }),
+        makeEnv()
+      )
+      const headers = new Headers(getProxiedInit(fetchMock).headers)
+      expect(headers.get(ORIGINAL_HOST_HEADER)).toBe("admin.threa.io")
     })
 
     test("proxied request strips client-supplied X-Forwarded-For", async () => {

@@ -164,7 +164,7 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 | `/test-auth-login*` | Control plane (stub-auth dev only)                                     |
 | Everything else     | `threa-backoffice.pages.dev` (or `threa-backoffice-staging.pages.dev`) |
 
-**Security posture:** Mirrors the workspace router — trust only `CF-Connecting-IP`, strip client-supplied `X-Forwarded-For` to prevent rate-limit bypass on the control plane, set `X-Forwarded-Host`/`-Proto` so the control plane can build per-host redirect URIs (see `WORKOS_DEDICATED_REDIRECT_HOSTS` in `docs/deployment.md`).
+**Security posture:** Mirrors the workspace router — trust only `CF-Connecting-IP`, strip client-supplied `X-Forwarded-For` to prevent rate-limit bypass on the control plane, set `X-Forwarded-Host`/`-Proto` plus the custom `X-Threa-Host` header so the control plane can build per-host redirect URIs. The control plane reads `X-Threa-Host` (not `X-Forwarded-Host`, which Railway's edge overwrites) — see `WORKOS_DEDICATED_REDIRECT_HOSTS` in `docs/deployment.md`.
 
 **Why a router instead of binding the Pages project to `admin.threa.io` directly:** Same-origin proxying through the worker means the WorkOS session cookie lands on `admin.threa.io` directly with no `SameSite` cross-origin pain, and the control plane can use a per-host WorkOS redirect URI override based on the forwarded host header.
 
@@ -271,7 +271,7 @@ Browser -> Workspace Router:    Cookie (session cookie, name per env)
 Browser -> Backoffice Router:   Cookie (session cookie, name per env)
 Workspace Router -> Control Plane:   Cookie passthrough + INTERNAL_API_KEY (for /internal/*)
 Workspace Router -> Backend:         Cookie passthrough
-Backoffice Router -> Control Plane:  Cookie passthrough + X-Forwarded-Host (for per-host WorkOS redirect)
+Backoffice Router -> Control Plane:  Cookie passthrough + X-Threa-Host (for per-host WorkOS redirect; survives Railway)
 Control Plane -> Backend:            INTERNAL_API_KEY
 Backend -> Control Plane:            INTERNAL_API_KEY
 Browser -> Backend (WebSocket):      Cookie (session cookie, name per env)
