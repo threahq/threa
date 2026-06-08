@@ -356,6 +356,34 @@ describe("useVirtuosoScroll", () => {
       restore()
     }
   })
+
+  it("attaches the content observer even when the item-list mounts after the scroller", async () => {
+    const { observed, restore } = installManualResizeObserver()
+    try {
+      const scrollable = makeScrollableDiv({ clientHeight: 800, scrollTop: 1000 })
+      mockRect(scrollable.el, { top: 0, bottom: 800 })
+      // No virtuoso-item-list child exists when the scroller first attaches —
+      // Virtuoso can render it a frame later, after measuring the viewport.
+      renderHookWithScroller(
+        { itemCount: 50, getItemKey: (i) => String(i), resetKey: "stream_1", skipInitialScroll: false },
+        scrollable.el,
+        { scrollToIndex: vi.fn() } as unknown as VirtuosoHandle
+      )
+      expect(observed).toContain(scrollable.el)
+      expect(observed).not.toContain(scrollable.el.querySelector("[data-testid]"))
+
+      const list = document.createElement("div")
+      list.setAttribute("data-testid", "virtuoso-item-list")
+      scrollable.el.appendChild(list)
+
+      // The retry must pick up the late-mounted list and observe it; otherwise
+      // the anchor correction would be silently dead for the whole session.
+      await flushRaf()
+      expect(observed).toContain(list)
+    } finally {
+      restore()
+    }
+  })
 })
 
 function flushRaf(): Promise<void> {

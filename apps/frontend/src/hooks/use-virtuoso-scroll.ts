@@ -340,6 +340,14 @@ export function useVirtuosoScroll({
     // the fold, or Virtuoso already preserved) the delta is ~0 and we no-op.
     // Skipped while following the live tail (followOutput owns that) and before
     // the list has settled (the initial scroll / deep-link jump is positioning).
+    //
+    // Coexistence with the firstItemIndex re-anchor above: both fire on a
+    // prepend, but they don't double-correct because this reads the row's
+    // *actual* current offset and applies only the residual error. If Virtuoso
+    // preserves fully, delta ≈ 0; if it preserves partially (shifts scrollTop
+    // by X of the needed T), the row is still T−X off and we apply exactly that
+    // remainder; if it does nothing, we apply the whole T. Each case converges
+    // to the row sitting back at its recorded offset.
     const correctAnchor = () => {
       if (isAtBottomRef.current || !hasSettledRef.current) return
       const anchor = anchorRef.current
@@ -374,8 +382,26 @@ export function useVirtuosoScroll({
       }
     })
     observer.observe(scrollerEl)
-    const listEl = scrollerEl.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
-    if (listEl) observer.observe(listEl)
+
+    // Attach the content-height observer to Virtuoso's item-list. That element
+    // can mount a frame or two after the scroller (Virtuoso measures the
+    // viewport before rendering rows, and the cold-boot reveal gate keeps the
+    // list hidden until it settles), and this effect only re-runs on scrollerEl
+    // change — so a one-shot querySelector here would miss it and leave the
+    // correction permanently dead for the session. Retry across frames until
+    // the list exists, bounded so a list that never appears can't spin forever.
+    let contentObserveRaf: number | undefined
+    let observeAttempts = 0
+    const observeContentList = () => {
+      const listEl = scrollerEl.querySelector<HTMLElement>('[data-testid="virtuoso-item-list"]')
+      if (listEl) {
+        observer.observe(listEl)
+        return
+      }
+      if (observeAttempts++ > 120) return
+      contentObserveRaf = window.requestAnimationFrame(observeContentList)
+    }
+    observeContentList()
 
     // Refresh the anchored row as the user scrolls so a later content change
     // knows where to re-pin. rAF-throttled to one rect read per frame; our own
@@ -395,6 +421,7 @@ export function useVirtuosoScroll({
       scrollerEl.removeEventListener("scroll", handleScroll)
       window.clearTimeout(resizeTimerRef.current)
       if (anchorRafRef.current !== undefined) window.cancelAnimationFrame(anchorRafRef.current)
+      if (contentObserveRaf !== undefined) window.cancelAnimationFrame(contentObserveRaf)
     }
   }, [scrollerEl])
 
