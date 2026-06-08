@@ -181,6 +181,32 @@ export function computePaginationEdges(args: {
   }
 }
 
+/**
+ * Whether to prefetch older history given the reached-start signal.
+ *
+ * The jump-prone case is being parked at the live tail of a *scrollable*
+ * viewport: the loaded window can sit entirely inside the top overscan, so
+ * `reachedStart` is satisfied with zero user scrolling, and prefetching then
+ * prepends variable-height history above a scrolled anchor — jumping the scroll
+ * on load and cascading as each jump re-satisfies the trigger. So block older
+ * prefetch only while `followingLiveTail && scrollerScrollable`.
+ *
+ * When the whole window fits the viewport (`scrollerScrollable` false), the user
+ * cannot scroll off the tail to unlock pagination, and prepending is bottom-
+ * pinned and jump-free — so allow it; it fills history until the viewport
+ * scrolls, then the scrollable gate takes over. Once the user scrolls up off the
+ * tail (`followingLiveTail` false), prefetch leads normally.
+ */
+export function shouldPrefetchOlderHistory(args: {
+  followingLiveTail: boolean
+  scrollerScrollable: boolean
+  hasOlderEvents: boolean
+  isFetchingOlder: boolean
+}): boolean {
+  if (!args.hasOlderEvents || args.isFetchingOlder) return false
+  return !(args.followingLiveTail && args.scrollerScrollable)
+}
+
 interface StreamContentProps {
   workspaceId: string
   streamId: string
@@ -1828,14 +1854,22 @@ function VirtuosoMessageList({
   const FETCH_COOLDOWN_MS = 500
 
   const handleStartReached = useCallback(() => {
-    if (!hasOlderEvents || isFetchingOlder) return
+    // shouldFollowRef is true while parked at the live tail. Reading
+    // scrollHeight forces layout, so only measure in that case (see
+    // shouldPrefetchOlderHistory): block the on-load prepend-jump when the
+    // viewport is scrollable, but still let a window that fits the viewport
+    // page in history the user can't scroll to.
+    const followingLiveTail = shouldFollowRef.current
+    const el = virtuosoScrollerRef.current
+    const scrollerScrollable = followingLiveTail && el ? el.scrollHeight > el.clientHeight + 1 : false
+    if (!shouldPrefetchOlderHistory({ followingLiveTail, scrollerScrollable, hasOlderEvents, isFetchingOlder })) return
     const now = performance.now()
     if (now < olderFetchCooldownRef.current) return
     const started = fetchOlderEvents()
     if (started !== false) {
       olderFetchCooldownRef.current = now + FETCH_COOLDOWN_MS
     }
-  }, [hasOlderEvents, isFetchingOlder, fetchOlderEvents])
+  }, [hasOlderEvents, isFetchingOlder, fetchOlderEvents, virtuosoScrollerRef])
 
   const handleEndReached = useCallback(() => {
     if (!hasNewerEvents || isFetchingNewer) return

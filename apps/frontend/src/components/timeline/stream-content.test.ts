@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest"
-import { classifyDeepLinkScrollTick, shouldStartHighlightClear, computePaginationEdges } from "./stream-content"
+import {
+  classifyDeepLinkScrollTick,
+  shouldStartHighlightClear,
+  computePaginationEdges,
+  shouldPrefetchOlderHistory,
+} from "./stream-content"
 
 const DEADLINE = 4000
 
@@ -204,5 +209,35 @@ describe("computePaginationEdges", () => {
         prefetchDistance: DISTANCE,
       })
     ).toEqual({ reachedStart: false, reachedEnd: true })
+  })
+})
+
+describe("shouldPrefetchOlderHistory", () => {
+  const base = { followingLiveTail: false, scrollerScrollable: true, hasOlderEvents: true, isFetchingOlder: false }
+
+  it("does not prefetch while parked at the live tail of a scrollable viewport", () => {
+    // Regression guard: on load the viewport sits at the tail and the whole
+    // loaded window can fit inside the overscan, so reachedStart fires with no
+    // user scroll. Prefetching there prepends history above a scrolled anchor
+    // and jumps the scroll on load — the cascade this gate exists to prevent.
+    expect(shouldPrefetchOlderHistory({ ...base, followingLiveTail: true, scrollerScrollable: true })).toBe(false)
+  })
+
+  it("still pages in history at the tail when the window fits the viewport (not scrollable)", () => {
+    // The user can't scroll off the tail to unlock pagination, and a non-
+    // scrollable prepend is bottom-pinned and jump-free — so it must load.
+    expect(shouldPrefetchOlderHistory({ ...base, followingLiveTail: true, scrollerScrollable: false })).toBe(true)
+  })
+
+  it("prefetches once scrolled off the tail with older events not already loading", () => {
+    expect(shouldPrefetchOlderHistory({ ...base, followingLiveTail: false })).toBe(true)
+  })
+
+  it("does not prefetch when there is no older history", () => {
+    expect(shouldPrefetchOlderHistory({ ...base, hasOlderEvents: false })).toBe(false)
+  })
+
+  it("does not stack a second fetch while one is already in flight", () => {
+    expect(shouldPrefetchOlderHistory({ ...base, isFetchingOlder: true })).toBe(false)
   })
 })
