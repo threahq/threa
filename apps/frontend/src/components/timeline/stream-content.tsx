@@ -792,6 +792,12 @@ export function StreamContent({
   }
   const skipInitialScroll = deepLinkLatchRef.current.latched
 
+  // Genuine-user-gesture timestamp (wheel/touch/key/pointer on the scroller),
+  // stamped by the effect below. The scroll hook reads it so a scroll away from
+  // the bottom only stops auto-follow when the *user* did it — content growth
+  // (new message, link preview, virtua measuring) must not disarm follow.
+  const userInteractedAtRef = useRef(0)
+
   // --- Virtuoso scroll (main streams, channels, scratchpads) ---
   const {
     listRef,
@@ -799,6 +805,7 @@ export function StreamContent({
     contentRef: virtualContentRef,
     shift,
     isScrolledFarFromBottom: virtualIsScrolledFar,
+    isInitialSettling: virtualIsInitialSettling,
     scrollToBottom: virtualScrollToBottom,
     disableAutoScroll: virtualDisableAutoScroll,
     isFollowingTailRef,
@@ -810,6 +817,7 @@ export function StreamContent({
     resetKey: streamId,
     skipInitialScroll,
     isJumpMode,
+    userInteractedAtRef,
   })
 
   // Scroll container element, owned by useTimelineScroll. Attached to the
@@ -912,7 +920,6 @@ export function StreamContent({
   // gap before scrollToMessage attached its own abort listeners. That gap is
   // exactly the "I scroll up to read context, then get yanked back to the
   // linked message" deep-link bug.
-  const userInteractedAtRef = useRef(0)
   const scrollToMessage = useCallback(
     (messageId: string) => {
       if (!useVirtualized) {
@@ -1446,6 +1453,7 @@ export function StreamContent({
                     userInteractedAtRef={userInteractedAtRef}
                     scrollAbortRef={scrollAbortRef}
                     shift={shift}
+                    isInitialSettling={virtualIsInitialSettling}
                     onTimelineScroll={handleVirtualScroll}
                     isFollowingTailRef={isFollowingTailRef}
                     hasOlderEvents={hasOlderEvents}
@@ -1671,6 +1679,7 @@ function TimelineMessageList({
   userInteractedAtRef,
   scrollAbortRef,
   shift,
+  isInitialSettling,
   onTimelineScroll,
   isFollowingTailRef,
   hasOlderEvents,
@@ -1715,6 +1724,9 @@ function TimelineMessageList({
   /** virtua `shift`: maintain scroll from the end on this render (older page
    *  prepended) so the viewport doesn't move. */
   shift: boolean
+  /** True during the cold-load settle: mask the list with a skeleton overlay so
+   *  the measurement bounce stays off-screen until the height stabilises. */
+  isInitialSettling: boolean
   /** Scroll handler from useTimelineScroll (updates at-bottom / follow state). */
   onTimelineScroll: () => void
   /** True while parked at the live tail; gates older-history prefetch. */
@@ -1891,11 +1903,13 @@ function TimelineMessageList({
     el.addEventListener("wheel", mark, { passive: true })
     el.addEventListener("touchstart", mark, { passive: true })
     el.addEventListener("touchmove", mark, { passive: true })
+    el.addEventListener("pointerdown", mark, { passive: true })
     el.addEventListener("keydown", mark)
     return () => {
       el.removeEventListener("wheel", mark)
       el.removeEventListener("touchstart", mark)
       el.removeEventListener("touchmove", mark)
+      el.removeEventListener("pointerdown", mark)
       el.removeEventListener("keydown", mark)
     }
   }, [streamId, scrollerRef, userInteractedAtRef])
@@ -1995,39 +2009,52 @@ function TimelineMessageList({
     // Remount per stream (keyed) so all scroll state — the owned scroller, the
     // useTimelineScroll ResizeObserver, the deep-link jump latch — resets on a
     // switch and the new stream mounts already-populated at its tail.
-    <div
-      key={streamId}
-      ref={scrollerRef}
-      className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
-      style={{ overflowAnchor: "none" }}
-      data-suppress-pull-refresh="true"
-      onScroll={handleScroll}
-      {...batchPointerHandlers}
-    >
-      <div ref={contentRef}>
-        <div ref={topSpacerRef}>{reservedTopSpacer ? <BarTopSpacer /> : <StreamHeaderSpacer />}</div>
-        <Virtualizer
-          ref={listRef}
-          scrollRef={scrollerRef}
-          startMargin={startMargin}
-          // Maintain scroll from the end when an older page is prepended so the
-          // viewport doesn't move — the core reverse-infinite-scroll fix.
-          shift={shift}
-          // Off-screen px kept mounted so fast scrolling doesn't outrun
-          // mount+measure and flash blank rows. Deliberately modest: heavy
-          // message DOM (ProseMirror, link previews) janks with a large window;
-          // smooth fast-scroll comes from prefetching pages early, not overscan.
-          bufferSize={1000}
-        >
-          {visibleItems.map((item) => (
-            <div key={getTimelineItemKey(item)} className="relative mx-auto max-w-[800px]">
-              <TimelineItemContent item={item} ctx={renderCtx} />
-            </div>
-          ))}
-        </Virtualizer>
-        <ComposerFooterSpacer />
+    //
+    // During the cold-load settle the scroller is mounted (so virtua can measure
+    // item heights) but masked by a skeleton overlay, so the measurement bounce
+    // happens off-screen; the hook flips `isInitialSettling` false once the
+    // height stabilises. The overlay is pointer-events-none so an eager scroll
+    // still reaches the scroller (which aborts the settle and reveals at once).
+    <>
+      <div
+        key={streamId}
+        ref={scrollerRef}
+        className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
+        style={{ overflowAnchor: "none" }}
+        data-suppress-pull-refresh="true"
+        onScroll={handleScroll}
+        {...batchPointerHandlers}
+      >
+        <div ref={contentRef}>
+          <div ref={topSpacerRef}>{reservedTopSpacer ? <BarTopSpacer /> : <StreamHeaderSpacer />}</div>
+          <Virtualizer
+            ref={listRef}
+            scrollRef={scrollerRef}
+            startMargin={startMargin}
+            // Maintain scroll from the end when an older page is prepended so the
+            // viewport doesn't move — the core reverse-infinite-scroll fix.
+            shift={shift}
+            // Off-screen px kept mounted so fast scrolling doesn't outrun
+            // mount+measure and flash blank rows. Deliberately modest: heavy
+            // message DOM (ProseMirror, link previews) janks with a large window;
+            // smooth fast-scroll comes from prefetching pages early, not overscan.
+            bufferSize={1000}
+          >
+            {visibleItems.map((item) => (
+              <div key={getTimelineItemKey(item)} className="relative mx-auto max-w-[800px]">
+                <TimelineItemContent item={item} ctx={renderCtx} />
+              </div>
+            ))}
+          </Virtualizer>
+          <ComposerFooterSpacer />
+        </div>
       </div>
-    </div>
+      {isInitialSettling && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
+          {skeleton}
+        </div>
+      )}
+    </>
   )
 }
 

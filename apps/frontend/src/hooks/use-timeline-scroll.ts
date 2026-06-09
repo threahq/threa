@@ -13,6 +13,12 @@ const PROGRAMMATIC_SCROLL_MS = 150
  *  window so the tail tracks the shrinking viewport instead of snapping once
  *  before it settles. */
 const VIEWPORT_SETTLE_MS = 600
+/** A scroll-away-from-bottom only disarms follow if a real user gesture landed
+ *  within this window; otherwise it's content growth and the tail re-pins. */
+const USER_SCROLL_GRACE_MS = 300
+/** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
+ *  as converged, so the content can be revealed without a visible bounce. */
+const SETTLE_STABLE_FRAMES = 3
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
@@ -45,6 +51,15 @@ interface UseTimelineScrollOptions {
    * on a specific message, not following new output.
    */
   isJumpMode?: boolean
+  /**
+   * Timestamp of the last genuine user scroll gesture (wheel/touch/pointer/key)
+   * on the scroller. A scroll away from the bottom only disarms auto-follow when
+   * it was user-driven; content growth (new message, link preview, virtua
+   * measuring real heights) moves us off the bottom with no gesture and must NOT
+   * disarm follow — otherwise the tail won't re-pin and new messages stop
+   * pushing the view up.
+   */
+  userInteractedAtRef?: React.MutableRefObject<number>
 }
 
 interface UseTimelineScrollReturn {
@@ -62,6 +77,9 @@ interface UseTimelineScrollReturn {
   shift: boolean
   /** True when scrolled far enough from the bottom to show "Jump to latest". */
   isScrolledFarFromBottom: boolean
+  /** True during a cold-load settle — the caller masks the content (skeleton
+   *  overlay) until it flips false so the measurement bounce stays off-screen. */
+  isInitialSettling: boolean
   /** True while parked at the live tail (auto-following new output). */
   isFollowingTailRef: React.MutableRefObject<boolean>
   /** Imperatively scroll to the very bottom (the composer-spacer edge). */
@@ -96,12 +114,22 @@ export function useTimelineScroll({
   resetKey,
   skipInitialScroll = false,
   isJumpMode = false,
+  userInteractedAtRef,
 }: UseTimelineScrollOptions): UseTimelineScrollReturn {
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
 
   const [isScrolledFarFromBottom, setIsScrolledFarFromBottom] = useState(false)
+
+  // Mask the content during the cold-load settle. On the first load of a stream
+  // virtua measures item heights frame-by-frame, so scrollHeight oscillates and
+  // our re-pin chases it — the visible "bounce on initial load". Keep the
+  // content hidden (the component renders a skeleton overlay) until the height
+  // stabilises, so that convergence happens off-screen. Revisits are already
+  // measured, so this reveals immediately. Deep-link mounts drive their own
+  // jump, so they are never masked.
+  const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
 
   // Auto-follow the live tail. Seeded false for deep-link mounts so we don't
   // snap to bottom before the jump positions on its target.
@@ -138,6 +166,9 @@ export function useTimelineScroll({
     prevCountRef.current = 0
     didInitialScrollRef.current = false
     isFollowingTailRef.current = !skipInitialScroll
+    // Re-mask for the new stream's cold-load settle (a no-op when it converges
+    // instantly, e.g. revisiting an already-measured stream).
+    setIsInitialSettling(!skipInitialScroll)
   }
 
   // Compute `shift` for this render. Only while reading history (not following
@@ -194,14 +225,33 @@ export function useTimelineScroll({
     prevCountRef.current = 0
   }, [])
 
-  const settleToBottom = useCallback((ms: number) => {
+  // Hidden cold-load settle: pin to the bottom every frame while virtua measures
+  // real item heights, and reveal (drop the skeleton mask) once scrollHeight has
+  // held steady for a few frames — convergence is done — or a hard cap elapses.
+  // The bounce happens behind the mask; what the user sees is a stable bottom.
+  // A real user gesture aborts immediately (reveal + stop) so we never trap a
+  // user who wants to scroll during a slow settle.
+  const settleToBottom = useCallback((maxMs: number) => {
     initialSettleCleanupRef.current?.()
     const el = scrollerRef.current
-    if (!el) return
-    const settleUntil = performance.now() + ms
+    if (!el) {
+      setIsInitialSettling(false)
+      return
+    }
+    const start = performance.now()
     let aborted = false
+    let revealed = false
+    let lastHeight = -1
+    let stableFrames = 0
+    const reveal = () => {
+      if (!revealed) {
+        revealed = true
+        setIsInitialSettling(false)
+      }
+    }
     const cleanup = () => {
       aborted = true
+      reveal()
       if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
       initialSettleRafRef.current = 0
       el.removeEventListener("wheel", cleanup)
@@ -218,12 +268,21 @@ export function useTimelineScroll({
 
     const tick = () => {
       if (aborted) return
-      if (performance.now() >= settleUntil) {
+      const now = performance.now()
+      programmaticUntilRef.current = now + PROGRAMMATIC_SCROLL_MS
+      el.scrollTop = el.scrollHeight
+      const height = el.scrollHeight
+      if (height === lastHeight) stableFrames += 1
+      else {
+        stableFrames = 0
+        lastHeight = height
+      }
+      // Converged (height steady) or capped → reveal and hand off to the content
+      // ResizeObserver, which keeps the tail pinned for any later growth.
+      if (stableFrames >= SETTLE_STABLE_FRAMES || now - start >= maxMs) {
         cleanup()
         return
       }
-      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-      el.scrollTop = el.scrollHeight
       initialSettleRafRef.current = requestAnimationFrame(tick)
     }
     initialSettleRafRef.current = requestAnimationFrame(tick)
@@ -242,12 +301,24 @@ export function useTimelineScroll({
     // allowance the list lands ~a composer height short on first load and
     // disarms follow, which also kills keyboard-follow (gated on follow armed).
     const atBottom = distanceFromBottom <= AT_BOTTOM_PX + readComposerHeight(el)
-    // Reaching the tail re-arms follow — except in jump mode, where the user is
-    // anchored on a deep-linked message and transient atBottom from reflow must
-    // never yank them to the live tail.
-    isFollowingTailRef.current = atBottom && !isJumpMode
-    setIsScrolledFarFromBottom(distanceFromBottom > JUMP_TO_LATEST_PX)
-  }, [isJumpMode])
+    if (atBottom) {
+      // Reaching the tail re-arms follow — except in jump mode, where the user
+      // is anchored on a deep-linked message and a transient atBottom from
+      // reflow must never yank them to the live tail.
+      isFollowingTailRef.current = !isJumpMode
+    } else if (performance.now() - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS) {
+      // Only a genuine user scroll away from the bottom stops follow. Content
+      // growth (a new message, a link preview loading, virtua measuring real
+      // heights) moves us off the bottom with NO gesture; disarming there
+      // strands the tail instead of letting the ResizeObserver re-pin — the
+      // "new messages don't push the view up" and "preview lands under the
+      // composer" reports.
+      isFollowingTailRef.current = false
+    }
+    // While following we're effectively at the tail (the observer re-pins), so
+    // never surface jump-to-latest; only when the user has actually scrolled up.
+    setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
+  }, [isJumpMode, userInteractedAtRef])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
   // layout effect (pre-paint) against the owned scroller so there is no visible
@@ -276,7 +347,7 @@ export function useTimelineScroll({
       // Not-yet-measured list can throw; the snap + ResizeObserver still converge.
     }
     snapToBottom()
-    settleToBottom(5000)
+    settleToBottom(2000)
   }, [itemCount, skipInitialScroll, resetKey, snapToBottom, settleToBottom])
 
   // Keep the tail pinned while following, and absorb keyboard viewport changes
@@ -379,6 +450,7 @@ export function useTimelineScroll({
     contentRef,
     shift,
     isScrolledFarFromBottom,
+    isInitialSettling,
     isFollowingTailRef,
     scrollToBottom,
     disableAutoScroll,

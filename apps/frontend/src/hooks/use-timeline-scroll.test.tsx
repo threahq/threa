@@ -127,21 +127,41 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
-  it("handleScroll shows Jump-to-latest when far from the bottom and hides it near it", () => {
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+  it("handleScroll shows Jump-to-latest when the user scrolls far from the bottom and hides it near it", () => {
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
     harness.current.scrollerRef.current = el
 
-    // 5000 - 1000 - 800 = 3200px from the bottom -> far.
+    // 5000 - 1000 - 800 = 3200px from the bottom -> far, after a user gesture.
+    userInteractedAtRef.current = performance.now()
     act(() => harness.current.handleScroll())
     expect(harness.current.isScrolledFarFromBottom).toBe(true)
     expect(harness.current.isFollowingTailRef.current).toBe(false)
 
-    // Near the bottom -> hidden, and following re-arms.
+    // Near the bottom -> hidden, and following re-arms (no gesture needed).
     el.scrollTop = 4200
     act(() => harness.current.handleScroll())
     expect(harness.current.isScrolledFarFromBottom).toBe(false)
     expect(harness.current.isFollowingTailRef.current).toBe(true)
+  })
+
+  it("keeps following when content grows under the tail with no user gesture (new messages push up)", () => {
+    // A new message / link preview growing the content moves us off the bottom
+    // with no gesture; follow must stay armed so the ResizeObserver re-pins,
+    // instead of disarming and stranding the tail.
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+
+    // Content grows (scrollHeight jumps) with scrollTop unchanged and no gesture.
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 6000 })
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    expect(harness.current.isScrolledFarFromBottom).toBe(false)
   })
 
   it("stays following when only the composer footer spacer sits below the fold", () => {
@@ -149,7 +169,8 @@ describe("useTimelineScroll — scroll position", () => {
     // message resting just above it is "at the bottom", so follow must NOT
     // disarm — otherwise the initial scroll strands ~a composer height short and
     // keyboard-follow (gated on follow) breaks.
-    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4130 })
     el.style.setProperty("--composer-height", "70px")
     harness.current.scrollerRef.current = el
@@ -157,7 +178,8 @@ describe("useTimelineScroll — scroll position", () => {
     act(() => harness.current.handleScroll())
     expect(harness.current.isFollowingTailRef.current).toBe(true)
 
-    // Scrolling a real amount past the spacer DOES disarm.
+    // The user scrolling a real amount past the spacer DOES disarm.
+    userInteractedAtRef.current = performance.now()
     el.scrollTop = 3500
     act(() => harness.current.handleScroll())
     expect(harness.current.isFollowingTailRef.current).toBe(false)
