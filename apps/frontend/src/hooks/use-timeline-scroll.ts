@@ -428,24 +428,43 @@ export function useTimelineScroll({
         setKeyboardInsetPx(next)
       }
     }
-    const onViewportResize = () => {
+    // The on-screen keyboard does NOT reliably emit a `visualViewport` resize
+    // (nor does it always resize the scroller, so its ResizeObserver may stay
+    // quiet) — on some platforms the only signal is that an editable gained
+    // focus. useVisualViewport copes by POLLING across focus transitions; mirror
+    // that here. Pump an rAF loop for the settle window that re-measures the
+    // covered area (`keyboardInsetPx`) and re-pins the tail every frame, so the
+    // last message rides above the keyboard whether the layout shrinks the
+    // scroller or the keyboard overlays it. Driven by focusin/focusout (the
+    // reliable trigger) plus visualViewport resize/scroll where those fire.
+    const pumpKeyboard = () => {
       viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
       programmaticUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
-      applyInset()
-      if (!isFollowingTailRef.current || viewportRafRef.current) return
+      if (viewportRafRef.current) return
       const tick = () => {
-        if (!isFollowingTailRef.current || performance.now() >= viewportSettleUntilRef.current) {
+        applyInset()
+        if (isFollowingTailRef.current) {
+          programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+          snapToBottom()
+        }
+        if (performance.now() >= viewportSettleUntilRef.current) {
           viewportRafRef.current = 0
           return
         }
-        programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-        applyInset()
-        snapToBottom()
         viewportRafRef.current = requestAnimationFrame(tick)
       }
       viewportRafRef.current = requestAnimationFrame(tick)
     }
-    vv?.addEventListener("resize", onViewportResize)
+    const onFocusChange = (event: FocusEvent) => {
+      const t = event.target
+      if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+        pumpKeyboard()
+      }
+    }
+    vv?.addEventListener("resize", pumpKeyboard)
+    vv?.addEventListener("scroll", pumpKeyboard)
+    document.addEventListener("focusin", onFocusChange)
+    document.addEventListener("focusout", onFocusChange)
 
     // Media inside a row — a link preview's og:image, GitHub avatars, a GIF —
     // finishes decoding a frame or two after the row first lays out and grows
@@ -466,7 +485,10 @@ export function useTimelineScroll({
 
     return () => {
       observer.disconnect()
-      vv?.removeEventListener("resize", onViewportResize)
+      vv?.removeEventListener("resize", pumpKeyboard)
+      vv?.removeEventListener("scroll", pumpKeyboard)
+      document.removeEventListener("focusin", onFocusChange)
+      document.removeEventListener("focusout", onFocusChange)
       scroller.removeEventListener("load", onMediaLoad, true)
       if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
       viewportRafRef.current = 0
