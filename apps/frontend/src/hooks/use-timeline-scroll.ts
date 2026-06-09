@@ -1,5 +1,6 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react"
 import type { VirtualizerHandle } from "virtua"
+import { scrollDebug } from "@/lib/scroll-debug"
 
 /** Distance (px) from the bottom within which we treat the list as "at bottom". */
 const AT_BOTTOM_PX = 32
@@ -213,6 +214,7 @@ export function useTimelineScroll({
     const el = scrollerRef.current
     if (!el) return
     programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+    scrollDebug("snapToBottom", { sh: el.scrollHeight, st: el.scrollTop, ch: el.clientHeight, behavior })
     if (behavior === "smooth") {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     } else {
@@ -222,7 +224,11 @@ export function useTimelineScroll({
 
   const scrollToBottom = useCallback(
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
-      if (!options?.force && !isFollowingTailRef.current) return
+      if (!options?.force && !isFollowingTailRef.current) {
+        scrollDebug("scrollToBottom skipped (not following, no force)", { force: options?.force })
+        return
+      }
+      scrollDebug("scrollToBottom", { force: options?.force, wasFollowing: isFollowingTailRef.current })
       isFollowingTailRef.current = true
       setIsScrolledFarFromBottom(false)
       snapToBottom(options?.behavior)
@@ -314,13 +320,20 @@ export function useTimelineScroll({
     // next composer resize (a keystroke/newline) yanks the user back to the
     // tail — the "scrolled away but it snaps back on composer resize" report.
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
-    if (now < programmaticUntilRef.current && !userGestured) return
+    if (now < programmaticUntilRef.current && !userGestured) {
+      scrollDebug("handleScroll skipped (programmatic, no gesture)", {
+        msLeft: Math.round(programmaticUntilRef.current - now),
+      })
+      return
+    }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     // The composer footer spacer is dead space at the very bottom; the last
     // message resting just above it counts as "at the bottom". Without this
     // allowance the list lands ~a composer height short on first load and
     // disarms follow, which also kills keyboard-follow (gated on follow armed).
-    const atBottom = distanceFromBottom <= AT_BOTTOM_PX + readComposerHeight(el)
+    const composerH = readComposerHeight(el)
+    const atBottom = distanceFromBottom <= AT_BOTTOM_PX + composerH
+    const wasFollowing = isFollowingTailRef.current
     if (atBottom) {
       // Reaching the tail re-arms follow — except in jump mode, where the user
       // is anchored on a deep-linked message and a transient atBottom from
@@ -338,6 +351,17 @@ export function useTimelineScroll({
     // While following we're effectively at the tail (the observer re-pins), so
     // never surface jump-to-latest; only when the user has actually scrolled up.
     setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
+    if (wasFollowing !== isFollowingTailRef.current) {
+      scrollDebug(`follow ${isFollowingTailRef.current ? "ARMED" : "DISARMED"} (handleScroll)`, {
+        dist: Math.round(distanceFromBottom),
+        atBottom,
+        userGestured,
+        composerH: Math.round(composerH),
+        st: el.scrollTop,
+        sh: el.scrollHeight,
+        ch: el.clientHeight,
+      })
+    }
   }, [isJumpMode, userInteractedAtRef])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
@@ -388,24 +412,34 @@ export function useTimelineScroll({
     const observer = new ResizeObserver((entries) => {
       const el = scrollerRef.current
       if (!el) return
+      const hasViewportEntry = entries.some((entry) => entry.target === el)
       if (isFollowingTailRef.current) {
         // Re-pin to the absolute bottom as virtua measures real heights (initial
         // convergence) and on content/viewport growth (live append, keyboard
         // open). Marked programmatic so the resulting scroll event doesn't
         // disarm follow.
         programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+        scrollDebug("RO re-pin (following)", {
+          viewportEntry: hasViewportEntry,
+          ch: el.clientHeight,
+          prevCh: prevClientHeight,
+          sh: el.scrollHeight,
+          st: el.scrollTop,
+        })
         el.scrollTop = el.scrollHeight
         prevClientHeight = el.clientHeight
         return
       }
       // Only a viewport (scroller) resize should move a read position; content
       // entries leave clientHeight unchanged, so their delta is 0 (no-op).
-      const hasViewportEntry = entries.some((entry) => entry.target === el)
       if (!hasViewportEntry) return
       const clientHeight = el.clientHeight
       const delta = prevClientHeight - clientHeight
       prevClientHeight = clientHeight
-      if (delta !== 0) el.scrollTop += delta
+      if (delta !== 0) {
+        scrollDebug("RO viewport-delta (not following)", { delta, ch: clientHeight, st: el.scrollTop })
+        el.scrollTop += delta
+      }
     })
 
     observer.observe(scroller)
@@ -430,6 +464,14 @@ export function useTimelineScroll({
     const applyInset = () => {
       const next = measureCovered()
       if (next !== lastInsetRef.current) {
+        scrollDebug("keyboardInset change", {
+          from: lastInsetRef.current,
+          to: next,
+          scrollerBottom: scrollerRef.current ? Math.round(scrollerRef.current.getBoundingClientRect().bottom) : null,
+          vvHeight: vv ? Math.round(vv.height) : null,
+          vvOffsetTop: vv ? Math.round(vv.offsetTop) : null,
+          innerHeight: window.innerHeight,
+        })
         lastInsetRef.current = next
         setKeyboardInsetPx(next)
       }
@@ -468,6 +510,11 @@ export function useTimelineScroll({
     const onFocusChange = (event: FocusEvent) => {
       const t = event.target
       if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
+        scrollDebug(`${event.type} editable`, {
+          following: isFollowingTailRef.current,
+          ch: scrollerRef.current?.clientHeight,
+          vvHeight: vv ? Math.round(vv.height) : null,
+        })
         pumpKeyboard()
       }
     }

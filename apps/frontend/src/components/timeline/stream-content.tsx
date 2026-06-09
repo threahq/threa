@@ -76,6 +76,7 @@ import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
+import { scrollDebug } from "@/lib/scroll-debug"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -882,7 +883,12 @@ export function StreamContent({
   virtualScrollToBottomRef.current = virtualScrollToBottom
   const composerResizeTimerRef = useRef<number | undefined>(undefined)
   const handleComposerHeightChange = useCallback(
-    (_px: number, opts: { initial: boolean }) => {
+    (px: number, opts: { initial: boolean }) => {
+      scrollDebug("composerHeightChange", {
+        px,
+        initial: opts.initial,
+        following: isFollowingTailRef.current,
+      })
       window.clearTimeout(composerResizeTimerRef.current)
       if (opts.initial) {
         if (!skipInitialScroll && !isJumpMode) {
@@ -892,10 +898,13 @@ export function StreamContent({
         return
       }
       composerResizeTimerRef.current = window.setTimeout(() => {
+        scrollDebug("composerHeightChange debounced -> scrollToBottom()", {
+          following: isFollowingTailRef.current,
+        })
         virtualScrollToBottomRef.current()
       }, 120)
     },
-    [isJumpMode, skipInitialScroll]
+    [isJumpMode, skipInitialScroll, isFollowingTailRef]
   )
   useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
 
