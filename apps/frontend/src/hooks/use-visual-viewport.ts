@@ -6,6 +6,21 @@ const KEYBOARD_THRESHOLD = 100
 /** How long to poll visualViewport after focus changes to catch keyboard animation (ms) */
 const POLL_DURATION = 600
 
+/**
+ * Debounce (ms) for *growth* of `--viewport-height`. Chrome on Android steps
+ * `visualViewport.height` through several intermediate values while the
+ * keyboard closes — including a transient overshoot past the real viewport
+ * (753px reported on a 725px screen) — and writing each one into layout makes
+ * the close a multi-step stutter and briefly sizes the app taller than the
+ * screen, pushing the bottom-anchored composer below the fold. Growth is never
+ * urgent (while the value moves, the closing keyboard still covers the area
+ * the app hasn't reclaimed), so wait for it to hold still and apply the final
+ * height once — the same single-step resize Firefox performs natively.
+ * Shrink stays synchronous: deferring it leaves the composer hidden behind
+ * the rising keyboard while the user is about to type.
+ */
+const GROWTH_DEBOUNCE_MS = 150
+
 /** CSS custom property AppShell reads to size the app to the visible viewport */
 const VIEWPORT_HEIGHT_VAR = "--viewport-height"
 
@@ -60,8 +75,14 @@ export function useVisualViewport(enabled: boolean): boolean {
     // writes during the rAF poll loop and avoid invalidating every consumer
     // of the custom property on frames where nothing actually changed.
     let lastWrittenHeight = Number.NaN
+    // Growth target currently waiting out the settle debounce (NaN when none).
+    // Tracked so the poll loop — which calls update() every frame with the
+    // same value — doesn't reset the timer and starve the debounce; only a
+    // *changed* target reschedules it.
+    let pendingGrowthHeight = Number.NaN
+    let growthTimerId = 0
 
-    const update = () => {
+    const measureEffectiveHeight = () => {
       const vvHeight = vv ? vv.height : window.innerHeight
 
       // The OS keyboard for this page can only appear when an editable element
@@ -77,7 +98,21 @@ export function useVisualViewport(enabled: boolean): boolean {
       // stays put until the phantom resolves.
       const editableFocused = isEditableFocused()
       const looksLikePhantomShrink = !!vv && !editableFocused && vvHeight < window.innerHeight - KEYBOARD_THRESHOLD
-      const effectiveHeight = looksLikePhantomShrink ? window.innerHeight : vvHeight
+      return looksLikePhantomShrink ? window.innerHeight : vvHeight
+    }
+
+    const applyHeight = (px: number) => {
+      docEl.style.setProperty(VIEWPORT_HEIGHT_VAR, `${px}px`)
+      lastWrittenHeight = px
+    }
+
+    const cancelPendingGrowth = () => {
+      clearTimeout(growthTimerId)
+      pendingGrowthHeight = Number.NaN
+    }
+
+    const update = () => {
+      const effectiveHeight = measureEffectiveHeight()
 
       // Primary: visual viewport smaller than layout viewport (Chrome, Safari)
       let keyboardOpen = vv ? effectiveHeight < window.innerHeight - KEYBOARD_THRESHOLD : false
@@ -97,10 +132,30 @@ export function useVisualViewport(enabled: boolean): boolean {
       // "URL-bar hidden" value across reloads, pull-to-refresh, and BFCache
       // restores and leaves the app taller than the visible viewport until
       // something (keyboard, URL bar animation, orientation change) forces a
-      // re-layout.
+      // re-layout. Shrink applies synchronously (keyboard opening must reveal
+      // the composer immediately); growth waits out GROWTH_DEBOUNCE_MS so
+      // Chrome Android's chunked keyboard-close values — and its transient
+      // past-the-screen overshoot — collapse into one final write.
       if (effectiveHeight !== lastWrittenHeight) {
-        docEl.style.setProperty(VIEWPORT_HEIGHT_VAR, `${effectiveHeight}px`)
-        lastWrittenHeight = effectiveHeight
+        if (Number.isNaN(lastWrittenHeight) || effectiveHeight < lastWrittenHeight) {
+          cancelPendingGrowth()
+          applyHeight(effectiveHeight)
+        } else if (effectiveHeight !== pendingGrowthHeight) {
+          cancelPendingGrowth()
+          pendingGrowthHeight = effectiveHeight
+          growthTimerId = window.setTimeout(() => {
+            pendingGrowthHeight = Number.NaN
+            // Re-measure at fire time: the keyboard may have settled on a
+            // different final value than the chunk that scheduled this (the
+            // overshoot settles back down without always emitting a resize).
+            const settled = measureEffectiveHeight()
+            if (settled !== lastWrittenHeight) applyHeight(settled)
+          }, GROWTH_DEBOUNCE_MS)
+        }
+      } else {
+        // Height returned to the already-written value before the debounce
+        // elapsed — the growth was transient; nothing to apply.
+        cancelPendingGrowth()
       }
 
       // Only update React state when the boolean actually changes
@@ -175,6 +230,7 @@ export function useVisualViewport(enabled: boolean): boolean {
       cancelAnimationFrame(pollRafId.current)
       cancelAnimationFrame(scrollRafId.current)
       clearTimeout(settleTimeoutId.current)
+      cancelPendingGrowth()
       if (vv) {
         vv.removeEventListener("resize", update)
         vv.removeEventListener("scroll", onScroll)

@@ -68,6 +68,7 @@ describe("useVisualViewport", () => {
     }
     document.documentElement.style.removeProperty("--viewport-height")
     vi.restoreAllMocks()
+    vi.useRealTimers()
   })
 
   it("pins --viewport-height in pixels immediately on mount even when no keyboard is open", () => {
@@ -278,12 +279,92 @@ describe("useVisualViewport", () => {
       // Only a still-alive poll can pick this up.
       fakeVV.height = 800
       for (let i = 0; i < 6; i++) await nextFrame()
+      // Growth is debounced (see GROWTH_DEBOUNCE_MS) — wait out the settle
+      // window so the final height lands.
+      await new Promise<void>((resolve) => setTimeout(resolve, 250))
     })
 
     expect(getVH()).toBe("800px")
     expect(result.current).toBe(false)
 
     editable.remove()
+  })
+
+  it("debounces viewport growth into a single settled write (Chrome Android keyboard close)", () => {
+    // Chrome on Android steps visualViewport.height through several
+    // intermediate values while the keyboard closes — including a transient
+    // overshoot past the real screen height (753px captured on a 725px
+    // screen). Each chunk written into --viewport-height is a visible layout
+    // stutter, and the overshoot sizes the app taller than the screen,
+    // pushing the bottom-anchored composer below the fold. Growth must wait
+    // until the value holds still and land once, at the settled height.
+    vi.useFakeTimers()
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+
+    // Keyboard-open steady state. interactive-widget=resizes-content resizes
+    // both viewports together, so innerHeight tracks vv.height throughout.
+    setInnerHeight(436)
+    fakeVV.height = 436
+    renderHook(() => useVisualViewport(true))
+    expect(getVH()).toBe("436px")
+
+    // First close chunk — must not reach layout.
+    act(() => {
+      setInnerHeight(521)
+      fakeVV.height = 521
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("436px")
+
+    // A later chunk (the overshoot) reschedules the settle window.
+    act(() => vi.advanceTimersByTime(100))
+    act(() => {
+      setInnerHeight(753)
+      fakeVV.height = 753
+      fakeVV.emitResize()
+    })
+    act(() => vi.advanceTimersByTime(100))
+    expect(getVH()).toBe("436px")
+
+    // The viewport settles on the real height; the debounce re-measures at
+    // fire time, so the overshoot is never written — only the final value.
+    act(() => {
+      setInnerHeight(725)
+      fakeVV.height = 725
+      fakeVV.emitResize()
+    })
+    act(() => vi.advanceTimersByTime(200))
+    expect(getVH()).toBe("725px")
+  })
+
+  it("applies a shrink immediately even while a growth is pending (keyboard reopens mid-close)", () => {
+    vi.useFakeTimers()
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+
+    setInnerHeight(436)
+    fakeVV.height = 436
+    renderHook(() => useVisualViewport(true))
+    expect(getVH()).toBe("436px")
+
+    // Close starts (growth → debounced)…
+    act(() => {
+      setInnerHeight(725)
+      fakeVV.height = 725
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("436px")
+
+    // …but the user refocuses and the keyboard comes straight back: the
+    // shrink lands synchronously, never waiting out the growth debounce.
+    act(() => {
+      setInnerHeight(420)
+      fakeVV.height = 420
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("420px")
+
+    act(() => vi.advanceTimersByTime(300))
+    expect(getVH()).toBe("420px")
   })
 
   it("cleans up listeners and removes --viewport-height on unmount", () => {
