@@ -63,6 +63,7 @@ export function useComposerHeightPublish(
 
     const zone = el.closest<HTMLElement>("[data-editor-zone]")
     if (!zone) return
+    let retryRafId = 0
 
     // Seed the baseline from the height the footer spacer is *currently*
     // rendered with: the persisted `:root` fallback applied at boot, or a value
@@ -82,6 +83,14 @@ export function useComposerHeightPublish(
 
     const write = (h: number) => {
       const px = Math.ceil(h)
+      if (px <= 0) {
+        cancelAnimationFrame(retryRafId)
+        retryRafId = requestAnimationFrame(() => {
+          const measured = Math.ceil(el.getBoundingClientRect().height)
+          if (measured > 0) write(measured)
+        })
+        return
+      }
       zone.style.setProperty("--composer-height", `${px}px`)
       persistComposerHeight(px)
       // Notify on any change from the height the footer was last sized for —
@@ -107,6 +116,7 @@ export function useComposerHeightPublish(
     ro.observe(el)
 
     return () => {
+      cancelAnimationFrame(retryRafId)
       ro.disconnect()
       // Intentionally leave --composer-height set so stream navigation
       // starts with a reasonable approximation instead of falling back to 0px.

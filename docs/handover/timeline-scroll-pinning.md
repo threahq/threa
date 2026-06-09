@@ -57,9 +57,9 @@ The migration itself works well and the human is happy with general scrolling.
 ```
 
 The **composer** (message input pill) is a separate `position: absolute; bottom-0`
-element (`FloatingComposerShell`) that floats *over* the bottom of the scroller.
+element (`FloatingComposerShell`) that floats _over_ the bottom of the scroller.
 The `ComposerFooterSpacer` reserves matching empty space at the end of the scroll
-content so the last message can rest *above* the floating composer instead of
+content so the last message can rest _above_ the floating composer instead of
 behind it.
 
 ### The two CSS custom properties that matter
@@ -68,7 +68,7 @@ behind it.
   (`apps/frontend/src/hooks/use-composer-height-publish.ts`) onto the nearest
   `[data-editor-zone]` ancestor, via a `ResizeObserver` on the composer. The
   footer spacer reads it. It is **persisted** (`lib/composer-height-storage.ts`)
-  so it can be set on mount, but the composer's *real* measured height can differ
+  so it can be set on mount, but the composer's _real_ measured height can differ
   (cold boot, restored draft, density/zoom) and arrives a few frames later.
 - **`--viewport-height`** — published by `useVisualViewport`
   (`apps/frontend/src/hooks/use-visual-viewport.ts`) onto `document.documentElement`,
@@ -85,23 +85,23 @@ behind it.
 - `isFollowingTailRef` — are we parked at the live tail (auto-follow new output)?
 - `handleScroll` (on the scroller's `onScroll`): computes
   `distanceFromBottom = scrollHeight - scrollTop - clientHeight`; `atBottom =
-  distanceFromBottom <= AT_BOTTOM_PX(32) + readComposerHeight(el)`; sets follow =
+distanceFromBottom <= AT_BOTTOM_PX(32) + readComposerHeight(el)`; sets follow =
   atBottom && !jumpMode; toggles the jump-to-latest pill at `> 600px`.
 - `snapToBottom()` = `scrollTop = scrollHeight` (browser-clamped to the true max,
   which **includes** the footer spacer → last message lands above the composer).
   This is the "jump to latest" button path and the human confirms **it works
   flawlessly**.
 - **Initial scroll** (`useLayoutEffect`): `scrollToIndex(last, { align:"end",
-  offset: readComposerHeight })` to force virtua to render+measure the bottom on
+offset: readComposerHeight })` to force virtua to render+measure the bottom on
   a cold load (otherwise unmeasured items make `scrollHeight` an underestimate
   and we land "pages up"), then `snapToBottom()`. The `offset` is because
-  virtua's `scrollToIndex` aligns the *item* (ignores the trailing footer
+  virtua's `scrollToIndex` aligns the _item_ (ignores the trailing footer
   spacer); passing the composer height makes it target the footer-inclusive
   bottom. (Confirmed in virtua source: `scrollToIndex` sets `scrollTop = offset +
-  itemOffset + itemSize - viewport` and lets the **browser** clamp — it does not
+itemOffset + itemSize - viewport` and lets the **browser** clamp — it does not
   clamp to its own content, so the offset survives.)
 - **ResizeObserver** on `scroller` + `content`: while following → `scrollTop =
-  scrollHeight` (re-pin). While reading → compensate a viewport delta. This is
+scrollHeight` (re-pin). While reading → compensate a viewport delta. This is
   the signal that fires on composer/editor resize and **works** (see §3).
 - **visualViewport `resize`**: while following, re-pin **every animation frame**
   for `VIEWPORT_SETTLE_MS = 600ms`, holding follow armed throughout (keyboard
@@ -122,9 +122,9 @@ the latest commit (`df30c54`).
 On cold load or switching streams, the timeline lands with the last message
 **~a composer height too low** — partially behind the floating composer. It used
 to land "a couple pages up" (much worse); the `scrollToIndex` + offset work got
-it close, but it's still off by a small amount. The human's read: *"it smells of
+it close, but it's still off by a small amount. The human's read: _"it smells of
 timing — the editor seems to be calculated as 0 size and then we add/subtract
-some pixels which pushes content down a bit more."*
+some pixels which pushes content down a bit more."_
 
 ### Bug B — opening the mobile keyboard does not move the bottom up
 
@@ -140,7 +140,7 @@ keyboard.
 > place."**
 
 So the **content `ResizeObserver` → `scrollTop = scrollHeight` path works
-correctly** when `--composer-height` changes *after* layout has settled. The
+correctly** when `--composer-height` changes _after_ layout has settled. The
 failing paths (initial load, keyboard) both fire their snap **before** the
 relevant size has settled (composer not yet measured on cold load; viewport
 mid-animation on keyboard). This is a **timing/ordering** problem, not a math
@@ -153,7 +153,7 @@ problem — the math is proven correct by the working editor-resize path.
 Chronological; each shipped + tested:
 
 1. **`scrollToIndex(last, "end")` only** → fixed "pages up" but landed the last
-   message at the viewport edge *behind* the composer (ignores footer spacer).
+   message at the viewport edge _behind_ the composer (ignores footer spacer).
 2. **`scrollTop = scrollHeight` only (no scrollToIndex)** → regressed to "pages
    up": virtua never rendered the bottom, so `scrollHeight` was an estimate.
 3. **`scrollToIndex` + `scrollTop=scrollHeight` together** → they fought:
@@ -163,8 +163,8 @@ Chronological; each shipped + tested:
    kept; stops follow disarming when only the footer spacer is below the fold.
    Necessary but not sufficient.
 5. **`scrollToIndex(last,{align:"end", offset:composerHeight})`** → targets the
-   footer-inclusive bottom so it converges *with* the pin. Helped, still "off by
-   a bit" → strongly implies `readComposerHeight()` returns the *wrong/stale*
+   footer-inclusive bottom so it converges _with_ the pin. Helped, still "off by
+   a bit" → strongly implies `readComposerHeight()` returns the _wrong/stale_
    value at the instant of the initial layout effect (e.g. 0 or the persisted
    value, not the real measured one).
 6. **visualViewport re-pin, single rAF** → no effect on keyboard.
@@ -176,14 +176,14 @@ Chronological; each shipped + tested:
 - **Bug A:** at the moment the initial `useLayoutEffect` runs,
   `getComputedStyle(scroller).getPropertyValue("--composer-height")` is probably
   **0 or stale**, so the `offset` is wrong and the post-composer-measurement
-  re-pin (content RO) either doesn't fire or fires but is then undone. *Instrument
-  it:* log `--composer-height`, `scrollTop`, `scrollHeight`, `clientHeight` at:
+  re-pin (content RO) either doesn't fire or fires but is then undone. _Instrument
+  it:_ log `--composer-height`, `scrollTop`, `scrollHeight`, `clientHeight` at:
   the layout effect, every content-RO fire, and after the composer's first real
   measurement. See whether the RO snap actually runs and whether something writes
   `scrollTop` afterward.
 - **Bug B:** confirm empirically whether the **scroller's `clientHeight`
   actually shrinks** when the keyboard opens (set a breakpoint / log in the RO).
-  AppShell *is* sized to `--viewport-height`, but there may be a fixed-height or
+  AppShell _is_ sized to `--viewport-height`, but there may be a fixed-height or
   non-`h-full` ancestor between AppShell and the scroller that eats the shrink,
   OR `useVisualViewport(isMobile)` may be gated off / the device may overlay the
   keyboard without resizing. If the scroller does **not** shrink, no amount of
@@ -268,7 +268,10 @@ for (let i = 1; i <= COUNT; i++) {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${TOKEN}` },
       body: JSON.stringify({ content: body(i), clientMessageId: `seed-${STREAM}-${i}` }),
     })
-    if (res.status === 201) { sent++; break }
+    if (res.status === 201) {
+      sent++
+      break
+    }
     if (res.status === 429) {
       const backoff = Math.min(32000, 2000 * 2 ** attempt++)
       console.warn(`429 at #${i} — backing off ${backoff}ms`)
@@ -312,15 +315,18 @@ many messages on desktop is enough.
 Instrument with something like:
 
 ```js
-const s = document.querySelector('[ref=scrollerRef]') // or the overflow-y-auto timeline div
-const log = () => console.log({
-  scrollTop: s.scrollTop, scrollHeight: s.scrollHeight, clientHeight: s.clientHeight,
-  distanceFromBottom: s.scrollHeight - s.scrollTop - s.clientHeight,
-  composer: getComputedStyle(s).getPropertyValue('--composer-height'),
-  viewport: getComputedStyle(document.documentElement).getPropertyValue('--viewport-height'),
-})
+const s = document.querySelector("[ref=scrollerRef]") // or the overflow-y-auto timeline div
+const log = () =>
+  console.log({
+    scrollTop: s.scrollTop,
+    scrollHeight: s.scrollHeight,
+    clientHeight: s.clientHeight,
+    distanceFromBottom: s.scrollHeight - s.scrollTop - s.clientHeight,
+    composer: getComputedStyle(s).getPropertyValue("--composer-height"),
+    viewport: getComputedStyle(document.documentElement).getPropertyValue("--viewport-height"),
+  })
 new ResizeObserver(log).observe(s)
-window.visualViewport.addEventListener('resize', log)
+window.visualViewport.addEventListener("resize", log)
 ```
 
 ---
@@ -348,10 +354,96 @@ window.visualViewport.addEventListener('resize', log)
 ## 8. TL;DR for the next agent
 
 The general virtua migration is solid. Two timing bugs remain, and the proof
-that it's *timing* (not math) is that **a manual editor resize snaps perfectly**.
+that it's _timing_ (not math) is that **a manual editor resize snaps perfectly**.
 Open the app on a device/emulator, seed a channel (§5), put `scrollTop /
 scrollHeight / clientHeight / --composer-height / --viewport-height` side-by-side
 on a timeline at each relevant event (§4 hypotheses), and you'll see exactly
 which snap fires against a stale/zero size or against a scroller that didn't
 shrink. Fix that one ordering, reusing the working content-ResizeObserver path
 rather than adding more eager snaps.
+
+---
+
+## 9. Local follow-up notes (Codex, 2026-06-09)
+
+Environment used:
+
+- Branch: `claude/timeline-scroller-scroll-position-0tfsn6`
+- Dev stack: `bun run dev:test`
+- Local workspace: `ws_01KTNMH3BMJJBGT845VSC2RZHW`
+- Local channel: `stream_01KTNMN1G84HPHGR7NKCCXJWAK`
+- Browser surface: Codex in-app browser, desktop viewport initially `1280x720`
+
+Setup fixes needed before verification:
+
+- `virtua` was missing locally until `bun install` ran.
+- Vite served duplicate/stale React optimized chunks after the dependency change.
+  Adding `resolve.dedupe: ["react", "react-dom"]` in `apps/frontend/vite.config.ts`
+  removed the invalid-hook-call failure and allowed the workspace to render.
+
+Measured finding:
+
+- Before the composer-height fix, the timeline scroller computed
+  `--composer-height: 0px` even though the root fallback was `80px`.
+- DOM trace showed the shadowing source was `[data-editor-zone="main"]` with
+  inline `--composer-height: 0px`.
+- The `MessageInput` publisher was measuring the floating composer wrapper as
+  `0` during a transient layout phase and overwriting the valid fallback.
+- Patch in progress: `useComposerHeightPublish` now ignores `<= 0` measurements
+  and retries the measurement on the next animation frame instead of publishing
+  zero.
+
+Post-fix measurement:
+
+- After the zero-height guard, `[data-editor-zone="main"]` and the scroller both computed
+  `--composer-height: 163px`, matching the measured floating composer wrapper.
+- That fixed the stale/zero CSS variable path, but cold reload still landed
+  short of the live tail in the first test:
+  `scrollHeight=3541`, `clientHeight=672`, `scrollTop=2453`,
+  `distanceFromBottom=416`.
+- Interpretation: zero composer height was a real bug, but not the whole cold
+  load problem. The composer initial height correction can still call
+  `scrollToBottom()` after follow has already been disarmed by convergence, so
+  the self-guard makes the correction a no-op.
+
+Final patch direction taken:
+
+- For the composer's _initial_ height correction only, force the virtualized
+  timeline back to the tail when the view is not in deep-link / jump mode.
+- Keep runtime composer resize guarded by follow state so reading history is
+  not yanked to the tail.
+- Add an abortable initial bottom-settle loop in `useTimelineScroll`. The loop
+  runs for up to 5s while virtua converges item heights, but aborts immediately
+  on real user input (`wheel`, `touchmove`, `pointerdown`, `keydown`) so a user
+  who starts reading history is not pulled back to the tail.
+- Use immediate `scrollTop = scrollHeight` for the virtualized Jump to latest
+  path instead of smooth scrolling; local browser verification showed smooth
+  could hide the button while leaving the scroller in place.
+
+Verification completed locally:
+
+1. Desktop hard reload: passed. Latest message visible above composer,
+   `distanceFromBottom=0`, `--composer-height=163px`.
+2. Desktop stream switch away/back: passed. Latest message visible,
+   `distanceFromBottom=0`.
+3. Desktop Jump to latest: passed after removing smooth behavior. Scrolled up to
+   `distanceFromBottom≈2581`, button appeared; click returned to bottom
+   (`distanceFromBottom≈0`) and hid the button.
+4. Desktop composer growth by newlines: passed. Composer grew from `163px` to
+   `305px`; timeline stayed at `distanceFromBottom=0`. After clearing the draft
+   and waiting for the transition/ResizeObserver, composer returned to `163px`
+   and the timeline stayed pinned.
+5. Mobile-width hard reload (`390x844` viewport): passed.
+   `--composer-height=76px`, latest message visible above composer,
+   `distanceFromBottom≈0`.
+6. Mobile-width stream switch away/back: initially failed at
+   `distanceFromBottom≈932`; passed after extending the abortable settle window
+   to 5s.
+7. Mobile-width Jump to latest: passed. Scrolled up to
+   `distanceFromBottom≈2088`; click returned to bottom (`distanceFromBottom≈0`).
+
+Still requires human/device verification:
+
+- Real OS soft-keyboard behavior on Android/iOS. The local browser can simulate
+  a narrow/mobile viewport but does not open a real mobile keyboard or shrink
+  `window.visualViewport.height` the way a phone does.

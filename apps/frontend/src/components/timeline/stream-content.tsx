@@ -872,16 +872,22 @@ export function StreamContent({
   const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
   virtualScrollToBottomRef.current = virtualScrollToBottom
   const composerResizeTimerRef = useRef<number | undefined>(undefined)
-  const handleComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
-    window.clearTimeout(composerResizeTimerRef.current)
-    if (opts.initial) {
-      virtualScrollToBottomRef.current()
-      return
-    }
-    composerResizeTimerRef.current = window.setTimeout(() => {
-      virtualScrollToBottomRef.current()
-    }, 120)
-  }, [])
+  const handleComposerHeightChange = useCallback(
+    (_px: number, opts: { initial: boolean }) => {
+      window.clearTimeout(composerResizeTimerRef.current)
+      if (opts.initial) {
+        if (!skipInitialScroll && !isJumpMode) {
+          virtualScrollToBottomRef.current({ force: true })
+          requestAnimationFrame(() => virtualScrollToBottomRef.current({ force: true }))
+        }
+        return
+      }
+      composerResizeTimerRef.current = window.setTimeout(() => {
+        virtualScrollToBottomRef.current()
+      }, 120)
+    },
+    [isJumpMode, skipInitialScroll]
+  )
   useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
 
   // Scroll to a specific message and keep re-scrolling until the target
@@ -1309,7 +1315,7 @@ export function StreamContent({
         scrollToBottom({ force: true })
       })
     } else {
-      scrollToBottom({ force: true, behavior: "smooth" })
+      scrollToBottom({ force: true })
     }
   }, [isJumpMode, exitJumpMode, resetShiftBaseline, scrollToBottom])
 

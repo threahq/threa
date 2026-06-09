@@ -134,6 +134,31 @@ describe("useComposerHeightPublish", () => {
     }
   })
 
+  it("does not overwrite a valid first-paint height with a transient zero measurement", () => {
+    restoreRect()
+    restoreRect = pinInitialHeight(0)
+    const ro = installManualResizeObserver()
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0)
+      return 1
+    })
+    try {
+      const onHeightChange = vi.fn()
+      const { container } = render(<Harness onHeightChange={onHeightChange} zoneHeight="80px" />)
+      const zone = container.querySelector<HTMLElement>("[data-editor-zone]")!
+
+      expect(zone.style.getPropertyValue("--composer-height")).toBe("80px")
+      expect(onHeightChange).not.toHaveBeenCalled()
+
+      ro.fire(96)
+      expect(zone.style.getPropertyValue("--composer-height")).toBe("96px")
+      expect(onHeightChange).toHaveBeenCalledWith(96, { initial: true })
+    } finally {
+      raf.mockRestore()
+      ro.restore()
+    }
+  })
+
   it("fires onHeightChange only when the height actually changes", () => {
     const ro = installManualResizeObserver()
     try {

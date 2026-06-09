@@ -124,6 +124,8 @@ export function useTimelineScroll({
   // Drives the keyboard settle re-pin loop (see the ResizeObserver effect).
   const viewportSettleUntilRef = useRef(0)
   const viewportRafRef = useRef(0)
+  const initialSettleRafRef = useRef(0)
+  const initialSettleCleanupRef = useRef<(() => void) | null>(null)
 
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
@@ -192,6 +194,41 @@ export function useTimelineScroll({
     prevCountRef.current = 0
   }, [])
 
+  const settleToBottom = useCallback((ms: number) => {
+    initialSettleCleanupRef.current?.()
+    const el = scrollerRef.current
+    if (!el) return
+    const settleUntil = performance.now() + ms
+    let aborted = false
+    const cleanup = () => {
+      aborted = true
+      if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
+      initialSettleRafRef.current = 0
+      el.removeEventListener("wheel", cleanup)
+      el.removeEventListener("touchmove", cleanup)
+      el.removeEventListener("pointerdown", cleanup)
+      el.removeEventListener("keydown", cleanup)
+      initialSettleCleanupRef.current = null
+    }
+    initialSettleCleanupRef.current = cleanup
+    el.addEventListener("wheel", cleanup, { passive: true })
+    el.addEventListener("touchmove", cleanup, { passive: true })
+    el.addEventListener("pointerdown", cleanup, { passive: true })
+    el.addEventListener("keydown", cleanup)
+
+    const tick = () => {
+      if (aborted) return
+      if (performance.now() >= settleUntil) {
+        cleanup()
+        return
+      }
+      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+      el.scrollTop = el.scrollHeight
+      initialSettleRafRef.current = requestAnimationFrame(tick)
+    }
+    initialSettleRafRef.current = requestAnimationFrame(tick)
+  }, [])
+
   const handleScroll = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
@@ -239,7 +276,8 @@ export function useTimelineScroll({
       // Not-yet-measured list can throw; the snap + ResizeObserver still converge.
     }
     snapToBottom()
-  }, [itemCount, skipInitialScroll, resetKey, snapToBottom])
+    settleToBottom(5000)
+  }, [itemCount, skipInitialScroll, resetKey, snapToBottom, settleToBottom])
 
   // Keep the tail pinned while following, and absorb keyboard viewport changes
   // while reading. Two observed targets, one observer:
@@ -313,6 +351,7 @@ export function useTimelineScroll({
       vv?.removeEventListener("resize", onViewportResize)
       if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
       viewportRafRef.current = 0
+      initialSettleCleanupRef.current?.()
     }
   }, [resetKey, snapToBottom])
 
