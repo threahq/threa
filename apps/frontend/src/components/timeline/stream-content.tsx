@@ -77,6 +77,7 @@ import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
 import { scrollDebug } from "@/lib/scroll-debug"
+import { ScrollDebugHud } from "./scroll-debug-hud"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -808,6 +809,7 @@ export function StreamContent({
     isScrolledFarFromBottom: virtualIsScrolledFar,
     isInitialSettling: virtualIsInitialSettling,
     scrollToBottom: virtualScrollToBottom,
+    pinAcrossSettle: virtualPinAcrossSettle,
     disableAutoScroll: virtualDisableAutoScroll,
     isFollowingTailRef,
     handleScroll: handleVirtualScroll,
@@ -887,20 +889,24 @@ export function StreamContent({
         initial: opts.initial,
         following: isFollowingTailRef.current,
       })
-      // Cold load only: correct the approximate persisted footer height
-      // synchronously (pre-paint) so the list reveals already pinned to the true
-      // bottom. Later height changes — composer expand/collapse, keyboard
-      // transitions — are re-pinned by the timeline's own ResizeObserver while
-      // following, in phase with the layout. A second debounced scrollToBottom
-      // here fired ~120ms after the height settled, out of phase with the
-      // animation, and showed as a staged "jump down then correct" when the
-      // composer collapsed on blur at the same time the keyboard hid.
-      if (opts.initial && !skipInitialScroll && !isJumpMode) {
-        virtualScrollToBottomRef.current({ force: true })
-        requestAnimationFrame(() => virtualScrollToBottomRef.current({ force: true }))
+      // Cold load: correct the approximate persisted footer height synchronously
+      // (pre-paint) so the list reveals already pinned to the true bottom.
+      if (opts.initial) {
+        if (!skipInitialScroll && !isJumpMode) {
+          virtualScrollToBottomRef.current({ force: true })
+          requestAnimationFrame(() => virtualScrollToBottomRef.current({ force: true }))
+        }
+        return
       }
+      // Later height changes are the composer animating: it expands on focus as
+      // the keyboard opens, and collapses to its minimal view on blur as the
+      // keyboard hides. Pin every frame across the settle (only while following)
+      // so the tail rides up in phase as the composer grows and settles smoothly
+      // as it shrinks — instead of a single out-of-phase snap, which followed on
+      // open but staged a jump on close.
+      virtualPinAcrossSettle()
     },
-    [isJumpMode, skipInitialScroll, isFollowingTailRef]
+    [isJumpMode, skipInitialScroll, virtualPinAcrossSettle]
   )
 
   // Scroll to a specific message and keep re-scrolling until the target
@@ -1413,6 +1419,7 @@ export function StreamContent({
       <QuoteReplyProvider>
         <SharedMessagesProvider map={mergedSharedMessages}>
           <TextSelectionQuote streamId={streamId} />
+          <ScrollDebugHud scrollerRef={virtualScrollerRef} isFollowingTailRef={isFollowingTailRef} />
           <div className="relative h-full">
             <div className="absolute inset-0 overflow-hidden">
               {isSearchOpen && (

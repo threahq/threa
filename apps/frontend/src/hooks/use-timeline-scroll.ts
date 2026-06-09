@@ -85,6 +85,14 @@ interface UseTimelineScrollReturn {
   isFollowingTailRef: React.MutableRefObject<boolean>
   /** Imperatively scroll to the very bottom (the composer-spacer edge). */
   scrollToBottom: (options?: { force?: boolean; behavior?: ScrollBehavior }) => void
+  /**
+   * Re-pin the tail every frame across a settle window while following. Call on
+   * transitions that animate over many frames — composer expand/collapse,
+   * keyboard open/close — so the tail tracks the animation in phase instead of a
+   * single out-of-phase snap. No-op while not following (so a scroll-away is
+   * respected). Idempotent — re-triggering extends the window, never stacks.
+   */
+  pinAcrossSettle: () => void
   /** Disable auto-follow (e.g. when a deep-link jump takes over). */
   disableAutoScroll: () => void
   /** Attach to virtua's `onScroll` (and/or call after a native scroll). */
@@ -214,6 +222,33 @@ export function useTimelineScroll({
       el.scrollTop = el.scrollHeight
     }
   }, [])
+
+  // Re-pin the tail every animation frame across a settle window, but only while
+  // following. Used for transitions that animate over many frames where a single
+  // snap lands out of phase: the on-screen keyboard (focus / visualViewport) and
+  // composer height changes (expand on focus, collapse on blur). Pinning every
+  // frame tracks the animation in phase — content rides up smoothly as the
+  // keyboard opens and settles smoothly as it closes — instead of a staged jump.
+  // Each frame's snap is marked programmatic (short window) so it never disarms
+  // follow; the whole settle is NOT blanketed programmatic, so a genuine
+  // scroll-away still disarms mid-settle. Idempotent: re-triggering only extends
+  // the window, never stacks rAF loops.
+  const pinAcrossSettle = useCallback(() => {
+    viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
+    if (viewportRafRef.current) return
+    const tick = () => {
+      if (isFollowingTailRef.current) {
+        programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+        snapToBottom()
+      }
+      if (performance.now() >= viewportSettleUntilRef.current) {
+        viewportRafRef.current = 0
+        return
+      }
+      viewportRafRef.current = requestAnimationFrame(tick)
+    }
+    viewportRafRef.current = requestAnimationFrame(tick)
+  }, [snapToBottom])
 
   const scrollToBottom = useCallback(
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
@@ -461,27 +496,6 @@ export function useTimelineScroll({
     // reserved a spacer that was yanked away as the layout settled — the
     // "content shifts up on keyboard open then drops back down" report.
     const vv = window.visualViewport
-    const pumpKeyboard = () => {
-      viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
-      if (viewportRafRef.current) return
-      const tick = () => {
-        // Re-pin every frame across the keyboard animation, but ONLY while
-        // following, and mark just that snap programmatic (a short window) so it
-        // doesn't disarm follow. We deliberately do NOT blanket the whole settle
-        // as programmatic: that swallowed the user's own scroll-away for 600ms
-        // and let a later composer resize yank them back to the tail.
-        if (isFollowingTailRef.current) {
-          programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-          snapToBottom()
-        }
-        if (performance.now() >= viewportSettleUntilRef.current) {
-          viewportRafRef.current = 0
-          return
-        }
-        viewportRafRef.current = requestAnimationFrame(tick)
-      }
-      viewportRafRef.current = requestAnimationFrame(tick)
-    }
     const onFocusChange = (event: FocusEvent) => {
       const t = event.target
       if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
@@ -490,11 +504,11 @@ export function useTimelineScroll({
           ch: scrollerRef.current?.clientHeight,
           vvHeight: vv ? Math.round(vv.height) : null,
         })
-        pumpKeyboard()
+        pinAcrossSettle()
       }
     }
-    vv?.addEventListener("resize", pumpKeyboard)
-    vv?.addEventListener("scroll", pumpKeyboard)
+    vv?.addEventListener("resize", pinAcrossSettle)
+    vv?.addEventListener("scroll", pinAcrossSettle)
     document.addEventListener("focusin", onFocusChange)
     document.addEventListener("focusout", onFocusChange)
 
@@ -517,8 +531,8 @@ export function useTimelineScroll({
 
     return () => {
       observer.disconnect()
-      vv?.removeEventListener("resize", pumpKeyboard)
-      vv?.removeEventListener("scroll", pumpKeyboard)
+      vv?.removeEventListener("resize", pinAcrossSettle)
+      vv?.removeEventListener("scroll", pinAcrossSettle)
       document.removeEventListener("focusin", onFocusChange)
       document.removeEventListener("focusout", onFocusChange)
       scroller.removeEventListener("load", onMediaLoad, true)
@@ -526,7 +540,7 @@ export function useTimelineScroll({
       viewportRafRef.current = 0
       initialSettleCleanupRef.current?.()
     }
-  }, [resetKey, snapToBottom])
+  }, [resetKey, snapToBottom, pinAcrossSettle])
 
   return {
     listRef,
@@ -537,6 +551,7 @@ export function useTimelineScroll({
     isInitialSettling,
     isFollowingTailRef,
     scrollToBottom,
+    pinAcrossSettle,
     disableAutoScroll,
     handleScroll,
     resetShiftBaseline,
