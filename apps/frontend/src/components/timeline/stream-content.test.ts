@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import {
   classifyDeepLinkScrollTick,
   shouldStartHighlightClear,
-  computePaginationEdges,
+  computeScrollEdges,
   shouldPrefetchOlderHistory,
 } from "./stream-content"
 
@@ -156,57 +156,57 @@ describe("shouldStartHighlightClear", () => {
   })
 })
 
-describe("computePaginationEdges", () => {
-  // Virtuoso assigns data[0] a high virtual index that decrements as older
-  // pages prepend. Model a 100-item window: indices FIRST..FIRST+99.
-  const FIRST = 1_000_000
-  const COUNT = 100
-  const DISTANCE = 15
+describe("computeScrollEdges", () => {
+  // Model a scroller: 5000px of content in an 800px viewport, lead 1500px.
+  const SCROLL_HEIGHT = 5000
+  const CLIENT_HEIGHT = 800
+  const PREFETCH = 1500
 
-  it("stays idle while the rendered range sits in the middle of the loaded window", () => {
+  it("stays idle while scrolled into the middle of the loaded window", () => {
     expect(
-      computePaginationEdges({
-        range: { startIndex: FIRST + 40, endIndex: FIRST + 60 },
-        firstItemIndex: FIRST,
-        itemCount: COUNT,
-        prefetchDistance: DISTANCE,
+      computeScrollEdges({
+        scrollTop: 2500,
+        scrollHeight: SCROLL_HEIGHT,
+        clientHeight: CLIENT_HEIGHT,
+        prefetchPx: PREFETCH,
       })
     ).toEqual({ reachedStart: false, reachedEnd: false })
   })
 
-  it("leads the older fetch by prefetchDistance — fires before the range reaches index 0", () => {
-    // This is the regression guard for the "loading older messages" thrash:
-    // the older page must start loading while DISTANCE items still remain above
-    // the rendered range, not only when it lands on the boundary.
+  it("leads the older fetch by prefetchPx — fires before the top is reached", () => {
+    // Regression guard for the "loading older messages" thrash: the older page
+    // must start loading while ~1500px still remain above the viewport, not only
+    // when scrollTop hits 0.
     expect(
-      computePaginationEdges({
-        range: { startIndex: FIRST + DISTANCE, endIndex: FIRST + DISTANCE + 20 },
-        firstItemIndex: FIRST,
-        itemCount: COUNT,
-        prefetchDistance: DISTANCE,
+      computeScrollEdges({
+        scrollTop: PREFETCH,
+        scrollHeight: SCROLL_HEIGHT,
+        clientHeight: CLIENT_HEIGHT,
+        prefetchPx: PREFETCH,
       })
     ).toEqual({ reachedStart: true, reachedEnd: false })
   })
 
-  it("does not fire the older fetch while the range is still beyond the lead distance", () => {
+  it("does not fire the older fetch while still beyond the lead distance", () => {
     expect(
-      computePaginationEdges({
-        range: { startIndex: FIRST + DISTANCE + 1, endIndex: FIRST + DISTANCE + 21 },
-        firstItemIndex: FIRST,
-        itemCount: COUNT,
-        prefetchDistance: DISTANCE,
+      computeScrollEdges({
+        scrollTop: PREFETCH + 1,
+        scrollHeight: SCROLL_HEIGHT,
+        clientHeight: CLIENT_HEIGHT,
+        prefetchPx: PREFETCH,
       }).reachedStart
     ).toBe(false)
   })
 
-  it("leads the newer fetch by prefetchDistance near the bottom of the loaded window", () => {
-    const lastIndex = FIRST + COUNT - 1
+  it("leads the newer fetch by prefetchPx near the bottom of the loaded window", () => {
+    // distanceFromBottom = 5000 - scrollTop - 800. At scrollTop 2700 that's
+    // 1500 == lead, so the newer fetch fires.
     expect(
-      computePaginationEdges({
-        range: { startIndex: lastIndex - 20, endIndex: lastIndex - DISTANCE },
-        firstItemIndex: FIRST,
-        itemCount: COUNT,
-        prefetchDistance: DISTANCE,
+      computeScrollEdges({
+        scrollTop: 2700,
+        scrollHeight: SCROLL_HEIGHT,
+        clientHeight: CLIENT_HEIGHT,
+        prefetchPx: PREFETCH,
       })
     ).toEqual({ reachedStart: false, reachedEnd: true })
   })

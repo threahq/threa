@@ -71,7 +71,7 @@ export { useDraftComposer, type UseDraftComposerOptions, type DraftComposerState
 
 export { useScrollBehavior } from "./use-scroll-behavior"
 
-export { useVirtuosoScroll } from "./use-virtuoso-scroll"
+export { useTimelineScroll } from "./use-timeline-scroll"
 
 export { useStreamSearch } from "./use-stream-search"
 export { useMemoSearch, useMemoDetail, memoKeys } from "./use-memos"

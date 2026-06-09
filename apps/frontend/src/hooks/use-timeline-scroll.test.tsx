@@ -1,0 +1,138 @@
+import { describe, it, expect } from "vitest"
+import { act, render } from "@testing-library/react"
+import { useTimelineScroll } from "./use-timeline-scroll"
+
+type Options = Parameters<typeof useTimelineScroll>[0]
+type HookApi = ReturnType<typeof useTimelineScroll>
+
+function renderScrollHook(initialOptions: Options): {
+  current: HookApi
+  rerender: (options: Options) => void
+} {
+  const ref: { current: HookApi | undefined } = { current: undefined }
+  function Probe({ options }: { options: Options }) {
+    ref.current = useTimelineScroll(options)
+    return null
+  }
+  const utils = render(<Probe options={initialOptions} />)
+  return {
+    get current(): HookApi {
+      if (!ref.current) throw new Error("Probe did not capture the hook return value")
+      return ref.current
+    },
+    rerender: (options: Options) => act(() => utils.rerender(<Probe options={options} />)),
+  }
+}
+
+/** A div whose scroll metrics are mockable (jsdom has no layout). */
+function makeScrollerDiv(metrics: { scrollHeight: number; clientHeight: number; scrollTop?: number }) {
+  const el = document.createElement("div")
+  let scrollTop = metrics.scrollTop ?? 0
+  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => metrics.scrollHeight })
+  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => metrics.clientHeight })
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    get: () => scrollTop,
+    set: (v: number) => {
+      scrollTop = v
+    },
+  })
+  return el
+}
+
+const opts = (overrides: Partial<Options> & Pick<Options, "itemCount" | "getFirstKey">): Options => ({
+  resetKey: "stream_1",
+  ...overrides,
+})
+
+describe("useTimelineScroll — shift (prepend) detection", () => {
+  it("does not shift on the initial populated render", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("shifts when an older page is prepended while reading history", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    // Leave the live tail (reading history).
+    act(() => harness.current.disableAutoScroll())
+    // Older page lands: the first row's identity changes from e10 to e0.
+    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
+    expect(harness.current.shift).toBe(true)
+  })
+
+  it("does not shift on appends at the bottom (first row unchanged)", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    act(() => harness.current.disableAutoScroll())
+    // A live message appended at the end leaves the first row untouched.
+    harness.rerender(opts({ itemCount: 51, getFirstKey: () => "e10" }))
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("never shifts while following the live tail", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    // Still following (default). A sliding tail window can change the first row,
+    // but shift must stay false — we scroll to the bottom anyway.
+    harness.rerender(opts({ itemCount: 60, getFirstKey: () => "e0" }))
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("resets the prepend baseline on stream switch", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    act(() => harness.current.disableAutoScroll())
+    // New stream: first window must not be mis-detected as a prepend.
+    harness.rerender(opts({ resetKey: "stream_2", itemCount: 60, getFirstKey: () => "e0" }))
+    expect(harness.current.shift).toBe(false)
+  })
+
+  it("resetShiftBaseline clears detection so the next window isn't a prepend", () => {
+    const harness = renderScrollHook(opts({ itemCount: 0, getFirstKey: () => null }))
+    harness.rerender(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    act(() => harness.current.disableAutoScroll())
+    act(() => harness.current.resetShiftBaseline())
+    // exitJumpMode swaps the window wholesale; baseline was cleared so no shift.
+    harness.rerender(opts({ itemCount: 30, getFirstKey: () => "e90" }))
+    expect(harness.current.shift).toBe(false)
+  })
+})
+
+describe("useTimelineScroll — scroll position", () => {
+  it("scrollToBottom pins scrollTop to scrollHeight", () => {
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.scrollToBottom({ force: true }))
+    expect(el.scrollTop).toBe(5000)
+  })
+
+  it("handleScroll shows Jump-to-latest when far from the bottom and hides it near it", () => {
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
+    harness.current.scrollerRef.current = el
+
+    // 5000 - 1000 - 800 = 3200px from the bottom -> far.
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isScrolledFarFromBottom).toBe(true)
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+
+    // Near the bottom -> hidden, and following re-arms.
+    el.scrollTop = 4200
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isScrolledFarFromBottom).toBe(false)
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+  })
+
+  it("does not re-arm follow at the bottom while in jump mode", () => {
+    const harness = renderScrollHook(
+      opts({ itemCount: 50, getFirstKey: () => "e10", isJumpMode: true, skipInitialScroll: true })
+    )
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+})
