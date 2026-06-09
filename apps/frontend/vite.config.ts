@@ -9,6 +9,10 @@ import path from "path"
 const backendPort = process.env.VITE_BACKEND_PORT || "3001"
 const frontendPort = parseInt(process.env.VITE_PORT || "3000", 10)
 const backendTarget = `http://localhost:${backendPort}`
+const allowedHosts = (process.env.VITE_ALLOWED_HOSTS ?? "")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean)
 
 // Disable HMR during E2E tests to avoid noisy WebSocket errors when Playwright closes tabs
 const isE2ETest = !!process.env.VITE_BACKEND_PORT
@@ -122,6 +126,7 @@ export default defineConfig({
     }),
   ],
   resolve: {
+    dedupe: ["react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
@@ -135,6 +140,7 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: frontendPort,
+    allowedHosts,
     hmr: isE2ETest ? false : undefined,
     proxy: buildProxyConfig(),
     watch: {

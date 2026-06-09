@@ -1,13 +1,13 @@
-import { useMemo, useEffect, useCallback, useRef, useState } from "react"
+import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
-import { Virtuoso } from "react-virtuoso"
+import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, X, Move, Loader2, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   useEvents,
   useStreamSocket,
-  useVirtuosoScroll,
+  useTimelineScroll,
   useScrollBehavior,
   useStreamBootstrap,
   useWorkspaceUserId,
@@ -50,7 +50,6 @@ import {
   type StreamBootstrap,
 } from "@threa/types"
 import { isAbortableStepType } from "@/lib/step-config"
-import { EVENT_PREFETCH_DISTANCE } from "@/lib/constants"
 import {
   EventList,
   TimelineItemContent,
@@ -158,26 +157,26 @@ export function shouldStartHighlightClear(args: {
   return args.deepLinkTargetLoaded || args.deepLinkGaveUp
 }
 
+/** Lead distance (px) from either edge of the scroll range at which the next
+ *  page is prefetched, so it lands before a fast scroll reaches the boundary. */
+export const EDGE_PREFETCH_PX = 1500
+
 /**
- * Decide whether the rendered range is close enough to either edge of the
- * loaded window to prefetch the next page. `range` indices and `firstItemIndex`
- * are Virtuoso's virtual indices (firstItemIndex decrements as older pages are
- * prepended). `prefetchDistance` is the lead in items — a larger value starts
- * the fetch sooner so the page lands before a fast scroll reaches the boundary.
+ * Decide whether the scroll position is close enough to either edge of the
+ * loaded window to prefetch the next page. Pure px math over the owned
+ * scroller's native metrics — `prefetchPx` is the lead distance; a larger value
+ * starts the fetch sooner.
  */
-export function computePaginationEdges(args: {
-  range: { startIndex: number; endIndex: number }
-  firstItemIndex: number
-  itemCount: number
-  prefetchDistance: number
+export function computeScrollEdges(args: {
+  scrollTop: number
+  scrollHeight: number
+  clientHeight: number
+  prefetchPx: number
 }): { reachedStart: boolean; reachedEnd: boolean } {
-  const { range, firstItemIndex, itemCount, prefetchDistance } = args
-  const distFromStart = range.startIndex - firstItemIndex
-  const lastVirtualIndex = firstItemIndex + itemCount - 1
-  const distFromEnd = lastVirtualIndex - range.endIndex
+  const { scrollTop, scrollHeight, clientHeight, prefetchPx } = args
   return {
-    reachedStart: distFromStart <= prefetchDistance,
-    reachedEnd: distFromEnd <= prefetchDistance,
+    reachedStart: scrollTop <= prefetchPx,
+    reachedEnd: scrollHeight - scrollTop - clientHeight <= prefetchPx,
   }
 }
 
@@ -778,21 +777,12 @@ export function StreamContent({
   const visibleItemsRef = useRef(visibleItems)
   visibleItemsRef.current = visibleItems
 
-  const getItemKey = useCallback(
-    (index: number) => {
-      const item = visibleItems[index]
-      return item ? getTimelineItemKey(item) : String(index)
-    },
-    [visibleItems]
-  )
-
   // Latch deep-link mode per stream. `?m=` is auto-cleared from the URL after
   // 3s (see effect above), which would otherwise flip skipInitialScroll
-  // true->false mid-view and re-run useVirtuosoScroll's destructive reset
-  // (firstItemIndex + follow-output), yanking the user off the deep-linked
-  // message and snapping to the bottom. The latch only resets on streamId
-  // change, so a fresh deep-link into the same stream still re-arms (false
-  // is never written back within a stream once highlightMessageId was seen).
+  // true->false mid-view and re-arm auto-follow, yanking the user off the
+  // deep-linked message and snapping to the bottom. The latch only resets on
+  // streamId change, so a fresh deep-link into the same stream still re-arms
+  // (false is never written back within a stream once highlightMessageId was seen).
   const deepLinkLatchRef = useRef<{ streamId: string; latched: boolean }>({ streamId, latched: false })
   if (deepLinkLatchRef.current.streamId !== streamId) {
     deepLinkLatchRef.current = { streamId, latched: false }
@@ -802,28 +792,39 @@ export function StreamContent({
   }
   const skipInitialScroll = deepLinkLatchRef.current.latched
 
+  // Genuine-user-gesture timestamp (wheel/touch/key/pointer on the scroller),
+  // stamped by the effect below. The scroll hook reads it so a scroll away from
+  // the bottom only stops auto-follow when the *user* did it — content growth
+  // (new message, link preview, virtua measuring) must not disarm follow.
+  const userInteractedAtRef = useRef(0)
+
   // --- Virtuoso scroll (main streams, channels, scratchpads) ---
   const {
-    virtuosoRef,
-    firstItemIndex,
-    initialTopMostItemIndex,
+    listRef,
+    scrollerRef: virtualScrollerRef,
+    registerScroller: registerVirtualScroller,
+    contentRef: virtualContentRef,
+    shift,
     isScrolledFarFromBottom: virtualIsScrolledFar,
-    shouldFollowOutput,
+    isInitialSettling: virtualIsInitialSettling,
     scrollToBottom: virtualScrollToBottom,
     disableAutoScroll: virtualDisableAutoScroll,
-    handleAtBottomChange,
-    handleRangeChanged,
-    handleScrollerRef,
-    resetPrependState,
-  } = useVirtuosoScroll({
+    isFollowingTailRef,
+    handleScroll: handleVirtualScroll,
+    resetShiftBaseline,
+  } = useTimelineScroll({
     itemCount: useVirtualized ? visibleItems.length : 0,
-    getItemKey: useVirtualized ? getItemKey : () => "0",
+    getFirstKey: () => (useVirtualized && visibleItems.length > 0 ? getTimelineItemKey(visibleItems[0]) : null),
     resetKey: streamId,
     skipInitialScroll,
+    isJumpMode,
+    userInteractedAtRef,
   })
 
-  // Virtuoso ref for scroll container access (search highlight, etc.)
-  const virtuosoScrollerRef = useRef<HTMLDivElement | null>(null)
+  // Scroll container element, owned by useTimelineScroll. Attached to the
+  // scrollable div in the list below; read here for search highlight and
+  // deep-link scroll.
+  const virtuosoScrollerRef = virtualScrollerRef
 
   // --- Plain scroll for threads (they load all events) ---
   const {
@@ -848,30 +849,19 @@ export function StreamContent({
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
 
-  // Re-anchor the virtualized list to the bottom when the floating composer
-  // settles to a new height. The footer spacer that keeps the last message
-  // above the composer is sized from `--composer-height`, but Virtuoso freezes
-  // its scrollTop when that spacer grows (followOutput only reacts to new
-  // items; the resize safety-net only watches the scroller's own height). So a
-  // composer that lands taller a few frames after a message arrives (its 200ms
-  // height transition, async encryption notice / attachment chips) covers the
-  // bottom of the last message until the next reload. virtualScrollToBottom
-  // self-guards on isAtBottomRef, so this is a no-op unless the user is parked
-  // at the live tail (never fires during a deep-link jump or while scrolled up
-  // reading). The plain-scroll (thread/draft) path needs none of this: its
-  // `padding-bottom` reflows the content so the bottom row is never frozen
-  // behind the composer.
+  // Correct the bottom anchor on the composer's *first* measurement, before
+  // paint. The list first scrolled to LAST against the approximate persisted
+  // footer height; when the real composer differs (cold boot with a restored
+  // draft, density/zoom change) the footer spacer resizes, so we re-pin
+  // synchronously in the same frame the list reveals — no visible jump.
   //
-  // Two arrival paths, handled differently:
-  //  - `initial`: the composer's first measurement, fired from a layout effect
-  //    *before paint*. The list first scrolled to LAST against the approximate
-  //    persisted footer height; when the real composer differs (cold boot with
-  //    a restored draft, density/zoom change) we correct it synchronously here,
-  //    in the same frame the list reveals, so there is no visible jump.
-  //  - runtime changes: arrive async from the ResizeObserver after paint (the
-  //    200ms height transition, attachment chips settling). Debounced so the
-  //    snap lands once after the transition settles rather than fighting
-  //    Virtuoso's reflow on every intermediate frame.
+  // Runtime composer changes (focus expand, blur collapse, attachment chips,
+  // the 200ms height transition) are deliberately NOT handled here: the footer
+  // spacer lives inside the timeline's content wrapper, so the scroll hook's
+  // content ResizeObserver already re-pins the tail when it resizes. virtua owns
+  // its scroll position now (unlike Virtuoso, which froze on footer growth), so
+  // one mechanism covers it. virtualScrollToBottom self-guards on the follow
+  // flag, so the initial correction is a no-op unless parked at the live tail.
   //
   // Called through a ref so the handler identity stays stable: virtualScrollToBottom
   // is rebuilt on every itemCount change, and a changing prop would re-render
@@ -879,18 +869,14 @@ export function StreamContent({
   // exists to prevent).
   const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
   virtualScrollToBottomRef.current = virtualScrollToBottom
-  const composerResizeTimerRef = useRef<number | undefined>(undefined)
-  const handleComposerHeightChange = useCallback((_px: number, opts: { initial: boolean }) => {
-    window.clearTimeout(composerResizeTimerRef.current)
-    if (opts.initial) {
-      virtualScrollToBottomRef.current()
-      return
-    }
-    composerResizeTimerRef.current = window.setTimeout(() => {
-      virtualScrollToBottomRef.current()
-    }, 120)
-  }, [])
-  useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
+  const handleComposerHeightChange = useCallback(
+    (_px: number, opts: { initial: boolean }) => {
+      if (opts.initial && !skipInitialScroll && !isJumpMode) {
+        virtualScrollToBottomRef.current({ force: true })
+      }
+    },
+    [isJumpMode, skipInitialScroll]
+  )
 
   // Scroll to a specific message and keep re-scrolling until the target
   // element is actually visible in the scroller viewport. Items rendered
@@ -909,12 +895,12 @@ export function StreamContent({
   // Sticky "user grabbed the scroller" stamp for the *current* scroll intent.
   // Reset to 0 whenever a new intent is established (deep-link nav, search
   // jump, stream switch) and set by long-lived input listeners on the
-  // scroller (attached in VirtuosoMessageList). The refine loop reads this so
+  // scroller (attached by useTimelineScroll's gesture-stamp effect). The
+  // refine loop reads this so
   // a manual scroll always wins — including a gesture that began in the rAF
   // gap before scrollToMessage attached its own abort listeners. That gap is
   // exactly the "I scroll up to read context, then get yanked back to the
   // linked message" deep-link bug.
-  const userInteractedAtRef = useRef(0)
   const scrollToMessage = useCallback(
     (messageId: string) => {
       if (!useVirtualized) {
@@ -1026,12 +1012,12 @@ export function StreamContent({
           // and MAX_MS still bounds the loop if it never does.
           if (liveIdx >= 0) {
             try {
-              virtuosoRef.current?.scrollToIndex({ index: liveIdx, align: "center", behavior: "auto" })
+              listRef.current?.scrollToIndex(liveIdx, { align: "center" })
             } catch {
-              // react-virtuoso can still throw internally on a freshly
-              // mounted, not-yet-measured list (no defaultItemHeight).
-              // Non-fatal: the next tick retries once the size tree is
-              // populated, or the DOM path takes over once the row renders.
+              // virtua can still throw internally on a freshly mounted,
+              // not-yet-measured list. Non-fatal: the next tick retries once
+              // sizes are populated, or the DOM path takes over once the row
+              // renders.
             }
           }
           stableFrames = 0
@@ -1048,7 +1034,7 @@ export function StreamContent({
       attempt()
       return true
     },
-    [useVirtualized, visibleItems, virtuosoRef, disableAutoScroll]
+    [useVirtualized, visibleItems, listRef, disableAutoScroll]
   )
 
   useEffect(() => {
@@ -1312,14 +1298,14 @@ export function StreamContent({
       // The event window is about to be replaced wholesale (jump window →
       // latest window). Clear the prepend baseline so the next render isn't
       // mis-detected as a real prepend.
-      resetPrependState()
+      resetShiftBaseline()
       requestAnimationFrame(() => {
         scrollToBottom({ force: true })
       })
     } else {
-      scrollToBottom({ force: true, behavior: "smooth" })
+      scrollToBottom({ force: true })
     }
-  }, [isJumpMode, exitJumpMode, resetPrependState, scrollToBottom])
+  }, [isJumpMode, exitJumpMode, resetShiftBaseline, scrollToBottom])
 
   const editLastMessageCtxWithScroll = useMemo(
     () => ({ ...editLastMessageCtx, scrollToMessage }),
@@ -1328,12 +1314,12 @@ export function StreamContent({
 
   // Deep-link (?m=) mount hold. On a push-notification / Activities deep link
   // the latest window loads first; the jump effect then fetches the window
-  // around the target and swaps `events` wholesale. react-virtuoso only
-  // honors initialTopMostItemIndex at mount, so a Virtuoso instance mounted
-  // on the latest window can't re-anchor onto the jump window — scrollToMessage
-  // fights the stale anchor and the user lands far from the target ("scrolled
-  // to hell"). Holding the skeleton until the target is actually in the loaded
-  // window makes the single keyed mount land already-anchored on it. Uses the
+  // around the target and swaps `events` wholesale. A list mounted on the
+  // latest window lands at the live tail, so the later window swap +
+  // scrollToMessage would visibly yank the viewport over to the target.
+  // Holding the skeleton until the target is actually in the loaded window
+  // makes the single keyed mount land already-anchored on it (the pre-paint
+  // centering jump needs the target row to exist at mount). Uses the
   // raw ?m= id (not the search-active id) so in-stream search is unaffected,
   // and releases when the target loads (deepLinkTargetLoaded) or the jump
   // conclusively fails (deepLinkGaveUp) so it never hangs.
@@ -1437,22 +1423,20 @@ export function StreamContent({
               )}
               {!isDraft && useVirtualized && (
                 <>
-                  <VirtuosoMessageList
+                  <TimelineMessageList
                     visibleItems={visibleItems}
                     isLoading={isLoading}
                     holdForDeepLink={holdForDeepLink}
                     isConfirmedEmpty={isConfirmedEmpty}
-                    virtuosoRef={virtuosoRef}
-                    virtuosoScrollerRef={virtuosoScrollerRef}
-                    handleScrollerRef={handleScrollerRef}
-                    userInteractedAtRef={userInteractedAtRef}
+                    listRef={listRef}
+                    scrollerRef={virtualScrollerRef}
+                    registerScroller={registerVirtualScroller}
+                    contentRef={virtualContentRef}
                     scrollAbortRef={scrollAbortRef}
-                    isJumpMode={isJumpMode}
-                    firstItemIndex={firstItemIndex}
-                    initialTopMostItemIndex={initialTopMostItemIndex}
-                    shouldFollowOutput={shouldFollowOutput}
-                    handleAtBottomChange={handleAtBottomChange}
-                    handleRangeChanged={handleRangeChanged}
+                    shift={shift}
+                    isInitialSettling={virtualIsInitialSettling}
+                    onTimelineScroll={handleVirtualScroll}
+                    isFollowingTailRef={isFollowingTailRef}
                     hasOlderEvents={hasOlderEvents}
                     hasNewerEvents={hasNewerEvents}
                     fetchOlderEvents={fetchOlderEvents}
@@ -1638,7 +1622,7 @@ export function StreamContent({
               </div>
             )}
             {showBotRuntimePresence && activeBotPresence && (
-              <div className="pointer-events-none mx-4 mb-2 mt-2 flex justify-center">
+              <div className="pointer-events-none absolute inset-x-4 top-2 z-30 flex justify-center">
                 <ActiveBotStatusStrip
                   botName={activeBotPresence.bot.name}
                   runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
@@ -1665,22 +1649,20 @@ export function StreamContent({
 }
 
 /** Virtuoso-powered message list for streams, channels, and scratchpads */
-function VirtuosoMessageList({
+function TimelineMessageList({
   visibleItems,
   isLoading,
   holdForDeepLink,
   isConfirmedEmpty,
-  virtuosoRef,
-  virtuosoScrollerRef,
-  handleScrollerRef,
-  userInteractedAtRef,
+  listRef,
+  scrollerRef,
+  registerScroller,
+  contentRef,
   scrollAbortRef,
-  isJumpMode,
-  firstItemIndex,
-  initialTopMostItemIndex,
-  shouldFollowOutput,
-  handleAtBottomChange,
-  handleRangeChanged,
+  shift,
+  isInitialSettling,
+  onTimelineScroll,
+  isFollowingTailRef,
   hasOlderEvents,
   hasNewerEvents,
   fetchOlderEvents,
@@ -1702,29 +1684,34 @@ function VirtuosoMessageList({
   visibleItems: TimelineItem[]
   isLoading: boolean
   /** Hold the skeleton until a deep-link (?m=) target is in the loaded window
-   *  so the keyed Virtuoso instance mounts already anchored on it. */
+   *  so the keyed list mounts already anchored on it. */
   holdForDeepLink: boolean
   /** True only when we've fully resolved IDB and bootstrap and the stream is
    *  actually empty. During mid-switch transitions this is false, so we avoid
    *  flashing the "No messages yet" state before useLiveQuery catches up. */
   isConfirmedEmpty: boolean
-  virtuosoRef: React.RefObject<import("react-virtuoso").VirtuosoHandle | null>
-  virtuosoScrollerRef: React.MutableRefObject<HTMLDivElement | null>
-  handleScrollerRef: (ref: HTMLElement | Window | null) => void
-  /** Stamp set by long-lived scroller input listeners; read by the outer
-   *  scrollToMessage refine loop so manual scroll always wins. */
-  userInteractedAtRef: React.MutableRefObject<number>
+  /** virtua imperative handle (scrollToIndex for deep-link rendering). */
+  listRef: React.RefObject<VirtualizerHandle | null>
+  /** The scroll container we own (read-only handle; attach via registerScroller). */
+  scrollerRef: React.RefObject<HTMLDivElement | null>
+  /** Ref callback for the scroller `<div>`; keeps scrollerRef live and re-arms
+   *  the ResizeObserver once the scroller mounts. */
+  registerScroller: (node: HTMLDivElement | null) => void
+  /** Inner content wrapper (sized to full scroll height). */
+  contentRef: React.RefObject<HTMLDivElement | null>
   /** Non-null while a scrollToMessage refine loop is in flight. Programmatic
    *  scroll-into-view must not trigger edge pagination. */
   scrollAbortRef: React.MutableRefObject<(() => void) | null>
-  /** True while reading a deep-linked / searched history window. Auto-follow
-   *  to the live tail must never arm here. */
-  isJumpMode: boolean
-  firstItemIndex: number
-  initialTopMostItemIndex: import("react-virtuoso").IndexLocationWithAlign | number | undefined
-  shouldFollowOutput: boolean
-  handleAtBottomChange: (atBottom: boolean) => void
-  handleRangeChanged: (range: { startIndex: number; endIndex: number }) => void
+  /** virtua `shift`: maintain scroll from the end on this render (older page
+   *  prepended) so the viewport doesn't move. */
+  shift: boolean
+  /** True during the cold-load settle: mask the list with a skeleton overlay so
+   *  the measurement bounce stays off-screen until the height stabilises. */
+  isInitialSettling: boolean
+  /** Scroll handler from useTimelineScroll (updates at-bottom / follow state). */
+  onTimelineScroll: () => void
+  /** True while parked at the live tail; gates older-history prefetch. */
+  isFollowingTailRef: React.MutableRefObject<boolean>
   hasOlderEvents: boolean
   hasNewerEvents: boolean
   fetchOlderEvents: () => boolean
@@ -1784,24 +1771,6 @@ function VirtuosoMessageList({
   // would never get `isFirstMessage=true` and the badge would silently drop.
   const firstMessageId = useMemo(() => findFirstMessageId(visibleItems), [visibleItems])
 
-  // On a deep-link (?m=) jump the scroll hook returns `initialTopMostItemIndex:
-  // undefined` so it can drive the jump imperatively via scrollToMessage. But
-  // an absent prop leaves react-virtuoso's internal index stream at its `0`
-  // default, so the listState anchors the freshly-remounted (per-stream key)
-  // window at index 0 — the *top* of the loaded window — and the scroller
-  // lands far above the target, fighting scrollToMessage until it gives up.
-  // When the linked message is already in the loaded window, anchor the
-  // initial window on it so the cold-boot mount renders centered on the
-  // target; scrollToMessage then only has to refine. Falls back to the hook's
-  // value when the target isn't loaded yet (the jumpToEvent fetch path).
-  const effectiveInitialTopMostItemIndex = useMemo(() => {
-    if (highlightMessageId) {
-      const idx = findMessageItemIndex(visibleItems, highlightMessageId)
-      if (idx >= 0) return { index: idx, align: "center" } as const
-    }
-    return initialTopMostItemIndex
-  }, [highlightMessageId, visibleItems, initialTopMostItemIndex])
-
   const renderCtx = useMemo<TimelineItemRenderContext>(
     () => ({
       workspaceId,
@@ -1839,28 +1808,19 @@ function VirtuosoMessageList({
     ]
   )
 
-  // Memoize followOutput callback ref to avoid Virtuoso re-renders
-  const shouldFollowRef = useRef(shouldFollowOutput)
-  shouldFollowRef.current = shouldFollowOutput
-
-  const followOutput = useCallback((_isAtBottom: boolean) => {
-    if (shouldFollowRef.current) return "auto"
-    return false
-  }, [])
-
   // Fetch guards to prevent rapid re-firing
   const olderFetchCooldownRef = useRef(0)
   const newerFetchCooldownRef = useRef(0)
   const FETCH_COOLDOWN_MS = 500
 
   const handleStartReached = useCallback(() => {
-    // shouldFollowRef is true while parked at the live tail. Reading
+    // isFollowingTailRef is true while parked at the live tail. Reading
     // scrollHeight forces layout, so only measure in that case (see
     // shouldPrefetchOlderHistory): block the on-load prepend-jump when the
     // viewport is scrollable, but still let a window that fits the viewport
     // page in history the user can't scroll to.
-    const followingLiveTail = shouldFollowRef.current
-    const el = virtuosoScrollerRef.current
+    const followingLiveTail = isFollowingTailRef.current
+    const el = scrollerRef.current
     const scrollerScrollable = followingLiveTail && el ? el.scrollHeight > el.clientHeight + 1 : false
     if (!shouldPrefetchOlderHistory({ followingLiveTail, scrollerScrollable, hasOlderEvents, isFetchingOlder })) return
     const now = performance.now()
@@ -1869,7 +1829,7 @@ function VirtuosoMessageList({
     if (started !== false) {
       olderFetchCooldownRef.current = now + FETCH_COOLDOWN_MS
     }
-  }, [hasOlderEvents, isFetchingOlder, fetchOlderEvents, virtuosoScrollerRef])
+  }, [hasOlderEvents, isFetchingOlder, fetchOlderEvents, isFollowingTailRef, scrollerRef])
 
   const handleEndReached = useCallback(() => {
     if (!hasNewerEvents || isFetchingNewer) return
@@ -1881,131 +1841,74 @@ function VirtuosoMessageList({
     }
   }, [hasNewerEvents, isFetchingNewer, fetchNewerEvents])
 
-  const itemContent = useCallback(
-    (_index: number, item: TimelineItem) => (
-      <div className="relative mx-auto max-w-[800px]">
-        <TimelineItemContent item={item} ctx={renderCtx} />
-      </div>
-    ),
-    [renderCtx]
-  )
+  // Pagination is driven off the owned scroller's native scroll. virtua has no
+  // rangeChanged, so we measure distance from each edge in px and prefetch when
+  // within a lead distance. Gated so a programmatic deep-link scroll never
+  // kicks off pagination (its reflow would fight the refine loop).
+  const handleScroll = useCallback(() => {
+    onTimelineScroll()
+    if (scrollAbortRef.current !== null) return
+    const el = scrollerRef.current
+    if (!el) return
+    const { reachedStart, reachedEnd } = computeScrollEdges({
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      clientHeight: el.clientHeight,
+      prefetchPx: EDGE_PREFETCH_PX,
+    })
+    if (reachedStart) handleStartReached()
+    if (reachedEnd) handleEndReached()
+  }, [onTimelineScroll, scrollAbortRef, scrollerRef, handleStartReached, handleEndReached])
 
-  // Key items by stable identity so React doesn't reuse component instances
-  // across messages and leak per-message state (e.g. link previews).
-  const computeItemKey = useCallback((_index: number, item: TimelineItem) => getTimelineItemKey(item), [])
-
-  // Stable scroller ref callback — wrapping in useCallback avoids Virtuoso
-  // calling the old callback with null and the new one with the element
-  // on every render, which would disconnect/reconnect the ResizeObserver.
-  // Detaches the long-lived user-interaction listeners when the scroller is
-  // swapped (per-stream remount) or the component unmounts.
-  const userInteractionCleanupRef = useRef<(() => void) | null>(null)
-  const handleVirtuosoScrollerRef = useCallback(
-    (ref: HTMLElement | Window | null) => {
-      virtuosoScrollerRef.current = ref as HTMLDivElement | null
-      handleScrollerRef(ref)
-
-      userInteractionCleanupRef.current?.()
-      userInteractionCleanupRef.current = null
-      const el = ref as HTMLElement | null
-      if (el) {
-        // Long-lived genuine-input stamp. Deliberately listens to
-        // wheel/touch/keydown (real user gestures) and NOT `scroll`, so
-        // Virtuoso's own programmatic scroll-into-view never trips it. This
-        // catches a manual scroll that began before the rAF-delayed
-        // scrollToMessage loop attached its own abort listeners.
-        const mark = () => {
-          userInteractedAtRef.current = performance.now()
-        }
-        el.addEventListener("wheel", mark, { passive: true })
-        el.addEventListener("touchstart", mark, { passive: true })
-        el.addEventListener("touchmove", mark, { passive: true })
-        el.addEventListener("keydown", mark)
-        userInteractionCleanupRef.current = () => {
-          el.removeEventListener("wheel", mark)
-          el.removeEventListener("touchstart", mark)
-          el.removeEventListener("touchmove", mark)
-          el.removeEventListener("keydown", mark)
-        }
-      }
-    },
-    [virtuosoScrollerRef, handleScrollerRef]
-  )
-
-  useEffect(() => () => userInteractionCleanupRef.current?.(), [])
-
-  // Virtuoso's `startReached` / `endReached` observables throttle via
-  // `zt(200)` and use `distinctUntilChanged` on the emitted index, which
-  // means they can silently miss boundary crossings after a prepend
-  // (firstItemIndex decrements, but the distinct tracker may still hold a
-  // stale value if the user never scrolled away from the top between
-  // prepends). Tracking the range ourselves via `rangeChanged` guarantees
-  // the fetch triggers fire whenever the user is actually within a few
-  // items of either edge. Gated on `hasSettledRef` so transient ranges
-  // during the initial scroll-to-LAST don't kick off an unwanted fetch.
-  const hasRangeSettledRef = useRef(false)
+  // virtua has no rangeChanged, so a window that fits the viewport (not
+  // scrollable) would never fire a scroll to page in older history the user
+  // can't scroll to reach. Re-check the edges after each content change, on the
+  // next frame so virtua has measured. The cooldowns + shouldPrefetchOlderHistory
+  // gating keep this from looping; after a prepend the held scroll position sits
+  // further from the top, so reachedStart clears.
   useEffect(() => {
-    hasRangeSettledRef.current = false
-  }, [streamId])
+    const id = requestAnimationFrame(() => handleScroll())
+    return () => cancelAnimationFrame(id)
+  }, [visibleItems.length, handleScroll])
 
-  const wrappedHandleAtBottomChange = useCallback(
-    (atBottom: boolean) => {
-      if (visibleItems.length > 0) hasRangeSettledRef.current = true
-      // In jump mode the user is reading a deep-linked / searched history
-      // window. Prepend/append reflow and size measurement make Virtuoso
-      // transiently report atBottom; letting that arm followOutput (and the
-      // ResizeObserver LAST-snap) is what yanks the user to the live tail
-      // after the landing. Auto-follow only belongs on the live tail, so
-      // never let atBottom=true turn it on while in jump mode. atBottom=false
-      // still propagates so a real scroll-away keeps follow disabled.
-      handleAtBottomChange(isJumpMode ? false : atBottom)
-    },
-    [handleAtBottomChange, visibleItems.length, isJumpMode]
-  )
+  // The genuine-input stamp on the owned scroller lives in useTimelineScroll,
+  // gated on the mounted scroller element — an effect here keyed on streamId
+  // attached to a null ref on cold loads (the scroller mounts behind the
+  // skeleton) and never re-ran, leaving the stamp dead.
 
-  const wrappedHandleRangeChanged = useCallback(
-    (range: { startIndex: number; endIndex: number }) => {
-      handleRangeChanged(range)
-      if (!hasRangeSettledRef.current || visibleItems.length === 0) return
-      // A scrollToMessage refine loop is in flight: its programmatic
-      // scroll-into-view sweeps the (viewport-inflated) range across the
-      // edge thresholds and would kick off older/newer pagination, whose
-      // prepend/append reflow then fights the loop — the "loading more,
-      // flicker, then dumped at the bottom" deep-link storm. Pagination must
-      // be user-scroll driven; the loop aborts on real interaction, after
-      // which these fire normally.
-      if (scrollAbortRef.current !== null) return
-      const { reachedStart, reachedEnd } = computePaginationEdges({
-        range,
-        firstItemIndex,
-        itemCount: visibleItems.length,
-        prefetchDistance: EVENT_PREFETCH_DISTANCE,
-      })
-      if (reachedStart) handleStartReached()
-      if (reachedEnd) handleEndReached()
-    },
-    [handleRangeChanged, firstItemIndex, visibleItems.length, handleStartReached, handleEndReached]
-  )
+  // Center the deep-linked target on mount/when it loads. virtua mounts at the
+  // top; this anchors it near the target before the scrollToMessage refine loop
+  // takes over (and before paint, so there's no flash from the top). Runs once
+  // per stream: the keyed scroller div remounts on switch but this component
+  // does NOT, so the ref must be reset by hand when the stream changes.
+  const didInitialJumpRef = useRef(false)
+  const lastJumpStreamRef = useRef(streamId)
+  if (lastJumpStreamRef.current !== streamId) {
+    lastJumpStreamRef.current = streamId
+    didInitialJumpRef.current = false
+  }
+  useLayoutEffect(() => {
+    if (didInitialJumpRef.current || !highlightMessageId) return
+    const idx = findMessageItemIndex(visibleItems, highlightMessageId)
+    if (idx < 0) return
+    try {
+      listRef.current?.scrollToIndex(idx, { align: "center" })
+    } catch {
+      // virtua can throw on a not-yet-measured list; the refine loop recovers.
+    }
+    didInitialJumpRef.current = true
+  }, [highlightMessageId, visibleItems, listRef])
 
-  // Virtuoso positions items absolutely inside its scroller, so plain CSS
-  // `padding-top` on the wrapper is silently ignored — the topmost item still
-  // renders flush at scroller-top, where the floating BatchSelectionBar /
-  // StreamSearchBar overlap it. The official escape hatch is the `Header`
-  // component, which renders before the first item and is treated as
-  // scrollable content. We swap it in only while one of the bars is open.
-  // Must sit above the early returns below so the hook order stays stable.
+  // Reserve room at the top for the floating BatchSelectionBar / StreamSearchBar
+  // when open (taller), otherwise a small spacer so the head row's hover toolbar
+  // isn't clipped. Rendered as a real element above the virtualizer; its height
+  // is fed to virtua via startMargin so index math stays aligned.
   const reservedTopSpacer = isSearchOpen || batch?.enabled
-  const components = useMemo(
-    () => ({
-      // When no bar is open, fall back to StreamHeaderSpacer so the head
-      // row's hover toolbar (which floats above the message via
-      // `bottom-[calc(100%-20px)]`) doesn't get clipped by the scroller's
-      // top edge. Bar-open state uses the taller h-11 spacer.
-      Header: reservedTopSpacer ? BarTopSpacer : StreamHeaderSpacer,
-      Footer: ComposerFooterSpacer,
-    }),
-    [reservedTopSpacer]
-  )
+  const topSpacerRef = useRef<HTMLDivElement>(null)
+  const [startMargin, setStartMargin] = useState(0)
+  useLayoutEffect(() => {
+    setStartMargin(topSpacerRef.current?.offsetHeight ?? 0)
+  }, [reservedTopSpacer])
 
   // Single skeleton shape shared by the active-load branch and the cold-boot
   // empty fallback so the seam between MainContentGate's skeleton and
@@ -2057,90 +1960,83 @@ function VirtuosoMessageList({
   //    chrome is the visible background; rendering a skeleton on top of it
   //    would jiggle the layout.
   //
-  // Either way we mustn't mount <Virtuoso data={[]} />: its hidden-until-stable
-  // reveal gate arms only at didMount, and only when initialTopMostItemIndex
-  // is set — which it is NOT while itemCount is 0 (the scroll hook returns
-  // undefined). A Virtuoso mounted empty therefore reveals immediately, so
-  // the populate + scroll-to-LAST a frame later is visible (the "loads in too
-  // low then jumps" report). Deferring the mount until data exists makes the
-  // keyed instance mount already-populated, exactly like cold boot, so the
-  // gate arms.
+  // Either way we mustn't mount the virtualized list empty: the initial
+  // scroll-to-bottom and the cold-load settle mask in useTimelineScroll both
+  // arm when items first exist, so a list mounted with zero items paints an
+  // empty top-anchored frame and the populate + pin a frame later is visible
+  // (the "loads in too low then jumps" report). Deferring the mount until
+  // data exists makes the keyed instance mount already-populated, exactly
+  // like cold boot, so the settle mask covers the measurement bounce.
   if (visibleItems.length > 0) hasRenderedContentRef.current = true
   if (visibleItems.length === 0) {
     return hasRenderedContentRef.current ? <div className="h-full" aria-hidden /> : skeleton
   }
 
   return (
-    <Virtuoso
-      // Remount per stream so the mount-only reveal gate re-arms. Navigating
-      // between streams otherwise reuses this instance (only the streamId prop
-      // changes), leaving the gate latched-open from the previous stream. A
-      // fresh mount with populated data (guaranteed by the grace-window guard
-      // above) re-runs the exact cold-boot path: didMount sees
-      // initialTopMostItemIndex=LAST so the gate arms, the window is measured
-      // while hidden, and reveal waits until scroll-to-LAST settles.
-      key={streamId}
-      ref={virtuosoRef}
-      scrollerRef={handleVirtuosoScrollerRef}
-      className={cn("h-full", batch?.enabled && "select-none")}
-      data-suppress-pull-refresh="true"
-      firstItemIndex={firstItemIndex}
-      // Passing `initialTopMostItemIndex={undefined}` is NOT the same as
-      // omitting it: the prop key is still present, so react-virtuoso
-      // publishes `undefined` into its internal index stream (overwriting the
-      // safe numeric default), and a later reactive listState recompute runs
-      // its index normalizer on that `undefined` -> "Cannot read properties
-      // of undefined (reading 'index')", which crashes the whole route via
-      // the error boundary. The hook returns `undefined` on deep-link jumps;
-      // effectiveInitialTopMostItemIndex substitutes the linked message's
-      // index when it is loaded. Spread the prop only when it has a value and
-      // let react-virtuoso keep its default otherwise.
-      {...(effectiveInitialTopMostItemIndex !== undefined
-        ? { initialTopMostItemIndex: effectiveInitialTopMostItemIndex }
-        : {})}
-      data={visibleItems}
-      // Intentionally no defaultItemHeight: it makes Virtuoso skip the probe
-      // measure and reveal the list using the estimate, so a tall code block
-      // measured one frame after reveal triggers a "size increased" re-scroll
-      // (the down-then-back jump). Without it, the window is measured while
-      // hidden and reveal waits until scroll-to-LAST settles on real sizes.
-      skipAnimationFrameInResizeObserver
-      itemContent={itemContent}
-      computeItemKey={computeItemKey}
-      followOutput={followOutput}
-      atBottomStateChange={wrappedHandleAtBottomChange}
-      rangeChanged={wrappedHandleRangeChanged}
-      startReached={handleStartReached}
-      endReached={handleEndReached}
-      atBottomThreshold={30}
-      // Overscan budget (px) of off-screen rows kept mounted so fast scrolling
-      // doesn't outrun mount+measure and flash blank rows. This is a fixed pixel
-      // budget, not a row count, so the mounted-DOM ceiling stays
-      // viewport + top + bottom regardless of stream length — large streams keep
-      // their OOM protection. Upthread reading dominates, so top is larger.
-      // Deliberately small: a larger window mounts more heavy message DOM
-      // (ProseMirror content, link previews) than fast scrolling can absorb and
-      // janks on real-world data. Smooth fast-scroll comes from prefetching
-      // older pages early (EVENT_PREFETCH_DISTANCE), not a huge mounted window.
-      increaseViewportBy={{ top: 2400, bottom: 1200 }}
-      components={components}
-      {...batchPointerHandlers}
-    />
+    // Remount per stream (keyed) so all scroll state — the owned scroller, the
+    // useTimelineScroll ResizeObserver, the deep-link jump latch — resets on a
+    // switch and the new stream mounts already-populated at its tail.
+    //
+    // During the cold-load settle the scroller is mounted (so virtua can measure
+    // item heights) but masked by a skeleton overlay, so the measurement bounce
+    // happens off-screen; the hook flips `isInitialSettling` false once the
+    // height stabilises. The overlay is pointer-events-none so an eager scroll
+    // still reaches the scroller (which aborts the settle and reveals at once).
+    <>
+      <div
+        key={streamId}
+        ref={registerScroller}
+        className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
+        style={{ overflowAnchor: "none" }}
+        data-suppress-pull-refresh="true"
+        onScroll={handleScroll}
+        {...batchPointerHandlers}
+      >
+        <div ref={contentRef}>
+          <div ref={topSpacerRef}>{reservedTopSpacer ? <BarTopSpacer /> : <StreamHeaderSpacer />}</div>
+          <Virtualizer
+            ref={listRef}
+            scrollRef={scrollerRef}
+            startMargin={startMargin}
+            // Maintain scroll from the end when an older page is prepended so the
+            // viewport doesn't move — the core reverse-infinite-scroll fix.
+            shift={shift}
+            // Off-screen px kept mounted so fast scrolling doesn't outrun
+            // mount+measure and flash blank rows. Deliberately modest: heavy
+            // message DOM (ProseMirror, link previews) janks with a large window;
+            // smooth fast-scroll comes from prefetching pages early, not overscan.
+            bufferSize={1000}
+          >
+            {visibleItems.map((item) => (
+              <div key={getTimelineItemKey(item)} className="relative mx-auto max-w-[800px]">
+                <TimelineItemContent item={item} ctx={renderCtx} />
+              </div>
+            ))}
+          </Virtualizer>
+          <ComposerFooterSpacer />
+        </div>
+      </div>
+      {isInitialSettling && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 z-10 bg-background">
+          {skeleton}
+        </div>
+      )}
+    </>
   )
 }
 
 // Spacer reserving room for the floating composer pill, so the most recent
-// message sits visually offset above the pill at rest and `atBottom` accounts
-// for the composer's height (Virtuoso treats Footer as content).
+// message sits visually offset above the pill at rest and the at-bottom edge
+// accounts for the composer's height.
 const StreamHeaderSpacer = () => <div className="h-3 sm:h-6" aria-hidden />
 
 const ComposerFooterSpacer = () => <div aria-hidden style={{ height: "var(--composer-height, 0px)" }} />
 
-// 44px scrollable spacer used as Virtuoso's Header while the search or
-// batch-selection bar is open. Both bars render `absolute top-0` outside the
-// scroller; Header reserves matching room *inside* the scroller so the
-// topmost item never sits permanently underneath either bar. h-11 keeps the
-// numbers aligned with `StreamSearchBar` / `BatchSelectionBar`.
+// 44px scrollable spacer reserved at the top while the search or batch-selection
+// bar is open. Both bars render `absolute top-0` outside the scroller; this
+// reserves matching room *inside* it so the topmost item never sits permanently
+// underneath either bar. h-11 keeps the numbers aligned with `StreamSearchBar` /
+// `BatchSelectionBar`.
 const BarTopSpacer = () => <div aria-hidden className="h-11" />
 
 /**

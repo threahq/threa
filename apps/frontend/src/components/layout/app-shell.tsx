@@ -212,6 +212,14 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     sidebarTransform = isOpen ? "translate-x-0" : "-translate-x-full"
   }
 
+  // No transition on the height: animating it relayouts the app (and re-pins
+  // the virtualized timeline) every frame, which mobile GPUs can't hold at
+  // 60fps. Keyboard open/close snaps the layout in one step instead — the
+  // optimistic focusout restore in useVisualViewport makes the close step
+  // land immediately rather than after the browser reports the new viewport.
+  // Deliberately NOT will-change/composited: promoting the shell to its own
+  // layer forced a full re-raster of the whole app on every keyboard snap,
+  // which blacked the screen out for hundreds of ms on mobile GPUs.
   return (
     <div className="flex w-screen flex-col overflow-hidden" style={{ height: "var(--viewport-height, 100dvh)" }}>
       {/* Pull-to-refresh container — pulling anywhere (sidebar or main content)

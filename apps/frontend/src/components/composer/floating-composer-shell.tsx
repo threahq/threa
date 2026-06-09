@@ -19,7 +19,16 @@ interface FloatingComposerShellProps {
 
 export function FloatingComposerShell({ hidden = false, children, ref, ...rest }: FloatingComposerShellProps) {
   return (
-    <div ref={ref} {...rest} className={hidden ? "hidden" : "pointer-events-none absolute inset-x-0 bottom-0 z-20"}>
+    // will-change: the keyboard-close restore lays the composer out below the
+    // still-visible keyboard, outside the window, where browsers don't
+    // rasterize — without its own (small) compositor layer it painted in
+    // late as the keyboard slid away. Scoped here on purpose; the same hint
+    // on the whole app shell forced full-app re-rasters and was far worse.
+    <div
+      ref={ref}
+      {...rest}
+      className={hidden ? "hidden" : "pointer-events-none absolute inset-x-0 bottom-0 z-20 will-change-transform"}
+    >
       <div className="pointer-events-auto pt-3 px-3 pb-3 sm:pt-6 sm:px-6 sm:pb-4 mx-auto max-w-[800px] w-full min-w-0">
         {children}
       </div>

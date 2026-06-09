@@ -22,6 +22,9 @@ interface GiphyImageProps {
 // returns — both of which start a fresh backoff cycle.
 const MAX_RETRIES = 5
 const RETRY_BASE_MS = 500
+/** Reserved height (px, = Tailwind h-48) for a GIF whose dimensions we don't
+ *  know, so its row never collapses to ~0 and pop open on decode. */
+const FALLBACK_HEIGHT_CLASS = "h-48"
 
 /** Append a cache-busting param so a reload forces a fresh CDN fetch. */
 function withReloadParam(url: string, token: number): string {
@@ -42,11 +45,15 @@ function withReloadParam(url: string, token: number): string {
  * transient CDN hiccup doesn't drop the asset until the next page refresh.
  */
 export function GiphyImage({ url, title, className, width, height }: GiphyImageProps) {
-  // Reserve the GIF's box before its bytes decode. Without intrinsic dimensions
-  // the <img> lays out at ~0 height and grows to the decoded height on load,
-  // shifting every message below it — the "timeline jumps on load" report. With
-  // the width/height attributes plus an explicit aspect-ratio the browser
-  // reserves the (height-capped) box up front, so load is a no-reflow swap.
+  // Reserve the GIF's box before its bytes decode, so loading it never shifts
+  // the messages below — the "GIF loads in collapsed then opens" report.
+  //   - Dimensions known (picker inserts; new `giphy:` refs carry `?w=&h=`):
+  //     pin width/height + an explicit aspect-ratio (height-capped) so the GIF
+  //     lands at its true size with no reflow.
+  //   - Dimensions unknown (legacy embeds): there is no aspect to reserve, so
+  //     fix the HEIGHT — the same trick the image link-preview uses (`h-32`) —
+  //     and let only the width fill in on decode. The row height is stable from
+  //     first paint; the GIF fills in horizontally instead of expanding down.
   const hasDimensions = typeof width === "number" && typeof height === "number" && width > 0 && height > 0
   // Monotonic token: drives the <img> key and cache-bust param so every reload
   // is a genuinely fresh request rather than a reuse of the failed response.
@@ -132,7 +139,10 @@ export function GiphyImage({ url, title, className, width, height }: GiphyImageP
         width={hasDimensions ? width : undefined}
         height={hasDimensions ? height : undefined}
         onError={handleError}
-        className="block max-h-64 w-auto max-w-full rounded-item"
+        className={cn(
+          "block w-auto max-w-full rounded-item",
+          hasDimensions ? "max-h-64" : `${FALLBACK_HEIGHT_CLASS} object-contain`
+        )}
         style={hasDimensions ? { aspectRatio: `${width} / ${height}` } : undefined}
       />
       <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-white/85 backdrop-blur-sm">

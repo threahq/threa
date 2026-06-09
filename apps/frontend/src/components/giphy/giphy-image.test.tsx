@@ -103,13 +103,19 @@ describe("GiphyImage — load reliability", () => {
     expect(img.getAttribute("width")).toBe("480")
     expect(img.getAttribute("height")).toBe("270")
     expect(img.style.aspectRatio).toBe("480 / 270")
+    expect(img.className).toContain("max-h-64")
+    expect(img.className).not.toContain("h-48")
   })
 
-  it("omits dimension hints when none are known (legacy embeds) so nothing distorts", () => {
+  it("reserves a fixed height for legacy embeds (no dimensions) so the row never collapses", () => {
+    // Without `?w=&h=` there is no aspect to reserve; a fixed height keeps the
+    // row stable from first paint so the GIF fills in horizontally instead of
+    // collapsing to ~0 and popping open on decode.
     render(<GiphyImage url={GIF_URL} title="dance" />)
     const img = getImg()
     expect(img.getAttribute("width")).toBeNull()
     expect(img.getAttribute("height")).toBeNull()
     expect(img.style.aspectRatio).toBe("")
+    expect(img.className).toContain("h-48")
   })
 })

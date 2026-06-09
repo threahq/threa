@@ -6,6 +6,35 @@ const KEYBOARD_THRESHOLD = 100
 /** How long to poll visualViewport after focus changes to catch keyboard animation (ms) */
 const POLL_DURATION = 600
 
+/**
+ * Debounce (ms) for *growth* of `--viewport-height`. Chrome on Android steps
+ * `visualViewport.height` through several intermediate values while the
+ * keyboard closes — including a transient overshoot past the real viewport
+ * (753px reported on a 725px screen) — and writing each one into layout makes
+ * the close a multi-step stutter and briefly sizes the app taller than the
+ * screen, pushing the bottom-anchored composer below the fold. Growth is never
+ * urgent (while the value moves, the closing keyboard still covers the area
+ * the app hasn't reclaimed), so wait for it to hold still and apply the final
+ * height once — the same single-step resize Firefox performs natively.
+ * Shrink stays synchronous: deferring it leaves the composer hidden behind
+ * the rising keyboard while the user is about to type.
+ */
+const GROWTH_DEBOUNCE_MS = 150
+
+/**
+ * How long after an optimistic keyboard-close restore to freeze ALL height
+ * writes. A focusout that leaves no editable focused means the keyboard IS
+ * closing — waiting for the browser's chunked viewport reports (plus the
+ * growth debounce) made the composer trail the keyboard by several hundred
+ * ms, so the height is restored to the baseline immediately, and every value
+ * the browser reports during its close animation (keyboard-open shrinks AND
+ * the transient past-the-screen growth overshoot) is ignored. When the
+ * window expires — the keyboard is certainly done — one reconcile measurement
+ * applies any genuinely different settle. A real keyboard open clears the
+ * freeze instantly via the editable focusin handler.
+ */
+const OPTIMISTIC_CLOSE_SUPPRESS_MS = 500
+
 /** CSS custom property AppShell reads to size the app to the visible viewport */
 const VIEWPORT_HEIGHT_VAR = "--viewport-height"
 
@@ -60,8 +89,25 @@ export function useVisualViewport(enabled: boolean): boolean {
     // writes during the rAF poll loop and avoid invalidating every consumer
     // of the custom property on frames where nothing actually changed.
     let lastWrittenHeight = Number.NaN
+    // Growth target currently waiting out the settle debounce (NaN when none).
+    // Tracked so the poll loop — which calls update() every frame with the
+    // same value — doesn't reset the timer and starve the debounce; only a
+    // *changed* target reschedules it.
+    let pendingGrowthHeight = Number.NaN
+    let growthTimerId = 0
+    // Until this timestamp, ALL height writes are frozen (see the optimistic
+    // keyboard-close restore in onEditableFocusChange). Both directions, on
+    // purpose: mid-close Chrome reports keyboard-open heights (a shrink that
+    // would yank the restored height back down) AND a transient overshoot
+    // past the real screen (a growth that pushed the composer below the fold,
+    // whose shrink-correction the window then delayed — the "lands wrong,
+    // settles later" close jump). The reconcile timeout below applies one
+    // fresh measurement when the window expires.
+    let suppressWritesUntil = 0
+    let optimisticCloseTimeoutId = 0
+    let reconcileTimeoutId = 0
 
-    const update = () => {
+    const measureEffectiveHeight = () => {
       const vvHeight = vv ? vv.height : window.innerHeight
 
       // The OS keyboard for this page can only appear when an editable element
@@ -77,7 +123,22 @@ export function useVisualViewport(enabled: boolean): boolean {
       // stays put until the phantom resolves.
       const editableFocused = isEditableFocused()
       const looksLikePhantomShrink = !!vv && !editableFocused && vvHeight < window.innerHeight - KEYBOARD_THRESHOLD
-      const effectiveHeight = looksLikePhantomShrink ? window.innerHeight : vvHeight
+      return looksLikePhantomShrink ? window.innerHeight : vvHeight
+    }
+
+    const applyHeight = (px: number) => {
+      docEl.style.setProperty(VIEWPORT_HEIGHT_VAR, `${px}px`)
+      lastWrittenHeight = px
+    }
+
+    const cancelPendingGrowth = () => {
+      clearTimeout(growthTimerId)
+      pendingGrowthHeight = Number.NaN
+    }
+
+    const update = () => {
+      const effectiveHeight = measureEffectiveHeight()
+      const frozen = performance.now() < suppressWritesUntil
 
       // Primary: visual viewport smaller than layout viewport (Chrome, Safari)
       let keyboardOpen = vv ? effectiveHeight < window.innerHeight - KEYBOARD_THRESHOLD : false
@@ -87,8 +148,17 @@ export function useVisualViewport(enabled: boolean): boolean {
         keyboardOpen = effectiveHeight < baseHeight.current - KEYBOARD_THRESHOLD
       }
 
-      // Update baseline when keyboard is confirmed closed
-      if (!keyboardOpen) {
+      // During an optimistic close freeze the keyboard is closed as far as
+      // layout is concerned, even while the browser still reports the
+      // animating values — otherwise consumers of the boolean (the safe-area
+      // bottom padding) flip a beat after the height snap and the composer
+      // sits flush against the screen edge until the padding pops back in.
+      if (frozen) {
+        keyboardOpen = false
+      } else if (!keyboardOpen) {
+        // Update baseline when keyboard is confirmed closed. Never inside the
+        // freeze: mid-close the (clamped) innerHeight is still keyboard-sized
+        // and would corrupt the baseline the restore just committed to.
         baseHeight.current = window.innerHeight
       }
 
@@ -97,10 +167,34 @@ export function useVisualViewport(enabled: boolean): boolean {
       // "URL-bar hidden" value across reloads, pull-to-refresh, and BFCache
       // restores and leaves the app taller than the visible viewport until
       // something (keyboard, URL bar animation, orientation change) forces a
-      // re-layout.
-      if (effectiveHeight !== lastWrittenHeight) {
-        docEl.style.setProperty(VIEWPORT_HEIGHT_VAR, `${effectiveHeight}px`)
-        lastWrittenHeight = effectiveHeight
+      // re-layout. Shrink applies synchronously (keyboard opening must reveal
+      // the composer immediately); growth waits out GROWTH_DEBOUNCE_MS so
+      // Chrome Android's chunked keyboard-close values — and its transient
+      // past-the-screen overshoot — collapse into one final write. During an
+      // optimistic close window nothing is written at all (see
+      // suppressWritesUntil above); the booleans still update.
+      if (frozen) {
+        // fall through to the keyboard-open state update below
+      } else if (effectiveHeight !== lastWrittenHeight) {
+        if (Number.isNaN(lastWrittenHeight) || effectiveHeight < lastWrittenHeight) {
+          cancelPendingGrowth()
+          applyHeight(effectiveHeight)
+        } else if (effectiveHeight !== pendingGrowthHeight) {
+          cancelPendingGrowth()
+          pendingGrowthHeight = effectiveHeight
+          growthTimerId = window.setTimeout(() => {
+            pendingGrowthHeight = Number.NaN
+            // Re-measure at fire time: the keyboard may have settled on a
+            // different final value than the chunk that scheduled this (the
+            // overshoot settles back down without always emitting a resize).
+            const settled = measureEffectiveHeight()
+            if (settled !== lastWrittenHeight) applyHeight(settled)
+          }, GROWTH_DEBOUNCE_MS)
+        }
+      } else {
+        // Height returned to the already-written value before the debounce
+        // elapsed — the growth was transient; nothing to apply.
+        cancelPendingGrowth()
       }
 
       // Only update React state when the boolean actually changes
@@ -144,9 +238,42 @@ export function useVisualViewport(enabled: boolean): boolean {
     // opening (focusin) and closing (focusout), which can each animate for
     // several frames without emitting discrete resize events.
     const onEditableFocusChange = (e: FocusEvent) => {
-      if (e.target instanceof HTMLElement && isEditable(e.target)) {
-        pollForDuration(POLL_DURATION)
+      if (!(e.target instanceof HTMLElement && isEditable(e.target))) return
+      if (e.type === "focusin") {
+        // A real keyboard open must shrink immediately — end any optimistic
+        // close window from a preceding blur.
+        suppressWritesUntil = 0
+        clearTimeout(reconcileTimeoutId)
+      } else {
+        // The keyboard is closing. Restore the full height NOW so the close
+        // animation runs with the keyboard slide, instead of trailing the
+        // browser's chunked viewport reports (+ growth debounce) by several
+        // hundred ms. Deferred one task so a focus hop between editables
+        // (composer → search) lands first and skips the restore; the
+        // height-vs-baseline guard skips it when no keyboard was open.
+        clearTimeout(optimisticCloseTimeoutId)
+        optimisticCloseTimeoutId = window.setTimeout(() => {
+          if (isEditableFocused()) return
+          if (baseHeight.current > lastWrittenHeight) {
+            cancelPendingGrowth()
+            suppressWritesUntil = performance.now() + OPTIMISTIC_CLOSE_SUPPRESS_MS
+            applyHeight(baseHeight.current)
+            // The keyboard-state boolean snaps with the height (the safe-area
+            // padding it gates must land in the same relayout).
+            setIsKeyboardOpen(false)
+            // One reconcile when the freeze expires: by then the keyboard has
+            // fully closed, so a single fresh measurement either confirms the
+            // restored baseline (the usual case — no movement) or applies a
+            // genuinely different settle (URL bar moved during the close).
+            clearTimeout(reconcileTimeoutId)
+            reconcileTimeoutId = window.setTimeout(() => {
+              const settled = measureEffectiveHeight()
+              if (settled !== lastWrittenHeight) applyHeight(settled)
+            }, OPTIMISTIC_CLOSE_SUPPRESS_MS)
+          }
+        }, 0)
       }
+      pollForDuration(POLL_DURATION)
     }
 
     // Re-measure when the page is restored (BFCache restore, tab refocus).
@@ -175,6 +302,9 @@ export function useVisualViewport(enabled: boolean): boolean {
       cancelAnimationFrame(pollRafId.current)
       cancelAnimationFrame(scrollRafId.current)
       clearTimeout(settleTimeoutId.current)
+      clearTimeout(optimisticCloseTimeoutId)
+      clearTimeout(reconcileTimeoutId)
+      cancelPendingGrowth()
       if (vv) {
         vv.removeEventListener("resize", update)
         vv.removeEventListener("scroll", onScroll)
