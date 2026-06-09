@@ -47,7 +47,13 @@ export function GiphyImage({ url, title, className, width, height }: GiphyImageP
   // shifting every message below it — the "timeline jumps on load" report. With
   // the width/height attributes plus an explicit aspect-ratio the browser
   // reserves the (height-capped) box up front, so load is a no-reflow swap.
-  const hasDimensions = typeof width === "number" && typeof height === "number" && width > 0 && height > 0
+  const hasProvidedDimensions = typeof width === "number" && typeof height === "number" && width > 0 && height > 0
+  // Legacy GIFs (sent before dimensions rode the `giphy:` ref) carry no size, so
+  // there is nothing to reserve and they collapse-then-pop on load. Capture the
+  // decoded natural size on first load and reserve from it thereafter, so the
+  // row settles to a stable height (which virtua then caches) instead of
+  // flickering on every (re)mount as the user scrolls it back into view.
+  const [measured, setMeasured] = useState<{ width: number; height: number } | null>(null)
   // Monotonic token: drives the <img> key and cache-bust param so every reload
   // is a genuinely fresh request rather than a reuse of the failed response.
   const [reloadToken, setReloadToken] = useState(0)
@@ -57,6 +63,11 @@ export function GiphyImage({ url, title, className, width, height }: GiphyImageP
   const [failed, setFailed] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const reservedWidth = hasProvidedDimensions ? width : measured?.width
+  const reservedHeight = hasProvidedDimensions ? height : measured?.height
+  const hasDimensions =
+    typeof reservedWidth === "number" && typeof reservedHeight === "number" && reservedWidth > 0 && reservedHeight > 0
+
   const clearTimer = () => {
     if (timerRef.current) {
       clearTimeout(timerRef.current)
@@ -64,12 +75,13 @@ export function GiphyImage({ url, title, className, width, height }: GiphyImageP
     }
   }
 
-  // Reset retry state whenever the GIF source changes, and clear any pending
-  // retry on unmount.
+  // Reset retry + measured state whenever the GIF source changes, and clear any
+  // pending retry on unmount.
   useEffect(() => {
     setReloadToken(0)
     setRetries(0)
     setFailed(false)
+    setMeasured(null)
     return clearTimer
   }, [url])
 
@@ -85,6 +97,14 @@ export function GiphyImage({ url, title, className, width, height }: GiphyImageP
     window.addEventListener("online", onOnline)
     return () => window.removeEventListener("online", onOnline)
   }, [failed])
+
+  const handleLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    if (hasProvidedDimensions || measured) return
+    const img = event.currentTarget
+    if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+      setMeasured({ width: img.naturalWidth, height: img.naturalHeight })
+    }
+  }
 
   const handleError = () => {
     if (retries >= MAX_RETRIES) {
@@ -129,11 +149,12 @@ export function GiphyImage({ url, title, className, width, height }: GiphyImageP
         src={withReloadParam(url, reloadToken)}
         alt={title || "GIF"}
         loading="lazy"
-        width={hasDimensions ? width : undefined}
-        height={hasDimensions ? height : undefined}
+        width={hasDimensions ? reservedWidth : undefined}
+        height={hasDimensions ? reservedHeight : undefined}
+        onLoad={handleLoad}
         onError={handleError}
         className="block max-h-64 w-auto max-w-full rounded-item"
-        style={hasDimensions ? { aspectRatio: `${width} / ${height}` } : undefined}
+        style={hasDimensions ? { aspectRatio: `${reservedWidth} / ${reservedHeight}` } : undefined}
       />
       <span className="pointer-events-none absolute bottom-1.5 right-1.5 rounded-md bg-black/55 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-white/85 backdrop-blur-sm">
         GIPHY

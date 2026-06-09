@@ -112,4 +112,24 @@ describe("GiphyImage — load reliability", () => {
     expect(img.getAttribute("height")).toBeNull()
     expect(img.style.aspectRatio).toBe("")
   })
+
+  it("reserves the box from the decoded natural size when no dimensions were stored", () => {
+    // Legacy embeds carry no `?w=&h=`; capturing the natural size on first
+    // decode lets the row settle to a stable height (no more collapse-then-pop
+    // each time it scrolls back into view).
+    render(<GiphyImage url={GIF_URL} title="dance" />)
+    const img = getImg()
+    expect(img.style.aspectRatio).toBe("")
+
+    Object.defineProperty(img, "naturalWidth", { value: 320, configurable: true })
+    Object.defineProperty(img, "naturalHeight", { value: 240, configurable: true })
+    act(() => {
+      fireEvent.load(img)
+    })
+
+    const reserved = getImg()
+    expect(reserved.getAttribute("width")).toBe("320")
+    expect(reserved.getAttribute("height")).toBe("240")
+    expect(reserved.style.aspectRatio).toBe("320 / 240")
+  })
 })
