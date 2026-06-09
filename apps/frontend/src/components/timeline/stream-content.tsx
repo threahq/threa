@@ -880,7 +880,6 @@ export function StreamContent({
   // exists to prevent).
   const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
   virtualScrollToBottomRef.current = virtualScrollToBottom
-  const composerResizeTimerRef = useRef<number | undefined>(undefined)
   const handleComposerHeightChange = useCallback(
     (px: number, opts: { initial: boolean }) => {
       scrollDebug("composerHeightChange", {
@@ -888,24 +887,21 @@ export function StreamContent({
         initial: opts.initial,
         following: isFollowingTailRef.current,
       })
-      window.clearTimeout(composerResizeTimerRef.current)
-      if (opts.initial) {
-        if (!skipInitialScroll && !isJumpMode) {
-          virtualScrollToBottomRef.current({ force: true })
-          requestAnimationFrame(() => virtualScrollToBottomRef.current({ force: true }))
-        }
-        return
+      // Cold load only: correct the approximate persisted footer height
+      // synchronously (pre-paint) so the list reveals already pinned to the true
+      // bottom. Later height changes — composer expand/collapse, keyboard
+      // transitions — are re-pinned by the timeline's own ResizeObserver while
+      // following, in phase with the layout. A second debounced scrollToBottom
+      // here fired ~120ms after the height settled, out of phase with the
+      // animation, and showed as a staged "jump down then correct" when the
+      // composer collapsed on blur at the same time the keyboard hid.
+      if (opts.initial && !skipInitialScroll && !isJumpMode) {
+        virtualScrollToBottomRef.current({ force: true })
+        requestAnimationFrame(() => virtualScrollToBottomRef.current({ force: true }))
       }
-      composerResizeTimerRef.current = window.setTimeout(() => {
-        scrollDebug("composerHeightChange debounced -> scrollToBottom()", {
-          following: isFollowingTailRef.current,
-        })
-        virtualScrollToBottomRef.current()
-      }, 120)
     },
     [isJumpMode, skipInitialScroll, isFollowingTailRef]
   )
-  useEffect(() => () => window.clearTimeout(composerResizeTimerRef.current), [])
 
   // Scroll to a specific message and keep re-scrolling until the target
   // element is actually visible in the scroller viewport. Items rendered
