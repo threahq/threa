@@ -76,8 +76,6 @@ import { useStreamSearch } from "@/hooks/use-stream-search"
 import { useSearchHighlight } from "@/hooks/use-search-highlight"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { addStartBatchSelectListener } from "@/lib/batch-selection-events"
-import { scrollDebug } from "@/lib/scroll-debug"
-import { ScrollDebugHud } from "./scroll-debug-hud"
 
 /** Membership events; suppressed in threads (see displayEvents memo). */
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
@@ -872,13 +870,12 @@ export function StreamContent({
   const virtualScrollToBottomRef = useRef(virtualScrollToBottom)
   virtualScrollToBottomRef.current = virtualScrollToBottom
   const handleComposerHeightChange = useCallback(
-    (px: number, opts: { initial: boolean }) => {
-      scrollDebug("composerHeightChange", { px, initial: opts.initial, following: isFollowingTailRef.current })
+    (_px: number, opts: { initial: boolean }) => {
       if (opts.initial && !skipInitialScroll && !isJumpMode) {
         virtualScrollToBottomRef.current({ force: true })
       }
     },
-    [isJumpMode, skipInitialScroll, isFollowingTailRef]
+    [isJumpMode, skipInitialScroll]
   )
 
   // Scroll to a specific message and keep re-scrolling until the target
@@ -1391,7 +1388,6 @@ export function StreamContent({
       <QuoteReplyProvider>
         <SharedMessagesProvider map={mergedSharedMessages}>
           <TextSelectionQuote streamId={streamId} />
-          <ScrollDebugHud scrollerRef={virtualScrollerRef} isFollowingTailRef={isFollowingTailRef} />
           <div className="relative h-full">
             <div className="absolute inset-0 overflow-hidden">
               {isSearchOpen && (

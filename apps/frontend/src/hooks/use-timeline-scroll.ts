@@ -1,6 +1,5 @@
 import { useRef, useState, useCallback, useEffect, useLayoutEffect } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { scrollDebug } from "@/lib/scroll-debug"
 
 /** Distance (px) from the bottom within which we treat the list as "at bottom". */
 const AT_BOTTOM_PX = 32
@@ -243,11 +242,7 @@ export function useTimelineScroll({
 
   const scrollToBottom = useCallback(
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
-      if (!options?.force && !isFollowingTailRef.current) {
-        scrollDebug("scrollToBottom skipped (not following, no force)", { force: options?.force })
-        return
-      }
-      scrollDebug("scrollToBottom", { force: options?.force, wasFollowing: isFollowingTailRef.current })
+      if (!options?.force && !isFollowingTailRef.current) return
       isFollowingTailRef.current = true
       setIsScrolledFarFromBottom(false)
       const el = scrollerRef.current
@@ -372,7 +367,6 @@ export function useTimelineScroll({
     // stays armed through a keyboard open. Content growth never lowers scrollTop,
     // and our own pins sync prevTop, so neither reads as scrolledUp.
     const userScrolledUp = scrolledUp && userGestured
-    const wasFollowing = isFollowingTailRef.current
     if (atBottom && !userScrolledUp) {
       // Reaching the tail re-arms follow — except in jump mode, where the user
       // is anchored on a deep-linked message and a transient atBottom from
@@ -389,19 +383,6 @@ export function useTimelineScroll({
     // While following we're effectively at the tail (the observer re-pins), so
     // never surface jump-to-latest; only when the user has actually scrolled up.
     setIsScrolledFarFromBottom(!isFollowingTailRef.current && distanceFromBottom > JUMP_TO_LATEST_PX)
-    if (wasFollowing !== isFollowingTailRef.current) {
-      scrollDebug(`follow ${isFollowingTailRef.current ? "ARMED" : "DISARMED"} (handleScroll)`, {
-        dist: Math.round(distanceFromBottom),
-        atBottom,
-        scrolledUp,
-        userGestured,
-        composerH: Math.round(composerH),
-        prevTop: Math.round(prevTop),
-        st: el.scrollTop,
-        sh: el.scrollHeight,
-        ch: el.clientHeight,
-      })
-    }
   }, [isJumpMode, userInteractedAtRef])
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
@@ -467,13 +448,6 @@ export function useTimelineScroll({
           prevClientHeight = el.clientHeight
           return
         }
-        scrollDebug("RO pin (following)", {
-          viewportEntry: hasViewportEntry,
-          ch: el.clientHeight,
-          prevCh: prevClientHeight,
-          sh: el.scrollHeight,
-          st: el.scrollTop,
-        })
         pinToBottom()
         prevClientHeight = el.clientHeight
         return
@@ -485,7 +459,6 @@ export function useTimelineScroll({
       const delta = prevClientHeight - clientHeight
       prevClientHeight = clientHeight
       if (delta !== 0) {
-        scrollDebug("RO viewport-delta (not following)", { delta, ch: clientHeight, st: el.scrollTop })
         el.scrollTop += delta
         prevScrollTopRef.current = el.scrollTop
         prevScrollHeightRef.current = el.scrollHeight
