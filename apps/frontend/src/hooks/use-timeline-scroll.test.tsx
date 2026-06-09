@@ -338,3 +338,26 @@ describe("useTimelineScroll — observer attaches when the scroller mounts late"
     }
   })
 })
+
+describe("useTimelineScroll — gesture stamp attaches when the scroller mounts late", () => {
+  it("stamps userInteractedAtRef on a wheel gesture only once the scroller is registered", () => {
+    // Regression: the genuine-input stamp must attach once the scroller mounts
+    // (it renders behind the loading skeleton, so it's null on first commit).
+    // When this lived in an effect keyed on streamId reading scrollerRef.current,
+    // it attached to null on cold loads and never re-ran — the stamp stayed dead,
+    // so userGestured was always false and a deliberate scroll-up inside the band
+    // could never disarm follow, snapping the user back to the tail on any reflow.
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
+
+    // Not registered yet: no listener, so a stray wheel can't stamp.
+    el.dispatchEvent(new Event("wheel"))
+    expect(userInteractedAtRef.current).toBe(0)
+
+    // Scroller mounts via its ref callback → the stamp effect (re-)runs and binds.
+    act(() => harness.current.registerScroller(el))
+    el.dispatchEvent(new Event("wheel"))
+    expect(userInteractedAtRef.current).toBeGreaterThan(0)
+  })
+})

@@ -1435,7 +1435,6 @@ export function StreamContent({
                     scrollerRef={virtualScrollerRef}
                     registerScroller={registerVirtualScroller}
                     contentRef={virtualContentRef}
-                    userInteractedAtRef={userInteractedAtRef}
                     scrollAbortRef={scrollAbortRef}
                     shift={shift}
                     isInitialSettling={virtualIsInitialSettling}
@@ -1662,7 +1661,6 @@ function TimelineMessageList({
   scrollerRef,
   registerScroller,
   contentRef,
-  userInteractedAtRef,
   scrollAbortRef,
   shift,
   isInitialSettling,
@@ -1704,9 +1702,6 @@ function TimelineMessageList({
   registerScroller: (node: HTMLDivElement | null) => void
   /** Inner content wrapper (sized to full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
-  /** Stamp set by long-lived scroller input listeners; read by the outer
-   *  scrollToMessage refine loop so manual scroll always wins. */
-  userInteractedAtRef: React.MutableRefObject<number>
   /** Non-null while a scrollToMessage refine loop is in flight. Programmatic
    *  scroll-into-view must not trigger edge pagination. */
   scrollAbortRef: React.MutableRefObject<(() => void) | null>
@@ -1879,29 +1874,10 @@ function TimelineMessageList({
     return () => cancelAnimationFrame(id)
   }, [visibleItems.length, handleScroll])
 
-  // Long-lived genuine-input stamp on the owned scroller. Listens to
-  // wheel/touch/keydown (real gestures) and NOT `scroll`, so programmatic
-  // scroll-into-view never trips it. Re-attaches per stream (the scroller div
-  // is keyed by streamId below, so it remounts on switch).
-  useEffect(() => {
-    const el = scrollerRef.current
-    if (!el) return
-    const mark = () => {
-      userInteractedAtRef.current = performance.now()
-    }
-    el.addEventListener("wheel", mark, { passive: true })
-    el.addEventListener("touchstart", mark, { passive: true })
-    el.addEventListener("touchmove", mark, { passive: true })
-    el.addEventListener("pointerdown", mark, { passive: true })
-    el.addEventListener("keydown", mark)
-    return () => {
-      el.removeEventListener("wheel", mark)
-      el.removeEventListener("touchstart", mark)
-      el.removeEventListener("touchmove", mark)
-      el.removeEventListener("pointerdown", mark)
-      el.removeEventListener("keydown", mark)
-    }
-  }, [streamId, scrollerRef, userInteractedAtRef])
+  // The genuine-input stamp on the owned scroller lives in useTimelineScroll,
+  // gated on the mounted scroller element — an effect here keyed on streamId
+  // attached to a null ref on cold loads (the scroller mounts behind the
+  // skeleton) and never re-ran, leaving the stamp dead.
 
   // Center the deep-linked target on mount/when it loads. virtua mounts at the
   // top; this anchors it near the target before the scrollToMessage refine loop

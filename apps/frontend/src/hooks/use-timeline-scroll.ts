@@ -519,6 +519,39 @@ export function useTimelineScroll({
     }
   }, [resetKey, pinToBottom, scrollerEl])
 
+  // Genuine-input stamp on the owned scroller. wheel/touch/pointer/keydown are
+  // real user gestures; `scroll` is deliberately NOT listened to (our own
+  // programmatic pins fire it). handleScroll and the observer above read this
+  // stamp to tell a deliberate scroll-up from content growth.
+  //
+  // Gated on the mounted scroller element for the same reason as the observer:
+  // the scroller renders behind the loading skeleton, so an effect reading
+  // scrollerRef.current on first commit attaches to null, and with no dep that
+  // changes when the scroller mounts it never re-runs — the stamp was silently
+  // never attached on any cold load. With the stamp dead, `userGestured` is
+  // always false, so a scroll-up inside the at-bottom band can't disarm follow
+  // and the observer re-pins the user back to the tail on the next content
+  // reflow ("scroll up a little and get snapped back", on reflowing streams).
+  useEffect(() => {
+    const el = scrollerEl
+    if (!el || !userInteractedAtRef) return
+    const mark = () => {
+      userInteractedAtRef.current = performance.now()
+    }
+    el.addEventListener("wheel", mark, { passive: true })
+    el.addEventListener("touchstart", mark, { passive: true })
+    el.addEventListener("touchmove", mark, { passive: true })
+    el.addEventListener("pointerdown", mark, { passive: true })
+    el.addEventListener("keydown", mark)
+    return () => {
+      el.removeEventListener("wheel", mark)
+      el.removeEventListener("touchstart", mark)
+      el.removeEventListener("touchmove", mark)
+      el.removeEventListener("pointerdown", mark)
+      el.removeEventListener("keydown", mark)
+    }
+  }, [scrollerEl, userInteractedAtRef])
+
   // Abort an in-flight cold-load settle when the hook unmounts. Kept separate
   // from the ResizeObserver effect above so that effect can re-run when the
   // scroller attaches or remounts without tearing down a settle that the
