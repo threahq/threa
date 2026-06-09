@@ -98,9 +98,10 @@ export function useTimelineScroll({
   const didInitialScrollRef = useRef(false)
 
   // Timestamp until which scroll events are treated as our own programmatic
-  // snaps (initial scroll, follow re-pin). During that window handleScroll must
-  // not disarm follow: mid-convergence the content is still growing underneath,
-  // so we read as "not at bottom" even though we're chasing it.
+  // snaps (initial scroll, follow re-pin, keyboard transition). During that
+  // window handleScroll must not disarm follow: mid-convergence the content is
+  // still growing underneath, so we read as "not at bottom" even though we're
+  // chasing it.
   const programmaticUntilRef = useRef(0)
 
   // Reset all scroll state synchronously when the stream changes, before the
@@ -188,13 +189,26 @@ export function useTimelineScroll({
 
   // Initial scroll-to-bottom once the first window is populated. Runs in a
   // layout effect (pre-paint) against the owned scroller so there is no visible
-  // jump from the top. The content ResizeObserver below keeps it pinned as
-  // virtua measures real item heights.
+  // jump from the top.
+  //
+  // On a cold load virtua has only measured the top window; the rest are size
+  // estimates, so scrollTop = scrollHeight alone undershoots (the "lands a
+  // couple pages up" bug). scrollToIndex(last) makes virtua render + measure
+  // the bottom region first; the content ResizeObserver below then converges
+  // scrollTop = scrollHeight (footer-inclusive, browser-clamped) to the true
+  // bottom. scrollToIndex is used ONLY here — once the bottom is measured (the
+  // tail, the jump-to-latest button, keyboard re-pins) plain scrollTop suffices,
+  // and scrollToIndex would wrongly park the last message under the composer.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
     if (!scrollerRef.current) return
     isFollowingTailRef.current = true
     didInitialScrollRef.current = true
+    try {
+      listRef.current?.scrollToIndex(itemCount - 1, { align: "end" })
+    } catch {
+      // Not-yet-measured list can throw; the ResizeObserver snap still converges.
+    }
     snapToBottom()
   }, [itemCount, skipInitialScroll, resetKey, snapToBottom])
 
@@ -238,8 +252,29 @@ export function useTimelineScroll({
 
     observer.observe(scroller)
     observer.observe(content)
-    return () => observer.disconnect()
-  }, [resetKey])
+
+    // The on-screen keyboard shrinks the app to `--viewport-height` (see
+    // useVisualViewport), which usually shrinks the scroller and fires the
+    // ResizeObserver above. But on some mobile browsers the keyboard overlays
+    // without a layout resize, so the observer never fires and the last message
+    // stays hidden behind the composer/keyboard. Listen to visualViewport
+    // directly as the reliable trigger: protect follow through the transition,
+    // and re-pin to the bottom (next frame, once layout settles) if following.
+    const vv = window.visualViewport
+    const onViewportResize = () => {
+      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+      if (!isFollowingTailRef.current) return
+      requestAnimationFrame(() => {
+        if (isFollowingTailRef.current) snapToBottom()
+      })
+    }
+    vv?.addEventListener("resize", onViewportResize)
+
+    return () => {
+      observer.disconnect()
+      vv?.removeEventListener("resize", onViewportResize)
+    }
+  }, [resetKey, snapToBottom])
 
   return {
     listRef,
