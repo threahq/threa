@@ -809,7 +809,6 @@ export function StreamContent({
     isScrolledFarFromBottom: virtualIsScrolledFar,
     isInitialSettling: virtualIsInitialSettling,
     scrollToBottom: virtualScrollToBottom,
-    pinAcrossSettle: virtualPinAcrossSettle,
     disableAutoScroll: virtualDisableAutoScroll,
     isFollowingTailRef,
     handleScroll: handleVirtualScroll,
@@ -851,30 +850,19 @@ export function StreamContent({
   const scrollToBottom = useVirtualized ? virtualScrollToBottom : plainScrollToBottom
   const disableAutoScroll = useVirtualized ? virtualDisableAutoScroll : plainDisableAutoScroll
 
-  // Re-anchor the virtualized list to the bottom when the floating composer
-  // settles to a new height. The footer spacer that keeps the last message
-  // above the composer is sized from `--composer-height`, but Virtuoso freezes
-  // its scrollTop when that spacer grows (followOutput only reacts to new
-  // items; the resize safety-net only watches the scroller's own height). So a
-  // composer that lands taller a few frames after a message arrives (its 200ms
-  // height transition, async encryption notice / attachment chips) covers the
-  // bottom of the last message until the next reload. virtualScrollToBottom
-  // self-guards on isAtBottomRef, so this is a no-op unless the user is parked
-  // at the live tail (never fires during a deep-link jump or while scrolled up
-  // reading). The plain-scroll (thread/draft) path needs none of this: its
-  // `padding-bottom` reflows the content so the bottom row is never frozen
-  // behind the composer.
+  // Correct the bottom anchor on the composer's *first* measurement, before
+  // paint. The list first scrolled to LAST against the approximate persisted
+  // footer height; when the real composer differs (cold boot with a restored
+  // draft, density/zoom change) the footer spacer resizes, so we re-pin
+  // synchronously in the same frame the list reveals — no visible jump.
   //
-  // Two arrival paths, handled differently:
-  //  - `initial`: the composer's first measurement, fired from a layout effect
-  //    *before paint*. The list first scrolled to LAST against the approximate
-  //    persisted footer height; when the real composer differs (cold boot with
-  //    a restored draft, density/zoom change) we correct it synchronously here,
-  //    in the same frame the list reveals, so there is no visible jump.
-  //  - runtime changes: arrive async from the ResizeObserver after paint (the
-  //    200ms height transition, attachment chips settling). Debounced so the
-  //    snap lands once after the transition settles rather than fighting
-  //    Virtuoso's reflow on every intermediate frame.
+  // Runtime composer changes (focus expand, blur collapse, attachment chips,
+  // the 200ms height transition) are deliberately NOT handled here: the footer
+  // spacer lives inside the timeline's content wrapper, so the scroll hook's
+  // content ResizeObserver already re-pins the tail when it resizes. virtua owns
+  // its scroll position now (unlike Virtuoso, which froze on footer growth), so
+  // one mechanism covers it. virtualScrollToBottom self-guards on the follow
+  // flag, so the initial correction is a no-op unless parked at the live tail.
   //
   // Called through a ref so the handler identity stays stable: virtualScrollToBottom
   // is rebuilt on every itemCount change, and a changing prop would re-render
@@ -884,29 +872,12 @@ export function StreamContent({
   virtualScrollToBottomRef.current = virtualScrollToBottom
   const handleComposerHeightChange = useCallback(
     (px: number, opts: { initial: boolean }) => {
-      scrollDebug("composerHeightChange", {
-        px,
-        initial: opts.initial,
-        following: isFollowingTailRef.current,
-      })
-      // Cold load: correct the approximate persisted footer height synchronously
-      // (pre-paint) so the list reveals already pinned to the true bottom.
-      if (opts.initial) {
-        if (!skipInitialScroll && !isJumpMode) {
-          virtualScrollToBottomRef.current({ force: true })
-          requestAnimationFrame(() => virtualScrollToBottomRef.current({ force: true }))
-        }
-        return
+      scrollDebug("composerHeightChange", { px, initial: opts.initial, following: isFollowingTailRef.current })
+      if (opts.initial && !skipInitialScroll && !isJumpMode) {
+        virtualScrollToBottomRef.current({ force: true })
       }
-      // Later height changes are the composer animating: it expands on focus as
-      // the keyboard opens, and collapses to its minimal view on blur as the
-      // keyboard hides. Pin every frame across the settle (only while following)
-      // so the tail rides up in phase as the composer grows and settles smoothly
-      // as it shrinks — instead of a single out-of-phase snap, which followed on
-      // open but staged a jump on close.
-      virtualPinAcrossSettle()
     },
-    [isJumpMode, skipInitialScroll, virtualPinAcrossSettle]
+    [isJumpMode, skipInitialScroll, isFollowingTailRef]
   )
 
   // Scroll to a specific message and keep re-scrolling until the target

@@ -6,14 +6,6 @@ import { scrollDebug } from "@/lib/scroll-debug"
 const AT_BOTTOM_PX = 32
 /** Distance (px) from the bottom past which the "Jump to latest" affordance shows. */
 const JUMP_TO_LATEST_PX = 600
-/** Window (ms) during which scroll events are treated as our own programmatic
- *  snaps and must not disarm follow (covers the initial measure-and-converge). */
-const PROGRAMMATIC_SCROLL_MS = 150
-/** How long the mobile keyboard open/close animates `--viewport-height` (matches
- *  useVisualViewport's poll). We re-pin to the bottom every frame across this
- *  window so the tail tracks the shrinking viewport instead of snapping once
- *  before it settles. */
-const VIEWPORT_SETTLE_MS = 600
 /** A scroll-away-from-bottom only disarms follow if a real user gesture landed
  *  within this window; otherwise it's content growth and the tail re-pins. */
 const USER_SCROLL_GRACE_MS = 300
@@ -54,11 +46,13 @@ interface UseTimelineScrollOptions {
   isJumpMode?: boolean
   /**
    * Timestamp of the last genuine user scroll gesture (wheel/touch/pointer/key)
-   * on the scroller. A scroll away from the bottom only disarms auto-follow when
-   * it was user-driven; content growth (new message, link preview, virtua
+   * on the scroller. A scroll away from the bottom disarms auto-follow when it
+   * was user-driven; content growth (new message, link preview, virtua
    * measuring real heights) moves us off the bottom with no gesture and must NOT
    * disarm follow — otherwise the tail won't re-pin and new messages stop
-   * pushing the view up.
+   * pushing the view up. The scrollTop-delta check below is the primary signal
+   * (it catches the desktop scrollbar, which fires no gesture event); this stamp
+   * is the secondary signal for touch/wheel that hasn't yet moved scrollTop.
    */
   userInteractedAtRef?: React.MutableRefObject<number>
 }
@@ -85,14 +79,6 @@ interface UseTimelineScrollReturn {
   isFollowingTailRef: React.MutableRefObject<boolean>
   /** Imperatively scroll to the very bottom (the composer-spacer edge). */
   scrollToBottom: (options?: { force?: boolean; behavior?: ScrollBehavior }) => void
-  /**
-   * Re-pin the tail every frame across a settle window while following. Call on
-   * transitions that animate over many frames — composer expand/collapse,
-   * keyboard open/close — so the tail tracks the animation in phase instead of a
-   * single out-of-phase snap. No-op while not following (so a scroll-away is
-   * respected). Idempotent — re-triggering extends the window, never stacks.
-   */
-  pinAcrossSettle: () => void
   /** Disable auto-follow (e.g. when a deep-link jump takes over). */
   disableAutoScroll: () => void
   /** Attach to virtua's `onScroll` (and/or call after a native scroll). */
@@ -108,14 +94,28 @@ interface UseTimelineScrollReturn {
 /**
  * Scroll engine for the virtualized stream/channel timeline, built on `virtua`.
  *
- * Unlike the previous react-virtuoso integration, the scroll container is owned
- * here (a plain overflow `<div>`), so every scroll decision — at-bottom, follow,
- * jump-to-latest, keyboard resize — reads native `scrollTop/scrollHeight/
- * clientHeight` with no library tug-of-war. The one thing delegated to virtua is
- * the hard part: holding the viewport when an older page is prepended, via its
- * `shift` prop (scroll position maintained from the end). virtua also re-pins on
- * individual item resize, so off-screen media loading above the fold no longer
- * shifts the reading position.
+ * The scroll container is owned here (a plain overflow `<div>`), so every scroll
+ * decision reads native `scrollTop/scrollHeight/clientHeight` with no library
+ * tug-of-war. The design rests on two ideas:
+ *
+ *  1. **One idempotent pin.** Staying glued to the tail means exactly one thing:
+ *     `scrollTop = scrollHeight`. Every event that can change geometry while
+ *     following — content growth (new message, media decode, virtua measuring),
+ *     the footer spacer resizing as the composer expands/collapses, the viewport
+ *     shrinking as the keyboard opens — funnels through `pinToBottom`, observed
+ *     by a single `ResizeObserver`. They cannot fight because they all target
+ *     the same place; re-pinning is a no-op once already pinned.
+ *
+ *  2. **Our own pins are invisible to the scroll-up detector.** `pinToBottom`
+ *     updates the scroll-up baseline (`prevScrollTop`) synchronously with the
+ *     write, so the `scroll` event it triggers reads `top === prevTop` and never
+ *     disarms follow. That is what removes the need for programmatic
+ *     time-windows arbitrating "was this scroll mine or the user's": the user is
+ *     detected purely by `scrollTop` moving toward the top (device-independent —
+ *     scrollbar drag, wheel, touch, PageUp), guarded against content shrink.
+ *
+ * The one thing delegated to virtua is the hard part it does well: holding the
+ * viewport when an older page is prepended, via its `shift` prop.
  */
 export function useTimelineScroll({
   itemCount,
@@ -133,11 +133,10 @@ export function useTimelineScroll({
 
   // Mask the content during the cold-load settle. On the first load of a stream
   // virtua measures item heights frame-by-frame, so scrollHeight oscillates and
-  // our re-pin chases it — the visible "bounce on initial load". Keep the
-  // content hidden (the component renders a skeleton overlay) until the height
-  // stabilises, so that convergence happens off-screen. Revisits are already
-  // measured, so this reveals immediately. Deep-link mounts drive their own
-  // jump, so they are never masked.
+  // our re-pin chases it. Keep the content hidden (the component renders a
+  // skeleton overlay) until the height stabilises, so convergence happens
+  // off-screen. Revisits are already measured, so this reveals immediately.
+  // Deep-link mounts drive their own jump, so they are never masked.
   const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
 
   // Auto-follow the live tail. Seeded false for deep-link mounts so we don't
@@ -152,14 +151,9 @@ export function useTimelineScroll({
   const lastResetKeyRef = useRef(resetKey)
   const didInitialScrollRef = useRef(false)
 
-  // Timestamp until which scroll events are treated as our own programmatic
-  // snaps (initial scroll, follow re-pin, keyboard transition). During that
-  // window handleScroll must not disarm follow: mid-convergence the content is
-  // still growing underneath, so we read as "not at bottom" even though we're
-  // chasing it.
-  const programmaticUntilRef = useRef(0)
-  // Last scrollTop / scrollHeight observed by handleScroll. A scrollTop decrease
-  // outside a programmatic window is the user scrolling up (device-independent:
+  // Last scrollTop / scrollHeight observed by handleScroll (and written by every
+  // programmatic pin, so our own writes never read as a user scroll). A
+  // scrollTop decrease here is the user scrolling up (device-independent:
   // scrollbar drag, wheel, touch, keyboard PageUp), which disarms follow — BUT
   // only when scrollHeight didn't shrink. When content shrinks (composer
   // collapsing to its minimal view on send/blur, a row removed) the browser
@@ -169,9 +163,6 @@ export function useTimelineScroll({
   // scrollTop, so it never reads as a scroll-up either.
   const prevScrollTopRef = useRef(0)
   const prevScrollHeightRef = useRef(0)
-  // Drives the keyboard settle re-pin loop (see the ResizeObserver effect).
-  const viewportSettleUntilRef = useRef(0)
-  const viewportRafRef = useRef(0)
   const initialSettleRafRef = useRef(0)
   const initialSettleCleanupRef = useRef<(() => void) | null>(null)
 
@@ -208,71 +199,24 @@ export function useTimelineScroll({
   prevFirstKeyRef.current = firstKey
   prevCountRef.current = itemCount
 
-  // Go to the absolute bottom. scrollTop = scrollHeight is browser-clamped to
-  // the true maximum, which includes the composer footer spacer below virtua's
-  // items — so the last message lands *above* the composer, not behind it.
-  // (Deliberately NOT virtua's scrollToIndex: it aligns to the item and can't
-  // see the trailing footer spacer, so it parks the last message at the very
-  // bottom edge, under the composer.) In a virtualized list scrollHeight is
-  // estimate-based at first, so this can undershoot on the first frame — the
-  // content ResizeObserver below re-pins it as virtua measures real heights,
-  // protected from disarming follow by the programmatic-scroll window.
-  const snapToBottom = useCallback((behavior?: ScrollBehavior) => {
+  // The single pin. Go to the absolute bottom: scrollTop = scrollHeight is
+  // browser-clamped to the true maximum, which includes the composer footer
+  // spacer below virtua's items — so the last message lands *above* the
+  // composer, not behind it. (Deliberately NOT virtua's scrollToIndex: it aligns
+  // to the item and can't see the trailing footer spacer, so it parks the last
+  // message at the very bottom edge, under the composer.)
+  //
+  // Updating the scroll-up baseline in the same statement is load-bearing: the
+  // `scroll` event this write triggers then reads `top === prevTop`, so
+  // handleScroll sees no user movement and follow stays armed. That is what lets
+  // the ResizeObserver, the keyboard backstop, and the cold-load settle all pin
+  // freely without a programmatic time-window to tell them apart.
+  const pinToBottom = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
-    programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-    scrollDebug("snapToBottom", { sh: el.scrollHeight, st: el.scrollTop, ch: el.clientHeight, behavior })
-    if (behavior === "smooth") {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-    } else {
-      el.scrollTop = el.scrollHeight
-    }
-  }, [])
-
-  // Re-pin the tail across an animated transition (on-screen keyboard via
-  // focus/visualViewport, and composer expand/collapse) — but only once the
-  // layout has *settled*, never every frame. Forcing scrollTop every frame
-  // fought the browser's own keyboard auto-scroll on Chrome
-  // (interactive-widget=resizes-content) and showed as a bounce. Instead, watch
-  // scrollHeight/clientHeight each frame and only snap to the bottom once they've
-  // held steady for a couple of frames — i.e. at each resting point of the
-  // animation (and its end). That lands cleanly without fighting the in-flight
-  // animation. Only while following; each snap is marked programmatic (short
-  // window) so it never disarms follow, but the settle is not blanketed
-  // programmatic, so a genuine scroll-away still disarms. Idempotent:
-  // re-triggering only extends the window, never stacks rAF loops.
-  const pinAcrossSettle = useCallback(() => {
-    viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
-    if (viewportRafRef.current) return
-    let lastSh = -1
-    let lastCh = -1
-    let stableFrames = 0
-    const tick = () => {
-      const el = scrollerRef.current
-      if (el) {
-        if (el.scrollHeight === lastSh && el.clientHeight === lastCh) {
-          stableFrames += 1
-        } else {
-          stableFrames = 0
-          lastSh = el.scrollHeight
-          lastCh = el.clientHeight
-        }
-        // Settled (dimensions steady) and drifted off the bottom → land once.
-        if (stableFrames >= 2 && isFollowingTailRef.current) {
-          const distance = el.scrollHeight - el.scrollTop - el.clientHeight
-          if (distance > 1) {
-            programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-            el.scrollTop = el.scrollHeight
-          }
-        }
-      }
-      if (performance.now() >= viewportSettleUntilRef.current) {
-        viewportRafRef.current = 0
-        return
-      }
-      viewportRafRef.current = requestAnimationFrame(tick)
-    }
-    viewportRafRef.current = requestAnimationFrame(tick)
+    el.scrollTop = el.scrollHeight
+    prevScrollTopRef.current = el.scrollTop
+    prevScrollHeightRef.current = el.scrollHeight
   }, [])
 
   const scrollToBottom = useCallback(
@@ -284,9 +228,17 @@ export function useTimelineScroll({
       scrollDebug("scrollToBottom", { force: options?.force, wasFollowing: isFollowingTailRef.current })
       isFollowingTailRef.current = true
       setIsScrolledFarFromBottom(false)
-      snapToBottom(options?.behavior)
+      const el = scrollerRef.current
+      if (!el) return
+      if (options?.behavior === "smooth") {
+        // Animated: let the browser drive scrollTop over several frames.
+        // handleScroll re-arms at the bottom and tracks prevScrollTop as it goes.
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+      } else {
+        pinToBottom()
+      }
     },
-    [snapToBottom]
+    [pinToBottom]
   )
 
   const disableAutoScroll = useCallback(() => {
@@ -303,102 +255,85 @@ export function useTimelineScroll({
   // held steady for a few frames — convergence is done — or a hard cap elapses.
   // The bounce happens behind the mask; what the user sees is a stable bottom.
   // A real user gesture aborts immediately (reveal + stop) so we never trap a
-  // user who wants to scroll during a slow settle.
-  const settleToBottom = useCallback((maxMs: number) => {
-    initialSettleCleanupRef.current?.()
-    const el = scrollerRef.current
-    if (!el) {
-      setIsInitialSettling(false)
-      return
-    }
-    const start = performance.now()
-    let aborted = false
-    let revealed = false
-    let lastHeight = -1
-    let stableFrames = 0
-    const reveal = () => {
-      if (!revealed) {
-        revealed = true
+  // user who wants to scroll during a slow settle. Pinning here is the same
+  // idempotent pinToBottom the ResizeObserver uses, so the two never disagree.
+  const settleToBottom = useCallback(
+    (maxMs: number) => {
+      initialSettleCleanupRef.current?.()
+      const el = scrollerRef.current
+      if (!el) {
         setIsInitialSettling(false)
-      }
-    }
-    const cleanup = () => {
-      aborted = true
-      reveal()
-      if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
-      initialSettleRafRef.current = 0
-      el.removeEventListener("wheel", cleanup)
-      el.removeEventListener("touchmove", cleanup)
-      el.removeEventListener("pointerdown", cleanup)
-      el.removeEventListener("keydown", cleanup)
-      initialSettleCleanupRef.current = null
-    }
-    initialSettleCleanupRef.current = cleanup
-    el.addEventListener("wheel", cleanup, { passive: true })
-    el.addEventListener("touchmove", cleanup, { passive: true })
-    el.addEventListener("pointerdown", cleanup, { passive: true })
-    el.addEventListener("keydown", cleanup)
-
-    const tick = () => {
-      if (aborted) return
-      const now = performance.now()
-      programmaticUntilRef.current = now + PROGRAMMATIC_SCROLL_MS
-      el.scrollTop = el.scrollHeight
-      const height = el.scrollHeight
-      if (height === lastHeight) stableFrames += 1
-      else {
-        stableFrames = 0
-        lastHeight = height
-      }
-      // Converged (height steady) or capped → reveal and hand off to the content
-      // ResizeObserver, which keeps the tail pinned for any later growth.
-      if (stableFrames >= SETTLE_STABLE_FRAMES || now - start >= maxMs) {
-        cleanup()
         return
       }
+      const start = performance.now()
+      let aborted = false
+      let revealed = false
+      let lastHeight = -1
+      let stableFrames = 0
+      const reveal = () => {
+        if (!revealed) {
+          revealed = true
+          setIsInitialSettling(false)
+        }
+      }
+      const cleanup = () => {
+        aborted = true
+        reveal()
+        if (initialSettleRafRef.current) cancelAnimationFrame(initialSettleRafRef.current)
+        initialSettleRafRef.current = 0
+        el.removeEventListener("wheel", cleanup)
+        el.removeEventListener("touchmove", cleanup)
+        el.removeEventListener("pointerdown", cleanup)
+        el.removeEventListener("keydown", cleanup)
+        initialSettleCleanupRef.current = null
+      }
+      initialSettleCleanupRef.current = cleanup
+      el.addEventListener("wheel", cleanup, { passive: true })
+      el.addEventListener("touchmove", cleanup, { passive: true })
+      el.addEventListener("pointerdown", cleanup, { passive: true })
+      el.addEventListener("keydown", cleanup)
+
+      const tick = () => {
+        if (aborted) return
+        pinToBottom()
+        const height = el.scrollHeight
+        if (height === lastHeight) stableFrames += 1
+        else {
+          stableFrames = 0
+          lastHeight = height
+        }
+        // Converged (height steady) or capped → reveal and hand off to the
+        // ResizeObserver, which keeps the tail pinned for any later growth.
+        if (stableFrames >= SETTLE_STABLE_FRAMES || performance.now() - start >= maxMs) {
+          cleanup()
+          return
+        }
+        initialSettleRafRef.current = requestAnimationFrame(tick)
+      }
       initialSettleRafRef.current = requestAnimationFrame(tick)
-    }
-    initialSettleRafRef.current = requestAnimationFrame(tick)
-  }, [])
+    },
+    [pinToBottom]
+  )
 
   const handleScroll = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
-    const now = performance.now()
     const prevTop = prevScrollTopRef.current
     const prevHeight = prevScrollHeightRef.current
     prevScrollTopRef.current = el.scrollTop
     prevScrollHeightRef.current = el.scrollHeight
-    // A user scroll-up is the scrollTop moving DOWN (toward the top), measured
-    // directly so it's device-independent — scrollbar drag, wheel, touch, and
-    // keyboard PageUp all qualify, where the old gesture-event stamp missed the
-    // desktop scrollbar and left follow wrongly armed (it then snapped back on
-    // the next composer resize). Content growth raises scrollHeight instead of
-    // lowering scrollTop, so it never reads as a scroll-up — that's what keeps
-    // "new messages push the view up" from disarming follow. A scrollHeight
-    // SHRINK (composer collapsing on send/blur, a row removed) clamps scrollTop
-    // down on its own; that is not a user scroll, so exclude it — otherwise a
-    // sent message disarmed follow and stayed hidden behind the composer.
+    // A user scroll-up is the scrollTop moving toward the top, measured directly
+    // so it's device-independent — scrollbar drag, wheel, touch, and keyboard
+    // PageUp all qualify, where a gesture-event stamp alone missed the desktop
+    // scrollbar. A scrollHeight SHRINK (composer collapsing on send/blur, a row
+    // removed) clamps scrollTop down on its own; that is not a user scroll, so
+    // exclude it — otherwise a sent message disarmed follow and hid behind the
+    // composer. Our own programmatic pins update prevTop in the same statement
+    // as the write, so they read as no movement here and never disarm.
     const scrolledUp = el.scrollTop < prevTop - 1 && el.scrollHeight >= prevHeight - 1
-    // A stamped gesture is a secondary signal, honored even mid-programmatic
-    // window so a deliberate scroll during the keyboard settle still disarms.
+    // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
+    const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
-    // Skip non-user scroll movement (no recent gesture) during our own
-    // programmatic snaps AND across a keyboard/composer settle window. The
-    // browser auto-scrolls to keep the focused composer visible as the keyboard
-    // opens (Chrome interactive-widget=resizes-content), which briefly drops
-    // scrollTop; without this that read as a "scroll-up", disarmed follow, and
-    // then a freshly-sent message wasn't pinned and hid behind the composer.
-    // Disarming on these is also what stranded the list ~2 screens up on load. A
-    // genuine gesture still breaks through.
-    const inTransition = now < programmaticUntilRef.current || now < viewportSettleUntilRef.current
-    if (inTransition && !userGestured) {
-      scrollDebug("handleScroll skipped (transition, no gesture)", {
-        progMsLeft: Math.round(programmaticUntilRef.current - now),
-        settleMsLeft: Math.round(viewportSettleUntilRef.current - now),
-      })
-      return
-    }
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     // The composer footer spacer is dead space at the very bottom; the last
     // message resting just above it counts as "at the bottom". Without this
@@ -410,7 +345,8 @@ export function useTimelineScroll({
     if (atBottom) {
       // Reaching the tail re-arms follow — except in jump mode, where the user
       // is anchored on a deep-linked message and a transient atBottom from
-      // reflow must never yank them to the live tail.
+      // reflow must never yank them to the live tail. Checked before the
+      // scroll-away branch so sub-threshold jitter at the bottom never detaches.
       isFollowingTailRef.current = !isJumpMode
     } else if (scrolledUp || userGestured) {
       // The user scrolled away from the bottom. Content growth (new message,
@@ -445,13 +381,10 @@ export function useTimelineScroll({
   // estimates, so scrollTop = scrollHeight alone undershoots (the "lands a
   // couple pages up" bug). scrollToIndex(last) makes virtua render + measure the
   // bottom region. Passing offset = the composer footer-spacer height lands it
-  // at the footer-INCLUSIVE bottom (virtua sets scrollTop = offset + lastItem
-  // bottom - viewport and lets the browser clamp; it does not clamp to its own
-  // content), so the last message sits above the composer — not at the viewport
-  // edge behind it. virtua re-applies that same target as items measure, so it
-  // converges WITH the pin instead of fighting it. The content ResizeObserver
-  // re-pins again once the composer publishes its real --composer-height.
-  // scrollToIndex is used ONLY here; once measured, plain scrollTop suffices.
+  // at the footer-INCLUSIVE bottom, so the last message sits above the composer.
+  // virtua re-applies that target as items measure, and the cold-load settle
+  // (settleToBottom) re-pins each frame behind the skeleton mask until the
+  // height — composer spacer included — converges.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
     const el = scrollerRef.current
@@ -461,21 +394,25 @@ export function useTimelineScroll({
     try {
       listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
     } catch {
-      // Not-yet-measured list can throw; the snap + ResizeObserver still converge.
+      // Not-yet-measured list can throw; the pin + settle still converge.
     }
-    snapToBottom()
+    pinToBottom()
     settleToBottom(2000)
-  }, [itemCount, skipInitialScroll, resetKey, snapToBottom, settleToBottom])
+  }, [itemCount, skipInitialScroll, resetKey, pinToBottom, settleToBottom])
 
-  // Keep the tail pinned while following, and absorb keyboard viewport changes
-  // while reading. Two observed targets, one observer:
-  //  - content height grows (live append, virtua measuring real heights): if
-  //    following, snap back to the bottom so the latest message stays glued
-  //    above the composer.
-  //  - viewport height changes (mobile keyboard): following -> snap to bottom;
-  //    reading -> shift scrollTop by the delta so the row under the user's eyes
-  //    stays put as the visible area shrinks/grows. virtua already handles
-  //    item-content resize while reading, so we only compensate the viewport.
+  // The one observer that keeps the tail glued. Two observed targets:
+  //  - content (contentRef): grows on a live append, on media decoding, as
+  //    virtua measures real heights, and as the footer spacer resizes when the
+  //    composer expands/collapses. While following → pin.
+  //  - viewport (scrollerRef): shrinks/grows as the mobile keyboard opens/closes
+  //    (AppShell is sized to --viewport-height; see useVisualViewport). While
+  //    following → pin; while reading → shift scrollTop by the height delta so
+  //    the row under the user's eyes stays put as the visible area changes.
+  //
+  // Every geometry change a user could care about routes through here, so there
+  // is no separate media-load listener, composer-resize handler, or per-frame
+  // keyboard pump — they were all re-implementations of "content/viewport
+  // resized while following → pin".
   useEffect(() => {
     const scroller = scrollerRef.current
     const content = contentRef.current
@@ -487,19 +424,14 @@ export function useTimelineScroll({
       if (!el) return
       const hasViewportEntry = entries.some((entry) => entry.target === el)
       if (isFollowingTailRef.current) {
-        // Re-pin to the absolute bottom as virtua measures real heights (initial
-        // convergence) and on content/viewport growth (live append, keyboard
-        // open). Marked programmatic so the resulting scroll event doesn't
-        // disarm follow.
-        programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-        scrollDebug("RO re-pin (following)", {
+        scrollDebug("RO pin (following)", {
           viewportEntry: hasViewportEntry,
           ch: el.clientHeight,
           prevCh: prevClientHeight,
           sh: el.scrollHeight,
           st: el.scrollTop,
         })
-        el.scrollTop = el.scrollHeight
+        pinToBottom()
         prevClientHeight = el.clientHeight
         return
       }
@@ -512,71 +444,36 @@ export function useTimelineScroll({
       if (delta !== 0) {
         scrollDebug("RO viewport-delta (not following)", { delta, ch: clientHeight, st: el.scrollTop })
         el.scrollTop += delta
+        prevScrollTopRef.current = el.scrollTop
+        prevScrollHeightRef.current = el.scrollHeight
       }
     })
 
     observer.observe(scroller)
     observer.observe(content)
 
-    // On-screen keyboard handling. This app sizes AppShell to `--viewport-height`
-    // (pinned to the visible viewport by useVisualViewport) under
-    // interactive-widget=resizes-content, so opening the keyboard shrinks the
-    // scroller and the floating composer rides up with it — the ResizeObserver
-    // above already re-pins the tail on that shrink and unwinds it on close. The
-    // keyboard does not always emit a `visualViewport` resize, and the scroller
-    // shrink can lag a frame behind the viewport change, so on focus transitions
-    // (the reliable signal, mirroring useVisualViewport's poll) re-pin the tail
-    // every frame across the settle window while following. We deliberately do
-    // NOT reserve a measured keyboard "inset": the layout already lifts the
-    // scroller above the keyboard, and measuring a transiently-covered area
-    // reserved a spacer that was yanked away as the layout settled — the
-    // "content shifts up on keyboard open then drops back down" report.
+    // Keyboard backstop. AppShell is sized to --viewport-height (pinned to the
+    // visible viewport by useVisualViewport under interactive-widget=resizes-
+    // content), so opening the keyboard shrinks the scroller and the
+    // ResizeObserver above already re-pins. But some browsers change the visual
+    // viewport without resizing the layout viewport (the scroller), in which
+    // case no RO entry fires; pin on the visualViewport's own resize/scroll too.
+    // pinToBottom is a no-op when not following and idempotent when it is, so
+    // this can never fight the observer.
     const vv = window.visualViewport
-    const onFocusChange = (event: FocusEvent) => {
-      const t = event.target
-      if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) {
-        scrollDebug(`${event.type} editable`, {
-          following: isFollowingTailRef.current,
-          ch: scrollerRef.current?.clientHeight,
-          vvHeight: vv ? Math.round(vv.height) : null,
-        })
-        pinAcrossSettle()
-      }
+    const pinIfFollowing = () => {
+      if (isFollowingTailRef.current) pinToBottom()
     }
-    vv?.addEventListener("resize", pinAcrossSettle)
-    vv?.addEventListener("scroll", pinAcrossSettle)
-    document.addEventListener("focusin", onFocusChange)
-    document.addEventListener("focusout", onFocusChange)
-
-    // Media inside a row — a link preview's og:image, GitHub avatars, a GIF —
-    // finishes decoding a frame or two after the row first lays out and grows
-    // it. While parked at the tail that late growth can slip past the
-    // ResizeObserver's timing and leave the list pinned a hair short: the "small
-    // jump as a link preview loads in", and a few px of scrollable slack below
-    // the last message (masked by the at-bottom allowance, so follow stays armed
-    // but we're not actually at the true bottom). `load` doesn't bubble, so
-    // listen in the capture phase and re-pin to the exact bottom when following.
-    const onMediaLoad = (event: Event) => {
-      if (!isFollowingTailRef.current || !(event.target instanceof HTMLImageElement)) return
-      const el = scrollerRef.current
-      if (!el) return
-      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-      el.scrollTop = el.scrollHeight
-    }
-    scroller.addEventListener("load", onMediaLoad, true)
+    vv?.addEventListener("resize", pinIfFollowing)
+    vv?.addEventListener("scroll", pinIfFollowing)
 
     return () => {
       observer.disconnect()
-      vv?.removeEventListener("resize", pinAcrossSettle)
-      vv?.removeEventListener("scroll", pinAcrossSettle)
-      document.removeEventListener("focusin", onFocusChange)
-      document.removeEventListener("focusout", onFocusChange)
-      scroller.removeEventListener("load", onMediaLoad, true)
-      if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
-      viewportRafRef.current = 0
+      vv?.removeEventListener("resize", pinIfFollowing)
+      vv?.removeEventListener("scroll", pinIfFollowing)
       initialSettleCleanupRef.current?.()
     }
-  }, [resetKey, snapToBottom, pinAcrossSettle])
+  }, [resetKey, pinToBottom])
 
   return {
     listRef,
@@ -587,7 +484,6 @@ export function useTimelineScroll({
     isInitialSettling,
     isFollowingTailRef,
     scrollToBottom,
-    pinAcrossSettle,
     disableAutoScroll,
     handleScroll,
     resetShiftBaseline,

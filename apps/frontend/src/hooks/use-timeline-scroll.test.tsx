@@ -113,16 +113,18 @@ describe("useTimelineScroll — scroll position", () => {
     expect(el.scrollTop).toBe(5000)
   })
 
-  it("does not disarm follow while a programmatic snap is in flight (initial-convergence fix)", () => {
+  it("a programmatic pin keeps follow armed — its own scroll event reads as no movement", () => {
+    // The pin (initial convergence, re-pin) jumps scrollTop to the bottom and
+    // syncs the scroll-up baseline in the same write, so the `scroll` event it
+    // triggers reads top === prevTop and never disarms follow. This is what
+    // replaces the old programmatic time-window: no window, no arbitration.
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
     harness.current.scrollerRef.current = el
     act(() => harness.current.scrollToBottom({ force: true }))
+    expect(el.scrollTop).toBe(5000)
     expect(harness.current.isFollowingTailRef.current).toBe(true)
-    // Mid-convergence the content is still growing underneath, so a scroll event
-    // reads "not at bottom" — but it's our own snap, so follow must stay armed
-    // (otherwise the list strands ~2 screens up on load).
-    el.scrollTop = 1000
+    // The scroll event the pin triggered now fires (scrollTop already at 5000).
     act(() => harness.current.handleScroll())
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
@@ -162,20 +164,19 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(false)
   })
 
-  it("disarms follow on a genuine user gesture even while a programmatic window is open", () => {
-    // Opening the keyboard / a follow re-pin leaves a programmatic window open
-    // during which our own snaps must not disarm follow. But a real scroll-away
-    // in that window MUST still disarm — otherwise follow stays wrongly armed
-    // and the next composer resize yanks the user back to the tail (the
-    // "scrolled away but it snaps back on composer resize" report).
+  it("disarms follow when the user scrolls away right after a programmatic pin", () => {
+    // A real scroll-away immediately after our own re-pin MUST still disarm —
+    // otherwise follow stays wrongly armed and the next composer resize yanks the
+    // user back to the tail (the "scrolled away but it snaps back" report). The
+    // scrollTop drop from the pinned bottom is itself the signal; the gesture
+    // stamp is a redundant confirmation here.
     const userInteractedAtRef = { current: 0 }
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
     harness.current.scrollerRef.current = el
-    // Force a snap — this opens the programmatic window (PROGRAMMATIC_SCROLL_MS).
     act(() => harness.current.scrollToBottom({ force: true }))
     expect(harness.current.isFollowingTailRef.current).toBe(true)
-    // The user scrolls away WHILE that window is still open.
+    // The user scrolls up from the pinned bottom (scrollHeight unchanged).
     userInteractedAtRef.current = performance.now()
     el.scrollTop = 1000
     act(() => harness.current.handleScroll())
