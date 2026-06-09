@@ -1,4 +1,5 @@
 import { type ReactNode } from "react"
+import { FloatingComposerShell } from "@/components/composer/floating-composer-shell"
 import { Skeleton } from "@/components/ui/skeleton"
 
 // ============================================================================
@@ -19,8 +20,10 @@ export function StreamContentShell({ header, content, footer }: StreamContentShe
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-12 items-center justify-between border-b px-4">{header}</header>
-      <main className="flex-1 overflow-hidden">{content}</main>
-      <div className="border-t p-4">{footer}</div>
+      <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
+        {content}
+        <FloatingComposerShell>{footer}</FloatingComposerShell>
+      </main>
     </div>
   )
 }
@@ -43,7 +46,8 @@ function HeaderSkeleton() {
 
 function ContentSkeleton() {
   return (
-    <div className="p-4">
+    <div className="px-4 pb-4">
+      <div className="h-3 sm:h-6" />
       <div className="space-y-4">
         <MessageSkeleton />
         <MessageSkeleton />

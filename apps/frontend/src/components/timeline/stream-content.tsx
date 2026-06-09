@@ -1624,7 +1624,7 @@ export function StreamContent({
               </div>
             )}
             {showBotRuntimePresence && activeBotPresence && (
-              <div className="pointer-events-none mx-4 mb-2 mt-2 flex justify-center">
+              <div className="pointer-events-none absolute inset-x-4 top-2 z-30 flex justify-center">
                 <ActiveBotStatusStrip
                   botName={activeBotPresence.bot.name}
                   runtimeDisplayName={activeBotPresence.presence?.displayName ?? null}
