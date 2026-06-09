@@ -8,6 +8,11 @@ const JUMP_TO_LATEST_PX = 600
 /** Window (ms) during which scroll events are treated as our own programmatic
  *  snaps and must not disarm follow (covers the initial measure-and-converge). */
 const PROGRAMMATIC_SCROLL_MS = 150
+/** How long the mobile keyboard open/close animates `--viewport-height` (matches
+ *  useVisualViewport's poll). We re-pin to the bottom every frame across this
+ *  window so the tail tracks the shrinking viewport instead of snapping once
+ *  before it settles. */
+const VIEWPORT_SETTLE_MS = 600
 
 /**
  * Height (px) of the floating composer, published as `--composer-height` on the
@@ -116,6 +121,9 @@ export function useTimelineScroll({
   // still growing underneath, so we read as "not at bottom" even though we're
   // chasing it.
   const programmaticUntilRef = useRef(0)
+  // Drives the keyboard settle re-pin loop (see the ResizeObserver effect).
+  const viewportSettleUntilRef = useRef(0)
+  const viewportRafRef = useRef(0)
 
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
@@ -210,31 +218,27 @@ export function useTimelineScroll({
   //
   // On a cold load virtua has only measured the top window; the rest are size
   // estimates, so scrollTop = scrollHeight alone undershoots (the "lands a
-  // couple pages up" bug). scrollToIndex(last) makes virtua render + measure
-  // the bottom region first; then we pin scrollTop = scrollHeight (footer-
-  // inclusive, browser-clamped) to the true bottom. scrollToIndex lands a frame
-  // later and aligns the last *item* to the viewport bottom (ignoring the footer
-  // spacer), so re-pin across the next couple of frames — and again whenever the
-  // content ResizeObserver fires — so the footer-inclusive scrollTop wins.
-  // scrollToIndex is used ONLY here: once the bottom is measured (the tail, the
-  // jump-to-latest button, keyboard re-pins) plain scrollTop suffices.
+  // couple pages up" bug). scrollToIndex(last) makes virtua render + measure the
+  // bottom region. Passing offset = the composer footer-spacer height lands it
+  // at the footer-INCLUSIVE bottom (virtua sets scrollTop = offset + lastItem
+  // bottom - viewport and lets the browser clamp; it does not clamp to its own
+  // content), so the last message sits above the composer — not at the viewport
+  // edge behind it. virtua re-applies that same target as items measure, so it
+  // converges WITH the pin instead of fighting it. The content ResizeObserver
+  // re-pins again once the composer publishes its real --composer-height.
+  // scrollToIndex is used ONLY here; once measured, plain scrollTop suffices.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
-    if (!scrollerRef.current) return
+    const el = scrollerRef.current
+    if (!el) return
     isFollowingTailRef.current = true
     didInitialScrollRef.current = true
     try {
-      listRef.current?.scrollToIndex(itemCount - 1, { align: "end" })
+      listRef.current?.scrollToIndex(itemCount - 1, { align: "end", offset: readComposerHeight(el) })
     } catch {
-      // Not-yet-measured list can throw; the re-pins below still converge.
+      // Not-yet-measured list can throw; the snap + ResizeObserver still converge.
     }
     snapToBottom()
-    const r1 = requestAnimationFrame(() => snapToBottom())
-    const r2 = requestAnimationFrame(() => requestAnimationFrame(() => snapToBottom()))
-    return () => {
-      cancelAnimationFrame(r1)
-      cancelAnimationFrame(r2)
-    }
   }, [itemCount, skipInitialScroll, resetKey, snapToBottom])
 
   // Keep the tail pinned while following, and absorb keyboard viewport changes
@@ -279,25 +283,36 @@ export function useTimelineScroll({
     observer.observe(content)
 
     // The on-screen keyboard shrinks the app to `--viewport-height` (see
-    // useVisualViewport), which usually shrinks the scroller and fires the
-    // ResizeObserver above. But on some mobile browsers the keyboard overlays
-    // without a layout resize, so the observer never fires and the last message
-    // stays hidden behind the composer/keyboard. Listen to visualViewport
-    // directly as the reliable trigger: protect follow through the transition,
-    // and re-pin to the bottom (next frame, once layout settles) if following.
+    // useVisualViewport) which shrinks the scroller and fires the ResizeObserver
+    // above. But the keyboard *animates* that height over ~600ms, so a single
+    // snap fires before the viewport settles and a transient "not at bottom"
+    // mid-animation can disarm follow before the observer catches up. Drive the
+    // re-pin from visualViewport directly: while following, re-pin to the bottom
+    // every frame across the settle window and hold follow armed throughout, so
+    // the tail tracks the keyboard down instead of being left behind.
     const vv = window.visualViewport
     const onViewportResize = () => {
-      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-      if (!isFollowingTailRef.current) return
-      requestAnimationFrame(() => {
-        if (isFollowingTailRef.current) snapToBottom()
-      })
+      viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
+      programmaticUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
+      if (!isFollowingTailRef.current || viewportRafRef.current) return
+      const tick = () => {
+        if (!isFollowingTailRef.current || performance.now() >= viewportSettleUntilRef.current) {
+          viewportRafRef.current = 0
+          return
+        }
+        programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+        snapToBottom()
+        viewportRafRef.current = requestAnimationFrame(tick)
+      }
+      viewportRafRef.current = requestAnimationFrame(tick)
     }
     vv?.addEventListener("resize", onViewportResize)
 
     return () => {
       observer.disconnect()
       vv?.removeEventListener("resize", onViewportResize)
+      if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
+      viewportRafRef.current = 0
     }
   }, [resetKey, snapToBottom])
 
