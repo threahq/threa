@@ -81,10 +81,6 @@ interface UseTimelineScrollReturn {
   /** True during a cold-load settle — the caller masks the content (skeleton
    *  overlay) until it flips false so the measurement bounce stays off-screen. */
   isInitialSettling: boolean
-  /** Extra bottom space (px) the caller should reserve below the last message
-   *  while the on-screen keyboard overlays the scroller (0 when the layout
-   *  already shrinks the scroller above the keyboard). */
-  keyboardInsetPx: number
   /** True while parked at the live tail (auto-following new output). */
   isFollowingTailRef: React.MutableRefObject<boolean>
   /** Imperatively scroll to the very bottom (the composer-spacer edge). */
@@ -135,16 +131,6 @@ export function useTimelineScroll({
   // measured, so this reveals immediately. Deep-link mounts drive their own
   // jump, so they are never masked.
   const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
-
-  // Extra bottom space (px) the caller reserves below the last message while the
-  // on-screen keyboard overlays the scroller. Some mobile layouts shrink the app
-  // to `--viewport-height` (so the scroller already sits above the keyboard and
-  // this stays 0); others let the keyboard *overlay* the scroller without
-  // resizing it, so re-pinning has nowhere to move and the last message stays
-  // hidden. We measure how much of the scroller the keyboard actually covers and
-  // reserve exactly that, so pinning lifts the tail above the keyboard either way.
-  const [keyboardInsetPx, setKeyboardInsetPx] = useState(0)
-  const lastInsetRef = useRef(0)
 
   // Auto-follow the live tail. Seeded false for deep-link mounts so we don't
   // snap to bottom before the jump positions on its target.
@@ -461,51 +447,24 @@ export function useTimelineScroll({
     observer.observe(scroller)
     observer.observe(content)
 
-    // On-screen keyboard handling. Two layouts exist in the wild: some shrink
-    // the app to `--viewport-height` (the scroller ends up above the keyboard,
-    // so `coveredPx` is 0 and nothing extra is reserved); others let the keyboard
-    // OVERLAY the scroller without resizing it — there `scrollTop = scrollHeight`
-    // has nowhere to move and the last message stays hidden behind the keyboard.
-    // Measure how much of the scroller the keyboard actually covers and reserve
-    // exactly that as extra bottom space (`keyboardInsetPx`), so pinning lifts the
-    // tail above the keyboard either way. The keyboard animates over ~600ms, so
-    // re-measure + re-pin every frame across the settle window while following.
+    // On-screen keyboard handling. This app sizes AppShell to `--viewport-height`
+    // (pinned to the visible viewport by useVisualViewport) under
+    // interactive-widget=resizes-content, so opening the keyboard shrinks the
+    // scroller and the floating composer rides up with it — the ResizeObserver
+    // above already re-pins the tail on that shrink and unwinds it on close. The
+    // keyboard does not always emit a `visualViewport` resize, and the scroller
+    // shrink can lag a frame behind the viewport change, so on focus transitions
+    // (the reliable signal, mirroring useVisualViewport's poll) re-pin the tail
+    // every frame across the settle window while following. We deliberately do
+    // NOT reserve a measured keyboard "inset": the layout already lifts the
+    // scroller above the keyboard, and measuring a transiently-covered area
+    // reserved a spacer that was yanked away as the layout settled — the
+    // "content shifts up on keyboard open then drops back down" report.
     const vv = window.visualViewport
-    const measureCovered = (): number => {
-      const el = scrollerRef.current
-      if (!el || !vv) return 0
-      const covered = el.getBoundingClientRect().bottom - (vv.offsetTop + vv.height)
-      return covered > 1 ? Math.round(covered) : 0
-    }
-    const applyInset = () => {
-      const next = measureCovered()
-      if (next !== lastInsetRef.current) {
-        scrollDebug("keyboardInset change", {
-          from: lastInsetRef.current,
-          to: next,
-          scrollerBottom: scrollerRef.current ? Math.round(scrollerRef.current.getBoundingClientRect().bottom) : null,
-          vvHeight: vv ? Math.round(vv.height) : null,
-          vvOffsetTop: vv ? Math.round(vv.offsetTop) : null,
-          innerHeight: window.innerHeight,
-        })
-        lastInsetRef.current = next
-        setKeyboardInsetPx(next)
-      }
-    }
-    // The on-screen keyboard does NOT reliably emit a `visualViewport` resize
-    // (nor does it always resize the scroller, so its ResizeObserver may stay
-    // quiet) — on some platforms the only signal is that an editable gained
-    // focus. useVisualViewport copes by POLLING across focus transitions; mirror
-    // that here. Pump an rAF loop for the settle window that re-measures the
-    // covered area (`keyboardInsetPx`) and re-pins the tail every frame, so the
-    // last message rides above the keyboard whether the layout shrinks the
-    // scroller or the keyboard overlays it. Driven by focusin/focusout (the
-    // reliable trigger) plus visualViewport resize/scroll where those fire.
     const pumpKeyboard = () => {
       viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
       if (viewportRafRef.current) return
       const tick = () => {
-        applyInset()
         // Re-pin every frame across the keyboard animation, but ONLY while
         // following, and mark just that snap programmatic (a short window) so it
         // doesn't disarm follow. We deliberately do NOT blanket the whole settle
@@ -566,8 +525,6 @@ export function useTimelineScroll({
       if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
       viewportRafRef.current = 0
       initialSettleCleanupRef.current?.()
-      lastInsetRef.current = 0
-      setKeyboardInsetPx(0)
     }
   }, [resetKey, snapToBottom])
 
@@ -578,7 +535,6 @@ export function useTimelineScroll({
     shift,
     isScrolledFarFromBottom,
     isInitialSettling,
-    keyboardInsetPx,
     isFollowingTailRef,
     scrollToBottom,
     disableAutoScroll,

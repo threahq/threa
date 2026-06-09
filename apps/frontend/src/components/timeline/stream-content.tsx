@@ -807,7 +807,6 @@ export function StreamContent({
     shift,
     isScrolledFarFromBottom: virtualIsScrolledFar,
     isInitialSettling: virtualIsInitialSettling,
-    keyboardInsetPx: virtualKeyboardInsetPx,
     scrollToBottom: virtualScrollToBottom,
     disableAutoScroll: virtualDisableAutoScroll,
     isFollowingTailRef,
@@ -1464,7 +1463,6 @@ export function StreamContent({
                     scrollAbortRef={scrollAbortRef}
                     shift={shift}
                     isInitialSettling={virtualIsInitialSettling}
-                    keyboardInsetPx={virtualKeyboardInsetPx}
                     onTimelineScroll={handleVirtualScroll}
                     isFollowingTailRef={isFollowingTailRef}
                     hasOlderEvents={hasOlderEvents}
@@ -1691,7 +1689,6 @@ function TimelineMessageList({
   scrollAbortRef,
   shift,
   isInitialSettling,
-  keyboardInsetPx,
   onTimelineScroll,
   isFollowingTailRef,
   hasOlderEvents,
@@ -1739,9 +1736,6 @@ function TimelineMessageList({
   /** True during the cold-load settle: mask the list with a skeleton overlay so
    *  the measurement bounce stays off-screen until the height stabilises. */
   isInitialSettling: boolean
-  /** Extra bottom space (px) to reserve while the on-screen keyboard overlays the
-   *  scroller, so the tail can be lifted above it. 0 when not needed. */
-  keyboardInsetPx: number
   /** Scroll handler from useTimelineScroll (updates at-bottom / follow state). */
   onTimelineScroll: () => void
   /** True while parked at the live tail; gates older-history prefetch. */
@@ -2062,7 +2056,6 @@ function TimelineMessageList({
             ))}
           </Virtualizer>
           <ComposerFooterSpacer />
-          {keyboardInsetPx > 0 && <div aria-hidden style={{ height: keyboardInsetPx }} />}
         </div>
       </div>
       {isInitialSettling && (
