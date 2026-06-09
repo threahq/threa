@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { act, render } from "@testing-library/react"
+import type { VirtualizerHandle } from "virtua"
 import { useTimelineScroll } from "./use-timeline-scroll"
 
 type Options = Parameters<typeof useTimelineScroll>[0]
@@ -101,12 +102,32 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
 })
 
 describe("useTimelineScroll — scroll position", () => {
-  it("scrollToBottom pins scrollTop to scrollHeight", () => {
+  it("scrollToBottom lands on the last item via virtua, then pins to the absolute bottom", () => {
+    // Native scrollTop=scrollHeight alone undershoots a virtualized list (only
+    // the top window is measured); virtua's scrollToIndex converges past the
+    // estimates, then we pin to the bottom so the composer spacer is included.
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
     harness.current.scrollerRef.current = el
+    const scrollToIndex = vi.fn()
+    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
     act(() => harness.current.scrollToBottom({ force: true }))
+    expect(scrollToIndex).toHaveBeenCalledWith(49, { align: "end" })
     expect(el.scrollTop).toBe(5000)
+  })
+
+  it("does not disarm follow while a programmatic snap is in flight (initial-convergence fix)", () => {
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.scrollToBottom({ force: true }))
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // Mid-convergence the content is still growing underneath, so a scroll event
+    // reads "not at bottom" — but it's our own snap, so follow must stay armed
+    // (otherwise the list strands ~2 screens up on load).
+    el.scrollTop = 1000
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
   it("handleScroll shows Jump-to-latest when far from the bottom and hides it near it", () => {

@@ -5,6 +5,9 @@ import type { VirtualizerHandle } from "virtua"
 const AT_BOTTOM_PX = 32
 /** Distance (px) from the bottom past which the "Jump to latest" affordance shows. */
 const JUMP_TO_LATEST_PX = 600
+/** Window (ms) during which scroll events are treated as our own programmatic
+ *  snaps and must not disarm follow (covers the initial measure-and-converge). */
+const PROGRAMMATIC_SCROLL_MS = 150
 
 interface UseTimelineScrollOptions {
   /** Total item count of the virtualized list. */
@@ -94,6 +97,15 @@ export function useTimelineScroll({
   const lastResetKeyRef = useRef(resetKey)
   const didInitialScrollRef = useRef(false)
 
+  // Timestamp until which scroll events are treated as our own programmatic
+  // snaps (initial scroll, follow re-pin). During that window handleScroll must
+  // not disarm follow: mid-convergence the content is still growing underneath,
+  // so we read as "not at bottom" even though we're chasing it.
+  const programmaticUntilRef = useRef(0)
+  // Current item count, read inside the long-lived ResizeObserver closure.
+  const itemCountRef = useRef(itemCount)
+  itemCountRef.current = itemCount
+
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
   // effect would run a render too late and mis-detect the first window as a
@@ -122,18 +134,42 @@ export function useTimelineScroll({
   prevFirstKeyRef.current = firstKey
   prevCountRef.current = itemCount
 
-  const scrollToBottom = useCallback((options?: { force?: boolean; behavior?: ScrollBehavior }) => {
-    const el = scrollerRef.current
-    if (!el) return
-    if (!options?.force && !isFollowingTailRef.current) return
-    isFollowingTailRef.current = true
-    setIsScrolledFarFromBottom(false)
-    if (options?.behavior === "smooth") {
-      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-    } else {
-      el.scrollTop = el.scrollHeight
-    }
-  }, [])
+  // Go to the absolute bottom of a *virtualized* list. Native scrollTop =
+  // scrollHeight alone undershoots, because only the top window is measured at
+  // mount and the rest are size estimates — so the list lands well short of the
+  // bottom. First ask virtua to land on the last item (it converges past the
+  // estimates by rendering + measuring the bottom region), then snap to the
+  // absolute bottom so the composer footer spacer is included.
+  const snapToBottom = useCallback(
+    (behavior?: ScrollBehavior) => {
+      const el = scrollerRef.current
+      if (!el) return
+      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+      if (itemCountRef.current > 0) {
+        try {
+          listRef.current?.scrollToIndex(itemCountRef.current - 1, { align: "end" })
+        } catch {
+          // Not-yet-measured list can throw; the ResizeObserver snap converges.
+        }
+      }
+      if (behavior === "smooth") {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+      } else {
+        el.scrollTop = el.scrollHeight
+      }
+    },
+    [listRef]
+  )
+
+  const scrollToBottom = useCallback(
+    (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
+      if (!options?.force && !isFollowingTailRef.current) return
+      isFollowingTailRef.current = true
+      setIsScrolledFarFromBottom(false)
+      snapToBottom(options?.behavior)
+    },
+    [snapToBottom]
+  )
 
   const disableAutoScroll = useCallback(() => {
     isFollowingTailRef.current = false
@@ -147,6 +183,10 @@ export function useTimelineScroll({
   const handleScroll = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
+    // Skip our own programmatic snaps: mid-convergence the content is still
+    // growing underneath, so disarming follow here is what stranded the list
+    // ~2 screens up on load.
+    if (performance.now() < programmaticUntilRef.current) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     const atBottom = distanceFromBottom <= AT_BOTTOM_PX
     // Reaching the tail re-arms follow — except in jump mode, where the user is
@@ -162,12 +202,11 @@ export function useTimelineScroll({
   // virtua measures real item heights.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
-    const el = scrollerRef.current
-    if (!el) return
-    el.scrollTop = el.scrollHeight
+    if (!scrollerRef.current) return
     isFollowingTailRef.current = true
     didInitialScrollRef.current = true
-  }, [itemCount, skipInitialScroll, resetKey])
+    snapToBottom()
+  }, [itemCount, skipInitialScroll, resetKey, snapToBottom])
 
   // Keep the tail pinned while following, and absorb keyboard viewport changes
   // while reading. Two observed targets, one observer:
@@ -188,6 +227,17 @@ export function useTimelineScroll({
       const el = scrollerRef.current
       if (!el) return
       if (isFollowingTailRef.current) {
+        // Keep landing on the last item as virtua measures real heights during
+        // the initial convergence, then pin to the absolute bottom. Marked
+        // programmatic so the resulting scroll event doesn't disarm follow.
+        programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+        if (itemCountRef.current > 0) {
+          try {
+            listRef.current?.scrollToIndex(itemCountRef.current - 1, { align: "end" })
+          } catch {
+            // Not-yet-measured list can throw; the scrollTop snap still converges.
+          }
+        }
         el.scrollTop = el.scrollHeight
         prevClientHeight = el.clientHeight
         return
