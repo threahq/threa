@@ -305,10 +305,16 @@ export function useTimelineScroll({
   const handleScroll = useCallback(() => {
     const el = scrollerRef.current
     if (!el) return
-    // Skip our own programmatic snaps: mid-convergence the content is still
-    // growing underneath, so disarming follow here is what stranded the list
-    // ~2 screens up on load.
-    if (performance.now() < programmaticUntilRef.current) return
+    const now = performance.now()
+    // A genuine user gesture is honored even mid-programmatic-window. Our own
+    // snaps (initial convergence, follow re-pin, keyboard settle) carry no
+    // recent gesture, so we skip them — disarming on them is what stranded the
+    // list ~2 screens up on load. But a real scroll-away DURING the keyboard
+    // settle must still disarm: otherwise follow stays wrongly armed and the
+    // next composer resize (a keystroke/newline) yanks the user back to the
+    // tail — the "scrolled away but it snaps back on composer resize" report.
+    const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+    if (now < programmaticUntilRef.current && !userGestured) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     // The composer footer spacer is dead space at the very bottom; the last
     // message resting just above it counts as "at the bottom". Without this
@@ -320,7 +326,7 @@ export function useTimelineScroll({
       // is anchored on a deep-linked message and a transient atBottom from
       // reflow must never yank them to the live tail.
       isFollowingTailRef.current = !isJumpMode
-    } else if (performance.now() - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS) {
+    } else if (userGestured) {
       // Only a genuine user scroll away from the bottom stops follow. Content
       // growth (a new message, a link preview loading, virtua measuring real
       // heights) moves us off the bottom with NO gesture; disarming there
@@ -439,10 +445,14 @@ export function useTimelineScroll({
     // reliable trigger) plus visualViewport resize/scroll where those fire.
     const pumpKeyboard = () => {
       viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
-      programmaticUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
       if (viewportRafRef.current) return
       const tick = () => {
         applyInset()
+        // Re-pin every frame across the keyboard animation, but ONLY while
+        // following, and mark just that snap programmatic (a short window) so it
+        // doesn't disarm follow. We deliberately do NOT blanket the whole settle
+        // as programmatic: that swallowed the user's own scroll-away for 600ms
+        // and let a later composer resize yank them back to the tail.
         if (isFollowingTailRef.current) {
           programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
           snapToBottom()

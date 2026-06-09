@@ -127,6 +127,26 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
+  it("disarms follow on a genuine user gesture even while a programmatic window is open", () => {
+    // Opening the keyboard / a follow re-pin leaves a programmatic window open
+    // during which our own snaps must not disarm follow. But a real scroll-away
+    // in that window MUST still disarm — otherwise follow stays wrongly armed
+    // and the next composer resize yanks the user back to the tail (the
+    // "scrolled away but it snaps back on composer resize" report).
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 0 })
+    harness.current.scrollerRef.current = el
+    // Force a snap — this opens the programmatic window (PROGRAMMATIC_SCROLL_MS).
+    act(() => harness.current.scrollToBottom({ force: true }))
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // The user scrolls away WHILE that window is still open.
+    userInteractedAtRef.current = performance.now()
+    el.scrollTop = 1000
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
   it("handleScroll shows Jump-to-latest when the user scrolls far from the bottom and hides it near it", () => {
     const userInteractedAtRef = { current: 0 }
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
