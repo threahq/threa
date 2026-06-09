@@ -895,7 +895,8 @@ export function StreamContent({
   // Sticky "user grabbed the scroller" stamp for the *current* scroll intent.
   // Reset to 0 whenever a new intent is established (deep-link nav, search
   // jump, stream switch) and set by long-lived input listeners on the
-  // scroller (attached in VirtuosoMessageList). The refine loop reads this so
+  // scroller (attached by useTimelineScroll's gesture-stamp effect). The
+  // refine loop reads this so
   // a manual scroll always wins — including a gesture that began in the rAF
   // gap before scrollToMessage attached its own abort listeners. That gap is
   // exactly the "I scroll up to read context, then get yanked back to the
@@ -1313,12 +1314,12 @@ export function StreamContent({
 
   // Deep-link (?m=) mount hold. On a push-notification / Activities deep link
   // the latest window loads first; the jump effect then fetches the window
-  // around the target and swaps `events` wholesale. react-virtuoso only
-  // honors initialTopMostItemIndex at mount, so a Virtuoso instance mounted
-  // on the latest window can't re-anchor onto the jump window — scrollToMessage
-  // fights the stale anchor and the user lands far from the target ("scrolled
-  // to hell"). Holding the skeleton until the target is actually in the loaded
-  // window makes the single keyed mount land already-anchored on it. Uses the
+  // around the target and swaps `events` wholesale. A list mounted on the
+  // latest window lands at the live tail, so the later window swap +
+  // scrollToMessage would visibly yank the viewport over to the target.
+  // Holding the skeleton until the target is actually in the loaded window
+  // makes the single keyed mount land already-anchored on it (the pre-paint
+  // centering jump needs the target row to exist at mount). Uses the
   // raw ?m= id (not the search-active id) so in-stream search is unaffected,
   // and releases when the target loads (deepLinkTargetLoaded) or the jump
   // conclusively fails (deepLinkGaveUp) so it never hangs.
@@ -1878,8 +1879,14 @@ function TimelineMessageList({
   // Center the deep-linked target on mount/when it loads. virtua mounts at the
   // top; this anchors it near the target before the scrollToMessage refine loop
   // takes over (and before paint, so there's no flash from the top). Runs once
-  // per stream — the scroller is keyed by streamId, so the ref resets on switch.
+  // per stream: the keyed scroller div remounts on switch but this component
+  // does NOT, so the ref must be reset by hand when the stream changes.
   const didInitialJumpRef = useRef(false)
+  const lastJumpStreamRef = useRef(streamId)
+  if (lastJumpStreamRef.current !== streamId) {
+    lastJumpStreamRef.current = streamId
+    didInitialJumpRef.current = false
+  }
   useLayoutEffect(() => {
     if (didInitialJumpRef.current || !highlightMessageId) return
     const idx = findMessageItemIndex(visibleItems, highlightMessageId)
@@ -1953,14 +1960,13 @@ function TimelineMessageList({
   //    chrome is the visible background; rendering a skeleton on top of it
   //    would jiggle the layout.
   //
-  // Either way we mustn't mount <Virtuoso data={[]} />: its hidden-until-stable
-  // reveal gate arms only at didMount, and only when initialTopMostItemIndex
-  // is set — which it is NOT while itemCount is 0 (the scroll hook returns
-  // undefined). A Virtuoso mounted empty therefore reveals immediately, so
-  // the populate + scroll-to-LAST a frame later is visible (the "loads in too
-  // low then jumps" report). Deferring the mount until data exists makes the
-  // keyed instance mount already-populated, exactly like cold boot, so the
-  // gate arms.
+  // Either way we mustn't mount the virtualized list empty: the initial
+  // scroll-to-bottom and the cold-load settle mask in useTimelineScroll both
+  // arm when items first exist, so a list mounted with zero items paints an
+  // empty top-anchored frame and the populate + pin a frame later is visible
+  // (the "loads in too low then jumps" report). Deferring the mount until
+  // data exists makes the keyed instance mount already-populated, exactly
+  // like cold boot, so the settle mask covers the measurement bounce.
   if (visibleItems.length > 0) hasRenderedContentRef.current = true
   if (visibleItems.length === 0) {
     return hasRenderedContentRef.current ? <div className="h-full" aria-hidden /> : skeleton

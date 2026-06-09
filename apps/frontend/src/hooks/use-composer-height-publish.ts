@@ -10,14 +10,12 @@ interface UseComposerHeightPublishOptions {
    * fallback), but not when the first measurement matches that fallback. The
    * timeline uses this to re-anchor a virtualized list to the bottom: the
    * footer spacer that keeps the last message above the composer is sized from
-   * `--composer-height`, but Virtuoso's scroll position is frozen when that
-   * spacer resizes (its `followOutput` only reacts to new items, and its resize
-   * safety-net only watches the scroller's own height — not footer growth).
-   * Without this notification a composer that settles to a different height a
-   * few frames after mount (the persisted default not matching the actual
-   * composer, the 200ms height transition, async encryption notice / attachment
-   * chips) leaves the last message hidden behind the composer — or the list
-   * parked too high — until the next reload.
+   * `--composer-height`, and on first paint that variable holds the persisted
+   * approximation, not this composer's real height. Runtime spacer resizes are
+   * re-pinned by the timeline's own ResizeObserver; the initial correction is
+   * the one that must happen here, pre-paint, or the list paints anchored to
+   * the approximate height — the last message hidden behind the composer, or
+   * the list parked too high — until something else moves it.
    *
    * `opts.initial` is true only for the very first measurement of this mount,
    * which runs inside a layout effect *before the browser paints*. The timeline
