@@ -158,12 +158,17 @@ export function useTimelineScroll({
   // still growing underneath, so we read as "not at bottom" even though we're
   // chasing it.
   const programmaticUntilRef = useRef(0)
-  // Last scrollTop observed by handleScroll. A decrease outside a programmatic
-  // window is the user scrolling up (device-independent: covers scrollbar drag,
-  // wheel, touch, keyboard PageUp), which disarms follow. Content growth raises
-  // scrollHeight rather than lowering scrollTop, so it never reads as a scroll-up
-  // — that's what keeps "new messages push the view up" from disarming follow.
+  // Last scrollTop / scrollHeight observed by handleScroll. A scrollTop decrease
+  // outside a programmatic window is the user scrolling up (device-independent:
+  // scrollbar drag, wheel, touch, keyboard PageUp), which disarms follow — BUT
+  // only when scrollHeight didn't shrink. When content shrinks (composer
+  // collapsing to its minimal view on send/blur, a row removed) the browser
+  // clamps scrollTop down on its own; that is not a user scroll, and treating it
+  // as one wrongly disarmed follow so a freshly-sent message stayed hidden
+  // behind the composer. Content growth raises scrollHeight rather than lowering
+  // scrollTop, so it never reads as a scroll-up either.
   const prevScrollTopRef = useRef(0)
+  const prevScrollHeightRef = useRef(0)
   // Drives the keyboard settle re-pin loop (see the ResizeObserver effect).
   const viewportSettleUntilRef = useRef(0)
   const viewportRafRef = useRef(0)
@@ -180,6 +185,7 @@ export function useTimelineScroll({
     prevFirstKeyRef.current = null
     prevCountRef.current = 0
     prevScrollTopRef.current = 0
+    prevScrollHeightRef.current = 0
     didInitialScrollRef.current = false
     isFollowingTailRef.current = !skipInitialScroll
     // Re-mask for the new stream's cold-load settle (a no-op when it converges
@@ -223,23 +229,42 @@ export function useTimelineScroll({
     }
   }, [])
 
-  // Re-pin the tail every animation frame across a settle window, but only while
-  // following. Used for transitions that animate over many frames where a single
-  // snap lands out of phase: the on-screen keyboard (focus / visualViewport) and
-  // composer height changes (expand on focus, collapse on blur). Pinning every
-  // frame tracks the animation in phase — content rides up smoothly as the
-  // keyboard opens and settles smoothly as it closes — instead of a staged jump.
-  // Each frame's snap is marked programmatic (short window) so it never disarms
-  // follow; the whole settle is NOT blanketed programmatic, so a genuine
-  // scroll-away still disarms mid-settle. Idempotent: re-triggering only extends
-  // the window, never stacks rAF loops.
+  // Re-pin the tail across an animated transition (on-screen keyboard via
+  // focus/visualViewport, and composer expand/collapse) — but only once the
+  // layout has *settled*, never every frame. Forcing scrollTop every frame
+  // fought the browser's own keyboard auto-scroll on Chrome
+  // (interactive-widget=resizes-content) and showed as a bounce. Instead, watch
+  // scrollHeight/clientHeight each frame and only snap to the bottom once they've
+  // held steady for a couple of frames — i.e. at each resting point of the
+  // animation (and its end). That lands cleanly without fighting the in-flight
+  // animation. Only while following; each snap is marked programmatic (short
+  // window) so it never disarms follow, but the settle is not blanketed
+  // programmatic, so a genuine scroll-away still disarms. Idempotent:
+  // re-triggering only extends the window, never stacks rAF loops.
   const pinAcrossSettle = useCallback(() => {
     viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
     if (viewportRafRef.current) return
+    let lastSh = -1
+    let lastCh = -1
+    let stableFrames = 0
     const tick = () => {
-      if (isFollowingTailRef.current) {
-        programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-        snapToBottom()
+      const el = scrollerRef.current
+      if (el) {
+        if (el.scrollHeight === lastSh && el.clientHeight === lastCh) {
+          stableFrames += 1
+        } else {
+          stableFrames = 0
+          lastSh = el.scrollHeight
+          lastCh = el.clientHeight
+        }
+        // Settled (dimensions steady) and drifted off the bottom → land once.
+        if (stableFrames >= 2 && isFollowingTailRef.current) {
+          const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+          if (distance > 1) {
+            programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+            el.scrollTop = el.scrollHeight
+          }
+        }
       }
       if (performance.now() >= viewportSettleUntilRef.current) {
         viewportRafRef.current = 0
@@ -248,7 +273,7 @@ export function useTimelineScroll({
       viewportRafRef.current = requestAnimationFrame(tick)
     }
     viewportRafRef.current = requestAnimationFrame(tick)
-  }, [snapToBottom])
+  }, [])
 
   const scrollToBottom = useCallback(
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
@@ -341,25 +366,36 @@ export function useTimelineScroll({
     if (!el) return
     const now = performance.now()
     const prevTop = prevScrollTopRef.current
+    const prevHeight = prevScrollHeightRef.current
     prevScrollTopRef.current = el.scrollTop
+    prevScrollHeightRef.current = el.scrollHeight
     // A user scroll-up is the scrollTop moving DOWN (toward the top), measured
     // directly so it's device-independent — scrollbar drag, wheel, touch, and
     // keyboard PageUp all qualify, where the old gesture-event stamp missed the
     // desktop scrollbar and left follow wrongly armed (it then snapped back on
     // the next composer resize). Content growth raises scrollHeight instead of
     // lowering scrollTop, so it never reads as a scroll-up — that's what keeps
-    // "new messages push the view up" from disarming follow.
-    const scrolledUp = el.scrollTop < prevTop - 1
+    // "new messages push the view up" from disarming follow. A scrollHeight
+    // SHRINK (composer collapsing on send/blur, a row removed) clamps scrollTop
+    // down on its own; that is not a user scroll, so exclude it — otherwise a
+    // sent message disarmed follow and stayed hidden behind the composer.
+    const scrolledUp = el.scrollTop < prevTop - 1 && el.scrollHeight >= prevHeight - 1
     // A stamped gesture is a secondary signal, honored even mid-programmatic
     // window so a deliberate scroll during the keyboard settle still disarms.
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
-    // Skip our own programmatic snaps (initial convergence, follow re-pin,
-    // keyboard settle): they move scrollTop toward the bottom, so reading them
-    // as "not at bottom" and disarming is what stranded the list on load. A
+    // Skip non-user scroll movement (no recent gesture) during our own
+    // programmatic snaps AND across a keyboard/composer settle window. The
+    // browser auto-scrolls to keep the focused composer visible as the keyboard
+    // opens (Chrome interactive-widget=resizes-content), which briefly drops
+    // scrollTop; without this that read as a "scroll-up", disarmed follow, and
+    // then a freshly-sent message wasn't pinned and hid behind the composer.
+    // Disarming on these is also what stranded the list ~2 screens up on load. A
     // genuine gesture still breaks through.
-    if (now < programmaticUntilRef.current && !userGestured) {
-      scrollDebug("handleScroll skipped (programmatic, no gesture)", {
-        msLeft: Math.round(programmaticUntilRef.current - now),
+    const inTransition = now < programmaticUntilRef.current || now < viewportSettleUntilRef.current
+    if (inTransition && !userGestured) {
+      scrollDebug("handleScroll skipped (transition, no gesture)", {
+        progMsLeft: Math.round(programmaticUntilRef.current - now),
+        settleMsLeft: Math.round(viewportSettleUntilRef.current - now),
       })
       return
     }

@@ -127,6 +127,24 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
+  it("does not disarm follow when content shrinks and clamps scrollTop down (composer collapse on send)", () => {
+    // Sending a message clears the composer, so it shrinks back to one line:
+    // scrollHeight drops and the browser clamps scrollTop down on its own. That
+    // is NOT a user scroll-up — follow must stay armed so the freshly-sent
+    // message still pins above the composer instead of hiding behind it.
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4200 })
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // Composer collapses: scrollHeight shrinks, scrollTop clamped down, leaving us
+    // briefly off the bottom — but it's content shrink, not a user gesture.
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 4200 })
+    el.scrollTop = 3200
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+  })
+
   it("disarms follow when scrollTop drops with no gesture stamp (desktop scrollbar drag)", () => {
     // The desktop bug: dragging the scrollbar scrolls without firing
     // wheel/touch/pointer on the scroller, so the gesture stamp stays 0. Follow
