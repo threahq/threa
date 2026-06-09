@@ -804,6 +804,7 @@ export function StreamContent({
   const {
     listRef,
     scrollerRef: virtualScrollerRef,
+    registerScroller: registerVirtualScroller,
     contentRef: virtualContentRef,
     shift,
     isScrolledFarFromBottom: virtualIsScrolledFar,
@@ -1432,6 +1433,7 @@ export function StreamContent({
                     isConfirmedEmpty={isConfirmedEmpty}
                     listRef={listRef}
                     scrollerRef={virtualScrollerRef}
+                    registerScroller={registerVirtualScroller}
                     contentRef={virtualContentRef}
                     userInteractedAtRef={userInteractedAtRef}
                     scrollAbortRef={scrollAbortRef}
@@ -1658,6 +1660,7 @@ function TimelineMessageList({
   isConfirmedEmpty,
   listRef,
   scrollerRef,
+  registerScroller,
   contentRef,
   userInteractedAtRef,
   scrollAbortRef,
@@ -1694,8 +1697,11 @@ function TimelineMessageList({
   isConfirmedEmpty: boolean
   /** virtua imperative handle (scrollToIndex for deep-link rendering). */
   listRef: React.RefObject<VirtualizerHandle | null>
-  /** The scroll container we own. */
+  /** The scroll container we own (read-only handle; attach via registerScroller). */
   scrollerRef: React.RefObject<HTMLDivElement | null>
+  /** Ref callback for the scroller `<div>`; keeps scrollerRef live and re-arms
+   *  the ResizeObserver once the scroller mounts. */
+  registerScroller: (node: HTMLDivElement | null) => void
   /** Inner content wrapper (sized to full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
   /** Stamp set by long-lived scroller input listeners; read by the outer
@@ -2001,7 +2007,7 @@ function TimelineMessageList({
     <>
       <div
         key={streamId}
-        ref={scrollerRef}
+        ref={registerScroller}
         className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", batch?.enabled && "select-none")}
         style={{ overflowAnchor: "none" }}
         data-suppress-pull-refresh="true"

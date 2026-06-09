@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, vi } from "vitest"
 import { act, render } from "@testing-library/react"
 import { useTimelineScroll } from "./use-timeline-scroll"
 
@@ -241,6 +241,43 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(false)
   })
 
+  it("detaches on a light user scroll-up even within the at-bottom band (no snap-back)", () => {
+    // A small wheel/trackpad nudge inside the at-bottom band must disarm follow —
+    // otherwise the re-pin snaps the user straight back to the tail and they
+    // can't scroll up a little to read. Gesture-gated so keyboard-driven scroll
+    // changes (no scroller gesture) never count as a user scroll-up.
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4170 })
+    el.style.setProperty("--composer-height", "70px")
+    harness.current.scrollerRef.current = el
+    // distance = 5000 - 4170 - 800 = 30, inside the 32 + 70 band → following.
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // A light scroll up to distance = 60 — still inside the band — but with a
+    // real gesture. It must detach instead of being re-armed and snapped back.
+    userInteractedAtRef.current = performance.now()
+    el.scrollTop = 4140
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
+  it("does not detach from sub-threshold jitter inside the band without a gesture", () => {
+    // The same small scrollTop move with NO gesture (reflow jitter, momentum
+    // settle) must keep follow armed — only a deliberate gesture detaches.
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4170 })
+    el.style.setProperty("--composer-height", "70px")
+    harness.current.scrollerRef.current = el
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // Jitter up a few px, no gesture stamp → stays armed.
+    el.scrollTop = 4140
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+  })
+
   it("does not re-arm follow at the bottom while in jump mode", () => {
     const harness = renderScrollHook(
       opts({ itemCount: 50, getFirstKey: () => "e10", isJumpMode: true, skipInitialScroll: true })
@@ -249,5 +286,55 @@ describe("useTimelineScroll — scroll position", () => {
     harness.current.scrollerRef.current = el
     act(() => harness.current.handleScroll())
     expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+})
+
+describe("useTimelineScroll — observer attaches when the scroller mounts late", () => {
+  it("wires the ResizeObserver and re-pins when the scroller is registered after mount", () => {
+    // Regression: the scroller and content render behind a loading skeleton, so
+    // on the hook's first commit both refs are null and the ResizeObserver effect
+    // bails at its null-guard. Its deps must include the scroller's attachment so
+    // it re-runs once `registerScroller` provides the element — otherwise the
+    // observer (and the keyboard backstop) never wire up and the tail silently
+    // stops following the keyboard / composer resize on every stream.
+    const observers: MockResizeObserver[] = []
+    class MockResizeObserver {
+      targets: Element[] = []
+      constructor(public cb: ResizeObserverCallback) {
+        observers.push(this)
+      }
+      observe(t: Element) {
+        this.targets.push(t)
+      }
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("ResizeObserver", MockResizeObserver)
+    try {
+      const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+      // First commit: scroller not mounted yet (skeleton), so nothing observed.
+      expect(observers).toHaveLength(0)
+
+      // Scroller mounts: content first (it nests inside the scroller), then the
+      // scroller via its ref callback — the real attach order.
+      const content = document.createElement("div")
+      harness.current.contentRef.current = content
+      const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
+      act(() => harness.current.registerScroller(el))
+
+      // The effect re-ran and wired the observer to the live scroller + content.
+      expect(observers).toHaveLength(1)
+      expect(observers[0].targets).toContain(el)
+      expect(observers[0].targets).toContain(content)
+
+      // Keyboard opens → scroller resizes → observer fires. Following (default at
+      // mount), it pins the tail synchronously to the footer-inclusive bottom.
+      expect(harness.current.isFollowingTailRef.current).toBe(true)
+      expect(el.scrollTop).toBe(1000)
+      act(() => observers[0].cb([], observers[0] as unknown as ResizeObserver))
+      expect(el.scrollTop).toBe(5000)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -350,13 +350,33 @@ export function MessageComposer({
     setMobileFocused(true)
   }, [])
 
-  const handleBlurCapture = useCallback(() => {
-    blurTimeoutRef.current = setTimeout(() => {
+  const handleBlurCapture = useCallback((e: React.FocusEvent<HTMLElement>) => {
+    if (blurTimeoutRef.current) {
+      clearTimeout(blurTimeoutRef.current)
+      blurTimeoutRef.current = null
+    }
+    const root = e.currentTarget
+    // Focus hopping to another control *inside* the composer (a toolbar button,
+    // the link popover) must keep the mobile chrome open — never collapse.
+    const related = e.relatedTarget as Node | null
+    if (related && root.contains(related)) return
+
+    const collapse = () => {
+      blurTimeoutRef.current = null
+      // A within-composer refocus that landed a tick later (mobile toolbar taps
+      // where relatedTarget is null) cancels the collapse.
+      if (root.contains(document.activeElement)) return
       setMobileFocused(false)
       setMobileExpanded(false)
       setFormatOpen(false)
       setMobileLinkPopoverOpen(false)
-    }, 150)
+    }
+    // Focus is leaving the composer (tap outside → keyboard closing). Collapse on
+    // the next tick instead of after 150ms, so the chrome shrink runs *together*
+    // with the keyboard-close viewport change rather than landing afterward as a
+    // separate, jarring second step. The one-tick defer (not synchronous) still
+    // lets a refocus into the composer cancel it via the activeElement guard.
+    blurTimeoutRef.current = setTimeout(collapse, 0)
   }, [])
 
   // Cleanup timeout on unmount

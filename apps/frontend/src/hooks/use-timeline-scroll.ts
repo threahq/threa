@@ -60,8 +60,12 @@ interface UseTimelineScrollOptions {
 interface UseTimelineScrollReturn {
   /** Ref for virtua's `Virtualizer`/`VList` imperative handle. */
   listRef: React.RefObject<VirtualizerHandle | null>
-  /** Ref for the scroll container we own (attach to the scrollable `<div>`). */
+  /** Ref for the scroll container we own. Stays live for readers; attach the
+   *  element with `registerScroller` (not this) so the observer effect re-runs. */
   scrollerRef: React.RefObject<HTMLDivElement | null>
+  /** Ref callback for the scrollable `<div>` — use as its `ref`. Keeps
+   *  `scrollerRef` current and re-arms the ResizeObserver once it mounts. */
+  registerScroller: (node: HTMLDivElement | null) => void
   /** Ref for the inner content wrapper (sized to the full scroll height). */
   contentRef: React.RefObject<HTMLDivElement | null>
   /**
@@ -128,6 +132,24 @@ export function useTimelineScroll({
   const listRef = useRef<VirtualizerHandle>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+
+  // The scroller and content elements are rendered by a child that shows a
+  // loading skeleton first, so they are still null on this hook's first commit
+  // and only attach once messages arrive. `registerScroller` is the scroller's
+  // ref callback: it keeps `scrollerRef` live for readers (handleScroll, virtua's
+  // scrollRef, deep-link/search) AND records the element in state, so the
+  // ResizeObserver effect below re-runs the moment the scroller exists — and
+  // again on the keyed per-stream remount. Without this the observer (and the
+  // keyboard backstop) were wired once at mount against a null ref and never
+  // re-attached, so the tail silently stopped re-pinning on composer-resize and
+  // keyboard-open. The content node mounts inside (and so attaches before) the
+  // scroller, so reading `contentRef.current` when the scroller attaches is
+  // safe — only the scroller needs to drive the effect.
+  const [scrollerEl, setScrollerEl] = useState<HTMLDivElement | null>(null)
+  const registerScroller = useCallback((node: HTMLDivElement | null) => {
+    scrollerRef.current = node
+    setScrollerEl(node)
+  }, [])
 
   const [isScrolledFarFromBottom, setIsScrolledFarFromBottom] = useState(false)
 
@@ -341,18 +363,27 @@ export function useTimelineScroll({
     // disarms follow, which also kills keyboard-follow (gated on follow armed).
     const composerH = readComposerHeight(el)
     const atBottom = distanceFromBottom <= AT_BOTTOM_PX + composerH
+    // A deliberate user scroll-up — the scrollTop actually moved toward the top
+    // AND a real gesture (wheel/trackpad/touch/key) is in play — must detach
+    // even when we are still inside the at-bottom band, or a light nudge gets
+    // snapped straight back to the tail by the re-pin ("can't scroll up a
+    // little"). Gesture-gated on purpose: keyboard-driven scroll changes carry
+    // no scroller gesture, so they never count as a user scroll-up and follow
+    // stays armed through a keyboard open. Content growth never lowers scrollTop,
+    // and our own pins sync prevTop, so neither reads as scrolledUp.
+    const userScrolledUp = scrolledUp && userGestured
     const wasFollowing = isFollowingTailRef.current
-    if (atBottom) {
+    if (atBottom && !userScrolledUp) {
       // Reaching the tail re-arms follow — except in jump mode, where the user
       // is anchored on a deep-linked message and a transient atBottom from
-      // reflow must never yank them to the live tail. Checked before the
-      // scroll-away branch so sub-threshold jitter at the bottom never detaches.
+      // reflow must never yank them to the live tail. Sub-threshold jitter (no
+      // gesture) re-arms here too, so it never detaches.
       isFollowingTailRef.current = !isJumpMode
     } else if (scrolledUp || userGestured) {
-      // The user scrolled away from the bottom. Content growth (new message,
-      // link preview, virtua measuring real heights) does NOT lower scrollTop,
-      // so it doesn't land here — the tail keeps following and the
-      // ResizeObserver re-pins it.
+      // The user scrolled away from the bottom (past the band, or a deliberate
+      // nudge inside it). Content growth (new message, link preview, virtua
+      // measuring real heights) does NOT lower scrollTop, so it doesn't land
+      // here — the tail keeps following and the ResizeObserver re-pins it.
       isFollowingTailRef.current = false
     }
     // While following we're effectively at the tail (the observer re-pins), so
@@ -414,7 +445,7 @@ export function useTimelineScroll({
   // keyboard pump — they were all re-implementations of "content/viewport
   // resized while following → pin".
   useEffect(() => {
-    const scroller = scrollerRef.current
+    const scroller = scrollerEl
     const content = contentRef.current
     if (!scroller || !content) return
 
@@ -424,6 +455,18 @@ export function useTimelineScroll({
       if (!el) return
       const hasViewportEntry = entries.some((entry) => entry.target === el)
       if (isFollowingTailRef.current) {
+        // A CONTENT resize fired by an active user scroll (virtua re-measuring
+        // item heights as rows scroll into view) must NOT re-pin — that snaps a
+        // slow scroll-up back to the bottom before handleScroll can disarm
+        // follow. A VIEWPORT resize (keyboard open/close) always pins: it is not
+        // user-scroll-driven (the composer tap lands on the floating composer,
+        // not the scroller, so the gesture stamp stays stale), so keyboard-follow
+        // is unaffected.
+        const userScrolling = performance.now() - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+        if (!hasViewportEntry && userScrolling) {
+          prevClientHeight = el.clientHeight
+          return
+        }
         scrollDebug("RO pin (following)", {
           viewportEntry: hasViewportEntry,
           ch: el.clientHeight,
@@ -459,7 +502,9 @@ export function useTimelineScroll({
     // viewport without resizing the layout viewport (the scroller), in which
     // case no RO entry fires; pin on the visualViewport's own resize/scroll too.
     // pinToBottom is a no-op when not following and idempotent when it is, so
-    // this can never fight the observer.
+    // this can never fight the observer. Synchronous (not rAF-deferred): on
+    // Chrome Android a deferred pin lands a frame after the viewport step and
+    // fights the browser's own scroll adjustment — that was the Chrome bounce.
     const vv = window.visualViewport
     const pinIfFollowing = () => {
       if (isFollowingTailRef.current) pinToBottom()
@@ -471,13 +516,19 @@ export function useTimelineScroll({
       observer.disconnect()
       vv?.removeEventListener("resize", pinIfFollowing)
       vv?.removeEventListener("scroll", pinIfFollowing)
-      initialSettleCleanupRef.current?.()
     }
-  }, [resetKey, pinToBottom])
+  }, [resetKey, pinToBottom, scrollerEl])
+
+  // Abort an in-flight cold-load settle when the hook unmounts. Kept separate
+  // from the ResizeObserver effect above so that effect can re-run when the
+  // scroller attaches or remounts without tearing down a settle that the
+  // initial-scroll layout effect just started.
+  useEffect(() => () => initialSettleCleanupRef.current?.(), [])
 
   return {
     listRef,
     scrollerRef,
+    registerScroller,
     contentRef,
     shift,
     isScrolledFarFromBottom,
