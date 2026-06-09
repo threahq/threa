@@ -80,6 +80,10 @@ interface UseTimelineScrollReturn {
   /** True during a cold-load settle — the caller masks the content (skeleton
    *  overlay) until it flips false so the measurement bounce stays off-screen. */
   isInitialSettling: boolean
+  /** Extra bottom space (px) the caller should reserve below the last message
+   *  while the on-screen keyboard overlays the scroller (0 when the layout
+   *  already shrinks the scroller above the keyboard). */
+  keyboardInsetPx: number
   /** True while parked at the live tail (auto-following new output). */
   isFollowingTailRef: React.MutableRefObject<boolean>
   /** Imperatively scroll to the very bottom (the composer-spacer edge). */
@@ -130,6 +134,16 @@ export function useTimelineScroll({
   // measured, so this reveals immediately. Deep-link mounts drive their own
   // jump, so they are never masked.
   const [isInitialSettling, setIsInitialSettling] = useState(!skipInitialScroll)
+
+  // Extra bottom space (px) the caller reserves below the last message while the
+  // on-screen keyboard overlays the scroller. Some mobile layouts shrink the app
+  // to `--viewport-height` (so the scroller already sits above the keyboard and
+  // this stays 0); others let the keyboard *overlay* the scroller without
+  // resizing it, so re-pinning has nowhere to move and the last message stays
+  // hidden. We measure how much of the scroller the keyboard actually covers and
+  // reserve exactly that, so pinning lifts the tail above the keyboard either way.
+  const [keyboardInsetPx, setKeyboardInsetPx] = useState(0)
+  const lastInsetRef = useRef(0)
 
   // Auto-follow the live tail. Seeded false for deep-link mounts so we don't
   // snap to bottom before the jump positions on its target.
@@ -391,18 +405,33 @@ export function useTimelineScroll({
     observer.observe(scroller)
     observer.observe(content)
 
-    // The on-screen keyboard shrinks the app to `--viewport-height` (see
-    // useVisualViewport) which shrinks the scroller and fires the ResizeObserver
-    // above. But the keyboard *animates* that height over ~600ms, so a single
-    // snap fires before the viewport settles and a transient "not at bottom"
-    // mid-animation can disarm follow before the observer catches up. Drive the
-    // re-pin from visualViewport directly: while following, re-pin to the bottom
-    // every frame across the settle window and hold follow armed throughout, so
-    // the tail tracks the keyboard down instead of being left behind.
+    // On-screen keyboard handling. Two layouts exist in the wild: some shrink
+    // the app to `--viewport-height` (the scroller ends up above the keyboard,
+    // so `coveredPx` is 0 and nothing extra is reserved); others let the keyboard
+    // OVERLAY the scroller without resizing it — there `scrollTop = scrollHeight`
+    // has nowhere to move and the last message stays hidden behind the keyboard.
+    // Measure how much of the scroller the keyboard actually covers and reserve
+    // exactly that as extra bottom space (`keyboardInsetPx`), so pinning lifts the
+    // tail above the keyboard either way. The keyboard animates over ~600ms, so
+    // re-measure + re-pin every frame across the settle window while following.
     const vv = window.visualViewport
+    const measureCovered = (): number => {
+      const el = scrollerRef.current
+      if (!el || !vv) return 0
+      const covered = el.getBoundingClientRect().bottom - (vv.offsetTop + vv.height)
+      return covered > 1 ? Math.round(covered) : 0
+    }
+    const applyInset = () => {
+      const next = measureCovered()
+      if (next !== lastInsetRef.current) {
+        lastInsetRef.current = next
+        setKeyboardInsetPx(next)
+      }
+    }
     const onViewportResize = () => {
       viewportSettleUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
       programmaticUntilRef.current = performance.now() + VIEWPORT_SETTLE_MS
+      applyInset()
       if (!isFollowingTailRef.current || viewportRafRef.current) return
       const tick = () => {
         if (!isFollowingTailRef.current || performance.now() >= viewportSettleUntilRef.current) {
@@ -410,6 +439,7 @@ export function useTimelineScroll({
           return
         }
         programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+        applyInset()
         snapToBottom()
         viewportRafRef.current = requestAnimationFrame(tick)
       }
@@ -441,6 +471,8 @@ export function useTimelineScroll({
       if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
       viewportRafRef.current = 0
       initialSettleCleanupRef.current?.()
+      lastInsetRef.current = 0
+      setKeyboardInsetPx(0)
     }
   }, [resetKey, snapToBottom])
 
@@ -451,6 +483,7 @@ export function useTimelineScroll({
     shift,
     isScrolledFarFromBottom,
     isInitialSettling,
+    keyboardInsetPx,
     isFollowingTailRef,
     scrollToBottom,
     disableAutoScroll,
