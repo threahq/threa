@@ -144,6 +144,25 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
+  it("stays following when only the composer footer spacer sits below the fold", () => {
+    // The footer spacer (composer height) is dead space at the bottom; the last
+    // message resting just above it is "at the bottom", so follow must NOT
+    // disarm — otherwise the initial scroll strands ~a composer height short and
+    // keyboard-follow (gated on follow) breaks.
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 4130 })
+    el.style.setProperty("--composer-height", "70px")
+    harness.current.scrollerRef.current = el
+    // distanceFromBottom = 5000 - 4130 - 800 = 70 == the composer height.
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+
+    // Scrolling a real amount past the spacer DOES disarm.
+    el.scrollTop = 3500
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
   it("does not re-arm follow at the bottom while in jump mode", () => {
     const harness = renderScrollHook(
       opts({ itemCount: 50, getFirstKey: () => "e10", isJumpMode: true, skipInitialScroll: true })

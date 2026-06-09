@@ -9,6 +9,19 @@ const JUMP_TO_LATEST_PX = 600
  *  snaps and must not disarm follow (covers the initial measure-and-converge). */
 const PROGRAMMATIC_SCROLL_MS = 150
 
+/**
+ * Height (px) of the floating composer, published as `--composer-height` on the
+ * editor zone and reserved by the timeline's footer spacer. The last message
+ * sitting just above that spacer IS visually "at the bottom", so at-bottom math
+ * must treat the spacer as dead space — otherwise the list reads ~a composer
+ * height short of the bottom and wrongly disarms follow.
+ */
+function readComposerHeight(el: HTMLElement): number {
+  const raw = getComputedStyle(el).getPropertyValue("--composer-height")
+  const px = Number.parseFloat(raw)
+  return Number.isFinite(px) ? px : 0
+}
+
 interface UseTimelineScrollOptions {
   /** Total item count of the virtualized list. */
   itemCount: number
@@ -179,7 +192,11 @@ export function useTimelineScroll({
     // ~2 screens up on load.
     if (performance.now() < programmaticUntilRef.current) return
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    const atBottom = distanceFromBottom <= AT_BOTTOM_PX
+    // The composer footer spacer is dead space at the very bottom; the last
+    // message resting just above it counts as "at the bottom". Without this
+    // allowance the list lands ~a composer height short on first load and
+    // disarms follow, which also kills keyboard-follow (gated on follow armed).
+    const atBottom = distanceFromBottom <= AT_BOTTOM_PX + readComposerHeight(el)
     // Reaching the tail re-arms follow — except in jump mode, where the user is
     // anchored on a deep-linked message and transient atBottom from reflow must
     // never yank them to the live tail.
@@ -194,11 +211,13 @@ export function useTimelineScroll({
   // On a cold load virtua has only measured the top window; the rest are size
   // estimates, so scrollTop = scrollHeight alone undershoots (the "lands a
   // couple pages up" bug). scrollToIndex(last) makes virtua render + measure
-  // the bottom region first; the content ResizeObserver below then converges
-  // scrollTop = scrollHeight (footer-inclusive, browser-clamped) to the true
-  // bottom. scrollToIndex is used ONLY here — once the bottom is measured (the
-  // tail, the jump-to-latest button, keyboard re-pins) plain scrollTop suffices,
-  // and scrollToIndex would wrongly park the last message under the composer.
+  // the bottom region first; then we pin scrollTop = scrollHeight (footer-
+  // inclusive, browser-clamped) to the true bottom. scrollToIndex lands a frame
+  // later and aligns the last *item* to the viewport bottom (ignoring the footer
+  // spacer), so re-pin across the next couple of frames — and again whenever the
+  // content ResizeObserver fires — so the footer-inclusive scrollTop wins.
+  // scrollToIndex is used ONLY here: once the bottom is measured (the tail, the
+  // jump-to-latest button, keyboard re-pins) plain scrollTop suffices.
   useLayoutEffect(() => {
     if (skipInitialScroll || didInitialScrollRef.current || itemCount === 0) return
     if (!scrollerRef.current) return
@@ -207,9 +226,15 @@ export function useTimelineScroll({
     try {
       listRef.current?.scrollToIndex(itemCount - 1, { align: "end" })
     } catch {
-      // Not-yet-measured list can throw; the ResizeObserver snap still converges.
+      // Not-yet-measured list can throw; the re-pins below still converge.
     }
     snapToBottom()
+    const r1 = requestAnimationFrame(() => snapToBottom())
+    const r2 = requestAnimationFrame(() => requestAnimationFrame(() => snapToBottom()))
+    return () => {
+      cancelAnimationFrame(r1)
+      cancelAnimationFrame(r2)
+    }
   }, [itemCount, skipInitialScroll, resetKey, snapToBottom])
 
   // Keep the tail pinned while following, and absorb keyboard viewport changes
