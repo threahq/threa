@@ -10,6 +10,7 @@ import {
   useEffect,
   useId,
 } from "react"
+import { flushSync } from "react-dom"
 import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2 } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { usePreferencesOptional } from "@/contexts"
@@ -112,6 +113,14 @@ function getPreviewText(doc: JSONContent): string {
 /** Platform-appropriate modifier key symbol (⌘ on Mac, Ctrl+ elsewhere) */
 const MOD_SYMBOL = navigator.platform?.toLowerCase().includes("mac") ? "⌘" : "Ctrl+"
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
+
+/**
+ * How long to wait for the keyboard's viewport resize after an editor focus
+ * before expanding the mobile chrome anyway. Covers hardware keyboards and
+ * browsers that never resize the viewport; the soft-keyboard resize lands
+ * well inside this on both Chrome and Firefox Android.
+ */
+const KEYBOARD_RESIZE_WAIT_MS = 300
 
 export interface ComposerControlHandle {
   focus(): void
@@ -276,6 +285,7 @@ export function MessageComposer({
   const controlsDisabled = disabled || isSubmitting
 
   const richEditorRef = useRef<RichEditorHandle>(null)
+  const mobileRootRef = useRef<HTMLDivElement>(null)
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
@@ -291,6 +301,67 @@ export function MessageComposer({
   const isMobile = useIsMobile()
   const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const instructionsId = useId()
+
+  // Mobile chrome (action bar + full editor) stays open while focused OR while
+  // a dictation take is in flight (see mobileChromeOpen below). Mirrored in a
+  // ref so the stable focus handlers can read the current value.
+  const mobileChromeOpen = mobileFocused || voiceActive
+  const mobileChromeOpenRef = useRef(mobileChromeOpen)
+  mobileChromeOpenRef.current = mobileChromeOpen
+
+  // Defer the mobile chrome expansion until the keyboard's viewport resize
+  // lands. Expanding on focus alone ran ~100ms ahead of the keyboard, so the
+  // open read as two snaps: content nudged up for the taller composer, then
+  // the keyboard jump. Waiting for the first visualViewport resize after the
+  // focus — and rendering synchronously inside that event, in the same frame
+  // useVisualViewport writes --viewport-height — fuses both into ONE snap
+  // (the timeline ResizeObserver sees one combined layout change and pins
+  // once). The timeout is the fallback for keyboards that never resize the
+  // viewport (hardware keyboard); an already-open chrome skips the wait.
+  const pendingChromeOpenRef = useRef<(() => void) | null>(null)
+  const cancelPendingChromeOpen = useCallback(() => {
+    pendingChromeOpenRef.current?.()
+    pendingChromeOpenRef.current = null
+  }, [])
+  const openMobileChromeWithKeyboard = useCallback(() => {
+    if (mobileChromeOpenRef.current) {
+      setMobileFocused(true)
+      return
+    }
+    if (pendingChromeOpenRef.current) return
+    const vv = window.visualViewport
+    if (!vv) {
+      setMobileFocused(true)
+      return
+    }
+    const open = () => {
+      cancel()
+      // The viewport resize that arrives when focus has already LEFT the
+      // composer is the keyboard closing, not opening — never expand on it.
+      const root = mobileRootRef.current
+      if (root && !root.contains(document.activeElement)) return
+      flushSync(() => setMobileFocused(true))
+      // Re-assert focus for the tap-to-reveal path, where the editor was
+      // focused while still zero-height.
+      richEditorRef.current?.focus()
+    }
+    const timeoutId = window.setTimeout(open, KEYBOARD_RESIZE_WAIT_MS)
+    // Both browsers dispatch `window` resize BEFORE visualViewport resize
+    // (separate events) — useVisualViewport writes --viewport-height on
+    // whichever lands first, so the chrome must open on the first of the two
+    // or it trails the keyboard snap by a dispatch and reads as a second
+    // phase. The handlers run after useVisualViewport's (attached earlier),
+    // so the flushSync render shares the height write's frame.
+    vv.addEventListener("resize", open)
+    window.addEventListener("resize", open)
+    const cancel = () => {
+      pendingChromeOpenRef.current = null
+      clearTimeout(timeoutId)
+      vv.removeEventListener("resize", open)
+      window.removeEventListener("resize", open)
+    }
+    pendingChromeOpenRef.current = cancel
+  }, [])
 
   // Imperative handle to the live mic button so the composer can end the
   // dictation take when it sends or clears the draft (drops the polish toggle
@@ -319,72 +390,84 @@ export function MessageComposer({
       clearTimeout(blurTimeoutRef.current)
       blurTimeoutRef.current = null
     }
+    cancelPendingChromeOpen()
     setFormatOpen(false)
     setMobileExpanded(false)
     setMobileFocused(false)
     setMobileLinkPopoverOpen(false)
     setVoiceActive(false)
-  }, [scopeId])
+  }, [scopeId, cancelPendingChromeOpen])
 
   // Reset mobile-only state when viewport crosses the mobile/desktop threshold
   useEffect(() => {
     if (!isMobile) {
+      cancelPendingChromeOpen()
       setMobileExpanded(false)
       setMobileFocused(false)
       setMobileLinkPopoverOpen(false)
     }
-  }, [isMobile])
-
-  // Mobile chrome (action bar + full editor padding) stays open while focused
-  // OR while a dictation take is in flight, so a tap-outside doesn't unmount the
-  // mic mid-take and abort the session.
-  const mobileChromeOpen = mobileFocused || voiceActive
+  }, [isMobile, cancelPendingChromeOpen])
 
   // Track focus state for mobile progressive disclosure.
   // Uses a small delay on blur to avoid flicker when focus moves between editor and action bar buttons.
-  const handleFocusCapture = useCallback(() => {
-    if (blurTimeoutRef.current) {
-      clearTimeout(blurTimeoutRef.current)
-      blurTimeoutRef.current = null
-    }
-    setMobileFocused(true)
-  }, [])
+  const handleFocusCapture = useCallback(
+    (e: React.FocusEvent<HTMLElement>) => {
+      if (blurTimeoutRef.current) {
+        clearTimeout(blurTimeoutRef.current)
+        blurTimeoutRef.current = null
+      }
+      // An editor focus raises the keyboard — open the chrome together with
+      // its resize (one snap). Focus landing on other controls (the preview
+      // send button) raises no keyboard, so there is nothing to wait for.
+      if (e.target instanceof HTMLElement && e.target.isContentEditable) {
+        openMobileChromeWithKeyboard()
+      } else {
+        setMobileFocused(true)
+      }
+    },
+    [openMobileChromeWithKeyboard]
+  )
 
-  const handleBlurCapture = useCallback((e: React.FocusEvent<HTMLElement>) => {
-    if (blurTimeoutRef.current) {
-      clearTimeout(blurTimeoutRef.current)
-      blurTimeoutRef.current = null
-    }
-    const root = e.currentTarget
-    // Focus hopping to another control *inside* the composer (a toolbar button,
-    // the link popover) must keep the mobile chrome open — never collapse.
-    const related = e.relatedTarget as Node | null
-    if (related && root.contains(related)) return
+  const handleBlurCapture = useCallback(
+    (e: React.FocusEvent<HTMLElement>) => {
+      if (blurTimeoutRef.current) {
+        clearTimeout(blurTimeoutRef.current)
+        blurTimeoutRef.current = null
+      }
+      const root = e.currentTarget
+      // Focus hopping to another control *inside* the composer (a toolbar button,
+      // the link popover) must keep the mobile chrome open — never collapse.
+      const related = e.relatedTarget as Node | null
+      if (related && root.contains(related)) return
 
-    const collapse = () => {
-      blurTimeoutRef.current = null
-      // A within-composer refocus that landed a tick later (mobile toolbar taps
-      // where relatedTarget is null) cancels the collapse.
-      if (root.contains(document.activeElement)) return
-      setMobileFocused(false)
-      setMobileExpanded(false)
-      setFormatOpen(false)
-      setMobileLinkPopoverOpen(false)
-    }
-    // Focus is leaving the composer (tap outside → keyboard closing). Collapse on
-    // the next tick instead of after 150ms, so the chrome shrink runs *together*
-    // with the keyboard-close viewport change rather than landing afterward as a
-    // separate, jarring second step. The one-tick defer (not synchronous) still
-    // lets a refocus into the composer cancel it via the activeElement guard.
-    blurTimeoutRef.current = setTimeout(collapse, 0)
-  }, [])
+      const collapse = () => {
+        blurTimeoutRef.current = null
+        // A within-composer refocus that landed a tick later (mobile toolbar taps
+        // where relatedTarget is null) cancels the collapse.
+        if (root.contains(document.activeElement)) return
+        cancelPendingChromeOpen()
+        setMobileFocused(false)
+        setMobileExpanded(false)
+        setFormatOpen(false)
+        setMobileLinkPopoverOpen(false)
+      }
+      // Focus is leaving the composer (tap outside → keyboard closing). Collapse on
+      // the next tick instead of after 150ms, so the chrome shrink runs *together*
+      // with the keyboard-close viewport change rather than landing afterward as a
+      // separate, jarring second step. The one-tick defer (not synchronous) still
+      // lets a refocus into the composer cancel it via the activeElement guard.
+      blurTimeoutRef.current = setTimeout(collapse, 0)
+    },
+    [cancelPendingChromeOpen]
+  )
 
-  // Cleanup timeout on unmount
+  // Cleanup timeouts/listeners on unmount
   useEffect(
     () => () => {
       if (blurTimeoutRef.current) clearTimeout(blurTimeoutRef.current)
+      cancelPendingChromeOpen()
     },
-    []
+    [cancelPendingChromeOpen]
   )
 
   // Track whether the caret is inside a table so we can surface a discoverability
@@ -876,6 +959,7 @@ export function MessageComposer({
     <TooltipProvider delayDuration={300}>
       {/* Message input wrapper — dvh units respect the virtual keyboard on mobile */}
       <div
+        ref={mobileRootRef}
         className={cn(
           "flex flex-col transition-[max-height,min-height] duration-200 ease-out",
           mobileExpanded ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
@@ -924,10 +1008,12 @@ export function MessageComposer({
             )}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']")) return
-              // On mobile unfocused, reveal the editor first then focus on next frame
+              // On mobile unfocused, focus the (still zero-height) editor now —
+              // raising the keyboard — and expand the chrome together with the
+              // keyboard's viewport resize, so the open is a single snap.
               if (isMobile && !mobileChromeOpen) {
-                setMobileFocused(true)
-                requestAnimationFrame(() => richEditorRef.current?.focus())
+                openMobileChromeWithKeyboard()
+                richEditorRef.current?.focus()
                 return
               }
               richEditorRef.current?.focus()

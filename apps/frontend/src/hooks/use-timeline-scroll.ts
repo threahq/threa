@@ -339,19 +339,25 @@ export function useTimelineScroll({
     const prevHeight = prevScrollHeightRef.current
     prevScrollTopRef.current = el.scrollTop
     prevScrollHeightRef.current = el.scrollHeight
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     // A user scroll-up is the scrollTop moving toward the top, measured directly
     // so it's device-independent — scrollbar drag, wheel, touch, and keyboard
     // PageUp all qualify, where a gesture-event stamp alone missed the desktop
-    // scrollbar. A scrollHeight SHRINK (composer collapsing on send/blur, a row
-    // removed) clamps scrollTop down on its own; that is not a user scroll, so
-    // exclude it — otherwise a sent message disarmed follow and hid behind the
-    // composer. Our own programmatic pins update prevTop in the same statement
-    // as the write, so they read as no movement here and never disarm.
-    const scrolledUp = el.scrollTop < prevTop - 1 && el.scrollHeight >= prevHeight - 1
+    // scrollbar. Two browser-driven clamps also lower scrollTop and must NOT
+    // count: a scrollHeight SHRINK (composer collapsing on send/blur, a row
+    // removed) — otherwise a sent message disarmed follow and hid behind the
+    // composer — and a viewport GROWTH (keyboard closing: a taller scroller
+    // lowers the scrollTop maximum). The growth clamp lands exactly AT the new
+    // bottom, where a genuine scroll-up always ends ABOVE it, so requiring
+    // distance > 1 tells them apart; without it, the tap that dismissed the
+    // keyboard (a fresh scroller gesture) made the clamp read as a deliberate
+    // scroll-up, follow disarmed, and the close parked the list a
+    // keyboard-height above the tail. Our own programmatic pins update prevTop
+    // in the same statement as the write, so they read as no movement here.
+    const scrolledUp = el.scrollTop < prevTop - 1 && el.scrollHeight >= prevHeight - 1 && distanceFromBottom > 1
     // Secondary signal for a touch/wheel gesture that hasn't moved scrollTop yet.
     const now = performance.now()
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     // The composer footer spacer is dead space at the very bottom; the last
     // message resting just above it counts as "at the bottom". Without this
     // allowance the list lands ~a composer height short on first load and

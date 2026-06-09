@@ -147,6 +147,31 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
+  it("does not disarm follow when viewport growth clamps scrollTop down right after a tap (keyboard close)", () => {
+    // Dismissing the keyboard by tapping the timeline stamps a fresh gesture,
+    // and the optimistic close grows the viewport in the same beat: a taller
+    // scroller lowers the scrollTop maximum, so the browser clamps scrollTop
+    // down — a drop that, combined with the fresh tap, read as a deliberate
+    // scroll-up and disarmed follow (the close then parked the list a
+    // keyboard-height above the tail). The clamp lands exactly AT the new
+    // bottom, which a genuine scroll-up never does — follow must stay armed.
+    const userInteractedAtRef = { current: 0 }
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10", userInteractedAtRef }))
+    const el = makeScrollerDiv({ scrollHeight: 5220, clientHeight: 388, scrollTop: 4832 })
+    harness.current.scrollerRef.current = el
+    // Pinned at the keyboard-open bottom.
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // The dismissing tap lands on the scroller…
+    userInteractedAtRef.current = performance.now()
+    // …and the viewport grows back: clientHeight 388 → 677, browser clamps
+    // scrollTop to the new maximum (5220 - 677 = 4543).
+    Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 677 })
+    el.scrollTop = 4543
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+  })
+
   it("disarms follow when scrollTop drops with no gesture stamp (desktop scrollbar drag)", () => {
     // The desktop bug: dragging the scrollbar scrolls without firing
     // wheel/touch/pointer on the scroller, so the gesture stamp stays 0. Follow

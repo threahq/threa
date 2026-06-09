@@ -367,6 +367,140 @@ describe("useVisualViewport", () => {
     expect(getVH()).toBe("420px")
   })
 
+  it("restores the full height immediately on blur and ignores stale keyboard-open reports", async () => {
+    // The keyboard close is certain the moment focus leaves the last editable.
+    // Waiting for the browser's chunked viewport reports (plus the growth
+    // debounce) made the composer trail the keyboard by several hundred ms —
+    // the height must be restored optimistically on focusout, and the
+    // keyboard-open-sized values the browser still reports during its close
+    // animation must not yank it back down.
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+    const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 20))
+
+    setInnerHeight(800)
+    fakeVV.height = 800
+    renderHook(() => useVisualViewport(true))
+
+    const input = document.createElement("input")
+    document.body.appendChild(input)
+    input.focus()
+
+    act(() => {
+      fakeVV.height = 500
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("500px")
+
+    await act(async () => {
+      input.blur()
+      await nextTask()
+    })
+    expect(getVH()).toBe("800px")
+
+    // Mid-close the browser still reports keyboard-open heights (both
+    // viewports, resizes-content style, so the phantom clamp doesn't apply)
+    // — suppressed inside the optimistic window.
+    act(() => {
+      setInnerHeight(520)
+      fakeVV.height = 520
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("800px")
+
+    // The close settles on the value we already wrote — no further movement.
+    act(() => {
+      setInnerHeight(800)
+      fakeVV.height = 800
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("800px")
+
+    input.remove()
+  })
+
+  it("freezes the close-overshoot growth and reconciles once at window end (Chrome close jump)", async () => {
+    // The Chrome close jump: after the optimistic restore to 800, Chrome
+    // transiently reports a height PAST the real screen (the 753-on-725
+    // overshoot). As a growth above the restored baseline it used to sail
+    // through the debounce and get written — composer below the fold — and
+    // its shrink-correction was then suppressed until the window expired.
+    // The whole window must be write-frozen, with one reconcile at expiry.
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+    setInnerHeight(800)
+    fakeVV.height = 800
+    renderHook(() => useVisualViewport(true))
+
+    const input = document.createElement("input")
+    document.body.appendChild(input)
+    input.focus()
+    act(() => {
+      fakeVV.height = 500
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("500px")
+
+    await act(async () => {
+      input.blur()
+      await sleep(20)
+    })
+    expect(getVH()).toBe("800px")
+
+    // Mid-close overshoot past the restored baseline — must NOT be written,
+    // not even after the growth debounce elapses.
+    await act(async () => {
+      setInnerHeight(828)
+      fakeVV.height = 828
+      fakeVV.emitResize()
+      await sleep(250)
+    })
+    expect(getVH()).toBe("800px")
+
+    // The viewport settles back on the real height before the freeze ends;
+    // the reconcile at window expiry confirms the baseline — no movement.
+    await act(async () => {
+      setInnerHeight(800)
+      fakeVV.height = 800
+      fakeVV.emitResize()
+      await sleep(400)
+    })
+    expect(getVH()).toBe("800px")
+
+    input.remove()
+  })
+
+  it("skips the optimistic close restore when focus hops to another editable", async () => {
+    const getVH = () => document.documentElement.style.getPropertyValue("--viewport-height")
+    const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 20))
+
+    setInnerHeight(800)
+    fakeVV.height = 800
+    renderHook(() => useVisualViewport(true))
+
+    const composer = document.createElement("input")
+    const search = document.createElement("input")
+    document.body.append(composer, search)
+    composer.focus()
+
+    act(() => {
+      fakeVV.height = 500
+      fakeVV.emitResize()
+    })
+    expect(getVH()).toBe("500px")
+
+    // Focus moves composer → search: the keyboard stays up, so the deferred
+    // restore must see the new editable focus and do nothing.
+    await act(async () => {
+      search.focus()
+      await nextTask()
+    })
+    expect(getVH()).toBe("500px")
+
+    composer.remove()
+    search.remove()
+  })
+
   it("cleans up listeners and removes --viewport-height on unmount", () => {
     fakeVV.height = 800
     const { unmount } = renderHook(() => useVisualViewport(true))
