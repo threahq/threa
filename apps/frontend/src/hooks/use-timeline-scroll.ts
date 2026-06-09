@@ -346,9 +346,27 @@ export function useTimelineScroll({
     }
     vv?.addEventListener("resize", onViewportResize)
 
+    // Media inside a row — a link preview's og:image, GitHub avatars, a GIF —
+    // finishes decoding a frame or two after the row first lays out and grows
+    // it. While parked at the tail that late growth can slip past the
+    // ResizeObserver's timing and leave the list pinned a hair short: the "small
+    // jump as a link preview loads in", and a few px of scrollable slack below
+    // the last message (masked by the at-bottom allowance, so follow stays armed
+    // but we're not actually at the true bottom). `load` doesn't bubble, so
+    // listen in the capture phase and re-pin to the exact bottom when following.
+    const onMediaLoad = (event: Event) => {
+      if (!isFollowingTailRef.current || !(event.target instanceof HTMLImageElement)) return
+      const el = scrollerRef.current
+      if (!el) return
+      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+      el.scrollTop = el.scrollHeight
+    }
+    scroller.addEventListener("load", onMediaLoad, true)
+
     return () => {
       observer.disconnect()
       vv?.removeEventListener("resize", onViewportResize)
+      scroller.removeEventListener("load", onMediaLoad, true)
       if (viewportRafRef.current) cancelAnimationFrame(viewportRafRef.current)
       viewportRafRef.current = 0
       initialSettleCleanupRef.current?.()
