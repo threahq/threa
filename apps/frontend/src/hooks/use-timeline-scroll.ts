@@ -164,6 +164,12 @@ export function useTimelineScroll({
   // still growing underneath, so we read as "not at bottom" even though we're
   // chasing it.
   const programmaticUntilRef = useRef(0)
+  // Last scrollTop observed by handleScroll. A decrease outside a programmatic
+  // window is the user scrolling up (device-independent: covers scrollbar drag,
+  // wheel, touch, keyboard PageUp), which disarms follow. Content growth raises
+  // scrollHeight rather than lowering scrollTop, so it never reads as a scroll-up
+  // — that's what keeps "new messages push the view up" from disarming follow.
+  const prevScrollTopRef = useRef(0)
   // Drives the keyboard settle re-pin loop (see the ResizeObserver effect).
   const viewportSettleUntilRef = useRef(0)
   const viewportRafRef = useRef(0)
@@ -179,6 +185,7 @@ export function useTimelineScroll({
     lastResetKeyRef.current = resetKey
     prevFirstKeyRef.current = null
     prevCountRef.current = 0
+    prevScrollTopRef.current = 0
     didInitialScrollRef.current = false
     isFollowingTailRef.current = !skipInitialScroll
     // Re-mask for the new stream's cold-load settle (a no-op when it converges
@@ -312,14 +319,23 @@ export function useTimelineScroll({
     const el = scrollerRef.current
     if (!el) return
     const now = performance.now()
-    // A genuine user gesture is honored even mid-programmatic-window. Our own
-    // snaps (initial convergence, follow re-pin, keyboard settle) carry no
-    // recent gesture, so we skip them — disarming on them is what stranded the
-    // list ~2 screens up on load. But a real scroll-away DURING the keyboard
-    // settle must still disarm: otherwise follow stays wrongly armed and the
-    // next composer resize (a keystroke/newline) yanks the user back to the
-    // tail — the "scrolled away but it snaps back on composer resize" report.
+    const prevTop = prevScrollTopRef.current
+    prevScrollTopRef.current = el.scrollTop
+    // A user scroll-up is the scrollTop moving DOWN (toward the top), measured
+    // directly so it's device-independent — scrollbar drag, wheel, touch, and
+    // keyboard PageUp all qualify, where the old gesture-event stamp missed the
+    // desktop scrollbar and left follow wrongly armed (it then snapped back on
+    // the next composer resize). Content growth raises scrollHeight instead of
+    // lowering scrollTop, so it never reads as a scroll-up — that's what keeps
+    // "new messages push the view up" from disarming follow.
+    const scrolledUp = el.scrollTop < prevTop - 1
+    // A stamped gesture is a secondary signal, honored even mid-programmatic
+    // window so a deliberate scroll during the keyboard settle still disarms.
     const userGestured = now - (userInteractedAtRef?.current ?? 0) < USER_SCROLL_GRACE_MS
+    // Skip our own programmatic snaps (initial convergence, follow re-pin,
+    // keyboard settle): they move scrollTop toward the bottom, so reading them
+    // as "not at bottom" and disarming is what stranded the list on load. A
+    // genuine gesture still breaks through.
     if (now < programmaticUntilRef.current && !userGestured) {
       scrollDebug("handleScroll skipped (programmatic, no gesture)", {
         msLeft: Math.round(programmaticUntilRef.current - now),
@@ -339,13 +355,11 @@ export function useTimelineScroll({
       // is anchored on a deep-linked message and a transient atBottom from
       // reflow must never yank them to the live tail.
       isFollowingTailRef.current = !isJumpMode
-    } else if (userGestured) {
-      // Only a genuine user scroll away from the bottom stops follow. Content
-      // growth (a new message, a link preview loading, virtua measuring real
-      // heights) moves us off the bottom with NO gesture; disarming there
-      // strands the tail instead of letting the ResizeObserver re-pin — the
-      // "new messages don't push the view up" and "preview lands under the
-      // composer" reports.
+    } else if (scrolledUp || userGestured) {
+      // The user scrolled away from the bottom. Content growth (new message,
+      // link preview, virtua measuring real heights) does NOT lower scrollTop,
+      // so it doesn't land here — the tail keeps following and the
+      // ResizeObserver re-pins it.
       isFollowingTailRef.current = false
     }
     // While following we're effectively at the tail (the observer re-pins), so
@@ -355,8 +369,10 @@ export function useTimelineScroll({
       scrollDebug(`follow ${isFollowingTailRef.current ? "ARMED" : "DISARMED"} (handleScroll)`, {
         dist: Math.round(distanceFromBottom),
         atBottom,
+        scrolledUp,
         userGestured,
         composerH: Math.round(composerH),
+        prevTop: Math.round(prevTop),
         st: el.scrollTop,
         sh: el.scrollHeight,
         ch: el.clientHeight,

@@ -127,6 +127,23 @@ describe("useTimelineScroll — scroll position", () => {
     expect(harness.current.isFollowingTailRef.current).toBe(true)
   })
 
+  it("disarms follow when scrollTop drops with no gesture stamp (desktop scrollbar drag)", () => {
+    // The desktop bug: dragging the scrollbar scrolls without firing
+    // wheel/touch/pointer on the scroller, so the gesture stamp stays 0. Follow
+    // must still disarm from the scrollTop decrease itself — otherwise it stays
+    // armed and the next composer resize snaps the user back to the bottom.
+    const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
+    const el = makeScrollerDiv({ scrollHeight: 11122, clientHeight: 991, scrollTop: 10131 })
+    harness.current.scrollerRef.current = el
+    // Establish the baseline at the bottom (re-arms follow).
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(true)
+    // User drags the scrollbar up ~348px — no gesture event, just scrollTop.
+    el.scrollTop = 9783
+    act(() => harness.current.handleScroll())
+    expect(harness.current.isFollowingTailRef.current).toBe(false)
+  })
+
   it("disarms follow on a genuine user gesture even while a programmatic window is open", () => {
     // Opening the keyboard / a follow re-pin leaves a programmatic window open
     // during which our own snaps must not disarm follow. But a real scroll-away
