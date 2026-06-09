@@ -102,9 +102,6 @@ export function useTimelineScroll({
   // not disarm follow: mid-convergence the content is still growing underneath,
   // so we read as "not at bottom" even though we're chasing it.
   const programmaticUntilRef = useRef(0)
-  // Current item count, read inside the long-lived ResizeObserver closure.
-  const itemCountRef = useRef(itemCount)
-  itemCountRef.current = itemCount
 
   // Reset all scroll state synchronously when the stream changes, before the
   // shift computation below runs for the new stream's first render. A layout
@@ -134,32 +131,25 @@ export function useTimelineScroll({
   prevFirstKeyRef.current = firstKey
   prevCountRef.current = itemCount
 
-  // Go to the absolute bottom of a *virtualized* list. Native scrollTop =
-  // scrollHeight alone undershoots, because only the top window is measured at
-  // mount and the rest are size estimates — so the list lands well short of the
-  // bottom. First ask virtua to land on the last item (it converges past the
-  // estimates by rendering + measuring the bottom region), then snap to the
-  // absolute bottom so the composer footer spacer is included.
-  const snapToBottom = useCallback(
-    (behavior?: ScrollBehavior) => {
-      const el = scrollerRef.current
-      if (!el) return
-      programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-      if (itemCountRef.current > 0) {
-        try {
-          listRef.current?.scrollToIndex(itemCountRef.current - 1, { align: "end" })
-        } catch {
-          // Not-yet-measured list can throw; the ResizeObserver snap converges.
-        }
-      }
-      if (behavior === "smooth") {
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-      } else {
-        el.scrollTop = el.scrollHeight
-      }
-    },
-    [listRef]
-  )
+  // Go to the absolute bottom. scrollTop = scrollHeight is browser-clamped to
+  // the true maximum, which includes the composer footer spacer below virtua's
+  // items — so the last message lands *above* the composer, not behind it.
+  // (Deliberately NOT virtua's scrollToIndex: it aligns to the item and can't
+  // see the trailing footer spacer, so it parks the last message at the very
+  // bottom edge, under the composer.) In a virtualized list scrollHeight is
+  // estimate-based at first, so this can undershoot on the first frame — the
+  // content ResizeObserver below re-pins it as virtua measures real heights,
+  // protected from disarming follow by the programmatic-scroll window.
+  const snapToBottom = useCallback((behavior?: ScrollBehavior) => {
+    const el = scrollerRef.current
+    if (!el) return
+    programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
+    if (behavior === "smooth") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+    } else {
+      el.scrollTop = el.scrollHeight
+    }
+  }, [])
 
   const scrollToBottom = useCallback(
     (options?: { force?: boolean; behavior?: ScrollBehavior }) => {
@@ -227,17 +217,11 @@ export function useTimelineScroll({
       const el = scrollerRef.current
       if (!el) return
       if (isFollowingTailRef.current) {
-        // Keep landing on the last item as virtua measures real heights during
-        // the initial convergence, then pin to the absolute bottom. Marked
-        // programmatic so the resulting scroll event doesn't disarm follow.
+        // Re-pin to the absolute bottom as virtua measures real heights (initial
+        // convergence) and on content/viewport growth (live append, keyboard
+        // open). Marked programmatic so the resulting scroll event doesn't
+        // disarm follow.
         programmaticUntilRef.current = performance.now() + PROGRAMMATIC_SCROLL_MS
-        if (itemCountRef.current > 0) {
-          try {
-            listRef.current?.scrollToIndex(itemCountRef.current - 1, { align: "end" })
-          } catch {
-            // Not-yet-measured list can throw; the scrollTop snap still converges.
-          }
-        }
         el.scrollTop = el.scrollHeight
         prevClientHeight = el.clientHeight
         return

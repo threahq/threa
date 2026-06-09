@@ -1,6 +1,5 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect } from "vitest"
 import { act, render } from "@testing-library/react"
-import type { VirtualizerHandle } from "virtua"
 import { useTimelineScroll } from "./use-timeline-scroll"
 
 type Options = Parameters<typeof useTimelineScroll>[0]
@@ -102,17 +101,15 @@ describe("useTimelineScroll — shift (prepend) detection", () => {
 })
 
 describe("useTimelineScroll — scroll position", () => {
-  it("scrollToBottom lands on the last item via virtua, then pins to the absolute bottom", () => {
-    // Native scrollTop=scrollHeight alone undershoots a virtualized list (only
-    // the top window is measured); virtua's scrollToIndex converges past the
-    // estimates, then we pin to the bottom so the composer spacer is included.
+  it("scrollToBottom pins scrollTop to scrollHeight (footer-spacer-inclusive bottom)", () => {
+    // Browser-clamped scrollTop=scrollHeight lands at the true bottom INCLUDING
+    // the composer footer spacer below virtua's items, so the last message sits
+    // above the composer (not behind it). Deliberately not virtua's
+    // scrollToIndex, which aligns to the item and ignores the trailing spacer.
     const harness = renderScrollHook(opts({ itemCount: 50, getFirstKey: () => "e10" }))
     const el = makeScrollerDiv({ scrollHeight: 5000, clientHeight: 800, scrollTop: 1000 })
     harness.current.scrollerRef.current = el
-    const scrollToIndex = vi.fn()
-    harness.current.listRef.current = { scrollToIndex } as unknown as VirtualizerHandle
     act(() => harness.current.scrollToBottom({ force: true }))
-    expect(scrollToIndex).toHaveBeenCalledWith(49, { align: "end" })
     expect(el.scrollTop).toBe(5000)
   })
 
