@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { useSocket } from "@/contexts"
 import { joinRoomFireAndForget } from "@/lib/socket-room"
 import { registerStreamSocketHandlers } from "@/sync/stream-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 
 /**
  * Hook to handle real-time message/reaction events for a specific stream.
@@ -16,6 +17,8 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
   const shouldSubscribe = options?.enabled ?? true
   const queryClient = useQueryClient()
   const socket = useSocket()
+  // Optional: draft panels can mount outside the workspace SyncEngine provider.
+  const syncEngine = useOptionalSyncEngine()
 
   useEffect(() => {
     if (!socket || !workspaceId || !streamId || !shouldSubscribe) return
@@ -29,7 +32,14 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
     // Register all stream-level socket handlers — they write to IDB only.
     // queryClient is passed for transitional workspace bootstrap preview updates
     // (will be removed in Phase 3).
-    const cleanupHandlers = registerStreamSocketHandlers(socket, workspaceId, streamId, queryClient)
+    const cleanupHandlers = registerStreamSocketHandlers(socket, workspaceId, streamId, queryClient, {
+      // A live event that skips past the cached tail means events were missed
+      // (zombie socket, server bounce). Route to the engine's single-flighted
+      // backfill so the hole is fetched instead of persisting until reload.
+      onSequenceGap: syncEngine
+        ? ({ streamId: gapStreamId, afterSequence }) => void syncEngine.backfillStreamGap(gapStreamId, afterSequence)
+        : undefined,
+    })
 
     return () => {
       abortController.abort()
@@ -38,5 +48,5 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
       // a single leave undoes ALL joins. The SyncEngine also joins this room
       // for stream:activity delivery — leaving here would break sidebar updates.
     }
-  }, [socket, workspaceId, streamId, shouldSubscribe, queryClient])
+  }, [socket, workspaceId, streamId, shouldSubscribe, queryClient, syncEngine])
 }

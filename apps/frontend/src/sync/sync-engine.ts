@@ -73,6 +73,7 @@ export class SyncEngine {
   private activeBootstrap: Promise<void> | null = null
   private queuedReconnectBootstrap: Promise<void> | null = null
   private activeStreamRefreshes = new Map<string, Promise<void>>()
+  private activeGapBackfills = new Map<string, Promise<void>>()
   private hasEverConnected = false
   /** Whether the engine has been destroyed. Public for ref-check re-creation. */
   isDestroyed = false
@@ -225,6 +226,52 @@ export class SyncEngine {
   }
 
   /**
+   * Close a detected sequence gap: a live socket event arrived whose sequence
+   * leaves a hole behind the previously-latest persisted event, meaning events
+   * were missed while this client wasn't receiving (zombie socket, server
+   * bounce, a reconnect catch-up that raced live delivery). Fetches events
+   * after the PRE-GAP cursor — the current latest would skip the very hole
+   * this is meant to fill — and applies them append-style (INV-53).
+   *
+   * Single-flighted per stream: a burst of gap reports while a backfill is in
+   * flight collapses onto the same fetch; the applied response closes the gap
+   * they all observed.
+   */
+  backfillStreamGap(streamId: string, afterSequence: string): Promise<void> {
+    if (this.isDestroyed) return Promise.resolve()
+    const existing = this.activeGapBackfills.get(streamId)
+    if (existing) return existing
+
+    const { workspaceId, streamService, queryClient } = this.deps
+    const backfill = (async () => {
+      try {
+        const bootstrap = await streamService.bootstrap(workspaceId, streamId, { after: afterSequence })
+        if (this.isDestroyed) return
+        await applyStreamBootstrap(workspaceId, streamId, bootstrap)
+        queryClient.setQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId), (current) =>
+          current
+            ? toCachedStreamBootstrap(bootstrap, current, {
+                incrementWindowVersionOnReplace: bootstrap.syncMode === "replace",
+              })
+            : current
+        )
+      } catch (error) {
+        // Best-effort: the gap stays in the local cache and the next
+        // reconnect/navigation bootstrap closes it. Mark the stream stale so
+        // the sync indicator reflects the known divergence.
+        this.deps.syncStatus.set(`stream:${streamId}`, "stale")
+        console.error("Sequence-gap backfill failed", { streamId, afterSequence, error })
+      }
+    })().finally(() => {
+      if (this.activeGapBackfills.get(streamId) === backfill) {
+        this.activeGapBackfills.delete(streamId)
+      }
+    })
+    this.activeGapBackfills.set(streamId, backfill)
+    return backfill
+  }
+
+  /**
    * Re-trigger workspace bootstrap (e.g., user clicks "Retry" in sidebar error).
    */
   retryWorkspace(): void {
@@ -270,6 +317,20 @@ export class SyncEngine {
       let bootstrap: WorkspaceBootstrap
 
       if (_isReconnect && visibleStreamIds.length > 0) {
+        // Read each stream's catch-up cursor BEFORE re-joining its room. The
+        // re-join below starts delivering live events into IndexedDB
+        // immediately, and a message landing before the cursor read advances
+        // the cursor past the disconnect gap — the `after` fetch then
+        // permanently skips everything missed while offline (the "older
+        // message never appears while newer ones do" bug). Overlap is safe
+        // (writes dedupe by event id); gaps are not (INV-53).
+        const catchupCursors = new Map<string, string | null>()
+        await Promise.all(
+          visibleStreamIds.map(async (streamId) => {
+            catchupCursors.set(streamId, await getLatestPersistedSequence(streamId))
+          })
+        )
+
         await Promise.all(
           visibleStreamIds.map((streamId) => this.ensureStreamSubscription(streamId, { awaitJoin: true }))
         )
@@ -279,7 +340,7 @@ export class SyncEngine {
           Promise.all(
             visibleStreamIds.map(async (streamId) => {
               try {
-                const after = await getLatestPersistedSequence(streamId)
+                const after = catchupCursors.get(streamId) ?? null
                 const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
                 return { streamId, bootstrap }
               } catch (error) {
@@ -501,7 +562,16 @@ export class SyncEngine {
 
     if (!this.subscribedStreams.has(streamId)) {
       this.subscribedStreams.add(streamId)
-      const cleanup = registerStreamSocketHandlers(this.socket, this.deps.workspaceId, streamId, this.deps.queryClient)
+      const cleanup = registerStreamSocketHandlers(
+        this.socket,
+        this.deps.workspaceId,
+        streamId,
+        this.deps.queryClient,
+        {
+          onSequenceGap: ({ streamId: gapStreamId, afterSequence }) =>
+            void this.backfillStreamGap(gapStreamId, afterSequence),
+        }
+      )
       this.streamHandlerCleanups.set(streamId, cleanup)
     }
 
@@ -545,12 +615,16 @@ export class SyncEngine {
     syncStatus.setError(key, null)
 
     try {
+      const queryKey = streamKeys.bootstrap(workspaceId, streamId)
+      const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
+      // Cursor BEFORE the room join — once subscribed, live events land in
+      // IndexedDB and would advance the cursor past any gap this refresh is
+      // meant to close (INV-53: overlap is safe, gaps are not).
+      const after = previousBootstrap ? await getLatestPersistedSequence(streamId) : null
+
       await this.ensureStreamSubscription(streamId, { awaitJoin: true })
       if (this.isDestroyed) return
 
-      const queryKey = streamKeys.bootstrap(workspaceId, streamId)
-      const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
-      const after = previousBootstrap ? await getLatestPersistedSequence(streamId) : null
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
       await applyStreamBootstrap(workspaceId, streamId, bootstrap)
 

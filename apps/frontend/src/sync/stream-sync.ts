@@ -498,12 +498,40 @@ function isEncryptedPayload(payload: unknown): boolean {
   return !!p && typeof p.ciphertext === "string" && !!p.envelope
 }
 
+export interface StreamSocketHandlerOptions {
+  /**
+   * Called after a live event was written whose sequence leaves a hole behind
+   * the previously-latest persisted event — i.e. events were missed while this
+   * client wasn't receiving (zombie socket, server bounce, a catch-up fetch
+   * that raced live delivery). `afterSequence` is the pre-write latest, so a
+   * `bootstrap?after=` fetch from it closes the hole (INV-53: overlap is safe,
+   * gaps are not). Other users' command events legitimately occupy sequence
+   * slots that are never delivered to this viewer, so a reported gap may turn
+   * out to be empty — the backfill is idempotent and self-quiets because the
+   * next live event sits contiguously on the new tail.
+   */
+  onSequenceGap?: (gap: { streamId: string; afterSequence: string }) => void
+}
+
+/**
+ * Pre-write tail-gap check: returns the latest persisted sequence when the
+ * incoming event skips past it (a hole exists behind the new tail), null when
+ * contiguous, older-than-tail, or the stream has nothing cached to gap against.
+ */
+function detectSequenceGap(latestPersisted: string | null, incomingSequence: string): string | null {
+  if (latestPersisted === null) return null
+  return sequenceToNum(incomingSequence) > sequenceToNum(latestPersisted) + 1 ? latestPersisted : null
+}
+
 export function registerStreamSocketHandlers(
   socket: Socket,
   workspaceId: string,
   streamId: string,
-  queryClient: QueryClient
+  queryClient: QueryClient,
+  options?: StreamSocketHandlerOptions
 ): () => void {
+  const onSequenceGap = options?.onSequenceGap
+
   const handleMessageCreated = async (payload: MessageEventPayload) => {
     if (payload.streamId !== streamId) return
 
@@ -529,10 +557,19 @@ export function registerStreamSocketHandlers(
       attachmentRefs: AttachmentRef[]
     } | null = null
 
+    // Set when this event's sequence reveals missed events behind it; reported
+    // after the transaction commits so the backfill never runs inside it.
+    let gapAfterSequence: string | null = null
+
     await db.transaction("rw", [db.events, db.pendingMessages], async () => {
       // Dedupe by event ID
       const existing = await db.events.get(newEvent.id)
       if (existing) return
+
+      // Tail-gap check must read the latest BEFORE this write advances it.
+      if (onSequenceGap) {
+        gapAfterSequence = detectSequenceGap(await getLatestPersistedSequence(streamId), newEvent.sequence)
+      }
 
       // Add the real event BEFORE deleting the optimistic one so that
       // Dexie live-query observers never see a frame with neither event.
@@ -546,6 +583,10 @@ export function registerStreamSocketHandlers(
         await db.pendingMessages.delete(newPayload.clientMessageId).catch(() => {})
       }
     })
+
+    if (gapAfterSequence !== null) {
+      onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+    }
 
     // Seed the decrypt cache so the encrypted server event renders its content
     // immediately. Only meaningful for E2E events (the wire payload carries a
@@ -767,12 +808,19 @@ export function registerStreamSocketHandlers(
     // Dedupe by event ID
     const existing = await db.events.get(payload.event.id)
     if (existing) return
+    // Tail-gap check must read the latest BEFORE this write advances it.
+    const gapAfterSequence = onSequenceGap
+      ? detectSequenceGap(await getLatestPersistedSequence(streamId), payload.event.sequence)
+      : null
     await db.events.put({
       ...payload.event,
       workspaceId,
       _sequenceNum: sequenceToNum(payload.event.sequence),
       _cachedAt: now,
     })
+    if (gapAfterSequence !== null) {
+      onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
+    }
   }
 
   const handleLinkPreviewReady = async (payload: LinkPreviewReadyPayload) => {
