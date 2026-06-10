@@ -395,6 +395,13 @@ export class PersonaAgent {
             supersededMessagePlan.nextIndex += 1
 
             try {
+              // Deliberately no `sources` here: the message_edited event has
+              // never carried them, and the rerun's citations still reach their
+              // one render surface — the session trace — via the runtime's
+              // message:edited event (SessionTraceObserver persists
+              // event.sources). E2E streams never take this path: editMessage
+              // refuses them and the catch below falls through to
+              // createMessage, which seals sources into the payload.
               const editedMessage = await editMessage({
                 workspaceId,
                 streamId: targetStreamId,
