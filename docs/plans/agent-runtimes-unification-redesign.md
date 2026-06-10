@@ -624,7 +624,71 @@ variants mirroring the enclave callbacks; and BIK generation handling on
 key roll/revive (the E2EE-7 class of problems, solved once for all sealed
 recipients).
 
-## 2.7 Open questions
+## 2.7 Enclave transport: invert push to pull
+
+Today the enclave is **push-addressed**: each instance registers its own
+`instanceUrl` at boot (SSRF-validated), dispatch POSTs the sealed assignment
+to the chosen instance (`forwarder.ts`), every session is pinned to its
+owning EIK via `server_id` expressly so aborts can be routed back
+(`repository.ts:111`), and cancel POSTs to
+`<instanceUrl>/sessions/:id/cancel`. This works, but it bakes in two costs:
+
+- **Per-instance addressability.** Horizontal scaling requires every replica
+  to have its own routable URL — the one deployment shape load balancers are
+  designed to hide. The session→instance pinning state exists precisely to
+  compensate.
+- **Inbound surface.** The enclave must run an HTTP listener that accepts
+  sealed payloads (with the 48MB body cap and its misattribution failure
+  mode, E2EE-23), and any future mid-turn interaction (interjection, UX-12)
+  would mean _more_ inbound routes racing against turn completion.
+
+The fix is to **invert the flow: the enclave pulls.** Two observations make
+pull strictly better here, not just simpler:
+
+1. **Interjection is consumed at loop-iteration boundaries anyway.** The
+   companion's `NewMessageAwareness.check()` is already pull-shaped — the
+   loop polls it between iterations and before committing a draft. Pushing a
+   mid-turn message into the enclave would only buffer it until the next
+   boundary; a long-lived bidirectional connection buys complexity, zero
+   effective latency. The enclave implements the same port as an outbound
+   callback — `GET .../sessions/:id/messages?after=<seq>` returning sealed
+   `{ciphertext, envelope}` rows — and **no new key machinery is needed**:
+   mid-turn messages are sealed under the stream SSK by the sender's client,
+   and the enclave already holds the SSK from the assignment's wraps. The
+   poll can piggyback on the heartbeat it already sends every turn. This is
+   the UX-12 "implement" option, and it lands on the identical seam the
+   plaintext agent uses.
+2. **Pulling the turn start converges the enclave onto the claim protocol
+   the bot path already proved.** If sealed assignments become claimable work
+   items (`FOR UPDATE SKIP LOCKED`, TTL + renew, complete/fail — the exact
+   lifecycle bot-runtimes runs in production), then: any replica can claim
+   (no addressability, no pinning state, no `instanceUrl` registration or
+   SSRF validation), scaling is "run more replicas," and the enclave's
+   inbound listener disappears entirely except `/healthz` — a real
+   attack-surface reduction for the component whose hardening matters most,
+   and one less thing real attestation has to cover. Turn-start latency is
+   handled the way bots handle it: a stateless wake-up nudge (any instance
+   may react) or a short poll interval; the nudge is an optimization, not a
+   dependency. Cancellation and `shouldAbort` collapse into the same channel
+   — the heartbeat/poll response carries "cancelled/superseded," feeding the
+   loop's existing abort gate — closing the N-3 cancellation divergence at
+   the same time.
+
+Under the Turn Contract this means `EnclaveTurnDriver` and
+`ExternalTurnDriver` share one transport lifecycle (claim → heartbeat/poll →
+complete/fail) and differ only on payload sealing and trust tier — the
+deepest version of "the enclave works like the others" available. The
+wrap-targeting question (the assignment seals to a _specific_ EIK) is the one
+genuine complication: either the claim is keyed so only wrap-capable
+instances claim it (claim predicate on `key_id`), or — once a shared-EIK or
+re-wrap-on-claim scheme exists — any instance can. Start with the predicate;
+it is one `WHERE` clause.
+
+Sequencing: this is Phase 2.2 work (it _is_ the `EnclaveTurnDriver`
+transport), but the interjection poll (observation 1) stands alone and could
+ship earlier as the UX-12 fix without inverting turn start.
+
+## 2.8 Open questions
 
 1. **Enclave interjection: implement or declare?** Implementing sealed
    mid-turn message push is real work (new callback direction, wrap handling);
