@@ -1,6 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import { z } from "zod"
-import { AgentToolNames, AgentStepTypes } from "@threa/types"
+import { AgentToolNames, AgentStepTypes, type SourceItem } from "@threa/types"
 import type { AgentEvent } from "./agent-events"
 import { AgentRuntime } from "./agent-runtime"
 import { defineAgentTool } from "./agent-tool"
@@ -287,6 +287,87 @@ describe("AgentRuntime message counting", () => {
     expect(result.noMessageReason).toBe(
       "Kept the previous response because the rerun produced no actionable output after repeated attempts."
     )
+  })
+})
+
+describe("AgentRuntime source commitment", () => {
+  // §2.8 q4 spike: the required-sources commit payload must not be quietly
+  // defeated — a turn whose tool results carried sources commits them non-empty.
+  it("commits non-empty sources when a tool result carried sources", async () => {
+    const committed: Array<{ content: string; sources: SourceItem[] }> = []
+    const citingTool = defineAgentTool({
+      name: "citing_tool",
+      description: "test",
+      inputSchema: z.object({}),
+      execute: async () => ({
+        output: JSON.stringify({ summary: "found it" }),
+        sources: [{ type: "web" as const, title: "Example Page", url: "https://example.com/page" }],
+      }),
+      trace: {
+        stepType: AgentStepTypes.VISIT_PAGE,
+        formatContent: () => "{}",
+      },
+    })
+
+    let firstCall = true
+    const generateTextWithTools = async () => {
+      if (firstCall) {
+        firstCall = false
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: "tc_1", toolName: "citing_tool", input: {} }],
+          response: { messages: [{ role: "assistant" as const, content: "researching" } as any] },
+        }
+      }
+      return {
+        text: "Here is what I found.",
+        toolCalls: [],
+        response: { messages: [{ role: "assistant" as const, content: "Here is what I found." } as any] },
+      }
+    }
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "research this" }],
+      tools: [citingTool],
+      sendMessage: async ({ content, sources }) => {
+        committed.push({ content, sources })
+        return { messageId: "msg_1", operation: "created" }
+      },
+    })
+
+    const result = await runtime.run()
+
+    expect(committed).toHaveLength(1)
+    expect(committed[0]?.sources).toEqual([{ type: "web", title: "Example Page", url: "https://example.com/page" }])
+    expect(result.sources).toEqual([{ type: "web", title: "Example Page", url: "https://example.com/page" }])
+  })
+
+  it("commits an empty sources array (not undefined) for a sourceless turn", async () => {
+    const committed: Array<{ sources: unknown }> = []
+    const runtime = new AgentRuntime({
+      ai: {
+        generateTextWithTools: async () => ({
+          text: "Hi.",
+          toolCalls: [],
+          response: { messages: [{ role: "assistant", content: "Hi." } as any] },
+        }),
+      } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      tools: [],
+      sendMessage: async ({ sources }) => {
+        committed.push({ sources })
+        return { messageId: "msg_1", operation: "created" }
+      },
+    })
+
+    await runtime.run()
+
+    expect(committed).toEqual([{ sources: [] }])
   })
 })
 

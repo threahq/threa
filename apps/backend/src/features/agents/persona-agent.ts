@@ -382,7 +382,9 @@ export class PersonaAgent {
         })
         const isSupersedeRerun = !!supersededMessagePlan
 
-        const doSendMessage = async (msgInput: { content: string; sources?: SourceItem[] }) => {
+        // `sources` is required on the commit payload (empty array = none) so a
+        // caller can't silently drop citations — see AgentRuntimeConfig.sendMessage.
+        const doSendMessage = async (msgInput: { content: string; sources: SourceItem[] }) => {
           const latestSession = await AgentSessionRepository.findById(db, session.id)
           if (!latestSession || latestSession.status !== SessionStatuses.RUNNING) {
             throw new Error(`Session ${session.id} is no longer running`)
@@ -545,7 +547,7 @@ export class PersonaAgent {
 
         // Stub mode: send canned response, skip AI loop
         if (stubResponse) {
-          const msg = await doSendMessage({ content: stubResponse })
+          const msg = await doSendMessage({ content: stubResponse, sources: [] })
           return {
             messagesSent: 1,
             sentMessageIds: [msg.messageId],

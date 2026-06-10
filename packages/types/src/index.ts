@@ -364,7 +364,7 @@ export type {
   EnclaveStreamEnvelope,
   EnclaveSealedMessage,
   EnclaveSskWrap,
-  EnclaveSealedReply,
+  SealedReply,
   EnclaveSealedName,
   EnclaveSealedStep,
   EnclaveSealedStepStart,

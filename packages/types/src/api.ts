@@ -474,14 +474,20 @@ export interface EnclaveSskWrap {
 }
 
 /**
- * One sealed reply the enclave produced this turn, streamed back to
+ * One sealed reply a sealed-capable agent driver produced this turn — the
+ * enclave today, any owner-granted sealed actor later — streamed back to
  * `POST .../sessions/:id/messages` the moment the agent loop sends it (so an
  * interim "I'll look into it" lands before the final answer, not batched at the
- * end). The enclave mints each reply's id (a `msg_…` ULID) and binds it into the
- * seal AAD (`streamId|messageId|senderId`); the backend stores the ciphertext
- * under that same id.
+ * end). Part of the shared sealed vocabulary, not enclave-owned: nothing in the
+ * shape is enclave-specific, and consumers must never branch on "is this the
+ * enclave" — the stream is the axis. The producer mints each reply's id (a
+ * `msg_…` ULID) and binds it into the seal AAD (`streamId|messageId|senderId`);
+ * the backend stores the ciphertext under that same id. Citation sources ride
+ * INSIDE the ciphertext (the sealed payload wrapper, `@threa/crypto`'s
+ * `serializeSealedPayload`) — they reveal what was researched, so they must
+ * never appear as a cleartext column or wire field (E2EE-9).
  */
-export interface EnclaveSealedReply {
+export interface SealedReply {
   messageId: string
   ciphertext: string
   envelope: EnclaveStreamEnvelope

@@ -41,6 +41,8 @@ import { useLongPress } from "@/hooks/use-long-press"
 import { AttachmentList } from "./attachment-list"
 import { E2eAttachmentList } from "./e2e-attachment-list"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import type { SealedSourceItem } from "@threa/crypto"
+import { MessageSourceList } from "./message-sources"
 import { LinkPreviewList } from "./link-preview-list"
 import { MemoPreviewList } from "./memo-preview-list"
 import { GiphyPreviewList } from "./giphy-preview-list"
@@ -164,6 +166,12 @@ interface MessageLayoutProps {
    * the server-side attachment rows are opaque placeholders for E2E messages.
    */
   attachmentRefs?: AttachmentRef[]
+  /**
+   * Decrypted E2E citation sources, surfaced from the SSK-sealed payload of an
+   * agent reply (E2EE-9 — sources only ever exist inside the ciphertext).
+   * When present and non-empty, the body renders `<MessageSourceList>`.
+   */
+  sources?: SealedSourceItem[]
   containerClassName?: string
   isHighlighted?: boolean
   isNew?: boolean
@@ -465,6 +473,7 @@ function MessageLayout({
   footer,
   children,
   attachmentRefs,
+  sources,
   containerClassName,
   isHighlighted,
   isNew,
@@ -528,6 +537,7 @@ function MessageLayout({
             />
           )
         )}
+        {sources && sources.length > 0 && <MessageSourceList sources={sources} />}
         {isFirstMessage && <MessageContextBadge workspaceId={workspaceId} streamId={streamId} />}
         <MessageLinkPreviews
           messageId={payload.messageId}
@@ -774,6 +784,8 @@ interface MessageEventInnerProps {
   isFirstMessage?: boolean
   /** Decrypted E2E attachment refs, threaded to the body's `<E2eAttachmentList>`. */
   attachmentRefs?: AttachmentRef[]
+  /** Decrypted E2E citation sources, threaded to the body's `<MessageSourceList>` (E2EE-9). */
+  sources?: SealedSourceItem[]
   /** True when the message lives in an E2E stream — hides the Edit affordance (E2EE-1). */
   e2eEnabled?: boolean
   /**
@@ -823,6 +835,7 @@ function SentMessageEvent({
   groupContinuation,
   isFirstMessage,
   attachmentRefs,
+  sources,
   e2eEnabled,
   e2eDecryptedMarkdown,
   batch,
@@ -1207,6 +1220,7 @@ function SentMessageEvent({
         actorName={actorName}
         isFirstMessage={isFirstMessage}
         attachmentRefs={attachmentRefs}
+        sources={sources}
         statusIndicator={
           <>
             <RelativeTime date={event.createdAt} className="text-xs text-muted-foreground" />
@@ -1777,6 +1791,7 @@ export function MessageEvent({
           groupContinuation={groupContinuation}
           isFirstMessage={isFirstMessage}
           attachmentRefs={decrypted.status === "decrypted" ? decrypted.attachmentRefs : undefined}
+          sources={decrypted.status === "decrypted" ? decrypted.sources : undefined}
           e2eEnabled={decrypted.status !== "plaintext"}
           e2eDecryptedMarkdown={decrypted.status === "decrypted" ? decrypted.contentMarkdown : undefined}
           batch={batch}

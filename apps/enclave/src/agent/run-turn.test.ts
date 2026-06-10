@@ -7,6 +7,7 @@ import {
   bytesToBase64,
   generateStreamKey,
   openMessageAsString,
+  parseSealedPayload,
   sealMessage,
   serializeSealedPayload,
   utf8Encode,
@@ -14,7 +15,7 @@ import {
   type AttachmentRef,
 } from "@threa/crypto"
 import type {
-  EnclaveSealedReply,
+  SealedReply,
   EnclaveSealedStep,
   EnclaveSealedStepStart,
   EnclaveSealedSubstep,
@@ -29,16 +30,16 @@ const GEN = 0
 
 /** Collects the replies and sealed trace steps/substeps the loop streams back. */
 function collector(): {
-  onMessage: (r: EnclaveSealedReply) => Promise<void>
+  onMessage: (r: SealedReply) => Promise<void>
   onStepStarted: (s: EnclaveSealedStepStart) => Promise<void>
   onStep: (s: EnclaveSealedStep) => Promise<void>
   onSubstep: (s: EnclaveSealedSubstep) => Promise<void>
-  sent: EnclaveSealedReply[]
+  sent: SealedReply[]
   started: EnclaveSealedStepStart[]
   steps: EnclaveSealedStep[]
   substeps: EnclaveSealedSubstep[]
 } {
-  const sent: EnclaveSealedReply[] = []
+  const sent: SealedReply[] = []
   const started: EnclaveSealedStepStart[] = []
   const steps: EnclaveSealedStep[] = []
   const substeps: EnclaveSealedSubstep[] = []
@@ -339,6 +340,82 @@ describe("runEnclaveTurn", () => {
     // The turn still produced its reply, streamed and reported under the same id.
     expect(result.messageIds[0]).toMatch(/^msg_/)
     expect(sent.find((m) => m.messageId === result.messageIds[0])).toBeDefined()
+  })
+
+  it("seals the turn's citation sources inside the reply payload (E2EE-9)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "What causes the tides?", "msg_user", "usr_owner")
+
+    // Hermetic Tavily: web_search's fetch returns one titled result, so the
+    // tool reports a SourceItem the loop accumulates into the commit payload.
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          query: "tides",
+          results: [{ title: "Tide Atlas", url: "https://tides.example/atlas", content: "the moon", score: 0.9 }],
+          answer: "The moon.",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )) as unknown as typeof fetch
+
+    try {
+      const chat = stubChat([toolCallReply("web_search", { query: "tides" }), textReply("Tides come from the moon.")])
+      const { onMessage, onStepStarted, onStep, onSubstep, sent } = collector()
+
+      await runEnclaveTurn(
+        {
+          keyPair,
+          rawChat: chat.fn,
+          onMessage,
+          onStepStarted,
+          onStep,
+          onSubstep,
+          tools: { tavilyApiKey: "tvly-test" },
+        },
+        baseRequest({ wraps: [wrap], prompt })
+      )
+
+      // The reply's sealed payload carries the sources INSIDE the ciphertext —
+      // the wire (`SealedReply`) stays ciphertext + envelope only, so the
+      // backend never learns what was researched.
+      expect(sent).toHaveLength(1)
+      const raw = await openMessageAsString({
+        key: ssk,
+        envelope: sent[0]!.envelope,
+        ciphertext: Buffer.from(sent[0]!.ciphertext, "base64"),
+      })
+      const payload = parseSealedPayload(raw)
+      expect(payload.contentMarkdown).toBe("Tides come from the moon.")
+      expect(payload.sources).toEqual([{ title: "Tide Atlas", url: "https://tides.example/atlas" }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("seals the bare reply string (no wrapper) when the turn gathered no sources", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Say hi.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Hi."))
+    const { onMessage, onStepStarted, onStep, onSubstep, sent } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    // Byte-identical to every sourceless E2E reply already written: a plain
+    // string, not the JSON wrapper.
+    const raw = await openMessageAsString({
+      key: ssk,
+      envelope: sent[0]!.envelope,
+      ciphertext: Buffer.from(sent[0]!.ciphertext, "base64"),
+    })
+    expect(raw).toBe("Hi.")
   })
 
   it("decrypts the trigger's attachments and feeds them as multimodal content", async () => {

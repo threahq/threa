@@ -45,18 +45,15 @@ export {
   type UnwrapStreamKeyInput,
 } from "./stream-key"
 
-export {
-  ATTACHMENT_AAD,
-  ATTACHMENT_KEY_GENERATION,
-  decryptAttachmentBytes,
-  type AttachmentRef,
-} from "./attachment"
+export { ATTACHMENT_AAD, ATTACHMENT_KEY_GENERATION, decryptAttachmentBytes, type AttachmentRef } from "./attachment"
 
 export {
   E2E_PAYLOAD_VERSION,
   serializeSealedPayload,
   parseSealedPayload,
   isAttachmentRef,
+  isSealedSourceItem,
   type E2eSealedPayload,
   type ParsedSealedPayload,
+  type SealedSourceItem,
 } from "./sealed-payload"
