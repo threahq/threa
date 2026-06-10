@@ -709,7 +709,7 @@ export function createPublicApiHandlers({
       // but the public-API sendMessage/updateMessage only accept plaintext, so
       // an accepted E2E row here could never be referenced by a matching
       // message. Pi/CLI agents get this flag back in the Pi-remote-with-files
-      // slice (`.claude/plans/e2e-attachments.md`).
+      // slice.
       if (parseE2eUploadFlag(req.body)) {
         throw new HttpError("E2E attachment uploads are not supported on the public API yet", {
           status: 400,

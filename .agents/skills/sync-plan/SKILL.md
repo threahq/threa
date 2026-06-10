@@ -1,20 +1,45 @@
 ---
 name: sync-plan
-description: Ensure a committed plan file exists and reflects the current branch state. Use before creating a PR to give CodeRabbit accurate plan context for adherence checking.
-allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(git add:*), Bash(git commit:*), Bash(git status:*), Bash(gh pr view:*), Read, Write, Edit, Glob, Grep, Agent, Skill(find-plan)
+description: Embed or refresh the implementation plan inside the PR description as a collapsible details block. Use before/after creating a PR so CodeRabbit and reviewers have accurate plan context without committing plan files to the repo.
+allowed-tools: Bash(git diff:*), Bash(git log:*), Bash(git branch:*), Bash(gh pr view:*), Bash(gh pr edit:*), Bash(gh api:*), Read, Write, Edit, Glob, Grep, Agent, Skill(find-plan)
 ---
 
 # Sync Plan
 
-Produces or updates a committed plan file at `.claude/plans/<branch>.md` that accurately reflects the current branch state. This gives CodeRabbit (and future reviewers) a clear spec to check plan adherence against.
+Keeps the implementation plan **in the PR description**, inside a collapsible
+`<details>` block, so it travels with the PR for review and CodeRabbit plan-adherence
+checks — without committing a plan file to the repo.
+
+Plans are **not** committed to the repository. Committed plan files (`.claude/plans/*.md`)
+added bloat, made diffs harder to size up, and confused future agents that globbed them.
+The PR description is the single home for the plan: the title and prose give the high-level
+summary; the `<details>` block holds the full plan.
 
 ## When to Use
 
-- Before `/create-pr` — ensures the PR has an up-to-date plan committed
+- Before `/create-pr` — so the PR is created with the plan already embedded
 - After significant implementation changes that diverge from the original plan
-- When starting a new feature branch that doesn't have a plan yet
+- When a reviewer (or CodeRabbit) needs the full plan context on an existing PR
 
-## Step 1: Gather Branch Context
+## The Plan Block Format
+
+The full plan lives in a `<details>` block with a **stable marker** so tooling can find
+and replace it. Always use this exact summary line so the block is machine-locatable:
+
+```markdown
+<details>
+<summary>📋 Full implementation plan</summary>
+
+[full plan content — see structure in Step 4]
+
+</details>
+```
+
+The block goes near the **end** of the PR body, after the human-facing sections
+(Problem / Solution / design decisions / file tables / test plan), so the description
+reads as a summary first and the long plan stays collapsed.
+
+## Step 1: Gather Branch + PR Context
 
 Run in parallel:
 
@@ -27,56 +52,43 @@ git log main..HEAD --oneline
 
 # Files changed vs main
 git diff main...HEAD --stat
+
+# Existing PR + current body (the baseline to update). Empty output = no PR yet.
+gh pr view --json number,title,body 2>/dev/null
 ```
 
-Also use the Glob tool to check for existing plan files: `.claude/plans/*.md`
+If a PR exists, its body is the baseline. Look for an existing
+`<summary>📋 Full implementation plan</summary>` block — that is the plan to update.
 
-Derive the branch slug for the plan filename: strip prefixes like `feat/`, `fix/`, `chore/`, and use the rest (e.g., `feat/multi-modal-images` → `multi-modal-images`).
+## Step 2: Recover Plan Intent + Session Context
 
-## Step 2: Find Existing Plan and Session Context
+**2a. Run `/find-plan`** to surface the original intent, course corrections, and design
+decisions from conversation history. This is the most valuable input for the WHY — the diff
+shows what changed, find-plan explains why.
 
-**2a. Check for an existing committed plan file** at `.claude/plans/<branch-slug>.md`.
-If found, read it — this is the baseline to update.
-
-**2b. Run `/find-plan` to gather session context.**
-
-This surfaces the original intent, course corrections, and design decisions from conversation history. The find-plan skill will:
-- Find plan mode sessions and plan-like discourse across all sessions for this project
-- Classify sessions as MAIN, SUBSTEP, SIDE_QUEST, or INVESTIGATION
-- Identify course corrections where the approach changed mid-implementation
-- Return a structured view of all plans chronologically
-
-Store the find-plan output — you'll use it in Step 4 to capture design decisions and course corrections that aren't visible in the diff alone.
-
-**2c. If neither a plan file nor session plans were found:**
-1. Check the PR description (if a PR exists): `gh pr view --json body -q '.body'`
-2. Ask the user what the feature is about
+**2b. If find-plan returns nothing and no PR body plan exists:**
+1. Ask the user what the feature is about, or
+2. Derive intent from the commits and diff (Step 3).
 
 ## Step 3: Understand What Was Actually Built
 
-Read the full diff to understand the implementation:
-
 ```bash
-# Detailed diff for understanding changes
 git diff main...HEAD
 ```
 
-For large diffs, use `--stat` first, then read the most important files directly. Focus on:
-- New files (what was created)
-- Modified files (what was changed and why)
-- Deleted files (what was removed)
-- Migration files (schema changes)
+For large diffs, use `--stat` first, then read the most important files directly. Focus on
+new files (what was created), modified files (what changed and why), deleted files, and
+migrations (schema changes).
 
-## Step 4: Produce the Plan File
+## Step 4: Compose the Plan Content
 
-Write `.claude/plans/<branch-slug>.md` with this structure:
+Write the full plan with this structure (this is the body that goes **inside** the
+`<details>` block):
 
 ```markdown
-# [Feature Name]
-
 ## Goal
 
-[One-paragraph summary of what this feature/change accomplishes and why]
+[One-paragraph summary of what this change accomplishes and why]
 
 ## What Was Built
 
@@ -86,7 +98,6 @@ Write `.claude/plans/<branch-slug>.md` with this structure:
 
 **Files:**
 - `path/to/file.ts` — [what this file does]
-- `path/to/other.ts` — [what this file does]
 
 ### [Component/Area 2]
 
@@ -94,83 +105,88 @@ Write `.claude/plans/<branch-slug>.md` with this structure:
 
 ## Design Decisions
 
-### [Decision 1 title]
+### [Decision title]
 
 **Chose:** [what was chosen]
 **Why:** [reasoning]
 **Alternatives considered:** [if any]
 
-### [Decision 2 title]
-
-...
-
 ## Design Evolution
 
-[Course corrections discovered via session history from /find-plan. Include only significant direction changes, not minor tweaks.]
+[Course corrections from /find-plan. Only significant direction changes.]
 
-- **[What changed]:** [Original approach] → [New approach]. [Why the change was made.]
+- **[What changed]:** [Original approach] → [New approach]. [Why.]
 
 ## Schema Changes
 
-[List any migrations added, what they do]
+[Migrations added, what they do]
 
 ## What's NOT Included
 
-[Explicitly call out things that are out of scope or deferred. This helps CodeRabbit avoid false positives on "missing" changes.]
+[Out-of-scope or deferred items. Prevents false positives on "missing" changes.]
 
 ## Status
 
-- [x] [Completed item]
 - [x] [Completed item]
 - [ ] [Pending item, if any]
 ```
 
 ### Writing Guidelines
 
-- **Describe what IS, not what was planned.** This file reflects the actual implementation, not the original aspirations.
-- **Use session context for the WHY.** The diff shows what changed; the find-plan output explains why. Design decisions and course corrections from conversations are the most valuable parts for reviewers.
-- **Be specific about file paths.** CodeRabbit needs concrete references to match against the diff.
-- **Call out design decisions explicitly.** These are the things a reviewer would question — answer them preemptively.
-- **Include "Design Evolution" when the approach changed.** If find-plan reveals course corrections, document the original → final approach and why. This prevents reviewers from questioning intentional pivots.
-- **Include "What's NOT Included".** This prevents CodeRabbit from flagging intentional omissions as missing changes.
-- **Keep it concise.** This is a review aid, not a design doc. Target 100-300 lines.
+- **Describe what IS, not what was planned.** Reflect the actual implementation.
+- **Use session context for the WHY.** Design decisions and course corrections from
+  conversations are the most valuable parts for reviewers.
+- **Be specific about file paths.** CodeRabbit needs concrete references to match the diff.
+- **Include "Design Evolution" when the approach changed**, and "What's NOT Included" to
+  prevent CodeRabbit from flagging intentional omissions as missing changes.
+- **Keep it concise.** A review aid, not a design doc. Target 100-300 lines.
+- **Do NOT invent requirements.** If something is unclear, ask.
+- **Do NOT include side quests** — only what's relevant to this PR.
 
-## Step 5: Diff and Confirm
+## Step 5: Write the Plan Into the PR Description
 
-If updating an existing plan, show the user what changed:
+The plan goes in the PR body, not a file. Two cases:
+
+**No PR yet:** Hand the composed plan to `/create-pr`, which places it in the
+`<details>` block in the body it creates. (If you're running `/create-pr` already, you have
+the content — just embed it.)
+
+**PR exists:** Update the body, replacing any existing plan block (matched by the
+`<summary>📋 Full implementation plan</summary>` marker) and keeping the human-facing
+summary sections intact.
+
+```bash
+# Capture the current body, splice the plan block, write to a temp file.
+gh pr view --json body -q '.body' > /tmp/claude/pr-body.md
+# Edit /tmp/claude/pr-body.md: replace the existing details block, or append a new one
+# at the end of the body if none exists. Then:
+gh pr edit --body-file /tmp/claude/pr-body.md
+```
+
+If `gh pr edit` fails with a GraphQL warning, it usually still succeeded — verify with
+`gh pr view --json body`. As a fallback use the API:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/<number> --method PATCH -f body="$(cat /tmp/claude/pr-body.md)"
+```
+
+## Step 6: Confirm
+
+Tell the user what changed:
 
 ```
-Plan updated. Changes:
-- Added: [new sections]
-- Updated: [sections that changed]
-- Removed: [sections no longer relevant]
-```
-
-If creating a new plan, show the user the outline:
-
-```
-Plan created at .claude/plans/<branch-slug>.md
-Sections:
-- Goal: [one-line summary]
-- Components: [list]
-- Design decisions: [count]
+Plan synced into PR #<number> description.
+- Summary sections: [unchanged | updated]
+- Plan block: [created | updated]
 - Status: [x completed, y pending]
 ```
 
-Ask the user to confirm before committing: "Does this look right? I'll commit it so CodeRabbit can reference it during review."
-
-## Step 6: Commit the Plan
-
-```bash
-git add .claude/plans/<branch-slug>.md
-git commit -m "docs: sync plan for <branch-slug>"
-```
-
-After committing, tell the user the full path to the plan file so they can review it easily.
+Do **not** commit anything — the plan lives only in the PR description.
 
 ## Important Notes
 
-- **Do NOT invent requirements.** The plan should reflect what was actually built, derived from the diff and commits. If something is unclear, ask.
-- **Do NOT include session history or side quests.** This file is for CodeRabbit, not for archaeology. Only include what's relevant to the current PR.
-- **Preserve existing plans when updating.** Don't discard the user's original plan structure — update it to match reality.
-- **One plan per branch.** If the branch has sub-features, they go in sections, not separate files.
+- **One plan per PR.** Sub-features go in sections of the one block, not separate blocks.
+- **Preserve the human-facing summary.** Never overwrite Problem/Solution prose with the
+  plan; the plan is the collapsed detail, not the headline.
+- **Never commit plan files.** `.claude/plans/` is gitignored. If you find a stray plan
+  file in the working tree, do not `git add` it.

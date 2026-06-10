@@ -51,11 +51,20 @@ For each commit, understand:
 
 Read relevant files if needed:
 
-- Task docs in `tasks/` or `docs/plans/`
+- Design docs in `docs/plans/` (intentional, long-lived design docs — distinct from branch plans)
 - Work notes if they exist
 - The actual code changes
 
+**The implementation plan lives in the PR description, not the repo.** Branch plans are
+never committed (`.claude/plans/` is gitignored). The title and prose give the high-level
+summary; the full plan goes in a collapsible `<details>` block near the end of the body.
+Run `/sync-plan` (or `/find-plan`) to compose the plan content before writing the body.
+
 ### 4. Structure the PR description
+
+The title and the prose sections are the **high-level summary** — keep them tight so a
+reviewer can size up the change at a glance. The **full plan** is collapsed in the
+`<details>` block at the end, so a long plan never bloats the visible description.
 
 The PR must include these sections:
 
@@ -103,6 +112,16 @@ The PR must include these sections:
 
 - [x] Completed tests
 - [ ] Manual verification steps
+
+<details>
+<summary>📋 Full implementation plan</summary>
+
+[Full plan from /sync-plan or /find-plan: Goal, What Was Built, Design Decisions,
+Design Evolution, Schema Changes, What's NOT Included, Status. Use the exact summary
+line above so tooling (CodeRabbit, /code-review, /update-pr) can locate the block.
+Omit this block only if there is genuinely no plan beyond the prose above.]
+
+</details>
 
 ---
 
