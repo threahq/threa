@@ -113,19 +113,21 @@ done
 
 Sessions with plan-like discourse (even without formal plan mode) will be identified by the Haiku subagent in Step 4b. This provides better accuracy than keyword matching since it understands semantic intent.
 
-**3c. Find plan files in the repository:**
+**3c. Check the PR description for an existing plan:**
+
+The plan is kept in the PR body inside a collapsible details block (plans are not committed
+to the repo — `.claude/plans/` is gitignored). If a PR exists, this is the authoritative
+synthesized plan.
 
 ```bash
-# Check for plan files in the repository
-echo "=== Plan files in repository ==="
-find . -maxdepth 4 -type f \( \
-  -name "*.plan.md" -o \
-  -name "plan.md" -o \
-  -path "*/plans/*.md" -o \
-  -path "*/.claude/plans/*.md" -o \
-  -path "*/tasks/*.md" \
-\) 2>/dev/null
+# Pull the plan block out of the current PR's body, if a PR exists
+echo "=== Plan in PR description ==="
+gh pr view --json body -q '.body' 2>/dev/null | \
+  awk '/<summary>📋 Full implementation plan<\/summary>/{f=1} f; /<\/details>/{if(f)exit}'
 ```
+
+Long-lived design docs under `docs/plans/` are a separate, intentional concern — check them
+only if the branch is implementing one of those designs.
 
 **3d. Find plan files written during sessions:**
 
@@ -154,13 +156,15 @@ For each plan source found, extract content and classify it.
 
 **4a. Extract plan content:**
 
-For plan files written during sessions (found in Step 3d), read them directly:
+Start from the PR description's plan block if it exists (Step 3c) — that's the synthesized
+plan. For any plan files written during sessions (found in Step 3d), read those local files
+directly for additional context:
 
 ```bash
-# If a plan file was found, read it
-if [ -n "$MAIN_PLAN_FILE" ]; then
-  echo "=== Main Plan File ==="
-  cat "$MAIN_PLAN_FILE"
+# If a session-written plan file was found, read it
+if [ -n "$SESSION_PLAN_FILE" ]; then
+  echo "=== Session Plan File ==="
+  cat "$SESSION_PLAN_FILE"
 fi
 ```
 
@@ -195,16 +199,9 @@ First, gather the classification context:
 ```bash
 BRANCH_NAME=$(git branch --show-current 2>/dev/null || echo "unknown")
 
-# Get main plan summary (check repo-local .claude/plans/ first, then global)
-PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-MAIN_PLAN_FILE=$(ls "$PROJECT_ROOT"/.claude/plans/*.md 2>/dev/null | head -1)
-if [ -z "$MAIN_PLAN_FILE" ]; then
-  MAIN_PLAN_FILE=$(ls ~/.claude/plans/*.md 2>/dev/null | head -1)
-fi
-MAIN_PLAN_SUMMARY=""
-if [ -n "$MAIN_PLAN_FILE" ]; then
-  MAIN_PLAN_SUMMARY=$(head -20 "$MAIN_PLAN_FILE")
-fi
+# Get main plan summary from the PR description's plan block, if a PR exists
+MAIN_PLAN_SUMMARY=$(gh pr view --json body -q '.body' 2>/dev/null | \
+  awk '/<summary>📋 Full implementation plan<\/summary>/{f=1} f; /<\/details>/{if(f)exit}' | head -20)
 
 # Get session data for classification
 SESSION_DATA=$(cat "$SESSIONS_INDEX" | jq -r '

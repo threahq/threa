@@ -67,7 +67,9 @@ reviews:
           outdated dependency warnings are out of scope
 
         Plan adherence:
-        If plan files exist in .claude/plans/, check that PR changes align with the plan.
+        The implementation plan is in the PR description, inside the collapsible
+        "📋 Full implementation plan" details block (plans are not committed to the repo).
+        If that block exists, check that PR changes align with the plan.
         Flag missing corresponding changes: API change without frontend/backoffice update,
         type change without usage update, schema change without migration.
     - path: "**/migrations/**"

@@ -185,11 +185,15 @@ chore:
   a stale plan. Because the doc is present-tense and accurate, design-adherence review
   actually means something.
 - **Plans become transient scratch.** Plans are still useful while _building_ — they're
-  just not committed artifacts. They live as local agent state and are gitignored. The
-  durable record is the feature doc.
+  just not committed artifacts. The in-flight plan lives in the **PR description**, inside
+  a collapsible "📋 Full implementation plan" details block, so it travels with the PR for
+  review and CodeRabbit plan-adherence without bloating the repo. Local agent plan state is
+  gitignored. The durable record is the feature doc.
 
-> Migration status: the move off committed plans (`docs/plans/`, `.claude/plans/`) and
-> the skill rewiring (`sync-plan` → feature-doc sync) is a separate, larger change. It
+> Migration status: committed branch plans (`.claude/plans/`) are removed and gitignored —
+> `sync-plan`, `create-pr`, `update-pr`, `code-review`, and `.coderabbit.yaml` now keep the
+> plan in the PR description. The deeper "feature doc is the durable record" rewiring
+> (`sync-plan` → feature-doc sync, retiring `docs/plans/`) is a separate, larger change and
 > is **not** done yet — see the pilot rollout note below.
 
 ## Rollout

@@ -10,6 +10,8 @@ dev-dist/
 .DS_Store
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Branch plans live in the PR description (collapsible details block), not the repo
+.claude/plans/
 
 # Playwright
 test-results/

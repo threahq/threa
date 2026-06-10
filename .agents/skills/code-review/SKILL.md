@@ -31,7 +31,10 @@ Note ALL active IDs — new review supersedes each one.
 1. `gh pr view N --json number,title,url,headRefOid,body` — store PR metadata + HEAD SHA
 2. `gh repo view --json owner,name` — store OWNER/REPO
 3. Find and read CLAUDE.md files (root + directories touched by diff)
-4. Find plan **inline** (no agent): Glob for `.claude/plans/`, `~/.claude/plans/`, `*.plan.md`, `plans/*.md`. Read matches. Store plan content or "No plan found".
+4. Find plan **inline** (no agent): the plan lives in the PR body — extract the
+   `<details>` block under `<summary>📋 Full implementation plan</summary>` from the body
+   fetched in step 1. Store plan content or "No plan found". (Plans are not committed to the
+   repo; do not glob `.claude/plans/`.)
 5. **Pre-compute historical context** via single Bash call (saves ~20 agent tool calls):
 
 ```bash

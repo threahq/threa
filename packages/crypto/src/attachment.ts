@@ -5,8 +5,7 @@ import { openMessage, STREAM_ENVELOPE_VERSION } from "./stream-key"
  * One end-to-end-encrypted attachment, carried inside the SSK-sealed message
  * payload (its `attachmentRefs`) and never on the wire in clear. `key`/`iv`
  * open the opaque S3 ciphertext; `filename`/`mimeType`/`sizeBytes` are the real
- * values the server's placeholder row deliberately hides. See
- * `.claude/plans/e2e-attachments.md`.
+ * values the server's placeholder row deliberately hides.
  *
  * Lives in the shared crypto package so both the browser (encrypt on upload,
  * decrypt on view) and the enclave (decrypt to feed the model) use one

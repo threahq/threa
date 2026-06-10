@@ -87,7 +87,9 @@ Use single quotes. For apostrophes: `'Don'\''t'`
 
 ## PR Body Structure
 
-Follow this template for consistency:
+Follow this template for consistency. The prose is the high-level summary; the full
+implementation plan stays collapsed in the `<details>` block at the end (branch plans
+are never committed — `.claude/plans/` is gitignored).
 
 ```markdown
 ## Problem
@@ -113,10 +115,22 @@ Follow this template for consistency:
 
 - [ ] Test item
 
+<details>
+<summary>📋 Full implementation plan</summary>
+
+[Full plan. Use `/sync-plan` to compose/refresh it.]
+
+</details>
+
 ---
 
 🤖 _PR by [Claude Code](https://claude.com/claude-code)_
 ```
+
+**Preserve the plan block when editing.** If the current body already has a
+`<summary>📋 Full implementation plan</summary>` block, keep it (or refresh it with
+`/sync-plan`) — don't drop it when you rewrite the prose sections. To regenerate the plan
+content itself, prefer `/sync-plan`, which locates and replaces the block in place.
 
 ## Examples
 
