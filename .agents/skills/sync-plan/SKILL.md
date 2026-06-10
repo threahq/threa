@@ -174,7 +174,7 @@ gh api repos/{owner}/{repo}/pulls/<number> --method PATCH -f body="$(cat /tmp/cl
 
 Tell the user what changed:
 
-```
+```text
 Plan synced into PR #<number> description.
 - Summary sections: [unchanged | updated]
 - Plan block: [created | updated]
