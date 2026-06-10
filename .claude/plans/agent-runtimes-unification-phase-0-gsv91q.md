@@ -1,138 +1,129 @@
-# Agent Runtimes Unification — Phase 0.1: Required-sources commit payload + sealed reply sources (E2EE-9)
+# Agent Runtimes Unification — Phase 0.1: Required-sources commit payload + sealed reply sources
 
 ## Goal
 
-First item of the Phase 0 migration plan in `docs/plans/agent-runtimes-unification-redesign.md`
-(§2.4, item 0.1). The shared agent loop accumulates citation `SourceItem[]`s from tool
-results and hands them to `sendMessage`, but the commit payload's `sources` field was
-optional — so the enclave host silently destructured only `{ content }` and every
-researched E2E answer rendered with zero citations (audit finding E2EE-9). This PR makes
-`sources` a required field of the commit payload (empty array = none, omission doesn't
-compile) and threads the sources through the sealed reply payload to the browser, which
-renders them under the decrypted reply.
+Close E2EE-9 (enclave replies drop all citation sources) — item 0.1 of the Phase 0
+migration plan in `docs/plans/agent-runtimes-unification-redesign.md` §2.4. The
+shared `AgentRuntime` loop already accumulates `SourceItem[]` from tool results and
+passes them to `sendMessage`, but the enclave's terminal action destructured only
+`{ content }`, so researched E2E answers rendered with zero citations. The fix makes
+`sources` a **required** field on the commit payload (omission no longer compiles),
+threads them through the sealed reply — inside the ciphertext, never a cleartext
+column or wire field — and renders them under the decrypted reply.
 
 ## What Was Built
 
-### Required-`sources` commit payload (shared loop)
+### Required-sources commit payload (shared loop)
 
-`AgentRuntimeConfig.sendMessage` now takes `{ content: string; sources: SourceItem[] }`
-with `sources` required. The loop always passes the accumulated array (possibly empty).
-A host that ignores citations no longer type-checks.
-
-**Files:**
-
-- `packages/agent-runtime/src/runtime/agent-runtime.ts` — required `sources` on the
-  `sendMessage` config field; `commitMessage` passes the array unconditionally.
-- `packages/agent-runtime/src/runtime/agent-runtime.test.ts` — the §2.8 q4 spike test:
-  a turn whose tool results carried sources must commit non-empty sources; a sourceless
-  turn commits `[]`, not `undefined`.
-- `apps/backend/src/features/agents/persona-agent.ts` — companion `doSendMessage`
-  tightened to the required shape; stub-mode call passes `sources: []`.
-
-### Sources inside the sealed payload (crypto)
-
-`E2eSealedPayload` gains an optional `sources` field carried INSIDE the SSK ciphertext —
-sources reveal what was researched, so they must never travel as a cleartext column or
-wire field (the E2EE-9 design constraint). A reply with neither attachments nor sources
-still seals the bare markdown string, byte-identical to every E2E message already
-written; older payloads parse unchanged.
+`AgentRuntimeConfig.sendMessage` now takes `sources: SourceItem[]` (required; empty
+array means "none"), so a host can no longer silently narrow the contract. The
+runtime always passes the accumulated array at commit.
 
 **Files:**
 
-- `packages/crypto/src/sealed-payload.ts` — `SealedSourceItem` (structural twin of
-  `@threa/types`' `SourceItem`; the crypto package stays dependency-free, mirroring how
-  `EnclaveStreamEnvelope` mirrors `StreamEnvelope`), `serializeSealedPayload(content,
-refs?, sources?)`, `parseSealedPayload` returns validated `sources` (malformed
-  elements dropped, same defence as `isAttachmentRef`).
-- `packages/crypto/src/index.ts` — exports.
+- `packages/agent-runtime/src/runtime/agent-runtime.ts` — `sendMessage` input field made required; `commitMessage` passes the array unconditionally
+- `packages/agent-runtime/src/runtime/agent-runtime.test.ts` — the §2.8 q4 spike test: a turn whose tool results carried sources commits non-empty sources; a sourceless turn commits `[]`, not `undefined`
+- `apps/backend/src/features/agents/persona-agent.ts` — companion `doSendMessage` signature tightened to match; stub-mode call passes `sources: []`
 
-### Enclave commits sealed sources
+### Sealed sources in the E2E payload (crypto)
 
-The enclave's `sendMessage` (the E2EE-9 bug site) now destructures `{ content, sources }`
-and seals `serializeSealedPayload(content, undefined, sources)` under the reply SSK.
-The wire shape (`SealedReply`) is unchanged: ciphertext + envelope only; the backend
-callback handler needs no change and never sees the sources.
-
-**Files:**
-
-- `apps/enclave/src/agent/run-turn.ts` — seal sources into the reply payload.
-- `apps/enclave/src/agent/run-turn.test.ts` — enclave-path spike test: a turn whose
-  `web_search` (hermetic fetch stub) carried a source seals it inside the reply payload
-  and the owner's SSK recovers it; a sourceless reply stays a bare string.
-
-### `EnclaveSealedReply` → `SealedReply` rename (§2.6 rule 1)
-
-Per the redesign's forward-compatibility rules, sealed wire types touched by Phase 0.1
-are renamed out of the enclave namespace — they are a shared sealed vocabulary any
-owner-granted sealed actor may produce, not enclave-owned. Full rename, no deprecated
-alias (INV-49). `EnclaveSealedStep` is deliberately untouched here; it renames in
-Phase 0.2 when it is extended (same rule).
+`E2eSealedPayload` gains an optional `sources` field carried inside the SSK
+ciphertext. `serializeSealedPayload` takes sources as a third argument (the JSON
+wrapper appears only when refs or sources exist — a sourceless reply stays a bare
+markdown string, byte-identical to every E2E message already written).
+`parseSealedPayload` returns validated sources (malformed elements dropped, same
+defence as `isAttachmentRef`).
 
 **Files:**
 
-- `packages/types/src/api.ts`, `packages/types/src/index.ts` — rename + doc comment.
-- `apps/enclave/src/agent/run-turn.ts`, `backend-callbacks.ts`, `run-turn.test.ts`,
-  `sessions.test.ts` — updated imports.
+- `packages/crypto/src/sealed-payload.ts` — `SealedSourceItem` (structural twin of `SourceItem`; crypto stays dependency-free), `serializeSealedPayload(content, refs?, sources?)`, `parseSealedPayload` → `{ contentMarkdown, attachmentRefs, sources }`, `isSealedSourceItem`
+- `packages/crypto/src/index.ts` — exports
 
-### Rendering decrypted reply sources
+### Enclave reply path
 
-The browser's sealed-payload open path surfaces `sources` through the decrypt cache, and
-the message bubble renders a collapsible "Sources (n)" list under a decrypted E2E reply.
-The render gate is the decrypted payload itself (the stream axis), never "is this the
-enclave".
+The enclave's `sendMessage` now destructures `{ content, sources }` and seals
+`serializeSealedPayload(content, undefined, sources)` — sources travel inside the
+ciphertext. The backend callback (`enclave-runtimes/session-handlers.ts`) needs no
+change: it stores opaque ciphertext, which is the point.
 
 **Files:**
 
-- `apps/frontend/src/lib/crypto/message-envelope.ts` — `DecryptedMessageContent.sources`,
-  populated by the v2 open path (v1 fan-out predates sources → `[]`).
-- `apps/frontend/src/hooks/use-decrypted-message-content.ts` — `decrypted` variant
-  carries `sources`.
-- `apps/frontend/src/components/timeline/message-sources.tsx` — new `MessageSourceList`
-  (Shadcn Collapsible, styled after the trace dialog's `SourceList`).
-- `apps/frontend/src/components/timeline/message-event.tsx` — threads `sources` from the
-  decrypt hook into `MessageLayout` next to `attachmentRefs`.
-- `apps/frontend/src/components/timeline/message-sources.test.tsx`,
-  `apps/frontend/src/lib/crypto/__tests__/message-envelope.test.ts` — tests.
+- `apps/enclave/src/agent/run-turn.ts` — the E2EE-9 fix (was: `sendMessage: async ({ content })`)
+- `apps/enclave/src/agent/run-turn.test.ts` — integration test: a turn whose web_search result carried a source seals non-empty sources inside the reply payload; a sourceless turn seals the bare string
+
+### Sealed-type rename (§2.6 rule 1)
+
+`EnclaveSealedReply` → `SealedReply`: sealed wire types are a shared vocabulary, not
+enclave-owned (the enclave is one producer; a BIK-granted external harness is a
+future one). Renamed with no deprecated alias (INV-49).
+
+**Files:**
+
+- `packages/types/src/api.ts`, `packages/types/src/index.ts` — rename + doc comment stating the shared-vocabulary rule and the sources-inside-ciphertext constraint
+- `apps/enclave/src/agent/run-turn.ts`, `backend-callbacks.ts`, `run-turn.test.ts`, `sessions.test.ts` — usage updates
+
+### Rendering (frontend)
+
+The decrypt path surfaces sealed sources and the message bubble renders them: the
+sealed payload is the only place E2E reply sources can exist, so the decrypted
+bubble is the surface that has them (plaintext replies surface sources via the
+trace dialog's `SourceList`; sealed *trace-step* sources are Phase 0.2 / E2EE-14).
+
+**Files:**
+
+- `apps/frontend/src/lib/crypto/message-envelope.ts` — `DecryptedMessageContent.sources`, populated from `parseSealedPayload`
+- `apps/frontend/src/hooks/use-decrypted-message-content.ts` — `decrypted` variant carries `sources`
+- `apps/frontend/src/components/timeline/message-sources.tsx` — new `MessageSourceList` (collapsed "Sources (n)" → linked citations), styled after the trace dialog's `SourceList`
+- `apps/frontend/src/components/timeline/message-event.tsx` — threads `decrypted.sources` → `SentMessageEvent` → `MessageLayout`, rendered after attachments
+- `apps/frontend/src/components/timeline/message-sources.test.tsx`, `apps/frontend/src/lib/crypto/__tests__/message-envelope.test.ts` — tests
 
 ## Design Decisions
 
-### Sources ride inside the ciphertext, not on the wire
+### Sources ride inside the ciphertext
 
-**Chose:** extend the sealed payload wrapper (`E2eSealedPayload.sources`).
-**Why:** the audit's explicit design constraint — sources reveal what was researched.
-The backend `/messages` callback and `agent_session` projections stay plaintext-free.
-**Alternatives considered:** a cleartext `sources` field on `SealedReply` or the
-messages row — rejected by E2EE-9's constraint.
+**Chose:** extend the sealed payload wrapper (`E2eSealedPayload`), not `SealedReply`
+or the messages-callback schema.
+**Why:** sources reveal what was researched — the audit's design constraint (E2EE-9)
+forbids a cleartext column or plaintext wire field. The backend handler is untouched
+by design.
 
-### Bubble-level rendering for sealed reply sources
+### Crypto-local `SealedSourceItem` instead of importing `@threa/types`
 
-**Chose:** render decrypted sources under the E2E reply bubble (`MessageSourceList`).
-**Why:** the sealed message payload is the only carrier of reply sources for E2E (the
-server can't put them in `agent_session_steps.sources`, which is how plaintext replies
-surface citations in the trace dialog). The bubble is where the decrypted payload
-renders. The E2E trace dialog's per-step sources (including the `message_sent` step)
-are Phase 0.2 (E2EE-14).
+**Chose:** mirror the `SourceItem` shape in `packages/crypto`.
+**Why:** `@threa/crypto` is dependency-free (only `@hpke/core`); same precedent as
+`EnclaveStreamEnvelope` mirroring `StreamEnvelope` in the other direction. Bridged
+by structural typing.
 
-### `SealedSourceItem` defined in `@threa/crypto`
+### Rename now, with 0.1
 
-**Chose:** a structural twin of `SourceItem` local to the crypto package.
-**Why:** `@threa/crypto` is dependency-free (only `@hpke/core`); pulling `@threa/types`
-in would invert the dependency direction. Same precedent as `AttachmentRef` (crypto)
-and `EnclaveStreamEnvelope` (types), bridged by structural typing.
+**Chose:** `EnclaveSealedReply` → `SealedReply` in this PR.
+**Why:** §2.6 rule 1 binds the rename to the first PR that touches the type.
+`EnclaveSealedStep` is renamed in 0.2 when it is touched.
+
+### Bubble rendering for sealed sources
+
+**Chose:** render decrypted sources under the reply bubble (`MessageSourceList`).
+**Why:** for E2E the message payload is the only carrier of reply sources, and the
+bubble is where that payload renders. The trace dialog's `message_sent` step gets
+its own sealed sources in 0.2 (E2EE-14).
+
+## Schema Changes
+
+None. No migrations; the sealed payload is versioned JSON inside existing ciphertext
+columns, and old clients/messages parse unchanged (unknown `sources` ignored by old
+parsers; absent `sources` defaults to `[]` in the new one).
 
 ## What's NOT Included
 
-- **0.2 (E2EE-14):** sealed sources on trace steps (`EnclaveSealedStep` → `SealedStep`
-  rename happens there, when the type is touched).
-- Plaintext bubbles do not grow a source list — plaintext replies keep their existing
-  surfaces (inline markdown citations + trace dialog `SourceList`).
-- Bot `/complete` sources (N-5) — Phase 2.3 per the migration plan.
-- No schema changes; no migrations.
+- Sealed sources on trace steps (`EnclaveSealedStep` → `SealedStep`) — Phase 0.2 (E2EE-14)
+- Enclave `/fail` callback — Phase 0.3; usage recording — 0.4; bot claim bounding — 0.5; mention entities — 0.6; turn digests — 0.7
+- Bot `/complete` sources (N-5) — Phase 2.3
+- A sources UI on *plaintext* reply bubbles — plaintext replies keep their existing surfaces (inline markdown citations + trace dialog `SourceList`)
 
 ## Status
 
-- [x] Required `sources` on the runtime commit payload + spike tests
-- [x] Sealed payload carries sources; enclave seals them; tests
-- [x] `EnclaveSealedReply` → `SealedReply` rename
-- [x] Frontend decrypt path + `MessageSourceList` rendering + tests
-- [x] Typecheck, lint, agent-runtime/crypto/enclave/frontend/backend-unit/backend-e2e suites green
+- [x] Required `sources` on the runtime commit payload + spike test (§2.8 q4)
+- [x] Sealed payload carries sources (crypto + enclave + tests)
+- [x] `SealedReply` rename (§2.6 rule 1)
+- [x] Frontend decrypt + rendering + tests
+- [x] Full verification: typecheck, lint, agent-runtime (143), crypto (33), enclave (57), frontend (2331), backend unit (1621), backend e2e (308) — all green
