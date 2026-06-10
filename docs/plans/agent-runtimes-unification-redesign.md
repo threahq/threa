@@ -119,30 +119,42 @@ contract (trigger semantics, payload, capabilities, lifecycle).
   synthesizes a minimal `context:received` + `message:sent` trace for a bot
   that never POSTs `/steps`, so the same activity card that always shows steps
   for Ariadne can be empty for a bot.
+- **N-7: The key-distribution half of E2E-for-external-bots already exists.**
+  Bot runtimes register a per-session X25519 **BIK** at `bot:hello`
+  (`bot-runtimes/socket-handler.ts:40`, `repository.ts:48-52` — "the short id
+  used as `recipient_key_id` when wrapping a stream's SSK to this bot");
+  `e2e_stream_actors` accepts `kind: "bot"`; and the owner's client already
+  mints SSK wraps to every invited bot's live BIKs, pinned by bot id,
+  including on key roll (`streams/service.ts:885-913`, tests at
+  `service.test.ts:675-695,788-849`). What does **not** exist is the sealed
+  wire: invocations are blocked on E2E streams (PR #780), the claim payload
+  has no sealed variant, and `/steps`/`/complete` accept plaintext only. The
+  June 5 doc's "it has no SSK and cannot seal" is stale — the accurate
+  statement is "it can be granted the key, but there is no sealed transport."
 
 ## 1.5 Capability matrix — how identical are the three surfaces today?
 
 Legend: ✅ works · ⚠️ partial/divergent mechanism · ❌ absent · ⛔ absent **by
 design** (a real physical/trust constraint, not drift).
 
-| Capability                           | Companion                                            | Enclave                                       | External bot                                                             |
-| ------------------------------------ | ---------------------------------------------------- | --------------------------------------------- | ------------------------------------------------------------------------ |
-| Trigger: companion-mode message      | ✅ outbox → `PERSONA_AGENT`                          | ✅ outbox → `ENCLAVE_INVOKE`                  | ⚠️ "active-scratchpad" invocation (separate handler, separate semantics) |
-| Trigger: @mention                    | ✅                                                   | ⛔ mentions ride in ciphertext                | ✅ (plaintext only; ASCII-only regex — INV-54 tension)                   |
-| Trigger: edit/delete supersede-rerun | ✅                                                   | ❌                                            | ❌                                                                       |
-| Conversation history                 | ⚠️ last 20 messages, access-scoped                   | ⚠️ last 30 sealed messages                    | ❌ prompt-only, no scoped fetch handle (N-4)                             |
-| Prior turns' tool results in context | ❌ ephemeral (steps never re-injected)               | ❌ not shipped                                | ❌                                                                       |
-| Threa-provided tools                 | ✅ ~40                                               | ✅ 4 (web ×3, `load_attachment`)              | ⛔ brings its own                                                        |
-| Tool gating                          | ⚠️ per-persona `enabledTools`; categories unenforced | ✅ per-stream `allowedToolCategories`         | ❌ none (capabilities = trigger kinds)                                   |
-| Sources on replies                   | ✅                                                   | ❌ dropped (E2EE-9)                           | ❌ not expressible (N-5)                                                 |
-| Mid-turn interjection / reconsider   | ✅                                                   | ❌ (UX-12)                                    | ❌ (and undeclarable)                                                    |
-| Trace steps → `agent_session_steps`  | ✅ via `SessionTraceObserver`                        | ✅ via `EnclaveTraceObserver` (sealed)        | ✅ via `/steps` POSTs (optional → blank traces, N-6)                     |
-| `context:received` lead-in           | ✅ loop-emitted                                      | ⚠️ hand-synthesized pre-run (#4)              | ❌ never                                                                 |
-| Failure lifecycle                    | ✅ fail + DLQ hooks                                  | ❌ no `/fail`; dies by staleness (~2 min)     | ⚠️ `/fail` exists; attempts unbounded, no park/DLQ                       |
-| Cancellation                         | ✅ `shouldAbort` + tool signals                      | ⚠️ separate `/cancel` route                   | ❌                                                                       |
-| Cost attribution / telemetry         | ✅ `costContext` + OTEL                              | ❌ usage only at completion, unrecorded       | ❌                                                                       |
-| Auto-title                           | ✅ server naming handler                             | ✅ sealed enclave title (different mechanism) | ⚠️ rides the server path                                                 |
-| E2E streams                          | ⛔ excluded (routes to enclave)                      | ✅ the only path                              | ⛔ excluded (correct: no SSK, untrusted code)                            |
+| Capability                           | Companion                                            | Enclave                                       | External bot                                                                           |
+| ------------------------------------ | ---------------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Trigger: companion-mode message      | ✅ outbox → `PERSONA_AGENT`                          | ✅ outbox → `ENCLAVE_INVOKE`                  | ⚠️ "active-scratchpad" invocation (separate handler, separate semantics)               |
+| Trigger: @mention                    | ✅                                                   | ⛔ mentions ride in ciphertext                | ✅ (plaintext only; ASCII-only regex — INV-54 tension)                                 |
+| Trigger: edit/delete supersede-rerun | ✅                                                   | ❌                                            | ❌                                                                                     |
+| Conversation history                 | ⚠️ last 20 messages, access-scoped                   | ⚠️ last 30 sealed messages                    | ❌ prompt-only, no scoped fetch handle (N-4)                                           |
+| Prior turns' tool results in context | ❌ ephemeral (steps never re-injected)               | ❌ not shipped                                | ❌                                                                                     |
+| Threa-provided tools                 | ✅ ~40                                               | ✅ 4 (web ×3, `load_attachment`)              | ⛔ brings its own                                                                      |
+| Tool gating                          | ⚠️ per-persona `enabledTools`; categories unenforced | ✅ per-stream `allowedToolCategories`         | ❌ none (capabilities = trigger kinds)                                                 |
+| Sources on replies                   | ✅                                                   | ❌ dropped (E2EE-9)                           | ❌ not expressible (N-5)                                                               |
+| Mid-turn interjection / reconsider   | ✅                                                   | ❌ (UX-12)                                    | ❌ (and undeclarable)                                                                  |
+| Trace steps → `agent_session_steps`  | ✅ via `SessionTraceObserver`                        | ✅ via `EnclaveTraceObserver` (sealed)        | ✅ via `/steps` POSTs (optional → blank traces, N-6)                                   |
+| `context:received` lead-in           | ✅ loop-emitted                                      | ⚠️ hand-synthesized pre-run (#4)              | ❌ never                                                                               |
+| Failure lifecycle                    | ✅ fail + DLQ hooks                                  | ❌ no `/fail`; dies by staleness (~2 min)     | ⚠️ `/fail` exists; attempts unbounded, no park/DLQ                                     |
+| Cancellation                         | ✅ `shouldAbort` + tool signals                      | ⚠️ separate `/cancel` route                   | ❌                                                                                     |
+| Cost attribution / telemetry         | ✅ `costContext` + OTEL                              | ❌ usage only at completion, unrecorded       | ❌                                                                                     |
+| Auto-title                           | ✅ server naming handler                             | ✅ sealed enclave title (different mechanism) | ⚠️ rides the server path                                                               |
+| E2E streams                          | ⛔ excluded (routes to enclave)                      | ✅ the only path                              | ⚠️ invocations blocked (policy, PR #780); BIK + SSK-wrap machinery already built (N-7) |
 
 **Reading the matrix against the product goal:** the companion and enclave
 should differ only on the ⛔ rows (workspace tools, mentions-in-ciphertext) —
@@ -249,9 +261,10 @@ first-party surfaces — but three things do not:
 2. **External ≈ both.** A third-party harness participates through the same
    contract — same trigger semantics, same trace projection, same lifecycle,
    same commit payload — with exactly one structural difference: **the agent
-   is not ours**, so Threa hands it a turn instead of driving the model, and
-   it can never receive sealed material. Everything else degrades by
-   _declaration_, not by omission.
+   is not ours**, so Threa hands it a turn instead of driving the model.
+   Sealed material reaches it only through an explicit owner key-grant (the
+   BIK path, N-7), which policy keeps switched off today — see §2.6.
+   Everything else degrades by _declaration_, not by omission.
 
 ## 2.2 The shape
 
@@ -313,10 +326,16 @@ tools: "threa-managed" | "self", triggers: [...] }`. One function computes
    the effective capability set per turn: it folds the per-stream
    `allowedToolCategories` policy (generalized from `e2e_streams` to all
    streams — closing #8 by giving the dead `isToolAllowedByPolicy` its one
-   production call site), and it owns the hard rule
-   `trust === "third-party" ⇒ delivery ≠ "sealed"` — consolidating today's
-   scattered E2E guards into one declarative gate. The existing
-   `supportedCapabilities` on `bot:hello` becomes `manifest.triggers`,
+   production call site), and it owns the sealed-delivery rule. That rule is
+   deliberately **not** "third-party ⇒ never sealed"; it is **"no live,
+   explicitly granted SSK wrap for this actor ⇒ no sealed delivery"** — key
+   possession via grant, evaluated in one place. The enclave qualifies because
+   its grant is automatic at E2E-stream creation; an external bot qualifies
+   only if the owner has invited it as an E2E actor (the N-7 BIK path) **and**
+   the `externalSealedDelivery` policy switch is on — which it is not today.
+   This consolidates the scattered E2E guards into one declarative gate while
+   keeping E2EE-for-external-agents a policy flip, not a redesign (§2.6). The
+   existing `supportedCapabilities` on `bot:hello` becomes `manifest.triggers`,
    unchanged on the wire.
 4. **`declaredUnsupported(reason)` instead of optional fields.** A driver that
    cannot interject (the enclave today, every bot) passes a sentinel, not
@@ -379,10 +398,11 @@ unchanged as the wire; the driver wraps them. Closing the parity gaps:
   behavior and the "missing link" notice move into per-`BotRuntimeKind`
   config.
 
-**Explicitly out of scope, by design (the ⛔ rows):** third-party harnesses in
-E2E streams (no SSK, unattested code — the trust-tier rule makes this one
-typed guard, flippable only behind real attestation); workspace tools inside
-the enclave; Threa-managed tools for self-driven harnesses.
+**Out of scope as shipped behavior — but not foreclosed:** third-party
+harnesses in E2E streams are off by **policy**, not by architecture (§2.6
+spells out the forward-compatibility rules; the key-grant machinery already
+exists, N-7). Genuinely out of scope by design: workspace tools inside the
+enclave; Threa-managed tools for self-driven harnesses.
 
 ## 2.4 Migration plan
 
@@ -460,7 +480,8 @@ session/stream. E2E: the summary is computed **in-enclave** at turn end,
 sealed, and stored as a sealed artifact the next assignment ships back —
 exactly the auto-title pattern (PR #794) generalized. The regional backend
 never holds a plaintext summary; the no-memory guarantee of §1.6 is preserved
-because the only writer and reader of the summary plaintext is the enclave.
+because summary plaintext exists only inside SSK-granted recipients — the
+enclave today, any owner-granted sealed actor later (§2.6 rule 3).
 
 **C-3 — prompt caching.** Since every turn re-sends a growing prefix,
 enabling provider prompt caching (Anthropic `cache_control` via OpenRouter)
@@ -545,7 +566,65 @@ in Phase 2.3. Digest source-stream ids (the scope-drift re-filter input)
 must be recorded from the first digest shipped, even if the re-filter itself
 lands later — retrofitting provenance onto old digests is not possible.
 
-## 2.6 Open questions
+## 2.6 Forward-compatibility: E2EE for external agents
+
+Product context, stated plainly: Threa-blindness is the point of E2EE for
+agentic chat. A user who won't let Threa see their development lifecycle or
+private workflows may be entirely comfortable letting **their own**
+self-hosted agent see it — the trust decision belongs to the user, not to
+Threa's first-party/third-party distinction. So the design must treat "a
+third-party harness participates in an E2E stream" as a **deferred policy
+decision**, never as an architectural impossibility. We are not adding it
+now; we are refusing to make it a rewrite later.
+
+The asymmetry in what exists (N-7): the **key half is built** — BIK
+registration at `bot:hello`, bot actors in `e2e_stream_actors`, owner-minted
+SSK wraps pinned by bot id that survive key rolls. The **wire half is not** —
+no sealed invocation payload, no sealed `/steps` or `/complete`. Turning the
+feature on is therefore: build the sealed wire variants, add the consent UX,
+flip one gate. To keep it that way, the unification work must honor five
+rules:
+
+1. **Sealed wire types are not enclave-named.** When Phase 0.1/0.2 extend
+   `EnclaveSealedReply`/`EnclaveSealedStep` with sources, rename them to
+   `SealedReply`/`SealedStep` (the enclave is one producer of a shared sealed
+   vocabulary, not its owner). Likewise the assignment shape that carries
+   sealed history + wraps is the future sealed claim payload — design
+   `EnclaveSessionAssignment`'s successor as `SealedTurnContext` consumed by
+   any sealed-capable driver.
+2. **`delivery: "sealed"` is a variant any driver may receive**, gated by
+   `negotiateCapabilities`' key-grant rule (§2.2.3) — never by `instanceof
+EnclaveTurnDriver` checks or per-route `assertNotE2eStream` sprinkles. The
+   policy switch (`externalSealedDelivery: off`) lives inside the one gate, so
+   flipping it is one line plus the consent UX, and every downstream path
+   already type-checks.
+3. **Sealed continuity transfers automatically.** Turn digests and rolling
+   summaries are sealed under the **stream's SSK** (not an enclave-specific
+   key), so any recipient the owner has granted — enclave today, a BIK-bearing
+   harness later — can read and extend the same conversation memory. Nothing
+   about §2.5 may assume the sealed reader is the enclave.
+4. **The no-memory guarantee keys off the stream, not the agent.** Every
+   server-side gate in §1.6 branches on `isE2eStream` — none on who produces
+   the turn. Keep it that way and the entire §1.6 guarantee applies unchanged
+   to a sealed external turn.
+5. **Trigger semantics inherit the enclave's constraint, not new ones.**
+   Mentions ride in ciphertext, so sealed external invocations are
+   active-scratchpad/explicit-trigger only — the same boundary the enclave
+   already has. No design may depend on server-side content parsing for E2E
+   external dispatch (a client-side mention hint is the eventual answer for
+   both first- and third-party sealed actors).
+
+What flipping the switch will require when the day comes (so it's scoped now,
+not discovered then): a consent surface ("this bot will be able to read this
+encrypted scratchpad" — the grant is the owner's deliberate act, unlike the
+automatic enclave wrap); per-runner identity so the grant binds to the bot it
+names (the wrap path already pins bot id; the callback auth does not —
+E2EE-21/22's fix covers both); sealed claim/`/steps`/`/complete` wire
+variants mirroring the enclave callbacks; and BIK generation handling on
+key roll/revive (the E2EE-7 class of problems, solved once for all sealed
+recipients).
+
+## 2.7 Open questions
 
 1. **Enclave interjection: implement or declare?** Implementing sealed
    mid-turn message push is real work (new callback direction, wrap handling);
