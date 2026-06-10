@@ -772,6 +772,38 @@ describe("SyncEngine.backfillStreamGap", () => {
     expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(1)
   })
 
+  it("queues a distinct gap reported mid-flight and backfills it after the active one settles", async () => {
+    // A second gap with a different cursor may cover events that committed
+    // after the in-flight fetch's server read — dropping it would leave the
+    // hole until the next reconnect. It must chain one follow-up fetch.
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    deps.streamService.bootstrap.mockClear()
+
+    let resolveFirst: (bootstrap: StreamBootstrap) => void = () => {}
+    deps.streamService.bootstrap.mockImplementationOnce(
+      () =>
+        new Promise<StreamBootstrap>((resolve) => {
+          resolveFirst = resolve
+        })
+    )
+
+    const first = engine.backfillStreamGap("stream_1", "1")
+    // Distinct gap arrives while the first backfill is in flight.
+    void engine.backfillStreamGap("stream_1", "3")
+
+    resolveFirst(makeStreamBootstrap("stream_1", "2"))
+    await first
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(2)
+      expect(deps.streamService.bootstrap).toHaveBeenNthCalledWith(1, "ws_1", "stream_1", { after: "1" })
+      expect(deps.streamService.bootstrap).toHaveBeenNthCalledWith(2, "ws_1", "stream_1", { after: "3" })
+    })
+  })
+
   it("backfills when a live socket event skips past the cached tail (end to end)", async () => {
     const deps = makeDeps()
     const workspaceBootstrap = makeWorkspaceBootstrap()

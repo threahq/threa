@@ -73,7 +73,10 @@ export class SyncEngine {
   private activeBootstrap: Promise<void> | null = null
   private queuedReconnectBootstrap: Promise<void> | null = null
   private activeStreamRefreshes = new Map<string, Promise<void>>()
-  private activeGapBackfills = new Map<string, Promise<void>>()
+  private activeGapBackfills = new Map<string, { cursor: string; promise: Promise<void> }>()
+  /** Lowest gap cursor reported per stream while a backfill was in flight —
+   *  drained into one follow-up backfill when the active one settles. */
+  private queuedGapCursors = new Map<string, string>()
   private hasEverConnected = false
   /** Whether the engine has been destroyed. Public for ref-check re-creation. */
   isDestroyed = false
@@ -233,17 +236,29 @@ export class SyncEngine {
    * after the PRE-GAP cursor — the current latest would skip the very hole
    * this is meant to fill — and applies them append-style (INV-53).
    *
-   * Single-flighted per stream: a burst of gap reports while a backfill is in
-   * flight collapses onto the same fetch; the applied response closes the gap
-   * they all observed.
+   * Single-flighted per stream: duplicate reports of the SAME gap (the engine
+   * and the stream-view hook both register handlers, so each gap fires twice)
+   * collapse onto the in-flight fetch. A report with a DIFFERENT cursor while
+   * one is in flight is a distinct gap whose events may have committed after
+   * the active fetch's server read — it is queued (lowest cursor wins) and
+   * drained into one follow-up backfill when the active one settles, instead
+   * of being silently dropped.
    */
   backfillStreamGap(streamId: string, afterSequence: string): Promise<void> {
     if (this.isDestroyed) return Promise.resolve()
-    const existing = this.activeGapBackfills.get(streamId)
-    if (existing) return existing
+    const active = this.activeGapBackfills.get(streamId)
+    if (active) {
+      if (active.cursor !== afterSequence) {
+        const queued = this.queuedGapCursors.get(streamId)
+        if (queued === undefined || BigInt(afterSequence) < BigInt(queued)) {
+          this.queuedGapCursors.set(streamId, afterSequence)
+        }
+      }
+      return active.promise
+    }
 
     const { workspaceId, streamService, queryClient } = this.deps
-    const backfill = (async () => {
+    const promise = (async () => {
       try {
         const bootstrap = await streamService.bootstrap(workspaceId, streamId, { after: afterSequence })
         if (this.isDestroyed) return
@@ -263,12 +278,17 @@ export class SyncEngine {
         console.error("Sequence-gap backfill failed", { streamId, afterSequence, error })
       }
     })().finally(() => {
-      if (this.activeGapBackfills.get(streamId) === backfill) {
+      if (this.activeGapBackfills.get(streamId)?.promise === promise) {
         this.activeGapBackfills.delete(streamId)
       }
+      const queued = this.queuedGapCursors.get(streamId)
+      if (queued !== undefined) {
+        this.queuedGapCursors.delete(streamId)
+        void this.backfillStreamGap(streamId, queued)
+      }
     })
-    this.activeGapBackfills.set(streamId, backfill)
-    return backfill
+    this.activeGapBackfills.set(streamId, { cursor: afterSequence, promise })
+    return promise
   }
 
   /**

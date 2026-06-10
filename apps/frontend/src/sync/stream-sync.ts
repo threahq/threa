@@ -805,18 +805,26 @@ export function registerStreamSocketHandlers(
   const handleAppendEvent = async (payload: AgentSessionEventPayload | CommandEventPayload | MemberRemovedPayload) => {
     if (payload.streamId !== streamId) return
     const now = Date.now()
-    // Dedupe by event ID
-    const existing = await db.events.get(payload.event.id)
-    if (existing) return
-    // Tail-gap check must read the latest BEFORE this write advances it.
-    const gapAfterSequence = onSequenceGap
-      ? detectSequenceGap(await getLatestPersistedSequence(streamId), payload.event.sequence)
-      : null
-    await db.events.put({
-      ...payload.event,
-      workspaceId,
-      _sequenceNum: sequenceToNum(payload.event.sequence),
-      _cachedAt: now,
+    // Set when this event's sequence reveals missed events behind it; reported
+    // after the transaction commits so the backfill never runs inside it.
+    let gapAfterSequence: string | null = null
+    // Same transactional shape as handleMessageCreated: dedupe, gap-read, and
+    // put must be atomic, or a concurrent append can land between the gap read
+    // and this write and make the cursor lie in either direction.
+    await db.transaction("rw", [db.events], async () => {
+      // Dedupe by event ID
+      const existing = await db.events.get(payload.event.id)
+      if (existing) return
+      // Tail-gap check must read the latest BEFORE this write advances it.
+      if (onSequenceGap) {
+        gapAfterSequence = detectSequenceGap(await getLatestPersistedSequence(streamId), payload.event.sequence)
+      }
+      await db.events.put({
+        ...payload.event,
+        workspaceId,
+        _sequenceNum: sequenceToNum(payload.event.sequence),
+        _cachedAt: now,
+      })
     })
     if (gapAfterSequence !== null) {
       onSequenceGap?.({ streamId, afterSequence: gapAfterSequence })
