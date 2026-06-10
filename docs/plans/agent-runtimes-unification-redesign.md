@@ -130,7 +130,8 @@ design** (a real physical/trust constraint, not drift).
 | Trigger: companion-mode message      | ✅ outbox → `PERSONA_AGENT`                          | ✅ outbox → `ENCLAVE_INVOKE`                  | ⚠️ "active-scratchpad" invocation (separate handler, separate semantics) |
 | Trigger: @mention                    | ✅                                                   | ⛔ mentions ride in ciphertext                | ✅ (plaintext only; ASCII-only regex — INV-54 tension)                   |
 | Trigger: edit/delete supersede-rerun | ✅                                                   | ❌                                            | ❌                                                                       |
-| Conversation history                 | ✅ full, access-scoped                               | ✅ 30 sealed messages                         | ❌ prompt-only, no scoped fetch handle (N-4)                             |
+| Conversation history                 | ⚠️ last 20 messages, access-scoped                   | ⚠️ last 30 sealed messages                    | ❌ prompt-only, no scoped fetch handle (N-4)                             |
+| Prior turns' tool results in context | ❌ ephemeral (steps never re-injected)               | ❌ not shipped                                | ❌                                                                       |
 | Threa-provided tools                 | ✅ ~40                                               | ✅ 4 (web ×3, `load_attachment`)              | ⛔ brings its own                                                        |
 | Tool gating                          | ⚠️ per-persona `enabledTools`; categories unenforced | ✅ per-stream `allowedToolCategories`         | ❌ none (capabilities = trigger kinds)                                   |
 | Sources on replies                   | ✅                                                   | ❌ dropped (E2EE-9)                           | ❌ not expressible (N-5)                                                 |
@@ -156,6 +157,85 @@ and opaque closures (`sendMessage` may ignore `sources`; `newMessages?` may be
 omitted; observers may handle any subset of events), so a host can silently
 narrow a responsibility — and the external path is a separate hand-built
 contract that nobody maps onto those edges.
+
+## 1.6 The enclave no-memory guarantee — verified
+
+Product claim to verify: _the enclave generates no memories; all of its
+outputs are end-to-end encrypted and opaque to the regional backend; only the
+enclave (when invited) can access plaintext._ Verified true as of 2026-06-10,
+with three honest caveats. Every server-side pipeline that consumes message
+content was swept:
+
+| Pipeline                  | E2E behavior                                                                                                                                                          | Evidence                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| GAM / memo extraction     | Short-circuits E2E streams entirely — no memos, no conversations rows                                                                                                 | `memos/accumulator-outbox-handler.ts:142-144`                                                                     |
+| Search index + embeddings | E2E streams partitioned out pre-query; tsvector/embedding never populated                                                                                             | `search/service.ts:103-115`                                                                                       |
+| Auto-naming               | Sealed enclave title only (`name_ciphertext`/`name_envelope`); never plaintext                                                                                        | `enclave-runtimes/session-handlers.ts:218-245`                                                                    |
+| Link previews             | Handler short-circuits E2E streams                                                                                                                                    | `link-previews/outbox-handler.ts:105-108`                                                                         |
+| Activity feed             | Returns `[]` for E2E (messages, reactions, saved reminders)                                                                                                           | `activity/outbox-handler.ts:142-143,197-198,228-229`                                                              |
+| Push notifications        | Generic "Encrypted message" label, no content                                                                                                                         | `push/service.ts:11-12`                                                                                           |
+| AI usage / cost logging   | Token counts + model string only; never prompt/response content                                                                                                       | `ai-usage/cost-service.ts:69-82`                                                                                  |
+| Message storage           | Plaintext columns are placeholders; ciphertext + envelope canonical                                                                                                   | migration `20260526175633_e2e_streams.sql`                                                                        |
+| Write sink (backstop)     | **INV-E1 enforced at `EventService`** since PR #780: plaintext into an E2E stream throws at the sink, sealed edits refused; scheduled messages backstopped            | `messaging/event-service.ts:439,704`, `scheduled-messages/service.ts:651`, sink tests `event-service.test.ts:764` |
+| Enclave outputs           | Replies, trace steps, substeps, titles all sealed (`*_ciphertext` + `*_envelope`)                                                                                     | `session-handlers.ts:172-207,276-288,331-356`                                                                     |
+| Enclave invitation        | Enclave actor added to `e2e_stream_actors` at E2E creation (idempotent); dispatch requires the invitation **and** live-EIK SSK wraps for current + trigger generation | `e2e-streams/actor-repository.ts:39-53`, `dispatch/request-builder.ts:67-87`                                      |
+
+**The honest caveats (state these wherever the guarantee is marketed):**
+
+1. **Metadata is visible.** Step types, step counts, durations, message ids,
+   token counts, model string, and timestamps are cleartext — the backend sees
+   the _shape_ of every encrypted turn (Ariadne ran 4 steps, one was a
+   `tool_call`, the reply was ~900 completion tokens), never its content.
+2. **Plaintext necessarily transits the enclave process and the model
+   provider.** The enclave decrypts to run the loop and sends plaintext to
+   OpenRouter pinned to zero-retention providers
+   (`provider: { data_collection: "deny" }`, `apps/enclave/src/llm.ts:78`).
+   That is a contractual guarantee, not a cryptographic one.
+3. **"Only the enclave" is operational, not attested** (E2EE-21/22, still
+   open): enclave identity rests on `INTERNAL_API_KEY` secrecy and the
+   registration path; `/attestation` is informational. Real attestation +
+   per-runner identity is Phase 2.4 in the migration plan and is the
+   precondition for making this claim adversarially robust.
+
+## 1.7 Conversation continuity — what the agent remembers turn-over-turn
+
+How "session-like" is a scratchpad conversation today? Each trigger message
+creates a fresh `agent_sessions` row and a fresh context build — there is no
+persistent session object — but continuity is **reconstructed from the
+stream** each turn:
+
+- **Companion:** last 20 messages (`MAX_CONTEXT_MESSAGES`,
+  `companion/context.ts:135`), access-scoped, with full attachment text for
+  the trigger + last 3 user messages and summaries for older ones.
+  `lastSeenSequence` is only a dedup guard, never a context source.
+- **Enclave:** last 30 sealed messages shipped in the assignment
+  (`MAX_HISTORY_MESSAGES`, `enclave-invoke-worker.ts:31`), decrypted
+  in-enclave; attachments re-shipped under a 32MB inline budget. The enclave
+  is stateless between assignments.
+- **External bot:** `promptMarkdown` only — zero history (N-4). The one
+  longitudinal concept in the whole system is here, though:
+  `bot_runtime_session_links` + `targetRuntimeSessionId` let a harness keep
+  its **own** long-running session and have Threa hand back the handle each
+  turn. The harness owns the state; Threa passes the key. (Pi-only today.)
+
+So the "every message is a brand-new conversation" worry is half-true: the
+**message text** of the conversation carries over (within caps) on the two
+first-party surfaces — but three things do not:
+
+1. **Tool work is amnesiac (C-1).** Prior turns' tool calls and results live
+   only in `agent_session_steps` (sealed steps for E2E) and are **never
+   re-injected** into a later turn's context. If Ariadne researched something
+   in turn 1, turn 3 sees only her final reply text — "what did that article
+   say?" forces a re-search or invites a hallucination. This is the single
+   biggest gap between a Threa scratchpad and a Claude.ai/ChatGPT thread,
+   where tool results stay in the conversation.
+2. **The window is shallow and cliff-edged (C-2).** 20 (companion) / 30
+   (enclave) messages, then silent forgetting — no rolling summary, no
+   token-budget window. Long scratchpad conversations lose their beginning
+   without any signal.
+3. **Every turn re-sends everything, uncached (C-3).** No provider-side
+   prompt caching (`cache_control`) anywhere, so the cost of deepening the
+   window grows linearly per turn and quadratically per conversation.
 
 # Part 2 — Redesign: one Turn Contract, three drivers
 
@@ -343,7 +423,66 @@ new abstractions and is worth doing regardless of appetite for the rest.
 multimodal on `/complete`; per-stream _persona_ routing (`harnessId` binding —
 the design admits it, nothing requires it yet).
 
-## 2.5 Open questions
+## 2.5 Conversation continuity: scratchpads as long-running conversations
+
+Product goal: a scratchpad with companion mode on should feel like one
+continuous Claude.ai/ChatGPT-style conversation — messages, **and the agent's
+tool work**, accumulate as shared memory across turns — on plaintext and E2E
+alike. The fix is not a persistent session object (the stateless
+turn-per-trigger model is correct and race-safe, INV-20); it is making the
+**context window a first-class, shared hydration policy** instead of two
+hard-coded caps. This slots into the Turn Contract as the `Hydrate` step of
+`TurnDispatch`: one `ContextWindowPolicy` consumed by all drivers.
+
+**C-1 — carry tool work forward.** Two mechanisms, complementary:
+
+- _Turn digests (recommended first)._ At session end the loop already knows
+  what it did (`AgentRuntimeResult` + the step list). Persist a compact
+  per-session digest — tools called, key findings, sources — as a final step
+  row, and include the last N turns' digests in the next context build as
+  system-context. For E2E, the digest is sealed like any step and shipped in
+  the assignment's history (the enclave holds the SSK wraps to decrypt prior
+  generations it can open); the backend never sees it. Cheap, bounded, works
+  identically on both first-party surfaces.
+- _Selective step replay (later, if digests prove lossy)._ Re-inject the raw
+  `tool:complete` trace contents of the last 1–2 turns. Strictly richer,
+  strictly more expensive — and for the enclave it competes with the 48MB
+  assignment budget (E2EE-23), which is why digests come first.
+
+**C-2 — replace the message-count cliff with a budgeted window + rolling
+summary.** One shared policy: fill the window newest-first under a token
+budget (the `truncateMessages` machinery already exists at
+`packages/agent-runtime/src/runtime/truncation.ts`); when older turns fall
+out, fold them into a rolling conversation summary that rides at the top of
+the context. Plaintext: the summary is computed backend-side and stored on the
+session/stream. E2E: the summary is computed **in-enclave** at turn end,
+sealed, and stored as a sealed artifact the next assignment ships back —
+exactly the auto-title pattern (PR #794) generalized. The regional backend
+never holds a plaintext summary; the no-memory guarantee of §1.6 is preserved
+because the only writer and reader of the summary plaintext is the enclave.
+
+**C-3 — prompt caching.** Since every turn re-sends a growing prefix,
+enabling provider prompt caching (Anthropic `cache_control` via OpenRouter)
+on the stable prefix (system prompt + older history) makes deep windows
+affordable and faster. For the enclave this must respect the zero-retention
+provider constraint — caching is only enabled where the pinned providers
+support it under `data_collection: "deny"`; otherwise skip it. This is a pure
+optimization and never a correctness dependency.
+
+**External bots.** Continuity is the harness's job (it owns its loop), and
+the embryo already exists: generalize `bot_runtime_session_links` /
+`targetRuntimeSessionId` from Pi-only to any `BotRuntimeKind` whose manifest
+declares persistent sessions, and pair it with the N-4 context handle so a
+freshly-started harness can rehydrate. Threa's contract is: stable session
+handle in, scoped history access on request — not shipping Threa-side
+summaries to third parties.
+
+Sequencing: turn digests and the budgeted window are Phase 1-adjacent (they
+live in the shared hydration path the contract introduces); sealed rolling
+summaries land with the enclave driver work in Phase 2.2; session-link
+generalization joins the de-Pi-ification in Phase 2.3.
+
+## 2.6 Open questions
 
 1. **Enclave interjection: implement or declare?** Implementing sealed
    mid-turn message push is real work (new callback direction, wrap handling);
@@ -360,3 +499,16 @@ the design admits it, nothing requires it yet).
 4. **`sources: []` willful defeat** (prior doc's spike #3): add the test that
    a turn whose tool results carried sources commits non-empty sources, so the
    required-field guarantee isn't quietly defeated.
+5. **Digest authorship and trust (C-1):** the turn digest is model-generated
+   text that future turns treat as ground truth. Does it need the same
+   trust-boundary wrap as tool output, and should the trace UI render it so
+   users can correct a wrong digest?
+6. **Sealed-summary key generations (C-2 × E2EE-7):** a rolling summary
+   sealed under generation N must be re-wrapped or rebuilt when the stream
+   key rolls, or it becomes the same stranded-data class as parked turns.
+   Decide: re-wrap on revive (preferred) or rebuild from scratch on
+   generation mismatch.
+7. **Where does the budgeted window live for mentions/channels?** Scratchpads
+   want deep continuity; a channel mention probably still wants the shallow
+   window. The `ContextWindowPolicy` should be per-trigger-kind (deep for
+   companion-mode scratchpad turns, shallow for mention turns), not global.
