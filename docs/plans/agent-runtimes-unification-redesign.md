@@ -391,14 +391,15 @@ new abstractions and is worth doing regardless of appetite for the rest.
 
 **Phase 0 — Parity fixes on existing seams (1 PR each)**
 
-| #   | Change                                                                                                  | Closes             |
-| --- | ------------------------------------------------------------------------------------------------------- | ------------------ |
-| 0.1 | Required-`sources` commit payload; thread sealed sources through `EnclaveSealedReply` + reply rendering | E2EE-9             |
-| 0.2 | Sealed sources on trace steps (`EnclaveSealedStep`)                                                     | E2EE-14            |
-| 0.3 | Enclave `/fail` callback wired to `failSessionWithLifecycle`                                            | E2EE-25, #6        |
-| 0.4 | Record enclave usage at `/complete` through the shared usage-recording path                             | #9                 |
-| 0.5 | Bound bot claim attempts + park/DLQ                                                                     | unbounded-attempts |
-| 0.6 | Mention extraction from `contentJson` mention entities                                                  | INV-54 Pi-ism      |
+| #   | Change                                                                                                                                                                                 | Closes             |
+| --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| 0.1 | Required-`sources` commit payload; thread sealed sources through `EnclaveSealedReply` + reply rendering                                                                                | E2EE-9             |
+| 0.2 | Sealed sources on trace steps (`EnclaveSealedStep`)                                                                                                                                    | E2EE-14            |
+| 0.3 | Enclave `/fail` callback wired to `failSessionWithLifecycle`                                                                                                                           | E2EE-25, #6        |
+| 0.4 | Record enclave usage at `/complete` through the shared usage-recording path                                                                                                            | #9                 |
+| 0.5 | Bound bot claim attempts + park/DLQ                                                                                                                                                    | unbounded-attempts |
+| 0.6 | Mention extraction from `contentJson` mention entities                                                                                                                                 | INV-54 Pi-ism      |
+| 0.7 | Turn digests: persist an end-of-session "tools called / findings / sources" digest step; inject recent digests into the next context build (sealed via the auto-title pattern for E2E) | C-1                |
 
 **Phase 1 — One projector, one gate**
 
@@ -469,6 +470,54 @@ provider constraint — caching is only enabled where the pinned providers
 support it under `data_collection: "deny"`; otherwise skip it. This is a pure
 optimization and never a correctness dependency.
 
+**Multiplayer surfaces and episode boundaries.** Continuity needs a key —
+"which conversation is this turn part of?" — and the answer differs by surface
+shape, not by new machinery:
+
+- _Scratchpads and threads: the episode is the stream._ They are bounded
+  conversations by construction, and multi-author already works: the context
+  build resolves every participant's name and formats history with attribution
+  (`companion/context.ts:144-169,294`), so a multiplayer thread is simply the
+  same conversation with more user messages. Digests and the rolling summary
+  attach to the stream.
+- _Channels: reduce to threads._ A channel @-mention already spawns a thread
+  where the persona responds (`mention-invoke-outbox-handler.ts:34-43`);
+  top-level channel turns don't exist, so no new rule is needed.
+- _DMs (and any flat, unbounded surface): episodes by recency._ A DM is one
+  endless stream, so continuity attaches to an episode: if the latest
+  completed agent session's `lastSeenSequence` falls within the current
+  context window (roughly: an invocation within the last ~20 messages), the
+  new invocation **continues** that episode — inject its digest chain, with
+  the intervening messages already present in the window filling the gap.
+  Otherwise start a fresh episode with no digest carry-over.
+  `lastSeenSequence` already exists for exactly this comparison, so the
+  boundary check is one query.
+- _Within-turn multiplayer_ (several people talking while the agent runs) is
+  already the interjection/reconsider path on the companion; the enclave gap
+  is UX-12, tracked above.
+
+The multiplayer wrinkle that must not be skipped: **digest access-scoping.**
+Context is access-scoped to the _invoking_ user (`accessibleStreamIds` +
+`strip-inaccessible-refs`). In a multiplayer thread, turn N's digest may embed
+workspace material retrieved under invoker A's access; turn N+1 may be
+invoked by B with narrower access. Anything Ariadne already _said in the
+stream_ is safe — every member can see it. The digest's unspoken material is
+not. The clean division:
+
+- **Digests carry tool work and are filterable.** Each digest records the
+  source stream ids of the workspace material it contains; injection
+  re-filters against the _current_ invoker's `accessibleStreamIds` (the same
+  mechanism `strip-inaccessible-refs` uses today). Web-derived content is
+  exempt (public).
+- **The rolling summary carries conversation only.** A prose summary cannot
+  be post-hoc filtered, so it is built exclusively from in-stream messages
+  (member-visible by definition), never from tool output. Tool memory rides
+  only in the filterable digests.
+
+E2E streams are owner-only by design today at every layer, so multiplayer
+continuity does not arise there — but if E2E ever gains participants, digest
+filtering must land first.
+
 **External bots.** Continuity is the harness's job (it owns its loop), and
 the embryo already exists: generalize `bot_runtime_session_links` /
 `targetRuntimeSessionId` from Pi-only to any `BotRuntimeKind` whose manifest
@@ -477,10 +526,15 @@ freshly-started harness can rehydrate. Threa's contract is: stable session
 handle in, scoped history access on request — not shipping Threa-side
 summaries to third parties.
 
-Sequencing: turn digests and the budgeted window are Phase 1-adjacent (they
-live in the shared hydration path the contract introduces); sealed rolling
-summaries land with the enclave driver work in Phase 2.2; session-link
-generalization joins the de-Pi-ification in Phase 2.3.
+Sequencing: turn digests are **Phase 0 (0.7)** — they need no new
+abstractions (the session has its step list at completion; the sealed variant
+reuses the auto-title pattern) and they kill the worst of the tool-work
+amnesia immediately. The budgeted window and episode boundaries are Phase
+1-adjacent (they live in the shared hydration path the contract introduces);
+sealed rolling summaries land with the enclave driver work in Phase 2.2;
+session-link/episode generalization for harnesses joins the de-Pi-ification
+in Phase 2.3. Digest access-filtering must ship with — not after — the first
+digest injection on any multi-member surface.
 
 ## 2.6 Open questions
 
@@ -512,3 +566,9 @@ generalization joins the de-Pi-ification in Phase 2.3.
    want deep continuity; a channel mention probably still wants the shallow
    window. The `ContextWindowPolicy` should be per-trigger-kind (deep for
    companion-mode scratchpad turns, shallow for mention turns), not global.
+8. **DM episode boundary tuning:** "invocation within the last ~20 messages"
+   is a message-count heuristic; a long pause in a quiet DM still reads as the
+   same conversation to a human. Decide whether the boundary is count-based,
+   time-based, or both (e.g., within the window **or** within 24h), and
+   whether the user can explicitly start fresh ("new conversation" affordance,
+   like clearing a Claude.ai thread).
