@@ -121,11 +121,16 @@ opt-in.
 
 ### What a persona may see is access-scoped
 
-The agent runs with the access of whoever it is acting for, not workspace-wide. Context
-building computes `accessibleStreamIds` from the invoking user's readable streams
-(`companion/context.ts:121`), and references to streams outside that set are stripped before
-they reach the model (`companion/strip-inaccessible-refs.ts`). So a companion in one stream
-cannot quote or surface content from a stream the user cannot read.
+The agent runs with the access of the _place_ it is invoked in, not workspace-wide and not
+(except in one case) the invoking user's. `computeAgentAccessSpec`
+(`researcher/access-spec.ts:52`) derives the scope from the stream: a private channel sees
+itself plus public streams; a public channel or public scratchpad sees public streams only;
+a DM sees the intersection of what both participants can access; only a private scratchpad —
+a single-user surface — runs with the invoking user's full access. Context building resolves
+that spec to `accessibleStreamIds` (`companion/context.ts:121`), and references to streams
+outside the set are stripped before they reach the model
+(`companion/strip-inaccessible-refs.ts`). So a companion in one stream cannot quote or
+surface content the location is not entitled to see.
 
 ### Which tools exist is per-persona, then per-integration
 

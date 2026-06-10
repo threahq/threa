@@ -496,27 +496,35 @@ shape, not by new machinery:
   already the interjection/reconsider path on the companion; the enclave gap
   is UX-12, tracked above.
 
-The multiplayer wrinkle that must not be skipped: **digest access-scoping.**
-Context is access-scoped to the _invoking_ user (`accessibleStreamIds` +
-`strip-inaccessible-refs`). In a multiplayer thread, turn N's digest may embed
-workspace material retrieved under invoker A's access; turn N+1 may be
-invoked by B with narrower access. Anything Ariadne already _said in the
-stream_ is safe — every member can see it. The digest's unspoken material is
-not. The clean division:
+**Why multiplayer digests are safe by construction — scope is the place, not
+the person.** The agent's access scope is computed from the _location_, not
+the invoking user (`computeAgentAccessSpec`,
+`agents/researcher/access-spec.ts:52-81`): a private channel sees itself plus
+public streams; a public channel or public scratchpad sees public streams
+only; a DM sees the intersection of what both participants can access; only a
+**private scratchpad** — a single-user surface — runs with the invoking
+user's full access. So on every multi-member surface the scope is identical
+no matter which member triggers the turn, and a digest produced by turn N
+contains only material the location itself was entitled to see — safe to
+inject into turn N+1 regardless of who invoked it.
 
-- **Digests carry tool work and are filterable.** Each digest records the
+The residual wrinkle is **scope drift over time**, not who is asking: a
+stream that was public when a digest was written can go private later, and a
+DM's intersection shrinks when a participant loses access to a stream. So:
+
+- **Digests carry tool work and stay filterable.** Each digest records the
   source stream ids of the workspace material it contains; injection
-  re-filters against the _current_ invoker's `accessibleStreamIds` (the same
-  mechanism `strip-inaccessible-refs` uses today). Web-derived content is
+  re-filters against the location's _current_ access spec — same cheap check
+  as `strip-inaccessible-refs`, on the correct axis. Web-derived content is
   exempt (public).
 - **The rolling summary carries conversation only.** A prose summary cannot
   be post-hoc filtered, so it is built exclusively from in-stream messages
   (member-visible by definition), never from tool output. Tool memory rides
   only in the filterable digests.
 
-E2E streams are owner-only by design today at every layer, so multiplayer
-continuity does not arise there — but if E2E ever gains participants, digest
-filtering must land first.
+E2E streams are owner-only by design today at every layer, so none of this
+arises there — and a private E2E scratchpad's scope is its owner's, matching
+the private-scratchpad rule above.
 
 **External bots.** Continuity is the harness's job (it owns its loop), and
 the embryo already exists: generalize `bot_runtime_session_links` /
@@ -533,8 +541,9 @@ amnesia immediately. The budgeted window and episode boundaries are Phase
 1-adjacent (they live in the shared hydration path the contract introduces);
 sealed rolling summaries land with the enclave driver work in Phase 2.2;
 session-link/episode generalization for harnesses joins the de-Pi-ification
-in Phase 2.3. Digest access-filtering must ship with — not after — the first
-digest injection on any multi-member surface.
+in Phase 2.3. Digest source-stream ids (the scope-drift re-filter input)
+must be recorded from the first digest shipped, even if the re-filter itself
+lands later — retrofitting provenance onto old digests is not possible.
 
 ## 2.6 Open questions
 
