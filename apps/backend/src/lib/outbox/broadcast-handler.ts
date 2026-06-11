@@ -186,7 +186,9 @@ export class BroadcastHandler implements OutboxHandler {
   }
 
   private broadcastEvent(event: OutboxEvent, routedEvent: RoutedEvent | undefined): void {
-    const groups = routedEvent?.groups ?? resolveDeliveryGroups(event)
+    // Explicit undefined check, not `??`: bot-scoped events carry groups ===
+    // null, which must pass through without re-resolving routing.
+    const groups = routedEvent !== undefined ? routedEvent.groups : resolveDeliveryGroups(event)
 
     // Bot-scoped events ride the `/bot` namespace and use bot/instance/session
     // rooms so siblings on the same bot can stop racing each other (claimed,

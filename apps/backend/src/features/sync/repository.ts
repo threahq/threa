@@ -49,7 +49,8 @@ export const SyncLogRepository = {
       const existingResult = await client.query<{ outbox_event_id: string; sync_id: string }>(sql`
         SELECT outbox_event_id, sync_id
         FROM sync_log
-        WHERE outbox_event_id = ANY(${outboxEventIds}::bigint[])
+        WHERE workspace_id = ${workspaceId}
+          AND outbox_event_id = ANY(${outboxEventIds}::bigint[])
       `)
 
       const assigned = new Map<bigint, bigint>()
@@ -57,9 +58,7 @@ export const SyncLogRepository = {
         assigned.set(BigInt(row.outbox_event_id), BigInt(row.sync_id))
       }
 
-      const missing = entries
-        .filter((e) => !assigned.has(e.outboxEventId))
-        .sort((a, b) => Number(a.outboxEventId - b.outboxEventId))
+      const missing = entries.filter((e) => !assigned.has(e.outboxEventId))
 
       if (missing.length > 0) {
         const rows = missing.map((e, i) => {
