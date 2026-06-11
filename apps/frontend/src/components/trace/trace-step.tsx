@@ -870,7 +870,7 @@ function SubstepTimeline({
                   }}
                 />
               </span>
-              <span className={cn("flex-1 min-w-0 text-foreground/90", isLast && isLive && "font-medium")}>
+              <span className={cn("flex-1 min-w-0 break-words text-foreground/90", isLast && isLive && "font-medium")}>
                 {substep.text}
               </span>
               {offset && (
@@ -1027,10 +1027,10 @@ function SourceItem({ source, workspaceId, isLast }: { source: TraceSource; work
 
   return (
     <div className={cn("px-2.5 py-1.5 mx-[-1px]", !isLast && "border-b border-border")}>
-      <div className="font-semibold mb-1 text-xs">
+      <div className="font-semibold mb-1 text-xs break-words">
         <SourceTitle source={source} internalLink={internalLink} />
       </div>
-      {source.domain && <div className="text-[11px] text-muted-foreground mb-1">{source.domain}</div>}
+      {source.domain && <div className="text-[11px] text-muted-foreground mb-1 break-words">{source.domain}</div>}
       {source.authorName && source.type === "workspace_message" && (
         <div className="text-[11px] text-muted-foreground mb-1">
           by {source.authorName}
