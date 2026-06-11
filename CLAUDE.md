@@ -233,6 +233,8 @@ Multi-view pages (tabs, sub-sections, filter states) must derive their active vi
 
 Preview surfaces must strip markdown before rendering. Any UI that shows a preview of user-authored message content (thread cards, sidebar stream previews, activity feed snippets, notification text, quoted snippets, search results) must route `contentMarkdown` through `stripMarkdownToInline()` in `apps/frontend/src/lib/markdown/strip.ts` or `truncateContent()` in `apps/frontend/src/components/layout/sidebar/utils.ts` — never pass raw markdown into a plain `<span>`, or literal syntax (`**bold**`, fenced code, `[text](url)`, `:emoji:` shortcodes) ships to users as characters (INV-60). Backend sends raw markdown on the wire; frontend strips at render time. Reference surfaces that already do this correctly: `StreamItemPreview` (sidebar stream list) and `ActivityPreview` (activity feed).
 
+The rendered timeline window is verifiably contiguous over the viewer-visible ordering (INV-61). Events every member receives as timeline rows (`TIMELINE_BROADCAST_EVENT_TYPES` in `packages/types`) consume a dense per-stream `broadcastSequence` allocated by `StreamEventRepository` alongside the global `sequence`; author-scoped command events and patch-style rows (edits, reactions, deletes) do not, so for any viewer a missing broadcast number is ALWAYS a real gap — never another user's invisible event. The message-move flow, the one operation that vacates slots, declares them on its source tombstone (`vacatedBroadcastSequences`). On the frontend, `computeTimelineHoles` (`apps/frontend/src/sync/contiguity.ts`) is the single read-side authority: a detected hole renders as an in-place loading placeholder (never a silent gap) and triggers a scoped backfill, so a missed message resolves the placeholder where it belongs instead of popping in above rows already on screen. The catch-up cursor has exactly one owner — `SyncEngine.joinStreamForCatchUp` reads the cursor BEFORE joining the room; never re-derive it at call sites.
+
 ### 6) Testing and Reliability Expectations
 
 Always resolve failing tests; do not dismiss failures as pre-existing (INV-22).
@@ -264,7 +266,7 @@ When handling variants, colocate variant config and keep shared behavior on one 
 - **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
 - **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58
 - **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54
-- **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60
+- **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60, INV-61
 - **Testing:** INV-22, INV-23, INV-24, INV-26, INV-39, INV-48
 - **Code hygiene and maneuverability:** INV-25, INV-29, INV-36, INV-38, INV-43, INV-47, INV-49
 

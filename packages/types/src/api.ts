@@ -772,6 +772,17 @@ export interface MessagesMovedEventPayload {
    * `messages.length` is the canonical count.
    */
   messages: MovedMessagePreview[]
+  /**
+   * Present only on the SOURCE-side tombstone: the `broadcastSequence`
+   * values the relocated events vacated in the source stream. Moving is the
+   * one operation that removes rows from a stream's otherwise-dense
+   * broadcast chain (INV-61); the tombstone — whose own broadcastSequence is
+   * always above every vacated slot, so any window that can see the hole
+   * also contains the tombstone — declares those slots accounted-for so
+   * clients don't mistake them for missed messages and render phantom
+   * loading placeholders.
+   */
+  vacatedBroadcastSequences?: string[]
 }
 
 /**

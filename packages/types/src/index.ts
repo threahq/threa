@@ -32,6 +32,9 @@ export {
   type EventType,
   COMMAND_EVENT_TYPES,
   type CommandEventType,
+  TIMELINE_BROADCAST_EVENT_TYPES,
+  type TimelineBroadcastEventType,
+  isTimelineBroadcastEventType,
   // Workspace roles
   WORKSPACE_USER_ROLES,
   // Invitation statuses

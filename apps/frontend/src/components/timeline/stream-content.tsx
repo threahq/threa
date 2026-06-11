@@ -55,6 +55,7 @@ import {
   TimelineItemContent,
   groupTimelineItems,
   annotateAuthorGroups,
+  injectGapItems,
   findFirstMessageId,
   findMessageItemIndex,
   getTimelineItemKey,
@@ -343,6 +344,7 @@ export function StreamContent({
 
   const {
     events,
+    holes,
     isLoading,
     isConfirmedEmpty,
     error,
@@ -465,9 +467,16 @@ export function StreamContent({
       })
   }, [events, isThread])
 
+  // Gap placeholders are injected AFTER grouping/annotation so a hole in the
+  // broadcast chain (INV-61) renders as its own in-place loading row — see
+  // useEvents' contiguity gate for how holes are detected and backfilled.
   const timelineItems = useMemo(
-    () => annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined)),
-    [displayEvents, currentWorkspaceUserId]
+    () =>
+      injectGapItems(
+        annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined)),
+        holes
+      ),
+    [displayEvents, currentWorkspaceUserId, holes]
   )
 
   // `order` is the position in the rendered timeline. Non-thread streams

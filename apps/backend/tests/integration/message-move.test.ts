@@ -206,6 +206,7 @@ describe("message move integration", () => {
       sourceStreamId: string
       destinationStreamId: string
       messages: Array<{ id: string; authorId: string | null; contentMarkdown: string }>
+      vacatedBroadcastSequences?: string[]
     }
     expect(sourceTombstonePayload.sourceStreamId).toBe(sourceStreamId)
     expect(sourceTombstonePayload.destinationStreamId).toBe(result.thread.id)
@@ -214,6 +215,15 @@ describe("message move integration", () => {
     // passed `[movedB, movedA]` deliberately to verify this.
     expect(sourceTombstonePayload.messages.map((message) => message.id)).toEqual([movedA.id, movedB.id])
 
+    // INV-61: the source tombstone declares the broadcast slots the move
+    // vacated, so clients don't mistake them for missed events. Source
+    // broadcast order here: target=1, keep=2, movedA=3, movedB=4,
+    // session started=5, session completed=6 — the move relocates 3..6.
+    expect(sourceTombstonePayload.vacatedBroadcastSequences).toEqual(["3", "4", "5", "6"])
+    // The tombstone's own slot is the next dense value, above everything it
+    // declares — any window that can see the hole also sees the declaration.
+    expect(sourceTombstone.broadcastSequence).toBe(7n)
+
     const destinationTombstoneRows = await StreamEventRepository.list(pool, result.thread.id, {
       types: ["messages:moved"],
     })
@@ -221,7 +231,28 @@ describe("message move integration", () => {
       (event) => (event.payload as { destinationStreamId: string }).destinationStreamId === result.thread.id
     )
     expect(destinationTombstone).toBeDefined()
-    expect(destinationTombstone?.payload).toEqual(sourceTombstonePayload)
+    // Destination side gained dense fresh slots — nothing to declare, so its
+    // payload is the shared base WITHOUT the source-only vacated list.
+    const { vacatedBroadcastSequences: _vacated, ...sharedTombstonePayload } = sourceTombstonePayload
+    expect(destinationTombstone?.payload).toEqual(sharedTombstonePayload)
+
+    // The destination's broadcast chain is dense over the relocated events
+    // (in source chronological order) plus the destination tombstone (INV-61).
+    const destinationEvents = await StreamEventRepository.list(pool, result.thread.id)
+    expect(destinationEvents.map((event) => [event.eventType, event.broadcastSequence])).toEqual([
+      ["message_created", 1n],
+      ["message_created", 2n],
+      ["agent_session:started", 3n],
+      ["agent_session:completed", 4n],
+      ["messages:moved", 5n],
+    ])
+
+    // Wire shape: bigint fields cross as strings (sourceTombstoneEvent is the
+    // pre-serialized outbox payload).
+    expect(result.sourceTombstoneEvent.broadcastSequence).toBe("7")
+    expect(
+      (result.sourceTombstoneEvent.payload as { vacatedBroadcastSequences?: string[] }).vacatedBroadcastSequences
+    ).toEqual(["3", "4", "5", "6"])
 
     // The outbox payload carries the source tombstone separately so source
     // clients can append it after applying `removedEventIds` (the tombstone

@@ -1,12 +1,19 @@
 import type { Querier } from "../../db"
 import { sql } from "../../db"
-import { COMMAND_EVENT_TYPES, type AgentSessionRerunContext, type AuthorType, type EventType } from "@threa/types"
+import {
+  COMMAND_EVENT_TYPES,
+  isTimelineBroadcastEventType,
+  type AgentSessionRerunContext,
+  type AuthorType,
+  type EventType,
+} from "@threa/types"
 
 // Internal row type (snake_case, not exported)
 interface StreamEventRow {
   id: string
   stream_id: string
   sequence: string // bigint comes as string from pg
+  broadcast_sequence: string | null
   event_type: string
   payload: unknown
   actor_id: string | null
@@ -23,6 +30,15 @@ export interface StreamEvent {
   id: string
   streamId: string
   sequence: bigint
+  /**
+   * Dense per-stream counter over TIMELINE_BROADCAST_EVENT_TYPES only —
+   * the events every member receives as appended timeline rows. Unlike
+   * `sequence` (which all event types consume, including author-scoped
+   * command events), a viewer's broadcast chain has no legitimate holes,
+   * so clients can treat a missing number as a real gap (INV-61).
+   * `null` for non-broadcast event types.
+   */
+  broadcastSequence: bigint | null
   eventType: EventType
   payload: unknown
   actorId: string | null
@@ -49,11 +65,13 @@ export interface InsertEventParams {
 export interface MoveEventSequenceUpdate {
   messageId: string
   sequence: bigint
+  broadcastSequence: bigint
 }
 
 export interface MoveEventIdSequenceUpdate {
   eventId: string
   sequence: bigint
+  broadcastSequence: bigint
 }
 
 function mapRowToEvent(row: StreamEventRow): StreamEvent {
@@ -61,6 +79,7 @@ function mapRowToEvent(row: StreamEventRow): StreamEvent {
     id: row.id,
     streamId: row.stream_id,
     sequence: BigInt(row.sequence),
+    broadcastSequence: row.broadcast_sequence === null ? null : BigInt(row.broadcast_sequence),
     eventType: row.event_type as EventType,
     payload: row.payload,
     actorId: row.actor_id,
@@ -87,48 +106,79 @@ function parseAgentSessionRerunContext(value: unknown): AgentSessionRerunContext
 }
 
 export const StreamEventRepository = {
-  async getNextSequence(db: Querier, streamId: string): Promise<bigint> {
-    // Upsert and return next sequence atomically
-    const result = await db.query<{ next_sequence: string }>(sql`
-      INSERT INTO stream_sequences (stream_id, next_sequence)
-      VALUES (${streamId}, 2)
+  /**
+   * Atomically bump the stream's global counter by `total` and its dense
+   * broadcast counter (INV-61) by `broadcast` in one upsert, returning the
+   * first value of each allocated range. A single statement keeps the two
+   * counters race-safe under concurrent writers (INV-20) — the broadcast
+   * order always matches the global order because both ranges are claimed
+   * together.
+   */
+  async allocateSequences(
+    db: Querier,
+    streamId: string,
+    counts: { total: number; broadcast: number }
+  ): Promise<{ firstSequence: bigint; firstBroadcastSequence: bigint }> {
+    const { total, broadcast } = counts
+    const result = await db.query<{ first_sequence: string; first_broadcast_sequence: string }>(sql`
+      INSERT INTO stream_sequences (stream_id, next_sequence, next_broadcast_sequence)
+      VALUES (${streamId}, ${total + 1}, ${broadcast + 1})
       ON CONFLICT (stream_id) DO UPDATE
-        SET next_sequence = stream_sequences.next_sequence + 1
-      RETURNING next_sequence - 1 AS next_sequence
+        SET next_sequence = stream_sequences.next_sequence + ${total},
+            next_broadcast_sequence = stream_sequences.next_broadcast_sequence + ${broadcast}
+      RETURNING next_sequence - ${total} AS first_sequence,
+                next_broadcast_sequence - ${broadcast} AS first_broadcast_sequence
     `)
-    return BigInt(result.rows[0].next_sequence)
+    return {
+      firstSequence: BigInt(result.rows[0].first_sequence),
+      firstBroadcastSequence: BigInt(result.rows[0].first_broadcast_sequence),
+    }
   },
 
-  async getNextSequences(db: Querier, streamId: string, count: number): Promise<bigint[]> {
+  /**
+   * Allocate `count` (sequence, broadcastSequence) pairs for events that are
+   * all broadcast timeline types — used by the move flow when relocating
+   * message/agent-session events into a destination stream.
+   */
+  async getNextSequencePairs(
+    db: Querier,
+    streamId: string,
+    count: number
+  ): Promise<Array<{ sequence: bigint; broadcastSequence: bigint }>> {
     if (count <= 0) return []
-    const result = await db.query<{ start_sequence: string }>(sql`
-      INSERT INTO stream_sequences (stream_id, next_sequence)
-      VALUES (${streamId}, ${count + 1})
-      ON CONFLICT (stream_id) DO UPDATE
-        SET next_sequence = stream_sequences.next_sequence + ${count}
-      RETURNING next_sequence - ${count} AS start_sequence
-    `)
-    const start = BigInt(result.rows[0].start_sequence)
-    return Array.from({ length: count }, (_, i) => start + BigInt(i))
+    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, streamId, {
+      total: count,
+      broadcast: count,
+    })
+    return Array.from({ length: count }, (_, i) => ({
+      sequence: firstSequence + BigInt(i),
+      broadcastSequence: firstBroadcastSequence + BigInt(i),
+    }))
   },
 
   async insert(db: Querier, params: InsertEventParams): Promise<StreamEvent> {
-    const sequence = await this.getNextSequence(db, params.streamId)
+    const isBroadcast = isTimelineBroadcastEventType(params.eventType)
+    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, params.streamId, {
+      total: 1,
+      broadcast: isBroadcast ? 1 : 0,
+    })
+    const broadcastSequence = isBroadcast ? firstBroadcastSequence : null
     const createdAt = params.createdAt ?? new Date()
 
     const result = await db.query<StreamEventRow>(sql`
-      INSERT INTO stream_events (id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at)
+      INSERT INTO stream_events (id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at)
       VALUES (
         ${params.id},
         ${params.streamId},
-        ${sequence.toString()},
+        ${firstSequence.toString()},
+        ${broadcastSequence === null ? null : broadcastSequence.toString()},
         ${params.eventType},
         ${JSON.stringify(params.payload)},
         ${params.actorId ?? null},
         ${params.actorType ?? null},
         ${createdAt}
       )
-      RETURNING id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at
+      RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
     `)
     return mapRowToEvent(result.rows[0])
   },
@@ -139,21 +189,36 @@ export const StreamEventRepository = {
     if (paramsList.some((p) => p.streamId !== streamId)) {
       throw new Error("insertMany requires all events to belong to the same stream")
     }
-    const sequences = await this.getNextSequences(db, streamId, paramsList.length)
+    const broadcastFlags = paramsList.map((p) => isTimelineBroadcastEventType(p.eventType))
+    const broadcastCount = broadcastFlags.filter(Boolean).length
+    const { firstSequence, firstBroadcastSequence } = await this.allocateSequences(db, streamId, {
+      total: paramsList.length,
+      broadcast: broadcastCount,
+    })
+
+    // Broadcast slots are handed out in list order so the broadcast chain's
+    // order always matches the global sequence order.
+    let broadcastOffset = 0n
+    const broadcastSeqs = broadcastFlags.map((isBroadcast) => {
+      if (!isBroadcast) return null
+      const value = firstBroadcastSequence + broadcastOffset
+      broadcastOffset += 1n
+      return value.toString()
+    })
 
     const ids = paramsList.map((p) => p.id)
     const streamIds = paramsList.map(() => streamId)
-    const seqs = sequences.map((s) => s.toString())
+    const seqs = paramsList.map((_, i) => (firstSequence + BigInt(i)).toString())
     const eventTypes = paramsList.map((p) => p.eventType)
     const payloads = paramsList.map((p) => JSON.stringify(p.payload))
     const actorIds = paramsList.map((p) => p.actorId ?? null)
     const actorTypes = paramsList.map((p) => p.actorType ?? null)
 
     const result = await db.query<StreamEventRow>(
-      `INSERT INTO stream_events (id, stream_id, sequence, event_type, payload, actor_id, actor_type)
-       SELECT * FROM unnest($1::text[], $2::text[], $3::bigint[], $4::text[], $5::jsonb[], $6::text[], $7::text[])
-       RETURNING id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at`,
-      [ids, streamIds, seqs, eventTypes, payloads, actorIds, actorTypes]
+      `INSERT INTO stream_events (id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type)
+       SELECT * FROM unnest($1::text[], $2::text[], $3::bigint[], $4::bigint[], $5::text[], $6::jsonb[], $7::text[], $8::text[])
+       RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at`,
+      [ids, streamIds, seqs, broadcastSeqs, eventTypes, payloads, actorIds, actorTypes]
     )
     return result.rows.map(mapRowToEvent)
   },
@@ -215,7 +280,7 @@ export const StreamEventRepository = {
     const orderDirection = afterSequence !== undefined ? "ASC" : "DESC"
 
     const query = `
-      SELECT id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
       WHERE ${conditions.join(" AND ")}
       ORDER BY sequence ${orderDirection}
@@ -282,7 +347,7 @@ export const StreamEventRepository = {
 
   async findById(db: Querier, id: string): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
-      SELECT id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
       WHERE id = ${id}
     `)
@@ -292,7 +357,7 @@ export const StreamEventRepository = {
   /** Find the message_created event for a given message ID within a stream. */
   async findByMessageId(db: Querier, streamId: string, messageId: string): Promise<StreamEvent | null> {
     const result = await db.query<StreamEventRow>(sql`
-      SELECT id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
       WHERE stream_id = ${streamId}
         AND event_type = 'message_created'
@@ -310,7 +375,7 @@ export const StreamEventRepository = {
     if (messageIds.length === 0) return []
 
     const result = await db.query<StreamEventRow>(sql`
-      SELECT id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
       WHERE stream_id = ${streamId}
         AND event_type = 'message_created'
@@ -355,33 +420,36 @@ export const StreamEventRepository = {
 
     const messageIds = params.updates.map((update) => update.messageId)
     const sequences = params.updates.map((update) => update.sequence.toString())
+    const broadcastSequences = params.updates.map((update) => update.broadcastSequence.toString())
 
     const result = await db.query<StreamEventRow>(
       `UPDATE stream_events e
        SET stream_id = $1,
            sequence = updates.new_sequence,
+           broadcast_sequence = updates.new_broadcast_sequence,
            payload = e.payload || jsonb_build_object(
              'movedFrom', jsonb_build_object(
-               'sourceStreamId', $4::text,
-               'sourceStreamSlug', $5::text,
-               'sourceStreamDisplayName', $6::text,
-               'movedAt', $7::text,
-               'movedBy', $8::text,
-               'movedByType', $9::text,
-               'moveTombstoneId', $10::text
+               'sourceStreamId', $5::text,
+               'sourceStreamSlug', $6::text,
+               'sourceStreamDisplayName', $7::text,
+               'movedAt', $8::text,
+               'movedBy', $9::text,
+               'movedByType', $10::text,
+               'moveTombstoneId', $11::text
              )
            )
        FROM (
-         SELECT * FROM unnest($2::text[], $3::bigint[]) AS u(message_id, new_sequence)
+         SELECT * FROM unnest($2::text[], $3::bigint[], $4::bigint[]) AS u(message_id, new_sequence, new_broadcast_sequence)
        ) updates
-       WHERE e.stream_id = $4
+       WHERE e.stream_id = $5
          AND e.event_type = 'message_created'
          AND e.payload->>'messageId' = updates.message_id
-       RETURNING id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at`,
+       RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at`,
       [
         params.destinationStreamId,
         messageIds,
         sequences,
+        broadcastSequences,
         params.sourceStreamId,
         params.movedFrom.sourceStreamSlug,
         params.movedFrom.sourceStreamDisplayName,
@@ -402,7 +470,7 @@ export const StreamEventRepository = {
     if (sessionIds.length === 0) return []
 
     const result = await db.query<StreamEventRow>(sql`
-      SELECT id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at
+      SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
       FROM stream_events
       WHERE stream_id = ${streamId}
         AND event_type = ANY(${["agent_session:started", "agent_session:completed", "agent_session:failed", "agent_session:deleted"]})
@@ -421,17 +489,18 @@ export const StreamEventRepository = {
 
     const eventIds = params.updates.map((update) => update.eventId)
     const sequences = params.updates.map((update) => update.sequence.toString())
+    const broadcastSequences = params.updates.map((update) => update.broadcastSequence.toString())
 
     const result = await db.query<StreamEventRow>(
       `UPDATE stream_events e
-       SET stream_id = $1, sequence = updates.new_sequence
+       SET stream_id = $1, sequence = updates.new_sequence, broadcast_sequence = updates.new_broadcast_sequence
        FROM (
-         SELECT * FROM unnest($2::text[], $3::bigint[]) AS u(event_id, new_sequence)
+         SELECT * FROM unnest($2::text[], $3::bigint[], $4::bigint[]) AS u(event_id, new_sequence, new_broadcast_sequence)
        ) updates
-       WHERE e.stream_id = $4
+       WHERE e.stream_id = $5
          AND e.id = updates.event_id
-       RETURNING id, stream_id, sequence, event_type, payload, actor_id, actor_type, created_at`,
-      [params.destinationStreamId, eventIds, sequences, params.sourceStreamId]
+       RETURNING id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at`,
+      [params.destinationStreamId, eventIds, sequences, broadcastSequences, params.sourceStreamId]
     )
     return result.rows.map(mapRowToEvent)
   },

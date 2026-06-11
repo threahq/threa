@@ -4,7 +4,9 @@ import type { Socket } from "socket.io-client"
 import { db } from "@/db"
 import {
   applyStreamBootstrap,
+  detectSequenceGap,
   getLatestPersistedSequence,
+  getPersistedTail,
   registerStreamSocketHandlers,
   toCachedStreamBootstrap,
   updateMessageEvent,
@@ -1271,5 +1273,176 @@ describe("registerStreamSocketHandlers — sequence gap detection (INV-53)", () 
 
     expect(onSequenceGap).not.toHaveBeenCalled()
     cleanup()
+  })
+
+  // -------------------------------------------------------------------------
+  // Broadcast-chain detection (INV-61) — exact, no command-event phantoms
+  // -------------------------------------------------------------------------
+
+  async function seedStamped(streamId: string, id: string, sequence: number, broadcastSequence: string | null) {
+    await db.events.put({
+      ...makeEvent({ id, streamId, sequence: String(sequence) }),
+      broadcastSequence,
+      workspaceId: "ws_1",
+      _sequenceNum: sequence,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  it("does not report a gap when skipped global slots belong to viewer-invisible events (INV-61)", async () => {
+    const streamId = "stream_bcast_clean"
+    // Persisted tail: message at global 100, broadcast 50. Another user's
+    // command events consumed global 101-102 but were never delivered here.
+    await seedStamped(streamId, "evt_100", 100, "50")
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: { ...makeWireEvent("evt_103", streamId, "103"), broadcastSequence: "51" },
+    })
+
+    // The pre-INV-61 global heuristic would have flagged this as a gap and
+    // fired a futile backfill; the dense broadcast chain proves it's contiguous.
+    expect(onSequenceGap).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("reports a broadcast-chain gap with the latest GLOBAL sequence as cursor", async () => {
+    const streamId = "stream_bcast_gap"
+    await seedStamped(streamId, "evt_100", 100, "50")
+    // Own command event sits on the global tail without a broadcast slot —
+    // the cursor must still be the global latest so `bootstrap?after=`
+    // fetches everything missed.
+    await seedStamped(streamId, "cmd_101", 101, null)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: { ...makeWireEvent("evt_105", streamId, "105"), broadcastSequence: "52" },
+    })
+
+    expect(onSequenceGap).toHaveBeenCalledWith({ streamId, afterSequence: "101" })
+    cleanup()
+  })
+
+  it("compares on the broadcast chain even when an unstamped row is the global tail", async () => {
+    const streamId = "stream_bcast_cmd_tail"
+    await seedStamped(streamId, "evt_100", 100, "50")
+    await seedStamped(streamId, "cmd_101", 101, null)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    // Global 103 > 101 + 1 would false-positive on the old heuristic, but
+    // broadcast 51 is exactly contiguous with the persisted 50.
+    await emit("message:created", {
+      workspaceId: "ws_1",
+      streamId,
+      event: { ...makeWireEvent("evt_103", streamId, "103"), broadcastSequence: "51" },
+    })
+
+    expect(onSequenceGap).not.toHaveBeenCalled()
+    cleanup()
+  })
+})
+
+describe("detectSequenceGap (unit)", () => {
+  it("uses the dense broadcast chain when both sides are stamped", () => {
+    const tail = { latestSequence: "100", latestBroadcastSequence: "50" }
+    expect(detectSequenceGap(tail, { sequence: "105", broadcastSequence: "51" })).toBeNull()
+    expect(detectSequenceGap(tail, { sequence: "105", broadcastSequence: "52" })).toBe("100")
+    expect(detectSequenceGap(tail, { sequence: "105", broadcastSequence: "50" })).toBeNull()
+  })
+
+  it("falls back to the global heuristic when either side is unstamped", () => {
+    expect(
+      detectSequenceGap(
+        { latestSequence: "100", latestBroadcastSequence: null },
+        { sequence: "102", broadcastSequence: "51" }
+      )
+    ).toBe("100")
+    expect(
+      detectSequenceGap(
+        { latestSequence: "100", latestBroadcastSequence: "50" },
+        { sequence: "102", broadcastSequence: null }
+      )
+    ).toBe("100")
+    expect(
+      detectSequenceGap(
+        { latestSequence: "100", latestBroadcastSequence: null },
+        { sequence: "101", broadcastSequence: null }
+      )
+    ).toBeNull()
+  })
+
+  it("never reports a gap against an empty cache", () => {
+    expect(
+      detectSequenceGap(
+        { latestSequence: null, latestBroadcastSequence: null },
+        { sequence: "5", broadcastSequence: "3" }
+      )
+    ).toBeNull()
+  })
+})
+
+describe("getPersistedTail", () => {
+  beforeEach(async () => {
+    await db.events.clear()
+  })
+
+  it("finds the highest broadcast stamp below an unstamped global tail", async () => {
+    const streamId = "stream_tail_scan"
+    await db.events.bulkPut([
+      {
+        ...makeEvent({ id: "evt_a", streamId, sequence: "100" }),
+        broadcastSequence: "50",
+        workspaceId: "ws_1",
+        _sequenceNum: 100,
+        _cachedAt: Date.now(),
+      },
+      {
+        ...makeEvent({ id: "cmd_b", streamId, sequence: "101" }),
+        broadcastSequence: null,
+        workspaceId: "ws_1",
+        _sequenceNum: 101,
+        _cachedAt: Date.now(),
+      },
+    ])
+
+    expect(await getPersistedTail(streamId)).toEqual({ latestSequence: "101", latestBroadcastSequence: "50" })
+  })
+
+  it("excludes pending/failed optimistic rows from both cursors", async () => {
+    const streamId = "stream_tail_pending"
+    const placeholder = Date.now()
+    await db.events.bulkPut([
+      {
+        ...makeEvent({ id: "evt_a", streamId, sequence: "100" }),
+        broadcastSequence: "50",
+        workspaceId: "ws_1",
+        _sequenceNum: 100,
+        _cachedAt: Date.now(),
+      },
+      {
+        ...makeEvent({ id: "temp_x", streamId, sequence: String(placeholder) }),
+        broadcastSequence: null,
+        workspaceId: "ws_1",
+        _sequenceNum: placeholder,
+        _status: "pending",
+        _cachedAt: Date.now(),
+      },
+    ])
+
+    expect(await getPersistedTail(streamId)).toEqual({ latestSequence: "100", latestBroadcastSequence: "50" })
+  })
+
+  it("returns nulls for an empty stream", async () => {
+    expect(await getPersistedTail("stream_tail_empty")).toEqual({ latestSequence: null, latestBroadcastSequence: null })
   })
 })

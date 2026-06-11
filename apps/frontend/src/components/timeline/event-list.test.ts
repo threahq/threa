@@ -2,9 +2,12 @@ import { describe, it, expect } from "vitest"
 import type { StreamEvent } from "@threa/types"
 import {
   annotateAuthorGroups,
+  filterVisibleItems,
   findFirstMessageId,
   findMessageItemIndex,
+  getTimelineItemKey,
   groupTimelineItems,
+  injectGapItems,
   type TimelineItem,
 } from "./event-list"
 
@@ -385,5 +388,76 @@ describe("findMessageItemIndex", () => {
       eventItem("evt_2", "msg_real"),
     ]
     expect(findMessageItemIndex(items, "msg_real")).toBe(1)
+  })
+})
+
+describe("injectGapItems", () => {
+  function messageItem(id: string): TimelineItem {
+    return {
+      type: "event",
+      event: createEvent({ id, sequence: "1", eventType: "message_created", payload: { messageId: `msg_${id}` } }),
+    }
+  }
+
+  it("inserts a gap placeholder directly after its anchor row", () => {
+    const items = [messageItem("evt_1"), messageItem("evt_2")]
+    const result = injectGapItems(items, [{ afterEventId: "evt_1", missingCount: 2 }])
+
+    expect(result).toEqual([items[0], { type: "gap", afterEventId: "evt_1", missingCount: 2 }, items[1]])
+  })
+
+  it("anchors a gap after a group that contains the anchor event", () => {
+    const items: TimelineItem[] = [
+      {
+        type: "session_group",
+        sessionId: "sess_1",
+        sessionVersion: 1,
+        events: [createSessionStartedEvent("evt_s1", "1", "sess_1", "msg_t")],
+      },
+      messageItem("evt_2"),
+    ]
+    const result = injectGapItems(items, [{ afterEventId: "evt_s1", missingCount: 1 }])
+
+    expect(result[1]).toEqual({ type: "gap", afterEventId: "evt_s1", missingCount: 1 })
+  })
+
+  it("emits a placeholder for every hole anchored inside the same group", () => {
+    const items: TimelineItem[] = [
+      {
+        type: "session_group",
+        sessionId: "sess_1",
+        sessionVersion: 1,
+        events: [
+          createSessionStartedEvent("evt_s1", "1", "sess_1", "msg_t"),
+          createSessionCompletedEvent("evt_s2", "2", "sess_1"),
+        ],
+      },
+      messageItem("evt_3"),
+    ]
+    const result = injectGapItems(items, [
+      { afterEventId: "evt_s1", missingCount: 1 },
+      { afterEventId: "evt_s2", missingCount: 2 },
+    ])
+
+    expect(result.slice(1, 3)).toEqual([
+      { type: "gap", afterEventId: "evt_s1", missingCount: 1 },
+      { type: "gap", afterEventId: "evt_s2", missingCount: 2 },
+    ])
+  })
+
+  it("skips holes whose anchor is not in the item list and is a no-op without holes", () => {
+    const items = [messageItem("evt_1")]
+    expect(injectGapItems(items, [{ afterEventId: "evt_unknown", missingCount: 1 }])).toEqual(items)
+    expect(injectGapItems(items, [])).toBe(items)
+  })
+
+  it("gives gap items a stable key distinct from event keys", () => {
+    expect(getTimelineItemKey({ type: "gap", afterEventId: "evt_1", missingCount: 2 })).toBe("gap:evt_1")
+  })
+
+  it("keeps gap items visible through filterVisibleItems", () => {
+    const items = injectGapItems([messageItem("evt_1")], [{ afterEventId: "evt_1", missingCount: 1 }])
+    const visible = filterVisibleItems(items)
+    expect(visible.some((item) => item.type === "gap")).toBe(true)
   })
 })
