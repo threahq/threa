@@ -32,7 +32,13 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
     // Register all stream-level socket handlers — they write to IDB only.
     // queryClient is passed for transitional workspace bootstrap preview updates
     // (will be removed in Phase 3).
-    const cleanupHandlers = registerStreamSocketHandlers(socket, workspaceId, streamId, queryClient, {
+    //
+    // In active sync-v2 mode, register through the engine's event gate so
+    // these handlers receive catch-up entries and respect buffer-and-splice
+    // exactly like engine-owned handlers; a raw-socket registration here
+    // would apply live events out of order while catch-up replays the log.
+    const eventSource = syncEngine?.getLiveEventSource() ?? socket
+    const cleanupHandlers = registerStreamSocketHandlers(eventSource, workspaceId, streamId, queryClient, {
       // A live event that skips past the cached tail means events were missed
       // (zombie socket, server bounce). Route to the engine's single-flighted
       // backfill so the hole is fetched instead of persisting until reload.

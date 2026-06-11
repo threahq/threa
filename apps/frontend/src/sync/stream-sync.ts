@@ -13,7 +13,7 @@ import {
 } from "@threa/types"
 import { seedDecryption } from "@/lib/crypto/decrypt-cache"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
-import type { Socket } from "socket.io-client"
+import type { SyncEventSource } from "./socket-event-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { streamKeys } from "@/hooks/use-streams"
 import type { QueryClient } from "@tanstack/react-query"
@@ -606,7 +606,7 @@ export function detectSequenceGap(
 }
 
 export function registerStreamSocketHandlers(
-  socket: Socket,
+  socket: SyncEventSource,
   workspaceId: string,
   streamId: string,
   queryClient: QueryClient,
