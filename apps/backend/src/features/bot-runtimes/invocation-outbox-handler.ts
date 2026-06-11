@@ -1,13 +1,18 @@
 import type { Pool } from "pg"
 import { AuthorTypes, StreamTypes, botHasCapability } from "@threa/types"
-import { parseMarkdown } from "@threa/prosemirror"
+import { collectMentionSlugs, parseMarkdown } from "@threa/prosemirror"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { StreamRepository } from "../streams"
 import { BotRepository } from "../public-api/bot-repository"
 import { BotRuntimeService } from "./service"
-import { BotRuntimeSessionLinkRepository, StreamActiveActorRepository } from "./repository"
+import {
+  BotRuntimeInstanceRepository,
+  BotRuntimeSessionLinkRepository,
+  StreamActiveActorRepository,
+} from "./repository"
+import { resolveRuntimeKindConfig } from "./runtime-kind-config"
 import { EventService } from "../messaging"
 import { PersonaRepository } from "../agents"
 
@@ -19,10 +24,6 @@ const DEFAULT_CONFIG = {
   refreshIntervalMs: 5_000,
   maxRetries: 5,
   baseBackoffMs: 1_000,
-}
-
-function extractMentionSlugs(markdown: string): string[] {
-  return Array.from(markdown.matchAll(/@([a-zA-Z0-9][a-zA-Z0-9_-]{0,63})/g), (match) => match[1]!.toLowerCase())
 }
 
 export class BotInvocationOutboxHandler implements OutboxHandler {
@@ -100,7 +101,12 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(this.pool, rootStreamId)
     const invocationRootStreamId = rootStream?.id ?? stream.id
     const isUserAuthored = message.event.actorType === AuthorTypes.USER
-    const mentionedSlugs = isUserAuthored ? extractMentionSlugs(message.event.payload.contentMarkdown) : []
+    // Mentions come from the canonical contentJson mention nodes (INV-58) —
+    // produced by the editor's mention picker and by parseMarkdown on the API
+    // path — not from a pattern over serialized markdown, so non-Latin slugs
+    // dispatch the same as ASCII ones (INV-54).
+    const contentJson = message.event.payload.contentJson
+    const mentionedSlugs = isUserAuthored && contentJson ? collectMentionSlugs(contentJson) : []
     const uniqueMentionedSlugs = Array.from(new Set(mentionedSlugs))
     const [mentionedBots, mentionedPersonas] =
       uniqueMentionedSlugs.length > 0
@@ -163,14 +169,21 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       })
     }
     if (!link) {
-      await this.createMissingLinkNotice({
-        workspaceId: message.workspaceId,
-        streamId: stream.id,
-        botName: bot.name,
-        rootStreamId: rootStream.id,
-        sourceMessageId: message.event.payload.messageId,
-      })
-      return
+      // No link: whether that blocks dispatch is a per-runtime-kind policy.
+      // Resolve the kind from the bot's latest runtime instance; link-free
+      // kinds fall through to an untargeted invocation below.
+      const instances = await BotRuntimeInstanceRepository.findLatestForBots(this.pool, message.workspaceId, [bot.id])
+      const kindConfig = resolveRuntimeKindConfig(instances.get(bot.id)?.runtimeKind ?? null)
+      if (kindConfig.sessionLinking === "required") {
+        await this.createMissingLinkNotice({
+          workspaceId: message.workspaceId,
+          streamId: stream.id,
+          contentMarkdown: kindConfig.missingSessionLinkNotice(bot.name),
+          rootStreamId: rootStream.id,
+          sourceMessageId: message.event.payload.messageId,
+        })
+        return
+      }
     }
 
     await this.service.createInvocation({
@@ -192,8 +205,8 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
           ].join("\n"),
       authorUserId: message.event.actorId,
       mentionedActorSlugs: mentionedSlugs,
-      targetInstanceId: link.instanceId,
-      targetRuntimeSessionId: link.runtimeSessionId,
+      targetInstanceId: link?.instanceId ?? null,
+      targetRuntimeSessionId: link?.runtimeSessionId ?? null,
       metadata: {},
     })
   }
@@ -201,18 +214,17 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private async createMissingLinkNotice(params: {
     workspaceId: string
     streamId: string
-    botName: string
+    contentMarkdown: string
     rootStreamId: string
     sourceMessageId: string
   }): Promise<void> {
-    const contentMarkdown = `**${params.botName} is not linked to this scratchpad.** Run \`/remote-control\` in Pi to link a session.`
     await this.eventService.createMessage({
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       authorId: AuthorTypes.SYSTEM,
       authorType: AuthorTypes.SYSTEM,
-      contentJson: parseMarkdown(contentMarkdown),
-      contentMarkdown,
+      contentJson: parseMarkdown(params.contentMarkdown),
+      contentMarkdown: params.contentMarkdown,
       clientMessageId: `bot-runtime-unlinked:${params.rootStreamId}:${params.sourceMessageId}`,
       metadata: { "bot_runtime.notice": "missing_session_link" },
     })

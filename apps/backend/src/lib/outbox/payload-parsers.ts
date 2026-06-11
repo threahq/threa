@@ -5,7 +5,7 @@
  * raw type casts to ensure consistent handling across all listeners.
  */
 
-import type { AuthorType } from "@threa/types"
+import type { AuthorType, JSONContent } from "@threa/types"
 import { AuthorTypes } from "@threa/types"
 
 /**
@@ -23,6 +23,12 @@ export interface NormalizedMessagePayload {
     payload: {
       messageId: string
       contentMarkdown: string
+      /**
+       * Canonical ProseMirror content (INV-58). Null only when the event
+       * payload predates contentJson or is malformed — consumers that read
+       * structural nodes (mentions, shares) treat null as "none present".
+       */
+      contentJson: JSONContent | null
     }
   }
 }
@@ -64,6 +70,10 @@ export function parseMessagePayload(payload: unknown): NormalizedMessagePayload 
           payload: {
             messageId: eventPayload.messageId,
             contentMarkdown: (eventPayload.contentMarkdown as string) ?? "",
+            contentJson:
+              eventPayload.contentJson && typeof eventPayload.contentJson === "object"
+                ? (eventPayload.contentJson as JSONContent)
+                : null,
           },
         },
       }
