@@ -1,5 +1,5 @@
 import { Pool } from "pg"
-import { sql, withClient, withTransaction } from "../../db"
+import { withClient, withTransaction } from "../../db"
 import { ConversationRepository, type Conversation } from "./repository"
 import { ConversationFeedbackRepository } from "./feedback-repository"
 import { MessageRepository, type Message } from "../messaging"
@@ -90,7 +90,11 @@ export class ConversationService {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
 
-      const message = await MessageRepository.findById(client, messageId)
+      // Lock-then-read in one statement (INV-20): the same row lock that
+      // serializes us against concurrent boundary extractions also guarantees
+      // the streamId/authorId we validate against can't be changed by a
+      // concurrent message move between read and write.
+      const message = await MessageRepository.findByIdForUpdate(client, messageId)
       if (!message) {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
@@ -100,10 +104,6 @@ export class ConversationService {
           code: "MESSAGE_NOT_IN_CONVERSATION_STREAM",
         })
       }
-
-      // INV-20: serialize with concurrent boundary extractions, which lock the
-      // same message row before rewriting its membership.
-      await client.query(sql`SELECT id FROM messages WHERE id = ${messageId} FOR UPDATE`)
 
       const previous = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, messageId)
       if (previous?.id === target.id) {

@@ -9,6 +9,11 @@ const listConversationsSchema = z.object({
   limit: z.coerce.number().min(1).max(100).optional(),
 })
 
+const reassignMessageParamsSchema = z.object({
+  conversationId: z.string().min(1),
+  messageId: z.string().min(1),
+})
+
 interface Dependencies {
   conversationService: ConversationService
   streamService: StreamService
@@ -77,7 +82,15 @@ export function createConversationHandlers({ conversationService, streamService 
     async reassignMessage(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
-      const { conversationId, messageId } = req.params
+
+      const paramsResult = reassignMessageParamsSchema.safeParse(req.params)
+      if (!paramsResult.success) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: z.flattenError(paramsResult.error).fieldErrors,
+        })
+      }
+      const { conversationId, messageId } = paramsResult.data
 
       const conversation = await conversationService.getById(conversationId)
       if (!conversation || conversation.workspaceId !== workspaceId) {

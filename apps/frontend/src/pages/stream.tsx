@@ -457,6 +457,10 @@ export function StreamPage() {
                 size="icon"
                 className={cn("h-8 w-8 rounded-r-none", isConversationOverlayOn && "bg-accent text-accent-foreground")}
                 title="Conversation overlay"
+                // Stable accessible name; on/off state is announced via
+                // aria-pressed (ARIA toggle-button pattern), so the label
+                // must not flip with the state.
+                aria-label="Conversation overlay"
                 aria-pressed={isConversationOverlayOn}
                 onClick={() => setConversationOverlayOn(!isConversationOverlayOn)}
               >

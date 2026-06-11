@@ -236,12 +236,17 @@ describe("ConversationService.reassignMessage", () => {
     expect(result.conversation.id).toBe(convAId)
     expect(result.previousConversation).toBeNull()
 
-    const counts = await withTransaction(pool, async (client) => {
-      const feedback = await client.query(`SELECT COUNT(*)::int AS n FROM conversation_feedback`)
-      const outbox = await client.query(`SELECT COUNT(*)::int AS n FROM outbox`)
-      return { feedback: feedback.rows[0].n, outbox: outbox.rows[0].n }
+    // INV-23: assert the absence of the specific rows a non-no-op would have
+    // produced, not aggregate counts.
+    const sideEffects = await withTransaction(pool, async (client) => {
+      const feedback = await client.query(`SELECT id FROM conversation_feedback`)
+      const outbox = await client.query<{ event_type: string }>(
+        `SELECT event_type FROM outbox
+         WHERE event_type IN ('conversation:updated', 'conversation:message_reassigned', 'conversation:message_assigned')`
+      )
+      return { feedbackRows: feedback.rows, outboxRows: outbox.rows }
     })
-    expect(counts).toEqual({ feedback: 0, outbox: 0 })
+    expect(sideEffects).toEqual({ feedbackRows: [], outboxRows: [] })
   })
 
   test("rejects a message from a different stream than the conversation", async () => {

@@ -36,10 +36,9 @@ test("conversation overlay shows in-view groups without layout shift and applies
   await sendChannelMessage(page, `${topicB}. Safari-anvandare kommer inte in.`)
 
   const rowA = page.locator("div[data-event-id][data-message-id]").filter({ hasText: topicA })
-  const yBeforeToggle = (await rowA.boundingBox())!.y
 
   // Toggle the overlay from the stream header. State is URL-derived.
-  await page.getByRole("button", { name: "Conversation overlay" }).click()
+  await page.getByRole("button", { name: "Conversation overlay", exact: true }).click()
   await expect(page).toHaveURL(/convOverlay=on/)
 
   // The floating panel fills with the conversations whose rows are on screen
@@ -55,9 +54,18 @@ test("conversation overlay shows in-view groups without layout shift and applies
   await expect(blockChips.filter({ hasText: topicA })).toHaveCount(1)
   await expect(blockChips.filter({ hasText: topicB })).toHaveCount(1)
 
-  // The decoration must not reflow the timeline: same row, same position.
-  const yAfterToggle = (await rowA.boundingBox())!.y
-  expect(Math.abs(yAfterToggle - yBeforeToggle)).toBeLessThan(0.5)
+  // The decoration must not reflow the timeline. Measured by toggling the
+  // overlay off and back on NOW, when the timeline is quiescent (extraction
+  // done, panel filled) — comparing across the initial toggle instead would
+  // race the live settling of freshly sent messages, which moves rows for
+  // reasons unrelated to the overlay.
+  const yWithOverlay = (await rowA.boundingBox())!.y
+  await page.getByRole("button", { name: "Conversation overlay", exact: true }).click()
+  await expect(panel).toHaveCount(0)
+  const yWithoutOverlay = (await rowA.boundingBox())!.y
+  expect(Math.abs(yWithOverlay - yWithoutOverlay)).toBeLessThan(0.5)
+  await page.getByRole("button", { name: "Conversation overlay", exact: true }).click()
+  await expect(panelRowA).toBeVisible({ timeout: 15000 })
 
   await page.screenshot({ path: test.info().outputPath("overlay-on.png") })
 
