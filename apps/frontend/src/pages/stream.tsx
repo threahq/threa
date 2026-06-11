@@ -17,9 +17,11 @@ import {
   Tag,
   Link2,
   Layers,
+  ChevronDown,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {
@@ -445,27 +447,50 @@ export function StreamPage() {
             </Button>
           )}
           {(isChannel || isDm) && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8"
-              title="Conversations"
-              onClick={() => setConversationViewOpen(!isConversationViewOpen)}
-            >
-              <MessageCircle className="h-4 w-4" />
-            </Button>
-          )}
-          {(isChannel || isDm) && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("h-8 w-8", isConversationOverlayOn && "bg-accent text-accent-foreground")}
-              title="Conversation overlay"
-              aria-pressed={isConversationOverlayOn}
-              onClick={() => setConversationOverlayOn(!isConversationOverlayOn)}
-            >
-              <Layers className="h-4 w-4" />
-            </Button>
+            // Split button (the `GroupedItem` pattern from message-context-menu):
+            // primary tap toggles the conversation overlay; the chevron lists
+            // every conversation view — overlay first (default, font-medium),
+            // then the slide-out conversations list.
+            <div className="flex items-stretch">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn("h-8 w-8 rounded-r-none", isConversationOverlayOn && "bg-accent text-accent-foreground")}
+                title="Conversation overlay"
+                aria-pressed={isConversationOverlayOn}
+                onClick={() => setConversationOverlayOn(!isConversationOverlayOn)}
+              >
+                <Layers className="h-4 w-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-5 rounded-l-none border-l border-border/50 px-0"
+                    aria-label="Other conversation views"
+                  >
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="min-w-[200px]">
+                  <DropdownMenuItem
+                    className="gap-2 cursor-pointer font-medium"
+                    onSelect={() => setConversationOverlayOn(!isConversationOverlayOn)}
+                  >
+                    <Layers className="h-4 w-4 text-muted-foreground" />
+                    Conversation overlay
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 cursor-pointer"
+                    onSelect={() => setConversationViewOpen(!isConversationViewOpen)}
+                  >
+                    <MessageCircle className="h-4 w-4 text-muted-foreground" />
+                    Conversations list
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           )}
           {stream &&
             !isDraft &&
