@@ -61,7 +61,10 @@ class MockSocket {
       const room = args[0] as string
       const callback = args[1] as ((result?: { ok: boolean }) => void) | undefined
       if (this.joinInterceptor) {
-        void this.joinInterceptor(room).then(() => callback?.({ ok: true }))
+        // Ack on both paths so a rejecting interceptor can't hang an awaited join.
+        void this.joinInterceptor(room)
+          .then(() => callback?.({ ok: true }))
+          .catch(() => callback?.({ ok: false }))
       } else {
         callback?.({ ok: true })
       }

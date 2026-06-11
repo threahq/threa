@@ -270,6 +270,10 @@ export class SyncEngine {
               })
             : current
         )
+        // Clear any stale marker a prior failed backfill (or a degraded
+        // reconnect) left behind — the gap is closed and the stream is current.
+        this.deps.syncStatus.setError(`stream:${streamId}`, null)
+        this.deps.syncStatus.set(`stream:${streamId}`, "synced")
       } catch (error) {
         // Best-effort: the gap stays in the local cache and the next
         // reconnect/navigation bootstrap closes it. Mark the stream stale so
