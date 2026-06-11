@@ -433,11 +433,21 @@ Two discoveries from reading the current code change the original sketch:
 
 ### Design choice: sequence at the dispatcher, not in domain transactions
 
+**Decided: option (b)** (2026-06-11, after the hardening and read-before-stamp analysis
+below). Two arguments carried it beyond migration cost. First, the client's cursor is
+always a sync-log position — never derived from domain rows — so there is no
+"list-then-subscribe-from-last-row" seam for the visibility window to leak through; the
+spine is self-consistent. Second, and decisive for longevity: under (a) every _future_
+write path must remember to allocate a sync id, a forget-and-it's-invisible bug class
+that grows with the system; under (b) sequencing lives at the one chokepoint all
+client-routed events already flow through, so new features get log coverage
+automatically by writing outbox events — which they must do anyway to be delivered at
+all.
+
 Allocating sync ids inside every domain transaction (option (a) in Part 2) is correct but
-touches ~100 write sites and serializes each workspace's writes on one row. The
-recommended shape is option (b): the `BroadcastHandler` already holds an exclusive
-`CursorLock` and processes outbox events in visibility order — it becomes the
-**single-writer sequencer**. Costs, stated plainly: the sync id exists only after
+touches ~100 write sites and serializes each workspace's writes on one row. Option (b):
+the `BroadcastHandler` already holds an exclusive `CursorLock` and processes outbox
+events in visibility order — it becomes the **single-writer sequencer**. Costs, stated plainly: the sync id exists only after
 dispatch (~10–60ms post-commit, so HTTP responses can't return it — acceptable, clients
 key on `clientMessageId`), and log-append isn't atomic with the domain write — a crash
 between outbox processing and append is retried via the cursor, made idempotent by a
