@@ -1795,7 +1795,6 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       sessionCanAbort,
       onAbortResearch: handleAbortResearch,
-      phase,
       batch,
     }),
     [
@@ -1812,10 +1811,37 @@ function TimelineMessageList({
       sessionLiveSubsteps,
       sessionCanAbort,
       handleAbortResearch,
-      phase,
       batch,
     ]
   )
+
+  // Stagger the post-reveal hydration burst (INV-21 adjacent): when the
+  // coordinated-loading phase flips to "ready", releasing every row's
+  // deferSecondaryHydration at once fires all presigns/link previews/embeds
+  // in one frame — a long task right at reveal. Instead release rows in
+  // batches from the bottom (the viewport on a chat) upward, one batch per
+  // frame. Once every row present at release time is hydrated, latch open so
+  // later prepends/appends hydrate immediately.
+  const HYDRATION_RELEASE_BATCH = 8
+  const [hydrationWave, setHydrationWave] = useState(0)
+  const fullyHydratedRef = useRef(false)
+  const lastHydrationStreamRef = useRef(streamId)
+  if (lastHydrationStreamRef.current !== streamId) {
+    lastHydrationStreamRef.current = streamId
+    fullyHydratedRef.current = false
+    setHydrationWave(0)
+  }
+  const itemCount = visibleItems.length
+  useEffect(() => {
+    if (phase !== "ready" || fullyHydratedRef.current) return
+    if (hydrationWave * HYDRATION_RELEASE_BATCH >= itemCount) {
+      fullyHydratedRef.current = true
+      return
+    }
+    const id = requestAnimationFrame(() => setHydrationWave((wave) => wave + 1))
+    return () => cancelAnimationFrame(id)
+  }, [phase, hydrationWave, itemCount])
+  const releasedFromBottom = hydrationWave * HYDRATION_RELEASE_BATCH
 
   // Fetch guards to prevent rapid re-firing
   const olderFetchCooldownRef = useRef(0)
@@ -2011,14 +2037,22 @@ function TimelineMessageList({
             // viewport doesn't move — the core reverse-infinite-scroll fix.
             shift={shift}
             // Off-screen px kept mounted so fast scrolling doesn't outrun
-            // mount+measure and flash blank rows. Deliberately modest: heavy
-            // message DOM (ProseMirror, link previews) janks with a large window;
-            // smooth fast-scroll comes from prefetching pages early, not overscan.
-            bufferSize={1000}
+            // mount+measure and flash blank rows. Was 1000 when every data tick
+            // re-rendered the whole window; with memoized rows the steady-state
+            // cost of extra mounted rows is near zero, so a larger buffer buys
+            // fling headroom. Mount cost still bounds it — don't raise further
+            // without profiling on a low-end device.
+            bufferSize={2000}
           >
-            {visibleItems.map((item) => (
+            {visibleItems.map((item, index) => (
               <div key={getTimelineItemKey(item)} className="relative mx-auto max-w-[800px]">
-                <TimelineItemContent item={item} ctx={renderCtx} />
+                <TimelineItemContent
+                  item={item}
+                  ctx={renderCtx}
+                  deferSecondaryHydration={
+                    !fullyHydratedRef.current && (phase !== "ready" || index < visibleItems.length - releasedFromBottom)
+                  }
+                />
               </div>
             ))}
           </Virtualizer>
