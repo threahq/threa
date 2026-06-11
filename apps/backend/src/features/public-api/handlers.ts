@@ -1063,7 +1063,7 @@ export function createPublicApiHandlers({
           : normalizeMessage(result.data.finalMessageMarkdown)
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
-      const { completed, message } = await withTransaction(pool, async (client) => {
+      const { completed, message, sessionFinalized, synthesizedSteps } = await withTransaction(pool, async (client) => {
         const claim = await botRuntimeService.findActiveClaimForUpdate(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
@@ -1164,22 +1164,30 @@ export function createPublicApiHandlers({
               streamId: completed.responseStreamId,
               event: streamEvent,
             })
-            // Best-effort live frames for an open trace dialog (the durable
-            // record is the rows + outbox event above): synthesized steps first,
-            // then the terminal status, mirroring a reported run's ordering.
-            for (const step of synthesizedSteps) {
-              io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:step:completed", {
-                sessionId: completed.id,
-                step: serializeTraceStep(step),
-              })
-            }
-            io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
-              sessionId: completed.id,
-            })
+            return { completed, message, sessionFinalized: true, synthesizedSteps }
           }
         }
-        return { completed, message }
+        return { completed, message, sessionFinalized: false, synthesizedSteps: [] }
       })
+      // Best-effort live frames for an open trace dialog, emitted after the
+      // transaction releases its connection (INV-41) — the durable record is
+      // the rows + outbox event committed above. Synthesized steps first, then
+      // the terminal status, mirroring a reported run's ordering.
+      if (sessionFinalized) {
+        try {
+          for (const step of synthesizedSteps) {
+            io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:step:completed", {
+              sessionId: completed.id,
+              step: serializeTraceStep(step),
+            })
+          }
+          io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
+            sessionId: completed.id,
+          })
+        } catch (err) {
+          logger.warn({ err, invocationId: completed.id }, "Failed to emit bot invocation completion frames")
+        }
+      }
       res.json({
         data: {
           invocationId: completed.id,
