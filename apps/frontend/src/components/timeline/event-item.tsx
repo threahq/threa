@@ -4,6 +4,7 @@ import type { BatchTimelineState } from "./event-list"
 import { MessageEvent } from "./message-event"
 import { MembershipEvent } from "./membership-event"
 import { MessagesMovedEvent } from "./messages-moved-event"
+import { MemoCapturedEvent } from "./memo-captured-event"
 import { SystemEvent } from "./system-event"
 
 interface EventItemProps {
@@ -121,6 +122,13 @@ export function EventItem({
         </div>
       )
     }
+
+    case "memos:captured":
+      return (
+        <div data-event-id={event.id}>
+          <MemoCapturedEvent event={event} workspaceId={workspaceId} />
+        </div>
+      )
 
     case "reaction_added":
     case "reaction_removed":

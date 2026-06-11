@@ -2,6 +2,7 @@ import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import * as messageEventModule from "./message-event"
 import * as membershipEventModule from "./membership-event"
+import * as memoCapturedEventModule from "./memo-captured-event"
 import * as systemEventModule from "./system-event"
 import { EventItem } from "./event-item"
 import type { StreamEvent } from "@threa/types"
@@ -22,6 +23,9 @@ beforeEach(() => {
   vi.spyOn(systemEventModule, "SystemEvent").mockImplementation((() => (
     <div data-testid="system-event" />
   )) as unknown as typeof systemEventModule.SystemEvent)
+  vi.spyOn(memoCapturedEventModule, "MemoCapturedEvent").mockImplementation((() => (
+    <div data-testid="memo-captured-event" />
+  )) as unknown as typeof memoCapturedEventModule.MemoCapturedEvent)
 })
 
 const createMessageEvent = (messageId: string, contentMarkdown: string): StreamEvent => ({
@@ -107,6 +111,27 @@ describe("EventItem", () => {
       render(<EventItem event={event} workspaceId={workspaceId} streamId={streamId} />)
 
       expect(screen.getByTestId("message-event")).toBeInTheDocument()
+    })
+
+    it("should render MemoCapturedEvent for memos:captured events", () => {
+      const event: StreamEvent = {
+        id: "evt_capture",
+        streamId,
+        sequence: "10",
+        broadcastSequence: "7",
+        eventType: "memos:captured",
+        actorId: null,
+        actorType: "system",
+        createdAt: new Date().toISOString(),
+        payload: {
+          conversationId: "conv_1",
+          memos: [{ memoId: "memo_1", title: "A decision", knowledgeType: "decision", sourceMessageIds: ["msg_1"] }],
+        },
+      }
+
+      render(<EventItem event={event} workspaceId={workspaceId} streamId={streamId} />)
+
+      expect(screen.getByTestId("memo-captured-event")).toBeInTheDocument()
     })
   })
 })

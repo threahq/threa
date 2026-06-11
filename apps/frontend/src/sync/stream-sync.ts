@@ -409,6 +409,12 @@ interface MemberRemovedPayload {
   event: StreamEvent
 }
 
+interface MemosCapturedPayload {
+  workspaceId: string
+  streamId: string
+  event: StreamEvent
+}
+
 interface LinkPreviewReadyPayload {
   workspaceId: string
   streamId: string
@@ -846,7 +852,9 @@ export function registerStreamSocketHandlers(
     })
   }
 
-  const handleAppendEvent = async (payload: AgentSessionEventPayload | CommandEventPayload | MemberRemovedPayload) => {
+  const handleAppendEvent = async (
+    payload: AgentSessionEventPayload | CommandEventPayload | MemberRemovedPayload | MemosCapturedPayload
+  ) => {
     if (payload.streamId !== streamId) return
     const now = Date.now()
     // Set when this event's sequence reveals missed events behind it; reported
@@ -954,6 +962,7 @@ export function registerStreamSocketHandlers(
   socket.on("agent_session:completed", handleAppendEvent)
   socket.on("agent_session:failed", handleAppendEvent)
   socket.on("agent_session:deleted", handleAppendEvent)
+  socket.on("stream:memos_captured", handleAppendEvent)
   socket.on("link_preview:ready", handleLinkPreviewReady)
   socket.on("pointer:invalidated", handlePointerInvalidated)
   socket.on("bot_runtime:presence", handleBotRuntimePresence)
@@ -977,6 +986,7 @@ export function registerStreamSocketHandlers(
     socket.off("agent_session:completed", handleAppendEvent)
     socket.off("agent_session:failed", handleAppendEvent)
     socket.off("agent_session:deleted", handleAppendEvent)
+    socket.off("stream:memos_captured", handleAppendEvent)
     socket.off("link_preview:ready", handleLinkPreviewReady)
     socket.off("pointer:invalidated", handlePointerInvalidated)
     socket.off("bot_runtime:presence", handleBotRuntimePresence)
