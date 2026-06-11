@@ -64,13 +64,18 @@ per-client cursor and no replay. Two production investigations document the cons
   was to _drop_ the failed event instead ("availability > guaranteed delivery"). Delivery
   is now explicitly lossy on error.
 - [`investigations/outbox-sequence-gap.md`](investigations/outbox-sequence-gap.md):
-  BIGSERIAL allocation order ≠ commit order, so under concurrency a handler's cursor can
-  permanently skip a still-invisible row. This affects every outbox consumer, not just
-  broadcast.
+  BIGSERIAL allocation order ≠ commit order, so under concurrency a handler's cursor
+  could permanently skip a still-invisible row. **Since mitigated**: `CursorLock` now
+  keeps a sliding window of processed ids (`packages/backend-common/src/outbox/cursor-lock.ts`,
+  migration `20260216132158_outbox_processed_ids.sql`) so the base cursor only advances
+  past an unseen id after a gap window (default 1s) expires. A transaction that holds its
+  outbox INSERT open longer than the window can still be skipped — the mitigation is
+  probabilistic, not structural — but in practice domain transactions commit in
+  milliseconds.
 
-Both are symptoms of cursoring an allocation-ordered log with no commit-visibility
-horizon and no acknowledgment. Fixing delivery per-symptom (skip on error, maybe later a
-gap-aware cursor) keeps the at-most-once semantics; clients can never trust the feed.
+Both are symptoms of cursoring an allocation-ordered log with no acknowledgment. The
+sliding window fixed the reader side well enough; client delivery remains at-most-once —
+emit and forget — so clients still can never trust the feed.
 
 ### The workarounds are load-bearing and growing
 
@@ -109,6 +114,32 @@ which the world is consistent. The gate (and the reveal-before-write coordinatio
 `reveal-gate.ts`) wouldn't fully disappear — avatar preloading and skeleton timing are
 genuinely presentational — but the hard part, "when is the data consistent enough to
 paint", becomes a cursor comparison instead of a multi-condition latch.
+
+### The newest data point: PR #824 (INV-61, dense broadcast sequence)
+
+[PR #824](https://github.com/threahq/threa/pull/824) makes one stream's timeline provably
+gap-free, and the machinery it needed is the strongest evidence yet for this diagnosis.
+Because the global per-stream sequence has legitimate per-viewer holes (author-scoped
+command events other viewers never receive; edit/reaction rows delivered live as patches,
+not rows), it had to add a second counter (`broadcast_sequence`) dense over exactly the
+row-delivered event types, allocate both atomically, declare vacated slots on move
+tombstones, gate rendering behind a contiguity scan with in-place placeholders, and
+consolidate the catch-up cursor into a single owner. All of it is correct — and all of it
+is the price of making _one surface_ trustworthy on top of an untrusted feed.
+
+Two lessons carry into v2:
+
+- **Per-viewer density is the requirement for client-verified ordering.** A client can
+  only prove contiguity over a sequence that has no legitimate holes _for that viewer_.
+  A group-filtered workspace log is not per-viewer dense, so v2 clients must not try to
+  verify density at all — loss detection moves server-side, to ordered per-connection
+  delivery plus the visible-head comparison. That is exactly what `subscribe(cursor)`
+  provides.
+- **#824 composes with v2; it doesn't conflict.** It fixes today's UX with today's
+  architecture, and its single-cursor-owner refactor (`joinStreamForCatchUp`) is the
+  shape v2 builds on. Once the log exists and delivery is replayable, the render-side
+  contiguity gate downgrades from the only line of defense to optional
+  defense-in-depth.
 
 ## Part 2: The convergent design — one log, one cursor
 
@@ -154,17 +185,43 @@ Properties that fall out:
 - **Offline writes keep the existing queue.** This pattern is about the read path; the
   optimistic layer and offline operation queue stay as they are.
 
+### Who owns the subscription? Nobody — it's derived
+
+Today the client owns room membership: it explicitly joins rooms with acks, and the
+whole client half of INV-53 exists to order those joins against fetches. The natural
+companion to the log is **subscriptions derived server-side from membership**: on socket
+authentication the backend joins the connection to its workspace room, its user room,
+and every member stream's room (one membership query); membership-change events adjust
+rooms server-side from then on. The client asks for nothing except `subscribe(cursor)`.
+
+This is less radical than it sounds. The engine already joins every member stream's room
+on connect so the sidebar gets activity — clients already receive everything they're
+entitled to. They just orchestrate it themselves, and the orchestration is where the
+bugs have lived: #820's pre-join cursor poisoning, the join-ack ordering, the
+don't-leave-room-on-unmount footgun (rooms aren't reference-counted). No new backend
+state is needed — Socket.IO rooms are already server-side in-memory state; this only
+changes who writes them.
+
+One sequencing caveat: implicit joins _without_ the log merely relocate the race (a
+connect-time server join still has a window against events emitted mid-connect). With
+the log, that window is harmless because replay covers it. So the order is: log first,
+then derived subscriptions delete the client half of INV-53 safely. Selective
+subscription (say, bandwidth-constrained mobile skipping high-volume streams) can come
+later as a server-side delivery filter rather than client room churn.
+
 ### The hard parts (named, not hand-waved)
 
-- **Commit-visibility ordering must be solved once, at the log.** The BIGSERIAL gap from
-  `outbox-sequence-gap.md` becomes the central correctness problem instead of a per-handler
-  one. Two workable options: (a) a per-workspace sequence allocated via the existing
-  race-safe upsert pattern (like `stream_sequences` today) — serializes writes within a
-  workspace on one row, which is acceptable at our workspace sizes and is what makes the
-  log gap-free by construction; (b) keep global BIGSERIAL but maintain a server-side
-  "safe horizon" (advance only past ids below the oldest in-flight transaction, via
-  `pg_current_snapshot()`), and never deliver past the horizon. Option (a) is simpler and
-  also fixes the existing outbox consumers if they move to the same log.
+- **Commit-visibility ordering must be solved once, at the log.** Two workable options:
+  (a) allocate the per-workspace sequence inside the domain transaction via the existing
+  race-safe upsert pattern (like `stream_sequences`) — the row lock serializes concurrent
+  allocators until commit/abort, so allocation order equals commit order and the log is
+  gap-free by construction, at the cost of touching every write path and serializing all
+  client-visible writes in a workspace on one row; (b) assign sequence numbers from a
+  **single-writer sequencer at the dispatch layer** — the `BroadcastHandler` already
+  processes outbox events one at a time under an exclusive `CursorLock` with a
+  gap-tolerant sliding window, so it can stamp dense per-workspace sync ids in visibility
+  order with zero changes to domain write paths. Option (b) is the smaller change and is
+  what Part 6 scopes.
 - **Per-client replay needs a delivery layer.** Today `io.to(room).emit()` is fire-and-
   forget. A subscription with a cursor means the server tracks, per connection, "replaying
   from X" → "live". This is new server code (a per-connection state machine with
@@ -229,16 +286,190 @@ Recommendation: do not couple the sync redesign to an Effect adoption. Steal the
 (explicit retry policies as values, scoped resources, interruption) for the delivery
 layer; revisit the library itself as an independent decision if and when v4 settles.
 
+## Part 5: Pressure tests
+
+Offline-first is a hard product constraint: IndexedDB stays the client's source of
+truth, the offline write queue stays, and the design has to assume any client may have
+been offline for days. The Part 2 design walked through the nastiest scenarios:
+
+### 1. Mid-stream membership join
+
+A user is added to stream S at log position 1040. They lack all of S's prior state, and
+the log filter can't give it to them (entries before 1040 weren't group-visible to them
+when written, and may be compacted anyway). Resolution: the `stream:member_added` log
+entry itself triggers a **partial bootstrap** of S — the existing stream bootstrap
+endpoint, with its response stamped with the log position P it was computed at. The
+reconciliation rule is exact: entries for S with sync id ≤ P are skipped, entries > P are
+applied. The snapshot-vs-live race that today needs `_patchedAt` wall-clock heuristics
+becomes an integer comparison. History-visibility policy stays in the snapshot endpoint
+(where it lives today), not in the log filter.
+
+### 2. Long offline window hits log compaction
+
+Client returns after two weeks with cursor X; the log only retains entries newer than Y,
+and Y > X. The server answers "cursor too old" and the client falls back to a windowed
+snapshot stamped with position P, resuming the log from P. The offline-first rules:
+
+- The snapshot **merges** into IDB, never wipes it. Locally cached history older than the
+  snapshot window stays — it is still valid data, and it's what makes the app usable
+  offline immediately on next launch.
+- Pruning applies only inside the snapshot's window, with the snapshot's log position as
+  the ceiling — the structural version of today's max-returned-sequence prune rule.
+- The pending offline queue is untouched by snapshot application; it replays through the
+  normal write path with its existing idempotency. Conflicts (entity deleted while
+  offline) surface as normal write-path errors, as they do today.
+
+### 3. Offline and optimistic writes racing replay
+
+On reconnect, catch-up replay and the offline queue flush run concurrently. This is safe
+under the same two rules the engine already has: optimistic temp events live **outside
+sequence space** (pending/failed events are excluded from cursor computation today;
+unchanged), and the client's own writes return through the log carrying the
+`clientMessageId` echo, replacing the temp row. A lost ack followed by a retry is
+idempotent by `clientMessageId`. The log changes nothing about the write path — by
+design.
+
+### 4. Quiet workspace: distinguishing silence from loss
+
+The heartbeat carries the maximum sync id **visible to this client's groups** (one
+indexed `MAX` query per connection). Cursor equal to head means genuinely quiet; head
+ahead of cursor means catch-up. Today silence and loss are indistinguishable, which is
+why zombie-socket pings and page-resume refreshes exist; under the log they become a
+cheap comparison.
+
+### 5. Churny entries vs the log
+
+`stream:read` fires on every scroll; presence and typing churn even harder. Three tiers:
+
+- **Last-writer-wins types** (read state, preferences, sidebar config): compact by key —
+  keep only the newest entry per `(event_type, entity)` older than a short horizon, like
+  Kafka log compaction. Catch-up semantics survive: the newest entry per key either has
+  sync id > cursor (returned) or ≤ cursor (client already has it).
+- **Append types** (messages, reactions, memberships): time/size-based retention, below
+  which the snapshot path covers.
+- **Ephemeral types** (typing, presence heartbeats): keep them **off the log** as plain
+  emits. Losing them is correct behavior; durable delivery would be a bug.
+
+### 6. Multi-tab, one IndexedDB
+
+Tabs share the persisted cursor. Entry application is idempotent (put-by-id) and cursor
+advance is monotonic max, so two tabs syncing concurrently converge without
+coordination.
+
+### 7. The honest caveat: phase one keeps two phases
+
+The first client migration step keeps "subscribe over socket + catch-up over HTTP" —
+deliberately, because a paged, resumable HTTP catch-up is _better_ on flaky connections
+than one giant socket replay, and it reuses the delta-bootstrap shape that exists. What
+changes is that reconciling the two sources becomes exact: buffer live entries while
+catch-up runs, then apply buffered entries with sync id greater than the catch-up's
+position. No `_patchedAt`, no `windowVersion`, no per-field merge logic. A true
+single-channel `subscribe(cursor)` with server-side splice is a later refinement, worth
+doing only if the buffer-and-splice shape ever bites.
+
+## Part 6: Step 1, scoped — the sync-log spine
+
+Two discoveries from reading the current code change the original sketch:
+
+1. **The BIGSERIAL skip bug is already mitigated** (sliding-window `CursorLock`, see the
+   Part 1 correction). Step 1 doesn't need to re-fix the outbox reader; it can build on
+   it.
+2. **`broadcastEvent` already computes the delivery groups.** Its routing branches
+   resolve every event to exactly the rooms `ws:{wsId}`, `ws:{wsId}:stream:{streamId}`,
+   `ws:{wsId}:user:{userId}` (`apps/backend/src/lib/outbox/broadcast-handler.ts:148-329`).
+   Step 1 persists what the router already computes instead of discarding it after emit.
+
+### Design choice: sequence at the dispatcher, not in domain transactions
+
+Allocating sync ids inside every domain transaction (option (a) in Part 2) is correct but
+touches ~100 write sites and serializes each workspace's writes on one row. The
+recommended shape is option (b): the `BroadcastHandler` already holds an exclusive
+`CursorLock` and processes outbox events in visibility order — it becomes the
+**single-writer sequencer**. Costs, stated plainly: the sync id exists only after
+dispatch (~10–60ms post-commit, so HTTP responses can't return it — acceptable, clients
+key on `clientMessageId`), and log-append isn't atomic with the domain write — a crash
+between outbox processing and append is retried via the cursor, made idempotent by a
+unique index on `outbox_event_id`.
+
+### Schema (append-only migration, INV-17)
+
+```sql
+CREATE TABLE sync_log (
+    workspace_id TEXT NOT NULL,
+    sync_id BIGINT NOT NULL,
+    outbox_event_id BIGINT NOT NULL,
+    event_type TEXT NOT NULL,
+    groups TEXT[] NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (workspace_id, sync_id)
+);
+CREATE UNIQUE INDEX idx_sync_log_outbox_event ON sync_log (outbox_event_id);
+CREATE INDEX idx_sync_log_groups ON sync_log USING GIN (groups);
+
+CREATE TABLE workspace_sync_sequences (
+    workspace_id TEXT PRIMARY KEY,
+    next_sequence BIGINT NOT NULL DEFAULT 1
+);
+```
+
+No FKs (INV-1), workspace-scoped (INV-8). E2EE: `payload` carries sealed envelopes
+exactly as outbox payloads do today; `groups` and ordering are plaintext metadata.
+
+### Changes
+
+1. **`BroadcastHandler`**: for client-routed events, per batch (set-based, INV-56): group
+   events by workspace, allocate N sync ids per workspace via the `stream_sequences`-style
+   race-safe upsert (INV-20), multi-row `INSERT INTO sync_log ... ON CONFLICT
+(outbox_event_id) DO NOTHING` (reading back existing ids on conflict for crash-retry),
+   then emit each event with its `syncId` attached to the payload. Bot-namespace events
+   stay off the log.
+2. **Catch-up endpoint**: `GET /api/workspaces/:workspaceId/sync?after=<syncId>&limit=<n>`
+   → `{ entries, head }`, filtered to the requester's groups (workspace + stream
+   memberships + own user group). Zod-validated (INV-55), repository-backed (INV-5),
+   lives in `apps/backend/src/features/sync/` (INV-51).
+3. **Head exposure**: the catch-up response carries `head` (max visible sync id); the
+   client's existing page-resume/visibility hooks can check it cheaply. A dedicated
+   per-connection heartbeat lands with client adoption (step 2), not here.
+4. **Retention**: deferred. The outbox retention-worker pattern gets copied with a
+   generous time-based policy (weeks, not hours) when compaction is designed; until then
+   the table grows, which is fine at current volumes.
+
+### Explicitly out of scope for step 1
+
+No client behavior change (clients may ignore `syncId` entirely), no handler
+conversions, no compaction worker, no per-connection replay machinery.
+
+### What step 1 buys on its own
+
+- A dropped socket emit (the "availability > guaranteed delivery" skip in
+  `broadcast-handler-event-loss.md`) stops being permanent loss: the entry is durable
+  before the emit and any future catch-up returns it.
+- The routing branches' group computation becomes persisted, inspectable, testable data.
+- Step 2 — the client holding one cursor — becomes purely client-side work against an
+  endpoint that already exists.
+
+### Test plan for step 1
+
+- Sequencer idempotency: reprocessing the same outbox event after a simulated crash
+  yields the same sync id and no duplicate row.
+- Ordering: concurrent outbox commits produce dense, gapless per-workspace sync ids in
+  visibility order.
+- ACL filtering: catch-up returns only entries whose groups intersect the requester's;
+  a membership change is reflected on the next fetch.
+- E2EE passthrough: sealed payloads round-trip the log untouched.
+
 ## Recommendation
 
 1. **Build the single-cursor protocol as an evolution of the existing engine** (Part 2
    migration sketch). It is the only option that keeps E2EE, per-stream ACLs, Postgres
    ownership, offline writes, and the Bun stack all intact, and most of the prerequisites
    already exist in this codebase.
-2. **First concrete step, valuable on its own:** per-workspace sequencing on
-   client-routed outbox events + a commit-visibility-safe cursor. This fixes the
-   still-open BIGSERIAL skip bug (`outbox-sequence-gap.md`) and the lossy-on-error
-   broadcast semantics for every consumer, before any client work starts.
+2. **First concrete step, valuable on its own:** the sync-log spine scoped in Part 6 —
+   per-workspace sync ids assigned at the dispatcher, persisted to a `sync_log` table,
+   plus a group-filtered catch-up endpoint. From that point a dropped socket emit is no
+   longer permanent loss (the entry is durable and replayable), and the later client
+   migration becomes purely client-side work.
 3. **Spike PowerSync only if** we decide we don't want to own a sync engine at all — it is
    a credible product, but the migration (client SQLite, new service + bucket storage,
    sync rules) is larger than building our missing pieces.
