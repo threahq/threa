@@ -6,6 +6,7 @@ import {
   type SealedStepStart,
   type EnclaveSealedSubstep,
   type EnclaveSessionResult,
+  type EnclaveSessionFailure,
 } from "@threa/types"
 import type { EnclaveConfig } from "../config"
 
@@ -29,6 +30,8 @@ export interface BackendCallbacks {
   substep(sessionId: string, substep: EnclaveSealedSubstep): Promise<void>
   /** Mark the session complete once the loop finishes (replies already streamed). */
   complete(sessionId: string, result: EnclaveSessionResult): Promise<void>
+  /** Terminate the session promptly when the loop throws — scrubbed error metadata only, never plaintext. */
+  fail(sessionId: string, failure: EnclaveSessionFailure): Promise<void>
   /** Persist a sealed auto-generated stream title (best-effort; for untitled E2E scratchpads). */
   sealedName(sessionId: string, sealed: EnclaveSealedName): Promise<void>
 }
@@ -103,6 +106,16 @@ export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks 
         signal: AbortSignal.timeout(COMPLETE_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session complete failed: ${res.status}`)
+    },
+
+    async fail(sessionId, failure) {
+      const res = await fetch(`${base}/internal/enclave-runtimes/sessions/${sessionId}/fail`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(failure),
+        signal: AbortSignal.timeout(COMPLETE_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session fail failed: ${res.status}`)
     },
 
     async sealedName(sessionId, sealed) {

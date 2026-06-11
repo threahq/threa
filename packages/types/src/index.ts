@@ -371,6 +371,7 @@ export type {
   EnclaveSealedSubstep,
   EnclaveSessionAssignment,
   EnclaveSessionResult,
+  EnclaveSessionFailure,
   UpdateStreamInput,
   UpdateCompanionModeInput,
   StreamBootstrap,

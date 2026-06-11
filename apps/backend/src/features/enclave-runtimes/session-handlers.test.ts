@@ -311,6 +311,82 @@ describe("createEnclaveSessionHandlers.complete", () => {
   })
 })
 
+describe("createEnclaveSessionHandlers.fail", () => {
+  const FAIL_BODY = { errorName: "AbortError" }
+
+  it("400s an invalid body", async () => {
+    const { handlers } = makeHandlers()
+    await expect(handlers.fail(req("session_1", { bad: true }), fakeRes())).rejects.toMatchObject({ status: 400 })
+  })
+
+  it("404s when the session is gone", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    const { handlers } = makeHandlers()
+    await expect(handlers.fail(req("session_1", FAIL_BODY), fakeRes())).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("409s when the session already terminated", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    const { handlers } = makeHandlers()
+    await expect(handlers.fail(req("session_1", FAIL_BODY), fakeRes())).rejects.toMatchObject({ status: 409 })
+  })
+
+  it("marks the session FAILED with the scrubbed classification and emits the failed lifecycle", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(SESSION)
+    const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const { handlers, io, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.fail(req("session_1", FAIL_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
+    // classification — the error's class name, never plaintext content (INV-E7).
+    expect(updateStatus.mock.calls[0]![2]).toBe(SessionStatuses.FAILED)
+    expect(updateStatus.mock.calls[0]![3]).toMatchObject({
+      error: "Enclave session failed: AbortError",
+      onlyIfStatus: SessionStatuses.RUNNING,
+    })
+    // The failed lifecycle event/outbox is what clears the inline indicator.
+    expect(insertEvent.mock.calls[0]![1]).toMatchObject({
+      streamId: "stream_1",
+      eventType: "agent_session:failed",
+      payload: { sessionId: "session_1", error: "Enclave session failed: AbortError" },
+    })
+    expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:failed")
+    // And a live-open trace dialog (session room) is transitioned to failed.
+    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
+    expect(emit.mock.calls.some((c) => c[0] === "agent_session:failed")).toBe(true)
+  })
+
+  it("204s without emitting when the session raced to a terminal state under us", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    // Lost the RUNNING→FAILED transition (completed concurrently between
+    // assertRunning and the gated update).
+    spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(null)
+    const insertEvent = spyOn(StreamEventRepository, "insert")
+    const { handlers, emit } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.fail(req("session_1", FAIL_BODY), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(insertEvent).not.toHaveBeenCalled() // no double-emit
+    expect(emit).not.toHaveBeenCalled()
+  })
+})
+
 describe("createEnclaveSessionHandlers.stepStarted", () => {
   it("400s an invalid body", async () => {
     const { handlers } = makeHandlers()

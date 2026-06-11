@@ -663,6 +663,19 @@ export interface EnclaveSessionResult {
   usage?: { promptTokens?: number; completionTokens?: number }
 }
 
+/**
+ * The failure ack, posted to `POST .../sessions/:id/fail` when the enclave's turn
+ * loop throws. Carries only a scrubbed error *classification* — never plaintext
+ * content. The loop runs after the prompt/history are decrypted, so the raw error
+ * could carry payload bytes; the enclave sends just the thrown error's class name
+ * (e.g. `"AbortError"`). The backend maps it onto the session's failure lifecycle
+ * (`failSessionWithLifecycle`), terminating the session promptly instead of
+ * waiting for orphan-cleanup's stale-heartbeat backstop.
+ */
+export interface EnclaveSessionFailure {
+  errorName: string
+}
+
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown
 
 /**
