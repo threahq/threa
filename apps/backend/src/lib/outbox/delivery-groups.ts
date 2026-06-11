@@ -1,3 +1,4 @@
+import type { Server } from "socket.io"
 import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
 import {
   isStreamScopedEvent,
@@ -51,6 +52,30 @@ export function userGroup(userId: string): string {
  */
 export function groupToRoom(workspaceId: string, group: string): string {
   return group === WORKSPACE_GROUP ? `ws:${workspaceId}` : `ws:${workspaceId}:${group}`
+}
+
+/**
+ * Emits one event to the union of its groups' rooms. Socket.io dedupes
+ * sockets present in several rooms, so an event never reaches the same
+ * connection twice. The payload carries the sync id (string, like stream
+ * sequences on the wire) when one is assigned, so future clients can keep a
+ * sync-log cursor; current clients ignore it. Shared by the BroadcastHandler
+ * (live path) and the sync-log reconciliation sweep (rescue path) so the two
+ * can never drift.
+ */
+export function emitToGroups(
+  io: Server,
+  event: Pick<OutboxEvent, "eventType" | "payload">,
+  groups: string[],
+  syncId?: bigint
+): void {
+  if (groups.length === 0) {
+    return
+  }
+  const { workspaceId } = event.payload
+  const rooms = groups.map((group) => groupToRoom(workspaceId, group))
+  const payload = syncId ? { ...event.payload, syncId: syncId.toString() } : event.payload
+  io.to(rooms).emit(event.eventType, payload)
 }
 
 /**

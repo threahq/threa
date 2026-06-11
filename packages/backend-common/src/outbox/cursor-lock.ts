@@ -14,6 +14,7 @@ export interface CursorLockConfig {
   baseBackoffMs: number // e.g., 1000 (1s)
   batchSize: number // e.g., 100
   gapWindowMs?: number // e.g., 1000 (1s) — how long to keep processed IDs before compacting
+  gapCeilingMs?: number // e.g., 60000 (60s) — hard ceiling after which a gap is skipped without liveness proof
 }
 
 export type ProcessResult =
@@ -39,10 +40,35 @@ function generateRunId(): string {
 }
 
 const DEFAULT_GAP_WINDOW_MS = 1000
+const DEFAULT_GAP_CEILING_MS = 60_000
+// Conservative allowance for app-clock (readAt) vs DB-clock (xact_start) skew.
+// Padding only delays a skip; it can never cause one.
+const CLOCK_SKEW_PAD_MS = 1000
 
 export interface CompactState {
   cursor: bigint
   processedIds: ProcessedIdsMap
+}
+
+export interface CompactGapOptions {
+  /**
+   * Start time of the oldest transaction currently running in the database,
+   * or null when none is running. When provided, expiring an entry (which
+   * pulls the base cursor over any unfilled gaps below it) requires PROOF the
+   * gaps are dead: a gap at id N observed at time t can only be filled by a
+   * transaction that was already running at t (it allocated N from the
+   * sequence before the higher id became visible), so if every running
+   * transaction started after t, the gap's owner has ended and the missing
+   * row is either visible by now or never coming.
+   */
+  oldestRunningTxnStart: Date | null
+  /**
+   * Wall-clock fallback ceiling: entries older than this expire even without
+   * liveness proof, so an abandoned multi-minute transaction cannot stall the
+   * cursor forever. Skips at the ceiling are loud (caller logs) and, for the
+   * broadcast listener, healable by the sync-log reconciliation sweep.
+   */
+  gapCeilingMs?: number
 }
 
 /**
@@ -54,13 +80,19 @@ export interface CompactState {
  * 3. new_base = max(max(expired_ids), base_cursor)
  * 4. Remove all entries where id <= new_base
  * 5. Advance through any remaining entries contiguous with new_base
+ *
+ * Without `gapOptions`, expiry is purely time-based (the original sliding
+ * window). With `gapOptions`, expiry additionally requires the transaction
+ * liveness proof described on CompactGapOptions, with gapCeilingMs as the
+ * fallback.
  */
 export function compact(
   cursor: bigint,
   processedIds: ProcessedIdsMap,
   newIds: bigint[],
   now: Date,
-  gapWindowMs: number
+  gapWindowMs: number,
+  gapOptions?: CompactGapOptions
 ): CompactState {
   // 1. Merge new IDs
   const merged = { ...processedIds }
@@ -71,13 +103,28 @@ export function compact(
 
   // 2. Find expired entries
   const cutoff = now.getTime() - gapWindowMs
+  const ceilingCutoff = now.getTime() - (gapOptions?.gapCeilingMs ?? DEFAULT_GAP_CEILING_MS)
+  // An entry observed at `readAt` proves gaps below it are dead only if every
+  // transaction running now started after it (see CompactGapOptions).
+  const provenBefore = gapOptions
+    ? gapOptions.oldestRunningTxnStart === null
+      ? Number.POSITIVE_INFINITY
+      : gapOptions.oldestRunningTxnStart.getTime() - CLOCK_SKEW_PAD_MS
+    : Number.POSITIVE_INFINITY
   let maxExpired = cursor
   for (const [idStr, readAt] of Object.entries(merged)) {
-    if (new Date(readAt).getTime() <= cutoff) {
-      const id = BigInt(idStr)
-      if (id > maxExpired) {
-        maxExpired = id
-      }
+    const readAtMs = new Date(readAt).getTime()
+    if (readAtMs > cutoff) {
+      continue
+    }
+    if (gapOptions && readAtMs >= provenBefore && readAtMs > ceilingCutoff) {
+      // A transaction predating this observation is still running — the gap
+      // below could still fill. Hold the window open.
+      continue
+    }
+    const id = BigInt(idStr)
+    if (id > maxExpired) {
+      maxExpired = id
     }
   }
 
@@ -105,6 +152,25 @@ export function compact(
   }
 
   return { cursor: newBase, processedIds: remaining }
+}
+
+/**
+ * True when the tracked ids (window + new batch) do not form a contiguous run
+ * from the base cursor — i.e. compaction could pull the cursor over a missing
+ * id. Only then is the transaction-liveness lookup worth a query.
+ */
+export function hasUnfilledGaps(cursor: bigint, processedIds: ProcessedIdsMap, newIds: bigint[]): boolean {
+  const ids = [...Object.keys(processedIds).map(BigInt), ...newIds].sort((a, b) => Number(a - b))
+  let expected = cursor + 1n
+  for (const id of ids) {
+    if (id > expected) {
+      return true
+    }
+    if (id === expected) {
+      expected += 1n
+    }
+  }
+  return false
 }
 
 /**
@@ -138,6 +204,7 @@ export class CursorLock {
   private readonly maxRetries: number
   private readonly baseBackoffMs: number
   private readonly gapWindowMs: number
+  private readonly gapCeilingMs: number
 
   private refreshTimer: ReturnType<typeof setInterval> | null = null
   private runId: string | null = null
@@ -151,6 +218,7 @@ export class CursorLock {
     this.baseBackoffMs = config.baseBackoffMs
     this.batchSize = config.batchSize
     this.gapWindowMs = config.gapWindowMs ?? DEFAULT_GAP_WINDOW_MS
+    this.gapCeilingMs = config.gapCeilingMs ?? DEFAULT_GAP_CEILING_MS
   }
 
   /**
@@ -202,7 +270,7 @@ export class CursorLock {
             }
 
             // Compact and persist
-            const compacted = compact(cursor, processedIdsMap, result.processedIds, getNow(), this.gapWindowMs)
+            const compacted = await this.compactWithGapGuard(cursor, processedIdsMap, result.processedIds, getNow())
             await this.persistProcessedState(compacted, getNow())
             cursor = compacted.cursor
             processedIdsMap = compacted.processedIds
@@ -220,7 +288,7 @@ export class CursorLock {
           case "error": {
             // Handle partial progress if processedIds provided
             if (result.processedIds !== undefined && result.processedIds.length > 0) {
-              const compacted = compact(cursor, processedIdsMap, result.processedIds, getNow(), this.gapWindowMs)
+              const compacted = await this.compactWithGapGuard(cursor, processedIdsMap, result.processedIds, getNow())
               await this.persistProcessedState(compacted, getNow())
               cursor = compacted.cursor
               processedIdsMap = compacted.processedIds
@@ -248,6 +316,58 @@ export class CursorLock {
     }
 
     return didWork
+  }
+
+  /**
+   * Compacts the sliding window, gating gap skips on transaction liveness.
+   *
+   * When the tracked ids are contiguous from the cursor the plain compaction
+   * runs (no extra query). When a gap exists, the oldest running transaction's
+   * start time is fetched and gaps are only skipped once provably dead — or
+   * once past gapCeilingMs, which is logged loudly because it is the one path
+   * that can still lose an event for non-broadcast listeners.
+   */
+  private async compactWithGapGuard(
+    cursor: bigint,
+    processedIds: ProcessedIdsMap,
+    newIds: bigint[],
+    now: Date
+  ): Promise<CompactState> {
+    if (!hasUnfilledGaps(cursor, processedIds, newIds)) {
+      return compact(cursor, processedIds, newIds, now, this.gapWindowMs)
+    }
+
+    const oldestRunningTxnStart = await this.fetchOldestRunningTxnStart()
+    const guarded = compact(cursor, processedIds, newIds, now, this.gapWindowMs, {
+      oldestRunningTxnStart,
+      gapCeilingMs: this.gapCeilingMs,
+    })
+
+    // Compare with the unguarded result purely for observability: a held gap
+    // means a long-running transaction may still commit an event into it.
+    const unguarded = compact(cursor, processedIds, newIds, now, this.gapWindowMs)
+    if (guarded.cursor < unguarded.cursor) {
+      logger.warn(
+        {
+          listenerId: this.listenerId,
+          heldCursor: guarded.cursor.toString(),
+          wouldBeCursor: unguarded.cursor.toString(),
+          oldestRunningTxnStart: oldestRunningTxnStart?.toISOString() ?? null,
+        },
+        "Holding outbox gap open: a transaction predating the gap is still running"
+      )
+    }
+
+    return guarded
+  }
+
+  private async fetchOldestRunningTxnStart(): Promise<Date | null> {
+    const result = await this.pool.query<{ oldest: Date | null }>(sql`
+      SELECT MIN(xact_start) AS oldest
+      FROM pg_stat_activity
+      WHERE xact_start IS NOT NULL AND datname = current_database()
+    `)
+    return result.rows[0]?.oldest ?? null
   }
 
   private async isReadyToProcess(now: Date): Promise<boolean> {

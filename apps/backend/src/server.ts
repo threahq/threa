@@ -108,7 +108,7 @@ import {
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
-import { SyncService } from "./features/sync"
+import { SyncService, SyncLogReconciliationWorker } from "./features/sync"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import {
   BotRuntimeInstanceRepository,
@@ -1129,6 +1129,17 @@ export async function startServer(): Promise<ServerInstance> {
   await outboxDispatcher.start()
   outboxRetentionWorker.start()
 
+  // Correctness net for the sync-log spine: rescues client-routed outbox
+  // events the dispatcher missed (gap skip, crash) into sync_log + a late emit
+  const syncLogReconciliationWorker = new SyncLogReconciliationWorker(
+    { pool, io },
+    {
+      intervalMs: Number(process.env.SYNC_LOG_SWEEP_INTERVAL_MS) || undefined,
+      delayMs: Number(process.env.SYNC_LOG_SWEEP_DELAY_MS) || undefined,
+    }
+  )
+  await syncLogReconciliationWorker.start()
+
   const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
@@ -1168,6 +1179,7 @@ export async function startServer(): Promise<ServerInstance> {
     await scheduleManager.stop()
     await cleanupWorker.stop()
     await outboxRetentionWorker.stop()
+    await syncLogReconciliationWorker.stop()
     await outboxDispatcher.stop()
     await jobQueue.stop()
     logger.info("Closing socket.io...")

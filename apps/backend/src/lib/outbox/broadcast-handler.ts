@@ -9,7 +9,7 @@ import {
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
 } from "./repository"
-import { resolveDeliveryGroups, groupToRoom } from "./delivery-groups"
+import { resolveDeliveryGroups, emitToGroups } from "./delivery-groups"
 import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
@@ -163,7 +163,12 @@ export class BroadcastHandler implements OutboxHandler {
       if (groups === null || groups.length === 0) {
         continue
       }
+      // The log is workspace-sharded; an event without a workspace can't be
+      // sequenced (and no client room would ever receive it anyway).
       const { workspaceId } = event.payload
+      if (typeof workspaceId !== "string" || workspaceId.length === 0) {
+        continue
+      }
       let entries = byWorkspace.get(workspaceId)
       if (!entries) {
         entries = []
@@ -198,19 +203,7 @@ export class BroadcastHandler implements OutboxHandler {
       return
     }
 
-    if (groups.length === 0) {
-      return
-    }
-
-    // One emit to the union of rooms — Socket.io dedupes sockets present in
-    // several of them, so an event never reaches the same connection twice.
-    // The payload carries the sync id (string, like stream sequences on the
-    // wire) so future clients can keep a sync-log cursor; current clients
-    // ignore it.
-    const { workspaceId } = event.payload
-    const rooms = groups.map((group) => groupToRoom(workspaceId, group))
-    const payload = routedEvent?.syncId ? { ...event.payload, syncId: routedEvent.syncId.toString() } : event.payload
-    this.io.to(rooms).emit(event.eventType, payload)
+    emitToGroups(this.io, event, groups, routedEvent?.syncId)
   }
 
   /**

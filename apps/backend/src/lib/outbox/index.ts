@@ -4,6 +4,14 @@ export { OutboxRetentionWorker, type OutboxRetentionWorkerConfig } from "@threa/
 
 // Domain-specific outbox code
 export { BroadcastHandler, type BroadcastHandlerConfig } from "./broadcast-handler"
+export {
+  resolveDeliveryGroups,
+  emitToGroups,
+  groupToRoom,
+  WORKSPACE_GROUP,
+  streamGroup,
+  userGroup,
+} from "./delivery-groups"
 export { parseMessagePayload, type NormalizedMessagePayload } from "./payload-parsers"
 export {
   OutboxRepository,

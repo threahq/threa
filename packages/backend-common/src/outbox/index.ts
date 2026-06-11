@@ -13,8 +13,10 @@ export {
   ensureListener,
   ensureListenerFromLatest,
   compact,
+  hasUnfilledGaps,
   type CursorLockConfig,
   type ProcessResult,
   type ProcessedIdsMap,
   type CompactState,
+  type CompactGapOptions,
 } from "./cursor-lock"
