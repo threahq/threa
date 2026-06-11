@@ -136,6 +136,8 @@ describe("SyncLogRepository catch-up reads", () => {
     expect(entries.map((e) => e.syncId)).toEqual([entry])
   })
 
+  // INV-62: threads inherit access from their root stream; a membership-only
+  // filter would silently drop thread content for root-stream members.
   test("thread entries are visible to root-stream members who never joined the thread", async () => {
     const workspaceId = uniqueId("ws")
     const me = uniqueId("usr")

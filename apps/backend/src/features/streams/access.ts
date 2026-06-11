@@ -61,7 +61,7 @@ export async function resolveEffectiveAccessStream<T extends AccessResolvable>(
  * Use this from any feature that needs to gate on stream access. Inlining
  * `StreamMemberRepository.isMember` plus visibility logic is a recurring
  * footgun (membership ≠ access) — route everything through here so the
- * three cases above stay consistent.
+ * three cases above stay consistent (INV-62).
  *
  * Takes a `Querier` so it composes with existing transactions (`withClient`
  * / `withTransaction` blocks) without acquiring an extra connection. The

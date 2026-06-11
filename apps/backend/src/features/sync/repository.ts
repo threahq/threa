@@ -123,11 +123,12 @@ export const SyncLogRepository = {
    * stream-group entries for streams they can read.
    *
    * A stream is readable when the user is a member of it OR a member of its
-   * root stream — threads never carry their own access; `checkStreamAccess`
-   * resolves a thread's visibility entirely through `root_stream_id`, so a
-   * channel member must receive thread events (previews, replies by others)
-   * for threads they haven't participated in. The log filter mirrors that
-   * exact rule to keep catch-up delivery congruent with live delivery.
+   * root stream (INV-62) — threads never carry their own access;
+   * `checkStreamAccess` resolves a thread's visibility entirely through
+   * `root_stream_id`, so a channel member must receive thread events
+   * (previews, replies by others) for threads they haven't participated in.
+   * The log filter mirrors that exact rule to keep catch-up delivery
+   * congruent with live delivery.
    *
    * Each visibility grant is bounded below by its membership's join position —
    * the sync id of the user's latest `stream:member_added` entry for the
