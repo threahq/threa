@@ -122,3 +122,76 @@ describe("AgentSessionRepository.updateStep finalize-race guard", () => {
     expect(captured.text).not.toContain("AND completed_at IS NULL")
   })
 })
+
+describe("AgentSessionRepository.findRecentDigestStepsByStream", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("selects turn_digest steps of the stream's COMPLETED sessions for the persona, newest session first", async () => {
+    const captured = { text: null as string | null, values: null as unknown[] | null }
+    const db: Querier = {
+      query: mock(async (queryTextOrConfig) => {
+        const config = queryTextOrConfig as QueryConfig
+        captured.text = config.text
+        captured.values = config.values ?? []
+        return {
+          rows: [
+            {
+              id: "step_digest",
+              session_id: "session_1",
+              step_number: 7,
+              step_type: "turn_digest",
+              content: '{"findings":"x"}',
+              content_ciphertext: null,
+              content_envelope: null,
+              sources: null,
+              message_id: null,
+              tokens_used: null,
+              started_at: new Date("2026-06-10T10:00:00.000Z"),
+              completed_at: new Date("2026-06-10T10:00:01.000Z"),
+              session_created_at: new Date("2026-06-10T09:59:00.000Z"),
+              session_completed_at: new Date("2026-06-10T10:00:02.000Z"),
+            },
+          ],
+          rowCount: 1,
+        } as QueryResult
+      }),
+    }
+
+    const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, {
+      streamId: "stream_1",
+      personaId: "persona_1",
+      limit: 5,
+    })
+
+    expect(captured.text).toContain("JOIN agent_sessions s ON s.id = st.session_id")
+    expect(captured.text).toContain("s.stream_id =")
+    expect(captured.text).toContain("s.persona_id =")
+    expect(captured.text).toContain("s.status =")
+    expect(captured.text).toContain("st.step_type =")
+    expect(captured.text).toContain("ORDER BY s.created_at DESC, st.step_number DESC")
+    expect(captured.values).toEqual(["stream_1", "persona_1", SessionStatuses.COMPLETED, "turn_digest", 5])
+
+    expect(rows).toEqual([
+      {
+        step: {
+          id: "step_digest",
+          sessionId: "session_1",
+          stepNumber: 7,
+          stepType: "turn_digest",
+          content: '{"findings":"x"}',
+          contentCiphertext: null,
+          contentEnvelope: null,
+          sources: null,
+          messageId: null,
+          tokensUsed: null,
+          startedAt: new Date("2026-06-10T10:00:00.000Z"),
+          completedAt: new Date("2026-06-10T10:00:01.000Z"),
+        },
+        sessionCreatedAt: new Date("2026-06-10T09:59:00.000Z"),
+        sessionCompletedAt: new Date("2026-06-10T10:00:02.000Z"),
+      },
+    ])
+  })
+})

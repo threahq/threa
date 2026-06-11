@@ -613,6 +613,33 @@ function renderStepContent(
       return <span>{content}</span>
     }
 
+    case "turn_digest": {
+      // The digest's JSON content (TurnDigestStepContent): model-written
+      // findings prose plus the deterministic tool list. Its sources live
+      // inside the JSON (already rendered on the originating tool steps), so
+      // only the prose + tool list surface here.
+      if (structured && typeof structured.findings === "string") {
+        const toolsCalled = Array.isArray(structured.toolsCalled)
+          ? (structured.toolsCalled as unknown[]).filter((t): t is string => typeof t === "string")
+          : []
+        return (
+          <div className="space-y-2">
+            <div className="text-muted-foreground text-[11px]">
+              Saved a digest of this turn's tool work for future turns.
+            </div>
+            <MarkdownContent
+              content={structured.findings as string}
+              className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
+            />
+            {toolsCalled.length > 0 && (
+              <div className="text-[11px] text-muted-foreground">Tools used: {toolsCalled.join(", ")}</div>
+            )}
+          </div>
+        )
+      }
+      return <span className="text-muted-foreground">Saved a digest of this turn's tool work for future turns.</span>
+    }
+
     case "tool_error":
       if (isStructuredToolTrace(structured)) {
         return <ToolTraceContent headline={structured.headline} sections={structured.sections ?? []} isError={true} />

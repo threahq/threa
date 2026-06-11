@@ -98,6 +98,13 @@ export interface AgentSessionProgressSnapshot {
   messageCount: number
 }
 
+/** One `turn_digest` step joined with its session's timing (C-1 injection input). */
+export interface RecentDigestStep {
+  step: AgentSessionStep
+  sessionCreatedAt: Date
+  sessionCompletedAt: Date | null
+}
+
 // Insert params
 export interface InsertSessionParams {
   id: string
@@ -697,6 +704,43 @@ export const AgentSessionRepository = {
       `
     )
     return result.rows.map(mapRowToStep)
+  },
+
+  /**
+   * The `turn_digest` steps of a stream's most recent COMPLETED sessions for a
+   * persona, newest session first (C-1 injection input — callers reverse to
+   * oldest-first for the prompt). Completed-only is load-bearing: it excludes
+   * the in-flight session building its own context, and a session superseded
+   * after completing drops out the moment its status flips, taking its now
+   * obsolete digest with it.
+   */
+  async findRecentDigestStepsByStream(
+    db: Querier,
+    params: { streamId: string; personaId: string; limit: number }
+  ): Promise<RecentDigestStep[]> {
+    const result = await db.query<StepRow & { session_created_at: Date; session_completed_at: Date | null }>(
+      sql`
+        SELECT
+          st.id, st.session_id, st.step_number, st.step_type,
+          st.content, st.content_ciphertext, st.content_envelope,
+          st.sources, st.message_id, st.tokens_used, st.started_at, st.completed_at,
+          s.created_at AS session_created_at,
+          s.completed_at AS session_completed_at
+        FROM agent_session_steps st
+        JOIN agent_sessions s ON s.id = st.session_id
+        WHERE s.stream_id = ${params.streamId}
+          AND s.persona_id = ${params.personaId}
+          AND s.status = ${SessionStatuses.COMPLETED}
+          AND st.step_type = ${AgentStepTypes.TURN_DIGEST}
+        ORDER BY s.created_at DESC, st.step_number DESC
+        LIMIT ${params.limit}
+      `
+    )
+    return result.rows.map((row) => ({
+      step: mapRowToStep(row),
+      sessionCreatedAt: row.session_created_at,
+      sessionCompletedAt: row.session_completed_at,
+    }))
   },
 
   async findLatestStep(db: Querier, sessionId: string): Promise<AgentSessionStep | null> {

@@ -13,6 +13,7 @@ import { awaitAttachmentProcessing } from "../../attachments"
 import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ConversationSummaryService } from "../conversation-summary-service"
 import { buildSystemPrompt } from "./prompt/system-prompt"
+import { loadTurnDigestPromptBlock } from "./turn-digests"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
 import { computeAgentAccessSpec } from "../researcher/access-spec"
@@ -281,7 +282,18 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
 
   const scratchpadCustomPrompt = await resolveScratchpadCustomPrompt(db, stream, preferences)
 
-  const systemPrompt = buildSystemPrompt(
+  // Prior turns' tool-work digests (C-1), re-filtered against the location's
+  // CURRENT access set — see buildTurnDigestPromptBlock for the scope-drift
+  // rule. Appended after the base prompt so both first-party drivers fold the
+  // identically-formatted block in at the same point (the enclave appends the
+  // same formatter's output in run-turn).
+  const turnDigestBlock = await loadTurnDigestPromptBlock(db, {
+    streamId: stream.id,
+    personaId: persona.id,
+    accessibleStreamIds,
+  })
+
+  let systemPrompt = buildSystemPrompt(
     persona,
     streamContext,
     scratchpadCustomPrompt,
@@ -290,6 +302,9 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     rollingConversationSummary,
     invokingUserId !== undefined
   )
+  if (turnDigestBlock) {
+    systemPrompt += `\n\n${turnDigestBlock}`
+  }
 
   const messages = formatMessagesWithTemporal(streamContext.conversationHistory, streamContext, authorNames)
 

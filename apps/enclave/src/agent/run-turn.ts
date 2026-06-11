@@ -25,7 +25,14 @@ import type {
   EnclaveSealedName,
   EnclaveSskWrap,
 } from "@threa/types"
-import { AgentRuntime } from "@threa/agent-runtime/runtime"
+import {
+  AgentRuntime,
+  TurnDigestCollector,
+  formatTurnDigestsForPrompt,
+  generateTurnDigest,
+  parseTurnDigestStepContent,
+  type TurnDigestPromptEntry,
+} from "@threa/agent-runtime/runtime"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
 import { createEnclaveAI, type UsageAccumulator } from "./enclave-ai"
@@ -164,11 +171,37 @@ export async function runEnclaveTurn(
   const replySsk = sskByGeneration.get(request.reply.keyGeneration)
   if (!replySsk) throw new InvokeError("No SSK wrap for the reply's key generation")
 
+  // Prior turns' sealed digests (C-1): open the ones our wraps cover and fold
+  // them into the system prompt with the SAME formatter the in-process
+  // companion uses, so the two surfaces read identical memory. An unopenable
+  // or malformed digest is skipped, never fatal — parity with history items.
+  const digestEntries: TurnDigestPromptEntry[] = []
+  for (const item of request.recentDigests ?? []) {
+    const digestSsk = sskByGeneration.get(item.envelope.keyGeneration)
+    if (!digestSsk) continue
+    try {
+      const raw = await openMessageAsString({
+        key: digestSsk,
+        envelope: item.envelope,
+        ciphertext: base64ToBytes(item.ciphertext),
+      })
+      const digest = parseTurnDigestStepContent(raw)
+      if (digest) digestEntries.push({ completedAt: item.completedAt, digest })
+    } catch {
+      continue
+    }
+  }
+  const digestBlock = formatTurnDigestsForPrompt(digestEntries)
+  const systemPrompt = digestBlock ? `${request.system}\n\n${digestBlock}` : request.system
+
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
   const messageIds: string[] = []
   // First reply's plaintext, kept only to seed the auto-title below (never logged
   // or persisted; lives in-process for the turn like all other plaintext here).
   let firstReplyText: string | null = null
+  // Last reply's plaintext, kept only to ground the turn digest below (same
+  // in-process-only lifetime as firstReplyText).
+  let lastReplyText: string | null = null
 
   // Construct the enclave AI once so the turn loop and any in-process research
   // sub-loop accumulate token usage into the same total. The enclave AI keys off
@@ -189,11 +222,15 @@ export async function runEnclaveTurn(
     sendSubstep: onSubstep,
   })
 
+  // Collects the turn's completed tool calls so the digest below can carry the
+  // tool work into later turns (C-1) — same collector the companion runs.
+  const digestCollector = new TurnDigestCollector()
+
   const runtime = new AgentRuntime({
     ai,
     model,
     modelString: request.model,
-    systemPrompt: request.system,
+    systemPrompt,
     messages,
     tools: buildEnclaveTools({
       ai,
@@ -209,7 +246,7 @@ export async function runEnclaveTurn(
       // refs already ride the messages the model reads).
       attachments: { refsById, ciphertextById },
     }),
-    observers: [traceObserver],
+    observers: [traceObserver, digestCollector],
     maxTokens: request.maxTokens,
     temperature: request.temperature,
     // Hand ONLY the long-running research sub-loop the session's cancel signal so
@@ -230,6 +267,7 @@ export async function runEnclaveTurn(
     // sourceless reply seals the bare string, byte-identical to before.
     sendMessage: async ({ content, sources }) => {
       if (firstReplyText === null) firstReplyText = content
+      lastReplyText = content
       const messageId = `msg_${ulid()}`
       const sealed = await sealMessage({
         key: replySsk,
@@ -256,6 +294,29 @@ export async function runEnclaveTurn(
   }
 
   await runtime.run()
+
+  // Turn digest (C-1): condense the turn's tool work with one cheap completion
+  // over the same pinned model, seal it as a trailing turn_digest step (the
+  // auto-title pattern: post-run, in-enclave, plaintext never leaves), and ship
+  // it over the step callback. Best-effort — the replies are already delivered,
+  // so a digest failure must never affect the turn. Usage accumulates into the
+  // same total recorded at /complete.
+  if (digestCollector.hasToolWork) {
+    try {
+      const digest = await generateTurnDigest({
+        ai,
+        model,
+        modelString: request.model,
+        records: digestCollector.records,
+        replyText: lastReplyText ?? undefined,
+      })
+      if (digest) {
+        await traceObserver.emitTurnDigest(JSON.stringify(digest))
+      }
+    } catch {
+      // The digest is non-essential; a failure must never affect the reply.
+    }
+  }
 
   // Auto-title an untitled encrypted scratchpad from the decrypted turn. The
   // server can't do this (it only holds ciphertext), so the enclave generates a

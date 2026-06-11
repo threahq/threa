@@ -414,6 +414,45 @@ describe("TraceStep", () => {
     expect(screen.getByText("Planning queries…")).toBeInTheDocument()
   })
 
+  it("renders a turn_digest step's findings and tool list", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "turn_digest",
+            content: JSON.stringify({
+              findings: "Spring tides happen when the sun and moon align.",
+              toolsCalled: ["web_search", "read_url"],
+              sources: [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }],
+              sourceStreamIds: [],
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Memory")).toBeInTheDocument()
+    expect(screen.getByText(/Saved a digest of this turn's tool work/i)).toBeInTheDocument()
+    expect(screen.getByText(/Spring tides happen when the sun and moon align\./)).toBeInTheDocument()
+    expect(screen.getByText(/Tools used: web_search, read_url/)).toBeInTheDocument()
+  })
+
+  it("falls back to a plain notice for a turn_digest step with unreadable content", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({ stepType: "turn_digest", content: "not json" })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText(/Saved a digest of this turn's tool work for future turns\./)).toBeInTheDocument()
+  })
+
   it("renders the sources sealed inside a decrypted step payload (E2EE-14)", async () => {
     const user = userEvent.setup()
     vi.spyOn(e2eSessionModule, "useE2eSession").mockReturnValue({

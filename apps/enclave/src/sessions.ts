@@ -36,6 +36,11 @@ const MAX_COMPLETION_TOKENS = 32_000
  * assignment.
  */
 const MAX_INLINE_ATTACHMENTS = 64
+/**
+ * Upper bound on prior-turn digests per assignment. The dispatch worker ships
+ * `TURN_DIGEST_INJECT_COUNT` (5); this caps a malformed/hostile body.
+ */
+const MAX_RECENT_DIGESTS = 16
 
 const streamEnvelopeSchema = z.object({
   v: z.number(),
@@ -118,6 +123,16 @@ export const sessionAssignmentSchema = z.object({
   // Whether to auto-title this scratchpad (declared so Zod doesn't strip it —
   // the same failure mode the attachment slice hit).
   autoTitle: z.boolean().optional(),
+  /**
+   * Prior turns' sealed turn_digest steps (C-1), oldest→newest. MUST be
+   * declared — Zod strips unknown keys, and silently dropping these would
+   * just quietly bring the tool-work amnesia back. `completedAt` is clear
+   * timing metadata; the digest body opens only here.
+   */
+  recentDigests: z
+    .array(sealedMessageSchema.extend({ completedAt: z.string().min(1) }))
+    .max(MAX_RECENT_DIGESTS)
+    .optional(),
 })
 
 export interface SessionsDeps {

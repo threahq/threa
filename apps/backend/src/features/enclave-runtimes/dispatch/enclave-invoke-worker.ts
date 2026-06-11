@@ -25,7 +25,8 @@ import { EnclaveRuntimesRepository } from "../repository"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "../service"
 import type { EnclaveForwarder } from "../forwarder"
 import { buildEnclaveSessionAssignment } from "./request-builder"
-import { StreamTypes } from "@threa/types"
+import { StreamTypes, type EnclaveStreamEnvelope } from "@threa/types"
+import { TURN_DIGEST_INJECT_COUNT } from "@threa/agent-runtime"
 
 /** How many prior messages of context to forward. */
 const MAX_HISTORY_MESSAGES = 30
@@ -145,6 +146,25 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     ]
     const attachmentCiphertexts = await loadAttachmentCiphertexts(pool, storage, attachmentCiphertextIds)
 
+    // Prior turns' sealed digests (C-1): ship the opaque turn_digest step
+    // ciphertext from this stream's recent completed sessions so the enclave —
+    // the only party holding the SSK wraps — can fold them into the turn's
+    // context. The backend never opens them (INV-E7); the enclave skips any
+    // generation it has no wrap for.
+    const digestRows = await AgentSessionRepository.findRecentDigestStepsByStream(pool, {
+      streamId,
+      personaId: ARIADNE_AGENT_ID,
+      limit: TURN_DIGEST_INJECT_COUNT,
+    })
+    const recentDigests = digestRows
+      .filter((row) => row.step.contentCiphertext && row.step.contentEnvelope)
+      .reverse() // newest-first from the repo → oldest-first for the prompt
+      .map((row) => ({
+        ciphertext: row.step.contentCiphertext!,
+        envelope: row.step.contentEnvelope as EnclaveStreamEnvelope,
+        completedAt: (row.step.completedAt ?? row.sessionCreatedAt).toISOString(),
+      }))
+
     const sid = newSessionId()
     const built = buildEnclaveSessionAssignment({
       e2e,
@@ -163,6 +183,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       replySenderId: ARIADNE_AGENT_ID,
       sessionId: sid,
       attachmentCiphertexts,
+      recentDigests,
       // Ask the enclave to seal a title only for an untitled scratchpad: gate on
       // the *trigger's own* stream (a top-level scratchpad message titles it; a
       // thread reply never does), while `e2e.hasSealedName` is the root's — the

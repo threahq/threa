@@ -18,6 +18,33 @@ export interface TraceSource {
   timestamp?: string
 }
 
+/**
+ * The JSON content of a `turn_digest` step — the compact end-of-session record
+ * of the turn's tool work (C-1), persisted as the session's final step row and
+ * injected into later turns' context builds so follow-ups ("what did that
+ * article say?") don't force a re-search. `findings` is model-written prose;
+ * the other fields are recorded deterministically from the loop's tool events.
+ * For E2E sessions the whole object is sealed as the step's ciphertext; for
+ * plaintext sessions it is the step's `content` JSON string.
+ */
+export interface TurnDigestStepContent {
+  /** Model-written summary of what the turn's tools found — compact, self-contained. */
+  findings: string
+  /** Tool names the turn called (first-call order, deduped). */
+  toolsCalled: string[]
+  /** Citation sources the turn's tools produced (deduped, bounded). */
+  sources: TraceSource[]
+  /**
+   * Stream ids of the workspace material this digest contains — provenance for
+   * the access re-filter at injection time (a stream that was readable when the
+   * digest was written can become inaccessible later; injection must re-check
+   * against the location's CURRENT access). Web-derived content is exempt
+   * (public), so a web-only digest records an empty array. Recorded from the
+   * first digest shipped: provenance cannot be retrofitted onto old digests.
+   */
+  sourceStreamIds: string[]
+}
+
 export type AgentSessionRerunCause = "invoking_message_edited" | "referenced_message_edited"
 
 export interface AgentSessionRerunContext {

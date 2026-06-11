@@ -7,3 +7,12 @@ export type { AgentObserver } from "./agent-observer"
 export { OtelObserver } from "./otel-observer"
 export { AgentRuntime } from "./agent-runtime"
 export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./agent-runtime"
+export {
+  TurnDigestCollector,
+  generateTurnDigest,
+  parseTurnDigestStepContent,
+  formatTurnDigestsForPrompt,
+  TURN_DIGEST_INJECT_COUNT,
+  type ToolWorkRecord,
+  type TurnDigestPromptEntry,
+} from "./turn-digest"

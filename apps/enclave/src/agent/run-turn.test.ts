@@ -309,6 +309,131 @@ describe("runEnclaveTurn", () => {
     ])
   })
 
+  it("folds opened recent digests into the system prompt and skips generations it has no wrap for", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "And what about neap tides?", "msg_user", "usr_owner")
+
+    const openableDigest = await sealUnder(
+      ssk,
+      JSON.stringify({
+        findings: "Spring tides align sun and moon.",
+        toolsCalled: ["web_search"],
+        sources: [],
+        sourceStreamIds: [],
+      }),
+      "step_digest_old",
+      "persona_ariadne"
+    )
+    // Sealed under a generation this enclave has no wrap for — must be skipped, not fatal.
+    const strandedSsk = generateStreamKey()
+    const strandedSealed = await sealMessage({
+      key: strandedSsk,
+      keyGeneration: 5,
+      payload: JSON.stringify({ findings: "Stranded digest.", toolsCalled: [], sources: [], sourceStreamIds: [] }),
+      aad: buildMessageAad({ streamId: STREAM_ID, messageId: "step_digest_stranded", senderId: "persona_ariadne" }),
+    })
+
+    const chat = stubChat(textReply("Neap tides are the weak ones."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({
+        wraps: [wrap],
+        prompt,
+        recentDigests: [
+          { ...openableDigest, completedAt: "2026-06-10T10:00:00.000Z" },
+          {
+            ciphertext: bytesToBase64(strandedSealed.ciphertext),
+            envelope: strandedSealed.envelope,
+            completedAt: "2026-06-11T10:00:00.000Z",
+          },
+        ],
+      })
+    )
+
+    // The system message the model saw carries the opened digest (shared
+    // formatter output), but never the one we couldn't open.
+    const system = String(chat.seen[0]?.messages[0]?.content ?? "")
+    expect(system).toContain("You are Ariadne.")
+    expect(system).toContain("## Prior Tool Work (Turn Digests)")
+    expect(system).toContain("Spring tides align sun and moon.")
+    expect(system).toContain("Turn completed 2026-06-10T10:00:00.000Z")
+    expect(system).not.toContain("Stranded digest.")
+  })
+
+  it("leaves the system prompt untouched when no digests ride the assignment", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Hello.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Hi!"))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    expect(chat.seen[0]?.messages[0]?.content).toBe("You are Ariadne.")
+  })
+
+  it("seals a turn digest step after a tool-using turn, recovered by the owner's SSK", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Read that page for me.", "msg_user", "usr_owner")
+    // Turn 1: tool call (SSRF guard keeps it hermetic). Turn 2: the reply.
+    // Call 3 is the post-run digest completion over the same transport.
+    const chat = stubChat([
+      toolCallReply("read_url", { url: "http://localhost/secret" }),
+      textReply("Couldn't read it."),
+      textReply("Tried to read localhost; it was blocked."),
+    ])
+    const { onMessage, onStepStarted, onStep, onSubstep, started, steps } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep, tools: { tavilyApiKey: "tvly-test" } },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    // The digest call ran tool-less after the loop and the step landed sealed,
+    // opened + finalized under the same enclave-minted id.
+    const digestStep = steps.find((s) => s.stepType === "turn_digest")
+    expect(digestStep).toBeDefined()
+    expect(started.find((s) => s.stepId === digestStep!.stepId)).toBeDefined()
+    expect(chat.seen.at(-1)?.tools).toBeUndefined()
+
+    const opened = await openMessageAsString({
+      key: ssk,
+      envelope: digestStep!.envelope,
+      ciphertext: Buffer.from(digestStep!.ciphertext, "base64"),
+    })
+    const digest = JSON.parse(opened)
+    expect(digest.findings).toBe("Tried to read localhost; it was blocked.")
+    expect(digest.toolsCalled).toEqual(["read_url"])
+    expect(digest.sourceStreamIds).toEqual([])
+  })
+
+  it("does not digest a tool-free turn (no extra model call, no digest step)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Just say hi.", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Hi!"))
+    const { onMessage, onStepStarted, onStep, onSubstep, steps } = collector()
+
+    await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    expect(chat.seen).toHaveLength(1)
+    expect(steps.find((s) => s.stepType === "turn_digest")).toBeUndefined()
+  })
+
   it("runs a tool call and seals its trace step under the SSK", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()

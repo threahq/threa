@@ -108,6 +108,25 @@ async function assignmentFor(
   }
 }
 
+describe("sessionAssignmentSchema", () => {
+  it("keeps recentDigests through parsing (Zod strips undeclared keys — the attachment-slice failure mode)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const assignment = await assignmentFor(keyPair, ssk, "hello")
+    const recentDigests = [
+      {
+        ciphertext: "ZGlnZXN0",
+        envelope: { v: 2, keyGeneration: GEN, iv: "aXY=", aad: "YWFk" },
+        completedAt: "2026-06-10T10:00:00.000Z",
+      },
+    ]
+
+    const parsed = sessionAssignmentSchema.safeParse({ ...assignment, recentDigests })
+    expect(parsed.success).toBe(true)
+    expect(parsed.data!.recentDigests).toEqual(recentDigests)
+  })
+})
+
 describe("createSessionsHandler", () => {
   it("400s an invalid assignment without starting work", () => {
     const handler = createSessionsHandler({
