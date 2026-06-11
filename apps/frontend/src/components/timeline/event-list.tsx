@@ -20,6 +20,12 @@ import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
 import { UnreadDivider } from "./unread-divider"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
+import type {
+  ConversationOverlayContext,
+  ConversationOverlayModel,
+  ConversationRowAnnotation,
+} from "./conversation-overlay/model"
 
 interface EventListProps {
   timelineItems: TimelineItem[]
@@ -35,6 +41,8 @@ interface EventListProps {
   /** Event IDs that just arrived via socket and should flash briefly */
   newMessageIds?: Set<string>
   batch?: BatchTimelineState
+  /** Set while the conversation overlay is active; decorates message rows. */
+  conversationOverlay?: ConversationOverlayContext
 }
 
 /**
@@ -105,6 +113,12 @@ export type TimelineItem =
        * time so the format tracks user preferences (INV-42).
        */
       groupContinuation?: boolean
+      /**
+       * Conversation membership annotation, stamped by
+       * `annotateConversationRows` only while the conversation overlay is
+       * active. Absent on non-message events and when the overlay is off.
+       */
+      conversationRow?: ConversationRowAnnotation
     }
   | { type: "command_group"; commandId: string; events: StreamEvent[] }
   | { type: "session_group"; sessionId: string; sessionVersion: number; events: StreamEvent[] }
@@ -159,6 +173,32 @@ export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
 
     if (!belongsToRun) return item
     return { ...item, groupContinuation: true }
+  })
+}
+
+/**
+ * Stamps message timeline items with their primary-conversation membership
+ * for the conversation overlay. `blockStart` marks the first message of each
+ * contiguous run of one conversation — that's where the floating topic chip
+ * renders.
+ *
+ * Non-message items (session/command cards, membership events) do not break
+ * a run: a session card in the middle of a conversation shouldn't restart
+ * the chip. Unassigned messages (extraction pending, or membership unknown)
+ * carry `conversationId: null`, render undecorated, and never start a block.
+ *
+ * Pure and export-only, mirroring `annotateAuthorGroups`.
+ */
+export function annotateConversationRows(items: TimelineItem[], model: ConversationOverlayModel): TimelineItem[] {
+  let previousConversationId: string | null = null
+  return items.map((item) => {
+    if (item.type !== "event" || !isGroupableMessage(item.event)) return item
+    const messageId = (item.event.payload as { messageId?: string })?.messageId
+    if (!messageId) return item
+    const conversationId = model.conversationIdByMessageId.get(messageId) ?? null
+    const blockStart = conversationId != null && conversationId !== previousConversationId
+    previousConversationId = conversationId
+    return { ...item, conversationRow: { conversationId, blockStart } }
   })
 }
 
@@ -404,6 +444,8 @@ export interface TimelineItemRenderContext {
   /** Click handler for the Stop research button. */
   onAbortResearch?: (sessionId: string) => void
   batch?: BatchTimelineState
+  /** Set while the conversation overlay is active; decorates message rows. */
+  conversationOverlay?: ConversationOverlayContext
 }
 
 function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean {
@@ -425,6 +467,42 @@ export interface TimelineItemContentProps {
 /** Renders a single timeline item. Used by virtua's row mapping and non-virtualized lists. */
 function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: TimelineItemContentProps) {
   const showUnreadDivider = isFirstUnread(item, ctx.firstUnreadEventId)
+
+  let eventNode: React.ReactNode = null
+  if (item.type === "event") {
+    eventNode = (
+      <EventItem
+        event={item.event}
+        workspaceId={ctx.workspaceId}
+        streamId={ctx.streamId}
+        highlightMessageId={ctx.highlightMessageId}
+        agentActivity={ctx.hideSessionCards ? ctx.agentActivity : undefined}
+        isNew={ctx.newMessageIds?.has(item.event.id)}
+        deferSecondaryHydration={deferSecondaryHydration}
+        batch={ctx.batch}
+        // Continuations directly under an UnreadDivider promote back to head so
+        // the first unread message in a run still reads as a fresh turn for the
+        // viewer (fixes the "continuation starting an unread block" edge case).
+        groupContinuation={item.groupContinuation && !showUnreadDivider}
+        isFirstMessage={
+          ctx.firstMessageId != null && (item.event.payload as { messageId?: string })?.messageId === ctx.firstMessageId
+        }
+      />
+    )
+    const overlayMessageId = (item.event.payload as { messageId?: string })?.messageId
+    if (ctx.conversationOverlay && item.conversationRow && overlayMessageId) {
+      eventNode = (
+        <ConversationOverlayRow
+          overlay={ctx.conversationOverlay}
+          annotation={item.conversationRow}
+          messageId={overlayMessageId}
+        >
+          {eventNode}
+        </ConversationOverlayRow>
+      )
+    }
+  }
+
   return (
     <>
       {showUnreadDivider && <UnreadDivider isFading={ctx.isDividerFading} />}
@@ -458,26 +536,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
           />
         </div>
       )}
-      {item.type === "event" && (
-        <EventItem
-          event={item.event}
-          workspaceId={ctx.workspaceId}
-          streamId={ctx.streamId}
-          highlightMessageId={ctx.highlightMessageId}
-          agentActivity={ctx.hideSessionCards ? ctx.agentActivity : undefined}
-          isNew={ctx.newMessageIds?.has(item.event.id)}
-          deferSecondaryHydration={deferSecondaryHydration}
-          batch={ctx.batch}
-          // Continuations directly under an UnreadDivider promote back to head so
-          // the first unread message in a run still reads as a fresh turn for the
-          // viewer (fixes the "continuation starting an unread block" edge case).
-          groupContinuation={item.groupContinuation && !showUnreadDivider}
-          isFirstMessage={
-            ctx.firstMessageId != null &&
-            (item.event.payload as { messageId?: string })?.messageId === ctx.firstMessageId
-          }
-        />
-      )}
+      {eventNode}
     </>
   )
 }
@@ -506,7 +565,15 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
   switch (a.type) {
     case "event": {
       const other = b as Extract<TimelineItem, { type: "event" }>
-      return a.event === other.event && (a.groupContinuation ?? false) === (other.groupContinuation ?? false)
+      if (a.event !== other.event || (a.groupContinuation ?? false) !== (other.groupContinuation ?? false)) {
+        return false
+      }
+      // Overlay annotation objects are rebuilt by every annotation pass, so
+      // compare by value — identity would defeat the memo on each data tick.
+      return (
+        (a.conversationRow?.conversationId ?? null) === (other.conversationRow?.conversationId ?? null) &&
+        (a.conversationRow?.blockStart ?? false) === (other.conversationRow?.blockStart ?? false)
+      )
     }
     case "command_group": {
       const other = b as Extract<TimelineItem, { type: "command_group" }>
@@ -572,6 +639,11 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
 
   if (item.type !== "event") return true
 
+  // The overlay context is memoized in useConversationOverlay and only gets a
+  // new identity when focus/pending/model actually change — exactly the
+  // moments decorated rows must repaint, so identity comparison is correct.
+  if (p.conversationOverlay !== n.conversationOverlay) return false
+
   const messageId = getEventMessageId(item.event)
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
@@ -620,6 +692,7 @@ export function EventList({
   hideSessionCards,
   newMessageIds,
   batch,
+  conversationOverlay,
 }: EventListProps) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -702,6 +775,7 @@ export function EventList({
     sessionCanAbort,
     onAbortResearch: handleAbortResearch,
     batch,
+    conversationOverlay,
   }
 
   return (

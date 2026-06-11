@@ -55,6 +55,7 @@ import {
   TimelineItemContent,
   groupTimelineItems,
   annotateAuthorGroups,
+  annotateConversationRows,
   injectGapItems,
   findFirstMessageId,
   findMessageItemIndex,
@@ -64,6 +65,9 @@ import {
   type TimelineItemRenderContext,
   type BatchTimelineState,
 } from "./event-list"
+import { ConversationOverlayPanel } from "./conversation-overlay/conversation-overlay"
+import { useConversationOverlay } from "./conversation-overlay/use-conversation-overlay"
+import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageInput } from "./message-input"
 import { ActiveBotStatusStrip } from "./active-bot-status-strip"
 import { JoinChannelBar } from "./join-channel-bar"
@@ -226,7 +230,7 @@ export function StreamContent({
   stream: streamFromProps,
   autoFocus,
 }: StreamContentProps) {
-  const [, setSearchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const socket = useSocket()
   const messageService = useMessageService()
@@ -310,6 +314,33 @@ export function StreamContent({
   }, [bootstrap?.botMemberIds, botRuntimePresence, workspaceBots])
   const isArchived = stream?.archivedAt != null
   const isSystem = stream?.type === StreamTypes.SYSTEM
+
+  // Conversation overlay (channels/DMs): URL-derived so a refresh or shared
+  // link restores the same view (INV-59). The stream header owns the toggle;
+  // this component reads the param, fetches conversations while active, and
+  // threads the overlay context into the timeline rows.
+  const supportsConversationOverlay =
+    !isDraft && (stream?.type === StreamTypes.CHANNEL || stream?.type === StreamTypes.DM)
+  const conversationOverlayActive = supportsConversationOverlay && searchParams.get("convOverlay") === "on"
+  const { context: conversationOverlay, inViewConversations } = useConversationOverlay({
+    workspaceId,
+    streamId,
+    enabled: conversationOverlayActive,
+  })
+  const closeConversationOverlay = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        prev.delete("convOverlay")
+        return prev
+      },
+      { replace: true }
+    )
+  }, [setSearchParams])
+  // Batch-selection mode suspends the whole overlay (legend, rails, chips,
+  // correction swatch) — batch turns every row into a selection toggle, and
+  // the overlay's swatch would compete for the same clicks. The URL param is
+  // kept, so the overlay returns when batch mode ends.
+  const activeConversationOverlay = batchMode ? undefined : conversationOverlay
   const parentStreamId = stream?.parentStreamId
   const parentMessageId = stream?.parentMessageId
   const parentCachedEvents = useStreamEvents(parentStreamId ?? undefined)
@@ -470,14 +501,14 @@ export function StreamContent({
   // Gap placeholders are injected AFTER grouping/annotation so a hole in the
   // broadcast chain (INV-61) renders as its own in-place loading row — see
   // useEvents' contiguity gate for how holes are detected and backfilled.
-  const timelineItems = useMemo(
-    () =>
-      injectGapItems(
-        annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined)),
-        holes
-      ),
-    [displayEvents, currentWorkspaceUserId, holes]
-  )
+  const conversationOverlayModel = conversationOverlay?.model
+  const timelineItems = useMemo(() => {
+    let items = annotateAuthorGroups(groupTimelineItems(displayEvents, currentWorkspaceUserId ?? undefined))
+    if (conversationOverlayModel && conversationOverlayModel.conversations.length > 0) {
+      items = annotateConversationRows(items, conversationOverlayModel)
+    }
+    return injectGapItems(items, holes)
+  }, [displayEvents, currentWorkspaceUserId, holes, conversationOverlayModel])
 
   // `order` is the position in the rendered timeline. Non-thread streams
   // happen to sort by sequence already, but threads re-sort by
@@ -1404,6 +1435,14 @@ export function StreamContent({
                 <StreamSearchBar search={streamSearch} onClose={handleSearchClose} onNavigate={handleSearchNavigate} />
               )}
               {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
+              {activeConversationOverlay && (
+                <ConversationOverlayPanel
+                  overlay={activeConversationOverlay}
+                  inViewConversations={inViewConversations}
+                  onClose={closeConversationOverlay}
+                  searchBarOpen={isSearchOpen}
+                />
+              )}
               {isDraft && (
                 <div
                   className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
@@ -1463,6 +1502,7 @@ export function StreamContent({
                     isSearchOpen={isSearchOpen}
                     batch={batchState}
                     batchPointerHandlers={batchPointerHandlers}
+                    conversationOverlay={activeConversationOverlay}
                   />
                   {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -1532,6 +1572,7 @@ export function StreamContent({
                     hideSessionCards={isChannel}
                     newMessageIds={newMessageIds}
                     batch={batchState}
+                    conversationOverlay={activeConversationOverlay}
                   />
                   {isFetchingNewer && (
                     <div className="flex justify-center py-2">
@@ -1689,6 +1730,7 @@ function TimelineMessageList({
   isSearchOpen,
   batch,
   batchPointerHandlers,
+  conversationOverlay,
 }: {
   visibleItems: TimelineItem[]
   isLoading: boolean
@@ -1738,6 +1780,7 @@ function TimelineMessageList({
   isSearchOpen: boolean
   batch?: BatchTimelineState
   batchPointerHandlers?: React.HTMLAttributes<HTMLElement>
+  conversationOverlay?: ConversationOverlayContext
 }) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -1796,6 +1839,7 @@ function TimelineMessageList({
       sessionCanAbort,
       onAbortResearch: handleAbortResearch,
       batch,
+      conversationOverlay,
     }),
     [
       workspaceId,
@@ -1812,6 +1856,7 @@ function TimelineMessageList({
       sessionCanAbort,
       handleAbortResearch,
       batch,
+      conversationOverlay,
     ]
   )
 

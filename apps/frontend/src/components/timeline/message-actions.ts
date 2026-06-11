@@ -14,6 +14,7 @@ import {
   Bell,
   Share2,
   CornerDownRight,
+  Layers,
 } from "lucide-react"
 import { toast } from "sonner"
 import { stripMarkdown } from "@/lib/markdown"
@@ -115,6 +116,12 @@ export interface MessageActionContext {
    * streams don't render an inline `messages:moved` tombstone.
    */
   onShowMoveDetails?: () => void
+  /**
+   * Open the conversation picker for the overlay's "this message belongs
+   * to…" correction. Set only while the conversation overlay is active —
+   * this is the touch path to the desktop hover swatch on the row's rail.
+   */
+  onReassignConversation?: () => void
 }
 
 /** A top-level action in the message context menu. */
@@ -332,6 +339,17 @@ export const messageActions: MessageAction[] = [
     icon: CornerDownRight,
     when: (ctx) => !!ctx.onMoveToThread,
     action: (ctx) => ctx.onMoveToThread?.(),
+  },
+  {
+    // Conversation-overlay correction: "this message belongs to…". The
+    // callback is only set while the overlay is active, so the entry
+    // appears exactly when the rails/panel are visible. Touch devices rely
+    // on this — the rail swatch is hover-only.
+    id: "reassign-conversation",
+    label: "Move to conversation…",
+    icon: Layers,
+    when: (ctx) => !!ctx.onReassignConversation,
+    action: (ctx) => ctx.onReassignConversation?.(),
   },
   {
     // Destination-side discovery for messages that arrived via a move.

@@ -443,6 +443,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/workspaces/:workspaceId/streams/:streamId/conversations", ...authed, conversation.listByStream)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId", ...authed, conversation.getById)
   app.get("/api/workspaces/:workspaceId/conversations/:conversationId/messages", ...authed, conversation.getMessages)
+  app.post(
+    "/api/workspaces/:workspaceId/conversations/:conversationId/messages/:messageId/reassign",
+    ...authed,
+    conversation.reassignMessage
+  )
 
   // Commands
   app.post("/api/workspaces/:workspaceId/commands/dispatch", ...authed, rateLimits.commandDispatch, command.dispatch)
