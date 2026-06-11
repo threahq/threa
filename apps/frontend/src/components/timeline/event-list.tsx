@@ -185,8 +185,7 @@ export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
  * Non-message items (session/command cards, membership events) do not break
  * a run: a session card in the middle of a conversation shouldn't restart
  * the chip. Unassigned messages (extraction pending, or membership unknown)
- * carry `conversationId: null`, render the dotted "not placed yet" rail, and
- * never start a block.
+ * carry `conversationId: null`, render undecorated, and never start a block.
  *
  * Pure and export-only, mirroring `annotateAuthorGroups`.
  */

@@ -17,21 +17,21 @@ import { ConversationOverlayRowProvider } from "./row-context"
 
 /**
  * Floating panel listing the conversations that currently have message rows
- * on screen (fed by the overlay's IntersectionObserver tracking). Top-right,
- * absolutely positioned (INV-21: toggling the overlay never reflows the
- * timeline), collapsible to a compact pill — collapsed by default on mobile
- * where horizontal space is scarce. Rows toggle focus on a conversation;
- * X closes the overlay (drops the URL param).
+ * on screen (fed by the overlay's IntersectionObserver tracking). Anchored
+ * bottom-right above the composer — the top-right corner belongs to the
+ * per-row topic chips, which scroll with the timeline and would slide under
+ * a top-anchored panel. Absolutely positioned (INV-21: toggling the overlay
+ * never reflows the timeline), collapsible to a compact pill — collapsed by
+ * default on mobile where space is scarce. Rows toggle focus on a
+ * conversation; X closes the overlay (drops the URL param).
  */
 export function ConversationOverlayPanel({
   overlay,
   inViewConversations,
-  isSearchOpen,
   onClose,
 }: {
   overlay: ConversationOverlayContext
   inViewConversations: ConversationWithStaleness[]
-  isSearchOpen: boolean
   onClose: () => void
 }) {
   const isMobile = useIsMobile()
@@ -43,7 +43,14 @@ export function ConversationOverlayPanel({
   return (
     <div
       data-testid="conversation-overlay-panel"
-      className={cn("absolute right-2 z-20 flex justify-end", isSearchOpen ? "top-14" : "top-2")}
+      className="absolute right-2 z-20 flex justify-end"
+      // --composer-height measures the floating pill itself; the pill also
+      // floats above the container bottom and has the send-hint line under
+      // it, so a plain +0.5rem (what Jump-to-latest uses, which sits flush
+      // against the pill) would leave the panel's lower rows behind the
+      // composer. 2.5rem clears the pill's own bottom offset with breathing
+      // room.
+      style={{ bottom: "calc(var(--composer-height, 0px) + 2.5rem)" }}
     >
       {collapsed ? (
         <button
@@ -132,22 +139,15 @@ export function ConversationOverlayPanel({
   )
 }
 
-/** Hue strip + wash painted over a message row. Pointer-transparent. */
+/**
+ * Hue strip + wash painted over a message row. Pointer-transparent.
+ * Unassigned rows (`colorIndex` null) render no decoration at all: a marker
+ * can't distinguish "extraction pending" from "conversation outside the
+ * fetched window", and scrolled-back history made every old row light up
+ * with it — pure noise.
+ */
 function RowTint({ colorIndex }: { colorIndex: number | null }) {
-  if (colorIndex == null) {
-    // Unassigned: dotted muted strip, no wash — reads as "extraction hasn't
-    // placed this yet" without raising an alarm for just-sent messages.
-    return (
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-[3px]"
-        style={{
-          background:
-            "repeating-linear-gradient(to bottom, hsl(var(--muted-foreground) / 0.35) 0 4px, transparent 4px 9px)",
-        }}
-      />
-    )
-  }
+  if (colorIndex == null) return null
   return (
     <div
       aria-hidden
@@ -163,8 +163,8 @@ function RowTint({ colorIndex }: { colorIndex: number | null }) {
 /**
  * Wraps one message row while the conversation overlay is active:
  *
- * - hue rail + soft wash for the row's primary conversation (dotted muted
- *   rail when unassigned)
+ * - hue rail + soft wash for the row's primary conversation (no decoration
+ *   when unassigned)
  * - dimming when another conversation is focused via the in-view panel
  * - a hover swatch on the rail that opens the correction menu ("this belongs
  *   to …"), feeding boundary-extraction feedback
@@ -222,13 +222,15 @@ export function ConversationOverlayRow({
           // it adds no height (INV-21) — toggling the overlay must not move
           // a single message. Purely informational (focus/corrections live
           // in the panel and the rail swatch); fades on row hover to hand
-          // the corner to the message hover toolbar.
+          // the corner to the message hover toolbar. Desktop-only: on
+          // mobile's dense header line the chip covers the timestamp, and
+          // the rails + panel already carry the grouping there.
           <span
             data-testid="conversation-block-chip"
             title={conversation.topicSummary ?? undefined}
             className={cn(
               "pointer-events-none absolute right-3 top-1.5 z-[5] sm:right-4",
-              "inline-flex max-w-[40%] items-center gap-1.5 rounded-full border px-2 py-0.5",
+              "hidden max-w-[40%] items-center gap-1.5 rounded-full border px-2 py-0.5 sm:inline-flex",
               "bg-background/85 text-[10px] font-medium leading-4 shadow-sm backdrop-blur-sm",
               "transition-opacity group-hover/convrow:opacity-0"
             )}
@@ -326,7 +328,11 @@ export function ConversationPickerDrawer({
   annotation: ConversationRowAnnotation
   messageId: string
 }) {
-  const { model, onReassignMessage } = overlay
+  const { model, onReassignMessage, pendingMessageId } = overlay
+  // Mirror the rail swatch menu: ignore picks while this message's
+  // reassignment is already in flight, so rapid taps can't enqueue
+  // duplicate corrections.
+  const isPending = pendingMessageId === messageId
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
@@ -339,14 +345,15 @@ export function ConversationPickerDrawer({
               <button
                 key={candidate.id}
                 type="button"
-                disabled={isCurrent}
+                disabled={isCurrent || isPending}
                 onClick={() => {
+                  if (isCurrent || isPending) return
                   onOpenChange(false)
                   onReassignMessage(messageId, candidate.id)
                 }}
                 className={cn(
                   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-                  isCurrent ? "opacity-60" : "active:bg-muted/80"
+                  isCurrent || isPending ? "opacity-60" : "active:bg-muted/80"
                 )}
               >
                 <span

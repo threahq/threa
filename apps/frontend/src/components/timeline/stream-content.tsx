@@ -1439,7 +1439,6 @@ export function StreamContent({
                 <ConversationOverlayPanel
                   overlay={activeConversationOverlay}
                   inViewConversations={inViewConversations}
-                  isSearchOpen={isSearchOpen}
                   onClose={closeConversationOverlay}
                 />
               )}
