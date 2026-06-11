@@ -919,7 +919,10 @@ export class PersonaAgent {
         modelString: TURN_DIGEST_MODEL_ID,
         records: digestCollector.records,
         replyText,
-        telemetry: { functionId: "turn-digest" },
+        telemetry: {
+          functionId: "turn-digest",
+          metadata: { model_id: TURN_DIGEST_MODEL_ID, session_id: sessionId },
+        },
         context: {
           workspaceId,
           userId: invokingUserId,
