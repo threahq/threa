@@ -304,6 +304,23 @@ applied. The snapshot-vs-live race that today needs `_patchedAt` wall-clock heur
 becomes an integer comparison. History-visibility policy stays in the snapshot endpoint
 (where it lives today), not in the log filter.
 
+To be explicit about volume: **history is never replayed through the log.** The log is a
+forward-only change feed; history is pull-based. The partial bootstrap is the same
+windowed snapshot used when opening any stream today — one recent page, older pages
+lazy-loaded on scroll — so joining a years-old, very long stream costs a new member
+exactly one page, and the log carries only what happens after the snapshot position.
+
+One trap in the naive implementation: a catch-up query that filters by _current_ groups
+would also deliver S-tagged entries from before the join (anything still inside the
+retained log window between the client's cursor and position 1040). The snapshot skip
+rule makes that harmless for correctness (everything ≤ P is skipped anyway), but it
+wastes bandwidth on busy streams and, for a private stream with a no-history policy, it
+would leak recent pre-join entries. The fix is one condition: the `stream:member_added`
+entry's own sync id _is_ the membership's join position, so the catch-up query bounds
+each `stream:<id>` group by the requester's join sync id (stored on the membership row
+when the sequencer stamps the entry). Stream-tagged entries are only ever delivered from
+the join point forward.
+
 ### 2. Long offline window hits log compaction
 
 Client returns after two weeks with cursor X; the log only retains entries newer than Y,
@@ -426,8 +443,10 @@ exactly as outbox payloads do today; `groups` and ordering are plaintext metadat
    stay off the log.
 2. **Catch-up endpoint**: `GET /api/workspaces/:workspaceId/sync?after=<syncId>&limit=<n>`
    → `{ entries, head }`, filtered to the requester's groups (workspace + stream
-   memberships + own user group). Zod-validated (INV-55), repository-backed (INV-5),
-   lives in `apps/backend/src/features/sync/` (INV-51).
+   memberships + own user group), with each `stream:<id>` group bounded below by the
+   membership's join position (see pressure test 1 — prevents pre-join over-delivery and
+   no-history leaks). Zod-validated (INV-55), repository-backed (INV-5), lives in
+   `apps/backend/src/features/sync/` (INV-51).
 3. **Head exposure**: the catch-up response carries `head` (max visible sync id); the
    client's existing page-resume/visibility hooks can check it cheaply. A dedicated
    per-connection heartbeat lands with client adoption (step 2), not here.
