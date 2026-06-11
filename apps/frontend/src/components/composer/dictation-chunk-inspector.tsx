@@ -12,6 +12,14 @@ interface DictationChunkInspectorProps {
 }
 
 /**
+ * How long the popover survives after the cursor leaves the chunk. The popover
+ * is offset 8px from the chunk, so the cursor must cross a gap where it hovers
+ * neither element; closing immediately on pointerout would make the popover
+ * unreachable with a mouse.
+ */
+export const HOVER_CLOSE_GRACE_MS = 200
+
+/**
  * Hover/tap inspector for the just-landed polished dictation chunk(s). The
  * editor decoration tags each chunk with a `[data-chunk-id]` attribute; this
  * component watches the document for hover/click on those elements and floats
@@ -19,7 +27,9 @@ interface DictationChunkInspectorProps {
  * raw versions, with a one-tap switch.
  *
  * Two interaction models, one component:
- *   - Mouse: hover opens, leaving both the chunk and the popover closes.
+ *   - Mouse: hover opens; leaving both the chunk and the popover closes after
+ *     a short grace period (the popover is offset from the chunk, so the
+ *     cursor needs time to travel across the gap without dismissing it).
  *   - Touch / click: tap the chunk to open, tap outside (or Escape) to close.
  *
  * Positioning uses `@floating-ui/react` (same stack as the editor's other
@@ -69,6 +79,25 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
     [refs.floating]
   )
 
+  const closeTimerRef = useRef<number | null>(null)
+
+  const cancelScheduledClose = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleClose = useCallback(() => {
+    cancelScheduledClose()
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null
+      setAnchor(null)
+    }, HOVER_CLOSE_GRACE_MS)
+  }, [cancelScheduledClose])
+
+  useEffect(() => cancelScheduledClose, [cancelScheduledClose])
+
   useEffect(() => {
     function findChunkElement(target: EventTarget | null): HTMLElement | null {
       if (!(target instanceof Element)) return null
@@ -80,24 +109,41 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
       // Touch devices emulate hover-ish events on first tap; ignore them so
       // the click handler is the sole source of truth on mobile.
       if (e.pointerType === "touch") return
+      // The cursor made it onto the popover: keep it open.
+      if (isInsidePopover(e.target instanceof Node ? e.target : null)) {
+        cancelScheduledClose()
+        return
+      }
       const el = findChunkElement(e.target)
       if (!el) return
       const chunkId = el.dataset.chunkId
       if (!chunkId) return
       const record = chunksRef.current.get(chunkId)
       if (!record || record.locked) return
+      cancelScheduledClose()
       setAnchor({ chunkId, el })
     }
 
     function onPointerOut(e: PointerEvent) {
       if (e.pointerType === "touch") return
+      // Only departures from a chunk or the popover can close it. Without
+      // this origin guard, every element boundary the cursor crosses
+      // elsewhere on the page would restart the grace timer below and keep
+      // the popover alive long past HOVER_CLOSE_GRACE_MS.
+      const from = e.target instanceof Node ? e.target : null
+      const fromChunk = from instanceof Element && from.closest("[data-chunk-id]") !== null
+      if (!fromChunk && !isInsidePopover(from)) return
       const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
       // Don't dismiss when the cursor moves onto the popover itself (so the
       // user can hover inside it to click Switch) or onto another chunk
       // element (the next pointerover handles the re-anchor).
       if (next && isInsidePopover(next)) return
       if (next instanceof Element && next.closest("[data-chunk-id]")) return
-      setAnchor(null)
+      // The popover floats with a gap from the chunk, so the cursor passes
+      // over neither on its way there. Defer the close so the traversal
+      // doesn't dismiss the popover before it can be reached; pointerover on
+      // the popover (or a chunk) cancels the pending close.
+      scheduleClose()
     }
 
     function onClick(e: MouseEvent) {
@@ -109,7 +155,9 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
         const record = chunksRef.current.get(chunkId)
         if (!record || record.locked) return
         // Tapping the same chunk toggles closed; tapping a different one
-        // re-anchors to it.
+        // re-anchors to it. A pending hover-close must not fire after the
+        // re-anchor, or it would dismiss the freshly opened popover.
+        cancelScheduledClose()
         setAnchor((prev) => (prev?.chunkId === chunkId ? null : { chunkId, el }))
         return
       }
@@ -130,7 +178,7 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
       document.removeEventListener("click", onClick)
       document.removeEventListener("keydown", onKey)
     }
-  }, [isInsidePopover])
+  }, [isInsidePopover, scheduleClose, cancelScheduledClose])
 
   if (typeof document === "undefined" || !anchor) return null
   const record = chunks.get(anchor.chunkId)
