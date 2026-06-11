@@ -138,7 +138,7 @@ outside the set are stripped before they reach the model
 (`companion/strip-inaccessible-refs.ts`). So a companion in one stream cannot quote or
 surface content the location is not entitled to see.
 
-### Which tools exist is per-persona, then per-integration
+### Which tools exist is per-persona, then per-integration, then per-stream
 
 A persona's `enabledTools` list decides which tools are even offered; a `null` list means
 all of them, for backwards compatibility (`tool-set.ts`, `tools/index.ts`). On top of that,
@@ -147,6 +147,15 @@ only when the workspace has those integrations connected, and a persona that lis
 tool without the integration just logs a warning and the tool is silently absent
 (`tool-set.ts:77`). Ariadne ships with web search, URL reading, bounded research, memo
 description, and the GitHub and Linear read tools (`built-in-agents.ts:66`).
+
+Last, the stream's own tool-privacy policy folds over the built toolset through
+`negotiateCapabilities` (`packages/agent-runtime/src/runtime/negotiate-capabilities.ts`),
+which filters on each tool's declared `categories` via `areToolCategoriesAllowed`. The
+policy lives in `stream_policies` (`StreamPoliciesRepository`), keyed by the non-thread
+root — threads inherit, mirroring stream access — and row absence means "no restriction".
+The companion applies it in `persona-agent.ts` to both the main toolset and the
+general-research sub-loop's; the enclave applies the same function to its own toolset
+(see below).
 
 Each tool definition is self-describing beyond its wire schema: `AgentToolConfig` carries
 the tool's privacy `categories` (sourced from `TOOL_CATEGORIES_BY_NAME` for registered
@@ -189,12 +198,9 @@ enclave-side wiring lives in the enclave service, not here. See e2e-encrypted-sc
 
 What does not exist today, stated plainly:
 
-- **No per-stream tool policy on plaintext streams.** Companion tool availability is
-  per-persona (`enabledTools`) and per-integration, plus the access-scoping and
-  trust-boundary defenses above. The one per-stream policy that exists is
-  `e2e_streams.allowed_tool_categories`, enforced by the enclave's toolset filter against
-  each tool's declared `categories`; generalizing it to all streams is planned (the
-  agent-runtimes unification plan, phase 1.4).
+- **No surface sets the per-stream tool policy yet.** `stream_policies` is enforced on
+  every stream (companion and enclave alike), but no API endpoint or UI writes it — a
+  policy today is a manual row. The per-category picker is deferred frontend work.
 - **Workspace persona overrides are code-complete but not surfaced.** A persona's built-in
   config can be patched per workspace (`built-in-agents.ts:148`, `applyBuiltInAgentPatch`)
   and the override repository exists, but no UI sets these and there is no persona picker, so

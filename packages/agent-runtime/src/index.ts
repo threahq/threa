@@ -1,6 +1,8 @@
 // Runtime
 export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./runtime/agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./runtime/agent-tool"
+export { negotiateCapabilities } from "./runtime/negotiate-capabilities"
+export type { NegotiateCapabilitiesParams, NegotiatedCapabilities } from "./runtime/negotiate-capabilities"
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./runtime/agent-events"
 export type { AgentObserver } from "./runtime/agent-observer"
 export { OtelObserver } from "./runtime/otel-observer"

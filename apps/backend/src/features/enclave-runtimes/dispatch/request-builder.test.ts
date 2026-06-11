@@ -11,7 +11,6 @@ const E2E: E2eStream = {
   ownerUserId: "usr_owner",
   ownerUserKeyId: "e2ek_owner",
   currentKeyGeneration: 1,
-  allowedToolCategories: null,
   hasSealedName: false,
 }
 
@@ -70,6 +69,7 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
     persona: PERSONA,
     replySenderId: "persona_ariadne",
     sessionId: "session_test",
+    allowedToolCategories: null,
     ...over,
   }
 }
@@ -180,12 +180,12 @@ describe("buildEnclaveSessionAssignment", () => {
   })
 
   it("carries the stream's tool-privacy policy onto the assignment", () => {
-    const built = buildEnclaveSessionAssignment(inputs({ e2e: { ...E2E, allowedToolCategories: ["web"] } }))
+    const built = buildEnclaveSessionAssignment(inputs({ allowedToolCategories: ["web"] }))
     expect(built!.assignment.allowedToolCategories).toEqual(["web"])
   })
 
   it("ships an empty policy verbatim (no tools at all)", () => {
-    const built = buildEnclaveSessionAssignment(inputs({ e2e: { ...E2E, allowedToolCategories: [] } }))
+    const built = buildEnclaveSessionAssignment(inputs({ allowedToolCategories: [] }))
     expect(built!.assignment.allowedToolCategories).toEqual([])
   })
 })

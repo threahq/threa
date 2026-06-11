@@ -560,7 +560,6 @@ describe("StreamService.createThread (via create)", () => {
       ownerUserId: "usr_owner",
       ownerUserKeyId: "uik_owner",
       currentKeyGeneration: 2,
-      allowedToolCategories: null,
       enabledAt: new Date(),
     } as never)
     mockMarkStreamE2e.mockReset().mockResolvedValue({} as never)

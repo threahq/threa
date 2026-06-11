@@ -1,4 +1,4 @@
-import type { EnclaveSessionAssignment, EnclaveStreamEnvelope } from "@threa/types"
+import type { EnclaveSessionAssignment, EnclaveStreamEnvelope, ToolPrivacyPolicy } from "@threa/types"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import type { Message } from "../../messaging"
 import type { EnclaveRuntime } from "../repository"
@@ -43,6 +43,13 @@ export interface BuildInvokeInputs {
   replySenderId: string
   /** The server-created agent_sessions id the enclave drives this turn under. */
   sessionId: string
+  /**
+   * The stream's tool-privacy policy (from `stream_policies`, resolved at the
+   * root scratchpad — threads inherit). `null` = no restriction. Shipped on the
+   * assignment so the enclave gates its own toolset; the server never builds
+   * the tools itself.
+   */
+  allowedToolCategories: ToolPrivacyPolicy
   /**
    * Opaque ciphertext for each E2E attachment bound to the trigger message,
    * base64-encoded. The worker reads these from S3 (the backend can't decrypt
@@ -119,7 +126,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
     // Per-stream tool-privacy policy: ship it so the enclave gates its tools.
     // NULL = unrestricted → omit the field (the enclave then builds its full
     // web surface, today's behavior).
-    ...(e2e.allowedToolCategories ? { allowedToolCategories: e2e.allowedToolCategories } : {}),
+    ...(inputs.allowedToolCategories ? { allowedToolCategories: inputs.allowedToolCategories } : {}),
     // Attachment ciphertext (trigger + recent history), shipped inline so the
     // enclave reads files without an S3 egress. Omitted when there are none.
     ...(inputs.attachmentCiphertexts && inputs.attachmentCiphertexts.length > 0

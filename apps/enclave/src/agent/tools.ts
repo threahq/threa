@@ -2,11 +2,12 @@ import {
   createReadUrlTool,
   createWebSearchTool,
   createGeneralResearchTool,
+  negotiateCapabilities,
   runGeneralResearch,
   type AgentTool,
 } from "@threa/agent-runtime/runtime"
 import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
-import { areToolCategoriesAllowed, type ToolPrivacyCategory } from "@threa/types"
+import type { ToolPrivacyCategory } from "@threa/types"
 import type { LanguageModel } from "ai"
 import { createEnclaveLoadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
 
@@ -83,11 +84,14 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
       ),
   })
 
-  // The owner's per-stream policy filters on each tool's OWN declared
-  // categories: the entire web surface (web_search, read_url, general_research)
-  // drops together when `web` is not allowed — honest about the privacy the
-  // stream keeps without crippling files the model was already shown.
-  return [...localTools, ...webTools(), research].filter((tool) =>
-    areToolCategoriesAllowed(deps.allowedCategories, tool.config.categories)
-  )
+  // The owner's per-stream policy folds over each tool's OWN declared
+  // categories through the same `negotiateCapabilities` chokepoint the
+  // companion uses: the entire web surface (web_search, read_url,
+  // general_research) drops together when `web` is not allowed — honest about
+  // the privacy the stream keeps without crippling files the model was
+  // already shown.
+  return negotiateCapabilities({
+    streamPolicy: deps.allowedCategories,
+    tools: [...localTools, ...webTools(), research],
+  }).tools
 }

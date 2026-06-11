@@ -64,7 +64,8 @@ the row regardless.
 **Dispatch (backend → enclave).** When a turn is owed in an encrypted stream, the
 `enclave-invoke-worker` builds an `EnclaveSessionAssignment` — the sealed prompt,
 sealed history, the SSK wrap(s) addressed to a live EIK, the system prompt (clear,
-non-secret), model id, the per-stream `allowedToolCategories` policy, and
+non-secret), model id, the per-stream `allowedToolCategories` policy (read from
+`stream_policies`, keyed by the root like the rest of the E2E identity), and
 non-secret `trigger` metadata — and `POST`s it to the enclave via the
 `forwarder`. The worker inserts the running session row and its `started` event in
 **one transaction** (INV-7) and, if assignment fails, drives the session through

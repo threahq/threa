@@ -1,4 +1,3 @@
-import type { ToolPrivacyPolicy } from "@threa/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
@@ -9,7 +8,6 @@ interface E2eStreamRow {
   owner_user_id: string
   owner_user_key_id: string
   current_key_generation: number
-  allowed_tool_categories: string[] | null
   /** Computed in getByStreamId only; absent (→ false) on RETURNING rows. */
   has_sealed_name?: boolean
 }
@@ -22,12 +20,6 @@ export interface E2eStream {
   ownerUserKeyId: string
   /** SSK generation new messages currently seal under (0 for owner-only). */
   currentKeyGeneration: number
-  /**
-   * Tool-privacy policy: the tool categories the enclave agent may use in this
-   * stream. `null` = no restriction (default). Carried into the enclave session
-   * assignment and enforced there (the server never builds the tools itself).
-   */
-  allowedToolCategories: ToolPrivacyPolicy
   /**
    * Whether a sealed display name is already stored. Lets the enclave dispatch
    * decide whether to ask the enclave to auto-title this scratchpad (only when
@@ -50,8 +42,7 @@ export interface MarkStreamE2eParams {
   currentKeyGeneration?: number
 }
 
-const COLUMNS =
-  "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, current_key_generation, allowed_tool_categories"
+const COLUMNS = "stream_id, workspace_id, enabled_at, owner_user_id, owner_user_key_id, current_key_generation"
 
 function mapRow(row: E2eStreamRow): E2eStream {
   return {
@@ -61,7 +52,6 @@ function mapRow(row: E2eStreamRow): E2eStream {
     ownerUserId: row.owner_user_id,
     ownerUserKeyId: row.owner_user_key_id,
     currentKeyGeneration: row.current_key_generation,
-    allowedToolCategories: (row.allowed_tool_categories as ToolPrivacyPolicy) ?? null,
     hasSealedName: row.has_sealed_name ?? false,
   }
 }
