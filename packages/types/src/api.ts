@@ -508,17 +508,22 @@ export interface EnclaveSealedName {
 }
 
 /**
- * One sealed trace step the enclave produced this turn, POSTed to
+ * One sealed trace step a sealed-capable agent driver produced this turn — the
+ * enclave today, any owner-granted sealed actor later — POSTed to
  * `POST .../sessions/:id/steps` the moment the agent loop emits it (the LLM's
- * reasoning, each reply it sends, …). Only the step's *type*, optional reply
- * link, and timing travel in clear; the step's content (reasoning text, message
- * body, and — when tools land — their args/output) is sealed under the reply
- * SSK, bound by AAD to `streamId|stepId|senderId`, so the backend persists
- * ciphertext it can't read (INV-E7). The enclave mints each step's id (a
+ * reasoning, each reply it sends, …). Part of the shared sealed vocabulary,
+ * not enclave-owned. Only the step's *type*, optional reply link, and timing
+ * travel in clear; the step's content (reasoning text, message body, and —
+ * when tools land — their args/output) is sealed under the reply SSK, bound by
+ * AAD to `streamId|stepId|senderId`, so the backend persists ciphertext it
+ * can't read (INV-E7). A step's citation sources ride INSIDE the ciphertext
+ * (the sealed payload wrapper, `@threa/crypto`'s `serializeSealedPayload`) —
+ * they reveal what was researched, so they must never appear as a cleartext
+ * column or wire field (E2EE-14). The producer mints each step's id (a
  * `step_…` ULID) and the backend stores the ciphertext under it; the browser
  * decrypts it with the stream key, exactly as it does message ciphertext.
  */
-export interface EnclaveSealedStep {
+export interface SealedStep {
   stepId: string
   stepType: AgentStepType
   /**
@@ -540,10 +545,10 @@ export interface EnclaveSealedStep {
  * (and hang its live substeps under it) before completion, exactly as it does for
  * non-E2E personas. `stepType` + `stepId` travel in clear; content is sealed under
  * the reply SSK when it's already known (reasoning/reply text) and absent for tools
- * whose result isn't known yet. A matching `EnclaveSealedStep` finalizes the same
+ * whose result isn't known yet. A matching `SealedStep` finalizes the same
  * `stepId` in place when the step completes.
  */
-export interface EnclaveSealedStepStart {
+export interface SealedStepStart {
   stepId: string
   stepType: AgentStepType
   /** For message_sent steps: the reply id this step describes (clear, same as the finalize). */

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react"
-import type { AgentSessionStep } from "@threa/types"
+import { TRACE_SOURCE_TYPES, type AgentSessionStep, type TraceSource, type TraceSourceType } from "@threa/types"
+import type { SealedSourceItem } from "@threa/crypto"
 import {
   getCachedDecryption,
   requestDecryption,
@@ -24,14 +25,19 @@ import { useStreamFromStore } from "@/stores/stream-store"
  *  - `plaintext`  — step has no ciphertext; `content` is its plaintext field.
  *  - `locked`     — sealed step but the E2E session isn't unlocked.
  *  - `pending`    — unlocked, decrypt in flight (cache miss on first paint).
- *  - `decrypted`  — unlocked, decrypt succeeded; render `content`.
+ *  - `decrypted`  — unlocked, decrypt succeeded; render `content` + `sources`.
  *  - `failed`     — decrypt threw (wrong key, tampered AAD, etc.).
+ *
+ * A sealed step's citation sources ride INSIDE the ciphertext (E2EE-14), so the
+ * decrypted variant carries them — already projected into the same `TraceSource`
+ * shape a plaintext step's cleartext `sources` column holds, so the trace
+ * dialog's `SourceList` renders both without branching on the producer.
  */
 export type DecryptedStepContent =
   | { status: "plaintext"; content: string | undefined }
   | { status: "locked"; content: undefined }
   | { status: "pending"; content: undefined }
-  | { status: "decrypted"; content: string }
+  | { status: "decrypted"; content: string; sources: TraceSource[] }
   | { status: "failed"; content: undefined }
 
 function readSealedStep(step: AgentSessionStep): { ciphertext: string; envelope: unknown } | null {
@@ -86,8 +92,44 @@ export function useDecryptedStepContent(
   // root is known, never against the bare thread id.
   if (!sessionUnlocked) return { status: "locked", content: undefined }
   if (cached?.status === "decrypted" && cached.content) {
-    return { status: "decrypted", content: cached.content.contentMarkdown }
+    return {
+      status: "decrypted",
+      content: cached.content.contentMarkdown,
+      sources: toTraceSources(cached.content.sources ?? []),
+    }
   }
   if (cached?.status === "failed") return { status: "failed", content: undefined }
   return { status: "pending", content: undefined }
+}
+
+/**
+ * Project the sealed payload's sources into the renderable `TraceSource` shape.
+ * The sealed twin carries no `domain` (it's derivable), so derive it from the
+ * url here — same as the reply bubble's source list. An unrecognized `type`
+ * falls back to `web`: every sealed source has a url, which is exactly what the
+ * web rendering links.
+ */
+function toTraceSources(sources: SealedSourceItem[]): TraceSource[] {
+  return sources.map((s) => {
+    const domain = domainOf(s.url)
+    return {
+      type: isTraceSourceType(s.type) ? s.type : "web",
+      title: s.title,
+      url: s.url,
+      ...(domain ? { domain } : {}),
+      ...(s.snippet ? { snippet: s.snippet } : {}),
+    }
+  })
+}
+
+function isTraceSourceType(type: string | undefined): type is TraceSourceType {
+  return type !== undefined && (TRACE_SOURCE_TYPES as readonly string[]).includes(type)
+}
+
+function domainOf(url: string): string | undefined {
+  try {
+    return new URL(url).hostname || undefined
+  } catch {
+    return undefined
+  }
 }

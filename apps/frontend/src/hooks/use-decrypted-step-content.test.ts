@@ -92,7 +92,47 @@ describe("useDecryptedStepContent", () => {
       )
     )
 
-    expect(result.current).toEqual({ status: "decrypted", content: "decrypted reasoning" })
+    expect(result.current).toEqual({ status: "decrypted", content: "decrypted reasoning", sources: [] })
+  })
+
+  it("surfaces the payload's sealed sources as renderable TraceSources (E2EE-14)", () => {
+    unlockedSession()
+    vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({
+      status: "decrypted",
+      content: {
+        contentMarkdown: "tides",
+        contentJson: { type: "doc" } as never,
+        sources: [
+          { type: "web", title: "Tide Atlas", url: "https://tides.example/atlas", snippet: "the moon" },
+          // No type and an unparseable url — falls back to "web", no domain.
+          { title: "Unlabeled", url: "not-a-url" },
+        ],
+      },
+    })
+
+    const { result } = renderHook(() =>
+      useDecryptedStepContent(
+        makeStep({ contentCiphertext: "abc", contentEnvelope: { v: 2, keyGeneration: 0, iv: "x", aad: "y" } }),
+        WORKSPACE_ID,
+        STREAM_ID,
+        USER_ID
+      )
+    )
+
+    expect(result.current).toEqual({
+      status: "decrypted",
+      content: "tides",
+      sources: [
+        {
+          type: "web",
+          title: "Tide Atlas",
+          url: "https://tides.example/atlas",
+          domain: "tides.example",
+          snippet: "the moon",
+        },
+        { type: "web", title: "Unlabeled", url: "not-a-url" },
+      ],
+    })
   })
 
   it("returns failed when the cached decrypt failed", () => {

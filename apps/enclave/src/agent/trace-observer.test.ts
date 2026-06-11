@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
-import { generateStreamKey, openMessageAsString } from "@threa/crypto"
-import type { EnclaveSealedStep, EnclaveSealedStepStart, EnclaveSealedSubstep } from "@threa/types"
+import { generateStreamKey, openMessageAsString, parseSealedPayload } from "@threa/crypto"
+import type { SealedStep, SealedStepStart, EnclaveSealedSubstep } from "@threa/types"
 import { EnclaveTraceObserver } from "./trace-observer"
 
 const STREAM_ID = "stream_x"
@@ -10,13 +10,13 @@ const SENDER = "persona_ariadne"
 function makeObserver(): {
   observer: EnclaveTraceObserver
   ssk: Uint8Array
-  started: EnclaveSealedStepStart[]
-  steps: EnclaveSealedStep[]
+  started: SealedStepStart[]
+  steps: SealedStep[]
   substeps: EnclaveSealedSubstep[]
 } {
   const ssk = generateStreamKey()
-  const started: EnclaveSealedStepStart[] = []
-  const steps: EnclaveSealedStep[] = []
+  const started: SealedStepStart[] = []
+  const steps: SealedStep[] = []
   const substeps: EnclaveSealedSubstep[] = []
   const observer = new EnclaveTraceObserver({
     streamId: STREAM_ID,
@@ -113,6 +113,91 @@ describe("EnclaveTraceObserver", () => {
     expect(done.stepType).toBe("web_search")
     expect(done.durationMs).toBe(850)
     expect(await open(ssk, done)).toBe("weather")
+  })
+
+  it("seals a tool's citation sources inside the finalized step payload (E2EE-14)", async () => {
+    const { observer, ssk, started, steps } = makeObserver()
+
+    await observer.handle({
+      type: "tool:start",
+      toolCallId: "tc_1",
+      toolName: "web_search",
+      stepType: "web_search",
+      input: { query: "tides" },
+    })
+    await observer.handle({
+      type: "tool:complete",
+      toolCallId: "tc_1",
+      toolName: "web_search",
+      input: { query: "tides" },
+      output: "{}",
+      durationMs: 850,
+      trace: {
+        stepType: "web_search",
+        content: "tides",
+        sources: [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas", domain: "tides.example" }],
+      },
+    })
+
+    // The wire step stays ciphertext + envelope only — the sources ride INSIDE
+    // the sealed payload, never as a cleartext field.
+    expect(started[0]!.ciphertext).toBeUndefined()
+    const done = steps[0]!
+    expect(Object.keys(done).sort()).toEqual(["ciphertext", "durationMs", "envelope", "stepId", "stepType"])
+    const payload = parseSealedPayload(await open(ssk, done))
+    expect(payload.contentMarkdown).toBe("tides")
+    expect(payload.sources).toEqual([{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }])
+  })
+
+  it("drops a url-less source rather than sealing an un-renderable citation", async () => {
+    const { observer, ssk, steps } = makeObserver()
+
+    await observer.handle({
+      type: "tool:start",
+      toolCallId: "tc_1",
+      toolName: "web_search",
+      stepType: "web_search",
+      input: {},
+    })
+    await observer.handle({
+      type: "tool:complete",
+      toolCallId: "tc_1",
+      toolName: "web_search",
+      input: {},
+      output: "{}",
+      durationMs: 5,
+      trace: {
+        stepType: "web_search",
+        content: "tides",
+        sources: [
+          { type: "workspace_memo", title: "No link" },
+          { type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" },
+        ],
+      },
+    })
+
+    const payload = parseSealedPayload(await open(ssk, steps[0]!))
+    expect(payload.sources).toEqual([{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }])
+  })
+
+  it("seals the reply's citation sources into the message_sent step (start and finalize)", async () => {
+    const { observer, ssk, started, steps } = makeObserver()
+
+    await observer.handle({
+      type: "message:sent",
+      messageId: "msg_reply",
+      content: "The tide turns at dawn.",
+      sources: [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas", snippet: "the moon" }],
+    })
+
+    // Both frames share one seal, so an open trace dialog sees the sources the
+    // moment the step opens — the same bytes the finalize persists.
+    expect(started[0]!.ciphertext).toBe(steps[0]!.ciphertext)
+    const payload = parseSealedPayload(await open(ssk, steps[0]!))
+    expect(payload.contentMarkdown).toBe("The tide turns at dawn.")
+    expect(payload.sources).toEqual([
+      { type: "web", title: "Tide Atlas", url: "https://tides.example/atlas", snippet: "the moon" },
+    ])
   })
 
   it("seals each tool:progress phase and persists a running snapshot onto the in-flight step", async () => {
@@ -244,8 +329,8 @@ describe("EnclaveTraceObserver", () => {
     // A backend missing /steps/started (or a transient blip) makes sendStepStarted
     // reject. That must never drop the durable finalized step.
     const ssk = generateStreamKey()
-    const started: EnclaveSealedStepStart[] = []
-    const steps: EnclaveSealedStep[] = []
+    const started: SealedStepStart[] = []
+    const steps: SealedStep[] = []
     const observer = new EnclaveTraceObserver({
       streamId: STREAM_ID,
       replySsk: ssk,
