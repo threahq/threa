@@ -11,6 +11,22 @@ export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./ag
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./agent-tool"
 export { negotiateCapabilities } from "./negotiate-capabilities"
 export type { NegotiateCapabilitiesParams, NegotiatedCapabilities } from "./negotiate-capabilities"
+// The turn contract's sealed driver: the enclave runs the same AgentRuntime loop
+// behind a sealing sink. Provider-free (no createAI / OTEL), so it belongs in the
+// curated barrel; the companion's InProcessTurnDriver stays out — the enclave only
+// ever serves "sealed" delivery. `declaredUnsupported` lets it name the gaps it
+// can't fill (interjection, UX-12) instead of silently omitting them.
+export { EnclaveTurnDriver, TurnDeliveries, declaredUnsupported, isDeclaredUnsupported } from "./turn-driver"
+export type {
+  TurnCommit,
+  TurnCommitReceipt,
+  TurnDelivery,
+  TurnDriver,
+  TurnRequest,
+  TurnResult,
+  TurnSink,
+  DeclaredUnsupported,
+} from "./turn-driver"
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 export type { AgentObserver } from "./agent-observer"
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"

@@ -8,7 +8,13 @@ export type { AgentObserver } from "./runtime/agent-observer"
 export { OtelObserver } from "./runtime/otel-observer"
 export { AgentRuntime, mergeSourceItems } from "./runtime/agent-runtime"
 export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./runtime/agent-runtime"
-export { InProcessTurnDriver, TurnDeliveries } from "./runtime/turn-driver"
+export {
+  InProcessTurnDriver,
+  EnclaveTurnDriver,
+  TurnDeliveries,
+  declaredUnsupported,
+  isDeclaredUnsupported,
+} from "./runtime/turn-driver"
 export type {
   TurnCommit,
   TurnCommitReceipt,
@@ -17,6 +23,7 @@ export type {
   TurnRequest,
   TurnResult,
   TurnSink,
+  DeclaredUnsupported,
 } from "./runtime/turn-driver"
 export {
   TurnDigestCollector,

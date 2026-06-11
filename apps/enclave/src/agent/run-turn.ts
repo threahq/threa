@@ -26,13 +26,17 @@ import type {
   EnclaveSskWrap,
 } from "@threa/types"
 import {
-  AgentRuntime,
+  EnclaveTurnDriver,
+  TurnDeliveries,
+  declaredUnsupported,
   TurnDigestCollector,
   buildToolPromptSections,
   formatTurnDigestsForPrompt,
   generateTurnDigest,
   parseTurnDigestStepContent,
   type TurnDigestPromptEntry,
+  type TurnRequest,
+  type TurnSink,
 } from "@threa/agent-runtime/runtime"
 import type { EnclaveKeyPair } from "../keystore"
 import type { RawChatFn } from "../llm"
@@ -251,14 +255,21 @@ export async function runEnclaveTurn(
     .filter((block): block is string => Boolean(block))
     .join("\n\n")
 
-  const runtime = new AgentRuntime({
-    ai,
+  // Split the turn into what it IS (the request: model binding, prompt, history,
+  // toolset, sampling) and what it touches in the host (the sink: the sealing
+  // commit + trace observers, cooperative cancel, and the declared-unsupported
+  // interjection edge). The EnclaveTurnDriver maps both onto the same
+  // `AgentRuntime` the in-process companion runs — the enclave differs only by
+  // delivery and by sealing, never by a forked loop.
+  const turnRequest: TurnRequest = {
+    delivery: TurnDeliveries.SEALED,
     model,
     modelString: request.model,
     systemPrompt,
     messages,
     tools: turnTools,
-    observers: [traceObserver, digestCollector],
+    maxTokens: request.maxTokens,
+    temperature: request.temperature,
     // Lead the trace with the CONTEXT step ("Triggered by: …"): the runtime
     // emits it as a `context:received` event at run start and the observer
     // seals it like any other step. The body is the decrypted prompt;
@@ -267,25 +278,16 @@ export async function runEnclaveTurn(
     ...(request.trigger
       ? { initialContext: { messages: [{ ...request.trigger, content: promptText, isTrigger: true }] } }
       : {}),
-    maxTokens: request.maxTokens,
-    temperature: request.temperature,
-    // Hand ONLY the long-running research sub-loop the session's cancel signal so
-    // a user "Stop research" aborts it gracefully (partial findings, the turn
-    // still replies). Gated by tool name exactly like the in-process path, so a
-    // short/uninterruptible tool never receives an already-aborted signal.
-    ...(abortSignal
-      ? {
-          toolSignalProvider: (_toolCallId: string, toolName: string) =>
-            toolName === AgentToolNames.GENERAL_RESEARCH ? abortSignal : undefined,
-        }
-      : {}),
+  }
+
+  const turnSink: TurnSink = {
     // Terminal action: mint each reply's id, seal it under the current SSK bound
     // to that id, and stream it back now (awaited, so it's delivered before the
     // loop moves on). The backend stores ciphertext under this id. Citation
     // sources ride INSIDE the sealed payload — they reveal what was researched,
     // so they must never travel as a cleartext column or wire field (E2EE-9). A
     // sourceless reply seals the bare string, byte-identical to before.
-    sendMessage: async ({ content, sources }) => {
+    commitMessage: async ({ content, sources }) => {
       if (firstReplyText === null) firstReplyText = content
       lastReplyText = content
       const messageId = `msg_${ulid()}`
@@ -303,9 +305,27 @@ export async function runEnclaveTurn(
       messageIds.push(messageId)
       return { messageId }
     },
-  })
+    observers: [traceObserver, digestCollector],
+    // Interjection is declared unsupported, not silently omitted (UX-12 / §2.2.4):
+    // the enclave reads sealed history once at assignment time and has no channel
+    // to see messages that land mid-turn, so the loop's reconsider path has no
+    // provider here. The reason rides the seam for rendering; the sealed mid-turn
+    // pull (§2.7) is the future "implement" alternative.
+    newMessages: declaredUnsupported("Ariadne can't see mid-turn messages in encrypted scratchpads"),
+    // Hand ONLY the long-running research sub-loop the session's cancel signal so
+    // a user "Stop research" aborts it gracefully (partial findings, the turn
+    // still replies). Gated by tool name exactly like the in-process path, so a
+    // short/uninterruptible tool never receives an already-aborted signal.
+    ...(abortSignal
+      ? {
+          toolSignalProvider: (_toolCallId: string, toolName: string) =>
+            toolName === AgentToolNames.GENERAL_RESEARCH ? abortSignal : undefined,
+        }
+      : {}),
+  }
 
-  await runtime.run()
+  // Per turn because the enclave AI is per turn (it accumulates THIS turn's usage).
+  await new EnclaveTurnDriver({ ai }).runTurn(turnRequest, turnSink)
 
   // Turn digest (C-1): condense the turn's tool work with one cheap completion
   // over the same pinned model, seal it as a trailing turn_digest step (the

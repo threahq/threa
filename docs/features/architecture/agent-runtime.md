@@ -204,6 +204,19 @@ transport. Only personas flagged `e2eCapable` (Ariadne, `built-in-agents.ts:95`)
 enclave actor; the dispatch gate refuses a non-capable one (`isE2eCapablePersona`). The
 enclave-side wiring lives in the enclave service, not here. See e2e-encrypted-scratchpads.
 
+**The enclave reaches the loop through the sealed turn driver.** `run-turn.ts` mirrors the
+companion's seam: it builds a `TurnRequest` (delivery `"sealed"`) and a `TurnSink` whose
+`commitMessage` seals each reply under the stream SSK and whose observers seal each trace
+step, then hands both to an `EnclaveTurnDriver` — the same `runTurnOnAgentRuntime` mapping
+the plaintext driver uses, differing only by delivery and sealing. The driver is exported
+from the curated barrel (no OTEL, no `createAI`) and is constructed per turn because the
+enclave's `AgentRuntimeAI` is per turn (it accumulates that turn's token usage). The enclave
+cannot see messages that arrive mid-turn — it reads sealed history once at assignment time —
+so its sink passes `declaredUnsupported("…")` for the interjection edge rather than omitting
+it: the gap (UX-12) is a named, renderable product decision, not a silent hole. Implementing
+a sealed mid-turn pull is a later option (`docs/plans/agent-runtimes-unification-redesign.md`
+§2.7).
+
 ## Boundaries
 
 What does not exist today, stated plainly:
