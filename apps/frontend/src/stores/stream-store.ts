@@ -1,5 +1,6 @@
 import Dexie from "dexie"
 import { useLiveQuery } from "dexie-react-hooks"
+import { useRef } from "react"
 import { db, type CachedEvent, type CachedStream } from "@/db"
 
 /**
@@ -100,11 +101,45 @@ export function useStreamEvents(
   // the previous stream's array. Our stamp lets us detect that regardless of
   // whether the previous result happened to be non-empty or empty.
   const resultStreamId = (result as (CachedEvent[] & { __streamId?: string }) | undefined)?.__streamId
+  const prevRef = useRef<{ streamId: string; array: CachedEvent[]; byId: Map<string, CachedEvent> } | null>(null)
   if (streamId && resultStreamId !== streamId) {
     return undefined
   }
+  if (!result || !streamId) return result
 
-  return result
+  // Structural sharing: `useLiveQuery` re-runs on ANY write to db.events and
+  // materializes all-new row objects, even for rows whose stored bytes did
+  // not change. Downstream memoization (timeline rows) keys off row identity,
+  // so without sharing a single-message write invalidates every visible row.
+  // A row is considered unchanged when its write markers match: every
+  // payload-mutating write path bumps `_patchedAt` (socket patches),
+  // `_cachedAt` (bootstrap apply / cache updates), or `_status` (optimistic
+  // lifecycle), so matching markers imply an identical row.
+  const prev = prevRef.current
+  let shared = result
+  if (prev && prev.streamId === streamId) {
+    let allSame = prev.array.length === result.length
+    shared = result.map((row, i) => {
+      const old = prev.byId.get(row.id)
+      if (
+        old &&
+        old._cachedAt === row._cachedAt &&
+        old._patchedAt === row._patchedAt &&
+        old._status === row._status &&
+        old.sequence === row.sequence
+      ) {
+        if (allSame && prev.array[i] !== old) allSame = false
+        return old
+      }
+      allSame = false
+      return row
+    })
+    if (allSame) shared = prev.array
+  }
+  if (shared !== prev?.array) {
+    prevRef.current = { streamId, array: shared, byId: new Map(shared.map((row) => [row.id, row])) }
+  }
+  return shared
 }
 
 /**
