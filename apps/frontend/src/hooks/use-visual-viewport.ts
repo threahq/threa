@@ -35,6 +35,16 @@ const GROWTH_DEBOUNCE_MS = 150
  */
 const OPTIMISTIC_CLOSE_SUPPRESS_MS = 500
 
+/**
+ * Max px difference between the optimistic-close baseline and the reconcile
+ * measurement that we silently accept. Browsers report the settled viewport a
+ * few px off the baseline (URL-bar rounding, inset rounding); re-snapping for
+ * that triggers a second resize → re-pin → re-measure cycle the user sees as
+ * content "loading in again" after the keyboard closed. Genuine settles (URL
+ * bar moved: tens of px) still apply.
+ */
+const RECONCILE_TOLERANCE_PX = 8
+
 /** CSS custom property AppShell reads to size the app to the visible viewport */
 const VIEWPORT_HEIGHT_VAR = "--viewport-height"
 
@@ -268,7 +278,11 @@ export function useVisualViewport(enabled: boolean): boolean {
             clearTimeout(reconcileTimeoutId)
             reconcileTimeoutId = window.setTimeout(() => {
               const settled = measureEffectiveHeight()
-              if (settled !== lastWrittenHeight) applyHeight(settled)
+              // Tolerate small deltas: a few px of URL-bar/inset noise in the
+              // settled measurement is not worth a second resize → re-pin →
+              // virtua re-measure cycle right after the optimistic snap (the
+              // visible "content loads in again" double-snap on close).
+              if (Math.abs(settled - lastWrittenHeight) > RECONCILE_TOLERANCE_PX) applyHeight(settled)
             }, OPTIMISTIC_CLOSE_SUPPRESS_MS)
           }
         }, 0)
