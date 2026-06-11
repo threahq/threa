@@ -1,5 +1,6 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
+import type { SyncCatchUpResponse } from "@threa/types"
 import { HttpError } from "../../lib/errors"
 import type { SyncService } from "./service"
 
@@ -38,7 +39,7 @@ export function createSyncHandlers({ syncService }: Dependencies) {
           createdAt: entry.createdAt.toISOString(),
         })),
         head: head.toString(),
-      })
+      } satisfies SyncCatchUpResponse)
     },
   }
 }

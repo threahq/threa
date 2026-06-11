@@ -229,6 +229,35 @@ export interface EventsAroundResponse {
 }
 
 // ============================================================================
+// Sync log catch-up (GET /api/workspaces/:workspaceId/sync)
+// ============================================================================
+
+/**
+ * One sync-log entry. `payload` is the exact outbox payload the live socket
+ * emits for `eventType` — applying a catch-up entry reuses the same handler
+ * the live event uses. `syncId` is a stringified BIGINT, like stream
+ * sequences on the wire.
+ */
+export interface SyncCatchUpEntry {
+  syncId: string
+  eventType: string
+  payload: unknown
+  createdAt: string
+}
+
+/**
+ * Catch-up page. Clients advance their cursor only by applied entries and
+ * page until a fetch comes back empty — `head` is a workspace-global
+ * freshness hint, NOT a cursor target: the per-user filtered view can sit
+ * permanently below it. (Shadow mode, which applies nothing, deliberately
+ * advances by fetched entries instead — see SyncEngine.performShadowCatchUp.)
+ */
+export interface SyncCatchUpResponse {
+  entries: SyncCatchUpEntry[]
+  head: string
+}
+
+// ============================================================================
 // Messages API
 // ============================================================================
 

@@ -58,7 +58,7 @@ import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
-import { messagesApi } from "@/api"
+import { messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { SettingsDialog } from "@/components/settings"
 import { WorkspaceSettingsDialog } from "@/components/workspace-settings/workspace-settings-dialog"
@@ -206,6 +206,7 @@ function WorkspaceSyncHandler({
         delete: scheduledService.delete,
         sendNow: scheduledService.sendNow,
       },
+      syncService: syncApi,
     })
   }
   const syncEngine = syncEngineRef.current

@@ -34,6 +34,7 @@ export {
   type MemoDetailResponse,
 } from "./memos"
 export { conversationsApi, type ListConversationsParams } from "./conversations"
+export { syncApi } from "./sync"
 export { preferencesApi } from "./preferences"
 export { workspaceSettingsApi } from "./workspace-settings"
 export { sidebarConfigApi } from "./sidebar-config"
