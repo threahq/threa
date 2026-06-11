@@ -83,6 +83,16 @@ called no tools, the runtime treats the text as a candidate reply, validates it,
 commits it through the `sendMessage` callback or loops once more. It ends with `session:end`
 or `session:error`.
 
+**The companion reaches the loop through the plaintext turn driver.** `persona-agent.ts`
+does not construct `AgentRuntime` directly: it builds a `TurnRequest` (delivery
+`"plaintext"`, the model binding, prompt, history, toolset, and sampling params) and a
+`TurnSink` (the commit path, trace observers, and the abort + interjection edges) and hands
+them to a long-lived `InProcessTurnDriver`
+(`packages/agent-runtime/src/runtime/turn-driver.ts`), which maps them onto
+`AgentRuntimeConfig` and runs the loop. The driver is the structural seam the sealed
+(enclave) and external (bot) drivers share — each delivery gets exactly one driver, and a
+request routed to the wrong one fails loudly.
+
 **Sending a message is a callback, not a side effect the loop owns.** The runtime is handed
 a `sendMessage` function (`agent-runtime.ts:64`); the backend's implementation in
 `persona-agent.ts` writes the actual stream message, attaches the sources the agent

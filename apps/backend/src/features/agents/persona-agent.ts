@@ -36,14 +36,16 @@ import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
+import { createSessionTraceProjector, OtelObserver, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
 import {
-  AgentRuntime,
-  createSessionTraceProjector,
-  OtelObserver,
-  type AgentRuntimeConfig,
-  type NewMessageInfo,
-} from "./runtime"
-import { TurnDigestCollector, generateTurnDigest, negotiateCapabilities } from "@threa/agent-runtime"
+  InProcessTurnDriver,
+  TurnDeliveries,
+  TurnDigestCollector,
+  generateTurnDigest,
+  negotiateCapabilities,
+  type TurnRequest,
+  type TurnSink,
+} from "@threa/agent-runtime"
 import type { SessionTrace } from "./trace-emitter"
 import {
   SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS,
@@ -162,7 +164,16 @@ interface SupersededMessagePlan {
 }
 
 export class PersonaAgent {
-  constructor(private readonly deps: PersonaAgentDeps) {}
+  /**
+   * The plaintext TurnDriver of the turn contract. Long-lived (INV-13): each
+   * turn passes its own TurnRequest + TurnSink; the driver runs AgentRuntime
+   * in-process exactly as before.
+   */
+  private readonly turnDriver: InProcessTurnDriver
+
+  constructor(private readonly deps: PersonaAgentDeps) {
+    this.turnDriver = new InProcessTurnDriver({ ai: deps.ai })
+  }
 
   async run(input: PersonaAgentInput): Promise<PersonaAgentResult> {
     const {
@@ -401,7 +412,7 @@ export class PersonaAgent {
         const isSupersedeRerun = !!supersededMessagePlan
 
         // `sources` is required on the commit payload (empty array = none) so a
-        // caller can't silently drop citations — see AgentRuntimeConfig.sendMessage.
+        // caller can't silently drop citations — see TurnCommit.
         const doSendMessage = async (msgInput: { content: string; sources: SourceItem[] }) => {
           const latestSession = await AgentSessionRepository.findById(db, session.id)
           if (!latestSession || latestSession.status !== SessionStatuses.RUNNING) {
@@ -599,9 +610,10 @@ export class PersonaAgent {
         // turn_digest step can carry the tool work into later turns (C-1).
         const digestCollector = new TurnDigestCollector()
 
-        // Run agent runtime
-        const runtime = new AgentRuntime({
-          ai,
+        // The turn as dispatch mints it: delivery + model binding + this
+        // turn's prompt, history, toolset, and sampling params.
+        const turnRequest: TurnRequest = {
+          delivery: TurnDeliveries.PLAINTEXT,
           model,
           modelString: persona.model,
           // Origin is "user" for mention-triggered runs where we can attribute
@@ -623,7 +635,6 @@ export class PersonaAgent {
           tools,
           maxTokens: persona.maxTokens,
           temperature: persona.temperature,
-          sendMessage: doSendMessage,
           allowNoMessageOutput: isSupersedeRerun,
           validateFinalResponse: isSupersedeRerun
             ? buildSupersedeResponseValidator({
@@ -646,6 +657,13 @@ export class PersonaAgent {
               model_name: parsed.modelName,
             },
           },
+        }
+
+        // The host edges this turn runs against: the commit path, the trace
+        // observers, and the abort + interjection channels that used to be
+        // handed to the loop as raw closures.
+        const turnSink: TurnSink = {
+          commitMessage: doSendMessage,
           observers: [
             createSessionTraceProjector(trace),
             digestCollector,
@@ -797,10 +815,10 @@ export class PersonaAgent {
             personaId: persona.id,
             lastProcessedSequence: session.lastSeenSequence ?? initialSequence,
           },
-        })
+        }
 
         try {
-          const loopResult = await runtime.run()
+          const loopResult = await this.turnDriver.runTurn(turnRequest, turnSink)
           const retainedMessageIds =
             isSupersedeRerun && loopResult.sentMessageIds.length === 0
               ? [...supersededMessagePlan.messageIds]
