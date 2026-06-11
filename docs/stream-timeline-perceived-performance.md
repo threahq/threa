@@ -8,9 +8,8 @@ own, none of them require abandoning the PWA, and most share two root causes.
 
 Sibling exploration: `docs/sync-engine-v2-exploration.md` (PR #826) diagnoses
 the data-layer side (two-tier sync model). This doc covers the render-layer
-side. The fixes here are complementary to sync v2 and worth doing regardless
-of whether v2 ships: even a perfect delta protocol still feeds the same
-render pipeline.
+side. See "Relationship to sync v2" below for exactly which symptoms v2 would
+and would not address.
 
 ## The two shared root causes
 
@@ -208,6 +207,43 @@ On top of that, media bytes genuinely re-download across sessions:
   these components at all when nothing changed, and structural sharing in
   the liveQuery read (symptom 1 fix) removes the trigger.
 
+## Relationship to sync v2 (PR #826)
+
+The single-cursor direction in #826 helps two of the four symptoms, partially,
+and none of the others:
+
+- **Symptom 1 (cold-start lag):** partially addressed. The largest trigger is
+  the bootstrap rewriting unchanged rows into IDB, which makes liveQuery
+  re-emit everything. Under v2, warm catch-up is a cursor replay that applies
+  only the delta, and "is my snapshot current" becomes an integer comparison,
+  so the spurious full-rewrite churn largely disappears. The hydration burst,
+  the presign round trips, and the workspace IDB indexing on a true cold
+  start remain.
+- **Symptom 4, flicker half:** addressed. The "some but not all" pattern is
+  the `_patchedAt` two-tier merge deciding which rows to rewrite; v2
+  dissolves that machinery. The media half (per-session presigned URLs,
+  mount-local fade state) is untouched.
+- **Symptoms 2 and 3:** not addressed. Composer blanking is a
+  render/compositor problem and scroll blanks are row mount cost vs.
+  overscan; neither has any sync component.
+
+Two reasons the render-layer work is needed regardless of v2:
+
+1. Dexie `liveQuery` re-runs `.toArray()` on any write to the events table,
+   including a legitimate single-message delta, and materializes all-new
+   object identities for every row. So even under a perfect delta protocol,
+   one new message invalidates every visible row's props unless the row tree
+   is memoized and the read path does structural sharing. v2 reduces how
+   often the storm fires; items 1-2 below reduce what a storm costs.
+2. v2's step 1 is backend-only (the sync-log spine, explicitly no client
+   behavior change), so its render-side benefits arrive in a later phase. The
+   fixes below are cheap and land immediately.
+
+One overlap to be aware of: item 2's "skip no-op IDB rewrites in the
+bootstrap merge" is a tactical version of what v2 provides structurally. It
+is still worth doing as cheap interim relief, but it is the one item below
+that v2 eventually subsumes.
+
 ## Proposed work, in order
 
 1. **Memoize the timeline row tree.** `React.memo` on `TimelineItemContent`,
@@ -230,9 +266,9 @@ On top of that, media bytes genuinely re-download across sessions:
 
 Items 1-2 are pure frontend refactors with no protocol implications. Item 3
 touches the backend attachment routes. Items 4-6 are small and local. None
-of them conflict with the sync v2 direction in PR #826; 1-2 make the current
-engine's rewrite-heavy behavior cheap to absorb, which also buys time for v2
-to land on its own schedule.
+of them conflict with sync v2; 1-2 make the current engine's rewrite-heavy
+behavior cheap to absorb, which also buys time for v2 to land on its own
+schedule (see "Relationship to sync v2" above).
 
 ## How to verify
 
