@@ -195,39 +195,6 @@ export class EnclaveTraceObserver implements AgentObserver {
   }
 
   /**
-   * Emit the leading CONTEXT step — the enclave's equivalent of the in-process
-   * persona-agent's CONTEXT_RECEIVED step ("Triggered by: …"). The runtime never
-   * emits this for the initial trigger (only `context:received` for mid-turn new
-   * messages), so the enclave's orchestration layer (run-turn) drives it once,
-   * before the loop. The message body is the decrypted prompt, sealed under the
-   * SSK exactly like a step; id/author/time are clear metadata. Content shape
-   * matches the in-process step so the same frontend renderer applies.
-   */
-  async emitContext(trigger: {
-    messageId: string
-    authorName: string
-    authorType: string
-    createdAt: string
-    content: string
-  }): Promise<void> {
-    await this.projector.record({
-      stepType: AgentStepTypes.CONTEXT_RECEIVED,
-      content: JSON.stringify({
-        messages: [
-          {
-            messageId: trigger.messageId,
-            authorName: trigger.authorName,
-            authorType: trigger.authorType,
-            createdAt: trigger.createdAt,
-            content: trigger.content,
-            isTrigger: true,
-          },
-        ],
-      }),
-    })
-  }
-
-  /**
    * Emit the trailing TURN_DIGEST step (C-1) — the enclave's twin of the
    * in-process post-run digest persist. Driven by run-turn after the loop ends
    * (the runtime never emits a digest event itself); the content is the digest

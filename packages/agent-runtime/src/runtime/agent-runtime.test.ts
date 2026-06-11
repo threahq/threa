@@ -290,6 +290,65 @@ describe("AgentRuntime message counting", () => {
   })
 })
 
+describe("AgentRuntime initial context", () => {
+  const replyOnce = () => ({
+    text: "",
+    toolCalls: [{ toolCallId: "tool_1", toolName: AgentToolNames.SEND_MESSAGE, input: { content: "Hi." } }],
+    response: { messages: [{ role: "assistant", content: "Replying." } as any] },
+  })
+
+  it("emits context:received with the configured messages and extras right after session:start", async () => {
+    const events: AgentEvent[] = []
+    const initialContext = {
+      messages: [
+        {
+          messageId: "msg_trigger",
+          authorName: "Kris",
+          authorType: "user" as const,
+          createdAt: "2026-06-11T09:00:00.000Z",
+          content: "Hi 👋",
+          isTrigger: true,
+        },
+      ],
+      extras: { synthesized: true },
+    }
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools: async () => replyOnce() } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "Hi 👋" }],
+      tools: [],
+      initialContext,
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+      observers: [{ handle: async (event: AgentEvent) => void events.push(event) }],
+    })
+
+    await runtime.run()
+
+    expect(events[0]!.type).toBe("session:start")
+    expect(events[1]).toEqual({ type: "context:received", ...initialContext })
+  })
+
+  it("emits no context:received when initialContext is omitted", async () => {
+    const events: AgentEvent[] = []
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools: async () => replyOnce() } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "Hi 👋" }],
+      tools: [],
+      sendMessage: async () => ({ messageId: "msg_1", operation: "created" }),
+      observers: [{ handle: async (event: AgentEvent) => void events.push(event) }],
+    })
+
+    await runtime.run()
+
+    expect(events.some((event) => event.type === "context:received")).toBe(false)
+  })
+})
+
 describe("AgentRuntime source commitment", () => {
   // §2.8 q4 spike: the required-sources commit payload must not be quietly
   // defeated — a turn whose tool results carried sources commits them non-empty.

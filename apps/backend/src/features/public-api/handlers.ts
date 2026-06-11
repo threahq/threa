@@ -59,9 +59,14 @@ import { botId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { AgentSessionRepository } from "../agents"
+import { AgentSessionRepository, type AgentSessionStep } from "../agents"
 import { encodeCursor, decodeCursor } from "./cursor"
-import { botInvocationStepEvents, createBotInvocationTraceProjector } from "./trace-steps"
+import {
+  botInvocationStepEvents,
+  createBotInvocationTraceProjector,
+  serializeTraceStep,
+  synthesizeReplyOnlyBotTrace,
+} from "./trace-steps"
 import { listMyBotsSchema } from "./schemas"
 import type {
   WireStream,
@@ -1118,7 +1123,27 @@ export function createPublicApiHandlers({
             sentMessageIds: message ? [message.id] : [],
           })
           if (finalizedSession) {
-            const steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
+            let steps = await AgentSessionRepository.findStepsBySession(client, completed.id)
+            // Synthesized-trace floor (N-6): a reply-only harness never POSTed
+            // /steps, so reconstruct the minimal context_received → message_sent
+            // trace in the same transaction — the completed event's stepCount
+            // and the rows land together (INV-7).
+            let synthesizedSteps: AgentSessionStep[] = []
+            if (steps.length === 0 && message) {
+              const author = await UserRepository.findById(client, req.workspaceId!, completed.authorUserId)
+              synthesizedSteps = await synthesizeReplyOnlyBotTrace(client, {
+                sessionId: completed.id,
+                trigger: {
+                  messageId: completed.sourceMessageId,
+                  authorName: author?.name ?? "Unknown",
+                  authorType: AuthorTypes.USER,
+                  createdAt: completed.createdAt.toISOString(),
+                  content: completed.promptMarkdown,
+                },
+                reply: { messageId: message.id, content: contentMarkdown! },
+              })
+              steps = synthesizedSteps
+            }
             const completedAt = finalizedSession.completedAt ?? new Date()
             const streamEvent = await StreamEventRepository.insert(client, {
               id: eventId(),
@@ -1139,6 +1164,15 @@ export function createPublicApiHandlers({
               streamId: completed.responseStreamId,
               event: streamEvent,
             })
+            // Best-effort live frames for an open trace dialog (the durable
+            // record is the rows + outbox event above): synthesized steps first,
+            // then the terminal status, mirroring a reported run's ordering.
+            for (const step of synthesizedSteps) {
+              io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:step:completed", {
+                sessionId: completed.id,
+                step: serializeTraceStep(step),
+              })
+            }
             io.to(`ws:${req.workspaceId!}:agent_session:${completed.id}`).emit("agent_session:completed", {
               sessionId: completed.id,
             })

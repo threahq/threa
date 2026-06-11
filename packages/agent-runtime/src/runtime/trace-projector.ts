@@ -1,5 +1,5 @@
 import { AgentReconsiderationDecisions, AgentStepTypes, type AgentStepType, type TraceSource } from "@threa/types"
-import type { AgentEvent, NewMessageInfo } from "./agent-events"
+import type { AgentEvent, TraceContextMessage } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 
 /**
@@ -89,8 +89,9 @@ export interface TraceStepSink<OpenStep> {
  *   recorded so the error is visible in the trace.
  *
  * Orchestration-driven steps that the runtime never emits as events (the
- * leading CONTEXT step, the trailing TURN_DIGEST step) go through `record`
- * directly — same vocabulary, same sink.
+ * trailing TURN_DIGEST step) go through `record` directly — same vocabulary,
+ * same sink. The leading CONTEXT step is no longer one of them: the runtime
+ * emits `context:received` itself at turn start from `config.initialContext`.
  */
 export class TraceProjector<OpenStep = unknown> implements AgentObserver {
   private readonly openByToolCallId = new Map<string, OpenStep>()
@@ -107,8 +108,7 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
 
   /**
    * Record one atomic step outside the runtime's event stream — the
-   * orchestration layer drives the leading CONTEXT_RECEIVED and trailing
-   * TURN_DIGEST steps through this.
+   * orchestration layer drives the trailing TURN_DIGEST step through this.
    */
   async record(step: TraceStepRecord): Promise<void> {
     await this.sink.record(step)
@@ -228,7 +228,7 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
       case "context:received": {
         await this.sink.record({
           stepType: AgentStepTypes.CONTEXT_RECEIVED,
-          content: JSON.stringify({ messages: event.messages.map(toTraceMessage) }),
+          content: JSON.stringify({ messages: event.messages.map(toTraceMessage), ...event.extras }),
         })
         break
       }
@@ -260,7 +260,9 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
   }
 }
 
-function toTraceMessage(m: NewMessageInfo) {
+function toTraceMessage(m: TraceContextMessage) {
+  // changeType (mid-turn injections) and isTrigger (turn-start context) are
+  // each absent on the other shape; JSON.stringify drops the undefined key.
   return {
     messageId: m.messageId,
     changeType: m.changeType,
@@ -268,5 +270,6 @@ function toTraceMessage(m: NewMessageInfo) {
     authorType: m.authorType,
     createdAt: m.createdAt,
     content: m.content.slice(0, 300),
+    isTrigger: m.isTrigger,
   }
 }

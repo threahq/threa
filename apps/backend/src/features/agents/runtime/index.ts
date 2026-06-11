@@ -9,6 +9,7 @@ export {
   type ExecutionPhase,
   type AgentEvent,
   type NewMessageInfo,
+  type TraceContextMessage,
   type AgentObserver,
   OtelObserver,
   AgentRuntime,

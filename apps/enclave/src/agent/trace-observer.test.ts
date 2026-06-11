@@ -351,15 +351,23 @@ describe("EnclaveTraceObserver", () => {
     expect(await open(ssk, steps[0]!)).toBe("Paris.")
   })
 
-  it("emits a sealed CONTEXT step for the trigger (started + finalized, isTrigger)", async () => {
+  it("seals the runtime's turn-start context:received as a CONTEXT step (started + finalized, isTrigger)", async () => {
     const { observer, ssk, started, steps } = makeObserver()
 
-    await observer.emitContext({
-      messageId: "msg_trigger",
-      authorName: "Kris",
-      authorType: "user",
-      createdAt: "2026-06-02T09:27:00.000Z",
-      content: "Hi 👋",
+    // run-turn passes the trigger as AgentRuntimeConfig.initialContext; the
+    // runtime emits this event at run start, through the observer pipeline.
+    await observer.handle({
+      type: "context:received",
+      messages: [
+        {
+          messageId: "msg_trigger",
+          authorName: "Kris",
+          authorType: "user",
+          createdAt: "2026-06-02T09:27:00.000Z",
+          content: "Hi 👋",
+          isTrigger: true,
+        },
+      ],
     })
 
     expect(started).toHaveLength(1)

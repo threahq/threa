@@ -152,6 +152,64 @@ describe("TraceProjector atomic steps", () => {
     ])
   })
 
+  it("serializes turn-start context:received with isTrigger and extras, byte-compatible with the companion's step", async () => {
+    const { sink, records } = createSinkStub()
+    const projector = new TraceProjector(sink)
+
+    const rerunContext = { cause: "invoking_message_edited", editedMessageId: "msg_1" }
+    const attachedContext = { refs: [{ streamId: "stream_ctx", messages: [] }] }
+    await projector.handle({
+      type: "context:received",
+      messages: [
+        {
+          messageId: "msg_0",
+          authorName: "Kris",
+          authorType: "user",
+          createdAt: "2026-06-11T08:59:00.000Z",
+          content: "earlier",
+          isTrigger: false,
+        },
+        {
+          messageId: "msg_1",
+          authorName: "Kris",
+          authorType: "user",
+          createdAt: "2026-06-11T09:00:00.000Z",
+          content: "trigger",
+          isTrigger: true,
+        },
+      ],
+      extras: { rerunContext, attachedContext },
+    })
+
+    // Exact string: turn-start messages must serialize without a changeType key
+    // (it would render a change label) and with extras after `messages`, exactly
+    // as the companion's hand-built step did before the runtime emitted this.
+    expect(records[0]!.content).toBe(
+      JSON.stringify({
+        messages: [
+          {
+            messageId: "msg_0",
+            authorName: "Kris",
+            authorType: "user",
+            createdAt: "2026-06-11T08:59:00.000Z",
+            content: "earlier",
+            isTrigger: false,
+          },
+          {
+            messageId: "msg_1",
+            authorName: "Kris",
+            authorType: "user",
+            createdAt: "2026-06-11T09:00:00.000Z",
+            content: "trigger",
+            isTrigger: true,
+          },
+        ],
+        rerunContext,
+        attachedContext,
+      })
+    )
+  })
+
   it("records reconsidering with the draft and truncated new messages", async () => {
     const { sink, records } = createSinkStub()
     const projector = new TraceProjector(sink)

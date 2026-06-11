@@ -15,6 +15,22 @@ export interface NewMessageInfo {
   createdAt: string
 }
 
+/**
+ * One message of a `context:received` event — the shape the TraceProjector
+ * serializes into the CONTEXT_RECEIVED step. Turn-start context messages carry
+ * `isTrigger` and no `changeType` (they're history, not change notifications);
+ * mid-turn injections are `NewMessageInfo`s, which satisfy this structurally.
+ */
+export interface TraceContextMessage {
+  messageId: string
+  changeType?: "message_created" | "message_edited" | "message_deleted"
+  content: string
+  authorName: string
+  authorType: AuthorType
+  createdAt: string
+  isTrigger?: boolean
+}
+
 // ---------------------------------------------------------------------------
 // AgentEvent — emitted by the runtime, consumed by observers
 // ---------------------------------------------------------------------------
@@ -57,7 +73,17 @@ export type AgentEvent =
   | { type: "message:sent"; messageId: string; content: string; sources?: TraceSource[] }
   | { type: "message:edited"; messageId: string; content: string; sources?: TraceSource[] }
   | { type: "response:kept"; reason: string }
-  | { type: "context:received"; messages: NewMessageInfo[] }
+  | {
+      type: "context:received"
+      messages: TraceContextMessage[]
+      /**
+       * Host-specific structured additions serialized into the step content
+       * alongside `messages` (e.g. the companion's rerunContext/attachedContext,
+       * or `synthesized: true` on a reconstructed bot trace). Renderable data
+       * only — the projector spreads it into the JSON verbatim.
+       */
+      extras?: Record<string, unknown>
+    }
   | { type: "reconsidering"; draft: string; newMessages: NewMessageInfo[] }
   | { type: "session:end"; messagesSent: number; sourceCount: number; lastContent?: string }
   | { type: "session:error"; error: string }

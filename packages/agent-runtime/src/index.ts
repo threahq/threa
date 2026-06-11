@@ -1,7 +1,7 @@
 // Runtime
 export { defineAgentTool, toVercelToolDefs } from "./runtime/agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./runtime/agent-tool"
-export type { AgentEvent, NewMessageInfo } from "./runtime/agent-events"
+export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./runtime/agent-events"
 export type { AgentObserver } from "./runtime/agent-observer"
 export { OtelObserver } from "./runtime/otel-observer"
 export { AgentRuntime, mergeSourceItems } from "./runtime/agent-runtime"
