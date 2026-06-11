@@ -2,8 +2,8 @@ import {
   INTERNAL_API_KEY_HEADER,
   type SealedReply,
   type EnclaveSealedName,
-  type EnclaveSealedStep,
-  type EnclaveSealedStepStart,
+  type SealedStep,
+  type SealedStepStart,
   type EnclaveSealedSubstep,
   type EnclaveSessionResult,
 } from "@threa/types"
@@ -22,9 +22,9 @@ export interface BackendCallbacks {
   /** Stream one sealed reply back the moment the loop sends it (written + broadcast now). */
   message(sessionId: string, reply: SealedReply): Promise<void>
   /** Open one in-flight sealed trace step the moment the loop starts it (persisted + broadcast now). */
-  stepStarted(sessionId: string, step: EnclaveSealedStepStart): Promise<void>
+  stepStarted(sessionId: string, step: SealedStepStart): Promise<void>
   /** Finalize one sealed trace step in place the moment it completes (persisted + broadcast now). */
-  step(sessionId: string, step: EnclaveSealedStep): Promise<void>
+  step(sessionId: string, step: SealedStep): Promise<void>
   /** Stream one sealed substep — ephemeral mid-run phase text (broadcast only, not persisted). */
   substep(sessionId: string, substep: EnclaveSealedSubstep): Promise<void>
   /** Mark the session complete once the loop finishes (replies already streamed). */

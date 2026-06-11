@@ -68,7 +68,11 @@ export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, o
 
   const isInProgress = !step.completedAt
   const duration = step.duration ? formatDuration(step.duration) : null
-  const hasSources = step.sources && step.sources.length > 0
+  // Sealed steps carry their citation sources INSIDE the decrypted payload
+  // (E2EE-14); plaintext steps carry them on the cleartext `sources` column.
+  // Key off what the payload holds, never off who produced the step.
+  const effectiveSources = decrypted.status === "decrypted" ? decrypted.sources : step.sources
+  const hasSources = effectiveSources && effectiveSources.length > 0
   const messageLink = step.messageId ? `/w/${workspaceId}/s/${streamId}?m=${step.messageId}` : null
   const hueColor = `hsl(${config.hue} ${config.saturation}% ${config.lightness}%)`
 
@@ -116,7 +120,7 @@ export function TraceStep({ step, workspaceId, streamId, userId, liveSubsteps, o
         )
       )}
 
-      {hasSources && <SourceList sources={step.sources!} config={config} workspaceId={workspaceId} />}
+      {hasSources && <SourceList sources={effectiveSources!} config={config} workspaceId={workspaceId} />}
     </div>
   )
 }

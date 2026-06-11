@@ -16,8 +16,8 @@ import {
 } from "@threa/crypto"
 import type {
   SealedReply,
-  EnclaveSealedStep,
-  EnclaveSealedStepStart,
+  SealedStep,
+  SealedStepStart,
   EnclaveSealedSubstep,
   EnclaveSessionAssignment,
 } from "@threa/types"
@@ -31,17 +31,17 @@ const GEN = 0
 /** Collects the replies and sealed trace steps/substeps the loop streams back. */
 function collector(): {
   onMessage: (r: SealedReply) => Promise<void>
-  onStepStarted: (s: EnclaveSealedStepStart) => Promise<void>
-  onStep: (s: EnclaveSealedStep) => Promise<void>
+  onStepStarted: (s: SealedStepStart) => Promise<void>
+  onStep: (s: SealedStep) => Promise<void>
   onSubstep: (s: EnclaveSealedSubstep) => Promise<void>
   sent: SealedReply[]
-  started: EnclaveSealedStepStart[]
-  steps: EnclaveSealedStep[]
+  started: SealedStepStart[]
+  steps: SealedStep[]
   substeps: EnclaveSealedSubstep[]
 } {
   const sent: SealedReply[] = []
-  const started: EnclaveSealedStepStart[] = []
-  const steps: EnclaveSealedStep[] = []
+  const started: SealedStepStart[] = []
+  const steps: SealedStep[] = []
   const substeps: EnclaveSealedSubstep[] = []
   return {
     sent,

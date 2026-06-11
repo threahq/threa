@@ -10,6 +10,8 @@ import {
 } from "@threa/types"
 import { TraceStep } from "./trace-step"
 import * as relativeTimeModule from "@/components/relative-time"
+import * as e2eSessionModule from "@/stores/e2e-session-store"
+import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
 
 function createStep(overrides: Partial<AgentSessionStep> = {}): AgentSessionStep {
   return {
@@ -410,5 +412,69 @@ describe("TraceStep", () => {
     // substep text is visible — parseStructuredContent should have treated
     // the object as already-parsed and pulled out the substeps.
     expect(screen.getByText("Planning queries…")).toBeInTheDocument()
+  })
+
+  it("renders the sources sealed inside a decrypted step payload (E2EE-14)", async () => {
+    const user = userEvent.setup()
+    vi.spyOn(e2eSessionModule, "useE2eSession").mockReturnValue({
+      status: "unlocked",
+      privateKey: {} as CryptoKey,
+      keyId: "key_1",
+    } as unknown as ReturnType<typeof e2eSessionModule.useE2eSession>)
+    vi.spyOn(decryptCacheModule, "getCachedDecryption").mockReturnValue({
+      status: "decrypted",
+      content: {
+        contentMarkdown: "tides",
+        contentJson: { type: "doc" } as never,
+        sources: [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }],
+      },
+    })
+
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "web_search",
+            content: undefined,
+            contentCiphertext: "abc",
+            contentEnvelope: { v: 2, keyGeneration: 0, iv: "x", aad: "y" },
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+          userId="member_1"
+        />
+      </MemoryRouter>
+    )
+
+    // The sealed step has no cleartext `sources` column — the list renders
+    // from the decrypted payload, exactly like a plaintext step's column does.
+    await user.click(screen.getByRole("button", { name: /sources/i }))
+    expect(screen.getByRole("link", { name: "Tide Atlas" })).toHaveAttribute("href", "https://tides.example/atlas")
+    expect(screen.getByText("tides.example")).toBeInTheDocument()
+  })
+
+  it("renders no sources for a sealed step while the scratchpad is locked", () => {
+    vi.spyOn(e2eSessionModule, "useE2eSession").mockReturnValue({
+      status: "locked",
+    } as unknown as ReturnType<typeof e2eSessionModule.useE2eSession>)
+
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "web_search",
+            content: undefined,
+            contentCiphertext: "abc",
+            contentEnvelope: { v: 2 },
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+          userId="member_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText("Unlock this scratchpad to view this step")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /sources/i })).not.toBeInTheDocument()
   })
 })

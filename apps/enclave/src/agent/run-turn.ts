@@ -19,8 +19,8 @@ import type {
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   SealedReply,
-  EnclaveSealedStep,
-  EnclaveSealedStepStart,
+  SealedStep,
+  SealedStepStart,
   EnclaveSealedSubstep,
   EnclaveSealedName,
   EnclaveSskWrap,
@@ -72,13 +72,13 @@ export interface EnclaveTurnDeps {
    * the leading edge of thinking/message_sent). Lets an open trace dialog render
    * the in-progress step before it finishes, mirroring the non-E2E runtime.
    */
-  onStepStarted: (step: EnclaveSealedStepStart) => Promise<void>
+  onStepStarted: (step: SealedStepStart) => Promise<void>
   /**
    * Finalize a sealed trace step in place when it completes (thinking, tool
    * calls, message_sent). Sealed under the same SSK as replies; the backend
    * persists ciphertext only.
    */
-  onStep: (step: EnclaveSealedStep) => Promise<void>
+  onStep: (step: SealedStep) => Promise<void>
   /** Stream a sealed substep — ephemeral mid-run phase text (e.g. research progress). */
   onSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
   /**

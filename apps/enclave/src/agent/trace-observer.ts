@@ -1,10 +1,17 @@
 import { ulid } from "ulid"
-import { buildMessageAad, bytesToBase64, sealMessage } from "@threa/crypto"
+import {
+  buildMessageAad,
+  bytesToBase64,
+  sealMessage,
+  serializeSealedPayload,
+  type SealedSourceItem,
+} from "@threa/crypto"
 import {
   AgentStepTypes,
-  type EnclaveSealedStep,
-  type EnclaveSealedStepStart,
+  type SealedStep,
+  type SealedStepStart,
   type EnclaveSealedSubstep,
+  type TraceSource,
 } from "@threa/types"
 import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
 
@@ -39,9 +46,9 @@ export interface EnclaveTraceObserverDeps {
   /** Ariadne's sender id, bound into each step's seal AAD. */
   senderId: string
   /** Open an in-flight step the moment the loop starts it (awaited, so it lands before the finalize). */
-  sendStepStarted: (step: EnclaveSealedStepStart) => Promise<void>
+  sendStepStarted: (step: SealedStepStart) => Promise<void>
   /** Finalize a step in place once it completes (awaited, so steps land in order). */
-  sendStep: (step: EnclaveSealedStep) => Promise<void>
+  sendStep: (step: SealedStep) => Promise<void>
   /** Deliver one sealed substep — ephemeral mid-run phase text (e.g. research progress). */
   sendSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
 }
@@ -98,7 +105,7 @@ export class EnclaveTraceObserver implements AgentObserver {
         // there's no opened step to bind to — a hidden/never-started tool).
         const sealed = await this.seal(text, stepId ?? mintStepId())
         const log = this.substepsByToolCallId.get(event.toolCallId)
-        let snapshot: { ciphertext: string; envelope: EnclaveSealedStep["envelope"] } | undefined
+        let snapshot: { ciphertext: string; envelope: SealedStep["envelope"] } | undefined
         if (stepId && log) {
           log.push({ text, at: new Date().toISOString() })
           snapshot = await this.seal(JSON.stringify({ substeps: [...log] }), stepId)
@@ -121,7 +128,14 @@ export class EnclaveTraceObserver implements AgentObserver {
         this.substepsByToolCallId.delete(event.toolCallId)
         this.hiddenToolCallIds.delete(event.toolCallId)
         if (!stepId) return // hidden tool — no step row was opened
-        const sealed = await this.seal(event.trace.content, stepId)
+        // The tool's citation sources ride INSIDE the sealed payload — they
+        // reveal what was researched, so they must never travel as a cleartext
+        // field (E2EE-14). A sourceless result seals the bare content string,
+        // byte-identical to before.
+        const sealed = await this.seal(
+          serializeSealedPayload(event.trace.content, undefined, toSealedSources(event.trace.sources)),
+          stepId
+        )
         await this.deps.sendStep({ stepId, stepType: event.trace.stepType, ...sealed, durationMs: event.durationMs })
         return
       }
@@ -159,7 +173,13 @@ export class EnclaveTraceObserver implements AgentObserver {
 
       case "message:sent": {
         const stepId = mintStepId()
-        const sealed = await this.seal(event.content, stepId)
+        // The reply's citation sources ride inside the sealed payload (E2EE-14),
+        // mirroring the reply message itself (E2EE-9). One seal serves both the
+        // start and the finalize, so an open trace dialog sees them immediately.
+        const sealed = await this.seal(
+          serializeSealedPayload(event.content, undefined, toSealedSources(event.sources)),
+          stepId
+        )
         await this.openStep({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
         await this.deps.sendStep({
           stepId,
@@ -216,7 +236,7 @@ export class EnclaveTraceObserver implements AgentObserver {
    * finalize — swallow it. (This is why a backend missing the `/steps/started`
    * route still records every step, just without the live in-flight frame.)
    */
-  private async openStep(step: EnclaveSealedStepStart): Promise<void> {
+  private async openStep(step: SealedStepStart): Promise<void> {
     // Swallow both a rejected promise AND a synchronous throw — a bad
     // `sendStepStarted` must never abort the handler and drop the durable
     // finalize. `.catch()` alone misses a sync throw before the promise exists.
@@ -235,7 +255,7 @@ export class EnclaveTraceObserver implements AgentObserver {
   private async seal(
     content: string,
     stepId: string
-  ): Promise<{ ciphertext: string; envelope: EnclaveSealedStep["envelope"] }> {
+  ): Promise<{ ciphertext: string; envelope: SealedStep["envelope"] }> {
     const sealed = await sealMessage({
       key: this.deps.replySsk,
       keyGeneration: this.deps.replyKeyGeneration,
@@ -248,4 +268,20 @@ export class EnclaveTraceObserver implements AgentObserver {
 
 function mintStepId(): string {
   return `step_${ulid()}`
+}
+
+/**
+ * Project the runtime's trace sources into the sealed-payload twin. The
+ * sealed shape requires a `url` (it's what the renderer links) — the enclave's
+ * web-only tools always produce one, so a url-less source (a workspace shape
+ * the enclave can't emit today) is dropped rather than sealed un-renderable.
+ * `domain` doesn't travel: the renderer derives it from the url, exactly like
+ * the reply bubble's source list. Empty/absent input returns undefined so the
+ * sealed bytes stay byte-identical to a sourceless step.
+ */
+function toSealedSources(sources: TraceSource[] | undefined): SealedSourceItem[] | undefined {
+  const sealable = (sources ?? [])
+    .filter((s): s is TraceSource & { url: string } => typeof s.url === "string" && s.url.length > 0)
+    .map((s) => ({ type: s.type, title: s.title, url: s.url, ...(s.snippet ? { snippet: s.snippet } : {}) }))
+  return sealable.length > 0 ? sealable : undefined
 }
