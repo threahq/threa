@@ -15,6 +15,20 @@ export function syncLogCursorKey(workspaceId: string): string {
 }
 
 /**
+ * Parses a sync id off the wire or out of IDB. Malformed input (a rogue
+ * payload, a corrupted row) is ignored loudly instead of throwing — a throw
+ * here would crash the hot onAny listener or poison the cursor load.
+ */
+function parseSyncId(value: string, context: string): bigint | null {
+  try {
+    return BigInt(value)
+  } catch {
+    console.warn(`Sync-v2: ignoring malformed sync id (${context})`, { value })
+    return null
+  }
+}
+
+/**
  * The client's single sync-log position for one workspace (`lastSyncId`),
  * persisted in the `syncCursors` IDB table.
  *
@@ -50,8 +64,8 @@ export class SyncLogCursor {
     this.loadPromise ??= (async () => {
       const row = await db.syncCursors.get(this.key)
       if (row) {
-        const persisted = BigInt(row.cursor)
-        if (this.value === null || persisted > this.value) {
+        const persisted = parseSyncId(row.cursor, "load")
+        if (persisted !== null && (this.value === null || persisted > this.value)) {
           this.value = persisted
         }
       }
@@ -67,7 +81,8 @@ export class SyncLogCursor {
   /** Monotonic max advance; schedules a debounced persist. */
   advance(syncId: string): void {
     if (this.disposed) return
-    const candidate = BigInt(syncId)
+    const candidate = parseSyncId(syncId, "advance")
+    if (candidate === null) return
     if (this.value !== null && candidate <= this.value) return
     this.value = candidate
     this.persistTimer ??= setTimeout(() => {
@@ -78,6 +93,7 @@ export class SyncLogCursor {
 
   /** Persists any pending advance immediately. */
   async flush(): Promise<void> {
+    if (this.disposed) return
     if (this.persistTimer) {
       clearTimeout(this.persistTimer)
       this.persistTimer = null

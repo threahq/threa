@@ -30,6 +30,24 @@ describe("SyncLogCursor", () => {
     cursor.dispose()
   })
 
+  it("ignores malformed sync ids instead of throwing (hot onAny path)", async () => {
+    const cursor = new SyncLogCursor(WORKSPACE_ID)
+    cursor.advance("10")
+
+    cursor.advance("")
+    cursor.advance("1.5")
+    cursor.advance("abc")
+    expect(cursor.get()).toBe("10")
+    cursor.dispose()
+
+    // A corrupted persisted row must not poison the load either
+    await db.syncCursors.put({ key: KEY, cursor: "not-a-number", updatedAt: Date.now() })
+    const reloaded = new SyncLogCursor(WORKSPACE_ID)
+    await reloaded.load()
+    expect(reloaded.get()).toBeNull()
+    reloaded.dispose()
+  })
+
   it("loads the persisted cursor and merges with in-memory advances by max", async () => {
     await db.syncCursors.put({ key: KEY, cursor: "50", updatedAt: Date.now() })
 

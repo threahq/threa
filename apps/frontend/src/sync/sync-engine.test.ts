@@ -915,7 +915,7 @@ describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
 
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("42"))
     expect(catchUp).toHaveBeenCalledTimes(1)
-    expect(catchUp).toHaveBeenCalledWith("ws_1", { after: "0", limit: 1 })
+    expect(catchUp).toHaveBeenCalledWith("ws_1", { after: "0", limit: 1 }, expect.any(AbortSignal))
     engine.destroy()
   })
 
@@ -949,8 +949,8 @@ describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
     await engine.onConnect(asSocket(new MockSocket()))
 
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("12"))
-    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", { after: "10", limit: 500 })
-    expect(catchUp).toHaveBeenNthCalledWith(2, "ws_1", { after: "12", limit: 500 })
+    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", { after: "10", limit: 500 }, expect.any(AbortSignal))
+    expect(catchUp).toHaveBeenNthCalledWith(2, "ws_1", { after: "12", limit: 500 }, expect.any(AbortSignal))
     engine.destroy()
   })
 
@@ -969,6 +969,23 @@ describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
 
     resolveFirst?.(emptyPage("10"))
     engine.destroy()
+  })
+
+  it("aborts an in-flight shadow catch-up on destroy", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let capturedSignal: AbortSignal | undefined
+    const catchUp = vi.fn((_workspaceId: unknown, _params: unknown, signal?: AbortSignal) => {
+      capturedSignal = signal
+      return new Promise<SyncCatchUpResponse>(() => {})
+    })
+    const engine = new SyncEngine(makeShadowDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+    expect(capturedSignal?.aborted).toBe(false)
+
+    engine.destroy()
+    expect(capturedSignal?.aborted).toBe(true)
   })
 
   it("does nothing when the shadow flag is off", async () => {

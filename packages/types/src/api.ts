@@ -249,7 +249,8 @@ export interface SyncCatchUpEntry {
  * Catch-up page. Clients advance their cursor only by applied entries and
  * page until a fetch comes back empty — `head` is a workspace-global
  * freshness hint, NOT a cursor target: the per-user filtered view can sit
- * permanently below it.
+ * permanently below it. (Shadow mode, which applies nothing, deliberately
+ * advances by fetched entries instead — see SyncEngine.performShadowCatchUp.)
  */
 export interface SyncCatchUpResponse {
   entries: SyncCatchUpEntry[]

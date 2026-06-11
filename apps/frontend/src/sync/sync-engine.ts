@@ -56,7 +56,8 @@ interface SyncEngineDeps {
   syncService?: {
     catchUp: (
       workspaceId: string,
-      params: { after: string; limit?: number }
+      params: { after: string; limit?: number },
+      signal?: AbortSignal
     ) => Promise<import("@threa/types").SyncCatchUpResponse>
   }
   /** Test override for the VITE_SYNC_V2_CURSOR flag. */
@@ -101,6 +102,7 @@ export class SyncEngine {
   private syncLogCursor: SyncLogCursor | null = null
   private syncCursorCleanup: (() => void) | null = null
   private activeShadowCatchUp: Promise<void> | null = null
+  private shadowCatchUpAbort: AbortController | null = null
 
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
@@ -351,6 +353,8 @@ export class SyncEngine {
     // Dispose without flushing — destroy can be an account switch that
     // repoints the shared db proxy, and the cursor must not leak across
     // accounts. See SyncLogCursor.
+    this.shadowCatchUpAbort?.abort()
+    this.shadowCatchUpAbort = null
     this.syncLogCursor?.dispose()
     this.syncLogCursor = null
   }
@@ -757,20 +761,27 @@ export class SyncEngine {
     if (!this.syncCursorShadowEnabled || this.isDestroyed) return Promise.resolve()
     if (this.activeShadowCatchUp) return this.activeShadowCatchUp
 
-    const promise = this.performShadowCatchUp(trigger)
+    const abort = new AbortController()
+    this.shadowCatchUpAbort = abort
+    const promise = this.performShadowCatchUp(trigger, abort.signal)
       .catch((error) => {
+        // A destroy-triggered abort is expected teardown, not a failure.
+        if (this.isDestroyed) return
         console.error("Sync-v2 shadow catch-up failed", { workspaceId: this.workspaceId, trigger, error })
       })
       .finally(() => {
         if (this.activeShadowCatchUp === promise) {
           this.activeShadowCatchUp = null
         }
+        if (this.shadowCatchUpAbort === abort) {
+          this.shadowCatchUpAbort = null
+        }
       })
     this.activeShadowCatchUp = promise
     return promise
   }
 
-  private async performShadowCatchUp(trigger: string): Promise<void> {
+  private async performShadowCatchUp(trigger: string, signal: AbortSignal): Promise<void> {
     const syncService = this.deps.syncService!
     const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
     await cursorStore.load()
@@ -783,7 +794,7 @@ export class SyncEngine {
       // only because shadow mode owns no healing. Active mode must read
       // head BEFORE the bootstrap data fetch (read-before-stamp rule) so
       // the race falls on the duplicate side, never the gap side.
-      const { head } = await syncService.catchUp(this.workspaceId, { after: "0", limit: 1 })
+      const { head } = await syncService.catchUp(this.workspaceId, { after: "0", limit: 1 }, signal)
       if (this.isDestroyed) return
       cursorStore.advance(head)
       console.info("Sync-v2 shadow cursor seeded from head", { workspaceId: this.workspaceId, trigger, head })
@@ -797,10 +808,11 @@ export class SyncEngine {
     const byEventType: Record<string, number> = {}
 
     while (pages < MAX_SHADOW_CATCHUP_PAGES) {
-      const response = await syncService.catchUp(this.workspaceId, {
-        after: cursor,
-        limit: SHADOW_CATCHUP_PAGE_LIMIT,
-      })
+      const response = await syncService.catchUp(
+        this.workspaceId,
+        { after: cursor, limit: SHADOW_CATCHUP_PAGE_LIMIT },
+        signal
+      )
       if (this.isDestroyed) return
       head = response.head
       if (response.entries.length === 0) break
