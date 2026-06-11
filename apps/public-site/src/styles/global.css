@@ -51,6 +51,24 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Paper grain — a fixed film of fractal noise over the whole page, multiply
+   so it darkens both the light bands and the night surfaces uniformly. At
+   this opacity it reads as paper tooth, not texture; pointer-events none so
+   it never intercepts anything. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+::selection {
+  background: hsl(var(--gold) / 0.3);
+}
+
 /* ---------- PAGE FRAME (seamless bands) ----------
      Each section is a full-bleed band that touches its neighbours with no
      gap; the tint alternates paper / paper-warm so the page reads as one
@@ -65,6 +83,61 @@ body {
 }
 .frame.warm {
   background: hsl(var(--paper-warm));
+}
+/* Night band — the closing register. Terminal surfaces and the final CTA
+   share this deep ink so the page ends with weight instead of one more
+   beige strip. */
+.frame.night {
+  background: hsl(var(--night));
+  color: hsl(35 12% 80%);
+}
+
+/* ---------- THREAD SPINE ----------
+   The golden thread, literally: a 1px gold line running down the left
+   margin of every section shell, with a small diamond bead marking each
+   section's start. Shells touch vertically, so per-shell lines read as one
+   continuous thread from the memory section to the closing band. */
+.memo-shell::before,
+.cta-shell::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--pad-x) / 2);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: hsl(var(--gold) / 0.18);
+  pointer-events: none;
+}
+.memo-shell::after,
+.cta-shell::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--pad-x) / 2);
+  top: 84px;
+  width: 7px;
+  height: 7px;
+  transform: translateX(-3.5px) rotate(45deg);
+  background: hsl(var(--paper));
+  border: 1px solid hsl(var(--gold));
+  pointer-events: none;
+}
+/* The first section fades the thread in; the closing band fades it out. */
+.memo-shell.is-centerpiece::before {
+  background: linear-gradient(180deg, hsl(var(--gold) / 0) 0, hsl(var(--gold) / 0.18) 140px);
+}
+.frame.night .cta-shell::before {
+  background: linear-gradient(180deg, hsl(var(--gold) / 0.3), hsl(var(--gold) / 0) 88%);
+}
+.frame.night .cta-shell::after {
+  background: hsl(var(--night));
+}
+@media (max-width: 880px) {
+  .memo-shell::before,
+  .memo-shell::after,
+  .cta-shell::before,
+  .cta-shell::after {
+    display: none;
+  }
 }
 .section-meta {
   display: flex;
@@ -157,6 +230,11 @@ body {
   content: "→";
   font-family: var(--font-display);
   font-weight: 400;
+  display: inline-block;
+  transition: transform 0.2s ease-out;
+}
+.cta:hover::after {
+  transform: translateX(3px);
 }
 .quiet {
   font-family: var(--font-mono);
@@ -1116,6 +1194,18 @@ body {
   overflow: hidden;
   position: relative;
 }
+/* Warm atmosphere behind the conversation — a soft gold wash so the hero
+   reads as lit paper instead of a flat white field. */
+.hero-shell::before {
+  content: "";
+  position: absolute;
+  top: -160px;
+  right: -180px;
+  width: 760px;
+  height: 760px;
+  background: radial-gradient(closest-side, hsl(var(--gold) / 0.09), transparent 72%);
+  pointer-events: none;
+}
 .hero-inner {
   padding: 64px var(--pad-x) 72px;
   position: relative;
@@ -1599,40 +1689,44 @@ body {
   max-width: 320px;
 }
 
+/* Terminal goes night — the one deep-ink surface in each band, so the
+   dev-credible artifacts (real commands, real output) carry the contrast
+   instead of another gray box. Prompt stays gold: the thread in the dark. */
 .os-terminal {
-  background: hsl(var(--paper-warm));
-  border: 1px solid hsl(var(--line));
+  background: hsl(var(--night));
+  border: 1px solid hsl(222 16% 18%);
   border-radius: 6px;
   padding: 18px 22px;
   font-family: var(--font-mono);
   font-size: 12.5px;
   line-height: 1.8;
-  color: hsl(var(--ink-soft));
+  color: hsl(35 12% 72%);
   margin-top: 4px;
   overflow-x: auto;
+  box-shadow: 0 16px 44px -24px hsl(222 30% 8% / 0.6);
 }
 .os-terminal .row {
   display: block;
   white-space: pre;
 }
 .os-terminal .prompt {
-  color: hsl(var(--gold));
+  color: hsl(var(--gold-soft));
   margin-right: 10px;
   user-select: none;
 }
 .os-terminal .cmd {
-  color: hsl(var(--ink));
+  color: hsl(38 18% 92%);
 }
 .os-terminal .arg {
-  color: hsl(var(--ink-soft));
+  color: hsl(35 12% 70%);
 }
 .os-terminal .out {
-  color: hsl(var(--muted));
+  color: hsl(35 8% 52%);
   padding-left: 20px;
   display: block;
 }
 .os-terminal .cmt {
-  color: hsl(var(--muted));
+  color: hsl(35 8% 50%);
   font-style: italic;
   padding-left: 4px;
 }
@@ -1689,24 +1783,26 @@ body {
 .patch-example .patch-body .md-li {
   color: hsl(var(--ink-soft));
 }
+/* The run line is a terminal, so it gets the night strip — the file above
+   stays paper (it's a document), the command below goes dark (it's a shell). */
 .patch-example .patch-run {
   padding: 11px 14px 13px;
-  border-top: 1px dashed hsl(var(--line));
+  background: hsl(var(--night));
   font-family: var(--font-mono);
   font-size: 12px;
-  color: hsl(var(--ink-soft));
+  color: hsl(35 12% 70%);
   white-space: pre;
   overflow-x: auto;
 }
 .patch-example .patch-run .prompt {
-  color: hsl(var(--gold));
+  color: hsl(var(--gold-soft));
   margin-right: 10px;
 }
 .patch-example .patch-run .cmd {
-  color: hsl(var(--ink));
+  color: hsl(38 18% 92%);
 }
 .patch-example .patch-run .arg {
-  color: hsl(var(--muted));
+  color: hsl(35 10% 60%);
 }
 
 .os-cta {
@@ -1822,6 +1918,7 @@ body {
   max-width: 1240px;
   margin: 0 auto;
   padding: 80px var(--pad-x);
+  position: relative;
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
   gap: 48px;
@@ -1861,6 +1958,38 @@ body {
 .cta-shell .quiet {
   margin-top: 12px;
   display: block;
+}
+/* Night variant — the closing band. Gold becomes the button color (ink-on-ink
+   would vanish), the input sinks into the dark, the accent word stays gold. */
+.frame.night .cta-shell h3 {
+  color: hsl(38 16% 94%);
+}
+.frame.night .cta-shell h3 .accent {
+  color: hsl(var(--gold-soft));
+}
+.frame.night .cta {
+  background: hsl(var(--gold));
+  color: hsl(var(--night));
+}
+.frame.night .cta-shell input {
+  background: hsl(var(--night-soft));
+  border-color: hsl(222 14% 24%);
+  color: hsl(38 16% 92%);
+}
+.frame.night .cta-shell input::placeholder {
+  color: hsl(222 10% 46%);
+}
+.frame.night .cta-shell input:focus {
+  border-color: hsl(var(--gold) / 0.6);
+}
+.frame.night .quiet {
+  color: hsl(222 10% 52%);
+}
+.frame.night #wl-status.is-ok {
+  color: hsl(142 50% 56%);
+}
+.frame.night #wl-status.is-err {
+  color: hsl(0 60% 62%);
 }
 /* Honeypot — kept in the layout for bots but pulled off-screen for humans and
    assistive tech (aria-hidden on the element). */
