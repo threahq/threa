@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { Skeleton } from "@/components/ui/skeleton"
-import { attachmentsApi } from "@/api"
+import { attachmentsApi, peekDownloadUrl } from "@/api"
 import { cn } from "@/lib/utils"
 import { downloadImage, copyImage, triggerDownload } from "@/lib/image-utils"
 import { formatFileSize } from "@/lib/file-size"
@@ -135,7 +135,12 @@ function ImageAttachment({
   isHighlighted,
   deferHydration = false,
 }: AttachmentItemProps) {
-  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
+  // Seed from the resolved-presign cache so a warm remount (virtua
+  // unmount/remount, bootstrap rewrite) renders the <img> on the very first
+  // frame instead of replaying skeleton → async presign → fade.
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(() =>
+    peekDownloadUrl(workspaceId, attachment.id, { variant: "thumbnail" })
+  )
   const [imgDecoded, setImgDecoded] = useState(false)
   const [error, setError] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -237,6 +242,14 @@ function ImageAttachment({
         {!imgDecoded && <Skeleton className="absolute inset-0 rounded-none" />}
         {thumbnailUrl && (
           <img
+            // Cache fast path: when the browser already has the bytes (warm
+            // remount — virtua unmount/remount, bootstrap rewrite), the image
+            // is complete before onLoad ever fires. Flip imgDecoded during
+            // commit so the row paints at full opacity instead of replaying
+            // the skeleton → fade-in cycle on content that never left cache.
+            ref={(node) => {
+              if (node?.complete && node.naturalWidth > 0) setImgDecoded(true)
+            }}
             src={thumbnailUrl}
             alt={attachment.filename}
             onLoad={() => setImgDecoded(true)}

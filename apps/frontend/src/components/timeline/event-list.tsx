@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 import {
   COMMAND_EVENT_TYPES,
   AGENT_SESSION_EVENT_TYPES,
@@ -403,7 +403,6 @@ export interface TimelineItemRenderContext {
   sessionCanAbort: Map<string, boolean>
   /** Click handler for the Stop research button. */
   onAbortResearch?: (sessionId: string) => void
-  phase: string
   batch?: BatchTimelineState
 }
 
@@ -416,8 +415,15 @@ function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean
   return item.event.id === firstUnreadEventId
 }
 
-/** Renders a single timeline item. Used by Virtuoso's itemContent and non-virtualized lists. */
-export function TimelineItemContent({ item, ctx }: { item: TimelineItem; ctx: TimelineItemRenderContext }) {
+interface TimelineItemContentProps {
+  item: TimelineItem
+  ctx: TimelineItemRenderContext
+  /** Defer non-critical per-message hydration (presigns, previews, embeds). */
+  deferSecondaryHydration: boolean
+}
+
+/** Renders a single timeline item. Used by virtua's row mapping and non-virtualized lists. */
+function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: TimelineItemContentProps) {
   const showUnreadDivider = isFirstUnread(item, ctx.firstUnreadEventId)
   return (
     <>
@@ -460,7 +466,7 @@ export function TimelineItemContent({ item, ctx }: { item: TimelineItem; ctx: Ti
           highlightMessageId={ctx.highlightMessageId}
           agentActivity={ctx.hideSessionCards ? ctx.agentActivity : undefined}
           isNew={ctx.newMessageIds?.has(item.event.id)}
-          deferSecondaryHydration={ctx.phase !== "ready"}
+          deferSecondaryHydration={deferSecondaryHydration}
           batch={ctx.batch}
           // Continuations directly under an UnreadDivider promote back to head so
           // the first unread message in a run still reads as a fresh turn for the
@@ -475,6 +481,125 @@ export function TimelineItemContent({ item, ctx }: { item: TimelineItem; ctx: Ti
     </>
   )
 }
+
+function getEventMessageId(event: StreamEvent): string | undefined {
+  return (event.payload as { messageId?: string })?.messageId
+}
+
+function eventsArrayEqual(a: StreamEvent[], b: StreamEvent[]): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
+/**
+ * Whether two TimelineItems would render identically. `groupTimelineItems`
+ * rebuilds every wrapper object on each run, but the underlying StreamEvent
+ * objects keep identity when unchanged (structural sharing in
+ * `useStreamEvents`), so identity of the contained events is the real signal.
+ */
+function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
+  if (a === b) return true
+  if (a.type !== b.type) return false
+  switch (a.type) {
+    case "event": {
+      const other = b as Extract<TimelineItem, { type: "event" }>
+      return a.event === other.event && (a.groupContinuation ?? false) === (other.groupContinuation ?? false)
+    }
+    case "command_group": {
+      const other = b as Extract<TimelineItem, { type: "command_group" }>
+      return a.commandId === other.commandId && eventsArrayEqual(a.events, other.events)
+    }
+    case "session_group": {
+      const other = b as Extract<TimelineItem, { type: "session_group" }>
+      return (
+        a.sessionId === other.sessionId &&
+        a.sessionVersion === other.sessionVersion &&
+        eventsArrayEqual(a.events, other.events)
+      )
+    }
+    case "gap": {
+      const other = b as Extract<TimelineItem, { type: "gap" }>
+      return a.afterEventId === other.afterEventId && a.missingCount === other.missingCount
+    }
+  }
+}
+
+/**
+ * Per-item props equality for the memoized row. `ctx` is rebuilt (new object,
+ * new Maps/Sets) on every message arrival, agent-activity tick, or batch
+ * interaction, so comparing ctx by identity would defeat the memo. Instead we
+ * compare only what this *item* actually reads out of ctx — set membership
+ * and map lookups rather than container identity.
+ *
+ * IMPORTANT: when adding a field to TimelineItemRenderContext that affects
+ * row rendering, it must be compared here, or rows will render stale.
+ */
+function timelineRowPropsEqual(prev: TimelineItemContentProps, next: TimelineItemContentProps): boolean {
+  if (!timelineItemEqual(prev.item, next.item)) return false
+  if (prev.deferSecondaryHydration !== next.deferSecondaryHydration) return false
+  const p = prev.ctx
+  const n = next.ctx
+  if (
+    p.workspaceId !== n.workspaceId ||
+    p.streamId !== n.streamId ||
+    p.hideSessionCards !== n.hideSessionCards ||
+    p.isDividerFading !== n.isDividerFading ||
+    p.onAbortResearch !== n.onAbortResearch
+  ) {
+    return false
+  }
+  const item = next.item
+  if (isFirstUnread(item, p.firstUnreadEventId) !== isFirstUnread(item, n.firstUnreadEventId)) return false
+
+  if (item.type === "session_group") {
+    const prevCounts = p.sessionLiveCounts.get(item.sessionId)
+    const nextCounts = n.sessionLiveCounts.get(item.sessionId)
+    if (prevCounts?.stepCount !== nextCounts?.stepCount || prevCounts?.messageCount !== nextCounts?.messageCount) {
+      return false
+    }
+    if (p.sessionLiveSubsteps.get(item.sessionId) !== n.sessionLiveSubsteps.get(item.sessionId)) return false
+    if ((p.sessionCanAbort.get(item.sessionId) ?? false) !== (n.sessionCanAbort.get(item.sessionId) ?? false)) {
+      return false
+    }
+    return true
+  }
+
+  if (item.type !== "event") return true
+
+  const messageId = getEventMessageId(item.event)
+  if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
+  if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
+  if ((p.newMessageIds?.has(item.event.id) ?? false) !== (n.newMessageIds?.has(item.event.id) ?? false)) return false
+  if (messageId !== undefined && p.agentActivity?.get(messageId) !== n.agentActivity?.get(messageId)) return false
+
+  const pb = p.batch
+  const nb = n.batch
+  if ((pb === undefined) !== (nb === undefined)) return false
+  if (pb && nb && messageId !== undefined) {
+    if (
+      pb.enabled !== nb.enabled ||
+      pb.onToggleMessage !== nb.onToggleMessage ||
+      pb.selectedMessageIds.has(messageId) !== nb.selectedMessageIds.has(messageId) ||
+      pb.invalidTargetIds.has(messageId) !== nb.invalidTargetIds.has(messageId) ||
+      (pb.hoveredTargetId === messageId) !== (nb.hoveredTargetId === messageId)
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
+ * Memoized timeline row. The timeline's inputs churn identity constantly
+ * (Dexie liveQuery re-emits all-new arrays on any events write; ctx is
+ * rebuilt per tick), so the memo uses a per-item comparator instead of
+ * shallow props equality — a data tick re-renders only the rows whose own
+ * inputs changed instead of the full window.
+ */
+export const TimelineItemContent = memo(TimelineItemContentImpl, timelineRowPropsEqual)
 
 /**
  * Non-virtualized event list for threads and other cases where all items are rendered.
@@ -573,7 +698,6 @@ export function EventList({
     sessionLiveSubsteps,
     sessionCanAbort,
     onAbortResearch: handleAbortResearch,
-    phase,
     batch,
   }
 
@@ -583,7 +707,7 @@ export function EventList({
         const itemKey = getTimelineItemKey(item)
         return (
           <div key={itemKey} className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}>
-            <TimelineItemContent item={item} ctx={ctx} />
+            <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={phase !== "ready"} />
           </div>
         )
       })}

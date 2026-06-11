@@ -182,6 +182,33 @@ async function pruneBootstrapReplaceWindow(streamId: string, bootstrap: StreamBo
   }
 }
 
+/**
+ * Whether putting `candidate` over `existing` would change nothing the app
+ * can observe. Skipping these puts matters for perceived performance: every
+ * write to `db.events` re-runs the timeline's `useLiveQuery`, and a bootstrap
+ * that rewrites byte-identical rows forces a full-window re-render for no
+ * user-visible change. `_cachedAt` is bookkeeping (nothing reads it for
+ * eviction or rendering), so a row that differs only by `_cachedAt` is a
+ * no-op. Rows carrying optimistic `_status` are never skipped — the put
+ * intentionally clears that flag on confirm.
+ */
+function isNoOpRewrite(existing: CachedEvent, candidate: CachedEvent): boolean {
+  if (existing._status !== undefined) return false
+  return (
+    existing.streamId === candidate.streamId &&
+    existing.workspaceId === candidate.workspaceId &&
+    existing.sequence === candidate.sequence &&
+    existing.broadcastSequence === candidate.broadcastSequence &&
+    existing._clientId === candidate._clientId &&
+    existing._sequenceNum === candidate._sequenceNum &&
+    existing.eventType === candidate.eventType &&
+    existing.actorId === candidate.actorId &&
+    existing.actorType === candidate.actorType &&
+    existing.createdAt === candidate.createdAt &&
+    JSON.stringify(existing.payload) === JSON.stringify(candidate.payload)
+  )
+}
+
 async function writeBootstrapEventsAndStream(
   workspaceId: string,
   streamId: string,
@@ -225,11 +252,13 @@ async function writeBootstrapEventsAndStream(
     const toWrite: CachedEvent[] = []
     for (const e of bootstrap.events) {
       const base = { ...e, workspaceId, _sequenceNum: sequenceToNum(e.sequence), _cachedAt: now }
+      const existing = existingById.get(e.id)
       if (e.eventType !== "message_created") {
-        toWrite.push(base)
+        if (existing === undefined || !isNoOpRewrite(existing, base)) {
+          toWrite.push(base)
+        }
         continue
       }
-      const existing = existingById.get(e.id)
       if (!existing) {
         toWrite.push(base)
         continue
@@ -238,7 +267,7 @@ async function writeBootstrapEventsAndStream(
         // Skip the put — existing row is fresher than this snapshot.
         continue
       }
-      toWrite.push({
+      const merged: CachedEvent = {
         ...base,
         payload: {
           ...(existing.payload as Record<string, unknown>),
@@ -247,7 +276,10 @@ async function writeBootstrapEventsAndStream(
         // Preserve the patch watermark so subsequent bootstraps still see
         // that this row has been touched by socket activity.
         _patchedAt: existing._patchedAt,
-      })
+      }
+      if (!isNoOpRewrite(existing, merged)) {
+        toWrite.push(merged)
+      }
     }
 
     if (toWrite.length > 0) {
