@@ -228,7 +228,8 @@ function exampleResponseValue(name: string, schema: JsonSchema, hint: string, de
     case "number":
       return exampleNumber(name)
     case "boolean":
-      return schema.default !== undefined ? schema.default : name.toLowerCase() === "hasmore" ? false : true
+      if (schema.default !== undefined) return schema.default
+      return name.toLowerCase() !== "hasmore"
     case "array":
       return schema.items ? [exampleResponseValue(name, schema.items, hint, depth)] : []
     case "object":
