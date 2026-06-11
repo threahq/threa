@@ -4,7 +4,7 @@ import { withTransaction, withTestTransaction } from "./setup"
 import { EventService, MessageRepository } from "../../src/features/messaging"
 import { StreamEventRepository } from "../../src/features/streams"
 import { OutboxRepository } from "../../src/lib/outbox"
-import { streamId, userId, workspaceId } from "../../src/lib/id"
+import { eventId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { setupTestDatabase, testMessageContent } from "./setup"
 
 describe("Event Sourcing", () => {
@@ -737,6 +737,156 @@ describe("Event Sourcing", () => {
       const events = await eventService.listEvents(testStreamId, { limit: 3 })
 
       expect(events).toHaveLength(3)
+    })
+  })
+
+  describe("Broadcast sequence (INV-61)", () => {
+    test("messages consume dense broadcast slots; edits, deletes, and reactions do not", async () => {
+      const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
+      const testUserId = userId()
+
+      const msg1 = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("first"),
+      })
+      await eventService.editMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        messageId: msg1.id,
+        actorId: testUserId,
+        ...testMessageContent("first (edited)"),
+      })
+      await eventService.addReaction({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        messageId: msg1.id,
+        userId: testUserId,
+        emoji: "👍",
+      })
+      const msg2 = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("second"),
+      })
+      await eventService.deleteMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        messageId: msg2.id,
+        actorId: testUserId,
+      })
+
+      const events = await StreamEventRepository.list(pool, testStreamId)
+      const byType = new Map(events.map((event) => [event.eventType, event]))
+
+      // Edits/deletes/reactions arrive at clients as payload patches, not
+      // appended rows — a broadcast slot for them would never be filled.
+      expect(byType.get("message_edited")?.broadcastSequence).toBeNull()
+      expect(byType.get("message_deleted")?.broadcastSequence).toBeNull()
+      expect(byType.get("reaction_added")?.broadcastSequence).toBeNull()
+
+      // The two messages hold consecutive slots despite the global counter
+      // having advanced past them in between.
+      const messageEvents = events.filter((event) => event.eventType === "message_created")
+      expect(messageEvents.map((event) => event.broadcastSequence)).toEqual([1n, 2n])
+      expect(messageEvents[1].sequence > 2n).toBe(true)
+    })
+
+    test("another viewer's command events leave the visible broadcast chain dense", async () => {
+      const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
+      const viewerA = userId()
+      const viewerB = userId()
+
+      await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId: viewerA,
+        authorType: "user",
+        ...testMessageContent("before"),
+      })
+      // Viewer B's author-scoped command lifecycle punches holes in the
+      // GLOBAL sequence that viewer A never receives.
+      await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: testStreamId,
+        eventType: "command_dispatched",
+        payload: { commandId: "cmd_1", command: "/recap" },
+        actorId: viewerB,
+        actorType: "user",
+      })
+      await StreamEventRepository.insert(pool, {
+        id: eventId(),
+        streamId: testStreamId,
+        eventType: "command_completed",
+        payload: { commandId: "cmd_1" },
+        actorId: viewerB,
+        actorType: "user",
+      })
+      await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId: viewerB,
+        authorType: "user",
+        ...testMessageContent("after"),
+      })
+
+      const viewerAEvents = await StreamEventRepository.list(pool, testStreamId, { viewerId: viewerA })
+      // Global sequences have a hole for viewer A (the command events), but
+      // the broadcast chain is dense — exactly what lets the client treat
+      // any missing broadcast number as a real gap.
+      expect(viewerAEvents.map((event) => event.eventType)).toEqual(["message_created", "message_created"])
+      expect(viewerAEvents.map((event) => event.broadcastSequence)).toEqual([1n, 2n])
+      expect(viewerAEvents[1].sequence - viewerAEvents[0].sequence > 1n).toBe(true)
+
+      // Command events themselves never consume broadcast slots.
+      const viewerBEvents = await StreamEventRepository.list(pool, testStreamId, { viewerId: viewerB })
+      const commandEvents = viewerBEvents.filter((event) => event.eventType === "command_dispatched")
+      expect(commandEvents.map((event) => event.broadcastSequence)).toEqual([null])
+    })
+
+    test("insertMany assigns broadcast slots in list order, skipping non-broadcast types", async () => {
+      const testStreamId = streamId()
+      const memberA = userId()
+      const memberB = userId()
+
+      const events = await StreamEventRepository.insertMany(pool, [
+        {
+          id: eventId(),
+          streamId: testStreamId,
+          eventType: "member_added",
+          payload: {},
+          actorId: memberA,
+          actorType: "user",
+        },
+        {
+          id: eventId(),
+          streamId: testStreamId,
+          eventType: "reaction_added",
+          payload: {},
+          actorId: memberA,
+          actorType: "user",
+        },
+        {
+          id: eventId(),
+          streamId: testStreamId,
+          eventType: "member_added",
+          payload: {},
+          actorId: memberB,
+          actorType: "user",
+        },
+      ])
+
+      expect(events.map((event) => [event.sequence, event.broadcastSequence])).toEqual([
+        [1n, 1n],
+        [2n, null],
+        [3n, 2n],
+      ])
     })
   })
 

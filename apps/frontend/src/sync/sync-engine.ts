@@ -341,22 +341,13 @@ export class SyncEngine {
       let bootstrap: WorkspaceBootstrap
 
       if (_isReconnect && visibleStreamIds.length > 0) {
-        // Read each stream's catch-up cursor BEFORE re-joining its room. The
-        // re-join below starts delivering live events into IndexedDB
-        // immediately, and a message landing before the cursor read advances
-        // the cursor past the disconnect gap — the `after` fetch then
-        // permanently skips everything missed while offline (the "older
-        // message never appears while newer ones do" bug). Overlap is safe
-        // (writes dedupe by event id); gaps are not (INV-53).
+        // Cursor-before-join per stream is owned by joinStreamForCatchUp —
+        // see its doc for why the order is load-bearing (INV-53).
         const catchupCursors = new Map<string, string | null>()
         await Promise.all(
           visibleStreamIds.map(async (streamId) => {
-            catchupCursors.set(streamId, await getLatestPersistedSequence(streamId))
+            catchupCursors.set(streamId, await this.joinStreamForCatchUp(streamId))
           })
-        )
-
-        await Promise.all(
-          visibleStreamIds.map((streamId) => this.ensureStreamSubscription(streamId, { awaitJoin: true }))
         )
 
         const [workspaceBootstrap, streamResults] = await Promise.all([
@@ -581,6 +572,27 @@ export class SyncEngine {
     return memberships.map((membership) => membership.streamId)
   }
 
+  /**
+   * The single owner of catch-up-cursor derivation (INV-53, INV-61): read
+   * the stream's latest persisted sequence, THEN join its room — in that
+   * order. Once subscribed, live events land in IndexedDB immediately, and a
+   * message landing before the cursor read would advance the cursor past the
+   * disconnect gap, making the subsequent `bootstrap?after=` fetch
+   * permanently skip everything missed while offline (the "older message
+   * never appears while newer ones do" bug). Overlap is safe (writes dedupe
+   * by event id); gaps are not.
+   *
+   * Callers must never read `getLatestPersistedSequence` and order it
+   * against a room join themselves. The one other cursor source is
+   * `backfillStreamGap`, which intentionally uses an explicit PRE-GAP cursor
+   * (the current latest would skip the very hole it fills).
+   */
+  private async joinStreamForCatchUp(streamId: string): Promise<string | null> {
+    const after = await getLatestPersistedSequence(streamId)
+    await this.ensureStreamSubscription(streamId, { awaitJoin: true })
+    return after
+  }
+
   private async ensureStreamSubscription(streamId: string, options?: { awaitJoin?: boolean }): Promise<void> {
     if (!this.socket || this.isDestroyed) return
 
@@ -641,13 +653,11 @@ export class SyncEngine {
     try {
       const queryKey = streamKeys.bootstrap(workspaceId, streamId)
       const previousBootstrap = queryClient.getQueryData<CachedStreamBootstrap>(queryKey)
-      // Cursor BEFORE the room join — once subscribed, live events land in
-      // IndexedDB and would advance the cursor past any gap this refresh is
-      // meant to close (INV-53: overlap is safe, gaps are not).
-      const after = previousBootstrap ? await getLatestPersistedSequence(streamId) : null
-
-      await this.ensureStreamSubscription(streamId, { awaitJoin: true })
+      const cursor = await this.joinStreamForCatchUp(streamId)
       if (this.isDestroyed) return
+      // Without a cached bootstrap this is a fresh open, not a catch-up —
+      // fetch the full latest window instead of an append from the cursor.
+      const after = previousBootstrap ? cursor : null
 
       const bootstrap = await streamService.bootstrap(workspaceId, streamId, after ? { after } : undefined)
       await applyStreamBootstrap(workspaceId, streamId, bootstrap)

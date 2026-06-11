@@ -83,6 +83,39 @@ export async function getLatestPersistedSequence(streamId: string): Promise<stri
   return latestEvent?.sequence ?? null
 }
 
+export interface PersistedTail {
+  /** Global sequence of the newest persisted row — the `bootstrap?after=` catch-up cursor. */
+  latestSequence: string | null
+  /**
+   * Highest `broadcastSequence` among recent persisted rows (broadcast order
+   * matches global order, so the first stamped row scanning downward holds
+   * the max). `null` when the cache predates the broadcast counter.
+   */
+  latestBroadcastSequence: string | null
+}
+
+/**
+ * Bound on the downward scan for a stamped row. Unstamped rows above the
+ * last stamped one only occur transitionally (pre-INV-61 cached rows);
+ * past the bound we fall back to the global-sequence gap heuristic.
+ */
+const TAIL_SCAN_LIMIT = 50
+
+export async function getPersistedTail(streamId: string): Promise<PersistedTail> {
+  const recent = await db.events
+    .where("[streamId+_sequenceNum]")
+    .between([streamId, 0], [streamId, Number.MAX_SAFE_INTEGER], true, true)
+    .reverse()
+    .filter((event) => event._status !== "pending" && event._status !== "failed")
+    .limit(TAIL_SCAN_LIMIT)
+    .toArray()
+
+  return {
+    latestSequence: recent[0]?.sequence ?? null,
+    latestBroadcastSequence: recent.find((event) => event.broadcastSequence != null)?.broadcastSequence ?? null,
+  }
+}
+
 function getBootstrapWindowFloor(events: StreamEvent[]): bigint | null {
   if (events.length === 0) return null
   return events.reduce((min, event) => {
@@ -505,22 +538,33 @@ export interface StreamSocketHandlerOptions {
    * client wasn't receiving (zombie socket, server bounce, a catch-up fetch
    * that raced live delivery). `afterSequence` is the pre-write latest, so a
    * `bootstrap?after=` fetch from it closes the hole (INV-53: overlap is safe,
-   * gaps are not). Other users' command events legitimately occupy sequence
-   * slots that are never delivered to this viewer, so a reported gap may turn
-   * out to be empty — the backfill is idempotent and self-quiets because the
-   * next live event sits contiguously on the new tail.
+   * gaps are not). When both sides carry a `broadcastSequence` the check is
+   * exact (INV-61: the broadcast chain is dense for every viewer). Only the
+   * transitional global-sequence fallback can report a gap that turns out to
+   * be empty — the backfill is idempotent and self-quiets.
    */
   onSequenceGap?: (gap: { streamId: string; afterSequence: string }) => void
 }
 
 /**
- * Pre-write tail-gap check: returns the latest persisted sequence when the
- * incoming event skips past it (a hole exists behind the new tail), null when
- * contiguous, older-than-tail, or the stream has nothing cached to gap against.
+ * Pre-write tail-gap check: returns the catch-up cursor (latest persisted
+ * global sequence) when the incoming event skips past the persisted tail,
+ * null when contiguous, older-than-tail, or there is nothing to gap against.
+ *
+ * The comparison runs on the dense broadcast chain when both sides are
+ * stamped — exact, no false positives from other viewers' command events.
+ * Unstamped events (own command echoes, pre-INV-61 caches) fall back to the
+ * conservative global-sequence heuristic.
  */
-function detectSequenceGap(latestPersisted: string | null, incomingSequence: string): string | null {
-  if (latestPersisted === null) return null
-  return sequenceToNum(incomingSequence) > sequenceToNum(latestPersisted) + 1 ? latestPersisted : null
+export function detectSequenceGap(
+  tail: PersistedTail,
+  incoming: Pick<StreamEvent, "sequence" | "broadcastSequence">
+): string | null {
+  if (tail.latestSequence === null) return null
+  if (incoming.broadcastSequence != null && tail.latestBroadcastSequence != null) {
+    return Number(incoming.broadcastSequence) > Number(tail.latestBroadcastSequence) + 1 ? tail.latestSequence : null
+  }
+  return sequenceToNum(incoming.sequence) > sequenceToNum(tail.latestSequence) + 1 ? tail.latestSequence : null
 }
 
 export function registerStreamSocketHandlers(
@@ -568,7 +612,7 @@ export function registerStreamSocketHandlers(
 
       // Tail-gap check must read the latest BEFORE this write advances it.
       if (onSequenceGap) {
-        gapAfterSequence = detectSequenceGap(await getLatestPersistedSequence(streamId), newEvent.sequence)
+        gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), newEvent)
       }
 
       // Add the real event BEFORE deleting the optimistic one so that
@@ -817,7 +861,7 @@ export function registerStreamSocketHandlers(
       if (existing) return
       // Tail-gap check must read the latest BEFORE this write advances it.
       if (onSequenceGap) {
-        gapAfterSequence = detectSequenceGap(await getLatestPersistedSequence(streamId), payload.event.sequence)
+        gapAfterSequence = detectSequenceGap(await getPersistedTail(streamId), payload.event)
       }
       await db.events.put({
         ...payload.event,

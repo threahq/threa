@@ -14,6 +14,7 @@ import type { MessageAgentActivity } from "@/hooks"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
 import { useAbortResearch } from "@/hooks"
 import { isAbortableStepType } from "@/lib/step-config"
+import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
 import { AgentSessionEvent } from "./agent-session-event"
 import { CommandEvent } from "./command-event"
@@ -107,6 +108,14 @@ export type TimelineItem =
     }
   | { type: "command_group"; commandId: string; events: StreamEvent[] }
   | { type: "session_group"; sessionId: string; sessionVersion: number; events: StreamEvent[] }
+  /**
+   * An in-place loading placeholder for a detected hole in the broadcast
+   * chain (INV-61): events are known to be missing right after
+   * `afterEventId` and a scoped backfill is in flight. Rendering the
+   * placeholder where the events belong means the backfill resolves it in
+   * place — a missed message never pops in above rows already on screen.
+   */
+  | { type: "gap"; afterEventId: string; missingCount: number }
 
 /** Event types that participate in author-grouping (render as message bodies). */
 const MESSAGE_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["message_created", "companion_response"])
@@ -225,9 +234,50 @@ export function getTimelineItemKey(item: TimelineItem): string {
       return item.commandId
     case "session_group":
       return item.sessionId
+    case "gap":
+      return `gap:${item.afterEventId}`
     default:
       return item.event.id
   }
+}
+
+/** Whether a timeline item renders (or contains) the given event id. */
+function itemContainsEvent(item: TimelineItem, eventId: string): boolean {
+  switch (item.type) {
+    case "command_group":
+    case "session_group":
+      return item.events.some((event) => event.id === eventId)
+    case "gap":
+      return false
+    default:
+      return item.event.id === eventId
+  }
+}
+
+/**
+ * Insert a `gap` placeholder item directly after the timeline item that
+ * renders each hole's `afterEventId` (INV-61). Holes whose anchor row isn't
+ * in the item list (e.g. the anchor was filtered out of this view) are
+ * skipped — the backfill still runs; there is just no position to mark.
+ */
+export function injectGapItems(
+  items: TimelineItem[],
+  holes: Array<{ afterEventId: string; missingCount: number }>
+): TimelineItem[] {
+  if (holes.length === 0) return items
+  const result: TimelineItem[] = []
+  const holesByAnchor = new Map(holes.map((hole) => [hole.afterEventId, hole]))
+  for (const item of items) {
+    result.push(item)
+    for (const [anchorId, hole] of holesByAnchor) {
+      if (itemContainsEvent(item, anchorId)) {
+        result.push({ type: "gap", afterEventId: hole.afterEventId, missingCount: hole.missingCount })
+        holesByAnchor.delete(anchorId)
+        break
+      }
+    }
+  }
+  return result
 }
 
 /**
@@ -356,6 +406,7 @@ export interface TimelineItemRenderContext {
 
 function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean {
   if (!firstUnreadEventId) return false
+  if (item.type === "gap") return false
   if (item.type === "command_group" || item.type === "session_group") {
     return item.events[0]?.id === firstUnreadEventId
   }
@@ -371,6 +422,19 @@ export function TimelineItemContent({ item, ctx }: { item: TimelineItem; ctx: Ti
       {item.type === "command_group" && (
         <div className="px-3 sm:px-6">
           <CommandEvent events={item.events} />
+        </div>
+      )}
+      {item.type === "gap" && (
+        // Fixed-height single row: the placeholder reserves the hole's spot
+        // and is replaced in place when the backfill lands — no content ever
+        // inserts above rows the user is already reading (INV-61, INV-21).
+        <div
+          role="status"
+          aria-label="Loading missed messages"
+          className="flex h-8 items-center gap-2 px-3 sm:px-6 text-xs text-muted-foreground"
+        >
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          <span>Loading {item.missingCount === 1 ? "a missed message" : `${item.missingCount} missed messages`}…</span>
         </div>
       )}
       {item.type === "session_group" && !ctx.hideSessionCards && (

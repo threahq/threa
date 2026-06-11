@@ -8,6 +8,7 @@ function createMessageEvent(messageId: string): StreamEvent {
     id: `evt_${messageId}`,
     streamId: "stream_1",
     sequence: 1n,
+    broadcastSequence: 1n,
     eventType: "message_created",
     actorId: "user_1",
     actorType: "user",

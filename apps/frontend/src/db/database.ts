@@ -137,6 +137,13 @@ export interface CachedEvent {
   sequence: string // bigint as string
   /** Numeric mirror of sequence for IDB index ordering (string indexes sort lexicographically). */
   _sequenceNum: number
+  /**
+   * Dense per-stream position over viewer-visible timeline rows (INV-61),
+   * mirrored from the wire. `null` for non-broadcast event types (own command
+   * events, patch-style rows), `undefined` for rows cached before the field
+   * existed — both are simply skipped by the contiguity chain.
+   */
+  broadcastSequence?: string | null
   eventType: EventType
   payload: unknown
   actorId: string | null

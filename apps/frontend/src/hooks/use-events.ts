@@ -6,6 +6,8 @@ import { db, sequenceToNum } from "@/db"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
 import { isTerminalBootstrapError, shouldSuppressBootstrapError } from "@/lib/query-load-state"
+import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/contiguity"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { StreamEvent, EventsAroundResponse, SharedMessageHydration } from "@threa/types"
 
 export const eventKeys = {
@@ -13,6 +15,10 @@ export const eventKeys = {
   list: (workspaceId: string, streamId: string) => [...eventKeys.all, "list", workspaceId, streamId] as const,
   newer: (workspaceId: string, streamId: string) => [...eventKeys.all, "newer", workspaceId, streamId] as const,
 }
+
+/** Spacing/cap for re-requesting a backfill while the same holes persist. */
+const HOLE_BACKFILL_RETRY_MS = 15_000
+const HOLE_BACKFILL_MAX_ATTEMPTS = 3
 
 interface JumpState {
   events: StreamEvent[]
@@ -460,6 +466,47 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     return getRenderableEvents(effectiveEvents, displayFloor) as unknown as StreamEvent[]
   }, [effectiveEvents, olderData, newerData, jumpState, displayFloor])
 
+  // Contiguity gate (INV-61): detect holes in the broadcast chain of the
+  // rendered window. Each hole renders as an in-place loading placeholder
+  // (see injectGapItems in event-list) and is backfilled via the engine's
+  // single-flighted gap fetch, so the missed message resolves the
+  // placeholder where it belongs instead of popping in above rows already
+  // on screen. Jump mode is exempt — its window is a single contiguous
+  // server response, and holes against the live tail are expected there.
+  const syncEngine = useOptionalSyncEngine()
+  const holes = useMemo<TimelineHole[]>(() => (jumpState ? [] : computeTimelineHoles(events)), [events, jumpState])
+  const holesKey = holesSignature(holes)
+  const holesRef = useRef(holes)
+  holesRef.current = holes
+
+  useEffect(() => {
+    if (!syncEngine || holesKey === "") return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let attempt = 0
+
+    // Re-request a few times while the SAME holes persist (transient fetch
+    // failures, server lag), then leave the placeholder to the next
+    // reconnect/navigation refresh. A filled hole changes holesKey, which
+    // cancels the retry chain via cleanup.
+    const request = () => {
+      if (cancelled) return
+      attempt++
+      for (const hole of holesRef.current) {
+        void syncEngine.backfillStreamGap(streamId, hole.afterSequence)
+      }
+      if (attempt < HOLE_BACKFILL_MAX_ATTEMPTS) {
+        timer = setTimeout(request, HOLE_BACKFILL_RETRY_MS)
+      }
+    }
+    request()
+
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [holesKey, syncEngine, streamId])
+
   // When IDB has been unresolved long enough that a user would notice, flip
   // the timeline to the skeleton instead of leaving it blank. Fast switches
   // clear the timer before it fires, so the flicker-free path is preserved
@@ -635,6 +682,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
   return {
     events,
+    holes,
     isLoading,
     isConfirmedEmpty,
     error: suppressBootstrapError ? null : error,

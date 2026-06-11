@@ -1087,7 +1087,10 @@ export class EventService {
         return left.event.id.localeCompare(right.event.id)
       })
 
-      const nextSequences = await StreamEventRepository.getNextSequences(
+      // Every movable event is a broadcast timeline type (message_created /
+      // agent_session:*), so each gets a fresh (sequence, broadcastSequence)
+      // pair at the destination — the destination chain stays dense (INV-61).
+      const nextSequencePairs = await StreamEventRepository.getNextSequencePairs(
         client,
         destinationThread.id,
         movableEvents.length
@@ -1095,12 +1098,31 @@ export class EventService {
       const updates: MoveMessageSequenceUpdate[] = []
       const agentSessionEventUpdates: MoveEventIdSequenceUpdate[] = []
       movableEvents.forEach((entry, index) => {
+        const pair = nextSequencePairs[index]
         if (entry.kind === "message") {
-          updates.push({ messageId: entry.messageId, sequence: nextSequences[index] })
+          updates.push({
+            messageId: entry.messageId,
+            sequence: pair.sequence,
+            broadcastSequence: pair.broadcastSequence,
+          })
         } else {
-          agentSessionEventUpdates.push({ eventId: entry.event.id, sequence: nextSequences[index] })
+          agentSessionEventUpdates.push({
+            eventId: entry.event.id,
+            sequence: pair.sequence,
+            broadcastSequence: pair.broadcastSequence,
+          })
         }
       })
+
+      // The slots these events occupied in the SOURCE stream's broadcast
+      // chain are vacated by the move. Declare them on the source tombstone
+      // so clients can tell "moved away" apart from "missed" (INV-61).
+      // movableEvents is already in ascending source-sequence order, and
+      // broadcast order matches global order, so no re-sort is needed.
+      const vacatedBroadcastSequences = movableEvents
+        .map((entry) => entry.event.broadcastSequence)
+        .filter((value): value is bigint => value !== null)
+        .map((value) => value.toString())
 
       // Pre-generate the destination tombstone's event ID so it can be
       // stamped onto each relocated `message_created` payload via
@@ -1215,11 +1237,13 @@ export class EventService {
       // same `movedAt` value so the badge tooltip and the tombstone summary
       // line render identical timestamps for the same move (otherwise app
       // clock vs DB NOW() can drift visibly under slow transactions).
+      // Only the source side carries `vacatedBroadcastSequences` — the
+      // destination gained dense fresh slots and has nothing to account for.
       const sourceTombstone = await StreamEventRepository.insert(client, {
         id: eventId(),
         streamId: params.sourceStreamId,
         eventType: "messages:moved",
-        payload: tombstonePayload,
+        payload: { ...tombstonePayload, vacatedBroadcastSequences } satisfies MessagesMovedEventPayload,
         actorId: params.actorId,
         actorType: AuthorTypes.USER,
         createdAt: movedAt,

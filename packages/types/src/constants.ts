@@ -86,6 +86,39 @@ export type EventType = (typeof EVENT_TYPES)[number]
 export const COMMAND_EVENT_TYPES = ["command_dispatched", "command_completed", "command_failed"] as const
 export type CommandEventType = (typeof COMMAND_EVENT_TYPES)[number]
 
+/**
+ * Timeline broadcast event types (subset of EVENT_TYPES): events that every
+ * stream member receives as individually delivered timeline rows — via a
+ * stream-room socket append AND bootstrap/list responses. These, and only
+ * these, consume the per-stream dense `broadcastSequence` counter that lets
+ * clients verify their visible timeline window is contiguous (INV-61).
+ *
+ * Excluded on purpose:
+ * - Command events are author-scoped — other viewers never receive them, so
+ *   giving them broadcast slots would create permanent holes for everyone else.
+ * - Edits / deletes / reactions are delivered live as payload *patches* onto
+ *   the original message row, not as appended rows, so a broadcast slot for
+ *   them would never be filled by live delivery.
+ * - Legacy/no-longer-emitted types (thread_created, companion_response,
+ *   stream_archived/unarchived) ride along in bootstrap windows without slots.
+ */
+export const TIMELINE_BROADCAST_EVENT_TYPES = [
+  "message_created",
+  "member_joined",
+  "member_added",
+  "member_left",
+  "agent_session:started",
+  "agent_session:completed",
+  "agent_session:failed",
+  "agent_session:deleted",
+  "messages:moved",
+] as const
+export type TimelineBroadcastEventType = (typeof TIMELINE_BROADCAST_EVENT_TYPES)[number]
+
+export function isTimelineBroadcastEventType(eventType: string): eventType is TimelineBroadcastEventType {
+  return (TIMELINE_BROADCAST_EVENT_TYPES as readonly string[]).includes(eventType)
+}
+
 // Workspace user roles — re-exported from workspace-permissions so the catalog
 // (`WORKSPACE_ROLE_DEFINITIONS`) and the User.role union cannot drift.
 export { WORKSPACE_USER_ROLES, type WorkspaceRoleSlug } from "./workspace-permissions"

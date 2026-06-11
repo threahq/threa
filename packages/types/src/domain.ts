@@ -447,6 +447,16 @@ export interface StreamEvent {
   id: string
   streamId: string
   sequence: string
+  /**
+   * Dense per-stream position over viewer-visible timeline rows
+   * (TIMELINE_BROADCAST_EVENT_TYPES), serialized as a string like `sequence`.
+   * For any viewer the broadcast chain has no legitimate holes — a missing
+   * number is always a real gap the client can backfill (INV-61). `null` for
+   * event types outside the broadcast set (author-scoped command events,
+   * patch-style edit/reaction rows) and for rows written before the counter
+   * existed.
+   */
+  broadcastSequence?: string | null
   eventType: EventType
   payload: unknown
   actorId: string | null
