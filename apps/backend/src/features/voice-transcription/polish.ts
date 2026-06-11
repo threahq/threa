@@ -15,6 +15,13 @@ export interface PolishTranscriptInput {
   workspaceId: string
   userId: string
   sessionId: string
+  /**
+   * Draft text already in the composer around the dictation insertion point,
+   * captured client-side at `voice:start`. Read-only context for the model
+   * (vocabulary, names, sentence continuation) — never part of the output.
+   */
+  draftBefore?: string
+  draftAfter?: string
 }
 
 export type PolishTranscript = (input: PolishTranscriptInput) => Promise<string>
@@ -30,7 +37,7 @@ export type PolishTranscript = (input: PolishTranscriptInput) => Promise<string>
  * text so dictation always commits something.
  */
 export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
-  return async ({ rawTranscript, level, workspaceId, userId, sessionId }) => {
+  return async ({ rawTranscript, level, workspaceId, userId, sessionId, draftBefore, draftAfter }) => {
     const trimmed = rawTranscript.trim()
     if (!trimmed) return rawTranscript
     // Defense-in-depth: the gateway short-circuits before reaching here, but an
@@ -39,6 +46,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
     if (level === "none") return rawTranscript
 
     const systemPrompt = level === "opinionated" ? POLISH_OPINIONATED_SYSTEM_PROMPT : POLISH_MINOR_SYSTEM_PROMPT
+    const userMessage = buildPolishUserMessage({ rawTranscript: trimmed, draftBefore, draftAfter })
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), POLISH_TIMEOUT_MS)
@@ -48,7 +56,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
         model: POLISH_MODEL,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Raw transcript:\n${trimmed}` },
+          { role: "user", content: userMessage },
         ],
         maxTokens: POLISH_MAX_TOKENS,
         temperature: 0.2,
@@ -57,6 +65,7 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
           metadata: {
             sessionId,
             rawLen: trimmed.length,
+            draftContextLen: (draftBefore?.length ?? 0) + (draftAfter?.length ?? 0),
             level,
           },
         },
@@ -77,6 +86,31 @@ export function createPolishTranscript(deps: { ai: AI }): PolishTranscript {
       clearTimeout(timer)
     }
   }
+}
+
+/**
+ * Assembles the polish user message. When the composer already holds text, the
+ * draft around the insertion point is included as labeled read-only sections so
+ * the model can match the draft's vocabulary (names, project terms) and make
+ * the polished text flow with the surrounding sentence. The prompt's hard rules
+ * tell the model these sections must never appear in the output.
+ */
+export function buildPolishUserMessage(args: {
+  rawTranscript: string
+  draftBefore?: string
+  draftAfter?: string
+}): string {
+  const sections: string[] = []
+  const before = args.draftBefore?.trim()
+  const after = args.draftAfter?.trim()
+  if (before) {
+    sections.push(`Existing draft text before the insertion point (context only, never output it):\n${before}`)
+  }
+  if (after) {
+    sections.push(`Existing draft text after the insertion point (context only, never output it):\n${after}`)
+  }
+  sections.push(`Raw transcript:\n${args.rawTranscript}`)
+  return sections.join("\n\n")
 }
 
 /**

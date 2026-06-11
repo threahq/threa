@@ -2,7 +2,7 @@ import type { Server } from "socket.io"
 import { ulid } from "ulid"
 import { z } from "zod"
 import type { AuthService } from "@threa/backend-common"
-import type { VoicePolishLevel } from "@threa/types"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS, type VoicePolishLevel } from "@threa/types"
 import { createSocketAuthMiddleware } from "../../lib/socket-auth"
 import { logger } from "../../lib/logger"
 import { HttpError } from "../../lib/errors"
@@ -15,6 +15,12 @@ import type { UserPreferencesService } from "../user-preferences"
 const startPayloadSchema = z.object({
   workspaceId: z.string().min(1),
   voiceSessionId: z.string().min(1),
+  // Draft text around the composer caret at take start, sent as read-only
+  // polish context. The client caps both sides at VOICE_DRAFT_CONTEXT_MAX_CHARS;
+  // the gateway re-caps below (truncate, don't reject — an oversized draft must
+  // never block dictation from starting).
+  draftBefore: z.string().optional(),
+  draftAfter: z.string().optional(),
 })
 
 interface Dependencies {
@@ -71,6 +77,13 @@ interface RelayState {
    * "insufficient funds" close often fires before any final lands).
    */
   lastInterim: string
+  /**
+   * Draft text around the insertion point, captured once at `voice:start` and
+   * forwarded to every polish pass as read-only context (vocabulary, names,
+   * sentence continuation). Already capped to VOICE_DRAFT_CONTEXT_MAX_CHARS.
+   */
+  draftBefore: string | undefined
+  draftAfter: string | undefined
   /**
    * Serializes polish work — out-of-order resolves would let an older
    * polished snapshot land in the editor after a newer one, which would
@@ -183,6 +196,10 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
         return
       }
       const { workspaceId, voiceSessionId } = parsed.data
+      // Proximity to the insertion point matters most for polish context, so
+      // keep the END of the before-text and the START of the after-text.
+      const draftBefore = parsed.data.draftBefore?.slice(-VOICE_DRAFT_CONTEXT_MAX_CHARS) || undefined
+      const draftAfter = parsed.data.draftAfter?.slice(0, VOICE_DRAFT_CONTEXT_MAX_CHARS) || undefined
       starting = true
 
       // Captured once getRelaySession resolves so a later failure (e.g.
@@ -257,6 +274,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
                 workspaceId: polishingState.workspaceId,
                 userId: polishingState.userId,
                 sessionId: polishingState.voiceSessionId,
+                draftBefore: polishingState.draftBefore,
+                draftAfter: polishingState.draftAfter,
               })
               if (state !== polishingState || polishingState.finalized) return
               socket.emit("voice:transcript:polished", {
@@ -376,6 +395,8 @@ export function registerVoiceGateway(io: Server, deps: Dependencies) {
           sessionChunkId,
           rawFinals: [],
           lastInterim: "",
+          draftBefore,
+          draftAfter,
           polishQueue: Promise.resolve(),
         }
         logger.debug({ voiceSessionId, workspaceId }, "Voice relay started")

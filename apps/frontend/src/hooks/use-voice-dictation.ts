@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { io, type Socket } from "socket.io-client"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
 import { voiceApi } from "@/api/voice"
 import { getCachedWsConfig } from "@/lib/cached-ws-config"
 import { useDictationCoordinator } from "@/contexts"
@@ -75,6 +76,14 @@ interface UseVoiceDictationOptions {
    * parallel prediction. Returns null when the chunkId isn't tracked.
    */
   onGetChunkText?: (chunkId: string) => string | null
+  /**
+   * Read the draft text around the caret (where dictation will be inserted)
+   * from the editor. Captured once when the take starts and sent with
+   * `voice:start` so the polish model sees the rest of the message as
+   * read-only context (names, terms, sentence continuation). Return null when
+   * the composer is empty or unavailable.
+   */
+  onGetDraftContext?: () => { before: string; after: string } | null
   language?: string
 }
 
@@ -262,6 +271,7 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
     onChunkSwap,
     onLockAllChunks,
     onGetChunkText,
+    onGetDraftContext,
     language,
   } = options
   const [state, setState] = useState<VoiceDictationState>("idle")
@@ -322,6 +332,8 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
   onLockAllChunksRef.current = onLockAllChunks
   const onGetChunkTextRef = useRef(onGetChunkText)
   onGetChunkTextRef.current = onGetChunkText
+  const onGetDraftContextRef = useRef(onGetDraftContext)
+  onGetDraftContextRef.current = onGetDraftContext
   // Read by the socket handler at insert time so the chunk lands in whichever
   // mode the toggle currently shows (the toggle can be flipped mid-session).
   const showOriginalRef = useRef(showOriginal)
@@ -700,9 +712,18 @@ export function useVoiceDictation(options: UseVoiceDictationOptions): UseVoiceDi
           if (workletRef.current) fail("Dictation connection lost")
         })
 
+        // Snapshot the draft around the caret as polish context. Captured at
+        // emit time (not button-press time) so it reflects the doc the
+        // dictation actually lands in. Proximity matters most, so keep the
+        // END of the before-text and the START of the after-text; empty sides
+        // are omitted so the wire payload stays minimal.
+        const draftContext = onGetDraftContextRef.current?.() ?? null
+        const draftBefore = draftContext?.before.slice(-VOICE_DRAFT_CONTEXT_MAX_CHARS).trim() || undefined
+        const draftAfter = draftContext?.after.slice(0, VOICE_DRAFT_CONTEXT_MAX_CHARS).trim() || undefined
+
         socket.emit(
           "voice:start",
-          { workspaceId, voiceSessionId: session.voiceSessionId },
+          { workspaceId, voiceSessionId: session.voiceSessionId, draftBefore, draftAfter },
           (result: { ok: boolean; error?: string }) => {
             // The user stopped (or we tore down) while this ACK was in flight —
             // don't resurrect a dead take into the "recording" state.
