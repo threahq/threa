@@ -33,6 +33,15 @@ describe("SyncLogRepository catch-up reads", () => {
     )
   }
 
+  /** Inserts a thread stream whose visibility inherits from `rootStreamId`. */
+  async function addThread(workspaceId: string, threadId: string, rootStreamId: string, parentStreamId: string) {
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, parent_stream_id, root_stream_id, created_by)
+       VALUES ($1, $2, 'thread', 'private', $3, $4, $5)`,
+      [threadId, workspaceId, parentStreamId, rootStreamId, uniqueId("usr")]
+    )
+  }
+
   /** Appends one entry and returns its sync id. */
   async function appendEntry(workspaceId: string, entry: Omit<SyncLogEntryInput, "outboxEventId">): Promise<bigint> {
     const [outboxEventId] = await reserveOutboxIds(1)
@@ -125,6 +134,78 @@ describe("SyncLogRepository catch-up reads", () => {
 
     const entries = await listFor(workspaceId, veteran)
     expect(entries.map((e) => e.syncId)).toEqual([entry])
+  })
+
+  test("thread entries are visible to root-stream members who never joined the thread", async () => {
+    const workspaceId = uniqueId("ws")
+    const me = uniqueId("usr")
+    const outsider = uniqueId("usr")
+    const channel = uniqueId("stream")
+    const thread = uniqueId("stream")
+    await addMembership(channel, me)
+    await addThread(workspaceId, thread, channel, channel)
+
+    const threadMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${thread}`],
+      payload: { workspaceId, kind: "pierres-thread-reply" },
+    })
+
+    // Member of the root channel: sees the thread's content without being a
+    // thread member (access inherits from the root, mirroring checkStreamAccess).
+    const mine = await listFor(workspaceId, me)
+    expect(mine.map((e) => e.syncId)).toEqual([threadMessage])
+
+    // Not a member of the root: sees nothing.
+    expect(await listFor(workspaceId, outsider)).toEqual([])
+  })
+
+  test("a depth-2 thread inherits visibility from the root, not the immediate parent", async () => {
+    const workspaceId = uniqueId("ws")
+    const me = uniqueId("usr")
+    const channel = uniqueId("stream")
+    const thread = uniqueId("stream")
+    const subThread = uniqueId("stream")
+    await addMembership(channel, me)
+    await addThread(workspaceId, thread, channel, channel)
+    await addThread(workspaceId, subThread, channel, thread)
+
+    const deepMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${subThread}`],
+      payload: { workspaceId, kind: "thread-of-thread" },
+    })
+
+    expect((await listFor(workspaceId, me)).map((e) => e.syncId)).toEqual([deepMessage])
+  })
+
+  test("inherited thread visibility is bounded by the root membership's join position", async () => {
+    const workspaceId = uniqueId("ws")
+    const joiner = uniqueId("usr")
+    const channel = uniqueId("stream")
+    const thread = uniqueId("stream")
+    await addThread(workspaceId, thread, channel, channel)
+
+    const preJoinThreadMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${thread}`],
+      payload: { workspaceId, kind: "thread-pre-join" },
+    })
+    const joinEntry = await appendEntry(workspaceId, {
+      eventType: "stream:member_added",
+      groups: [`stream:${channel}`, `user:${joiner}`],
+      payload: { workspaceId, streamId: channel, memberId: joiner },
+    })
+    await addMembership(channel, joiner)
+    const postJoinThreadMessage = await appendEntry(workspaceId, {
+      eventType: "message:created",
+      groups: [`stream:${thread}`],
+      payload: { workspaceId, kind: "thread-post-join" },
+    })
+
+    const syncIds = (await listFor(workspaceId, joiner)).map((e) => e.syncId)
+    expect(syncIds).toEqual([joinEntry, postJoinThreadMessage])
+    expect(syncIds).not.toContain(preJoinThreadMessage)
   })
 
   test("a rejoin moves the bound forward — entries from the left period stay hidden", async () => {

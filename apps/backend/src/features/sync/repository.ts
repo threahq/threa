@@ -120,15 +120,24 @@ export const SyncLogRepository = {
   /**
    * Lists log entries after a cursor, filtered to what the requesting user is
    * allowed to see: workspace-group entries, their own user-group entries, and
-   * stream-group entries for streams they are currently a member of.
+   * stream-group entries for streams they can read.
    *
-   * Each stream group is additionally bounded below by the user's join
-   * position — the sync id of their latest `stream:member_added` entry — so
-   * joining a stream never replays its pre-join history through the log
-   * (over-delivery would leak no-history private streams). Memberships with no
-   * member_added entry predate the log itself, so every log entry postdates
-   * the join and no bound is needed. The member_added entry itself reaches the
-   * joiner through their user group.
+   * A stream is readable when the user is a member of it OR a member of its
+   * root stream — threads never carry their own access; `checkStreamAccess`
+   * resolves a thread's visibility entirely through `root_stream_id`, so a
+   * channel member must receive thread events (previews, replies by others)
+   * for threads they haven't participated in. The log filter mirrors that
+   * exact rule to keep catch-up delivery congruent with live delivery.
+   *
+   * Each visibility grant is bounded below by its membership's join position —
+   * the sync id of the user's latest `stream:member_added` entry for the
+   * member stream (threads inherit the ROOT membership's bound) — so joining a
+   * stream never replays its pre-join history through the log (over-delivery
+   * would leak no-history private streams). Memberships with no member_added
+   * entry predate the log itself, so every log entry postdates the join and no
+   * bound is needed. The member_added entry itself reaches the joiner through
+   * their user group. When several grants cover one stream (direct thread
+   * member AND root member), any grant whose bound passes admits the entry.
    */
   async listEntriesForUser(
     db: Querier,
@@ -136,16 +145,27 @@ export const SyncLogRepository = {
   ): Promise<SyncLogEntry[]> {
     const { workspaceId, userId, after, limit } = params
     const result = await db.query<SyncLogEntryRow>(sql`
-      WITH member_streams AS (
-        SELECT stream_id FROM stream_members WHERE member_id = ${userId}
-      ),
-      join_bounds AS (
+      WITH join_bounds AS (
         SELECT DISTINCT ON (payload->>'streamId') payload->>'streamId' AS stream_id, sync_id AS join_sync_id
         FROM sync_log
         WHERE workspace_id = ${workspaceId}
           AND event_type = 'stream:member_added'
           AND groups @> ARRAY['user:' || ${userId}]
         ORDER BY payload->>'streamId', sync_id DESC
+      ),
+      memberships AS (
+        SELECT sm.stream_id, COALESCE(jb.join_sync_id, 0) AS bound
+        FROM stream_members sm
+        LEFT JOIN join_bounds jb ON jb.stream_id = sm.stream_id
+        WHERE sm.member_id = ${userId}
+      ),
+      visible_streams AS (
+        SELECT stream_id, bound FROM memberships
+        UNION ALL
+        SELECT s.id, m.bound
+        FROM streams s
+        JOIN memberships m ON m.stream_id = s.root_stream_id
+        WHERE s.workspace_id = ${workspaceId}
       )
       SELECT l.sync_id, l.event_type, l.payload, l.created_at
       FROM sync_log l
@@ -155,10 +175,9 @@ export const SyncLogRepository = {
           l.groups && ARRAY['workspace', 'user:' || ${userId}]
           OR EXISTS (
             SELECT 1
-            FROM member_streams ms
-            LEFT JOIN join_bounds jb ON jb.stream_id = ms.stream_id
-            WHERE l.groups @> ARRAY['stream:' || ms.stream_id]
-              AND l.sync_id > COALESCE(jb.join_sync_id, 0)
+            FROM visible_streams vs
+            WHERE l.groups @> ARRAY['stream:' || vs.stream_id]
+              AND l.sync_id > vs.bound
           )
         )
       ORDER BY l.sync_id
