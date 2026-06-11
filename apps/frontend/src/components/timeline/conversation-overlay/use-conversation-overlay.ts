@@ -114,27 +114,39 @@ export function useConversationOverlay({
     setFocusedConversationId((previous) => (previous === conversationId ? null : conversationId))
   }, [])
 
+  // One entry per in-flight correction, keyed by messageId. React state (not
+  // a ref) on purpose: each change gives `context` a new identity, which is
+  // what `timelineRowPropsEqual` (event-list.tsx) compares to repaint the
+  // decorated rows' pending affordances.
+  const [pendingMessageIds, setPendingMessageIds] = useState<ReadonlySet<string>>(() => new Set())
+
   const { mutate } = reassign
   const onReassignMessage = useCallback(
     (messageId: string, toConversationId: string) => {
+      setPendingMessageIds((previous) => new Set(previous).add(messageId))
       mutate(
         { messageId, toConversationId },
         {
           onError: () => toast.error("Couldn't move the message to that conversation"),
+          onSettled: () => {
+            setPendingMessageIds((previous) => {
+              const next = new Set(previous)
+              next.delete(messageId)
+              return next
+            })
+          },
         }
       )
     },
     [mutate]
   )
 
-  const pendingMessageId = reassign.isPending ? (reassign.variables?.messageId ?? null) : null
-
   const context = useMemo(
     () =>
       enabled
-        ? { model, focusedConversationId, onToggleFocus, onReassignMessage, pendingMessageId, observeRow }
+        ? { model, focusedConversationId, onToggleFocus, onReassignMessage, pendingMessageIds, observeRow }
         : undefined,
-    [enabled, model, focusedConversationId, onToggleFocus, onReassignMessage, pendingMessageId, observeRow]
+    [enabled, model, focusedConversationId, onToggleFocus, onReassignMessage, pendingMessageIds, observeRow]
   )
 
   const inViewConversations = useMemo(

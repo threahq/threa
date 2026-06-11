@@ -191,12 +191,12 @@ export function ConversationOverlayRow({
   messageId: string
   children: ReactNode
 }) {
-  const { model, focusedConversationId, onReassignMessage, pendingMessageId, observeRow } = overlay
+  const { model, focusedConversationId, onReassignMessage, pendingMessageIds, observeRow } = overlay
   const conversation = annotation.conversationId ? model.conversationsById.get(annotation.conversationId) : undefined
   const conversationId = conversation?.id ?? null
   const colorIndex = conversation ? (model.colorIndexById.get(conversation.id) ?? 0) : null
   const isDimmed = focusedConversationId != null && annotation.conversationId !== focusedConversationId
-  const isPending = pendingMessageId === messageId
+  const isPending = pendingMessageIds.has(messageId)
 
   // React 19 ref-callback cleanup: registration is undone when the row
   // unmounts or its conversation changes (reassignment). MUST be memoized —
@@ -334,11 +334,11 @@ export function ConversationPickerDrawer({
   annotation: ConversationRowAnnotation
   messageId: string
 }) {
-  const { model, onReassignMessage, pendingMessageId } = overlay
+  const { model, onReassignMessage, pendingMessageIds } = overlay
   // Mirror the rail swatch menu: ignore picks while this message's
   // reassignment is already in flight, so rapid taps can't enqueue
   // duplicate corrections.
-  const isPending = pendingMessageId === messageId
+  const isPending = pendingMessageIds.has(messageId)
   return (
     <Drawer open={open} onOpenChange={onOpenChange}>
       <DrawerContent>
