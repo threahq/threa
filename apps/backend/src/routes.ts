@@ -30,6 +30,7 @@ import type { AICostServiceLike } from "./features/ai-usage"
 import type { AI } from "@threa/agent-runtime"
 import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
+import { createSyncHandlers } from "./features/sync"
 import { createSavedMessagesHandlers } from "./features/saved-messages"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createLabelHandlers } from "./features/labels"
@@ -68,6 +69,7 @@ import type { MemoExplorerService } from "./features/memos"
 import type { ConversationService } from "./features/conversations"
 import type { InvitationService } from "./features/invitations"
 import type { ActivityService } from "./features/activity"
+import type { SyncService } from "./features/sync"
 import type { SavedMessagesService } from "./features/saved-messages"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { LabelService, LabelAssignmentService } from "./features/labels"
@@ -108,6 +110,7 @@ interface Dependencies {
   userE2eKeysService: UserE2eKeysService
   invitationService: InvitationService
   activityService: ActivityService
+  syncService: SyncService
   savedMessagesService: SavedMessagesService
   scheduledMessagesService: ScheduledMessagesService
   labelService: LabelService
@@ -158,6 +161,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userE2eKeysService,
     invitationService,
     activityService,
+    syncService,
     savedMessagesService,
     scheduledMessagesService,
     labelService,
@@ -247,6 +251,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const debug = createDebugHandlers({ pool, poolMonitor })
   const invitation = createInvitationHandlers({ invitationService })
   const activity = createActivityHandlers({ activityService })
+  const sync = createSyncHandlers({ syncService })
   const savedMessages = createSavedMessagesHandlers({ savedMessagesService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const label = createLabelHandlers({ labelService, labelAssignmentService })
@@ -504,6 +509,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   )
 
   // Activity feed
+  // Sync-log catch-up (sync engine v2 step 1): ordered entries after a cursor,
+  // ACL-filtered to the requester's delivery groups.
+  app.get("/api/workspaces/:workspaceId/sync", ...authed, sync.catchUp)
+
   app.get("/api/workspaces/:workspaceId/activity", ...authed, activity.list)
   app.post("/api/workspaces/:workspaceId/activity/read", ...authed, activity.markAllAsRead)
   app.post("/api/workspaces/:workspaceId/activity/:id/read", ...authed, activity.markOneAsRead)

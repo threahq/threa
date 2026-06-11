@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { sql, withTransaction } from "../../db"
+import { sql, withTransaction, type Querier } from "../../db"
 
 /** One client-routed outbox event headed for the sync log. */
 export interface SyncLogEntryInput {
@@ -7,6 +7,30 @@ export interface SyncLogEntryInput {
   eventType: string
   groups: string[]
   payload: unknown
+}
+
+/** A sync-log entry as returned by catch-up reads. */
+export interface SyncLogEntry {
+  syncId: bigint
+  eventType: string
+  payload: unknown
+  createdAt: Date
+}
+
+interface SyncLogEntryRow {
+  sync_id: string
+  event_type: string
+  payload: unknown
+  created_at: Date
+}
+
+function mapRowToEntry(row: SyncLogEntryRow): SyncLogEntry {
+  return {
+    syncId: BigInt(row.sync_id),
+    eventType: row.event_type,
+    payload: row.payload,
+    createdAt: row.created_at,
+  }
 }
 
 export const SyncLogRepository = {
@@ -91,5 +115,63 @@ export const SyncLogRepository = {
 
       return assigned
     })
+  },
+
+  /**
+   * Lists log entries after a cursor, filtered to what the requesting user is
+   * allowed to see: workspace-group entries, their own user-group entries, and
+   * stream-group entries for streams they are currently a member of.
+   *
+   * Each stream group is additionally bounded below by the user's join
+   * position — the sync id of their latest `stream:member_added` entry — so
+   * joining a stream never replays its pre-join history through the log
+   * (over-delivery would leak no-history private streams). Memberships with no
+   * member_added entry predate the log itself, so every log entry postdates
+   * the join and no bound is needed. The member_added entry itself reaches the
+   * joiner through their user group.
+   */
+  async listEntriesForUser(
+    db: Querier,
+    params: { workspaceId: string; userId: string; after: bigint; limit: number }
+  ): Promise<SyncLogEntry[]> {
+    const { workspaceId, userId, after, limit } = params
+    const result = await db.query<SyncLogEntryRow>(sql`
+      WITH member_streams AS (
+        SELECT stream_id FROM stream_members WHERE member_id = ${userId}
+      ),
+      join_bounds AS (
+        SELECT DISTINCT ON (payload->>'streamId') payload->>'streamId' AS stream_id, sync_id AS join_sync_id
+        FROM sync_log
+        WHERE workspace_id = ${workspaceId}
+          AND event_type = 'stream:member_added'
+          AND groups @> ARRAY['user:' || ${userId}]
+        ORDER BY payload->>'streamId', sync_id DESC
+      )
+      SELECT l.sync_id, l.event_type, l.payload, l.created_at
+      FROM sync_log l
+      WHERE l.workspace_id = ${workspaceId}
+        AND l.sync_id > ${after.toString()}
+        AND (
+          l.groups && ARRAY['workspace', 'user:' || ${userId}]
+          OR EXISTS (
+            SELECT 1
+            FROM member_streams ms
+            LEFT JOIN join_bounds jb ON jb.stream_id = ms.stream_id
+            WHERE l.groups @> ARRAY['stream:' || ms.stream_id]
+              AND l.sync_id > COALESCE(jb.join_sync_id, 0)
+          )
+        )
+      ORDER BY l.sync_id
+      LIMIT ${limit}
+    `)
+    return result.rows.map(mapRowToEntry)
+  },
+
+  /** Max visible sync id for a workspace (0 when the log is empty). */
+  async getHead(db: Querier, workspaceId: string): Promise<bigint> {
+    const result = await db.query<{ head: string }>(sql`
+      SELECT COALESCE(MAX(sync_id), 0) AS head FROM sync_log WHERE workspace_id = ${workspaceId}
+    `)
+    return BigInt(result.rows[0].head)
   },
 }
