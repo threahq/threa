@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { AgentToolNames, type UserPreferences } from "@threa/types"
+import type { UserPreferences } from "@threa/types"
 import type { Stream } from "../streams"
 import { buildStreamContext } from "./context-builder"
 import { buildSystemPrompt } from "./companion/prompt/system-prompt"
@@ -9,24 +9,18 @@ import type { BuiltInAgentConfig } from "./built-in-agents"
 /**
  * Ariadne runs the *same* agent loop in the enclave as in the main app, so she
  * must run the *same* system prompt — assembled by the shared `buildSystemPrompt`
- * (temporal grounding, response style, send_message rules, tool sections, the
- * trust boundary, and the owner's scratchpad custom instructions), not the bare
+ * (temporal grounding, response style, send_message rules, the trust boundary,
+ * and the owner's scratchpad custom instructions), not the bare
  * `persona.systemPrompt`. The regional backend builds it here (it has the DB)
  * and ships the raw text to the enclave; the only inherent deltas are that I/O
  * is encrypted and the toolset is reduced.
  *
- * Tools are the one real difference: the enclave has no DB, so only the web
- * tools are available — never `workspace_research`, attachments, or memos. We
- * pass that reduced set so the prompt advertises exactly what the enclave wires.
+ * Tool sections are deliberately NOT built here: only the enclave knows which
+ * tools it actually wires for a turn (its own Tavily key, the per-stream
+ * tool-privacy policy on the assignment), so run-turn appends
+ * `buildToolPromptSections` over the REAL toolset — the prompt then advertises
+ * exactly what's available, never a server-side guess.
  */
-const ENCLAVE_ENABLED_TOOLS: string[] = [
-  AgentToolNames.WEB_SEARCH,
-  AgentToolNames.READ_URL,
-  AgentToolNames.GENERAL_RESEARCH,
-  // Conversation-local file reads: the enclave's in-process variant decrypts
-  // inline-shipped ciphertext (no S3, no backend callback).
-  AgentToolNames.LOAD_ATTACHMENT,
-]
 
 export async function buildEnclaveSystemPrompt(params: {
   pool: Pool
@@ -44,13 +38,10 @@ export async function buildEnclaveSystemPrompt(params: {
   // encrypted history is shipped separately and decrypted inside the enclave.
   const context = await buildStreamContext(pool, stream, { preferences, currentTime: new Date() })
 
-  // Built-in config is structurally a persona; override the toolset to the
-  // enclave-available subset so the prompt advertises exactly what's wired.
-  // (buildSystemPrompt only reads name/systemPrompt/enabledTools; createdAt /
-  // updatedAt are filled to satisfy the Persona shape.)
+  // Built-in config is structurally a persona (buildSystemPrompt only reads
+  // name/systemPrompt; createdAt/updatedAt fill out the Persona shape).
   const enclavePersona: Persona = {
     ...persona,
-    enabledTools: ENCLAVE_ENABLED_TOOLS,
     createdAt: new Date(),
     updatedAt: new Date(),
   }
@@ -64,8 +55,9 @@ export async function buildEnclaveSystemPrompt(params: {
     // No rolling conversation summary — that's derived from plaintext history
     // the backend can't read for an E2E stream.
     null,
-    // workspace_research needs the DB; the enclave has none.
-    false
+    // No tool sections server-side: the enclave appends them from its real
+    // toolset (see the module doc above).
+    []
   )
 
   // The shared prompt advertises the reduced toolset but never explains *why*

@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import type { ModelMessage } from "ai"
+import type { AgentTool } from "@threa/agent-runtime"
 import type { UserPreferences } from "@threa/types"
 import { AgentTriggers, AuthorTypes, StreamTypes } from "@threa/types"
 import type { UserPreferencesService } from "../../user-preferences"
@@ -39,7 +40,14 @@ export interface ContextParams {
 }
 
 export interface AgentContext {
-  systemPrompt: string
+  /**
+   * Compose the final system prompt from the ACTUAL built toolset. Two-phase
+   * because the toolset is wired after context build (its deps — workspace
+   * access, integrations, researcher callbacks — come from this context), and
+   * the prompt's tool sections must reflect exactly what was wired, never a
+   * parallel enabled-tools list (INV-44-adjacent: one source of truth).
+   */
+  composeSystemPrompt: (tools: AgentTool[]) => string
   messages: ModelMessage[]
   triggerMessage: Message | null
   invokingUserId: string | undefined
@@ -293,23 +301,26 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessibleStreamIds,
   })
 
-  let systemPrompt = buildSystemPrompt(
-    persona,
-    streamContext,
-    scratchpadCustomPrompt,
-    trigger,
-    mentionerName,
-    rollingConversationSummary,
-    invokingUserId !== undefined
-  )
-  if (turnDigestBlock) {
-    systemPrompt += `\n\n${turnDigestBlock}`
+  const composeSystemPrompt = (tools: AgentTool[]): string => {
+    let systemPrompt = buildSystemPrompt(
+      persona,
+      streamContext,
+      scratchpadCustomPrompt,
+      trigger,
+      mentionerName,
+      rollingConversationSummary,
+      tools
+    )
+    if (turnDigestBlock) {
+      systemPrompt += `\n\n${turnDigestBlock}`
+    }
+    return systemPrompt
   }
 
   const messages = formatMessagesWithTemporal(streamContext.conversationHistory, streamContext, authorNames)
 
   return {
-    systemPrompt,
+    composeSystemPrompt,
     messages,
     triggerMessage,
     invokingUserId,

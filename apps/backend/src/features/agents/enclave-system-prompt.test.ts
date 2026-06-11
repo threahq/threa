@@ -32,20 +32,14 @@ describe("buildEnclaveSystemPrompt", () => {
     expect(result).toMatch(/do not guess or invent/i)
   })
 
-  it("builds the prompt with the enclave-reduced toolset and workspace_research disabled", async () => {
+  it("builds the prompt with NO tool sections — the enclave appends them from its real toolset", async () => {
     spyOn(contextBuilder, "buildStreamContext").mockResolvedValue({} as never)
     const build = spyOn(systemPrompt, "buildSystemPrompt").mockReturnValue("BASE")
 
     await buildEnclaveSystemPrompt({ pool: {} as Pool, stream: STREAM, preferences: PREFS, persona: PERSONA })
 
-    const [personaArg, , , , , rollingSummary, workspaceResearch] = build.mock.calls[0]!
-    expect((personaArg as { enabledTools: string[] }).enabledTools).toEqual([
-      "web_search",
-      "read_url",
-      "general_research",
-      "load_attachment",
-    ])
+    const [, , , , , rollingSummary, tools] = build.mock.calls[0]!
     expect(rollingSummary).toBeNull() // no plaintext history to summarize
-    expect(workspaceResearch).toBe(false) // no DB in the enclave
+    expect(tools).toEqual([]) // tool prose is assembled in-enclave (run-turn)
   })
 })

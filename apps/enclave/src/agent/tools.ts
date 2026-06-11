@@ -6,7 +6,7 @@ import {
   type AgentTool,
 } from "@threa/agent-runtime/runtime"
 import type { AgentRuntimeAI } from "@threa/agent-runtime/runtime"
-import { isToolCategoryAllowed, type ToolPrivacyCategory } from "@threa/types"
+import { areToolCategoriesAllowed, type ToolPrivacyCategory } from "@threa/types"
 import type { LanguageModel } from "ai"
 import { createEnclaveLoadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
 
@@ -52,14 +52,9 @@ export interface EnclaveToolDeps {
 }
 
 export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
-  // Conversation-local tools live outside the privacy gate (see `attachments`).
+  // Conversation-local tools carry empty `categories` (see `attachments`), so
+  // the policy filter below never drops them.
   const localTools: AgentTool[] = deps.attachments ? [createEnclaveLoadAttachmentTool(deps.attachments)] : []
-
-  // The owner's policy may forbid web egress for this scratchpad. The enclave's
-  // entire *web* surface (web_search, read_url, general_research) then drops,
-  // leaving only the conversation-local tools — honest about the privacy the
-  // stream keeps without crippling files the model was already shown.
-  if (!isToolCategoryAllowed(deps.allowedCategories, "web")) return localTools
 
   // The web primitives, built fresh on demand. The top-level loop and the
   // research sub-loop each get their OWN instances (the sub-loop runs the same
@@ -77,8 +72,10 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
   }
 
   // general_research drives the web subset only (no nested sub-agent, no
-  // workspace/integration tools the enclave can't reach). Reuses the shared loop.
+  // workspace/integration tools the enclave can't reach). Reuses the shared
+  // loop; `web-only` keeps the advertised reach honest.
   const research = createGeneralResearchTool({
+    scope: "web-only",
     runGeneralResearch: (query, { signal, onSubstep, deadlineAt }) =>
       runGeneralResearch(
         { ai: deps.ai, model: deps.model, modelString: deps.modelString },
@@ -86,5 +83,11 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
       ),
   })
 
-  return [...localTools, ...webTools(), research]
+  // The owner's per-stream policy filters on each tool's OWN declared
+  // categories: the entire web surface (web_search, read_url, general_research)
+  // drops together when `web` is not allowed — honest about the privacy the
+  // stream keeps without crippling files the model was already shown.
+  return [...localTools, ...webTools(), research].filter((tool) =>
+    areToolCategoriesAllowed(deps.allowedCategories, tool.config.categories)
+  )
 }

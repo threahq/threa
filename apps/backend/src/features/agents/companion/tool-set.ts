@@ -110,7 +110,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
     // integrations). Like workspace_research it needs the trigger context that
     // populates `runGeneralResearch`; additionally gated by persona enablement.
     runGeneralResearch && isToolEnabled(enabledTools, AgentToolNames.GENERAL_RESEARCH)
-      ? createGeneralResearchTool({ runGeneralResearch })
+      ? createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
       : null,
 
     // Web tools

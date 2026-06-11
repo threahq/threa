@@ -19,7 +19,7 @@ function buildResult(overrides: Partial<GeneralResearchResult> = {}): GeneralRes
 describe("general_research tool", () => {
   test("folds the brief into systemContext and returns a compact status output", async () => {
     const runGeneralResearch = mock(async (_query: string, _opts: RunGeneralResearchOptions) => buildResult())
-    const tool = createGeneralResearchTool({ runGeneralResearch })
+    const tool = createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
 
     const result = await tool.config.execute({ query: "Is the auth PR merged?" }, { toolCallId: "tc_1" })
 
@@ -40,7 +40,7 @@ describe("general_research tool", () => {
 
   test("carries the full brief in the trace content but keeps it out of the LLM output", async () => {
     const runGeneralResearch = mock(async () => buildResult())
-    const tool = createGeneralResearchTool({ runGeneralResearch })
+    const tool = createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
 
     const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
 
@@ -53,7 +53,7 @@ describe("general_research tool", () => {
 
   test("omits the brief from trace content when the researcher returned none", async () => {
     const runGeneralResearch = mock(async () => buildResult({ brief: "" }))
-    const tool = createGeneralResearchTool({ runGeneralResearch })
+    const tool = createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
 
     const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
 
@@ -68,7 +68,7 @@ describe("general_research tool", () => {
       seen = opts
       return buildResult()
     })
-    const tool = createGeneralResearchTool({ runGeneralResearch })
+    const tool = createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
     const controller = new AbortController()
     const before = Date.now()
 
@@ -83,7 +83,7 @@ describe("general_research tool", () => {
 
   test("surfaces partial results with their reason", async () => {
     const runGeneralResearch = mock(async () => buildResult({ partial: true, partialReason: "timeout", brief: "" }))
-    const tool = createGeneralResearchTool({ runGeneralResearch })
+    const tool = createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
 
     const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
 

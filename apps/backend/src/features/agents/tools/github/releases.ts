@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
@@ -20,6 +20,7 @@ export type ListReleasesInput = z.infer<typeof ListReleasesSchema>
 export function createGithubListReleasesTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_releases",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_RELEASES],
     description: `List releases in a GitHub repository, newest first. Returns tag name, release name, author, draft/prerelease flags, and publish timestamp.`,
     inputSchema: ListReleasesSchema,
 
@@ -88,6 +89,7 @@ export type GetReleaseInput = z.infer<typeof GetReleaseSchema>
 export function createGithubGetReleaseTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_get_release",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_GET_RELEASE],
     description: `Fetch a single release by tag (or the latest release if tag is omitted). Returns metadata plus the release body/notes (truncated to ${MAX_RELEASE_BODY_BYTES} bytes) and any attached assets.`,
     inputSchema: GetReleaseSchema,
 

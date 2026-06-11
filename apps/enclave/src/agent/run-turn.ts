@@ -28,6 +28,7 @@ import type {
 import {
   AgentRuntime,
   TurnDigestCollector,
+  buildToolPromptSections,
   formatTurnDigestsForPrompt,
   generateTurnDigest,
   parseTurnDigestStepContent,
@@ -192,7 +193,6 @@ export async function runEnclaveTurn(
     }
   }
   const digestBlock = formatTurnDigestsForPrompt(digestEntries)
-  const systemPrompt = digestBlock ? `${request.system}\n\n${digestBlock}` : request.system
 
   const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
   const messageIds: string[] = []
@@ -226,26 +226,38 @@ export async function runEnclaveTurn(
   // tool work into later turns (C-1) — same collector the companion runs.
   const digestCollector = new TurnDigestCollector()
 
+  const turnTools = buildEnclaveTools({
+    ai,
+    model,
+    modelString: request.model,
+    tavilyApiKey: tools?.tavilyApiKey,
+    currentTime: tools?.currentTime,
+    timezone: tools?.timezone,
+    // Per-stream policy travels on the assignment, not in `deps.tools` (which
+    // is the enclave's own capability config, e.g. whether it has a Tavily key).
+    allowedCategories: request.allowedToolCategories,
+    // Conversation-local file access for `load_attachment` (carries empty
+    // categories, so the policy filter never drops it; the refs already ride
+    // the messages the model reads).
+    attachments: { refsById, ciphertextById },
+  })
+
+  // The backend ships the prompt WITHOUT tool sections — only the enclave
+  // knows which tools it actually wires (its own Tavily key, the per-stream
+  // policy above). Advertise exactly the built toolset, then fold in prior
+  // turns' digests.
+  const toolSections = buildToolPromptSections(turnTools)
+  const systemPrompt = [request.system, toolSections, digestBlock]
+    .filter((block): block is string => Boolean(block))
+    .join("\n\n")
+
   const runtime = new AgentRuntime({
     ai,
     model,
     modelString: request.model,
     systemPrompt,
     messages,
-    tools: buildEnclaveTools({
-      ai,
-      model,
-      modelString: request.model,
-      tavilyApiKey: tools?.tavilyApiKey,
-      currentTime: tools?.currentTime,
-      timezone: tools?.timezone,
-      // Per-stream policy travels on the assignment, not in `deps.tools` (which
-      // is the enclave's own capability config, e.g. whether it has a Tavily key).
-      allowedCategories: request.allowedToolCategories,
-      // Conversation-local file access for `load_attachment` (ungated; the
-      // refs already ride the messages the model reads).
-      attachments: { refsById, ciphertextById },
-    }),
+    tools: turnTools,
     observers: [traceObserver, digestCollector],
     // Lead the trace with the CONTEXT step ("Triggered by: …"): the runtime
     // emits it as a `context:received` event at run start and the observer

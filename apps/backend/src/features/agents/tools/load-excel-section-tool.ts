@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { AttachmentRepository, AttachmentExtractionRepository, EXCEL_MAX_ROWS_PER_REQUEST } from "../../attachments"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
@@ -59,6 +59,7 @@ export function createLoadExcelSectionTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "load_excel_section",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LOAD_EXCEL_SECTION],
     description: `Load specific rows from a sheet in a large Excel workbook. Only use this when:
 - The workbook is large (>20K cells) and injection strategy is "summary" (full content not in context)
 - You need to read specific rows from a particular sheet

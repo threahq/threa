@@ -49,6 +49,7 @@ export {
 } from "./load-excel-section-tool"
 export {
   createWorkspaceResearchTool,
+  WORKSPACE_RESEARCH_TOOL_NAME,
   type WorkspaceResearchInput,
   type WorkspaceResearchCallbacks,
   type RunWorkspaceAgentOptions,

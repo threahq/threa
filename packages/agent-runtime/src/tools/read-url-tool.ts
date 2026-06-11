@@ -2,7 +2,7 @@ import { z } from "zod"
 import * as dns from "dns/promises"
 import * as ipaddr from "ipaddr.js"
 import { NodeHtmlMarkdown } from "node-html-markdown"
-import { AgentStepTypes, threaFetchUserAgent } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, threaFetchUserAgent } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 import { applySelect, describeShape, structuralPreview } from "./json-inspect"
@@ -207,6 +207,16 @@ export function createReadUrlTool() {
     description:
       "Fetch and read the content of a web page or JSON resource. Use this after web_search when you need more detail than the snippet provides, or when the user shares a specific URL to analyze. " +
       "HTML pages are returned as markdown. JSON is returned in full when small; when large, you instead get the data's `shape` (a schema sketch), a sampled `preview`, and a `hint` — then call again with `select` (e.g. '.data.items[0:20]') to drill into a specific part.",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.READ_URL],
+    promptBlock: `## Reading URLs
+
+You have a \`read_url\` tool to fetch and read the content of a web page or JSON resource.
+
+When to use read_url:
+- After web_search when you need more detail than the snippet provides
+- When the user shares a specific URL they want you to analyze
+- To verify information or get complete context from a source
+- To read JSON APIs: small responses come back in full. For large ones you get the data's \`shape\` (a schema sketch), a sampled \`preview\`, and a \`hint\` — then call read_url again with a \`select\` path (e.g. \`.data.items[0:20]\`, \`.results[3].name\`, \`.users[*].email\`) to drill into the part you need.`,
     inputSchema: ReadUrlSchema,
 
     execute: async (input): Promise<AgentToolResult> => {

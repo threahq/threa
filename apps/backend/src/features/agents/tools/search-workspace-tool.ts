@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, STREAM_TYPES, StreamTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_TYPES, StreamTypes } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { searchDmStreamsByParticipant, StreamRepository } from "../../streams"
 import { UserRepository } from "../../workspaces"
@@ -102,6 +102,7 @@ export function createSearchMessagesTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "search_messages",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_MESSAGES],
     description: `Search for messages in the workspace knowledge base. Use this to find:
 - Previous discussions about a topic
 - Specific information mentioned in past conversations
@@ -207,6 +208,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "search_streams",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_STREAMS],
     description: `Search for streams (channels, scratchpads, DMs) in the workspace. Use this to find:
 - Specific channels or conversations
 - Where certain topics are discussed
@@ -354,6 +356,7 @@ export function createSearchUsersTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "search_users",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_USERS],
     description: `Search for users in the workspace by name or email. Use this to find:
 - A specific person
 - Who to ask about a topic
@@ -411,6 +414,7 @@ export function createGetStreamMessagesTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "get_stream_messages",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GET_STREAM_MESSAGES],
     description: `Get recent messages from a specific stream (channel, scratchpad, DM, or thread). Use this to:
 - See what's being discussed in another stream
 - Get context from a related conversation

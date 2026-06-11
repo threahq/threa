@@ -1,6 +1,6 @@
 import type { Tool } from "ai"
 import { z } from "zod"
-import type { AgentStepType, TraceSource, SourceItem } from "@threa/types"
+import type { AgentStepType, ToolPrivacyCategory, TraceSource, SourceItem } from "@threa/types"
 
 // ---------------------------------------------------------------------------
 // AgentToolResult — unified return type for all tool execute handlers
@@ -38,6 +38,23 @@ export type ExecutionPhase = "early" | "normal"
 export interface AgentToolConfig<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
   name: string
   description: string
+  /**
+   * Privacy categories this tool falls into, consumed by per-stream tool
+   * policies via `areToolCategoriesAllowed`. Tools with a registered
+   * `AgentToolName` source their value from `TOOL_CATEGORIES_BY_NAME` so the
+   * name-keyed table stays the single source of truth. An EMPTY array marks a
+   * conversation-local tool (reads nothing beyond what the model already
+   * sees) that no policy ever gates.
+   */
+  categories: readonly ToolPrivacyCategory[]
+  /**
+   * System-prompt prose advertising this tool: a complete `## Section` block
+   * (no leading/trailing blank lines). Hosts assemble the prompt's tool
+   * sections from the ACTUAL built toolset via `buildToolPromptSections`, so
+   * a tool's prose can never drift from its availability. Omitted → the tool
+   * is announced only through its wire `description`.
+   */
+  promptBlock?: string
   inputSchema: TSchema
   execute: (
     input: z.infer<TSchema>,
@@ -90,6 +107,24 @@ export interface AgentTool {
 
 export function defineAgentTool<TSchema extends z.ZodTypeAny>(config: AgentToolConfig<TSchema>): AgentTool {
   return { name: config.name, config: config as AgentToolConfig }
+}
+
+// ---------------------------------------------------------------------------
+// buildToolPromptSections — assemble system-prompt tool prose from the toolset
+// ---------------------------------------------------------------------------
+
+/**
+ * Join the prompt blocks of the ACTUAL built toolset, in toolset order. This
+ * is the single tool-prose assembler for every host: prose rides each tool's
+ * definition, so a tool that wasn't built (missing deps, per-stream policy,
+ * persona gating) is never advertised, and a tool added to one host can't be
+ * forgotten in another's prompt.
+ */
+export function buildToolPromptSections(tools: AgentTool[]): string {
+  return tools
+    .map((t) => t.config.promptBlock)
+    .filter((block): block is string => Boolean(block))
+    .join("\n\n")
 }
 
 // ---------------------------------------------------------------------------

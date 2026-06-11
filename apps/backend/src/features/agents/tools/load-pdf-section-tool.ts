@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { AttachmentRepository, AttachmentExtractionRepository, PdfPageExtractionRepository } from "../../attachments"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
@@ -39,6 +39,7 @@ export function createLoadPdfSectionTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "load_pdf_section",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LOAD_PDF_SECTION],
     description: `Load specific pages from a large PDF document. Only use this when:
 - The PDF has more than 25 pages (large PDFs don't have full content in context)
 - You need to read specific sections based on the section metadata

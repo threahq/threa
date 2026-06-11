@@ -1,6 +1,8 @@
 import { z } from "zod"
 import {
   AgentStepTypes,
+  AgentToolNames,
+  TOOL_CATEGORIES_BY_NAME,
   type ExtractionContentType,
   type ChartData,
   type TableData,
@@ -37,6 +39,15 @@ export function createGetAttachmentTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "get_attachment",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GET_ATTACHMENT],
+    promptBlock: `## Getting Attachment Details
+
+You have a \`get_attachment\` tool to retrieve full details about a specific attachment.
+
+When to use get_attachment:
+- After search_attachments to get the complete content of a file
+- When you need the full text or structured data from an attachment
+- To examine an attachment referenced by ID`,
     description: `Get full details about a specific attachment including its extracted content.
 
 Use this after search_attachments to get:

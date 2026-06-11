@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { StreamTypes } from "@threa/types"
+import { createReadUrlTool, createWebSearchTool } from "@threa/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
+import { createWorkspaceResearchTool } from "../../tools"
 import { buildSystemPrompt } from "./system-prompt"
 
 const persona: Persona = {
@@ -48,8 +50,40 @@ describe("buildSystemPrompt", () => {
     expect(prompt).not.toContain("## Scratchpad Custom Instructions")
   })
 
-  test("web search recency guidance references tool metadata when temporal context is absent", () => {
-    const prompt = buildSystemPrompt(persona, scratchpadContext, null)
+  test("tool sections come from the ACTUAL toolset — no tools means no tool prose", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [])
+
+    expect(prompt).not.toContain("## Web Search")
+    expect(prompt).not.toContain("## Reading URLs")
+    expect(prompt).not.toContain("## Workspace Research")
+    // The trust boundary is unconditional — tools or not, outputs are untrusted.
+    expect(prompt).toContain("## Tool Output Trust Boundary")
+  })
+
+  test("each built tool contributes its own prompt section, in toolset order", () => {
+    const tools = [
+      createWorkspaceResearchTool({
+        runWorkspaceAgent: async () => ({ sources: [], memos: [], messages: [], substeps: [] }) as never,
+      }),
+      createWebSearchTool({ tavilyApiKey: "tvly-test" }),
+      createReadUrlTool(),
+    ]
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, tools)
+
+    expect(prompt).toContain("## Workspace Research")
+    expect(prompt).toContain("## Web Search")
+    expect(prompt).toContain("## Reading URLs")
+    expect(prompt.indexOf("## Workspace Research")).toBeLessThan(prompt.indexOf("## Web Search"))
+    expect(prompt.indexOf("## Web Search")).toBeLessThan(prompt.indexOf("## Reading URLs"))
+    // The scratchpad context section references workspace_research only when
+    // the tool is actually wired (derived from the toolset, not a flag).
+    expect(prompt).toContain("You can use the `workspace_research` tool")
+  })
+
+  test("web search recency guidance references tool metadata when the tool has no invocation time", () => {
+    const prompt = buildSystemPrompt(persona, scratchpadContext, null, undefined, undefined, null, [
+      createWebSearchTool({ tavilyApiKey: "tvly-test" }),
+    ])
 
     expect(prompt).toContain("## Web Search")
     expect(prompt).toContain("ground recency in web_search tool metadata")
@@ -58,7 +92,7 @@ describe("buildSystemPrompt", () => {
     )
   })
 
-  test("web search recency guidance references Current Time when temporal context is present", () => {
+  test("web search recency guidance references Current Time when the tool is temporally grounded", () => {
     const prompt = buildSystemPrompt(
       persona,
       {
@@ -71,7 +105,11 @@ describe("buildSystemPrompt", () => {
           timeFormat: "24h",
         },
       },
-      null
+      null,
+      undefined,
+      undefined,
+      null,
+      [createWebSearchTool({ tavilyApiKey: "tvly-test", currentTime: "2026-11-15T10:00:00.000Z", timezone: "UTC" })]
     )
 
     expect(prompt).toContain(

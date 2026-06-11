@@ -110,6 +110,7 @@ describe("runGeneralResearch", () => {
       config: {
         name: "web_search",
         description: "stub",
+        categories: [],
         inputSchema: { parse: (v: unknown) => v } as never,
         execute: async (_input: unknown, opts: { onProgress?: (s: string) => void }) => {
           opts.onProgress?.("inner: found 3 results")

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
@@ -30,6 +30,7 @@ export type SearchIssuesInput = z.infer<typeof SearchIssuesSchema>
 export function createGithubSearchIssuesTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_search_issues",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_SEARCH_ISSUES],
     description: `Search issues and pull requests using GitHub's issue search. Auto-scopes to the given repo. Returns titles, numbers, states, authors, labels, and timestamps. Use is:issue or is:pr qualifiers to restrict to one type.`,
     inputSchema: SearchIssuesSchema,
 
@@ -109,6 +110,7 @@ export type GetIssueInput = z.infer<typeof GetIssueSchema>
 export function createGithubGetIssueTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_get_issue",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_GET_ISSUE],
     description: `Fetch a single issue (or PR, via the issue endpoint) with full body (truncated to ${MAX_ISSUE_BODY_BYTES} bytes), labels, assignees, and up to ${MAX_ISSUE_COMMENTS} most recent comments (each truncated to ${MAX_ISSUE_COMMENT_BYTES} bytes). For PR-specific detail (branches, review state, diff), use github_get_pull_request.`,
     inputSchema: GetIssueSchema,
 
