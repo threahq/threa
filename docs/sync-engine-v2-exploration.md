@@ -441,7 +441,48 @@ recommended shape is option (b): the `BroadcastHandler` already holds an exclusi
 dispatch (~10–60ms post-commit, so HTTP responses can't return it — acceptable, clients
 key on `clientMessageId`), and log-append isn't atomic with the domain write — a crash
 between outbox processing and append is retried via the cursor, made idempotent by a
-unique index on `outbox_event_id`.
+unique index on `outbox_event_id`. One more cost is serious enough to get its own
+section: the sequencer inherits the outbox reader's gap heuristic, and a heuristic is
+not a foundation.
+
+### Hardening the spine: completeness must be structural, not a 1s heuristic
+
+The sliding window in `CursorLock` (`gapWindowMs`, default 1s) is probabilistic: a gap
+in the visible id sequence is skipped once it stays unfilled for one second. The bet is
+that any transaction owning the missing id has committed by then. It can lose: a domain
+transaction that holds its outbox INSERT open longer than the window — a lock wait under
+contention, pool saturation, a batch operation, an INV-41 violation — commits afterward,
+and its event is permanently skipped. Today that costs one lost emit, healed by the next
+bootstrap. Under v2 it would cost a **missing sync-log entry**, which no client catch-up
+can heal because the log is the thing clients trust. Relying more on the dispatcher
+raises the bar from "rarely loses" to "cannot lose". Two layers get there:
+
+1. **Exact gap classification in `CursorLock`** (benefits every outbox consumer, not
+   just broadcast). A gap at id N can only ever be filled by a transaction that was
+   already in flight when N+k became visible. So when a gap is first observed, record
+   the set of in-flight transaction ids (`pg_current_snapshot()`); skip the gap
+   permanently only once none of those transactions is still running — at which point
+   the missing row is provably aborted, never coming. The wall clock becomes a fallback
+   ceiling instead of the decision. This converts the heuristic into a proof for the
+   activity feed, GAM extraction, and embeddings too.
+2. **Completeness anchored on reconciliation, not on the cursor.** A periodic sweep
+   computes "client-routed outbox rows older than N seconds with no `sync_log` row" —
+   one indexed anti-join on `outbox_event_id` — and sequences (and emits) any stragglers.
+   Late sequencing is safe by design: the straggler takes the _next_ sync id, clients
+   order by sync id and apply idempotently by event id, so the log stays gap-free in its
+   own sequence; the entry is merely later than its wall-clock cause, and timeline
+   display order is governed by the stream's own sequence and timestamps, not by sync
+   id. With the sweep in place the cursor is a latency optimization and the sweep is the
+   correctness mechanism — the same philosophy the outbox already applies (NOTIFY as the
+   fast path, 2s polling as the guarantee). It also yields an alertable invariant: "no
+   client-routed outbox row older than X lacks a log entry" is one monitoring query. The
+   sweep must run well inside the outbox retention window, which it comfortably does.
+
+For comparison, option (a) — in-transaction allocation — needs neither layer (the row
+lock makes the log gap-free by construction); this is its real advantage and the real
+price of option (b). Option (b) plus the sweep reaches an equivalent guarantee while
+keeping every domain write path untouched, and layer 1 is worth doing for the existing
+consumers regardless of which option wins.
 
 ### Schema (append-only migration, INV-17)
 
@@ -505,6 +546,9 @@ conversions, no compaction worker, no per-connection replay machinery.
 
 ### Test plan for step 1
 
+- Reconciliation sweep: an outbox row the cursor skipped (simulated long-running
+  transaction committing after the gap window) is sequenced by the sweep, appears in the
+  log with a later sync id, and is returned by catch-up.
 - Sequencer idempotency: reprocessing the same outbox event after a simulated crash
   yields the same sync id and no duplicate row.
 - Ordering: concurrent outbox commits produce dense, gapless per-workspace sync ids in
