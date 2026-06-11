@@ -118,6 +118,8 @@ Relational integrity is enforced in application code, not in PostgreSQL schema d
 - Use `UserId` for workspace-scoped identity.
   `MemberId` is reserved for stream membership surfaces (`stream_members` and stream member APIs/events) (INV-50)
 
+Stream access is inherited, never direct (INV-62): a thread carries no access of its own — visibility resolves through `root_stream_id` to the nearest non-thread ancestor, and public root streams grant read access without a `stream_members` row. `checkStreamAccess` and `listAccessibleStreamIds` in `apps/backend/src/features/streams/access.ts` are the canonical predicates. Any query or filter that gates rows on stream membership or visibility (search, feeds, sync catch-up, attachments, notifications) must reuse those helpers or replicate the thread→root rule and pair it with a test for the non-member-thread-inside-a-member-channel case. Filtering by direct `stream_members` rows alone is the recurring footgun: it silently drops thread content for root-stream members (membership ≠ access).
+
 Migrations are append-only (INV-17). Never edit existing migration files.
 
 Write paths must be race-safe:
@@ -264,7 +266,7 @@ When handling variants, colocate variant config and keep shared behavior on one 
 
 ## Quick Invariant Lookup
 
-- **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57
+- **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57, INV-62
 - **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
 - **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58
 - **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54

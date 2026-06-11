@@ -108,6 +108,7 @@ import {
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
+import { SyncService } from "./features/sync"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import {
   BotRuntimeInstanceRepository,
@@ -479,6 +480,7 @@ export async function startServer(): Promise<ServerInstance> {
   const createThread = (params: Parameters<typeof streamService.createThread>[0]) => streamService.createThread(params)
 
   const activityService = new ActivityService({ pool })
+  const syncService = new SyncService({ pool })
   const savedMessagesService = new SavedMessagesService({ pool })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const labelService = new LabelService({ pool })
@@ -615,6 +617,7 @@ export async function startServer(): Promise<ServerInstance> {
     userE2eKeysService,
     invitationService,
     activityService,
+    syncService,
     savedMessagesService,
     scheduledMessagesService,
     labelService,

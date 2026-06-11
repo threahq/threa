@@ -93,6 +93,13 @@ reviews:
         dedicated client. (INV-30)
         Validate API inputs (body, query, params) with Zod schemas, not manual typeof
         checks. (INV-55)
+        Stream access is inherited through root_stream_id: threads never carry their own
+        access, and public root streams grant read access without a stream_members row.
+        Any new query or filter gating rows on stream membership/visibility must reuse
+        checkStreamAccess / listAccessibleStreamIds (features/streams/access.ts) or
+        replicate the thread-to-root rule. Flag audience/visibility predicates built on
+        direct stream_members rows alone — they drop thread content for root-stream
+        members. (INV-62)
     - path: "apps/frontend/src/**/*.tsx"
       instructions: |
         Do not define React components inside other React components. Extract to separate
