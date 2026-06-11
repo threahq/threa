@@ -17,8 +17,8 @@ interface MemoCapturedEventProps {
  * memory explorer (`?memo=` is the canonical memo deep-link, see memo-url.ts).
  */
 export function MemoCapturedEvent({ event, workspaceId }: MemoCapturedEventProps) {
-  const payload = event.payload as MemosCapturedEventPayload
-  if (!payload.memos?.length) return null
+  const payload = event.payload as MemosCapturedEventPayload | undefined
+  if (!payload?.memos?.length) return null
 
   return (
     <div className="py-2 px-3 sm:px-6 text-center">

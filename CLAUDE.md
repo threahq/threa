@@ -267,8 +267,8 @@ When handling variants, colocate variant config and keep shared behavior on one 
 - **Persistence and data integrity:** INV-1, INV-2, INV-3, INV-8, INV-17, INV-20, INV-30, INV-41, INV-50, INV-56, INV-57
 - **Architecture and dependencies:** INV-4, INV-5, INV-6, INV-7, INV-9, INV-10, INV-11, INV-12, INV-13, INV-27, INV-34, INV-35, INV-37, INV-51, INV-52
 - **API and backend contracts:** INV-31, INV-32, INV-33, INV-46, INV-55, INV-58
-- **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54, INV-62
-- **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60, INV-61
+- **AI and eval discipline:** INV-16, INV-19, INV-28, INV-44, INV-45, INV-54
+- **Frontend and UX behavior:** INV-14, INV-15, INV-18, INV-21, INV-40, INV-42, INV-53, INV-59, INV-60, INV-61, INV-62
 - **Testing:** INV-22, INV-23, INV-24, INV-26, INV-39, INV-48
 - **Code hygiene and maneuverability:** INV-25, INV-29, INV-36, INV-38, INV-43, INV-47, INV-49
 

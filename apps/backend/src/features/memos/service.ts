@@ -378,7 +378,15 @@ export class MemoService implements MemoServiceLike {
       // covers every capture event in the batch.
       const memosByConversation = new Map<string, MemoToCreate[]>()
       for (const memo of memosToCreate) {
-        if (!memo.sourceConversationId) continue
+        if (!memo.sourceConversationId) {
+          // Conversation-type memos always carry sourceConversationId; a miss
+          // here is a data bug worth surfacing, not silently skipping (INV-11).
+          logger.warn(
+            { memoId: memo.id, workspaceId, streamId },
+            "Memo missing sourceConversationId — skipping capture event"
+          )
+          continue
+        }
         const group = memosByConversation.get(memo.sourceConversationId) ?? []
         group.push(memo)
         memosByConversation.set(memo.sourceConversationId, group)
@@ -408,6 +416,10 @@ export class MemoService implements MemoServiceLike {
             eventType: "stream:memos_captured" as const,
             payload: { workspaceId, streamId, event },
           }))
+        )
+        logger.info(
+          { workspaceId, streamId, conversations: memosByConversation.size, captureEvents: captureEvents.length },
+          "memos:captured timeline events inserted"
         )
       }
 

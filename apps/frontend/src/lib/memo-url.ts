@@ -3,7 +3,7 @@
  * Inverse of `parseMemoUrl` below — keep the two in sync.
  */
 export function memoDeepLink(workspaceId: string, memoId: string): string {
-  return `/w/${workspaceId}/memory?memo=${memoId}`
+  return `/w/${encodeURIComponent(workspaceId)}/memory?memo=${encodeURIComponent(memoId)}`
 }
 
 /**
