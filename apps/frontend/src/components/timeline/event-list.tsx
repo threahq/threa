@@ -269,11 +269,14 @@ export function injectGapItems(
   const holesByAnchor = new Map(holes.map((hole) => [hole.afterEventId, hole]))
   for (const item of items) {
     result.push(item)
+    // An item can anchor MORE than one hole: a command/session group renders
+    // several events as one card, and distinct holes can sit behind distinct
+    // events inside it — emit a placeholder for each (map order preserves the
+    // holes' ascending order). Deleting while iterating a Map is safe in JS.
     for (const [anchorId, hole] of holesByAnchor) {
       if (itemContainsEvent(item, anchorId)) {
         result.push({ type: "gap", afterEventId: hole.afterEventId, missingCount: hole.missingCount })
         holesByAnchor.delete(anchorId)
-        break
       }
     }
   }

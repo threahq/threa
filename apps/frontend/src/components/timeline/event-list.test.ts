@@ -421,6 +421,30 @@ describe("injectGapItems", () => {
     expect(result[1]).toEqual({ type: "gap", afterEventId: "evt_s1", missingCount: 1 })
   })
 
+  it("emits a placeholder for every hole anchored inside the same group", () => {
+    const items: TimelineItem[] = [
+      {
+        type: "session_group",
+        sessionId: "sess_1",
+        sessionVersion: 1,
+        events: [
+          createSessionStartedEvent("evt_s1", "1", "sess_1", "msg_t"),
+          createSessionCompletedEvent("evt_s2", "2", "sess_1"),
+        ],
+      },
+      messageItem("evt_3"),
+    ]
+    const result = injectGapItems(items, [
+      { afterEventId: "evt_s1", missingCount: 1 },
+      { afterEventId: "evt_s2", missingCount: 2 },
+    ])
+
+    expect(result.slice(1, 3)).toEqual([
+      { type: "gap", afterEventId: "evt_s1", missingCount: 1 },
+      { type: "gap", afterEventId: "evt_s2", missingCount: 2 },
+    ])
+  })
+
   it("skips holes whose anchor is not in the item list and is a no-op without holes", () => {
     const items = [messageItem("evt_1")]
     expect(injectGapItems(items, [{ afterEventId: "evt_unknown", missingCount: 1 }])).toEqual(items)

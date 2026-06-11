@@ -10,6 +10,18 @@
 -- every viewer: a missing broadcast_sequence is always a real gap that a
 -- backfill fetch can close.
 
+BEGIN;
+
+-- Serialize against in-flight event writers for the duration of the backfill.
+-- Lock order matches the writers' order (every insert upserts stream_sequences
+-- first, then writes stream_events) so the migration cannot deadlock against
+-- them; once both locks are held the backfill snapshot is stable. Events
+-- written by not-yet-redeployed old code AFTER this commits simply carry a
+-- NULL broadcast_sequence — clients skip unstamped rows in the chain, so the
+-- deploy window degrades coverage, never correctness.
+LOCK TABLE stream_sequences IN ACCESS EXCLUSIVE MODE;
+LOCK TABLE stream_events IN ACCESS EXCLUSIVE MODE;
+
 ALTER TABLE stream_events
 ADD COLUMN IF NOT EXISTS broadcast_sequence BIGINT;
 
@@ -40,18 +52,22 @@ FROM (
 WHERE e.id = numbered.id
   AND e.broadcast_sequence IS NULL;
 
--- Seed each stream's counter just past its highest assigned slot. Streams
--- with no broadcast events keep the column default of 1.
+-- Seed each stream's counter just past its highest assigned slot, in one
+-- set-based pass (INV-56). Streams with no broadcast events aren't in the
+-- aggregate and keep the column default of 1.
 UPDATE stream_sequences ss
-SET next_broadcast_sequence = GREATEST(
-    ss.next_broadcast_sequence,
-    COALESCE(
-        (SELECT MAX(e.broadcast_sequence) + 1 FROM stream_events e WHERE e.stream_id = ss.stream_id),
-        1
-    )
-);
+SET next_broadcast_sequence = GREATEST(ss.next_broadcast_sequence, agg.max_assigned + 1)
+FROM (
+    SELECT stream_id, MAX(broadcast_sequence) AS max_assigned
+    FROM stream_events
+    WHERE broadcast_sequence IS NOT NULL
+    GROUP BY stream_id
+) agg
+WHERE ss.stream_id = agg.stream_id;
 
 -- Density is a correctness invariant — enforce uniqueness at the source.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_stream_events_stream_broadcast_seq
     ON stream_events (stream_id, broadcast_sequence)
     WHERE broadcast_sequence IS NOT NULL;
+
+COMMIT;
