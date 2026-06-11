@@ -399,6 +399,9 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
       getObjectStream: async () => {
         throw new Error("Not implemented in stub")
       },
+      getObjectContent: async () => {
+        throw new Error("Not implemented in stub")
+      },
       putObject: async () => {},
       delete: async () => {},
     }

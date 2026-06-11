@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import type { Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
@@ -142,6 +143,118 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
 
       const url = await attachmentService.getDownloadUrl(attachment, { download: download === "true" })
       res.json({ url, expiresIn: 900 })
+    },
+
+    /**
+     * Serve attachment bytes through the backend at a deterministic URL per
+     * (attachment, variant), so the browser HTTP cache works across sessions —
+     * unlike presigned URLs from `getDownloadUrl`, whose fresh signature
+     * defeats cache keying and forces a re-download every cold open.
+     *
+     * Same ACL chain as `getDownloadUrl`: workspace scoping, sharing-safety
+     * gate, direct stream access with the share-grant/inline-reference
+     * fallback.
+     *
+     * The stored object for a given (attachment, variant) never changes after
+     * processing completes, so ready variants are served `immutable`. The
+     * not-ready fall-through (thumbnail/processed not generated yet) serves
+     * the raw original with `no-store` — caching fallback bytes under the
+     * variant URL would pin them and the real variant would never appear.
+     */
+    async getContent(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { attachmentId } = req.params
+
+      const attachment = await attachmentService.getById(attachmentId)
+      if (!attachment || attachment.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Attachment not found" })
+      }
+
+      const sharingBlockReason = attachmentService.getSharingBlockReason(attachment)
+      if (sharingBlockReason) {
+        return res.status(403).json({ error: sharingBlockReason })
+      }
+
+      if (attachment.streamId) {
+        const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
+        if (!accessible) {
+          const granted = await isAttachmentReadableViaShareOrReference(pool, attachment, workspaceId, userId)
+          if (!granted) {
+            return res.status(403).json({ error: "Access denied" })
+          }
+        }
+      }
+
+      const parsed = z
+        .object({
+          variant: z.enum(["raw", "processed", "thumbnail"]).optional(),
+        })
+        .safeParse(req.query)
+      if (!parsed.success) return res.status(400).json({ error: "Invalid query parameters" })
+      const { variant } = parsed.data
+
+      // Resolve the variant to a stored object, mirroring getDownloadUrl's
+      // thumbnail → raw and transcode-job fall-throughs.
+      let storagePath = attachment.storagePath
+      let contentType = attachment.mimeType
+      let variantReady = true
+
+      if (variant === "thumbnail" && isImageAttachment(attachment.mimeType, attachment.filename)) {
+        if (attachment.thumbnailStoragePath) {
+          storagePath = attachment.thumbnailStoragePath
+          contentType = "image/webp"
+        } else {
+          variantReady = false
+        }
+      } else if (variant === "processed" || variant === "thumbnail") {
+        const job = await VideoTranscodeJobRepository.findByAttachmentId(pool, attachmentId)
+        const path = variant === "processed" ? job?.processedStoragePath : job?.thumbnailStoragePath
+        if (job?.status === "completed" && path) {
+          storagePath = path
+          contentType = variant === "processed" ? "video/mp4" : "image/jpeg"
+        } else {
+          variantReady = false
+        }
+      }
+
+      // The storage path uniquely identifies the served bytes (objects are
+      // written once), so a path-derived ETag is a valid validator. The
+      // fall-through gets no validator — a 304 must never extend the life of
+      // fallback bytes under the variant URL.
+      const etag = `"${createHash("sha256").update(storagePath).digest("hex")}"`
+      const cacheControl = variantReady ? "private, max-age=31536000, immutable" : "private, no-store"
+
+      res.set("Cache-Control", cacheControl)
+      res.set("X-Content-Type-Options", "nosniff")
+      // User-authored bytes served from the app origin must never execute as a
+      // document (HTML/SVG navigated to directly).
+      res.set("Content-Security-Policy", "sandbox")
+      if (variantReady) res.set("ETag", etag)
+
+      if (variantReady && req.headers["if-none-match"] === etag) {
+        return res.status(304).end()
+      }
+
+      const range = typeof req.headers.range === "string" ? req.headers.range : undefined
+      const object = await storage.getObjectContent(storagePath, { range })
+
+      res.set("Content-Type", contentType)
+      res.set("Accept-Ranges", "bytes")
+      if (object.contentLength !== undefined) res.set("Content-Length", String(object.contentLength))
+      if (object.contentRange) {
+        res.status(206)
+        res.set("Content-Range", object.contentRange)
+      }
+
+      object.stream.on("error", () => {
+        if (!res.headersSent) {
+          res.status(500).end()
+        } else {
+          res.end()
+        }
+      })
+      object.stream.pipe(res)
     },
 
     /**

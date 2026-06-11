@@ -4,7 +4,7 @@ export { workspacesApi, type WorkspaceBootstrap } from "./workspaces"
 export { streamsApi, type StreamBootstrap, type CreateStreamInput, type UpdateStreamInput } from "./streams"
 export { e2eKeyWrapsApi } from "./e2e-key-wraps"
 export { messagesApi, type CreateMessageInput, type UpdateMessageInput } from "./messages"
-export { attachmentsApi, peekDownloadUrl } from "./attachments"
+export { attachmentsApi, attachmentContentUrl } from "./attachments"
 export {
   commandsApi,
   type DispatchCommandInput,

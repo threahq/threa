@@ -14,6 +14,13 @@ export interface SignedDownloadUrlOptions {
   responseContentDisposition?: string
 }
 
+export interface ObjectContent {
+  stream: Readable
+  contentLength?: number
+  /** Set when the request carried a Range header — the S3 Content-Range of the partial response. */
+  contentRange?: string
+}
+
 export interface StorageProvider {
   getObjectSize(key: string): Promise<number>
   getSignedDownloadUrl(key: string, options?: SignedDownloadUrlOptions): Promise<string>
@@ -21,6 +28,8 @@ export interface StorageProvider {
   /** Fetch first N bytes of an object using HTTP Range header */
   getObjectRange(key: string, start: number, end: number): Promise<Buffer>
   getObjectStream(key: string): Promise<Readable>
+  /** Stream an object with the metadata needed to proxy it over HTTP (optionally a Range slice). */
+  getObjectContent(key: string, options?: { range?: string }): Promise<ObjectContent>
   putObject(key: string, body: Buffer, contentType: string): Promise<void>
   delete(key: string): Promise<void>
 }
@@ -120,6 +129,25 @@ export function createS3Storage(config: S3Config): StorageProvider {
       }
 
       return response.Body as Readable
+    },
+
+    async getObjectContent(key: string, options?: { range?: string }): Promise<ObjectContent> {
+      const command = new GetObjectCommand({
+        Bucket: config.bucket,
+        Key: key,
+        ...(options?.range && { Range: options.range }),
+      })
+      const response = await client.send(command)
+
+      if (!response.Body) {
+        throw new Error(`No body in S3 response for key: ${key}`)
+      }
+
+      return {
+        stream: response.Body as Readable,
+        contentLength: response.ContentLength,
+        contentRange: response.ContentRange,
+      }
     },
 
     async putObject(key: string, body: Buffer, contentType: string): Promise<void> {

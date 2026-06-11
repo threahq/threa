@@ -49,20 +49,20 @@ export function resetAttachmentUrlCache(): void {
 }
 
 /**
- * Synchronous peek at an already-resolved download URL. Lets remounting
- * components (virtualized rows) seed their initial state with the cached URL
- * instead of rendering a skeleton for the frame(s) the async `getDownloadUrl`
- * resolution takes, even on a warm cache.
+ * Deterministic, cookie-authenticated URL for an attachment's bytes. Stable
+ * across sessions — unlike presigned URLs from `getDownloadUrl`, whose fresh
+ * signature changes the cache key — so the browser HTTP cache serves warm
+ * opens with zero presign round trips and zero media bytes. Synchronous: safe
+ * to use directly as an `<img src>` in render. The backend serves ready
+ * variants with long-lived immutable caching.
  */
-export function peekDownloadUrl(
+export function attachmentContentUrl(
   workspaceId: string,
   attachmentId: string,
-  options?: { download?: boolean; variant?: "raw" | "processed" | "thumbnail" }
-): string | null {
-  const key = `${workspaceId}:${attachmentId}:${options?.download ? "download" : "inline"}:${options?.variant ?? "raw"}`
-  const cached = resolvedDownloadUrlCache.get(key)
-  if (cached && cached.expiresAt > Date.now()) return cached.url
-  return null
+  options?: { variant?: "raw" | "processed" | "thumbnail" }
+): string {
+  const params = options?.variant ? `?variant=${options.variant}` : ""
+  return `${API_BASE}/api/workspaces/${workspaceId}/attachments/${attachmentId}/content${params}`
 }
 
 export const attachmentsApi = {

@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto"
+import { once } from "node:events"
+import { Readable, Writable } from "node:stream"
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AttachmentSafetyStatuses } from "@threa/types"
 import { createAttachmentHandlers } from "./handlers"
 import { SharedMessageRepository } from "../messaging"
 import { AttachmentReferenceRepository } from "./reference-repository"
 import { AttachmentRepository, type AttachmentSearchRow } from "./repository"
+import { VideoTranscodeJobRepository } from "./video"
 
 function createResponse() {
   const res: any = {}
@@ -612,5 +616,288 @@ describe("attachment search handler", () => {
       referenceCount: 3,
     })
     expect(res.body.items[0].extraction).not.toHaveProperty("fullText")
+  })
+})
+
+/**
+ * Response double for the streaming content handler: a real Writable so
+ * `stream.pipe(res)` works, with the Express helpers the handler touches.
+ */
+function createStreamingResponse() {
+  const chunks: Buffer[] = []
+  const res: any = new Writable({
+    write(chunk, _encoding, callback) {
+      chunks.push(Buffer.from(chunk))
+      callback()
+    },
+  })
+  res.statusCode = 200
+  res.headers = {} as Record<string, string>
+  res.set = mock((name: string, value: string) => {
+    res.headers[name.toLowerCase()] = value
+    return res
+  })
+  res.status = mock((code: number) => {
+    res.statusCode = code
+    return res
+  })
+  res.json = mock((body: unknown) => {
+    res.body = body
+    return res
+  })
+  res.sentBytes = () => Buffer.concat(chunks)
+  return res
+}
+
+function pathEtag(storagePath: string): string {
+  return `"${createHash("sha256").update(storagePath).digest("hex")}"`
+}
+
+function buildContentStorage(content = "image-bytes") {
+  return {
+    getObjectContent: mock(async (_key: string, options?: { range?: string }) => ({
+      stream: Readable.from([Buffer.from(content)]),
+      contentLength: content.length,
+      contentRange: options?.range ? `bytes 0-${content.length - 1}/${content.length}` : undefined,
+    })),
+  } as any
+}
+
+function contentRequest(overrides: Record<string, unknown> = {}) {
+  return {
+    user: { id: "usr_1" },
+    workspaceId: "ws_1",
+    params: { attachmentId: "attach_1" },
+    query: {},
+    headers: {},
+    ...overrides,
+  } as any
+}
+
+describe("attachment content handler", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  function makeHandlers({
+    attachment = buildAttachment(AttachmentSafetyStatuses.CLEAN),
+    storage = buildContentStorage(),
+    streamService = { tryAccess: mock(() => Promise.resolve({ id: "str_1" })) } as any,
+  }: { attachment?: any; storage?: any; streamService?: any } = {}) {
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(attachment)),
+      getSharingBlockReason: mock(() => null),
+    } as any
+    return {
+      handlers: createAttachmentHandlers({ attachmentService, streamService, storage, pool: {} as any }),
+      storage,
+    }
+  }
+
+  it("streams the raw object with immutable caching and document-execution hardening", async () => {
+    const attachment = buildAttachment(AttachmentSafetyStatuses.CLEAN)
+    const { handlers, storage } = makeHandlers({ attachment })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest(), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/test.png", { range: undefined })
+    expect(res.sentBytes().toString()).toBe("image-bytes")
+    expect(res.headers).toMatchObject({
+      "content-type": "image/png",
+      "cache-control": "private, max-age=31536000, immutable",
+      etag: pathEtag("ws_1/attach_1/test.png"),
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox",
+      "accept-ranges": "bytes",
+      "content-length": "11",
+    })
+  })
+
+  it("returns 304 without fetching the object when If-None-Match matches", async () => {
+    const { handlers, storage } = makeHandlers()
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ headers: { "if-none-match": pathEtag("ws_1/attach_1/test.png") } }), res)
+
+    expect(res.statusCode).toBe(304)
+    expect(storage.getObjectContent).not.toHaveBeenCalled()
+  })
+
+  it("serves the sharp thumbnail variant as webp when generated", async () => {
+    const attachment = {
+      ...buildAttachment(AttachmentSafetyStatuses.CLEAN),
+      thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
+    }
+    const { handlers, storage } = makeHandlers({ attachment })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ query: { variant: "thumbnail" } }), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/thumbnail.webp", { range: undefined })
+    expect(res.headers).toMatchObject({
+      "content-type": "image/webp",
+      "cache-control": "private, max-age=31536000, immutable",
+      etag: pathEtag("ws_1/attach_1/thumbnail.webp"),
+    })
+  })
+
+  it("serves the raw fall-through with no-store and no ETag while the thumbnail is not ready", async () => {
+    // Caching the fallback under the variant URL would pin the raw bytes
+    // forever ("immutable") and the real thumbnail would never appear.
+    const { handlers, storage } = makeHandlers()
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ query: { variant: "thumbnail" } }), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/test.png", { range: undefined })
+    expect(res.headers["cache-control"]).toBe("private, no-store")
+    expect(res.headers).not.toHaveProperty("etag")
+  })
+
+  it("serves the processed video variant from the completed transcode job", async () => {
+    const attachment = {
+      ...buildAttachment(AttachmentSafetyStatuses.CLEAN),
+      mimeType: "video/quicktime",
+      filename: "clip.mov",
+      storagePath: "ws_1/attach_1/clip.mov",
+    }
+    spyOn(VideoTranscodeJobRepository, "findByAttachmentId").mockResolvedValue({
+      status: "completed",
+      processedStoragePath: "ws_1/attach_1/processed.mp4",
+      thumbnailStoragePath: "ws_1/attach_1/thumbnail.0000000.jpg",
+    } as any)
+    const { handlers, storage } = makeHandlers({ attachment })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ query: { variant: "processed" } }), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/processed.mp4", { range: undefined })
+    expect(res.headers).toMatchObject({
+      "content-type": "video/mp4",
+      "cache-control": "private, max-age=31536000, immutable",
+    })
+  })
+
+  it("falls through to the raw video with no-store while the transcode is incomplete", async () => {
+    const attachment = {
+      ...buildAttachment(AttachmentSafetyStatuses.CLEAN),
+      mimeType: "video/quicktime",
+      filename: "clip.mov",
+      storagePath: "ws_1/attach_1/clip.mov",
+    }
+    spyOn(VideoTranscodeJobRepository, "findByAttachmentId").mockResolvedValue({
+      status: "submitted",
+      processedStoragePath: null,
+      thumbnailStoragePath: null,
+    } as any)
+    const { handlers, storage } = makeHandlers({ attachment })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ query: { variant: "processed" } }), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/clip.mov", { range: undefined })
+    expect(res.headers["cache-control"]).toBe("private, no-store")
+    expect(res.headers["content-type"]).toBe("video/quicktime")
+  })
+
+  it("passes a Range request through and responds 206 with Content-Range", async () => {
+    const { handlers, storage } = makeHandlers()
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ headers: { range: "bytes=0-10" } }), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/test.png", { range: "bytes=0-10" })
+    expect(res.statusCode).toBe(206)
+    expect(res.headers["content-range"]).toBe("bytes 0-10/11")
+  })
+
+  it("returns 404 for an attachment in another workspace", async () => {
+    const attachment = { ...buildAttachment(AttachmentSafetyStatuses.CLEAN), workspaceId: "ws_other" }
+    const { handlers, storage } = makeHandlers({ attachment })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest(), res)
+
+    expect(res.statusCode).toBe(404)
+    expect(storage.getObjectContent).not.toHaveBeenCalled()
+  })
+
+  it("blocks content while the malware scan is pending", async () => {
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.PENDING_SCAN))),
+      getSharingBlockReason: mock(() => "Attachment is pending malware scan"),
+    } as any
+    const storage = buildContentStorage()
+    const handlers = createAttachmentHandlers({
+      attachmentService,
+      streamService: {} as any,
+      storage,
+      pool: {} as any,
+    })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest(), res)
+
+    expect(res.statusCode).toBe(403)
+    expect(res.body).toEqual({ error: "Attachment is pending malware scan" })
+    expect(storage.getObjectContent).not.toHaveBeenCalled()
+  })
+
+  it("denies content when there is no stream access, share grant, or inline reference", async () => {
+    const attachment = {
+      ...buildAttachment(AttachmentSafetyStatuses.CLEAN),
+      streamId: "str_source",
+      messageId: "msg_source",
+    }
+    spyOn(SharedMessageRepository, "listSourcesGrantedToViewer").mockResolvedValue(new Set())
+    spyOn(AttachmentReferenceRepository, "hasViewerAccessByReference").mockResolvedValue(false)
+    const { handlers, storage } = makeHandlers({
+      attachment,
+      streamService: { tryAccess: mock(() => Promise.resolve(null)) } as any,
+    })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest(), res)
+
+    expect(res.statusCode).toBe(403)
+    expect(res.body).toEqual({ error: "Access denied" })
+    expect(storage.getObjectContent).not.toHaveBeenCalled()
+  })
+
+  it("serves E2E ciphertext with its placeholder mime type", async () => {
+    const attachment = {
+      ...buildAttachment(AttachmentSafetyStatuses.E2E_UNSCANNED),
+      filename: "encrypted",
+      mimeType: "application/octet-stream",
+      storagePath: "ws_1/attach_1/encrypted",
+    }
+    const { handlers, storage } = makeHandlers({ attachment })
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest(), res)
+    await once(res, "finish")
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/encrypted", { range: undefined })
+    expect(res.headers).toMatchObject({
+      "content-type": "application/octet-stream",
+      "cache-control": "private, max-age=31536000, immutable",
+    })
+  })
+
+  it("rejects an unknown variant", async () => {
+    const { handlers, storage } = makeHandlers()
+    const res = createStreamingResponse()
+
+    await handlers.getContent(contentRequest({ query: { variant: "original" } }), res)
+
+    expect(res.statusCode).toBe(400)
+    expect(storage.getObjectContent).not.toHaveBeenCalled()
   })
 })
