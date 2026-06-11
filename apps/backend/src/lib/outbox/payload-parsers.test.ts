@@ -5,6 +5,10 @@ import { AuthorTypes } from "@threa/types"
 describe("parseMessagePayload", () => {
   describe("modern format", () => {
     test("should parse valid modern payload", () => {
+      const contentJson = {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "Hello world" }] }],
+      }
       const payload = {
         workspaceId: "ws_123",
         streamId: "stream_456",
@@ -16,6 +20,7 @@ describe("parseMessagePayload", () => {
           payload: {
             messageId: "msg_def",
             contentMarkdown: "Hello world",
+            contentJson,
           },
         },
       }
@@ -33,6 +38,7 @@ describe("parseMessagePayload", () => {
           payload: {
             messageId: "msg_def",
             contentMarkdown: "Hello world",
+            contentJson,
           },
         },
       })
@@ -84,9 +90,46 @@ describe("parseMessagePayload", () => {
           payload: {
             messageId: "msg_def",
             contentMarkdown: "",
+            contentJson: null,
           },
         },
       })
+    })
+
+    test("should null out array contentJson", () => {
+      const payload = {
+        workspaceId: "ws_123",
+        streamId: "stream_456",
+        event: {
+          payload: {
+            messageId: "msg_def",
+            contentMarkdown: "Hello",
+            contentJson: [],
+          },
+        },
+      }
+
+      const result = parseMessagePayload(payload)
+
+      expect(result?.event.payload.contentJson).toBeNull()
+    })
+
+    test("should null out non-object contentJson", () => {
+      const payload = {
+        workspaceId: "ws_123",
+        streamId: "stream_456",
+        event: {
+          payload: {
+            messageId: "msg_def",
+            contentMarkdown: "Hello",
+            contentJson: "not-a-doc",
+          },
+        },
+      }
+
+      const result = parseMessagePayload(payload)
+
+      expect(result?.event.payload.contentJson).toBeNull()
     })
   })
 
