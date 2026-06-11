@@ -1188,6 +1188,74 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("does not let a stale catch-up run reopen live flow for a newer reconnect cycle", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("11"))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+
+    // Reconnect while the first cycle's catch-up is still paging: a new
+    // cycle pauses the gate and must own the eventual splice.
+    await engine.onConnect(asSocket(socket))
+    socket.trigger("workspace_user:added", userAddedLivePayload("20", "user_live"))
+
+    // The stale run completes — it applies its log entry but must NOT
+    // resume the gate (the buffered live event stays unapplied until the
+    // new cycle's chained run splices it).
+    resolveFirstPage!({ entries: [userAddedEntry("11", "user_log")], head: "11" })
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_log")).toBeDefined()
+      expect(await db.workspaceUsers.get("user_live")).toBeDefined()
+    })
+    expect(engine.getSyncCursor()).toBe("20")
+    // The new cycle ran its own catch-up from the stale run's end position
+    // (one such fetch belongs to the stale run's paging, one to the rerun).
+    const fetchesFromEleven = catchUp.mock.calls.filter((call) => (call[1] as { after: string }).after === "11")
+    expect(fetchesFromEleven.length).toBeGreaterThanOrEqual(2)
+    engine.destroy()
+  })
+
+  it("applies all buffered events when the cursor seed only succeeds after bootstrap", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      let resolveRetrySeed: ((value: SyncCatchUpResponse) => void) | undefined
+      const catchUp = vi
+        .fn()
+        // Pre-bootstrap seed fails (offline first run)...
+        .mockRejectedValueOnce(new Error("offline"))
+        // ...the catch-up run's fallback retry succeeds with a head read
+        // AFTER the bootstrap snapshot.
+        .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveRetrySeed = resolve)))
+        .mockResolvedValue(emptyPage("42"))
+      const engine = new SyncEngine(makeActiveDeps(catchUp))
+      const socket = new MockSocket()
+
+      await engine.onConnect(asSocket(socket))
+      await vi.waitFor(() => expect(resolveRetrySeed).toBeDefined())
+
+      // Buffered during the window the snapshot does not provably cover —
+      // its syncId is below the late-read head, and it must still apply.
+      socket.trigger("workspace_user:added", userAddedLivePayload("5", "user_live"))
+      resolveRetrySeed!(emptyPage("42"))
+
+      await vi.waitFor(async () => {
+        expect(await db.workspaceUsers.get("user_live")).toBeDefined()
+      })
+      expect(engine.getSyncCursor()).toBe("42")
+      engine.destroy()
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
   it("never applies buffered events after destroy (account-switch safety)", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     const catchUp = vi.fn(() => new Promise<SyncCatchUpResponse>(() => {}))

@@ -78,9 +78,11 @@ describe("SocketEventGate", () => {
     socket.trigger("bot_runtime:presence", { workspaceId: WS, botId: "bot_1" })
     socket.trigger("message:created", { workspaceId: "ws_other", syncId: "6" })
 
-    expect(handler).toHaveBeenCalledTimes(2)
-    expect(handler).toHaveBeenCalledWith({ workspaceId: WS, botId: "bot_1" })
-    expect(handler).toHaveBeenCalledWith({ workspaceId: "ws_other", syncId: "6" })
+    // The syncId-bearing event for this workspace is absent: buffered.
+    expect(handler.mock.calls).toEqual([
+      [{ workspaceId: WS, botId: "bot_1" }],
+      [{ workspaceId: "ws_other", syncId: "6" }],
+    ])
   })
 
   it("splices buffered events in ascending syncId order, applying only those the predicate admits", async () => {
@@ -121,6 +123,34 @@ describe("SocketEventGate", () => {
     await gate.resume((eventType, syncId) => syncId > 10n || eventType === "stream:activity")
 
     expect(handler).toHaveBeenCalledWith({ workspaceId: WS, syncId: "3" })
+  })
+
+  it("stops the splice and stays paused when a new pause lands mid-drain", async () => {
+    const gate = new SocketEventGate(WS)
+    const socket = new FakeSocket()
+    const seen: string[] = []
+    gate.on("message:created", (payload: unknown) => {
+      const syncId = (payload as { syncId: string }).syncId
+      seen.push(syncId)
+      // A reconnect cycle starts while the splice is draining.
+      if (syncId === "15") gate.pause()
+    })
+    gate.attach(asSocket(socket))
+
+    gate.pause()
+    socket.trigger("message:created", { workspaceId: WS, syncId: "15" })
+    socket.trigger("message:created", { workspaceId: WS, syncId: "20" })
+    await gate.resume(() => true)
+
+    // The drain stopped at the new pause: "20" stays buffered, gate stays
+    // paused (a live event buffers instead of applying)...
+    expect(seen).toEqual(["15"])
+    socket.trigger("message:created", { workspaceId: WS, syncId: "25" })
+    expect(seen).toEqual(["15"])
+
+    // ...and the new cycle's own resume drains the remainder in order.
+    await gate.resume(() => true)
+    expect(seen).toEqual(["15", "20", "25"])
   })
 
   it("keeps draining events that arrive while the splice is running", async () => {
@@ -181,8 +211,7 @@ describe("SocketEventGate", () => {
       socket.trigger("message:created", { workspaceId: WS, syncId: "2" })
 
       // First buffered, second passed through live.
-      expect(handler).toHaveBeenCalledTimes(1)
-      expect(handler).toHaveBeenCalledWith({ workspaceId: WS, syncId: "2" })
+      expect(handler.mock.calls).toEqual([[{ workspaceId: WS, syncId: "2" }]])
       expect(warnSpy).toHaveBeenCalled()
     } finally {
       warnSpy.mockRestore()
@@ -218,8 +247,9 @@ describe("SocketEventGate", () => {
     gate.attach(asSocket(second))
     expect(first.listenerCount("message:created")).toBe(0)
 
+    // Exactly one delivery — a duplicated forwarder would produce two.
     second.trigger("message:created", { workspaceId: WS, syncId: "4" })
-    expect(handler).toHaveBeenCalledTimes(1)
+    expect(handler.mock.calls).toEqual([[{ workspaceId: WS, syncId: "4" }]])
   })
 
   it("dispose drops buffered events without applying them", async () => {

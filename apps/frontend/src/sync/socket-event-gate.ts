@@ -54,6 +54,9 @@ export class SocketEventGate implements SyncEventSource {
   private readonly forwarders = new Map<string, SyncEventHandler>()
   private socket: Socket | null = null
   private paused = false
+  /** Bumped on every pause so an in-flight resume from an older cycle can
+   *  detect that a newer pause owns the gate and must not reopen it. */
+  private pauseEpoch = 0
   private buffer: BufferedEvent[] = []
   private overflowWarned = false
   private disposed = false
@@ -124,6 +127,7 @@ export class SocketEventGate implements SyncEventSource {
   pause(): void {
     if (this.disposed) return
     this.paused = true
+    this.pauseEpoch += 1
   }
 
   /**
@@ -132,8 +136,15 @@ export class SocketEventGate implements SyncEventSource {
    * reopens live flow. Events arriving while the splice is draining keep
    * buffering and are drained by the same loop, so nothing applies out of
    * order during the handoff back to live.
+   *
+   * If a NEW pause lands while this splice is draining (a reconnect/resume
+   * cycle started), the drain stops, the remaining events go back to the
+   * buffer, and the gate stays paused — the new cycle's own resume owns the
+   * splice from there. Reopening here would let live events flow into the
+   * new cycle's bootstrap window.
    */
   async resume(applyIf: (eventType: string, syncId: bigint) => boolean): Promise<void> {
+    const epoch = this.pauseEpoch
     while (this.buffer.length > 0) {
       if (this.disposed) return
       const batch = this.buffer
@@ -143,13 +154,19 @@ export class SocketEventGate implements SyncEventSource {
         if (a.syncId > b.syncId) return 1
         return 0
       })
-      for (const event of batch) {
+      for (let i = 0; i < batch.length; i++) {
         if (this.disposed) return
+        if (this.pauseEpoch !== epoch) {
+          this.buffer = [...batch.slice(i), ...this.buffer]
+          return
+        }
+        const event = batch[i]
         if (!applyIf(event.eventType, event.syncId)) continue
         await this.dispatch(event.eventType, event.payload)
         this.opts.onApplied?.(event.syncId.toString())
       }
     }
+    if (this.pauseEpoch !== epoch) return
     this.paused = false
     this.overflowWarned = false
   }

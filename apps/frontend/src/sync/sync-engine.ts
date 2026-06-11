@@ -128,6 +128,12 @@ export class SyncEngine {
   private syncCursorCleanup: (() => void) | null = null
   private activeCatchUp: Promise<void> | null = null
   private catchUpAbort: AbortController | null = null
+  /** Bumped on every gate pause (connect/resume trigger). A catch-up run
+   *  belongs to the cycle it started in; a stale run must not reopen the
+   *  gate for a newer cycle's bootstrap window. */
+  private catchUpCycle = 0
+  private activeCatchUpCycle = 0
+  private queuedCatchUp: Promise<void> | null = null
 
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
@@ -182,9 +188,9 @@ export class SyncEngine {
     // keeps the catch-up position honest: an applied live event advances the
     // cursor optimistically, and a cursor that jumps during the bootstrap
     // window would make catch-up skip the very disconnect gap it heals.
-    // The catch-up run's finally-splice always reopens live flow.
+    // This cycle's catch-up run reopens live flow when it completes.
     this.eventGate?.attach(socket)
-    this.eventGate?.pause()
+    this.beginCatchUpCycle()
 
     if (isReconnect) {
       this.deps.syncStatus.setAllStale()
@@ -236,7 +242,7 @@ export class SyncEngine {
     if (this.isDestroyed) return
     // Same pause-before-bootstrap rule as onConnect: the catch-up position
     // must not move between this trigger and the catch-up fetch.
-    this.eventGate?.pause()
+    this.beginCatchUpCycle()
     await this.runBootstrap(true)
     void this.runCatchUp("resume")
   }
@@ -817,6 +823,16 @@ export class SyncEngine {
     return this.eventGate ?? socket
   }
 
+  /** Active mode: pause the gate and open a new catch-up cycle. Each
+   *  connect/resume trigger gets its own cycle so a catch-up run that was
+   *  already in flight cannot reopen live delivery inside the new trigger's
+   *  bootstrap window (its finally checks the cycle before resuming). */
+  private beginCatchUpCycle(): void {
+    if (!this.eventGate) return
+    this.eventGate.pause()
+    this.catchUpCycle += 1
+  }
+
   /**
    * Active mode, on connect: load the persisted cursor and, on a first run,
    * seed it from head — BEFORE the workspace bootstrap data fetch, so the
@@ -850,13 +866,32 @@ export class SyncEngine {
    */
   private runCatchUp(trigger: string): Promise<void> {
     if (this.syncCursorMode === "off" || this.isDestroyed) return Promise.resolve()
-    if (this.activeCatchUp) return this.activeCatchUp
+    if (this.activeCatchUp) {
+      // Same cycle: share the in-flight run. An OLDER cycle's run, though,
+      // started from a position read before this trigger's gap — its applies
+      // are still valid, but it must not stand in for this cycle's healing.
+      // Its finally leaves the gate paused (cycle mismatch) and we chain ONE
+      // fresh run after it settles, mirroring runBootstrap's queued
+      // reconnect chaining (INV-53).
+      if (this.activeCatchUpCycle === this.catchUpCycle) return this.activeCatchUp
+      this.queuedCatchUp ??= this.activeCatchUp
+        .catch(() => {
+          // Swallow — the follow-up run retries whatever failed.
+        })
+        .then(() => {
+          this.queuedCatchUp = null
+          return this.runCatchUp(trigger)
+        })
+      return this.queuedCatchUp
+    }
 
+    const cycle = this.catchUpCycle
+    this.activeCatchUpCycle = cycle
     const abort = new AbortController()
     this.catchUpAbort = abort
     const run =
       this.syncCursorMode === "active"
-        ? this.performActiveCatchUp(trigger, abort.signal)
+        ? this.performActiveCatchUp(trigger, abort.signal, cycle)
         : this.performShadowCatchUp(trigger, abort.signal)
     const promise = run
       .catch((error) => {
@@ -897,14 +932,15 @@ export class SyncEngine {
    * and reopens live flow. The cursor advances only past entries that were
    * handed to handlers (or policy-skipped), never by jumping to head.
    */
-  private async performActiveCatchUp(trigger: string, signal: AbortSignal): Promise<void> {
+  private async performActiveCatchUp(trigger: string, signal: AbortSignal, cycle: number): Promise<void> {
     const syncService = this.deps.syncService!
     const gate = this.eventGate!
     const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
-    // The position everything at or below which the log already applied (or
-    // the bootstrap snapshot covers). Buffered live events above it splice in
-    // after catch-up; null means no position is known (first run that failed
-    // to seed) and the splice applies everything buffered — live behavior.
+    // The position everything at or below which this run applied from the
+    // log (starting from the cursor, whose coverage the bootstrap snapshot
+    // owns). Buffered live events above it splice in after catch-up; null
+    // means no position is known and the splice applies everything buffered
+    // — live behavior.
     let appliedThrough: bigint | null = null
 
     try {
@@ -913,11 +949,12 @@ export class SyncEngine {
       if (cursorBefore === null) {
         // Normally seeded in initializeActiveCursor before bootstrap;
         // reaching here means that failed (offline first run). Retry the
-        // seed — the bootstrap that just ran covers everything at or below
-        // the seeded head.
+        // seed so future cycles have a position — but this head is read
+        // AFTER the bootstrap snapshot, so it must NOT bound the splice: a
+        // buffered live event at or below it is not guaranteed to be in the
+        // snapshot (read-before-stamp). appliedThrough stays null and the
+        // splice applies everything buffered.
         await this.initializeActiveCursor()
-        const seeded = cursorStore.get()
-        appliedThrough = seeded === null ? null : BigInt(seeded)
         return
       }
 
@@ -976,12 +1013,16 @@ export class SyncEngine {
         })
       }
     } finally {
-      // Always reopen live flow, even on a failed fetch or early return (the
-      // buffer must never strand). Buffered events at or below the applied
-      // position were already applied from the log — except skipped-type
-      // events, which only ever apply via live delivery and so splice
-      // regardless of position.
-      if (!this.isDestroyed) {
+      // Reopen live flow, even on a failed fetch or early return (the buffer
+      // must never strand) — but only when this run still belongs to the
+      // CURRENT pause cycle. If a newer connect/resume paused the gate while
+      // this run was in flight, its bootstrap window is still open; leave the
+      // gate paused and let that cycle's own run (chained by runCatchUp) do
+      // the splice. Buffered events at or below the applied position were
+      // already applied from the log — except skipped-type events, which
+      // only ever apply via live delivery and so splice regardless of
+      // position.
+      if (!this.isDestroyed && this.catchUpCycle === cycle) {
         const through = appliedThrough
         await gate.resume(
           (eventType, syncId) =>
