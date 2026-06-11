@@ -3,17 +3,19 @@ title: Sync Engine
 status: shipped
 audience: internal
 kind: subsystem
-invariants: [INV-53]
+invariants: [INV-53, INV-61]
 entry_points:
   - apps/frontend/src/sync/sync-engine.ts
   - apps/frontend/src/sync/stream-sync.ts
   - apps/frontend/src/sync/workspace-sync.ts
+  - apps/frontend/src/sync/contiguity.ts
   - apps/frontend/src/lib/socket-room.ts
 public_site: false
 summary: >
   One per-workspace class that owns the whole client sync lifecycle: bootstrap the
   workspace and its streams (subscribe-then-bootstrap), keep them live over the socket,
-  and re-sync everything on reconnect or page resume.
+  re-sync everything on reconnect or page resume, and verify the rendered timeline is
+  contiguous — detected gaps render as in-place placeholders and backfill themselves.
 related:
   [
     concepts/subscribe-then-bootstrap.md,
@@ -53,9 +55,10 @@ its room. The handlers (`registerStreamSocketHandlers`, `registerWorkspaceSocket
 write incoming events straight to IDB.
 
 **Navigation triggers a targeted refresh.** When the route changes, `setCurrentStreamId`
-kicks `refreshStreamAfterNavigation` → `performStreamRefresh`: confirm the subscription,
-then fetch a **delta** bootstrap (`after` = the latest persisted sequence) and merge it.
-So opening a stream you've seen before fetches only what you missed, not its whole history.
+kicks `refreshStreamAfterNavigation` → `performStreamRefresh`: derive the catch-up cursor
+and confirm the subscription (via `joinStreamForCatchUp`, see below), then fetch a
+**delta** bootstrap (`after` = the latest persisted sequence) and merge it. So opening a
+stream you've seen before fetches only what you missed, not its whole history.
 
 If you only need the mental model, stop here. The rest is the behavior that makes it
 correct under reconnects and races.
@@ -65,14 +68,58 @@ correct under reconnects and races.
 ### Reconnect re-bootstraps everything, as a delta
 
 On reconnect, the engine marks all state stale, tears down and re-registers handlers, and
-re-bootstraps. For the streams the user can currently see, it `awaitJoin`s each room, then
-fetches the workspace bootstrap and per-stream **delta** bootstraps in parallel: `after` =
-latest persisted sequence, which the backend serves as `syncMode: "append"` (or falls back
-to `replace` when the gap is too large to append). It applies them in one batch
-(`applyReconnectBootstrapBatch`). Per-stream failures are classified: 403/404 are terminal
-(the stream is gone or forbidden), everything else is transient and left "stale" to retry.
-This is subscribe-then-bootstrap again: the reconnect path is exactly where the old naive
-"just refetch" loses the events that arrived mid-reconnect.
+re-bootstraps. For the streams the user can currently see, it runs `joinStreamForCatchUp`
+per stream, then fetches the workspace bootstrap and per-stream **delta** bootstraps in
+parallel: `after` = latest persisted sequence, which the backend serves as
+`syncMode: "append"` (or falls back to `replace` when the gap is too large to append). It
+applies them in one batch (`applyReconnectBootstrapBatch`). Per-stream failures are
+classified: 403/404 are terminal (the stream is gone or forbidden), everything else is
+transient and left "stale" to retry. This is subscribe-then-bootstrap again: the reconnect
+path is exactly where the old naive "just refetch" loses the events that arrived
+mid-reconnect.
+
+### The catch-up cursor has exactly one owner
+
+`SyncEngine.joinStreamForCatchUp` is the only place that derives a stream's catch-up
+cursor, and it hard-codes the load-bearing order: **read the cursor, then join the room.**
+Once subscribed, live events land in IDB immediately, and a message landing before the
+cursor read would advance the cursor past the disconnect gap — the `after` fetch then
+permanently skips everything missed while offline ("an older message never appears while
+newer ones do"). Overlap is safe (writes dedupe by event id); gaps are not. Both the
+reconnect path and the navigation refresh go through it; call sites never read
+`getLatestPersistedSequence` and order it against a join themselves. The one intentional
+exception is `backfillStreamGap`, which takes an explicit **pre-gap** cursor — the current
+latest would skip the very hole it exists to fill.
+
+### Timeline contiguity is verified, not assumed (INV-61)
+
+The global per-stream `sequence` is consumed by every event type, including author-scoped
+command events other viewers never receive and patch-style rows (edits, reactions,
+deletes) that arrive as payload patches rather than rows — so a viewer's persisted
+sequence set has legitimate holes and "seq N requires N−1" is unsound. The backend
+therefore allocates a second, **dense** `broadcastSequence` for exactly the row-delivered
+broadcast types (`TIMELINE_BROADCAST_EVENT_TYPES`): for any viewer, a missing broadcast
+number is always a real gap.
+
+The client checks that chain in two places:
+
+- **Write path** (`detectSequenceGap` in `stream-sync.ts`): when a live event's broadcast
+  position skips past the persisted tail (`getPersistedTail`), the handler reports the
+  pre-write latest as a gap cursor and the engine's `backfillStreamGap` fetches
+  `bootstrap?after=` from it — single-flighted per stream, with a queued lowest-cursor
+  follow-up. Exact when both sides are stamped; pre-deploy rows fall back to the global
+  heuristic (which can over-report; the backfill is idempotent and self-quiets).
+- **Read path** (`computeTimelineHoles` in `sync/contiguity.ts`, driven by `useEvents`):
+  the single authority over the rendered window. A hole between two visible rows renders
+  as a fixed-height in-place "loading missed messages" placeholder and triggers a scoped
+  backfill, so the missed message resolves the placeholder where it belongs instead of
+  popping in above rows already on screen.
+
+The one operation that legitimately vacates broadcast slots is the message-move flow: it
+re-allocates moved rows densely in the destination and declares the vacated source slots
+on its source tombstone (`vacatedBroadcastSequences`). The tombstone's own slot is always
+above everything it declares, so any window that can see the hole also contains the
+declaration — moves never produce phantom placeholders.
 
 ### In-flight dedup and queued reconnects
 
@@ -124,13 +171,21 @@ retry affordances.
   [subscribe-then-bootstrap](../concepts/subscribe-then-bootstrap.md): subscriptions are
   confirmed before fetches, and snapshots merge rather than replace live events, on first
   load and on every reconnect.
+- **INV-61.** The rendered timeline window is verifiably contiguous over the
+  viewer-visible ordering. The dense `broadcastSequence` chain makes a missing event
+  detectable for any viewer; holes render as in-place placeholders and backfill via
+  `backfillStreamGap`; the catch-up cursor is owned solely by `joinStreamForCatchUp`.
 
 ## Entry points
 
 - `apps/frontend/src/sync/sync-engine.ts`: the `SyncEngine` class. Lifecycle, bootstrap
-  cycle, reconnect, navigation refresh, page resume.
+  cycle, reconnect, navigation refresh, page resume, gap backfill, the catch-up cursor
+  owner.
 - `apps/frontend/src/sync/stream-sync.ts`: `applyStreamBootstrap` and the merge / window
-  prune / two-tier reconciliation; the per-stream socket handlers.
+  prune / two-tier reconciliation; the per-stream socket handlers; write-path gap
+  detection (`getPersistedTail`, `detectSequenceGap`).
+- `apps/frontend/src/sync/contiguity.ts`: `computeTimelineHoles`, the read-side authority
+  for INV-61 (consumed by `useEvents` / the timeline's gap placeholders).
 - `apps/frontend/src/sync/workspace-sync.ts`: workspace bootstrap apply, workspace socket
   handlers, the batched reconnect apply.
 - `apps/frontend/src/lib/socket-room.ts`: `joinRoomWithAck` / `joinRoomBestEffort`, the
