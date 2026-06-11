@@ -19,7 +19,8 @@ import {
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
-import { SyncLogCursor, SYNC_V2_CURSOR_SHADOW_DEFAULT } from "./sync-log-cursor"
+import { SyncLogCursor, SYNC_V2_CURSOR_MODE, type SyncV2CursorMode } from "./sync-log-cursor"
+import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -61,12 +62,34 @@ interface SyncEngineDeps {
     ) => Promise<import("@threa/types").SyncCatchUpResponse>
   }
   /** Test override for the VITE_SYNC_V2_CURSOR flag. */
-  syncCursorShadowEnabled?: boolean
+  syncCursorMode?: SyncV2CursorMode
 }
 
-/** Safety valve for shadow catch-up paging (20 pages × 500 entries). */
-const MAX_SHADOW_CATCHUP_PAGES = 20
-const SHADOW_CATCHUP_PAGE_LIMIT = 500
+/** Safety valve for catch-up paging (20 pages × 500 entries). */
+const MAX_CATCHUP_PAGES = 20
+const CATCHUP_PAGE_LIMIT = 500
+
+/**
+ * Unread/read-state event types that active catch-up SKIPS (the cursor still
+ * advances past them). Their handlers are the only duplicate-unsafe ones in
+ * the apply surface: `stream:activity` and `activity:created` increment
+ * counters, so replaying a log entry already reflected in the bootstrap's
+ * absolute counts double-counts; and replaying `stream:read`/`stream:read_all`
+ * would zero counts whose causing increments were skipped. In phase 2b the
+ * workspace bootstrap stays the sole authority for unread state (INV-53
+ * healing is untouched), and live delivery of these types — including events
+ * buffered while catch-up pages — keeps applying exactly as today. A dropped
+ * live emit of these types heals on the next bootstrap, the same loss mode
+ * as before the log existed. Phase 2c can lift them into the log properly by
+ * converting their payloads to absolute values (LWW), at which point they
+ * leave this set.
+ */
+const CATCHUP_SKIPPED_UNREAD_EVENT_TYPES = new Set([
+  "stream:activity",
+  "activity:created",
+  "stream:read",
+  "stream:read_all",
+])
 
 /**
  * Owns the full sync lifecycle for a workspace:
@@ -95,14 +118,16 @@ export class SyncEngine {
   /** Whether the engine has been destroyed. Public for ref-check re-creation. */
   isDestroyed = false
 
-  // Sync-engine v2 cursor (shadow mode): one lastSyncId per workspace,
+  // Sync-engine v2 cursor: one lastSyncId per workspace. In shadow mode it is
   // advanced by live events and exercised against the catch-up endpoint
-  // without owning any healing yet. See sync-log-cursor.ts.
-  private readonly syncCursorShadowEnabled: boolean
+  // without owning any healing; in active mode catch-up entries are applied
+  // through the live handlers via the event gate. See sync-log-cursor.ts.
+  private readonly syncCursorMode: SyncV2CursorMode
+  private readonly eventGate: SocketEventGate | null
   private syncLogCursor: SyncLogCursor | null = null
   private syncCursorCleanup: (() => void) | null = null
-  private activeShadowCatchUp: Promise<void> | null = null
-  private shadowCatchUpAbort: AbortController | null = null
+  private activeCatchUp: Promise<void> | null = null
+  private catchUpAbort: AbortController | null = null
 
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
@@ -115,7 +140,13 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
-    this.syncCursorShadowEnabled = (deps.syncCursorShadowEnabled ?? SYNC_V2_CURSOR_SHADOW_DEFAULT) && !!deps.syncService
+    this.syncCursorMode = deps.syncService ? (deps.syncCursorMode ?? SYNC_V2_CURSOR_MODE) : "off"
+    this.eventGate =
+      this.syncCursorMode === "active"
+        ? new SocketEventGate(this.workspaceId, {
+            onApplied: (syncId) => this.syncLogCursor?.advance(syncId),
+          })
+        : null
   }
 
   /** Update the current stream ID (called from React when route changes). */
@@ -145,6 +176,15 @@ export class SyncEngine {
     const isReconnect = this.hasEverConnected
     this.hasEverConnected = true
     this.socket = socket
+    // Synchronously, before any await: events arriving right after the
+    // connect ack must already flow through the gate's forwarders — and be
+    // buffered, not applied. Pausing here (not at catch-up start) is what
+    // keeps the catch-up position honest: an applied live event advances the
+    // cursor optimistically, and a cursor that jumps during the bootstrap
+    // window would make catch-up skip the very disconnect gap it heals.
+    // The catch-up run's finally-splice always reopens live flow.
+    this.eventGate?.attach(socket)
+    this.eventGate?.pause()
 
     if (isReconnect) {
       this.deps.syncStatus.setAllStale()
@@ -153,13 +193,21 @@ export class SyncEngine {
       this.cleanupStreamHandlers()
     }
 
-    if (this.syncCursorShadowEnabled) {
+    if (this.syncCursorMode === "shadow") {
       this.trackSyncCursor(socket)
+    } else if (this.syncCursorMode === "active") {
+      // Read-before-stamp: the cursor position (head, on a first run) must be
+      // read BEFORE the bootstrap data fetch so any race falls on the
+      // duplicate side (entry also present in the snapshot — idempotent),
+      // never the gap side (entry stamped below a position read after the
+      // snapshot — permanent loss).
+      await this.initializeActiveCursor()
+      if (this.isDestroyed) return
     }
 
     // Register workspace-level socket handlers (stream:created, stream:updated, etc.)
     this.workspaceHandlerCleanup = registerWorkspaceSocketHandlers(
-      socket,
+      this.liveEventSource(socket),
       this.deps.workspaceId,
       this.deps.queryClient,
       {
@@ -174,9 +222,9 @@ export class SyncEngine {
     // Process pending offline operations (edits, deletes, reactions)
     this.kickOperationQueue()
 
-    // Shadow only — runs after bootstrap so it never competes for the
-    // connection setup window, and applies nothing.
-    void this.runShadowCatchUp(isReconnect ? "reconnect" : "connect")
+    // Runs after bootstrap so it never competes for the connection setup
+    // window. Shadow logs only; active applies through the gate.
+    void this.runCatchUp(isReconnect ? "reconnect" : "connect")
   }
 
   /**
@@ -186,8 +234,11 @@ export class SyncEngine {
    */
   async refreshAfterConnectivityResume(): Promise<void> {
     if (this.isDestroyed) return
+    // Same pause-before-bootstrap rule as onConnect: the catch-up position
+    // must not move between this trigger and the catch-up fetch.
+    this.eventGate?.pause()
     await this.runBootstrap(true)
-    void this.runShadowCatchUp("resume")
+    void this.runCatchUp("resume")
   }
 
   /**
@@ -261,9 +312,19 @@ export class SyncEngine {
     )
   }
 
-  /** Current sync-log cursor (v2 shadow), or null when none is tracked yet. */
+  /** Current sync-log cursor (v2), or null when none is tracked yet. */
   getSyncCursor(): string | null {
     return this.syncLogCursor?.get() ?? null
+  }
+
+  /**
+   * Registration surface for live stream handlers mounted outside the engine
+   * (useStreamSocket). In active mode this is the event gate, so hook-mounted
+   * handlers participate in catch-up dispatch and buffer-and-splice exactly
+   * like engine-owned ones; otherwise callers fall back to the raw socket.
+   */
+  getLiveEventSource(): SyncEventSource | null {
+    return this.eventGate
   }
 
   /**
@@ -350,11 +411,12 @@ export class SyncEngine {
     this.cleanupAllHandlers()
     this.subscribedStreams.clear()
     this.socket = null
-    // Dispose without flushing — destroy can be an account switch that
-    // repoints the shared db proxy, and the cursor must not leak across
-    // accounts. See SyncLogCursor.
-    this.shadowCatchUpAbort?.abort()
-    this.shadowCatchUpAbort = null
+    // Dispose without flushing or splicing — destroy can be an account switch
+    // that repoints the shared db proxy, and neither the cursor nor buffered
+    // events may leak across accounts. See SyncLogCursor / SocketEventGate.
+    this.catchUpAbort?.abort()
+    this.catchUpAbort = null
+    this.eventGate?.dispose()
     this.syncLogCursor?.dispose()
     this.syncLogCursor = null
   }
@@ -644,7 +706,7 @@ export class SyncEngine {
     if (!this.subscribedStreams.has(streamId)) {
       this.subscribedStreams.add(streamId)
       const cleanup = registerStreamSocketHandlers(
-        this.socket,
+        this.liveEventSource(this.socket),
         this.deps.workspaceId,
         streamId,
         this.deps.queryClient,
@@ -750,35 +812,183 @@ export class SyncEngine {
     this.syncCursorCleanup = () => socket.offAny(listener)
   }
 
+  /** Handler registration target: the gate in active mode, the socket otherwise. */
+  private liveEventSource(socket: Socket): SyncEventSource {
+    return this.eventGate ?? socket
+  }
+
   /**
-   * Shadow-mode catch-up: pages the sync endpoint from the cursor and logs
-   * what active mode WOULD have applied, applying nothing. Entries fetched
-   * here are events the live path never advanced past — after a disconnect
-   * that count is the healing the cursor will own; on a healthy resume it
-   * should be ~zero. Single-flighted; never throws into callers.
+   * Active mode, on connect: load the persisted cursor and, on a first run,
+   * seed it from head — BEFORE the workspace bootstrap data fetch, so the
+   * position is a lower bound of the snapshot (read-before-stamp). Errors are
+   * non-fatal: catch-up retries seeding later, and the bootstrap healing this
+   * phase keeps (INV-53) covers the rare first-run-plus-network-failure gap.
    */
-  private runShadowCatchUp(trigger: string): Promise<void> {
-    if (!this.syncCursorShadowEnabled || this.isDestroyed) return Promise.resolve()
-    if (this.activeShadowCatchUp) return this.activeShadowCatchUp
+  private async initializeActiveCursor(): Promise<void> {
+    const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
+    try {
+      await cursorStore.load()
+      if (cursorStore.get() !== null || this.isDestroyed) return
+      const abort = (this.catchUpAbort ??= new AbortController())
+      const { head } = await this.deps.syncService!.catchUp(this.workspaceId, { after: "0", limit: 1 }, abort.signal)
+      if (this.isDestroyed) return
+      cursorStore.advance(head)
+      console.info("Sync-v2 cursor seeded from head", { workspaceId: this.workspaceId, head })
+    } catch (error) {
+      if (this.isDestroyed) return
+      console.error("Sync-v2 cursor initialization failed", { workspaceId: this.workspaceId, error })
+    }
+  }
+
+  /**
+   * Catch-up after connect/reconnect/resume: pages the sync endpoint from the
+   * cursor. Shadow mode logs what active mode WOULD have applied; active mode
+   * applies entries through the gate. Entries fetched here are events the
+   * live path never advanced past — after a disconnect that is the healing
+   * the cursor owns; on a healthy resume it should be ~zero.
+   * Single-flighted; never throws into callers.
+   */
+  private runCatchUp(trigger: string): Promise<void> {
+    if (this.syncCursorMode === "off" || this.isDestroyed) return Promise.resolve()
+    if (this.activeCatchUp) return this.activeCatchUp
 
     const abort = new AbortController()
-    this.shadowCatchUpAbort = abort
-    const promise = this.performShadowCatchUp(trigger, abort.signal)
+    this.catchUpAbort = abort
+    const run =
+      this.syncCursorMode === "active"
+        ? this.performActiveCatchUp(trigger, abort.signal)
+        : this.performShadowCatchUp(trigger, abort.signal)
+    const promise = run
       .catch((error) => {
         // A destroy-triggered abort is expected teardown, not a failure.
         if (this.isDestroyed) return
-        console.error("Sync-v2 shadow catch-up failed", { workspaceId: this.workspaceId, trigger, error })
+        console.error("Sync-v2 catch-up failed", {
+          workspaceId: this.workspaceId,
+          mode: this.syncCursorMode,
+          trigger,
+          error,
+        })
       })
       .finally(() => {
-        if (this.activeShadowCatchUp === promise) {
-          this.activeShadowCatchUp = null
+        if (this.activeCatchUp === promise) {
+          this.activeCatchUp = null
         }
-        if (this.shadowCatchUpAbort === abort) {
-          this.shadowCatchUpAbort = null
+        if (this.catchUpAbort === abort) {
+          this.catchUpAbort = null
         }
       })
-    this.activeShadowCatchUp = promise
+    this.activeCatchUp = promise
     return promise
+  }
+
+  /**
+   * Active catch-up: applies log entries through the SAME registered handlers
+   * live socket events use (the protocol guarantees `entry.payload` is the
+   * exact payload the socket emits — see the sync service doc), in syncId
+   * order, awaiting each entry so applies cannot interleave. Duplicates are
+   * by design (sweep + dispatcher can both emit; snapshot/log overlap is the
+   * safe side of read-before-stamp) and are absorbed by the handlers'
+   * idempotency — except the unread counter family, which is skipped (see
+   * CATCHUP_SKIPPED_UNREAD_EVENT_TYPES).
+   *
+   * While catch-up pages, the gate buffers live syncId-bearing events; the
+   * finally-splice applies buffered events above the catch-up position (plus
+   * skipped-type events at any position, since catch-up never applies those)
+   * and reopens live flow. The cursor advances only past entries that were
+   * handed to handlers (or policy-skipped), never by jumping to head.
+   */
+  private async performActiveCatchUp(trigger: string, signal: AbortSignal): Promise<void> {
+    const syncService = this.deps.syncService!
+    const gate = this.eventGate!
+    const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
+    // The position everything at or below which the log already applied (or
+    // the bootstrap snapshot covers). Buffered live events above it splice in
+    // after catch-up; null means no position is known (first run that failed
+    // to seed) and the splice applies everything buffered — live behavior.
+    let appliedThrough: bigint | null = null
+
+    try {
+      await cursorStore.load()
+      const cursorBefore = cursorStore.get()
+      if (cursorBefore === null) {
+        // Normally seeded in initializeActiveCursor before bootstrap;
+        // reaching here means that failed (offline first run). Retry the
+        // seed — the bootstrap that just ran covers everything at or below
+        // the seeded head.
+        await this.initializeActiveCursor()
+        const seeded = cursorStore.get()
+        appliedThrough = seeded === null ? null : BigInt(seeded)
+        return
+      }
+
+      let cursor = cursorBefore
+      appliedThrough = BigInt(cursorBefore)
+      let head = cursorBefore
+      let pages = 0
+      let fetched = 0
+      let skipped = 0
+      const byEventType: Record<string, number> = {}
+
+      while (pages < MAX_CATCHUP_PAGES) {
+        const response = await syncService.catchUp(
+          this.workspaceId,
+          { after: cursor, limit: CATCHUP_PAGE_LIMIT },
+          signal
+        )
+        if (this.isDestroyed) return
+        head = response.head
+        if (response.entries.length === 0) break
+
+        pages += 1
+        fetched += response.entries.length
+        for (const entry of response.entries) {
+          if (this.isDestroyed) return
+          byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
+          if (CATCHUP_SKIPPED_UNREAD_EVENT_TYPES.has(entry.eventType)) {
+            skipped += 1
+          } else {
+            // Mirror the live wire shape exactly: emits carry the syncId
+            // spread onto the outbox payload (see emitToGroups).
+            const payload =
+              typeof entry.payload === "object" && entry.payload !== null
+                ? { ...entry.payload, syncId: entry.syncId }
+                : entry.payload
+            await gate.dispatch(entry.eventType, payload)
+          }
+          cursorStore.advance(entry.syncId)
+          appliedThrough = BigInt(entry.syncId)
+          cursor = entry.syncId
+        }
+      }
+
+      if (fetched > 0 || trigger !== "connect") {
+        console.info("Sync-v2 active catch-up", {
+          workspaceId: this.workspaceId,
+          trigger,
+          cursorBefore,
+          cursorAfter: cursor,
+          head,
+          fetched,
+          skipped,
+          pages,
+          byEventType,
+          truncated: pages >= MAX_CATCHUP_PAGES,
+        })
+      }
+    } finally {
+      // Always reopen live flow, even on a failed fetch or early return (the
+      // buffer must never strand). Buffered events at or below the applied
+      // position were already applied from the log — except skipped-type
+      // events, which only ever apply via live delivery and so splice
+      // regardless of position.
+      if (!this.isDestroyed) {
+        const through = appliedThrough
+        await gate.resume(
+          (eventType, syncId) =>
+            through === null || syncId > through || CATCHUP_SKIPPED_UNREAD_EVENT_TYPES.has(eventType)
+        )
+      }
+    }
   }
 
   private async performShadowCatchUp(trigger: string, signal: AbortSignal): Promise<void> {
@@ -791,9 +1001,10 @@ export class SyncEngine {
       // No cursor yet (first run on this device): seed from head instead of
       // replaying the whole retained log — everything at or below head is
       // covered by the bootstrap snapshot path. NOTE: this jump is legal
-      // only because shadow mode owns no healing. Active mode must read
-      // head BEFORE the bootstrap data fetch (read-before-stamp rule) so
-      // the race falls on the duplicate side, never the gap side.
+      // only because shadow mode owns no healing. Active mode reads head
+      // BEFORE the bootstrap data fetch (read-before-stamp rule) so the
+      // race falls on the duplicate side, never the gap side — see
+      // initializeActiveCursor.
       const { head } = await syncService.catchUp(this.workspaceId, { after: "0", limit: 1 }, signal)
       if (this.isDestroyed) return
       cursorStore.advance(head)
@@ -807,12 +1018,8 @@ export class SyncEngine {
     let fetched = 0
     const byEventType: Record<string, number> = {}
 
-    while (pages < MAX_SHADOW_CATCHUP_PAGES) {
-      const response = await syncService.catchUp(
-        this.workspaceId,
-        { after: cursor, limit: SHADOW_CATCHUP_PAGE_LIMIT },
-        signal
-      )
+    while (pages < MAX_CATCHUP_PAGES) {
+      const response = await syncService.catchUp(this.workspaceId, { after: cursor, limit: CATCHUP_PAGE_LIMIT }, signal)
       if (this.isDestroyed) return
       head = response.head
       if (response.entries.length === 0) break
@@ -839,7 +1046,7 @@ export class SyncEngine {
         fetched,
         pages,
         byEventType,
-        truncated: pages >= MAX_SHADOW_CATCHUP_PAGES,
+        truncated: pages >= MAX_CATCHUP_PAGES,
       })
     }
   }

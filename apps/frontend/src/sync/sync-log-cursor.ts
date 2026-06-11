@@ -1,12 +1,24 @@
 import { db } from "@/db"
 
 /**
- * Kill switch for the sync-engine v2 cursor shadow path (cursor tracking +
- * shadow catch-up in SyncEngine). Shadow mode observes and logs only — it
- * never applies catch-up entries — so it defaults on; set
- * VITE_SYNC_V2_CURSOR=off to disable.
+ * Sync-engine v2 cursor rollout stage (VITE_SYNC_V2_CURSOR):
+ *
+ * - "off"    — cursor fully inert (kill switch).
+ * - "shadow" — track the cursor and page catch-up, log what active mode
+ *              WOULD apply, apply nothing. The default: production shadow
+ *              logs must show the cursor heals correctly (fetched > 0 after
+ *              disconnects, ~0 on healthy resumes) before "active" ships.
+ * - "active" — apply catch-up entries through the live handlers and buffer-
+ *              and-splice live events while catch-up pages.
  */
-export const SYNC_V2_CURSOR_SHADOW_DEFAULT = import.meta.env.VITE_SYNC_V2_CURSOR !== "off"
+export type SyncV2CursorMode = "off" | "shadow" | "active"
+
+function parseSyncV2CursorMode(raw: string | undefined): SyncV2CursorMode {
+  if (raw === "off" || raw === "active") return raw
+  return "shadow"
+}
+
+export const SYNC_V2_CURSOR_MODE: SyncV2CursorMode = parseSyncV2CursorMode(import.meta.env.VITE_SYNC_V2_CURSOR)
 
 const PERSIST_DEBOUNCE_MS = 1_000
 

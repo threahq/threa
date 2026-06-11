@@ -1,6 +1,6 @@
 import { db, type CachedStream, type CachedStreamMembership, type CachedUnreadState } from "@/db"
 import { seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
-import type { Socket } from "socket.io-client"
+import type { SyncEventSource } from "./socket-event-gate"
 import type { QueryClient } from "@tanstack/react-query"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 import { streamKeys } from "@/hooks/use-streams"
@@ -401,7 +401,7 @@ function resolveDmPeerUserId(dmUserIds: [string, string] | undefined, currentUse
  * independently of component mount/unmount cycles.
  */
 export function registerWorkspaceSocketHandlers(
-  socket: Socket,
+  socket: SyncEventSource,
   workspaceId: string,
   queryClient: QueryClient,
   refs: {

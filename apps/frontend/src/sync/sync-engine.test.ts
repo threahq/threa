@@ -895,7 +895,7 @@ describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
     return {
       ...makeDeps(),
       syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
-      syncCursorShadowEnabled: true,
+      syncCursorMode: "shadow" as const,
     }
   }
 
@@ -990,7 +990,7 @@ describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
 
   it("does nothing when the shadow flag is off", async () => {
     const catchUp = vi.fn(async () => emptyPage("42"))
-    const deps = { ...makeShadowDeps(catchUp), syncCursorShadowEnabled: false }
+    const deps = { ...makeShadowDeps(catchUp), syncCursorMode: "off" as const }
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
@@ -1000,5 +1000,206 @@ describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
     expect(catchUp).not.toHaveBeenCalled()
     expect(engine.getSyncCursor()).toBeNull()
     engine.destroy()
+  })
+})
+
+describe("SyncEngine sync-v2 cursor (active mode)", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([
+      db.workspaces.clear(),
+      db.syncCursors.clear(),
+      db.workspaceUsers.clear(),
+      db.unreadState.clear(),
+    ])
+  })
+
+  function makeActiveDeps(catchUp: ReturnType<typeof vi.fn>) {
+    return {
+      ...makeDeps(),
+      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
+      syncCursorMode: "active" as const,
+    }
+  }
+
+  function emptyPage(head: string): SyncCatchUpResponse {
+    return { entries: [], head }
+  }
+
+  function userAddedEntry(syncId: string, userId: string): SyncCatchUpResponse["entries"][number] {
+    return {
+      syncId,
+      eventType: "workspace_user:added",
+      payload: { workspaceId: "ws_1", user: { id: userId, workspaceId: "ws_1", name: `User ${userId}` } },
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  function userAddedLivePayload(syncId: string, userId: string) {
+    return {
+      workspaceId: "ws_1",
+      syncId,
+      user: { id: userId, workspaceId: "ws_1", name: `User ${userId}` },
+    }
+  }
+
+  it("seeds the cursor from head BEFORE the workspace bootstrap data fetch on first run", async () => {
+    const order: string[] = []
+    const catchUp = vi.fn(async () => {
+      order.push("catchUp")
+      return emptyPage("42")
+    })
+    const deps = makeActiveDeps(catchUp)
+    const innerBootstrap = deps.workspaceService.bootstrap
+    deps.workspaceService.bootstrap = vi.fn(async () => {
+      order.push("bootstrap")
+      return innerBootstrap()
+    })
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    expect(order[0]).toBe("catchUp")
+    expect(order).toContain("bootstrap")
+    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", { after: "0", limit: 1 }, expect.any(AbortSignal))
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("42"))
+    engine.destroy()
+  })
+
+  it("applies catch-up entries through the registered live handlers and advances the cursor by applied entries", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: [userAddedEntry("11", "user_a"), userAddedEntry("12", "user_b")], head: "12" })
+      .mockResolvedValue(emptyPage("12"))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_a")).toBeDefined()
+      expect(await db.workspaceUsers.get("user_b")).toBeDefined()
+    })
+    expect(engine.getSyncCursor()).toBe("12")
+    engine.destroy()
+  })
+
+  it("skips unread-counter entries from the log but still advances the cursor past them", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [
+          {
+            syncId: "11",
+            eventType: "activity:created",
+            payload: {
+              workspaceId: "ws_1",
+              activity: { id: "act_1", streamId: "stream_x", activityType: "message", isSelf: false },
+            },
+            createdAt: new Date().toISOString(),
+          },
+          userAddedEntry("12", "user_a"),
+        ],
+        head: "12",
+      })
+      .mockResolvedValue(emptyPage("12"))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_a")).toBeDefined())
+    expect(engine.getSyncCursor()).toBe("12")
+    // The bootstrap wrote zeroed unread state; the skipped log entry must not
+    // have incremented it (bootstrap stays the counter authority in 2b).
+    const unread = await db.unreadState.get("ws_1")
+    expect(unread?.unreadActivityCount).toBe(0)
+    engine.destroy()
+  })
+
+  it("buffers live events while catch-up runs and splices those above the catch-up position afterwards", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("11"))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+
+    // Lands while catch-up pages: buffered, not applied.
+    socket.trigger("workspace_user:added", userAddedLivePayload("12", "user_live"))
+    expect(await db.workspaceUsers.get("user_live")).toBeUndefined()
+
+    resolveFirstPage!({ entries: [userAddedEntry("11", "user_log")], head: "11" })
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_log")).toBeDefined()
+      expect(await db.workspaceUsers.get("user_live")).toBeDefined()
+    })
+    expect(engine.getSyncCursor()).toBe("12")
+    engine.destroy()
+  })
+
+  it("applies buffered counter events at the splice even when at or below the catch-up position", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("12"))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+    // Bootstrap has applied by now (onConnect awaited it) with zeroed counts.
+    expect((await db.unreadState.get("ws_1"))?.unreadActivityCount).toBe(0)
+
+    const activityPayload = {
+      workspaceId: "ws_1",
+      syncId: "11",
+      activity: { id: "act_1", streamId: "stream_x", activityType: "message", isSelf: false },
+    }
+    socket.trigger("activity:created", activityPayload)
+
+    // The same event is also in the log (duplicate by design) — catch-up
+    // skips it there; the buffered live copy applies exactly once at splice.
+    resolveFirstPage!({
+      entries: [
+        {
+          syncId: "11",
+          eventType: "activity:created",
+          payload: activityPayload,
+          createdAt: new Date().toISOString(),
+        },
+        userAddedEntry("12", "user_a"),
+      ],
+      head: "12",
+    })
+
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadActivityCount).toBe(1)
+    })
+    expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
+    engine.destroy()
+  })
+
+  it("never applies buffered events after destroy (account-switch safety)", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi.fn(() => new Promise<SyncCatchUpResponse>(() => {}))
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    socket.trigger("workspace_user:added", userAddedLivePayload("12", "user_live"))
+
+    engine.destroy()
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    expect(await db.workspaceUsers.get("user_live")).toBeUndefined()
   })
 })
