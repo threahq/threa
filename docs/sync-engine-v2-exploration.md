@@ -260,6 +260,41 @@ store with live queries and optimistic mutations that explicitly pairs with a cu
 backend. It is not a protocol, but a custom collection fed by our sync log could later
 replace a lot of the Dexie/TanStack Query glue. Separate decision, not a prerequisite.
 
+### Is IndexedDB the right store, given the SQLite-wasm trend?
+
+PowerSync, Zero, and LiveStore all run SQLite (wasm/OPFS) on the client, which raises
+the fair question of whether Dexie/IDB is the weak link. The answer is no, for reasons
+specific to us:
+
+- **They need SQL; we don't.** Those engines replicate a relational schema and their
+  client query interface _is_ SQL — joins, aggregates, arbitrary queries over a partial
+  replica. Threa's client reads are key-range scans over a denormalized read model:
+  events by `(streamId, sequence)` window, get-by-id, short filtered lists. That is
+  IDB's sweet spot, and the timeline perf problems we have had were render-side, never
+  storage-side.
+- **Concurrent contexts are our hard requirement, and IDB wins it.** Background sync
+  (Part 7) means the service worker, the page, and multiple tabs all write the same
+  store. IDB transactions are browser-coordinated across contexts natively — `sw.ts`
+  already writes the same Dexie tables the app reads. OPFS SQLite takes one synchronous
+  access handle: multi-context access needs leader election (Web Locks) and a brokering
+  worker, and a service worker — killed and revived aggressively — is the worst possible
+  candidate for lease-holding. The engines that use SQLite-wasm ship that coordination
+  machinery as part of the product; hand-rolling it is real, fiddly work we would be
+  signing up for.
+- **Reactivity exists on our side.** Dexie's `liveQuery` (with its known cross-context
+  caveats) is how the UI observes sync writes today. SQLite-wasm has no native
+  reactivity; the products layer their own on top. Swapping stores means rebuilding the
+  observation layer too.
+- **Cost/benefit.** A storage swap touches every read path in the frontend and is fully
+  orthogonal to the protocol problem this doc is about. None of the Part 1 failures are
+  storage failures.
+
+When it would be worth revisiting: if client-side search or aggregation over large local
+history becomes a product requirement (offline full-text search, complex local filters),
+SQLite-wasm earns its complexity; and adopting PowerSync would bring its SQLite (with the
+coordination machinery included) as part of that package. Until one of those is true,
+IDB is the right store for this design, and notably the better one for Part 7.
+
 ## Part 4: Effect
 
 [Effect](https://effect.website) is a structured-concurrency / typed-errors / resource-
