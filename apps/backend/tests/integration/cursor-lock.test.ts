@@ -5,6 +5,7 @@ import {
   CursorLock,
   ensureListener,
   compact,
+  hasUnfilledGaps,
   type ProcessResult,
   type CursorLockConfig,
   type ProcessedIdsMap,
@@ -519,8 +520,10 @@ describe("CursorLock", () => {
       const event2 = await insertTestEvent()
       await ensureListener(pool, testListenerId, baseId)
 
-      // gapWindowMs=0 with <= comparison means entries expire immediately
-      const cursorLock = createTestCursorLock({ gapWindowMs: 0 })
+      // gapWindowMs=0 with <= comparison means entries expire immediately;
+      // gapCeilingMs=0 bypasses the transaction-liveness hold so this test
+      // exercises the window machinery deterministically
+      const cursorLock = createTestCursorLock({ gapWindowMs: 0, gapCeilingMs: 0 })
 
       const didWork = await cursorLock.run(async (cursor, processedIds): Promise<ProcessResult> => {
         const events = await OutboxRepository.fetchAfterId(pool, cursor, 10, processedIds)
@@ -559,6 +562,122 @@ describe("CursorLock", () => {
       expect(processedIdsSeen[0]).toHaveLength(0)
       // Second call: event1 should be in processedIds (non-contiguous, stays in window)
       expect(processedIdsSeen[1]).toContainEqual(event1)
+    })
+  })
+
+  describe("compact - gap liveness guard (pure function)", () => {
+    test("hasUnfilledGaps detects holes between cursor and tracked ids", () => {
+      expect(hasUnfilledGaps(10n, {}, [11n, 12n, 13n])).toBe(false)
+      expect(hasUnfilledGaps(10n, {}, [12n])).toBe(true)
+      expect(hasUnfilledGaps(10n, { "11": new Date().toISOString() }, [13n])).toBe(true)
+      expect(hasUnfilledGaps(10n, { "11": new Date().toISOString() }, [12n])).toBe(false)
+      expect(hasUnfilledGaps(10n, {}, [])).toBe(false)
+    })
+
+    test("holds an expired entry above a gap while a transaction predating it runs", () => {
+      const now = new Date()
+      const readAt = new Date(now.getTime() - 5000)
+      // Entry 14 (gap at 11-13) expired by the window, but a transaction that
+      // started before it was observed is still running — could still fill 11.
+      const result = compact(10n, { "14": readAt.toISOString() }, [], now, 1000, {
+        oldestRunningTxnStart: new Date(readAt.getTime() - 1000),
+        gapCeilingMs: 60_000,
+      })
+
+      expect(result.cursor).toBe(10n)
+      expect(result.processedIds["14"]).toBeDefined()
+    })
+
+    test("skips the gap once every running transaction postdates the observation", () => {
+      const now = new Date()
+      const readAt = new Date(now.getTime() - 5000)
+      const result = compact(10n, { "14": readAt.toISOString() }, [], now, 1000, {
+        // Oldest running transaction started well after entry 14 was observed
+        // (past the clock-skew pad) — the gap's owner has provably ended.
+        oldestRunningTxnStart: new Date(readAt.getTime() + 2000),
+        gapCeilingMs: 60_000,
+      })
+
+      expect(result.cursor).toBe(14n)
+      expect(Object.keys(result.processedIds)).toHaveLength(0)
+    })
+
+    test("skips the gap when no transaction is running at all", () => {
+      const now = new Date()
+      const readAt = new Date(now.getTime() - 5000)
+      const result = compact(10n, { "14": readAt.toISOString() }, [], now, 1000, {
+        oldestRunningTxnStart: null,
+        gapCeilingMs: 60_000,
+      })
+
+      expect(result.cursor).toBe(14n)
+    })
+
+    test("the ceiling forces the skip past an abandoned long transaction", () => {
+      const now = new Date()
+      const readAt = new Date(now.getTime() - 5000)
+      const result = compact(10n, { "14": readAt.toISOString() }, [], now, 1000, {
+        oldestRunningTxnStart: new Date(now.getTime() - 600_000),
+        gapCeilingMs: 3000,
+      })
+
+      expect(result.cursor).toBe(14n)
+    })
+  })
+
+  describe("run - transaction liveness gap guard", () => {
+    test("holds a gap open while the owning transaction runs, then processes the late commit", async () => {
+      // Transaction A allocates an outbox id but stays uncommitted — the
+      // classic BIGSERIAL visibility gap, held open longer than the window.
+      const txnClient = await pool.connect()
+      try {
+        await txnClient.query("BEGIN")
+        const inFlight = await txnClient.query<{ id: string }>(
+          `INSERT INTO outbox (event_type, payload) VALUES ('test:event', '{"test": true}') RETURNING id`
+        )
+        const gapId = BigInt(inFlight.rows[0].id)
+        const visibleId = await insertTestEvent()
+        expect(visibleId).toBeGreaterThan(gapId)
+
+        await ensureListener(pool, testListenerId, gapId - 1n)
+        const cursorLock = createTestCursorLock({ gapWindowMs: 10 })
+
+        const processed: bigint[] = []
+        const processor = async (cursor: bigint, processedIds: bigint[]): Promise<ProcessResult> => {
+          const events = await OutboxRepository.fetchAfterId(pool, cursor, 10, processedIds)
+          if (events.length === 0) return { status: "no_events" }
+          processed.push(...events.map((e) => e.id))
+          return { status: "processed", processedIds: events.map((e) => e.id) }
+        }
+
+        await cursorLock.run(processor)
+        // Window expired while transaction A still runs. Commit ANOTHER event
+        // so the next run processes a real batch — compaction only happens on
+        // the processed path, so without this the second run would return
+        // no_events and never reach the gap guard at all (the pre-hardening
+        // window would pass a no-op run too).
+        await new Promise((r) => setTimeout(r, 50))
+        const laterId = await insertTestEvent()
+        await cursorLock.run(processor)
+
+        // The guard must hold the cursor below the gap even though the gap
+        // window expired — the pre-hardening compaction would have expired
+        // visibleId and pulled the cursor past gapId here.
+        expect(processed).toContain(laterId)
+        let state = await getListenerState()
+        expect(BigInt(state!.last_processed_id)).toBeLessThan(gapId)
+
+        // Transaction A commits after the gap window — the pre-hardening
+        // window would have skipped this event permanently.
+        await txnClient.query("COMMIT")
+        await cursorLock.run(processor)
+
+        expect(processed).toContain(gapId)
+        state = await getListenerState()
+        expect(BigInt(state!.last_processed_id)).toBeGreaterThanOrEqual(laterId)
+      } finally {
+        txnClient.release()
+      }
     })
   })
 })

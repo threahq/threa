@@ -194,4 +194,79 @@ export const SyncLogRepository = {
     `)
     return BigInt(result.rows[0].head)
   },
+
+  /**
+   * Initializes the sweep floor at "now" — the log starts at deploy, so
+   * pre-log outbox history is never treated as missing.
+   */
+  async ensureSweepState(db: Querier): Promise<void> {
+    await db.query(sql`
+      INSERT INTO sync_log_sweep_state (singleton, swept_until)
+      VALUES ('sweep', NOW())
+      ON CONFLICT (singleton) DO NOTHING
+    `)
+  },
+
+  async getSweptUntil(db: Querier): Promise<Date | null> {
+    const result = await db.query<{ swept_until: Date }>(sql`
+      SELECT swept_until FROM sync_log_sweep_state WHERE singleton = 'sweep'
+    `)
+    return result.rows[0]?.swept_until ?? null
+  },
+
+  /** Monotone advance; concurrent sweepers are idempotent so GREATEST suffices. */
+  async advanceSweptUntil(db: Querier, until: Date): Promise<void> {
+    await db.query(sql`
+      UPDATE sync_log_sweep_state
+      SET swept_until = GREATEST(swept_until, ${until})
+      WHERE singleton = 'sweep'
+    `)
+  },
+
+  /**
+   * The latest instant the outbox is provably frozen up to: `delayMs` behind
+   * the DB clock, clamped by the oldest running transaction's start. Rows get
+   * `created_at = NOW()` = transaction start, so once every transaction that
+   * started before T has ended, the set of rows with created_at < T can never
+   * grow — a sweep over it is exhaustive, not probabilistic.
+   */
+  async getFrozenCutoff(db: Querier, delayMs: number): Promise<Date> {
+    const result = await db.query<{ cutoff: Date }>(sql`
+      SELECT LEAST(
+        NOW() - (${delayMs}::int * interval '1 millisecond'),
+        COALESCE(
+          (SELECT MIN(xact_start) FROM pg_stat_activity
+           WHERE xact_start IS NOT NULL AND datname = current_database()),
+          NOW()
+        )
+      ) AS cutoff
+    `)
+    return result.rows[0].cutoff
+  },
+
+  /**
+   * Outbox rows in [since, until) with no sync_log entry, in id order.
+   * Already-sequenced rows drop out via the anti-join, so re-running over the
+   * same window converges.
+   */
+  async listUnsequencedOutboxEvents(
+    db: Querier,
+    params: { since: Date; until: Date; limit: number }
+  ): Promise<Array<{ id: bigint; eventType: string; payload: unknown; createdAt: Date }>> {
+    const result = await db.query<{ id: string; event_type: string; payload: unknown; created_at: Date }>(sql`
+      SELECT o.id, o.event_type, o.payload, o.created_at
+      FROM outbox o
+      WHERE o.created_at >= ${params.since}
+        AND o.created_at < ${params.until}
+        AND NOT EXISTS (SELECT 1 FROM sync_log s WHERE s.outbox_event_id = o.id)
+      ORDER BY o.id
+      LIMIT ${params.limit}
+    `)
+    return result.rows.map((row) => ({
+      id: BigInt(row.id),
+      eventType: row.event_type,
+      payload: row.payload,
+      createdAt: row.created_at,
+    }))
+  },
 }

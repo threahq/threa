@@ -138,6 +138,7 @@ export {
   ensureListener,
   ensureListenerFromLatest,
   compact,
+  hasUnfilledGaps,
   OUTBOX_CHANNEL,
 } from "./outbox/index"
 export type {
@@ -152,6 +153,7 @@ export type {
   ProcessResult,
   ProcessedIdsMap,
   CompactState,
+  CompactGapOptions,
 } from "./outbox/index"
 
 // CORS
