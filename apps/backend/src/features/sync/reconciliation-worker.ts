@@ -42,7 +42,17 @@ export class SyncLogReconciliationWorker {
   constructor(deps: { pool: Pool; io: Server }, config?: SyncLogReconciliationWorkerConfig) {
     this.pool = deps.pool
     this.io = deps.io
-    this.config = { ...DEFAULT_CONFIG, ...config }
+    // Per-field ?? instead of object spread: callers pass `undefined` for
+    // unset env overrides, and spreading those would clobber the defaults —
+    // an undefined delayMs turns the frozen cutoff into NOW() and an
+    // undefined intervalMs makes the ticker spin, so the sweep would race
+    // the dispatcher and double-emit every event.
+    this.config = {
+      intervalMs: config?.intervalMs ?? DEFAULT_CONFIG.intervalMs,
+      delayMs: config?.delayMs ?? DEFAULT_CONFIG.delayMs,
+      batchSize: config?.batchSize ?? DEFAULT_CONFIG.batchSize,
+      maxBatchesPerRun: config?.maxBatchesPerRun ?? DEFAULT_CONFIG.maxBatchesPerRun,
+    }
     this.ticker = new Ticker({
       name: "sync-log-reconciliation",
       intervalMs: this.config.intervalMs,
