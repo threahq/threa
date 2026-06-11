@@ -26,6 +26,7 @@ import { createWorkspaceSettingsHandlers } from "./features/workspace-settings"
 import { createSidebarConfigHandlers } from "./features/sidebar-config"
 import { createUserE2eKeysHandlers } from "./features/user-e2e-keys"
 import { createAIUsageHandlers } from "./features/ai-usage"
+import type { AICostServiceLike } from "./features/ai-usage"
 import type { AI } from "@threa/agent-runtime"
 import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
@@ -136,6 +137,7 @@ interface Dependencies {
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
   jobQueue: QueueManager
+  costService: AICostServiceLike
 }
 
 export function registerRoutes(app: Express, deps: Dependencies) {
@@ -285,7 +287,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
     // Session callbacks: a live enclave drives an assigned turn over these
     // (liveness refresh + sealed replies on completion). Same shared-secret gate.
-    const enclaveSession = createEnclaveSessionHandlers({ pool, eventService, io: deps.io, jobQueue: deps.jobQueue })
+    const enclaveSession = createEnclaveSessionHandlers({
+      pool,
+      eventService,
+      io: deps.io,
+      jobQueue: deps.jobQueue,
+      costService: deps.costService,
+    })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
     app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
     app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", internalAuth, enclaveSession.sealedName)

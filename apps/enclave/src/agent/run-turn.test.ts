@@ -86,7 +86,11 @@ function stubChat(responses: RawChatResult | RawChatResult[]): { fn: RawChatFn; 
 }
 
 function textReply(text: string): RawChatResult {
-  return { message: { content: text }, model: "stub/model", usage: { prompt_tokens: 11, completion_tokens: 7 } }
+  return {
+    message: { content: text },
+    model: "stub/model",
+    usage: { prompt_tokens: 11, completion_tokens: 7, cost: 0.002 },
+  }
 }
 
 function sendMessageReply(...contents: string[]): RawChatResult {
@@ -165,7 +169,9 @@ describe("runEnclaveTurn", () => {
     expect(replyText).toBe("Paris.")
     expect(reply.envelope.keyGeneration).toBe(GEN)
     expect(result.model).toBe("anthropic/claude-sonnet-4.6")
-    expect(result.usage).toEqual({ promptTokens: 11, completionTokens: 7 })
+    // Token counts and OpenRouter's billed cost are summed across the turn and
+    // returned for the backend to record (#9).
+    expect(result.usage).toEqual({ promptTokens: 11, completionTokens: 7, cost: 0.002 })
 
     // The reply is also traced as a sealed message_sent step the same SSK opens,
     // linked to the reply id (its content is ciphertext on the wire).

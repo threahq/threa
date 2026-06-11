@@ -23,7 +23,7 @@ describe("createEnclaveAI", () => {
       model: "stub",
       usage: { prompt_tokens: 5, completion_tokens: 3 },
     })
-    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
+    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
     const ai = createEnclaveAI(chat.fn, usage)
 
     const result = await ai.generateTextWithTools({
@@ -41,7 +41,7 @@ describe("createEnclaveAI", () => {
     expect(result.text).toBe("Paris.")
     expect(result.toolCalls).toEqual([])
     expect(result.response.messages).toEqual([{ role: "assistant", content: "Paris." }])
-    expect(usage).toEqual({ promptTokens: 5, completionTokens: 3 })
+    expect(usage).toEqual({ promptTokens: 5, completionTokens: 3, cost: 0 })
   })
 
   it("maps tool calls (parsing arguments) and reconstructs the assistant message", async () => {
@@ -52,7 +52,7 @@ describe("createEnclaveAI", () => {
       },
       model: "stub",
     })
-    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
+    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
     const ai = createEnclaveAI(chat.fn, usage)
 
     const result = await ai.generateTextWithTools({
@@ -71,13 +71,17 @@ describe("createEnclaveAI", () => {
     ])
   })
 
-  it("accumulates usage across calls", async () => {
-    const chat = stub({ message: { content: "x" }, model: "stub", usage: { prompt_tokens: 4, completion_tokens: 2 } })
-    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
+  it("accumulates token usage and cost across calls", async () => {
+    const chat = stub({
+      message: { content: "x" },
+      model: "stub",
+      usage: { prompt_tokens: 4, completion_tokens: 2, cost: 0.25 },
+    })
+    const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
     const ai = createEnclaveAI(chat.fn, usage)
     const opts = { model: MODEL, modelString: "m", messages: [{ role: "user" as const, content: "hi" }] }
     await ai.generateTextWithTools(opts)
     await ai.generateTextWithTools(opts)
-    expect(usage).toEqual({ promptTokens: 8, completionTokens: 4 })
+    expect(usage).toEqual({ promptTokens: 8, completionTokens: 4, cost: 0.5 })
   })
 })

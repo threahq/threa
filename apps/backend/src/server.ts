@@ -643,6 +643,7 @@ export async function startServer(): Promise<ServerInstance> {
     storage,
     ai,
     controlPlaneClient,
+    costService,
   })
 
   app.use(errorHandler)

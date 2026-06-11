@@ -9,7 +9,8 @@ import { AgentSessionRepository, SessionStatuses } from "../agents"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { OutboxRepository } from "../../lib/outbox"
-import type { EventService } from "../messaging"
+import { MessageRepository, type EventService } from "../messaging"
+import type { AICostServiceLike } from "../ai-usage"
 import type { QueueManager } from "../../lib/queue"
 import { createEnclaveSessionHandlers } from "./session-handlers"
 
@@ -54,6 +55,10 @@ const MESSAGE_BODY = {
   envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
 }
 const COMPLETE_BODY = { messageIds: ["msg_a", "msg_b"], model: "anthropic/claude-sonnet-4.6" }
+const COMPLETE_BODY_WITH_USAGE = {
+  ...COMPLETE_BODY,
+  usage: { promptTokens: 1200, completionTokens: 340, cost: 0.0123 },
+}
 
 const STEP_BODY = {
   stepId: "step_a",
@@ -85,11 +90,24 @@ function fakeJobQueue() {
   return { jobQueue: { send } as unknown as QueueManager, send }
 }
 
+function fakeCostService() {
+  const recordUsage = mock(async (_params: Record<string, unknown>) => {})
+  return { costService: { recordUsage } as unknown as AICostServiceLike, recordUsage }
+}
+
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
   const eventService = { createMessage } as unknown as EventService
   const { io, emit } = fakeIo()
   const { jobQueue, send } = fakeJobQueue()
-  return { handlers: createEnclaveSessionHandlers({ pool, eventService, io, jobQueue }), createMessage, io, emit, send }
+  const { costService, recordUsage } = fakeCostService()
+  return {
+    handlers: createEnclaveSessionHandlers({ pool, eventService, io, jobQueue, costService }),
+    createMessage,
+    io,
+    emit,
+    send,
+    recordUsage,
+  }
 }
 
 describe("createEnclaveSessionHandlers.message", () => {
@@ -209,13 +227,14 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // No user message arrived during the turn → no follow-up dispatch.
     spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
     spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
-    const { handlers, createMessage, io, emit, send } = makeHandlers()
+    const { handlers, createMessage, io, emit, send, recordUsage } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
 
     expect(res.statusCode).toBe(204)
     expect(send).not.toHaveBeenCalled() // nothing unseen → no catch-up turn
+    expect(recordUsage).not.toHaveBeenCalled() // no usage in the ack → nothing to record
     expect(createMessage).not.toHaveBeenCalled() // replies were already streamed via /messages
     expect(complete).toHaveBeenCalledTimes(1)
     // Completion + event are one atomic transaction (INV-7): completeSession runs
@@ -236,6 +255,62 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // And a live-open trace dialog (session room) is transitioned to completed.
     expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
     expect(emit.mock.calls.some((c) => c[0] === "agent_session:completed")).toBe(true)
+  })
+
+  it("records the turn's token + cost usage against the workspace and invoking user", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
+    spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
+    // The invoking user is the trigger message's author (the session stores only its id).
+    spyOn(MessageRepository, "findById").mockResolvedValue({ authorId: "usr_owner" } as never)
+    const { handlers, recordUsage } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.complete(req("session_1", COMPLETE_BODY_WITH_USAGE), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(recordUsage).toHaveBeenCalledTimes(1)
+    // Same recording path companion turns use (#9): attributed to the workspace +
+    // invoking user with origin "user". Provider is re-derived from the bare
+    // OpenRouter model id; cost is OpenRouter's billed USD — accounting, never
+    // content (INV-E7).
+    expect(recordUsage.mock.calls[0]![0]).toMatchObject({
+      workspaceId: "ws_1",
+      userId: "usr_owner",
+      sessionId: "session_1",
+      functionId: "enclave-agent-loop",
+      model: "anthropic/claude-sonnet-4.6",
+      provider: "openrouter",
+      origin: "user",
+      usage: { promptTokens: 1200, completionTokens: 340, totalTokens: 1540, cost: 0.0123 },
+    })
+  })
+
+  it("does not record usage when the completion lost the RUNNING→COMPLETED race", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    // Lost the gated transition to a concurrent redelivery.
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(null)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    const findMessage = spyOn(MessageRepository, "findById")
+    const { handlers, recordUsage } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.complete(req("session_1", COMPLETE_BODY_WITH_USAGE), res)
+
+    expect(res.statusCode).toBe(204)
+    expect(recordUsage).not.toHaveBeenCalled() // gated on the won transition → no double-charge
+    expect(findMessage).not.toHaveBeenCalled()
   })
 
   it("dispatches a catch-up enclave turn for a user message that arrived mid-turn", async () => {
@@ -598,6 +673,7 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
       eventService: {} as EventService,
       io: fakeIo().io,
       jobQueue: fakeJobQueue().jobQueue,
+      costService: fakeCostService().costService,
     })
     await expect(handlers.heartbeat(req(undefined, {}), fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
@@ -609,6 +685,7 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
       eventService: {} as EventService,
       io: fakeIo().io,
       jobQueue: fakeJobQueue().jobQueue,
+      costService: fakeCostService().costService,
     })
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)

@@ -14,6 +14,8 @@ import { buildAssistantMessage, toOpenAiMessages, toOpenAiTools } from "./openai
 export interface UsageAccumulator {
   promptTokens: number
   completionTokens: number
+  /** OpenRouter's billed cost (USD), summed across the turn's calls. */
+  cost: number
 }
 
 function parseArguments(raw: string): unknown {
@@ -39,6 +41,7 @@ export function createEnclaveAI(rawChat: RawChatFn, usage: UsageAccumulator): Ag
 
       usage.promptTokens += result.usage?.prompt_tokens ?? 0
       usage.completionTokens += result.usage?.completion_tokens ?? 0
+      usage.cost += result.usage?.cost ?? 0
 
       const toolCalls = (result.message.tool_calls ?? []).map((tc) => ({
         toolCallId: tc.id,

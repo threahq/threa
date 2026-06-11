@@ -164,7 +164,7 @@ export async function runEnclaveTurn(
   const replySsk = sskByGeneration.get(request.reply.keyGeneration)
   if (!replySsk) throw new InvokeError("No SSK wrap for the reply's key generation")
 
-  const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0 }
+  const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
   const messageIds: string[] = []
   // First reply's plaintext, kept only to seed the auto-title below (never logged
   // or persisted; lives in-process for the turn like all other plaintext here).
@@ -282,7 +282,7 @@ export async function runEnclaveTurn(
   return {
     messageIds,
     model: request.model,
-    usage: { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens },
+    usage: { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, cost: usage.cost },
   }
 }
 

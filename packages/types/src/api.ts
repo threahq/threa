@@ -656,11 +656,15 @@ export interface EnclaveSessionAssignment {
  * this carries only the ids the enclave sent (oldest→newest, for the session's
  * `sent_message_ids`) plus non-secret model metadata. Usage is summed across
  * every model call the loop made.
+ *
+ * `usage` is aggregate accounting (token counts + the provider's billed `cost`
+ * in USD) — never message content — so it travels as plain JSON like the model
+ * id, and the backend records it against the workspace/user at completion.
  */
 export interface EnclaveSessionResult {
   messageIds: string[]
   model: string
-  usage?: { promptTokens?: number; completionTokens?: number }
+  usage?: { promptTokens?: number; completionTokens?: number; cost?: number }
 }
 
 /**
