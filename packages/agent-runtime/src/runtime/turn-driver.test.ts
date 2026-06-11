@@ -122,8 +122,10 @@ describe("EnclaveTurnDriver", () => {
     })
 
     expect(commits).toEqual([{ content: "Sealed reply", sources: [] }])
-    expect(result.sentMessageIds).toEqual(["msg_sealed_1"])
-    expect(result.messagesSent).toBe(1)
+    expect(result).toMatchObject({
+      sentMessageIds: ["msg_sealed_1"],
+      messagesSent: 1,
+    })
   })
 
   it("refuses a non-sealed delivery before any model call", async () => {
