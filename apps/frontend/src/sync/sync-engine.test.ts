@@ -24,6 +24,9 @@ class MockSocket {
   disconnectCalls = 0
   connectCalls = 0
   emittedEvents: Array<{ event: string; args: unknown[] }> = []
+  /** Runs before a join is acked — lets tests simulate live events landing
+   *  while the room join is in flight. */
+  joinInterceptor: ((room: string) => Promise<void>) | null = null
   private listeners = new Map<string, Set<EventHandler>>()
 
   on(event: string, handler: EventHandler) {
@@ -55,8 +58,16 @@ class MockSocket {
 
     // join ack: reply ok so onConnect's workspace join succeeds in tests
     if (event === "join") {
+      const room = args[0] as string
       const callback = args[1] as ((result?: { ok: boolean }) => void) | undefined
-      callback?.({ ok: true })
+      if (this.joinInterceptor) {
+        // Ack on both paths so a rejecting interceptor can't hang an awaited join.
+        void this.joinInterceptor(room)
+          .then(() => callback?.({ ok: true }))
+          .catch(() => callback?.({ ok: false }))
+      } else {
+        callback?.({ ok: true })
+      }
       return this
     }
 
@@ -654,5 +665,208 @@ describe("SyncEngine.handlePageResume", () => {
     await connectPromise
 
     expect(deps.queryClient.getQueryData(workspaceKeys.bootstrap("ws_1"))).toBeUndefined()
+  })
+})
+
+describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.events.clear(), db.streams.clear(), db.streamMemberships.clear()])
+  })
+
+  async function seedEvent(streamId: string, sequence: number): Promise<void> {
+    await db.events.put({
+      id: `evt_${sequence}`,
+      workspaceId: "ws_1",
+      streamId,
+      sequence: String(sequence),
+      eventType: "message_created",
+      payload: {
+        messageId: `msg_${sequence}`,
+        contentMarkdown: "old",
+        contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+      },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _sequenceNum: sequence,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  it("reads the reconnect catch-up cursor before re-joining the stream room", async () => {
+    // A live message can land the moment the room is re-joined — before the
+    // catch-up fetch runs. Reading the cursor after the join lets that message
+    // advance it past the disconnect gap, permanently skipping everything
+    // missed while offline. The cursor must reflect the pre-join tail.
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    await seedEvent("stream_1", 1)
+    engine.setVisibleStreamIds(["stream_1"])
+    deps.streamService.bootstrap.mockClear()
+
+    // Live event arrives through the freshly-joined room, mid-reconnect.
+    socket.joinInterceptor = async (room) => {
+      if (room === "ws:ws_1:stream:stream_1") {
+        await seedEvent("stream_1", 3)
+      }
+    }
+
+    await engine.onConnect(asSocket(socket)) // second connect → reconnect
+
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+  })
+
+  it("reads the navigation refresh cursor before the room join can deliver live events", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+
+    deps.streamService.bootstrap.mockClear()
+    deps.queryClient.setQueryData(["streams", "bootstrap", "ws_1", "stream_1"], makeStreamBootstrap("stream_1", "1"))
+    await seedEvent("stream_1", 1)
+
+    socket.joinInterceptor = async (room) => {
+      if (room === "ws:ws_1:stream:stream_1") {
+        await seedEvent("stream_1", 3)
+      }
+    }
+
+    engine.setCurrentStreamId("stream_1")
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+    })
+  })
+})
+
+describe("SyncEngine.backfillStreamGap", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.events.clear(), db.streams.clear(), db.streamMemberships.clear()])
+  })
+
+  it("fetches events after the provided pre-gap cursor and applies them", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    deps.streamService.bootstrap.mockClear()
+
+    await engine.backfillStreamGap("stream_1", "1")
+
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+    expect(await db.events.get("evt_2")).toBeTruthy()
+  })
+
+  it("single-flights concurrent backfills for the same stream", async () => {
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    deps.streamService.bootstrap.mockClear()
+
+    await Promise.all([engine.backfillStreamGap("stream_1", "1"), engine.backfillStreamGap("stream_1", "1")])
+
+    expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(1)
+  })
+
+  it("queues a distinct gap reported mid-flight and backfills it after the active one settles", async () => {
+    // A second gap with a different cursor may cover events that committed
+    // after the in-flight fetch's server read — dropping it would leave the
+    // hole until the next reconnect. It must chain one follow-up fetch.
+    const deps = makeDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    await primeConnectedEngine(engine, socket)
+    deps.streamService.bootstrap.mockClear()
+
+    let resolveFirst: (bootstrap: StreamBootstrap) => void = () => {}
+    deps.streamService.bootstrap.mockImplementationOnce(
+      () =>
+        new Promise<StreamBootstrap>((resolve) => {
+          resolveFirst = resolve
+        })
+    )
+
+    const first = engine.backfillStreamGap("stream_1", "1")
+    // Distinct gap arrives while the first backfill is in flight.
+    void engine.backfillStreamGap("stream_1", "3")
+
+    resolveFirst(makeStreamBootstrap("stream_1", "2"))
+    await first
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledTimes(2)
+      expect(deps.streamService.bootstrap).toHaveBeenNthCalledWith(1, "ws_1", "stream_1", { after: "1" })
+      expect(deps.streamService.bootstrap).toHaveBeenNthCalledWith(2, "ws_1", "stream_1", { after: "3" })
+    })
+  })
+
+  it("backfills when a live socket event skips past the cached tail (end to end)", async () => {
+    const deps = makeDeps()
+    const workspaceBootstrap = makeWorkspaceBootstrap()
+    workspaceBootstrap.streamMemberships = [
+      {
+        streamId: "stream_7",
+        memberId: "user_1",
+        notificationLevel: null,
+        lastReadEventId: null,
+        lastReadAt: null,
+        joinedAt: new Date().toISOString(),
+      },
+    ]
+    deps.workspaceService.bootstrap.mockResolvedValueOnce(workspaceBootstrap)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await db.events.put({
+      id: "evt_1",
+      workspaceId: "ws_1",
+      streamId: "stream_7",
+      sequence: "1",
+      eventType: "message_created",
+      payload: {
+        messageId: "msg_1",
+        contentMarkdown: "old",
+        contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+      },
+      actorId: "user_1",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+      _sequenceNum: 1,
+      _cachedAt: Date.now(),
+    })
+
+    await engine.onConnect(asSocket(socket))
+    deps.streamService.bootstrap.mockClear()
+
+    // Sequence 2 was missed (e.g. server bounce); 3 arrives live.
+    socket.trigger("message:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_7",
+      event: {
+        id: "evt_3",
+        streamId: "stream_7",
+        sequence: "3",
+        eventType: "message_created",
+        payload: {
+          messageId: "msg_3",
+          contentMarkdown: "new",
+          contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+        },
+        actorId: "user_2",
+        actorType: "user",
+        createdAt: new Date().toISOString(),
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_7", { after: "1" })
+    })
   })
 })

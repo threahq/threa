@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, vi } from "vitest"
 import { QueryClient } from "@tanstack/react-query"
 import type { Socket } from "socket.io-client"
 import { db } from "@/db"
@@ -1099,6 +1099,177 @@ describe("registerStreamSocketHandlers — E2E send reconciliation seeds the dec
     // Plaintext events render straight from their payload; the cache stays empty.
     expect(getCachedDecryption("evt_plain")).toBeUndefined()
 
+    cleanup()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Sequence gap detection — live events that skip past the cached tail
+// ---------------------------------------------------------------------------
+
+describe("registerStreamSocketHandlers — sequence gap detection (INV-53)", () => {
+  // A live event whose sequence leaves a hole behind the latest persisted one
+  // means events were missed (zombie socket, server bounce, failed catch-up).
+  // The handler must report the pre-write latest sequence so the caller can
+  // fetch the hole — without it the gap is permanent until a full reload.
+
+  function createTestSocket() {
+    const handlers = new Map<string, Set<(payload: unknown) => void>>()
+    const socket = {
+      on(event: string, handler: (payload: unknown) => void) {
+        const set = handlers.get(event) ?? new Set()
+        set.add(handler)
+        handlers.set(event, set)
+        return this
+      },
+      off(event: string, handler: (payload: unknown) => void) {
+        handlers.get(event)?.delete(handler)
+        return this
+      },
+    } as unknown as Socket
+    return {
+      socket,
+      async emit(event: string, payload: unknown) {
+        await Promise.all(Array.from(handlers.get(event) ?? []).map((handler) => handler(payload)))
+      },
+    }
+  }
+
+  function makeWireEvent(id: string, streamId: string, sequence: string): StreamEvent {
+    return {
+      id,
+      streamId,
+      sequence,
+      eventType: "message_created",
+      payload: { messageId: id, contentMarkdown: "hi", contentJson: { type: "doc", content: [] } },
+      actorId: "user_2",
+      actorType: "user",
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  async function seedPersisted(streamId: string, id: string, sequence: number): Promise<void> {
+    await db.events.put({
+      ...makeEvent({ id, streamId, sequence: String(sequence) }),
+      workspaceId: "ws_1",
+      _sequenceNum: sequence,
+      _cachedAt: Date.now(),
+    })
+  }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.pendingMessages.clear()
+  })
+
+  it("reports a gap when a live message skips past the latest persisted event", async () => {
+    const streamId = "stream_gap"
+    await seedPersisted(streamId, "evt_100", 100)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_102", streamId, "102") })
+
+    expect(onSequenceGap).toHaveBeenCalledWith({ streamId, afterSequence: "100" })
+    // The gap-revealing event itself is still written.
+    expect(await db.events.get("evt_102")).toBeDefined()
+    cleanup()
+  })
+
+  it("does not report a gap for the contiguous next event", async () => {
+    const streamId = "stream_contiguous"
+    await seedPersisted(streamId, "evt_100", 100)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_101", streamId, "101") })
+
+    expect(onSequenceGap).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("does not report a gap when the stream has no cached events yet", async () => {
+    const streamId = "stream_cold"
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_5", streamId, "5") })
+
+    expect(onSequenceGap).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("does not report a gap for an event at or below the cached tail", async () => {
+    const streamId = "stream_old_event"
+    await seedPersisted(streamId, "evt_100", 100)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_95", streamId, "95") })
+
+    expect(onSequenceGap).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("ignores pending optimistic placeholder rows when computing the gap baseline", async () => {
+    const streamId = "stream_gap_pending"
+    await seedPersisted(streamId, "evt_100", 100)
+    // Pending optimistic row with a Date.now() placeholder sequence must not
+    // mask the real tail — it would make every gap invisible.
+    const placeholder = Date.now()
+    await db.events.put({
+      ...makeEvent({ id: "temp_x", streamId, sequence: String(placeholder) }),
+      workspaceId: "ws_1",
+      _sequenceNum: placeholder,
+      _status: "pending",
+      _cachedAt: Date.now(),
+    })
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_102", streamId, "102") })
+
+    expect(onSequenceGap).toHaveBeenCalledWith({ streamId, afterSequence: "100" })
+    cleanup()
+  })
+
+  it("detects gaps on append-style events (membership, sessions) too", async () => {
+    const streamId = "stream_gap_member"
+    await seedPersisted(streamId, "evt_100", 100)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("stream:member_joined", {
+      workspaceId: "ws_1",
+      streamId,
+      event: { ...makeWireEvent("evt_103", streamId, "103"), eventType: "member_joined", payload: {} },
+    })
+
+    expect(onSequenceGap).toHaveBeenCalledWith({ streamId, afterSequence: "100" })
+    expect(await db.events.get("evt_103")).toBeDefined()
+    cleanup()
+  })
+
+  it("does not report duplicate gaps for an event already in IDB", async () => {
+    const streamId = "stream_gap_dupe"
+    await seedPersisted(streamId, "evt_100", 100)
+    const onSequenceGap = vi.fn()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, new QueryClient(), { onSequenceGap })
+
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_102", streamId, "102") })
+    onSequenceGap.mockClear()
+    // Redelivery of the same event (handler re-registration overlap) — deduped.
+    await emit("message:created", { workspaceId: "ws_1", streamId, event: makeWireEvent("evt_102", streamId, "102") })
+
+    expect(onSequenceGap).not.toHaveBeenCalled()
     cleanup()
   })
 })
