@@ -89,6 +89,31 @@ describe("createPolishTranscript", () => {
     expect(content).toContain("self-corrections")
   })
 
+  it("opinionated prompt covers narrated retroactive corrections and false starts", async () => {
+    // Two dictation behaviors the polish must handle beyond inline "no sorry Y":
+    // 1. Correcting an earlier (often mis-transcribed) phrase by narration:
+    //    "no no no, pull request, not poor frequence" -> earlier text replaced.
+    // 2. Abandoned restarts without a correction phrase:
+    //    "I am... I think this is good" -> "I think this is good".
+    const generateText = mock(async (_args: GenerateTextArgs) => textResult("clean") as never)
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+
+    await polish({
+      rawTranscript: "raw",
+      level: "opinionated",
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+    })
+
+    const sys = generateText.mock.calls[0][0].messages.find((m: { role: string }) => m.role === "system")
+    const content = sys?.content as string
+    expect(content).toContain("narrated retroactive corrections")
+    expect(content).toContain("garbled rendering")
+    expect(content).toContain("false starts and abandoned restarts")
+    expect(content).toContain("let me start over")
+  })
+
   it("tells the model to apply rules in the speaker's language (both prompts, not English-only)", async () => {
     // INV-54: don't make semantic decisions with English-only heuristics. The
     // examples in both prompts are English; this note is what tells the model
