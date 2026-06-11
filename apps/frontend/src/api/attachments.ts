@@ -48,6 +48,23 @@ export function resetAttachmentUrlCache(): void {
   resolvedDownloadUrlCache.clear()
 }
 
+/**
+ * Synchronous peek at an already-resolved download URL. Lets remounting
+ * components (virtualized rows) seed their initial state with the cached URL
+ * instead of rendering a skeleton for the frame(s) the async `getDownloadUrl`
+ * resolution takes, even on a warm cache.
+ */
+export function peekDownloadUrl(
+  workspaceId: string,
+  attachmentId: string,
+  options?: { download?: boolean; variant?: "raw" | "processed" | "thumbnail" }
+): string | null {
+  const key = `${workspaceId}:${attachmentId}:${options?.download ? "download" : "inline"}:${options?.variant ?? "raw"}`
+  const cached = resolvedDownloadUrlCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.url
+  return null
+}
+
 export const attachmentsApi = {
   /**
    * Upload a file to the workspace.
