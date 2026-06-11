@@ -108,6 +108,31 @@ function getDefaultLanHost(): string | undefined {
     .find((i) => i && i.family === "IPv4" && !i.internal)?.address
 }
 
+/**
+ * Best-effort Tailscale MagicDNS hostname so LAN mode also serves devices on
+ * the tailnet (e.g. a phone off the home WiFi). Tries the CLI on PATH first,
+ * then the macOS app-bundle binary. Returns undefined when Tailscale is
+ * absent or not running — LAN mode then behaves exactly as before.
+ */
+async function getTailscaleHost(): Promise<string | undefined> {
+  const candidates = ["tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"]
+  for (const bin of candidates) {
+    const result = await $`${bin} status --json`.quiet().nothrow()
+    if (result.exitCode !== 0) continue
+    try {
+      const status = JSON.parse(result.stdout.toString())
+      const dnsName: unknown = status?.Self?.DNSName
+      if (status?.BackendState === "Running" && typeof dnsName === "string" && dnsName.length > 0) {
+        // MagicDNS names come back fully qualified with a trailing dot.
+        return dnsName.replace(/\.$/, "")
+      }
+    } catch {
+      // Unparseable output — try the next candidate.
+    }
+  }
+  return undefined
+}
+
 async function ensureWorktreeEnv(): Promise<void> {
   const cwd = process.cwd()
   const backendEnvPath = path.join(cwd, "apps/backend/.env")
@@ -336,20 +361,30 @@ async function main() {
     }
   }
 
-  // LAN mode: bind to WiFi IP so the app is reachable from phones
+  // LAN mode: make the app reachable from phones. Every detected host gets
+  // CORS + Vite allowedHosts coverage; auth callbacks can only bind to ONE
+  // host (WORKOS_REDIRECT_URI is a single value), so an explicit LAN_HOST
+  // wins, then the Tailscale MagicDNS name (works away from the home
+  // network), then the WiFi IP.
   const explicitLanHost = getExplicitLanHost()
   const lanMode = process.env.LAN_MODE === "true" || process.argv.includes("--lan") || !!explicitLanHost
-  let lanIp: string | undefined
+  let lanHosts: string[] = []
+  let primaryLanHost: string | undefined
 
   if (lanMode) {
-    lanIp = explicitLanHost ?? getDefaultLanHost()
+    const tailscaleHost = await getTailscaleHost()
+    const defaultLanIp = getDefaultLanHost()
+    lanHosts = [...new Set([explicitLanHost, tailscaleHost, defaultLanIp].filter((h): h is string => !!h))]
 
-    if (!lanIp) {
-      console.error("LAN_MODE enabled but no LAN IP found — are you connected to WiFi?")
+    if (lanHosts.length === 0) {
+      console.error("LAN_MODE enabled but no LAN IP or Tailscale host found — are you connected to WiFi?")
       process.exit(1)
     }
 
-    console.log(`LAN mode: http://${lanIp}:3000`)
+    primaryLanHost = explicitLanHost ?? tailscaleHost ?? defaultLanIp
+    for (const host of lanHosts) {
+      console.log(`LAN mode: http://${host}:3000${host === primaryLanHost ? "  (auth callbacks)" : ""}`)
+    }
   }
 
   const corsOrigins = [
@@ -358,11 +393,11 @@ async function main() {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
   ]
-  if (lanIp) corsOrigins.push(`http://${lanIp}:3000`)
+  for (const host of lanHosts) corsOrigins.push(`http://${host}:3000`)
 
   const cpEnvOverrides: Record<string, string> = {}
-  if (lanIp && cpEnv.WORKOS_REDIRECT_URI) {
-    cpEnvOverrides.WORKOS_REDIRECT_URI = cpEnv.WORKOS_REDIRECT_URI.replace("localhost", lanIp)
+  if (primaryLanHost && cpEnv.WORKOS_REDIRECT_URI) {
+    cpEnvOverrides.WORKOS_REDIRECT_URI = cpEnv.WORKOS_REDIRECT_URI.replace("localhost", primaryLanHost)
   }
 
   // Dev convenience: auto-seed a platform admin for the default stub email so
@@ -426,6 +461,16 @@ async function main() {
   const frontend = Bun.spawn(["bun", "run", "--cwd", "apps/frontend", "dev"], {
     stdout: "inherit",
     stderr: "inherit",
+    env: {
+      ...process.env,
+      // Vite rejects unknown Host headers for non-IP hostnames, so every
+      // LAN-mode host (Tailscale name included) must be allowlisted or the
+      // phone's request bounces with "Blocked request".
+      VITE_ALLOWED_HOSTS: [...new Set([...(process.env.VITE_ALLOWED_HOSTS?.split(",") ?? []), ...lanHosts])]
+        .map((host) => host.trim())
+        .filter(Boolean)
+        .join(","),
+    },
   })
 
   const backoffice = Bun.spawn(["bun", "run", "--cwd", "apps/backoffice", "dev"], {
@@ -456,6 +501,11 @@ async function main() {
     stdout: "inherit",
     stderr: "inherit",
     env: {
+      // The enclave requires OPENROUTER_API_KEY. In the main checkout Bun
+      // auto-loads it from the root `.env`, but worktrees only get
+      // `apps/backend/.env` (ensureWorktreeEnv / setup-worktree copy that
+      // one), so fall back to it — listed first so real process env wins.
+      ...(backendEnv.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: backendEnv.OPENROUTER_API_KEY } : {}),
       ...process.env,
       PORT: "3011",
       ENCLAVE_SELF_URL: "http://localhost:3011",
