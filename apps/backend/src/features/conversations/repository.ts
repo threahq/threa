@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import type { ConversationStatus } from "@threa/types"
+import { ConversationStatuses, type ConversationStatus } from "@threa/types"
 
 interface ConversationRow {
   id: string
@@ -457,6 +457,37 @@ export const ConversationRepository = {
       SET message_ids = array_remove(message_ids, ${messageId}),
           updated_at = NOW()
       WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+    `)
+  },
+
+  /**
+   * Resolve a conversation that no longer owns any primary messages. The
+   * emptiness check runs inside the UPDATE (INV-20): a concurrent extraction
+   * appending to `message_ids` between the caller's read and this write makes
+   * the condition fail under the row lock instead of resolving a conversation
+   * that just gained a message. Workspace-scoped (INV-8).
+   */
+  async resolveIfEmpty(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET status = ${ConversationStatuses.RESOLVED}, updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+        AND cardinality(message_ids) = 0
+    `)
+  },
+
+  /**
+   * Flip a resolved conversation back to active. Used when a message moves
+   * into a conversation that was resolved — in particular one auto-resolved
+   * on becoming empty, which keeps it usable as an undo target. Conditional
+   * in SQL (INV-20), so it no-ops for active/stalled conversations.
+   */
+  async reactivateIfResolved(db: Querier, workspaceId: string, conversationId: string): Promise<void> {
+    await db.query(sql`
+      UPDATE conversations
+      SET status = ${ConversationStatuses.ACTIVE}, updated_at = NOW()
+      WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+        AND status = ${ConversationStatuses.RESOLVED}
     `)
   },
 
