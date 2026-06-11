@@ -16,6 +16,7 @@ import {
   KNOWLEDGE_TYPES,
   EXTRACTION_CONTENT_TYPES,
   AGENT_STEP_TYPES,
+  SOURCE_TYPES,
 } from "@threa/types"
 import { messageMetadataSchema, messageMetadataFilterSchema } from "../messaging"
 import { botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
@@ -110,12 +111,23 @@ export const renewInvocationClaimSchema = z.object({
   claimTtlSeconds: z.number().int().min(15).max(300).optional().default(60),
 })
 
+// Citations a bot attaches to its reply. `url` is a plain bounded string (not a
+// strict URL) because workspace sources carry internal navigation links, not
+// just web URLs — mirrors `SourceItem` in @threa/types.
+export const sourceItemSchema = z.object({
+  type: z.enum(SOURCE_TYPES).optional(),
+  title: z.string().min(1).max(500),
+  url: z.string().min(1).max(2000),
+  snippet: z.string().max(2000).optional(),
+})
+
 export const completeInvocationSchema = z
   .object({
     instanceId: z.string().min(1).max(128),
     claimToken: z.string().min(1).max(256),
     finalMessageMarkdown: z.string().min(1).max(50_000).optional(),
     noResponse: z.boolean().optional(),
+    sources: z.array(sourceItemSchema).max(50).optional(),
     metadata: messageMetadataSchema.optional(),
   })
   .refine((value) => value.noResponse === true || value.finalMessageMarkdown != null, {

@@ -1090,6 +1090,7 @@ export function createPublicApiHandlers({
               contentMarkdown,
               attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
               clientMessageId: `bot-invocation:${claim.id}`,
+              sources: result.data.sources,
               metadata: result.data.metadata,
             })
           : null
