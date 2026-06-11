@@ -947,10 +947,83 @@ a {
 }
 
 /* ---------- API REFERENCE (hand-rendered from the spec) ---------- */
+/* The reference runs full width: each operation is a two-column band — the
+   contract (params, body, response shape) on the left, the wire (example
+   request + example response) sticky on the right. Lead prose stays at
+   reading width. */
+.docs-article.is-wide {
+  max-width: none;
+}
+.docs-article.is-wide > p {
+  max-width: 760px;
+}
+.api-op-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 440px);
+  gap: 36px;
+  align-items: start;
+  margin-top: 6px;
+}
+.api-op-main {
+  min-width: 0;
+}
+.api-op-side {
+  min-width: 0;
+  position: sticky;
+  top: 64px;
+}
+.api-op-side .pg-block {
+  margin: 0 0 14px;
+}
+/* The side column is narrow; wrap long request lines instead of clipping
+   them behind a scrollbar (copy still uses the raw template, so display
+   wrapping is safe), and cap very long response examples. */
+.api-op-side .pg-pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 520px;
+  overflow-y: auto;
+}
+@media (max-width: 1120px) {
+  .api-op-cols {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .api-op-side {
+    position: static;
+  }
+}
+
 .api-group-desc {
   color: hsl(var(--muted));
   margin: -4px 0 10px;
   font-size: 14px;
+}
+/* Recipe links under a group heading — the task-shaped path into the group. */
+.api-recipes {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+  margin: 0 0 8px;
+}
+.api-recipes-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--muted));
+}
+.api-recipes a {
+  font-size: 13.5px;
+  color: hsl(var(--gold-dim));
+  text-decoration: none;
+  border-bottom: 1px solid hsl(var(--gold) / 0.35);
+  padding-bottom: 1px;
+}
+.api-recipes a:hover {
+  border-bottom-color: hsl(var(--gold));
+  color: hsl(var(--gold));
 }
 .api-op {
   scroll-margin-top: 64px;

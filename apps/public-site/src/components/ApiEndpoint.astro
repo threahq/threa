@@ -11,6 +11,7 @@ import {
   buildSchemaTree,
   jsonSchemaOf,
   exampleBody,
+  exampleResponse,
   typeLabel,
   constraintNote,
   type JsonSchema,
@@ -49,8 +50,10 @@ interface Props {
   anchor: string
   op: Operation
   run?: RunConfig
+  /** Entity noun for synthesized ids in the example response (e.g. "stream"). */
+  hint?: string
 }
-const { method, path, anchor, op, run } = Astro.props
+const { method, path, anchor, op, run, hint = "" } = Astro.props
 const verb = method.toUpperCase()
 
 // Required scopes come straight from the spec's per-operation security. An empty
@@ -126,6 +129,11 @@ if (method === "get") {
     curl += ` \\\n  -H "Content-Type: application/json" \\\n  -d '${exampleBodyStr}'`
   }
 }
+
+// Synthesized example response (the schema beside it stays the contract).
+const responseExample = successSchema?.properties
+  ? JSON.stringify(exampleResponse(successSchema, hint), null, 2)
+  : null
 ---
 
 <section class="api-op" id={anchor}>
@@ -134,52 +142,59 @@ if (method === "get") {
     <code class="api-path">{path}</code>
   </div>
   {op.summary && <h3 class="api-op-title">{op.summary}</h3>}
-  {op.description && <p class="api-op-desc">{op.description}</p>}
 
-  <p class="api-scopes">
-    <span class="api-scopes-label">Scope</span>
-    {scopes.length > 0 ? (
-      scopes.map((s) => <code class="api-scope">{s}</code>)
-    ) : (
-      <span class="api-scope-none">none — any valid key</span>
-    )}
-  </p>
+  <div class="api-op-cols">
+    <div class="api-op-main">
+      {op.description && <p class="api-op-desc">{op.description}</p>}
 
-  {pathParams.length > 0 && (
-    <>
-      <h4 class="api-sub">Path parameters</h4>
-      <SchemaTable nodes={pathParams.map(paramNode)} />
-    </>
-  )}
+      <p class="api-scopes">
+        <span class="api-scopes-label">Scope</span>
+        {scopes.length > 0 ? (
+          scopes.map((s) => <code class="api-scope">{s}</code>)
+        ) : (
+          <span class="api-scope-none">none — any valid key</span>
+        )}
+      </p>
 
-  {queryParams.length > 0 && (
-    <>
-      <h4 class="api-sub">Query parameters</h4>
-      <SchemaTable nodes={queryParams.map(paramNode)} />
-    </>
-  )}
+      {pathParams.length > 0 && (
+        <>
+          <h4 class="api-sub">Path parameters</h4>
+          <SchemaTable nodes={pathParams.map(paramNode)} />
+        </>
+      )}
 
-  {bodyNodes.length > 0 && (
-    <>
-      <h4 class="api-sub">Request body</h4>
-      <SchemaTable nodes={bodyNodes} />
-    </>
-  )}
+      {queryParams.length > 0 && (
+        <>
+          <h4 class="api-sub">Query parameters</h4>
+          <SchemaTable nodes={queryParams.map(paramNode)} />
+        </>
+      )}
 
-  <h4 class="api-sub">Example</h4>
-  <CodeBlock lang="bash" label={`${verb} ${path.replace("/api/v1/workspaces/{workspaceId}", "")}`} code={curl} run={run} />
+      {bodyNodes.length > 0 && (
+        <>
+          <h4 class="api-sub">Request body</h4>
+          <SchemaTable nodes={bodyNodes} />
+        </>
+      )}
 
-  {successNodes.length > 0 && (
-    <>
-      <h4 class="api-sub">Response {successCode}</h4>
-      <SchemaTable nodes={successNodes} />
-    </>
-  )}
+      {successNodes.length > 0 && (
+        <>
+          <h4 class="api-sub">Response {successCode}</h4>
+          <SchemaTable nodes={successNodes} />
+        </>
+      )}
 
-  <h4 class="api-sub">Status codes</h4>
-  <ul class="api-status">
-    {responseEntries.map(([code, r]) => (
-      <li><code>{code}</code> {r.description}</li>
-    ))}
-  </ul>
+      <h4 class="api-sub">Status codes</h4>
+      <ul class="api-status">
+        {responseEntries.map(([code, r]) => (
+          <li><code>{code}</code> {r.description}</li>
+        ))}
+      </ul>
+    </div>
+
+    <aside class="api-op-side">
+      <CodeBlock lang="bash" label={`${verb} ${path.replace("/api/v1/workspaces/{workspaceId}", "")}`} code={curl} run={run} />
+      {responseExample && <CodeBlock lang="json" label={`Response ${successCode} · example`} code={responseExample} />}
+    </aside>
+  </div>
 </section>

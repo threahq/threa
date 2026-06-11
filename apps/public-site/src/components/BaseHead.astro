@@ -11,6 +11,10 @@ const { title, description } = Astro.props
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="description" content={description} />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<!-- Agent entry points: a markdown index of the developer docs and the full
+     API contract, discoverable from every page (robots.txt names them too). -->
+<link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt — markdown index of the developer docs" />
+<link rel="alternate" type="application/json" href="/openapi.json" title="OpenAPI 3.1 contract for the Threa API" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
