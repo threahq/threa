@@ -9,9 +9,11 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { useIsMobile } from "@/hooks/use-mobile"
 import type { ConversationWithStaleness } from "@threa/types"
 import { conversationColor, type ConversationOverlayContext, type ConversationRowAnnotation } from "./model"
+import { ConversationOverlayRowProvider } from "./row-context"
 
 /**
  * Floating panel listing the conversations that currently have message rows
@@ -207,7 +209,12 @@ export function ConversationOverlayRow({
   return (
     <div className={cn("transition-opacity duration-200", isDimmed && "opacity-40 saturate-50")}>
       <div data-testid="conversation-overlay-row" className="group/convrow relative" ref={registerRow}>
-        {children}
+        {/* Row context lets the message action menu/drawer (deep inside
+            children) surface the "Move to conversation…" correction — the
+            touch path to what the desktop hover swatch below does. */}
+        <ConversationOverlayRowProvider overlay={overlay} annotation={annotation}>
+          {children}
+        </ConversationOverlayRowProvider>
         <RowTint colorIndex={colorIndex} />
         {annotation.blockStart && conversation && colorIndex != null && (
           // Floating topic label on the first message of each contiguous
@@ -297,5 +304,66 @@ export function ConversationOverlayRow({
         </DropdownMenu>
       </div>
     </div>
+  )
+}
+
+/**
+ * Bottom-sheet variant of the rail swatch's correction menu, opened from the
+ * message action drawer (mobile long-press) or the message ⋯ menu via the
+ * "Move to conversation…" action — touch devices have no hover to reveal the
+ * swatch. Same semantics: pick the conversation this message belongs to.
+ */
+export function ConversationPickerDrawer({
+  open,
+  onOpenChange,
+  overlay,
+  annotation,
+  messageId,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  overlay: ConversationOverlayContext
+  annotation: ConversationRowAnnotation
+  messageId: string
+}) {
+  const { model, onReassignMessage } = overlay
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange}>
+      <DrawerContent>
+        <DrawerTitle className="px-5 pb-2 pt-1 text-sm font-semibold">This message belongs to…</DrawerTitle>
+        <div className="max-h-[60dvh] overflow-y-auto px-2 pb-[max(12px,env(safe-area-inset-bottom))]">
+          {model.conversations.map((candidate) => {
+            const isCurrent = candidate.id === annotation.conversationId
+            const colorIndex = model.colorIndexById.get(candidate.id) ?? 0
+            return (
+              <button
+                key={candidate.id}
+                type="button"
+                disabled={isCurrent}
+                onClick={() => {
+                  onOpenChange(false)
+                  onReassignMessage(messageId, candidate.id)
+                }}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                  isCurrent ? "opacity-60" : "active:bg-muted/80"
+                )}
+              >
+                <span
+                  aria-hidden
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: conversationColor(colorIndex) }}
+                />
+                <span className="min-w-0 flex-1 truncate">{candidate.topicSummary || "Untitled conversation"}</span>
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  {candidate.messageIds.length}
+                </span>
+                {isCurrent && <Check className="h-4 w-4 shrink-0 text-muted-foreground" />}
+              </button>
+            )
+          })}
+        </div>
+      </DrawerContent>
+    </Drawer>
   )
 }

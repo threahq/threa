@@ -74,6 +74,8 @@ import { ShareMessageModal } from "@/components/share/share-message-modal"
 import { useIsOnline } from "@/components/layout/connection-status"
 import type { BatchTimelineState } from "./event-list"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
+import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
+import { useConversationOverlayRow } from "./conversation-overlay/row-context"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
 
@@ -1031,6 +1033,13 @@ function SentMessageEvent({
 
   const handleRequestReminder = useCallback(() => setReminderSheetOpen(true), [])
 
+  // Conversation-overlay correction via the action menu/drawer. The row
+  // context is non-null only while the overlay decorates this row, so the
+  // "Move to conversation…" entry tracks overlay visibility exactly.
+  const conversationOverlayRow = useConversationOverlayRow()
+  const [conversationPickerOpen, setConversationPickerOpen] = useState(false)
+  const handleRequestConversationPicker = useCallback(() => setConversationPickerOpen(true), [])
+
   const startDiscussWithAriadne = useDiscussWithAriadne(workspaceId)
   const handleDiscussWithAriadne = useCallback(
     // `useDiscussWithAriadne` rethrows after toasting so the surrounding
@@ -1148,6 +1157,7 @@ function SentMessageEvent({
       // user from clicking into a no-op while bootstrap is still in
       // flight.
       onShowMoveDetails: movedTombstoneEvent ? () => setTimeout(() => setMoveDetailsOpen(true), 0) : undefined,
+      onReassignConversation: conversationOverlayRow && !batch?.enabled ? handleRequestConversationPicker : undefined,
     }),
     [
       payload.contentMarkdown,
@@ -1185,6 +1195,8 @@ function SentMessageEvent({
       batch?.enabled,
       currentStream?.archivedAt,
       movedTombstoneEvent,
+      conversationOverlayRow,
+      handleRequestConversationPicker,
     ]
   )
 
@@ -1430,6 +1442,15 @@ function SentMessageEvent({
           workspaceId={workspaceId}
           messageId={payload.messageId}
           saved={savedForMessage ?? null}
+        />
+      )}
+      {conversationPickerOpen && conversationOverlayRow && (
+        <ConversationPickerDrawer
+          open={conversationPickerOpen}
+          onOpenChange={setConversationPickerOpen}
+          overlay={conversationOverlayRow.overlay}
+          annotation={conversationOverlayRow.annotation}
+          messageId={payload.messageId}
         />
       )}
     </>

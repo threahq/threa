@@ -106,6 +106,35 @@ test("conversation overlay shows in-view groups without layout shift and applies
   await expect(blockChips.filter({ hasText: topicB })).toHaveCount(0)
   await page.screenshot({ path: test.info().outputPath("overlay-reassigned.png") })
 
+  // Correct it back through the message action menu's "Move to conversation…"
+  // entry — the same action list the mobile long-press drawer renders, so
+  // this covers the touch path's plumbing (action visibility + picker sheet).
+  // Hover→click is retried: the toolbar is hover-revealed and can race
+  // layout in CI (same pattern as editor-auto-focus.spec.ts).
+  const moveOption = page.getByRole("menuitem", { name: "Move to conversation…" })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await overlayRowB.locator(".message-item").hover()
+    await overlayRowB.getByRole("button", { name: "Message actions" }).click()
+    try {
+      await expect(moveOption).toBeVisible({ timeout: 3000 })
+      break
+    } catch {
+      if (attempt === 2) throw new Error("Failed to open message actions menu after 3 attempts")
+      await page.keyboard.press("Escape").catch(() => {})
+    }
+  }
+  await moveOption.click()
+  const picker = page.getByRole("dialog").filter({ hasText: "This message belongs to" })
+  await expect(picker).toBeVisible()
+  await page.screenshot({ path: test.info().outputPath("overlay-picker.png") })
+  await picker.getByRole("button", { name: new RegExp(topicB) }).click()
+
+  // Conversation B regains the message: back in the in-view panel with its
+  // chip in the timeline, and conversation A's count drops back to 1.
+  await expect(panelRowB).toBeVisible({ timeout: 15000 })
+  await expect(blockChips.filter({ hasText: topicB })).toHaveCount(1)
+  await expect(panel.getByRole("button", { name: new RegExp(`${topicA} 1`) })).toBeVisible({ timeout: 15000 })
+
   // Close from the panel: overlay decorations and URL param drop.
   await panel.getByRole("button", { name: "Hide conversation overlay" }).click()
   await expect(page).not.toHaveURL(/convOverlay/)
