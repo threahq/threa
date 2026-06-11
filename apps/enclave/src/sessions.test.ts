@@ -144,6 +144,7 @@ describe("createSessionsHandler", () => {
       complete: async (sessionId, result) => {
         completed = { sessionId, result }
       },
+      fail: async () => {},
     }
     const inFlight = new Set<string>()
     const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, aborts: new Map() })
@@ -179,6 +180,7 @@ describe("createSessionsHandler", () => {
       throw new Error("model exploded")
     }
     let completed = false
+    const failed: { sessionId: string; errorName: string }[] = []
     const callbacks: BackendCallbacks = {
       heartbeat: async () => {},
       message: async () => {},
@@ -188,6 +190,9 @@ describe("createSessionsHandler", () => {
       sealedName: async () => {},
       complete: async () => {
         completed = true
+      },
+      fail: async (sessionId, failure) => {
+        failed.push({ sessionId, errorName: failure.errorName })
       },
     }
     const inFlight = new Set<string>()
@@ -199,6 +204,9 @@ describe("createSessionsHandler", () => {
 
     await vi.waitFor(() => expect(inFlight.size).toBe(0))
     expect(completed).toBe(false) // the failed turn never acked completion
+    // It acked the failure instead, with scrubbed metadata only (the error's class
+    // name, never the thrown message — which could carry decrypted payload bytes).
+    expect(failed).toEqual([{ sessionId: "session_test", errorName: "Error" }])
   })
 
   it("acks 202 without re-running when the session is already in flight", async () => {
@@ -221,6 +229,7 @@ describe("createSessionsHandler", () => {
         substep: async () => {},
         sealedName: async () => {},
         complete: async () => {},
+        fail: async () => {},
       },
       inFlight: new Set([assignment.sessionId]), // already running
       aborts: new Map(),

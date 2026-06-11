@@ -30,9 +30,9 @@ export interface SessionRunnerDeps {
 /**
  * Owns one assigned turn end to end: keeps the session's heartbeat fresh while
  * the agent loop runs, then hands the sealed replies back via `complete`. On
- * failure it stops heartbeating and lets the backend's orphan-cleanup reclaim
- * the session (an explicit fail callback + resume are later slices). Plaintext
- * lives only in `runEnclaveTurn`, for the duration of the loop.
+ * failure it acks the backend via `fail` so the session terminates promptly
+ * (orphan-cleanup stays the backstop if that ack can't land). Plaintext lives
+ * only in `runEnclaveTurn`, for the duration of the loop.
  */
 export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: EnclaveSessionAssignment): Promise<void> {
   const { sessionId } = assignment
@@ -70,12 +70,23 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     await deps.callbacks.complete(sessionId, result)
     logger.info({ sessionId, messages: result.messageIds.length }, "Enclave session completed")
   } catch (err) {
-    // This runs after the prompt/history were decrypted, so log only a scrubbed
+    // This runs after the prompt/history were decrypted, so derive only a scrubbed
     // classification — never the raw error object, which an upstream SDK might
     // populate with request/response content (the enclave never logs payloads).
-    // Nothing to ack — the backend reclaims the session when heartbeats stop.
     const errorName = err instanceof Error ? err.name : typeof err
     logger.error({ errorName, sessionId }, "Enclave session failed")
+    // Stop liveness refresh now, before the (awaited) fail ack — otherwise a
+    // hanging/slow `/fail` would keep beating `heartbeat_at` forward and push
+    // back the orphan-cleanup backstop. (`finally` clears it again; idempotent.)
+    clearInterval(heartbeat)
+    // Ack the failure so the backend terminates the session now (clears the
+    // inline indicator + open trace dialog) instead of waiting for orphan-cleanup.
+    // Best-effort + scrubbed metadata only: if this can't land, heartbeats have
+    // already stopped, so orphan-cleanup still reclaims the session as a backstop.
+    await deps.callbacks.fail(sessionId, { errorName }).catch((failErr) => {
+      const failErrorName = failErr instanceof Error ? failErr.name : typeof failErr
+      logger.warn({ errorName: failErrorName, sessionId }, "Enclave session fail callback failed")
+    })
   } finally {
     clearInterval(heartbeat)
     deps.aborts?.delete(sessionId)

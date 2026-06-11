@@ -293,6 +293,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/enclave-runtimes/sessions/:id/steps", internalAuth, enclaveSession.steps)
     app.post("/internal/enclave-runtimes/sessions/:id/substeps", internalAuth, enclaveSession.substep)
     app.post("/internal/enclave-runtimes/sessions/:id/complete", internalAuth, enclaveSession.complete)
+    app.post("/internal/enclave-runtimes/sessions/:id/fail", internalAuth, enclaveSession.fail)
   }
 
   // Global baseline rate limit

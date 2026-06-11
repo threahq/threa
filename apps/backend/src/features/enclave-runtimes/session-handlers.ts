@@ -9,7 +9,13 @@ import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 import { JobQueues, type QueueManager } from "../../lib/queue"
 import { HttpError } from "../../lib/errors"
-import { AgentSessionRepository, SessionStatuses, getBuiltInAgentConfig, type AgentSession } from "../agents"
+import {
+  AgentSessionRepository,
+  SessionStatuses,
+  getBuiltInAgentConfig,
+  failSessionWithLifecycle,
+  type AgentSession,
+} from "../agents"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
@@ -25,6 +31,7 @@ import type { EventService } from "../messaging"
  *   POST /internal/enclave-runtimes/sessions/:id/messages   — one sealed reply, streamed
  *   POST /internal/enclave-runtimes/sessions/:id/steps      — one sealed trace step, streamed
  *   POST /internal/enclave-runtimes/sessions/:id/complete   — ack (ids + metadata)
+ *   POST /internal/enclave-runtimes/sessions/:id/fail       — terminate on loop error
  */
 
 // Same opaque placeholder the user-send path stores for E2E rows (INV-E1: the
@@ -61,6 +68,14 @@ const completeSchema = z.object({
   messageIds: z.array(z.string().min(1)).max(64),
   model: z.string().min(1),
   usage: z.object({ promptTokens: z.number().optional(), completionTokens: z.number().optional() }).optional(),
+})
+
+// The enclave's scrubbed failure classification — `errorName` is the thrown
+// error's class name (e.g. "AbortError"), never plaintext content (INV-E7): the
+// loop runs after the prompt/history are decrypted, so the raw error is withheld.
+// Bounded so a misbehaving caller can't persist an unbounded string on the row.
+const failSchema = z.object({
+  errorName: z.string().min(1).max(200),
 })
 
 // One sealed trace step. `stepType` + `messageId` + timing are clear; the step's
@@ -535,6 +550,33 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue 
           )
         }
       }
+
+      res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/sessions/:id/fail
+     * The enclave's turn loop threw, so terminate the session promptly instead of
+     * waiting for orphan-cleanup's stale-heartbeat backstop. Drives the same
+     * `failSessionWithLifecycle` path the dispatch worker and orphan cleanup use
+     * (FAILED + an `agent_session:failed` stream event/outbox + session-room
+     * socket), so the inline indicator and an open trace dialog stop spinning at
+     * once. The body is a scrubbed error *classification* only — the enclave never
+     * sends plaintext (the raw error could carry decrypted payload bytes, INV-E7).
+     * `failSessionWithLifecycle` gates on winning the RUNNING→FAILED transition, so
+     * a redelivery that raced a concurrent terminal transition no-ops (still 204).
+     */
+    async fail(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = failSchema.safeParse(req.body)
+      if (!parsed.success) throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+
+      await failSessionWithLifecycle(pool, io, session, `Enclave session failed: ${parsed.data.errorName}`)
 
       res.status(204).end()
     },
