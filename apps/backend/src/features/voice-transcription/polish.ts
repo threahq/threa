@@ -104,12 +104,10 @@ export function buildPolishUserMessage(args: {
   const before = args.draftBefore?.trim()
   const after = args.draftAfter?.trim()
   if (before) {
-    sections.push(
-      `Existing draft text before the insertion point (context only, never output it):\n${args.draftBefore}`
-    )
+    sections.push(`Existing draft text before the insertion point (context only, never output it):\n${before}`)
   }
   if (after) {
-    sections.push(`Existing draft text after the insertion point (context only, never output it):\n${args.draftAfter}`)
+    sections.push(`Existing draft text after the insertion point (context only, never output it):\n${after}`)
   }
   sections.push(`Raw transcript:\n${args.rawTranscript}`)
   return sections.join("\n\n")
