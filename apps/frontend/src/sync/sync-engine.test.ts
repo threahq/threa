@@ -12,6 +12,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
+  type SyncCatchUpResponse,
 } from "@threa/types"
 
 type EventHandler = (...args: unknown[]) => void
@@ -28,6 +29,7 @@ class MockSocket {
    *  while the room join is in flight. */
   joinInterceptor: ((room: string) => Promise<void>) | null = null
   private listeners = new Map<string, Set<EventHandler>>()
+  private anyListeners = new Set<(event: string, ...args: unknown[]) => void>()
 
   on(event: string, handler: EventHandler) {
     const handlers = this.listeners.get(event)
@@ -38,6 +40,17 @@ class MockSocket {
 
   off(event: string, handler: EventHandler) {
     this.listeners.get(event)?.delete(handler)
+    return this
+  }
+
+  onAny(listener: (event: string, ...args: unknown[]) => void) {
+    this.anyListeners.add(listener)
+    return this
+  }
+
+  offAny(listener?: (event: string, ...args: unknown[]) => void) {
+    if (listener) this.anyListeners.delete(listener)
+    else this.anyListeners.clear()
     return this
   }
 
@@ -75,6 +88,7 @@ class MockSocket {
   }
 
   trigger(event: string, ...args: unknown[]) {
+    for (const listener of this.anyListeners) listener(event, ...args)
     const handlers = this.listeners.get(event)
     if (!handlers) return
     for (const handler of handlers) handler(...args)
@@ -868,5 +882,106 @@ describe("SyncEngine.backfillStreamGap", () => {
     await vi.waitFor(() => {
       expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_7", { after: "1" })
     })
+  })
+})
+
+describe("SyncEngine sync-v2 cursor (shadow mode)", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.syncCursors.clear()])
+  })
+
+  function makeShadowDeps(catchUp: ReturnType<typeof vi.fn>) {
+    return {
+      ...makeDeps(),
+      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
+      syncCursorShadowEnabled: true,
+    }
+  }
+
+  function emptyPage(head: string): SyncCatchUpResponse {
+    return { entries: [], head }
+  }
+
+  function entry(syncId: string, eventType = "message:created"): SyncCatchUpResponse["entries"][number] {
+    return { syncId, eventType, payload: {}, createdAt: new Date().toISOString() }
+  }
+
+  it("seeds the cursor from head on first run instead of replaying the log", async () => {
+    const catchUp = vi.fn(async () => emptyPage("42"))
+    const engine = new SyncEngine(makeShadowDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("42"))
+    expect(catchUp).toHaveBeenCalledTimes(1)
+    expect(catchUp).toHaveBeenCalledWith("ws_1", { after: "0", limit: 1 })
+    engine.destroy()
+  })
+
+  it("advances the cursor only from this workspace's live payloads carrying syncId", async () => {
+    const catchUp = vi.fn(async () => emptyPage("5"))
+    const engine = new SyncEngine(makeShadowDeps(catchUp))
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("5"))
+
+    socket.trigger("message:created", { workspaceId: "ws_1", syncId: "7" })
+    expect(engine.getSyncCursor()).toBe("7")
+
+    // Lower id, other workspace, missing syncId: none move the cursor
+    socket.trigger("message:created", { workspaceId: "ws_1", syncId: "6" })
+    socket.trigger("message:created", { workspaceId: "ws_other", syncId: "9" })
+    socket.trigger("stream:read", { workspaceId: "ws_1" })
+    expect(engine.getSyncCursor()).toBe("7")
+    engine.destroy()
+  })
+
+  it("pages catch-up from the persisted cursor until an empty page, advancing by fetched entries", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({ entries: [entry("11"), entry("12", "stream:read")], head: "12" })
+      .mockResolvedValue(emptyPage("12"))
+    const engine = new SyncEngine(makeShadowDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("12"))
+    expect(catchUp).toHaveBeenNthCalledWith(1, "ws_1", { after: "10", limit: 500 })
+    expect(catchUp).toHaveBeenNthCalledWith(2, "ws_1", { after: "12", limit: 500 })
+    engine.destroy()
+  })
+
+  it("single-flights concurrent shadow catch-ups", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirst: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi.fn(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirst ??= resolve)))
+    const engine = new SyncEngine(makeShadowDeps(catchUp))
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+
+    await engine.refreshAfterConnectivityResume()
+    await engine.refreshAfterConnectivityResume()
+    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+    expect(catchUp).toHaveBeenCalledTimes(1)
+
+    resolveFirst?.(emptyPage("10"))
+    engine.destroy()
+  })
+
+  it("does nothing when the shadow flag is off", async () => {
+    const catchUp = vi.fn(async () => emptyPage("42"))
+    const deps = { ...makeShadowDeps(catchUp), syncCursorShadowEnabled: false }
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    socket.trigger("message:created", { workspaceId: "ws_1", syncId: "7" })
+
+    expect(catchUp).not.toHaveBeenCalled()
+    expect(engine.getSyncCursor()).toBeNull()
+    engine.destroy()
   })
 })

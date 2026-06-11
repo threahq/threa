@@ -19,6 +19,7 @@ import {
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
+import { SyncLogCursor, SYNC_V2_CURSOR_SHADOW_DEFAULT } from "./sync-log-cursor"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -52,7 +53,19 @@ interface SyncEngineDeps {
     delete: (workspaceId: string, id: string) => Promise<void>
     sendNow: (workspaceId: string, id: string) => Promise<import("@threa/types").ScheduledMessageView>
   }
+  syncService?: {
+    catchUp: (
+      workspaceId: string,
+      params: { after: string; limit?: number }
+    ) => Promise<import("@threa/types").SyncCatchUpResponse>
+  }
+  /** Test override for the VITE_SYNC_V2_CURSOR flag. */
+  syncCursorShadowEnabled?: boolean
 }
+
+/** Safety valve for shadow catch-up paging (20 pages × 500 entries). */
+const MAX_SHADOW_CATCHUP_PAGES = 20
+const SHADOW_CATCHUP_PAGE_LIMIT = 500
 
 /**
  * Owns the full sync lifecycle for a workspace:
@@ -81,6 +94,14 @@ export class SyncEngine {
   /** Whether the engine has been destroyed. Public for ref-check re-creation. */
   isDestroyed = false
 
+  // Sync-engine v2 cursor (shadow mode): one lastSyncId per workspace,
+  // advanced by live events and exercised against the catch-up endpoint
+  // without owning any healing yet. See sync-log-cursor.ts.
+  private readonly syncCursorShadowEnabled: boolean
+  private syncLogCursor: SyncLogCursor | null = null
+  private syncCursorCleanup: (() => void) | null = null
+  private activeShadowCatchUp: Promise<void> | null = null
+
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
   private visibleStreamIds: string[] = []
@@ -92,6 +113,7 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
+    this.syncCursorShadowEnabled = (deps.syncCursorShadowEnabled ?? SYNC_V2_CURSOR_SHADOW_DEFAULT) && !!deps.syncService
   }
 
   /** Update the current stream ID (called from React when route changes). */
@@ -129,6 +151,10 @@ export class SyncEngine {
       this.cleanupStreamHandlers()
     }
 
+    if (this.syncCursorShadowEnabled) {
+      this.trackSyncCursor(socket)
+    }
+
     // Register workspace-level socket handlers (stream:created, stream:updated, etc.)
     this.workspaceHandlerCleanup = registerWorkspaceSocketHandlers(
       socket,
@@ -145,6 +171,10 @@ export class SyncEngine {
 
     // Process pending offline operations (edits, deletes, reactions)
     this.kickOperationQueue()
+
+    // Shadow only — runs after bootstrap so it never competes for the
+    // connection setup window, and applies nothing.
+    void this.runShadowCatchUp(isReconnect ? "reconnect" : "connect")
   }
 
   /**
@@ -155,6 +185,7 @@ export class SyncEngine {
   async refreshAfterConnectivityResume(): Promise<void> {
     if (this.isDestroyed) return
     await this.runBootstrap(true)
+    void this.runShadowCatchUp("resume")
   }
 
   /**
@@ -226,6 +257,11 @@ export class SyncEngine {
       this.deps.scheduledService,
       () => this.socket !== null && !this.isDestroyed
     )
+  }
+
+  /** Current sync-log cursor (v2 shadow), or null when none is tracked yet. */
+  getSyncCursor(): string | null {
+    return this.syncLogCursor?.get() ?? null
   }
 
   /**
@@ -312,6 +348,11 @@ export class SyncEngine {
     this.cleanupAllHandlers()
     this.subscribedStreams.clear()
     this.socket = null
+    // Dispose without flushing — destroy can be an account switch that
+    // repoints the shared db proxy, and the cursor must not leak across
+    // accounts. See SyncLogCursor.
+    this.syncLogCursor?.dispose()
+    this.syncLogCursor = null
   }
 
   // =========================================================================
@@ -684,6 +725,120 @@ export class SyncEngine {
     this.deps.syncStatus.setError(key, null)
   }
 
+  /**
+   * Shadow-mode half of the v2 live path: every socket event whose payload
+   * carries a `syncId` for this workspace advances the cursor. Events
+   * without one are bot-scoped or pre-deploy and stay invisible to the
+   * cursor. Registered with `onAny` so all 40+ event types hit one
+   * chokepoint instead of 40 handler edits.
+   */
+  private trackSyncCursor(socket: Socket): void {
+    this.syncLogCursor ??= new SyncLogCursor(this.workspaceId)
+    void this.syncLogCursor.load()
+
+    this.cleanupSyncCursorTracking()
+    const listener = (_event: string, ...args: unknown[]) => {
+      const payload = args[0] as { workspaceId?: unknown; syncId?: unknown } | undefined
+      if (!payload || payload.workspaceId !== this.workspaceId || typeof payload.syncId !== "string") return
+      this.syncLogCursor?.advance(payload.syncId)
+    }
+    socket.onAny(listener)
+    this.syncCursorCleanup = () => socket.offAny(listener)
+  }
+
+  /**
+   * Shadow-mode catch-up: pages the sync endpoint from the cursor and logs
+   * what active mode WOULD have applied, applying nothing. Entries fetched
+   * here are events the live path never advanced past — after a disconnect
+   * that count is the healing the cursor will own; on a healthy resume it
+   * should be ~zero. Single-flighted; never throws into callers.
+   */
+  private runShadowCatchUp(trigger: string): Promise<void> {
+    if (!this.syncCursorShadowEnabled || this.isDestroyed) return Promise.resolve()
+    if (this.activeShadowCatchUp) return this.activeShadowCatchUp
+
+    const promise = this.performShadowCatchUp(trigger)
+      .catch((error) => {
+        console.error("Sync-v2 shadow catch-up failed", { workspaceId: this.workspaceId, trigger, error })
+      })
+      .finally(() => {
+        if (this.activeShadowCatchUp === promise) {
+          this.activeShadowCatchUp = null
+        }
+      })
+    this.activeShadowCatchUp = promise
+    return promise
+  }
+
+  private async performShadowCatchUp(trigger: string): Promise<void> {
+    const syncService = this.deps.syncService!
+    const cursorStore = (this.syncLogCursor ??= new SyncLogCursor(this.workspaceId))
+    await cursorStore.load()
+
+    const cursorBefore = cursorStore.get()
+    if (cursorBefore === null) {
+      // No cursor yet (first run on this device): seed from head instead of
+      // replaying the whole retained log — everything at or below head is
+      // covered by the bootstrap snapshot path. NOTE: this jump is legal
+      // only because shadow mode owns no healing. Active mode must read
+      // head BEFORE the bootstrap data fetch (read-before-stamp rule) so
+      // the race falls on the duplicate side, never the gap side.
+      const { head } = await syncService.catchUp(this.workspaceId, { after: "0", limit: 1 })
+      if (this.isDestroyed) return
+      cursorStore.advance(head)
+      console.info("Sync-v2 shadow cursor seeded from head", { workspaceId: this.workspaceId, trigger, head })
+      return
+    }
+
+    let cursor = cursorBefore
+    let head = cursorBefore
+    let pages = 0
+    let fetched = 0
+    const byEventType: Record<string, number> = {}
+
+    while (pages < MAX_SHADOW_CATCHUP_PAGES) {
+      const response = await syncService.catchUp(this.workspaceId, {
+        after: cursor,
+        limit: SHADOW_CATCHUP_PAGE_LIMIT,
+      })
+      if (this.isDestroyed) return
+      head = response.head
+      if (response.entries.length === 0) break
+
+      pages += 1
+      fetched += response.entries.length
+      for (const entry of response.entries) {
+        byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
+      }
+      // Shadow advances by fetched entries — "applied" is a no-op here. The
+      // live onAny path may concurrently advance past this; monotonic max
+      // makes the race converge.
+      cursor = response.entries[response.entries.length - 1].syncId
+      cursorStore.advance(cursor)
+    }
+
+    if (fetched > 0 || trigger !== "connect") {
+      console.info("Sync-v2 shadow catch-up", {
+        workspaceId: this.workspaceId,
+        trigger,
+        cursorBefore,
+        cursorAfter: cursor,
+        head,
+        fetched,
+        pages,
+        byEventType,
+        truncated: pages >= MAX_SHADOW_CATCHUP_PAGES,
+      })
+    }
+  }
+
+  private cleanupSyncCursorTracking(): void {
+    if (this.syncCursorCleanup) {
+      this.syncCursorCleanup()
+      this.syncCursorCleanup = null
+    }
+  }
+
   private cleanupWorkspaceHandlers(): void {
     if (this.workspaceHandlerCleanup) {
       this.workspaceHandlerCleanup()
@@ -700,6 +855,7 @@ export class SyncEngine {
   private cleanupAllHandlers(): void {
     this.cleanupWorkspaceHandlers()
     this.cleanupStreamHandlers()
+    this.cleanupSyncCursorTracking()
   }
 }
 

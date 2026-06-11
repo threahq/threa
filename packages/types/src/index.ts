@@ -387,6 +387,9 @@ export type {
   StreamContextRefSource,
   EventsAroundResponse,
   SharedMessageHydration,
+  // Sync log catch-up
+  SyncCatchUpEntry,
+  SyncCatchUpResponse,
   // Messages
   CreateMessageInput,
   CreateMessageInputJson,
