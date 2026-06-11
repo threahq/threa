@@ -130,6 +130,15 @@ export type TimelineItem =
    * place — a missed message never pops in above rows already on screen.
    */
   | { type: "gap"; afterEventId: string; missingCount: number }
+  /**
+   * A placeholder row prepended at the head of the timeline while an older
+   * page is in flight (infinite scroll), so the space the page will fill
+   * reads as loading instead of blank. Visually similar to `gap` but
+   * semantically different — a gap is known-missing events (INV-61
+   * contiguity), a skeleton is just a page fetch in flight — so they stay
+   * separate item types.
+   */
+  | { type: "skeleton"; index: number }
 
 /** Event types that participate in author-grouping (render as message bodies). */
 const MESSAGE_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["message_created", "companion_response"])
@@ -276,10 +285,26 @@ export function getTimelineItemKey(item: TimelineItem): string {
       return item.sessionId
     case "gap":
       return `gap:${item.afterEventId}`
+    case "skeleton":
+      return `skeleton:older:${item.index}`
     default:
       return item.event.id
   }
 }
+
+/** Number of skeleton placeholder rows prepended while an older page is in flight. */
+export const OLDER_SKELETON_COUNT = 4
+
+/**
+ * The skeleton placeholder items, as a module-level constant so both the item
+ * identities and their keys are stable across renders while a fetch is in
+ * flight — otherwise the row memo comparator and virtua's measurement cache
+ * churn every frame.
+ */
+export const OLDER_SKELETON_ITEMS: readonly TimelineItem[] = Array.from(
+  { length: OLDER_SKELETON_COUNT },
+  (_, index) => ({ type: "skeleton" as const, index })
+)
 
 /** Whether a timeline item renders (or contains) the given event id. */
 function itemContainsEvent(item: TimelineItem, eventId: string): boolean {
@@ -288,6 +313,7 @@ function itemContainsEvent(item: TimelineItem, eventId: string): boolean {
     case "session_group":
       return item.events.some((event) => event.id === eventId)
     case "gap":
+    case "skeleton":
       return false
     default:
       return item.event.id === eventId
@@ -450,7 +476,7 @@ export interface TimelineItemRenderContext {
 
 function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean {
   if (!firstUnreadEventId) return false
-  if (item.type === "gap") return false
+  if (item.type === "gap" || item.type === "skeleton") return false
   if (item.type === "command_group" || item.type === "session_group") {
     return item.events[0]?.id === firstUnreadEventId
   }
@@ -524,6 +550,20 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
           <span>Loading {item.missingCount === 1 ? "a missed message" : `${item.missingCount} missed messages`}…</span>
         </div>
       )}
+      {item.type === "skeleton" && (
+        // Fixed-height placeholder while an older page is in flight. The
+        // floating "Loading older messages..." pill carries the announcement;
+        // these rows are purely visual (aria-hidden) and are swapped for the
+        // real rows in the same render the page lands.
+        <div aria-hidden data-testid="older-skeleton-row" className="flex gap-3 px-4 py-3 sm:px-6">
+          <Skeleton className="h-9 w-9 rounded-full" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+        </div>
+      )}
       {item.type === "session_group" && !ctx.hideSessionCards && (
         <div className="px-3 sm:px-6">
           <AgentSessionEvent
@@ -590,6 +630,10 @@ export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
     case "gap": {
       const other = b as Extract<TimelineItem, { type: "gap" }>
       return a.afterEventId === other.afterEventId && a.missingCount === other.missingCount
+    }
+    case "skeleton": {
+      const other = b as Extract<TimelineItem, { type: "skeleton" }>
+      return a.index === other.index
     }
   }
 }

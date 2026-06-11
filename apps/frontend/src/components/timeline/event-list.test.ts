@@ -10,6 +10,8 @@ import {
   injectGapItems,
   timelineItemEqual,
   timelineRowPropsEqual,
+  OLDER_SKELETON_COUNT,
+  OLDER_SKELETON_ITEMS,
   type TimelineItem,
   type TimelineItemRenderContext,
 } from "./event-list"
@@ -465,6 +467,25 @@ describe("injectGapItems", () => {
   })
 })
 
+describe("OLDER_SKELETON_ITEMS (older-page skeleton rows)", () => {
+  it("provides the configured number of skeleton items with stable, distinct keys", () => {
+    expect(OLDER_SKELETON_ITEMS).toHaveLength(OLDER_SKELETON_COUNT)
+    const keys = OLDER_SKELETON_ITEMS.map(getTimelineItemKey)
+    expect(new Set(keys).size).toBe(OLDER_SKELETON_COUNT)
+    expect(keys[0]).toBe("skeleton:older:0")
+  })
+
+  it("skeleton keys never collide with event, group, or gap keys", () => {
+    const eventKey = getTimelineItemKey({
+      type: "event",
+      event: createEvent({ id: "evt_1", sequence: "1", eventType: "message_created", payload: {} }),
+    })
+    const gapKey = getTimelineItemKey({ type: "gap", afterEventId: "evt_1", missingCount: 1 })
+    expect(OLDER_SKELETON_ITEMS.map(getTimelineItemKey)).not.toContain(eventKey)
+    expect(OLDER_SKELETON_ITEMS.map(getTimelineItemKey)).not.toContain(gapKey)
+  })
+})
+
 describe("timelineRowPropsEqual (memoized row comparator)", () => {
   function makeCtx(overrides: Partial<TimelineItemRenderContext> = {}): TimelineItemRenderContext {
     return {
@@ -597,5 +618,20 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     expect(timelineItemEqual(a, { type: "event", event: msgA })).toBe(true)
     expect(timelineItemEqual(a, { type: "event", event: msgA, groupContinuation: true })).toBe(false)
     expect(timelineItemEqual(a, { type: "event", event: { ...msgA } })).toBe(false)
+  })
+
+  it("timelineItemEqual: skeleton items compare by index, never equal another item type", () => {
+    expect(timelineItemEqual({ type: "skeleton", index: 0 }, { type: "skeleton", index: 0 })).toBe(true)
+    expect(timelineItemEqual({ type: "skeleton", index: 0 }, { type: "skeleton", index: 1 })).toBe(false)
+    expect(
+      timelineItemEqual({ type: "skeleton", index: 0 }, { type: "gap", afterEventId: "evt_1", missingCount: 1 })
+    ).toBe(false)
+  })
+
+  it("skeleton rows stay equal when ctx is rebuilt with fresh containers (no churn while fetching)", () => {
+    const item = OLDER_SKELETON_ITEMS[0]
+    const prev = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }), deferSecondaryHydration: false }
+    const next = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_y"]) }), deferSecondaryHydration: false }
+    expect(timelineRowPropsEqual(prev, next)).toBe(true)
   })
 })
