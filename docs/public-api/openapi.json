@@ -1491,7 +1491,8 @@
                       "tool_call",
                       "tool_error",
                       "rate_limited",
-                      "rate_limit_retry"
+                      "rate_limit_retry",
+                      "turn_digest"
                     ]
                   },
                   "content": { "type": "string", "minLength": 1, "maxLength": 10000 },

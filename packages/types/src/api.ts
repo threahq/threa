@@ -648,6 +648,17 @@ export interface EnclaveSessionAssignment {
    * otherwise (threads and already-titled scratchpads).
    */
   autoTitle?: boolean
+  /**
+   * Sealed `turn_digest` step contents from this stream's recent completed
+   * sessions, oldest→newest (C-1: carry tool work forward). The backend ships
+   * the opaque ciphertext it already persisted via `/steps`; the enclave — which
+   * holds the SSK wraps — opens each digest it can (skipping generations it has
+   * no wrap for), and folds them into the turn's system context so follow-ups
+   * don't force a re-search. `completedAt` is clear timing metadata (the step
+   * row already exposes it), so the model can judge staleness; the digest body
+   * never leaves ciphertext on the backend (INV-E7).
+   */
+  recentDigests?: (EnclaveSealedMessage & { completedAt: string })[]
 }
 
 /**

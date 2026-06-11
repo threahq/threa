@@ -78,6 +78,7 @@ function arrangeDispatch() {
   spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([WRAP])
   spyOn(MessageRepository, "findSurrounding").mockResolvedValue([])
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
+  spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(UserPreferencesService.prototype, "getPreferences").mockResolvedValue({} as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
@@ -202,6 +203,60 @@ describe("createEnclaveInvokeWorker", () => {
     expect(assignment.attachmentCiphertexts).toEqual([
       { attachmentId: "attach_t", ciphertext: Buffer.from("bytes:p/t").toString("base64") },
       { attachmentId: "attach_h", ciphertext: Buffer.from("bytes:p/h").toString("base64") },
+    ])
+  })
+
+  it("ships the stream's sealed turn digests oldest-first, skipping rows without ciphertext", async () => {
+    arrangeDispatch()
+    const envelope = { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" }
+    // Repo returns newest session first; the assignment must read oldest-first.
+    spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([
+      {
+        step: {
+          contentCiphertext: "bmV3",
+          contentEnvelope: envelope,
+          completedAt: new Date("2026-06-11T10:00:00.000Z"),
+        },
+        sessionCreatedAt: new Date("2026-06-11T09:59:00.000Z"),
+        sessionCompletedAt: new Date("2026-06-11T10:00:00.000Z"),
+      },
+      {
+        // Plaintext-shaped row (no ciphertext) must never ship to the enclave.
+        step: { content: '{"findings":"x"}', contentCiphertext: null, contentEnvelope: null, completedAt: new Date() },
+        sessionCreatedAt: new Date("2026-06-10T12:00:00.000Z"),
+        sessionCompletedAt: new Date("2026-06-10T12:00:01.000Z"),
+      },
+      {
+        step: {
+          contentCiphertext: "b2xk",
+          contentEnvelope: envelope,
+          completedAt: new Date("2026-06-10T10:00:00.000Z"),
+        },
+        sessionCreatedAt: new Date("2026-06-10T09:59:00.000Z"),
+        sessionCompletedAt: new Date("2026-06-10T10:00:00.000Z"),
+      },
+    ] as never)
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
+    })
+    await worker(JOB)
+
+    const assignment = assignSession.mock.calls[0]![1] as { recentDigests?: unknown }
+    expect(assignment.recentDigests).toEqual([
+      { ciphertext: "b2xk", envelope, completedAt: "2026-06-10T10:00:00.000Z" },
+      { ciphertext: "bmV3", envelope, completedAt: "2026-06-11T10:00:00.000Z" },
     ])
   })
 

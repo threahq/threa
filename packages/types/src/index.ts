@@ -737,6 +737,7 @@ export {
   TRACE_SOURCE_TYPES,
   type TraceSourceType,
   type TraceSource,
+  type TurnDigestStepContent,
   type AgentSessionRerunCause,
   type AgentSessionRerunContext,
   type AgentSessionStep,

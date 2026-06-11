@@ -52,6 +52,13 @@ export interface BuildInvokeInputs {
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
   /** Ask the enclave to generate + seal a title for this (untitled) scratchpad. */
   autoTitle?: boolean
+  /**
+   * Sealed `turn_digest` step ciphertext from the stream's recent completed
+   * sessions, oldest→newest (C-1). Opaque to the backend — the enclave opens
+   * what its wraps allow and folds the digests into the turn's system context.
+   * `completedAt` is clear timing metadata (the step row already exposes it).
+   */
+  recentDigests?: { ciphertext: string; envelope: EnclaveStreamEnvelope; completedAt: string }[]
 }
 
 export interface BuiltEnclaveInvoke {
@@ -119,6 +126,9 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
       ? { attachmentCiphertexts: inputs.attachmentCiphertexts }
       : {}),
     ...(inputs.autoTitle ? { autoTitle: true } : {}),
+    // Prior turns' sealed digests (C-1) — shipped only when present so the
+    // no-digest assignment stays byte-identical to before.
+    ...(inputs.recentDigests && inputs.recentDigests.length > 0 ? { recentDigests: inputs.recentDigests } : {}),
     reply: { keyGeneration: currentGen, senderId: inputs.replySenderId },
     // Clear metadata for the enclave's "Triggered by" CONTEXT step; the body is
     // the decrypted prompt, sealed enclave-side. Omitted when the author name

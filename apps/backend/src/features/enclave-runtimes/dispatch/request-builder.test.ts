@@ -104,6 +104,19 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(built!.assignment).not.toHaveProperty("trigger")
   })
 
+  it("ships prior turns' sealed digests verbatim, and omits the field when there are none", () => {
+    expect(buildEnclaveSessionAssignment(inputs())!.assignment).not.toHaveProperty("recentDigests")
+    expect(buildEnclaveSessionAssignment(inputs({ recentDigests: [] }))!.assignment).not.toHaveProperty("recentDigests")
+
+    const digest = {
+      ciphertext: "ZGlnZXN0",
+      envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
+      completedAt: "2026-06-10T10:00:00.000Z",
+    }
+    const built = buildEnclaveSessionAssignment(inputs({ recentDigests: [digest] }))
+    expect(built!.assignment.recentDigests).toEqual([digest])
+  })
+
   it("ships the trigger's attachment ciphertext inline, and omits it when there's none", () => {
     expect(buildEnclaveSessionAssignment(inputs())!.assignment).not.toHaveProperty("attachmentCiphertexts")
 

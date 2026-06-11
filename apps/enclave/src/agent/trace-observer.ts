@@ -229,6 +229,21 @@ export class EnclaveTraceObserver implements AgentObserver {
   }
 
   /**
+   * Emit the trailing TURN_DIGEST step (C-1) — the enclave's twin of the
+   * in-process post-run digest persist. Driven by run-turn after the loop ends
+   * (the runtime never emits a digest event itself); the content is the digest
+   * JSON, sealed under the SSK exactly like any step and shipped over the same
+   * `/steps` callback, so the backend persists ciphertext it can't read and a
+   * later assignment can ship it back as `recentDigests`.
+   */
+  async emitTurnDigest(content: string): Promise<void> {
+    const stepId = mintStepId()
+    const sealed = await this.seal(content, stepId)
+    await this.openStep({ stepId, stepType: AgentStepTypes.TURN_DIGEST, ...sealed })
+    await this.deps.sendStep({ stepId, stepType: AgentStepTypes.TURN_DIGEST, ...sealed })
+  }
+
+  /**
    * Open an in-flight step — best-effort. The `step:started` frame is live-UX
    * only (it lets an open trace dialog render the in-progress step); the durable
    * record is the *finalize* (`sendStep`), which has its own persistence fallback.

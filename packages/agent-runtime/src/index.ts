@@ -6,6 +6,15 @@ export type { AgentObserver } from "./runtime/agent-observer"
 export { OtelObserver } from "./runtime/otel-observer"
 export { AgentRuntime, mergeSourceItems } from "./runtime/agent-runtime"
 export type { AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./runtime/agent-runtime"
+export {
+  TurnDigestCollector,
+  generateTurnDigest,
+  parseTurnDigestStepContent,
+  formatTurnDigestsForPrompt,
+  TURN_DIGEST_INJECT_COUNT,
+  type ToolWorkRecord,
+  type TurnDigestPromptEntry,
+} from "./runtime/turn-digest"
 
 // Tools (web + internal)
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "./tools/web-search-tool"

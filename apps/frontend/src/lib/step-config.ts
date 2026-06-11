@@ -18,6 +18,7 @@ import {
   Wrench,
   AlertTriangle,
   Hourglass,
+  Brain,
   type LucideIcon,
 } from "lucide-react"
 
@@ -164,6 +165,14 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     hue: 38,
     saturation: 92,
     lightness: 50,
+  },
+  turn_digest: {
+    label: "Memory",
+    inlineLabel: "Saving memory...",
+    icon: Brain,
+    hue: 305,
+    saturation: 55,
+    lightness: 48,
   },
 }
 

@@ -14,6 +14,17 @@ export type { AgentObserver } from "./agent-observer"
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
 export { protectToolOutputText, protectToolOutputBlocks, type MultimodalContentBlock } from "./tool-trust-boundary"
 export { mergeSourceItems } from "./agent-runtime"
+// Turn digests (C-1) — dependency-light (no AI provider layer), so the enclave
+// runs the same collector/generator/formatter as the in-process companion.
+export {
+  TurnDigestCollector,
+  generateTurnDigest,
+  parseTurnDigestStepContent,
+  formatTurnDigestsForPrompt,
+  TURN_DIGEST_INJECT_COUNT,
+  type ToolWorkRecord,
+  type TurnDigestPromptEntry,
+} from "./turn-digest"
 
 // Web primitives + bounded research — enclave-safe (call external services
 // directly, no backend callback, no AI provider layer / OTEL pull).

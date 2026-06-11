@@ -37,10 +37,13 @@ import { buildAgentContext, buildToolSet, withCompanionSession, type WithSession
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
 import { AgentRuntime, SessionTraceObserver, OtelObserver, type NewMessageInfo } from "./runtime"
+import { TurnDigestCollector, generateTurnDigest } from "@threa/agent-runtime"
+import type { SessionTrace } from "./trace-emitter"
 import {
   SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS,
   SUPERSEDE_RESPONSE_VALIDATOR_MODEL_ID,
   SUPERSEDE_RESPONSE_VALIDATOR_TEMPERATURE,
+  TURN_DIGEST_MODEL_ID,
 } from "./config"
 
 export type { WithSessionResult }
@@ -566,6 +569,10 @@ export class PersonaAgent {
         const model = ai.getLanguageModel(persona.model)
         const parsed = ai.parseModel(persona.model)
 
+        // Collects the turn's completed tool calls (content + sources) so a
+        // turn_digest step can carry the tool work into later turns (C-1).
+        const digestCollector = new TurnDigestCollector()
+
         // Run agent runtime
         const runtime = new AgentRuntime({
           ai,
@@ -614,6 +621,7 @@ export class PersonaAgent {
           },
           observers: [
             new SessionTraceObserver(trace),
+            digestCollector,
             new OtelObserver({
               sessionId: session.id,
               streamId: targetStreamId,
@@ -805,6 +813,20 @@ export class PersonaAgent {
             await persistSnapshot(pool, workspaceId, resolvedBag.bagId, resolvedBag.nextSnapshot)
           }
 
+          // Turn digest (C-1): condense the turn's tool work into a final
+          // turn_digest step so later turns can answer follow-ups without
+          // re-running the tools. Best-effort and last — the reply is already
+          // committed, so a digest failure must never fail the turn.
+          await this.persistTurnDigest({
+            ai,
+            digestCollector,
+            trace,
+            sessionId: session.id,
+            workspaceId,
+            invokingUserId: agentContext.invokingUserId,
+            replyText: loopResult.sentContents.at(-1),
+          })
+
           return {
             messagesSent: loopResult.messagesSent,
             sentMessageIds: retainedMessageIds,
@@ -869,6 +891,54 @@ export class PersonaAgent {
           streamId,
           personaId,
         }
+    }
+  }
+
+  /**
+   * Generate + persist the turn's digest step (C-1). No-op when the turn used
+   * no tools (a plain chat turn's reply already carries over in history).
+   * Strictly best-effort: any failure logs and returns — the user-visible turn
+   * has already succeeded.
+   */
+  private async persistTurnDigest(params: {
+    ai: AI
+    digestCollector: TurnDigestCollector
+    trace: SessionTrace
+    sessionId: string
+    workspaceId: string
+    invokingUserId: string | undefined
+    replyText: string | undefined
+  }): Promise<void> {
+    const { ai, digestCollector, trace, sessionId, workspaceId, invokingUserId, replyText } = params
+    if (!digestCollector.hasToolWork) return
+
+    try {
+      const digest = await generateTurnDigest({
+        ai,
+        model: ai.getLanguageModel(TURN_DIGEST_MODEL_ID),
+        modelString: TURN_DIGEST_MODEL_ID,
+        records: digestCollector.records,
+        replyText,
+        telemetry: {
+          functionId: "turn-digest",
+          metadata: { model_id: TURN_DIGEST_MODEL_ID, session_id: sessionId },
+        },
+        context: {
+          workspaceId,
+          userId: invokingUserId,
+          sessionId,
+          origin: invokingUserId ? "user" : "system",
+        },
+      })
+      if (!digest) return
+
+      const step = await trace.startStep({
+        stepType: AgentStepTypes.TURN_DIGEST,
+        content: JSON.stringify(digest),
+      })
+      await step.complete({})
+    } catch (err) {
+      logger.warn({ err, sessionId }, "Turn digest generation failed; completing the turn without one")
     }
   }
 
