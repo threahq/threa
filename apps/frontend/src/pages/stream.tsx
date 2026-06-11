@@ -112,15 +112,22 @@ export function StreamPage() {
   const isConversationOverlayOn = searchParams.get("convOverlay") === "on"
 
   const setConversationOverlayOn = (on: boolean) => {
-    setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      if (on) {
-        newParams.set("convOverlay", "on")
-      } else {
-        newParams.delete("convOverlay")
-      }
-      return newParams
-    })
+    setSearchParams(
+      (prev) => {
+        const newParams = new URLSearchParams(prev)
+        if (on) {
+          newParams.set("convOverlay", "on")
+        } else {
+          newParams.delete("convOverlay")
+        }
+        return newParams
+      },
+      // The overlay is ephemeral view chrome, not navigation: every toggle
+      // path replaces (the panel's X in stream-content.tsx does too), so Back
+      // leaves the stream instead of silently toggling chrome. The URL still
+      // updates for refresh/share (INV-59).
+      { replace: true }
+    )
   }
 
   const { openUserProfile } = useUserProfile()
