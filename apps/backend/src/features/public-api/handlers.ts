@@ -55,12 +55,13 @@ import { HttpError } from "@threa/backend-common"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { randomUUID } from "crypto"
-import { botId, eventId, stepId } from "../../lib/id"
+import { botId, eventId } from "../../lib/id"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
-import { AgentSessionRepository, type AgentSessionStep } from "../agents"
+import { AgentSessionRepository } from "../agents"
 import { encodeCursor, decodeCursor } from "./cursor"
+import { botInvocationStepEvents, createBotInvocationTraceProjector } from "./trace-steps"
 import { listMyBotsSchema } from "./schemas"
 import type {
   WireStream,
@@ -460,33 +461,6 @@ export function sanitizeInvocationStepContent(content: string): string {
     return JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections })
   } catch {
     return redacted
-  }
-}
-
-/**
- * Serialize a trace step for `agent_session:step:completed` socket emission.
- *
- * Shared by every runtime that streams steps back to the session room — in-flight
- * Pi bot invocations and the E2E enclave — so the frontend handler stays
- * source-agnostic. E2E steps carry sealed `contentCiphertext` + `contentEnvelope`
- * in place of plaintext `content`; the server only relays the ciphertext and the
- * browser decrypts (INV-E7).
- */
-export function serializeTraceStep(step: AgentSessionStep) {
-  return {
-    id: step.id,
-    sessionId: step.sessionId,
-    stepNumber: step.stepNumber,
-    stepType: step.stepType,
-    content: (step.content ?? undefined) as string | undefined,
-    sources: step.sources ?? undefined,
-    messageId: step.messageId ?? undefined,
-    tokensUsed: step.tokensUsed ?? undefined,
-    duration: step.completedAt && step.startedAt ? step.completedAt.getTime() - step.startedAt.getTime() : undefined,
-    startedAt: step.startedAt.toISOString(),
-    completedAt: step.completedAt?.toISOString(),
-    contentCiphertext: step.contentCiphertext ?? undefined,
-    contentEnvelope: step.contentEnvelope ?? undefined,
   }
 }
 
@@ -1025,37 +999,27 @@ export function createPublicApiHandlers({
           instanceId: result.data.instanceId,
         }),
       ])
-      const now = new Date()
-      // Append + currentStepType must run in one transaction. appendStep is
-      // race-safe for concurrent step POSTs (INV-20), so simultaneous Pi events
-      // append distinct rows instead of clobbering each other.
-      const step = await withTransaction(pool, async (client) => {
-        const inserted = await AgentSessionRepository.appendStep(client, {
-          id: stepId(),
-          sessionId: claim.id,
-          stepType: result.data.stepType,
-          content: sanitizeInvocationStepContent(result.data.content),
-          startedAt: now,
-          completedAt: now,
-        })
-        await AgentSessionRepository.updateCurrentStepType(client, claim.id, result.data.stepType)
-        return inserted
-      })
-      const sessionRoom = `ws:${req.workspaceId!}:agent_session:${claim.id}`
-      io.to(sessionRoom).emit("agent_session:step:completed", {
-        sessionId: claim.id,
-        step: serializeTraceStep(step),
-      })
-      io.to(`ws:${req.workspaceId!}:stream:${claim.responseStreamId}`).emit("agent_session:progress", {
+      // Normalize the wire frame into AgentEvents and run them through the
+      // shared TraceProjector — the same event → step state machine the
+      // in-process companion and the enclave project through; only the sink
+      // (append-on-complete + socket emits) is invocation-specific (#5).
+      const { projector, sink } = createBotInvocationTraceProjector({
+        pool,
+        io,
         workspaceId: req.workspaceId!,
-        streamId: claim.responseStreamId,
         sessionId: claim.id,
+        streamId: claim.responseStreamId,
         triggerMessageId: claim.sourceMessageId,
         personaName: bot?.name ?? "",
-        stepCount: step.stepNumber,
-        messageCount: 0,
-        currentStepType: result.data.stepType,
       })
+      for (const event of botInvocationStepEvents({
+        stepType: result.data.stepType,
+        content: sanitizeInvocationStepContent(result.data.content),
+      })) {
+        await projector.handle(event)
+      }
+      const step = sink.lastStep
+      if (!step) throw new HttpError("Failed to record step", { status: 500, code: "INTERNAL_ERROR" })
       // Step recording also serves as a busy heartbeat — keeps the runtime's
       // presence statusText in sync with the most recent trace step so Pi
       // does not need to send a separate /presence call alongside each step.

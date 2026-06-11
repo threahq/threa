@@ -8,12 +8,21 @@ import {
 } from "@threa/crypto"
 import {
   AgentStepTypes,
+  type AgentStepType,
   type SealedStep,
   type SealedStepStart,
   type EnclaveSealedSubstep,
   type TraceSource,
 } from "@threa/types"
-import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
+import {
+  TraceProjector,
+  type AgentEvent,
+  type AgentObserver,
+  type TraceStepFinalize,
+  type TraceStepRecord,
+  type TraceStepSink,
+  type TraceSubstepEntry,
+} from "@threa/agent-runtime/runtime"
 
 /**
  * Observes the agent loop and ships each user-facing trace step back to the
@@ -21,18 +30,21 @@ import type { AgentEvent, AgentObserver } from "@threa/agent-runtime/runtime"
  * trace it can't read (INV-E7) and the owner's browser decrypts it exactly as
  * it decrypts message ciphertext.
  *
- * Each step's content is sealed under the *reply* SSK (the current generation),
- * bound by AAD to `streamId|stepId|senderId` — the same message-AAD scheme,
- * with the enclave-minted `step_…` id in the id slot (no collision with `msg_…`
- * ids) so the server can't shuffle a step's ciphertext onto a different row.
- * Plaintext exists only here, for the duration of the loop, and is never logged
- * or persisted in the clear.
+ * The event → step state machine is the shared `TraceProjector` — the exact
+ * code the in-process companion runs — so the two surfaces cannot diverge on
+ * which events become steps. Only the sink differs: each step's content is
+ * sealed under the *reply* SSK (the current generation), bound by AAD to
+ * `streamId|stepId|senderId` — the same message-AAD scheme, with the
+ * enclave-minted `step_…` id in the id slot (no collision with `msg_…` ids)
+ * so the server can't shuffle a step's ciphertext onto a different row.
+ * Plaintext exists only here, for the duration of the loop, and is never
+ * logged or persisted in the clear.
  *
- * This mirrors the backend `SessionTraceObserver`'s event→step lifecycle exactly
- * — only the sink differs (seal + POST instead of DB + socket). Every step opens
- * with a `step:started` (so a refresh / open trace dialog sees the in-flight step
- * and hangs its live substeps under it) and closes with the finalized step:
- * - `thinking` / `message:sent`: started + finalized back-to-back (content known up front)
+ * Every step opens with a `step:started` (so a refresh / open trace dialog sees
+ * the in-flight step and hangs its live substeps under it) and closes with the
+ * finalized step:
+ * - atomic steps (thinking, message_sent, …): started + finalized back-to-back,
+ *   one seal serving both frames (content known up front)
  * - `tool:start` → `tool:progress`* → `tool:complete`/`tool:error`: the real
  *   in-flight window — started carries no content (the result isn't known yet),
  *   substeps stream the phase text, and the finalize seals the tool's result.
@@ -53,194 +65,84 @@ export interface EnclaveTraceObserverDeps {
   sendSubstep: (substep: EnclaveSealedSubstep) => Promise<void>
 }
 
-export class EnclaveTraceObserver implements AgentObserver {
-  /** Maps an in-flight tool call to the step id minted at tool:start, so completion finalizes the same row. */
-  private readonly stepIdByToolCallId = new Map<string, string>()
-  /** Running substep log per in-flight tool call — sealed and persisted on each progress so a refresh replays it. */
-  private readonly substepsByToolCallId = new Map<string, Array<{ text: string; at: string }>>()
-  /** Tool calls hidden at tool:start — distinguishes "hidden, skip" from "unknown, synthesize error step". */
-  private readonly hiddenToolCallIds = new Set<string>()
+/** The sink's handle for an in-flight tool step: the enclave-minted step id its seals AAD-bind to. */
+interface EnclaveOpenStep {
+  stepId: string
+}
 
+/**
+ * The enclave's sealing sink for the shared `TraceProjector`: every step the
+ * projector emits is sealed under the reply SSK and shipped over the existing
+ * `/steps` callbacks. Citation sources ride INSIDE the sealed payload — they
+ * reveal what was researched, so they must never travel as a cleartext field
+ * (E2EE-9/14). A sourceless step seals the bare content string, byte-identical
+ * to a plain seal.
+ */
+class EnclaveSealingSink implements TraceStepSink<EnclaveOpenStep> {
   constructor(private readonly deps: EnclaveTraceObserverDeps) {}
 
-  async handle(event: AgentEvent): Promise<void> {
-    switch (event.type) {
-      case "thinking": {
-        // Content is known up front: open + finalize the same step back-to-back,
-        // mirroring the backend's startStep(content) → complete(). One seal,
-        // AAD-bound to this step's id, reused for both the start and the finalize.
-        const stepId = mintStepId()
-        const sealed = await this.seal(event.content, stepId)
-        await this.openStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed })
-        await this.deps.sendStep({ stepId, stepType: AgentStepTypes.THINKING, ...sealed, durationMs: event.durationMs })
-        return
-      }
-
-      case "tool:start": {
-        // Hidden tools are recorded in OTEL but never surface in the trace.
-        if (event.hidden) {
-          this.hiddenToolCallIds.add(event.toolCallId)
-          return
-        }
-        // Open the in-flight step with no content (the result isn't known yet);
-        // cache the minted id so tool:complete/tool:error finalizes the same row.
-        const stepId = mintStepId()
-        this.stepIdByToolCallId.set(event.toolCallId, stepId)
-        this.substepsByToolCallId.set(event.toolCallId, [])
-        await this.openStep({ stepId, stepType: event.stepType })
-        return
-      }
-
-      case "tool:progress": {
-        // Mid-run phase text (e.g. the research sub-agent's "Searching the web: …").
-        // Derived from the encrypted prompt, so seal it under the SSK like a step.
-        // Two sealed payloads travel in one POST, mirroring the unencrypted
-        // observer's emitSubstep + updateSubsteps: the single new phase (ephemeral,
-        // drives the live "Ariadne is …" indicator) and the running snapshot
-        // (persisted onto the step row so a refresh / open mid-run replays it).
-        const text = event.substep?.trim()
-        if (!text) return
-        const stepId = this.stepIdByToolCallId.get(event.toolCallId)
-        // Bind the seal AAD to the in-flight step (fall back to a fresh id only when
-        // there's no opened step to bind to — a hidden/never-started tool).
-        const sealed = await this.seal(text, stepId ?? mintStepId())
-        const log = this.substepsByToolCallId.get(event.toolCallId)
-        let snapshot: { ciphertext: string; envelope: SealedStep["envelope"] } | undefined
-        if (stepId && log) {
-          log.push({ text, at: new Date().toISOString() })
-          snapshot = await this.seal(JSON.stringify({ substeps: [...log] }), stepId)
-        }
-        await this.deps.sendSubstep({
-          stepType: event.stepType,
-          ...sealed,
-          stepId,
-          snapshotCiphertext: snapshot?.ciphertext,
-          snapshotEnvelope: snapshot?.envelope,
-        })
-        return
-      }
-
-      case "tool:complete": {
-        const stepId = this.stepIdByToolCallId.get(event.toolCallId)
-        // Clear all per-tool-call state up front (matches SessionTraceObserver,
-        // which deletes the hidden marker on complete too) so nothing leaks.
-        this.stepIdByToolCallId.delete(event.toolCallId)
-        this.substepsByToolCallId.delete(event.toolCallId)
-        this.hiddenToolCallIds.delete(event.toolCallId)
-        if (!stepId) return // hidden tool — no step row was opened
-        // The tool's citation sources ride INSIDE the sealed payload — they
-        // reveal what was researched, so they must never travel as a cleartext
-        // field (E2EE-14). A sourceless result seals the bare content string,
-        // byte-identical to before.
-        const sealed = await this.seal(
-          serializeSealedPayload(event.trace.content, undefined, toSealedSources(event.trace.sources)),
-          stepId
-        )
-        await this.deps.sendStep({ stepId, stepType: event.trace.stepType, ...sealed, durationMs: event.durationMs })
-        return
-      }
-
-      case "tool:error": {
-        const content = `${event.toolName} failed: ${event.error}`
-        const cachedId = this.stepIdByToolCallId.get(event.toolCallId)
-        if (cachedId) {
-          // Finalize the in-flight step with the error.
-          this.stepIdByToolCallId.delete(event.toolCallId)
-          this.substepsByToolCallId.delete(event.toolCallId)
-          const sealed = await this.seal(content, cachedId)
-          await this.deps.sendStep({
-            stepId: cachedId,
-            stepType: AgentStepTypes.TOOL_ERROR,
-            ...sealed,
-            durationMs: event.durationMs,
-          })
-        } else if (!this.hiddenToolCallIds.has(event.toolCallId)) {
-          // Unknown tool: the runtime emits tool:error with no preceding tool:start.
-          // Synthesize a started + finalized error step so it's still visible.
-          const stepId = mintStepId()
-          const sealed = await this.seal(content, stepId)
-          await this.openStep({ stepId, stepType: AgentStepTypes.TOOL_ERROR, ...sealed })
-          await this.deps.sendStep({
-            stepId,
-            stepType: AgentStepTypes.TOOL_ERROR,
-            ...sealed,
-            durationMs: event.durationMs,
-          })
-        }
-        this.hiddenToolCallIds.delete(event.toolCallId)
-        return
-      }
-
-      case "message:sent": {
-        const stepId = mintStepId()
-        // The reply's citation sources ride inside the sealed payload (E2EE-14),
-        // mirroring the reply message itself (E2EE-9). One seal serves both the
-        // start and the finalize, so an open trace dialog sees them immediately.
-        const sealed = await this.seal(
-          serializeSealedPayload(event.content, undefined, toSealedSources(event.sources)),
-          stepId
-        )
-        await this.openStep({ stepId, stepType: AgentStepTypes.MESSAGE_SENT, ...sealed })
-        await this.deps.sendStep({
-          stepId,
-          stepType: AgentStepTypes.MESSAGE_SENT,
-          messageId: event.messageId,
-          ...sealed,
-        })
-        return
-      }
-    }
-  }
-
-  /**
-   * Emit the leading CONTEXT step — the enclave's equivalent of the in-process
-   * persona-agent's CONTEXT_RECEIVED step ("Triggered by: …"). The runtime never
-   * emits this for the initial trigger (only `context:received` for mid-turn new
-   * messages), so the enclave's orchestration layer (run-turn) drives it once,
-   * before the loop. The message body is the decrypted prompt, sealed under the
-   * SSK exactly like a step; id/author/time are clear metadata. Content shape
-   * matches the in-process step so the same frontend renderer applies.
-   */
-  async emitContext(trigger: {
-    messageId: string
-    authorName: string
-    authorType: string
-    createdAt: string
-    content: string
-  }): Promise<void> {
+  async record(step: TraceStepRecord): Promise<void> {
+    // Content is known up front: open + finalize the same step back-to-back.
+    // One seal, AAD-bound to this step's id, reused for both frames — so an
+    // open trace dialog sees the content (and sources) the moment the step opens.
     const stepId = mintStepId()
     const sealed = await this.seal(
-      JSON.stringify({
-        messages: [
-          {
-            messageId: trigger.messageId,
-            authorName: trigger.authorName,
-            authorType: trigger.authorType,
-            createdAt: trigger.createdAt,
-            content: trigger.content,
-            isTrigger: true,
-          },
-        ],
-      }),
+      serializeSealedPayload(step.content, undefined, toSealedSources(step.sources)),
       stepId
     )
-    await this.openStep({ stepId, stepType: AgentStepTypes.CONTEXT_RECEIVED, ...sealed })
-    await this.deps.sendStep({ stepId, stepType: AgentStepTypes.CONTEXT_RECEIVED, ...sealed })
+    await this.openStep({ stepId, stepType: step.stepType, ...sealed })
+    await this.deps.sendStep({
+      stepId,
+      stepType: step.stepType,
+      ...sealed,
+      ...(step.messageId !== undefined ? { messageId: step.messageId } : {}),
+      ...(step.durationMs !== undefined ? { durationMs: step.durationMs } : {}),
+    })
   }
 
-  /**
-   * Emit the trailing TURN_DIGEST step (C-1) — the enclave's twin of the
-   * in-process post-run digest persist. Driven by run-turn after the loop ends
-   * (the runtime never emits a digest event itself); the content is the digest
-   * JSON, sealed under the SSK exactly like any step and shipped over the same
-   * `/steps` callback, so the backend persists ciphertext it can't read and a
-   * later assignment can ship it back as `recentDigests`.
-   */
-  async emitTurnDigest(content: string): Promise<void> {
+  async open(params: { stepType: AgentStepType }): Promise<EnclaveOpenStep> {
+    // Open the in-flight step with no content (the result isn't known yet);
+    // the minted id is the handle, so the finalize lands on the same row.
     const stepId = mintStepId()
-    const sealed = await this.seal(content, stepId)
-    await this.openStep({ stepId, stepType: AgentStepTypes.TURN_DIGEST, ...sealed })
-    await this.deps.sendStep({ stepId, stepType: AgentStepTypes.TURN_DIGEST, ...sealed })
+    await this.openStep({ stepId, stepType: params.stepType })
+    return { stepId }
+  }
+
+  async complete(step: EnclaveOpenStep, final: TraceStepFinalize): Promise<void> {
+    const sealed = await this.seal(
+      serializeSealedPayload(final.content, undefined, toSealedSources(final.sources)),
+      step.stepId
+    )
+    await this.deps.sendStep({
+      stepId: step.stepId,
+      stepType: final.stepType,
+      ...sealed,
+      ...(final.messageId !== undefined ? { messageId: final.messageId } : {}),
+      ...(final.durationMs !== undefined ? { durationMs: final.durationMs } : {}),
+    })
+  }
+
+  async substep(params: {
+    stepType: AgentStepType
+    step: EnclaveOpenStep
+    text: string
+    snapshot: TraceSubstepEntry[]
+  }): Promise<void> {
+    // Mid-run phase text is derived from the encrypted prompt, so seal it under
+    // the SSK like a step, AAD-bound to the in-flight step. Two sealed payloads
+    // travel in one POST, mirroring the in-process emitSubstep + updateSubsteps:
+    // the single new phase (ephemeral, drives the live "Ariadne is …" indicator)
+    // and the running snapshot (persisted onto the step row so a refresh / open
+    // mid-run replays it).
+    const sealed = await this.seal(params.text, params.step.stepId)
+    const snapshot = await this.seal(JSON.stringify({ substeps: params.snapshot }), params.step.stepId)
+    await this.deps.sendSubstep({
+      stepType: params.stepType,
+      ...sealed,
+      stepId: params.step.stepId,
+      snapshotCiphertext: snapshot.ciphertext,
+      snapshotEnvelope: snapshot.envelope,
+    })
   }
 
   /**
@@ -278,6 +180,63 @@ export class EnclaveTraceObserver implements AgentObserver {
       aad: buildMessageAad({ streamId: this.deps.streamId, messageId: stepId, senderId: this.deps.senderId }),
     })
     return { ciphertext: bytesToBase64(sealed.ciphertext), envelope: sealed.envelope }
+  }
+}
+
+export class EnclaveTraceObserver implements AgentObserver {
+  private readonly projector: TraceProjector<EnclaveOpenStep>
+
+  constructor(deps: EnclaveTraceObserverDeps) {
+    this.projector = new TraceProjector(new EnclaveSealingSink(deps))
+  }
+
+  async handle(event: AgentEvent): Promise<void> {
+    await this.projector.handle(event)
+  }
+
+  /**
+   * Emit the leading CONTEXT step — the enclave's equivalent of the in-process
+   * persona-agent's CONTEXT_RECEIVED step ("Triggered by: …"). The runtime never
+   * emits this for the initial trigger (only `context:received` for mid-turn new
+   * messages), so the enclave's orchestration layer (run-turn) drives it once,
+   * before the loop. The message body is the decrypted prompt, sealed under the
+   * SSK exactly like a step; id/author/time are clear metadata. Content shape
+   * matches the in-process step so the same frontend renderer applies.
+   */
+  async emitContext(trigger: {
+    messageId: string
+    authorName: string
+    authorType: string
+    createdAt: string
+    content: string
+  }): Promise<void> {
+    await this.projector.record({
+      stepType: AgentStepTypes.CONTEXT_RECEIVED,
+      content: JSON.stringify({
+        messages: [
+          {
+            messageId: trigger.messageId,
+            authorName: trigger.authorName,
+            authorType: trigger.authorType,
+            createdAt: trigger.createdAt,
+            content: trigger.content,
+            isTrigger: true,
+          },
+        ],
+      }),
+    })
+  }
+
+  /**
+   * Emit the trailing TURN_DIGEST step (C-1) — the enclave's twin of the
+   * in-process post-run digest persist. Driven by run-turn after the loop ends
+   * (the runtime never emits a digest event itself); the content is the digest
+   * JSON, sealed under the SSK exactly like any step and shipped over the same
+   * `/steps` callback, so the backend persists ciphertext it can't read and a
+   * later assignment can ship it back as `recentDigests`.
+   */
+  async emitTurnDigest(content: string): Promise<void> {
+    await this.projector.record({ stepType: AgentStepTypes.TURN_DIGEST, content })
   }
 }
 

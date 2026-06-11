@@ -36,7 +36,7 @@ import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
-import { AgentRuntime, SessionTraceObserver, OtelObserver, type NewMessageInfo } from "./runtime"
+import { AgentRuntime, createSessionTraceProjector, OtelObserver, type NewMessageInfo } from "./runtime"
 import { TurnDigestCollector, generateTurnDigest } from "@threa/agent-runtime"
 import type { SessionTrace } from "./trace-emitter"
 import {
@@ -401,7 +401,7 @@ export class PersonaAgent {
               // Deliberately no `sources` here: the message_edited event has
               // never carried them, and the rerun's citations still reach their
               // one render surface — the session trace — via the runtime's
-              // message:edited event (SessionTraceObserver persists
+              // message:edited event (the trace projector persists
               // event.sources). E2E streams never take this path: editMessage
               // refuses them and the catch below falls through to
               // createMessage, which seals sources into the payload.
@@ -620,7 +620,7 @@ export class PersonaAgent {
             },
           },
           observers: [
-            new SessionTraceObserver(trace),
+            createSessionTraceProjector(trace),
             digestCollector,
             new OtelObserver({
               sessionId: session.id,

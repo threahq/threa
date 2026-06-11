@@ -224,7 +224,7 @@ export class ActiveStep {
   /**
    * Persist a running substep log to the step's content field.
    *
-   * Called by `SessionTraceObserver` on every `tool:progress` event so that a
+   * Called by `SessionTraceStepSink` on every `tool:progress` event so that a
    * browser refresh mid-execution sees the phases collected so far rather than
    * a gap. Writes a minimal `{ substeps: [...] }` JSON; `complete()` later
    * overwrites with the tool's full content (which includes the same substeps

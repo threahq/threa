@@ -6,7 +6,7 @@ export { PersonaAgent } from "./persona-agent"
 export type { PersonaAgentDeps, PersonaAgentInput, PersonaAgentResult, WithSessionResult } from "./persona-agent"
 
 // Runtime (composable agent loop, observers, tool definitions)
-export { defineAgentTool, toVercelToolDefs, AgentRuntime, SessionTraceObserver, OtelObserver } from "./runtime"
+export { defineAgentTool, toVercelToolDefs, AgentRuntime, createSessionTraceProjector, OtelObserver } from "./runtime"
 export type {
   AgentTool,
   AgentToolConfig,

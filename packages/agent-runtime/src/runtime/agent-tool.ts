@@ -16,8 +16,7 @@ export interface AgentToolResult {
    * media type (e.g. a PDF the model reads natively).
    */
   multimodal?: Array<
-    | { type: "image"; url: string }
-    | { type: "file"; data: string; mediaType: string; filename?: string }
+    { type: "image"; url: string } | { type: "file"; data: string; mediaType: string; filename?: string }
   >
   /** Citation sources accumulated and attached to sent messages */
   sources?: SourceItem[]
@@ -47,7 +46,7 @@ export interface AgentToolConfig<TSchema extends z.ZodTypeAny = z.ZodTypeAny> {
       /**
        * Emit an ephemeral substep text update. Tools that want to show live progress
        * during execution call this with human-readable phase text. The runtime forwards
-       * each call as a `tool:progress` AgentEvent which the SessionTraceObserver translates
+       * each call as a `tool:progress` AgentEvent which the TraceProjector translates
        * to a socket emission (no DB write). Persistence happens at tool completion via the
        * trace.formatContent path if the tool's result embeds the substep log.
        */
