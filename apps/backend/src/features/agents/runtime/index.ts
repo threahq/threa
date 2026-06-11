@@ -12,6 +12,11 @@ export {
   type AgentObserver,
   OtelObserver,
   AgentRuntime,
+  TraceProjector,
+  type TraceStepSink,
+  type TraceStepRecord,
+  type TraceStepFinalize,
+  type TraceSubstepEntry,
   mergeSourceItems,
   type AgentRuntimeConfig,
   type AgentRuntimeResult,
@@ -20,6 +25,7 @@ export {
   type GeneralResearchResult,
 } from "@threa/agent-runtime"
 
-// Backend-only observer: stays here because it writes to PostgreSQL via the
-// session trace emitter.
-export { SessionTraceObserver } from "./session-trace-observer"
+// Backend-only sink: stays here because it writes to PostgreSQL via the
+// session trace emitter. The event → step state machine is the shared
+// TraceProjector above.
+export { SessionTraceStepSink, createSessionTraceProjector } from "./session-trace-sink"

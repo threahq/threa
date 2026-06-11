@@ -14,6 +14,16 @@ export type { AgentObserver } from "./agent-observer"
 export { MAX_MESSAGE_CHARS, truncateMessages } from "./truncation"
 export { protectToolOutputText, protectToolOutputBlocks, type MultimodalContentBlock } from "./tool-trust-boundary"
 export { mergeSourceItems } from "./agent-runtime"
+// The shared AgentEvent → trace-step state machine — dependency-light (types
+// only), so the enclave projects the exact same trace lifecycle as the
+// in-process companion and differs only in its sealing sink.
+export {
+  TraceProjector,
+  type TraceStepSink,
+  type TraceStepRecord,
+  type TraceStepFinalize,
+  type TraceSubstepEntry,
+} from "./trace-projector"
 // Turn digests (C-1) — dependency-light (no AI provider layer), so the enclave
 // runs the same collector/generator/formatter as the in-process companion.
 export {

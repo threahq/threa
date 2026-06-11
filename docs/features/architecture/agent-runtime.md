@@ -10,7 +10,7 @@ entry_points:
   - apps/backend/src/features/agents/companion/session.ts
   - apps/backend/src/features/agents/companion-outbox-handler.ts
   - apps/backend/src/features/agents/built-in-agents.ts
-  - apps/backend/src/features/agents/runtime/session-trace-observer.ts
+  - apps/backend/src/features/agents/runtime/session-trace-sink.ts
 public_site: false
 summary: >
   The loop that runs a persona against a stream: read the conversation, call tools,
@@ -91,11 +91,14 @@ have no `stream_members` row, so the message is written with an explicit access 
 
 **Traces are events turned into rows.** Everything the loop does (`tool:start`,
 `tool:progress`, `tool:complete`, `message:sent`, and so on, defined in `agent-events.ts`)
-is emitted to observers. `SessionTraceObserver` (`runtime/session-trace-observer.ts:26`) is
-the one that matters in production: it creates a persisted step row at `tool:start` so a
-mid-run refresh shows the in-progress step (`session-trace-observer.ts:52`), updates it at
-`tool:complete`, and pushes live progress to the socket through `trace-emitter.ts`. The
-activity card and the step-by-step trace the user sees are this stream of rows.
+is emitted to observers. The shared `TraceProjector`
+(`packages/agent-runtime/src/runtime/trace-projector.ts`) is the one that matters in
+production: it opens a persisted step at `tool:start` so a mid-run refresh shows the
+in-progress step, finalizes it at `tool:complete`, and hands persistence to an injected
+sink — the backend's `SessionTraceStepSink` (`runtime/session-trace-sink.ts`) pushes rows
+and live progress to the socket through `trace-emitter.ts`; the enclave and bot-invocation
+surfaces run the same projector over their own sinks. The activity card and the
+step-by-step trace the user sees are this stream of rows.
 
 If you only need the mental model, stop here. The rest is the behavior that makes it correct
 and safe.
@@ -210,5 +213,5 @@ What does not exist today, stated plainly:
   `message:created`, applies the companion-mode and e2e gates, queues the `PERSONA_AGENT` job.
 - `apps/backend/src/features/agents/built-in-agents.ts`: personas as data (Ariadne, Empty
   Agent), the patch schema, and the e2e-capability gate.
-- `apps/backend/src/features/agents/runtime/session-trace-observer.ts`: turns loop events
-  into persisted trace steps and socket emissions.
+- `apps/backend/src/features/agents/runtime/session-trace-sink.ts`: the backend sink the
+  shared `TraceProjector` drives — persists trace steps and socket emissions.

@@ -15,6 +15,13 @@ export {
   type ToolWorkRecord,
   type TurnDigestPromptEntry,
 } from "./runtime/turn-digest"
+export {
+  TraceProjector,
+  type TraceStepSink,
+  type TraceStepRecord,
+  type TraceStepFinalize,
+  type TraceSubstepEntry,
+} from "./runtime/trace-projector"
 
 // Tools (web + internal)
 export { createWebSearchTool, type WebSearchInput, type WebSearchResult } from "./tools/web-search-tool"

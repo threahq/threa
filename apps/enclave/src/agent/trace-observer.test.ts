@@ -247,8 +247,8 @@ describe("EnclaveTraceObserver", () => {
     expect(snapshot.substeps.every((s) => typeof s.at === "string")).toBe(true)
   })
 
-  it("broadcasts a substep without a snapshot when no step was opened (hidden tool)", async () => {
-    const { observer, ssk, substeps } = makeObserver()
+  it("skips a substep when no step was opened (hidden tool) — same as the in-process projector", async () => {
+    const { observer, substeps } = makeObserver()
 
     await observer.handle({
       type: "tool:progress",
@@ -258,10 +258,9 @@ describe("EnclaveTraceObserver", () => {
       substep: "phase",
     })
 
-    expect(substeps).toHaveLength(1)
-    expect(substeps[0]!.stepId).toBeUndefined()
-    expect(substeps[0]!.snapshotCiphertext).toBeUndefined()
-    expect(await open(ssk, substeps[0]!)).toBe("phase")
+    // Hidden means hidden: the whole lifecycle (including phases) stays out of
+    // the user-facing trace, exactly like the companion's plaintext path.
+    expect(substeps).toHaveLength(0)
   })
 
   it("drops a tool:complete with no matching tool:start (hidden tool)", async () => {
@@ -379,6 +378,18 @@ describe("EnclaveTraceObserver", () => {
       content: "Hi 👋",
       isTrigger: true,
     })
+  })
+
+  it("seals a message_edited step (shared projector: no event goes unhandled here, #5)", async () => {
+    const { observer, ssk, started, steps } = makeObserver()
+
+    await observer.handle({ type: "message:edited", messageId: "msg_reply", content: "Paris, France." })
+
+    expect(started).toHaveLength(1)
+    expect(steps).toHaveLength(1)
+    expect(steps[0]!.stepType).toBe("message_edited")
+    expect(steps[0]!.messageId).toBe("msg_reply")
+    expect(await open(ssk, steps[0]!)).toBe("Paris, France.")
   })
 
   it("ignores non-step lifecycle events", async () => {

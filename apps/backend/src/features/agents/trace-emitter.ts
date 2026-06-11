@@ -224,7 +224,7 @@ export class ActiveStep {
   /**
    * Persist a running substep log to the step's content field.
    *
-   * Called by `SessionTraceObserver` on every `tool:progress` event so that a
+   * Called by `SessionTraceStepSink` on every `tool:progress` event so that a
    * browser refresh mid-execution sees the phases collected so far rather than
    * a gap. Writes a minimal `{ substeps: [...] }` JSON; `complete()` later
    * overwrites with the tool's full content (which includes the same substeps
@@ -243,8 +243,14 @@ export class ActiveStep {
    * `SessionTrace.emitSubstep`.
    */
   async updateSubsteps(substeps: Array<{ text: string; at: string }>): Promise<void> {
+    // requireRunning guards the finalize race: the sink fires these writes
+    // without awaiting, so a delayed snapshot can reach the DB after
+    // `complete()` finalized the row — it must not overwrite the final
+    // content with a mid-run partial. Once finalized this no-ops, the same
+    // guard the enclave's substep-snapshot path uses.
     await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
       content: JSON.stringify({ substeps }),
+      requireRunning: true,
     })
   }
 

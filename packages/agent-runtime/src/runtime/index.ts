@@ -16,3 +16,10 @@ export {
   type ToolWorkRecord,
   type TurnDigestPromptEntry,
 } from "./turn-digest"
+export {
+  TraceProjector,
+  type TraceStepSink,
+  type TraceStepRecord,
+  type TraceStepFinalize,
+  type TraceSubstepEntry,
+} from "./trace-projector"
