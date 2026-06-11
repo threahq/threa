@@ -1,5 +1,5 @@
-import type { ReactNode } from "react"
-import { Check, Loader2, MessagesSquare, X } from "lucide-react"
+import { useCallback, useState, type ReactNode } from "react"
+import { Check, ChevronUp, Layers, Loader2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -9,111 +9,123 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useIsMobile } from "@/hooks/use-mobile"
 import type { ConversationWithStaleness } from "@threa/types"
 import { conversationColor, type ConversationOverlayContext, type ConversationRowAnnotation } from "./model"
 
 /**
- * Pill chip for one conversation: hue dot, topic, message count. Used both
- * at block starts in the timeline and inside the floating legend. Clicking
- * toggles focus on the conversation (dims everything else).
+ * Floating panel listing the conversations that currently have message rows
+ * on screen (fed by the overlay's IntersectionObserver tracking). Top-right,
+ * absolutely positioned (INV-21: toggling the overlay never reflows the
+ * timeline), collapsible to a compact pill — collapsed by default on mobile
+ * where horizontal space is scarce. Rows toggle focus on a conversation;
+ * X closes the overlay (drops the URL param).
  */
-function ConversationChip({
-  conversation,
-  colorIndex,
-  isFocused,
-  onToggleFocus,
-  className,
-}: {
-  conversation: ConversationWithStaleness
-  colorIndex: number
-  isFocused: boolean
-  onToggleFocus: (conversationId: string) => void
-  className?: string
-}) {
-  const topic = conversation.topicSummary || "Untitled conversation"
-  return (
-    <button
-      type="button"
-      onClick={() => onToggleFocus(conversation.id)}
-      aria-pressed={isFocused}
-      title={topic}
-      className={cn(
-        "inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-4",
-        "transition-colors hover:brightness-110",
-        className
-      )}
-      style={{
-        borderColor: conversationColor(colorIndex, isFocused ? 0.7 : 0.35),
-        backgroundColor: conversationColor(colorIndex, isFocused ? 0.16 : 0.07),
-        color: conversationColor(colorIndex),
-      }}
-    >
-      <span
-        aria-hidden
-        className="h-1.5 w-1.5 shrink-0 rounded-full"
-        style={{ backgroundColor: conversationColor(colorIndex) }}
-      />
-      <span className="truncate">{topic}</span>
-      <span className="shrink-0 tabular-nums opacity-60">{conversation.messageIds.length}</span>
-    </button>
-  )
-}
-
-/**
- * Floating legend pill listing the stream's conversations in palette order.
- * Absolutely positioned (INV-21: no layout shift when toggling), mirroring
- * the "Loading older messages" float. Chips toggle focus; X closes the
- * overlay (drops the URL param).
- */
-export function ConversationLegend({
+export function ConversationOverlayPanel({
   overlay,
+  inViewConversations,
   isSearchOpen,
   onClose,
 }: {
   overlay: ConversationOverlayContext
+  inViewConversations: ConversationWithStaleness[]
   isSearchOpen: boolean
   onClose: () => void
 }) {
+  const isMobile = useIsMobile()
+  // Collapsed by default on mobile; the user's explicit choice wins once made.
+  const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null)
+  const collapsed = userCollapsed ?? isMobile
   const { model, focusedConversationId, onToggleFocus } = overlay
+
   return (
     <div
-      data-testid="conversation-legend"
-      className={cn(
-        "absolute left-1/2 z-20 w-max max-w-[min(92%,44rem)] -translate-x-1/2",
-        isSearchOpen ? "top-14" : "top-2"
-      )}
+      data-testid="conversation-overlay-panel"
+      className={cn("absolute right-2 z-20 flex justify-end", isSearchOpen ? "top-14" : "top-2")}
     >
-      <div className="flex items-center gap-1 rounded-full border border-border/60 bg-background/95 py-1 pl-3 pr-1 shadow-md backdrop-blur-sm">
-        <MessagesSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        <div className="flex items-center gap-1 overflow-x-auto px-1 scrollbar-thin">
-          {model.conversations.length === 0 ? (
-            <span className="whitespace-nowrap px-1 text-xs text-muted-foreground">No conversations detected yet</span>
-          ) : (
-            model.conversations.map((conversation) => (
-              <ConversationChip
-                key={conversation.id}
-                conversation={conversation}
-                colorIndex={model.colorIndexById.get(conversation.id) ?? 0}
-                isFocused={focusedConversationId === conversation.id}
-                onToggleFocus={onToggleFocus}
-                className={cn(
-                  "max-w-[11rem] shrink-0",
-                  focusedConversationId != null && focusedConversationId !== conversation.id && "opacity-50"
-                )}
-              />
-            ))
-          )}
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 shrink-0 rounded-full"
-          onClick={onClose}
-          aria-label="Hide conversation overlay"
+      {collapsed ? (
+        <button
+          type="button"
+          aria-label="Show conversations in view"
+          onClick={() => setUserCollapsed(false)}
+          className="flex items-center gap-1.5 rounded-full border border-border/60 bg-background/95 px-2.5 py-1.5 shadow-md backdrop-blur-sm transition-colors hover:bg-accent"
         >
-          <X className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+          <Layers className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+          {inViewConversations.slice(0, 6).map((conversation) => (
+            <span
+              key={conversation.id}
+              aria-hidden
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: conversationColor(model.colorIndexById.get(conversation.id) ?? 0) }}
+            />
+          ))}
+        </button>
+      ) : (
+        <div className="w-64 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border/60 bg-popover/95 shadow-lg backdrop-blur-sm">
+          <div className="flex items-center gap-0.5 border-b border-border/40 py-1 pl-3 pr-1">
+            <span className="flex-1 truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Conversations in view
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 rounded-full"
+              onClick={() => setUserCollapsed(true)}
+              aria-label="Collapse conversations panel"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 rounded-full"
+              onClick={onClose}
+              aria-label="Hide conversation overlay"
+            >
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <div className="max-h-64 overflow-y-auto p-1 scrollbar-thin">
+            {inViewConversations.length === 0 ? (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                {model.conversations.length === 0 ? "No conversations detected yet" : "No conversations in view"}
+              </p>
+            ) : (
+              inViewConversations.map((conversation) => {
+                const colorIndex = model.colorIndexById.get(conversation.id) ?? 0
+                const isFocused = focusedConversationId === conversation.id
+                return (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    onClick={() => onToggleFocus(conversation.id)}
+                    aria-pressed={isFocused}
+                    title={conversation.topicSummary ?? undefined}
+                    className={cn(
+                      "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors hover:bg-accent",
+                      isFocused && "font-medium",
+                      focusedConversationId != null && !isFocused && "opacity-50"
+                    )}
+                    style={isFocused ? { backgroundColor: conversationColor(colorIndex, 0.12) } : undefined}
+                  >
+                    <span
+                      aria-hidden
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: conversationColor(colorIndex) }}
+                    />
+                    <span className="min-w-0 flex-1 truncate">
+                      {conversation.topicSummary || "Untitled conversation"}
+                    </span>
+                    <span className="shrink-0 tabular-nums text-muted-foreground">
+                      {conversation.messageIds.length}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -151,13 +163,14 @@ function RowTint({ colorIndex }: { colorIndex: number | null }) {
  *
  * - hue rail + soft wash for the row's primary conversation (dotted muted
  *   rail when unassigned)
- * - topic chip above the first message of each contiguous block
- * - dimming when another conversation is focused via chip/legend
+ * - dimming when another conversation is focused via the in-view panel
  * - a hover swatch on the rail that opens the correction menu ("this belongs
  *   to …"), feeding boundary-extraction feedback
+ * - registers the row with the overlay's IntersectionObserver so the
+ *   in-view panel knows which conversations are on screen
  *
- * All decoration is absolutely positioned or stacked above/below the row —
- * the message itself never moves when the overlay toggles (INV-21).
+ * All decoration is absolutely positioned — the message itself never moves
+ * when the overlay toggles (INV-21).
  */
 export function ConversationOverlayRow({
   overlay,
@@ -170,29 +183,61 @@ export function ConversationOverlayRow({
   messageId: string
   children: ReactNode
 }) {
-  const { model, focusedConversationId, onToggleFocus, onReassignMessage, pendingMessageId } = overlay
+  const { model, focusedConversationId, onReassignMessage, pendingMessageId, observeRow } = overlay
   const conversation = annotation.conversationId ? model.conversationsById.get(annotation.conversationId) : undefined
+  const conversationId = conversation?.id ?? null
   const colorIndex = conversation ? (model.colorIndexById.get(conversation.id) ?? 0) : null
   const isDimmed = focusedConversationId != null && annotation.conversationId !== focusedConversationId
   const isPending = pendingMessageId === messageId
 
+  // React 19 ref-callback cleanup: registration is undone when the row
+  // unmounts or its conversation changes (reassignment). MUST be memoized —
+  // an inline ref callback gets a fresh identity every render, so React
+  // re-runs cleanup+register each time. Registering empties then async-refills
+  // the observer's visible set, and the resulting panel state update renders
+  // this row again — an oscillation that keeps the in-view panel empty.
+  const registerRow = useCallback(
+    (element: HTMLElement | null) => {
+      if (!element || !conversationId) return
+      return observeRow(element, conversationId)
+    },
+    [observeRow, conversationId]
+  )
+
   return (
     <div className={cn("transition-opacity duration-200", isDimmed && "opacity-40 saturate-50")}>
-      {annotation.blockStart && conversation && colorIndex != null && (
-        <div data-testid="conversation-block-chip" className="flex px-3 pt-3 sm:px-6">
-          {/* ml-11 = avatar column (32px) + gap (12px): chips align with message text */}
-          <ConversationChip
-            conversation={conversation}
-            colorIndex={colorIndex}
-            isFocused={focusedConversationId === conversation.id}
-            onToggleFocus={onToggleFocus}
-            className="ml-11 max-w-[70%]"
-          />
-        </div>
-      )}
-      <div data-testid="conversation-overlay-row" className="group/convrow relative">
+      <div data-testid="conversation-overlay-row" className="group/convrow relative" ref={registerRow}>
         {children}
         <RowTint colorIndex={colorIndex} />
+        {annotation.blockStart && conversation && colorIndex != null && (
+          // Floating topic label on the first message of each contiguous
+          // block. Absolutely positioned over the row's top-right corner so
+          // it adds no height (INV-21) — toggling the overlay must not move
+          // a single message. Purely informational (focus/corrections live
+          // in the panel and the rail swatch); fades on row hover to hand
+          // the corner to the message hover toolbar.
+          <span
+            data-testid="conversation-block-chip"
+            title={conversation.topicSummary ?? undefined}
+            className={cn(
+              "pointer-events-none absolute right-3 top-1.5 z-[5] sm:right-4",
+              "inline-flex max-w-[40%] items-center gap-1.5 rounded-full border px-2 py-0.5",
+              "bg-background/85 text-[10px] font-medium leading-4 shadow-sm backdrop-blur-sm",
+              "transition-opacity group-hover/convrow:opacity-0"
+            )}
+            style={{
+              borderColor: conversationColor(colorIndex, 0.35),
+              color: conversationColor(colorIndex),
+            }}
+          >
+            <span
+              aria-hidden
+              className="h-1.5 w-1.5 shrink-0 rounded-full"
+              style={{ backgroundColor: conversationColor(colorIndex) }}
+            />
+            <span className="truncate">{conversation.topicSummary || "Untitled conversation"}</span>
+          </span>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

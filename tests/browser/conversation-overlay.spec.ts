@@ -2,9 +2,10 @@ import { test, expect, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, generateTestId } from "./helpers"
 
 /**
- * Conversation overlay E2E: toggle the overlay in a channel, see messages
- * grouped by conversation (legend + topic chips + colored rails), focus a
- * conversation from the legend, and correct a message's conversation via the
+ * Conversation overlay E2E: toggle the overlay in a channel without shifting
+ * the timeline layout (decoration is rails/washes + a floating top-right
+ * panel of in-view conversations), focus a conversation from the panel,
+ * collapse/expand the panel, and correct a message's conversation via the
  * rail swatch menu (which must recolor live through the reassign endpoint +
  * socket events).
  *
@@ -21,7 +22,7 @@ async function sendChannelMessage(page: Page, text: string): Promise<void> {
   await expect(page.locator("[data-editor-zone='main']").getByText(text)).toBeVisible({ timeout: 10000 })
 }
 
-test("conversation overlay shows groups, focuses, and applies corrections", async ({ page }) => {
+test("conversation overlay shows in-view groups without layout shift and applies corrections", async ({ page }) => {
   test.setTimeout(120000)
 
   const testId = generateTestId()
@@ -34,53 +35,71 @@ test("conversation overlay shows groups, focuses, and applies corrections", asyn
   await sendChannelMessage(page, `${topicA}. Vi behover boka lokal snart.`)
   await sendChannelMessage(page, `${topicB}. Safari-anvandare kommer inte in.`)
 
+  const rowA = page.locator("div[data-event-id][data-message-id]").filter({ hasText: topicA })
+  const yBeforeToggle = (await rowA.boundingBox())!.y
+
   // Toggle the overlay from the stream header. State is URL-derived.
   await page.getByRole("button", { name: "Conversation overlay" }).click()
   await expect(page).toHaveURL(/convOverlay=on/)
 
-  // Legend appears and fills with one chip per conversation as the stub
-  // extractor's assignments arrive (live via conversation:created events),
-  // and each conversation gets a block-start chip in the timeline.
-  const legend = page.getByTestId("conversation-legend")
-  const legendChipA = legend.getByRole("button", { name: new RegExp(topicA) })
+  // The floating panel fills with the conversations whose rows are on screen
+  // (live via conversation:created events + IntersectionObserver tracking).
+  const panel = page.getByTestId("conversation-overlay-panel")
+  const panelRowA = panel.getByRole("button", { name: new RegExp(topicA) })
+  const panelRowB = panel.getByRole("button", { name: new RegExp(topicB) })
+  await expect(panelRowA).toBeVisible({ timeout: 30000 })
+  await expect(panelRowB).toBeVisible({ timeout: 30000 })
+
+  // Each conversation block gets a floating topic chip on its first message.
   const blockChips = page.getByTestId("conversation-block-chip")
-  await expect(legendChipA).toBeVisible({ timeout: 30000 })
-  await expect(legend.getByRole("button", { name: new RegExp(topicB) })).toBeVisible({ timeout: 30000 })
-  await expect(blockChips.filter({ hasText: topicA })).toHaveCount(1, { timeout: 30000 })
-  await expect(blockChips.filter({ hasText: topicB })).toHaveCount(1, { timeout: 30000 })
+  await expect(blockChips.filter({ hasText: topicA })).toHaveCount(1)
+  await expect(blockChips.filter({ hasText: topicB })).toHaveCount(1)
+
+  // The decoration must not reflow the timeline: same row, same position.
+  const yAfterToggle = (await rowA.boundingBox())!.y
+  expect(Math.abs(yAfterToggle - yBeforeToggle)).toBeLessThan(0.5)
 
   await page.screenshot({ path: test.info().outputPath("overlay-on.png") })
 
   // Overlay survives a reload (INV-59: view state lives in the URL).
   await page.reload()
-  await expect(legendChipA).toBeVisible({ timeout: 30000 })
+  await expect(panelRowA).toBeVisible({ timeout: 30000 })
 
-  // Focus conversation A from the legend: chip reports pressed state and
+  // Panel collapses to a compact pill and expands back.
+  await panel.getByRole("button", { name: "Collapse conversations panel" }).click()
+  const expandPill = panel.getByRole("button", { name: "Show conversations in view" })
+  await expect(expandPill).toBeVisible()
+  await expect(panelRowA).toHaveCount(0)
+  await expandPill.click()
+  await expect(panelRowA).toBeVisible()
+
+  // Focus conversation A from the panel: row reports pressed state and
   // message rows of other conversations dim.
-  await legendChipA.click()
-  await expect(legendChipA).toHaveAttribute("aria-pressed", "true")
+  await panelRowA.click()
+  await expect(panelRowA).toHaveAttribute("aria-pressed", "true")
   const dimmedRowB = page.locator("[data-editor-zone='main'] .opacity-40").filter({ hasText: topicB })
   await expect(dimmedRowB.first()).toBeVisible()
   await page.screenshot({ path: test.info().outputPath("overlay-focused.png") })
   // Unfocus.
-  await legendChipA.click()
-  await expect(legendChipA).toHaveAttribute("aria-pressed", "false")
+  await panelRowA.click()
+  await expect(panelRowA).toHaveAttribute("aria-pressed", "false")
 
   // Correct message B into conversation A via the rail swatch menu.
-  const rowB = page.getByTestId("conversation-overlay-row").filter({ hasText: topicB })
-  await rowB.getByRole("button", { name: "Correct conversation for this message" }).click()
+  const overlayRowB = page.getByTestId("conversation-overlay-row").filter({ hasText: topicB })
+  await overlayRowB.getByRole("button", { name: "Correct conversation for this message" }).click()
   await page.screenshot({ path: test.info().outputPath("overlay-menu.png") })
   await page.getByRole("menuitem", { name: new RegExp(topicA) }).click()
 
-  // Message B now belongs to conversation A: its block-start chip for topic B
-  // disappears from the timeline, and conversation A's legend chip counts 2.
-  await expect(blockChips.filter({ hasText: topicB })).toHaveCount(0, { timeout: 15000 })
-  await expect(legend.getByRole("button", { name: new RegExp(`${topicA} 2`) })).toBeVisible({ timeout: 15000 })
+  // Message B now belongs to conversation A: conversation A's panel row
+  // counts 2, conversation B (no rows left on screen) drops from the
+  // in-view panel, and B's floating chip leaves the timeline.
+  await expect(panel.getByRole("button", { name: new RegExp(`${topicA} 2`) })).toBeVisible({ timeout: 15000 })
+  await expect(panelRowB).toHaveCount(0, { timeout: 15000 })
+  await expect(blockChips.filter({ hasText: topicB })).toHaveCount(0)
   await page.screenshot({ path: test.info().outputPath("overlay-reassigned.png") })
 
-  // Close from the legend: overlay decorations and URL param drop.
-  await page.getByRole("button", { name: "Hide conversation overlay" }).click()
+  // Close from the panel: overlay decorations and URL param drop.
+  await panel.getByRole("button", { name: "Hide conversation overlay" }).click()
   await expect(page).not.toHaveURL(/convOverlay/)
-  await expect(legend).toHaveCount(0)
-  await expect(blockChips).toHaveCount(0)
+  await expect(panel).toHaveCount(0)
 })

@@ -65,7 +65,7 @@ import {
   type TimelineItemRenderContext,
   type BatchTimelineState,
 } from "./event-list"
-import { ConversationLegend } from "./conversation-overlay/conversation-overlay"
+import { ConversationOverlayPanel } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlay } from "./conversation-overlay/use-conversation-overlay"
 import type { ConversationOverlayContext } from "./conversation-overlay/model"
 import { MessageInput } from "./message-input"
@@ -322,7 +322,7 @@ export function StreamContent({
   const supportsConversationOverlay =
     !isDraft && (stream?.type === StreamTypes.CHANNEL || stream?.type === StreamTypes.DM)
   const conversationOverlayActive = supportsConversationOverlay && searchParams.get("convOverlay") === "on"
-  const conversationOverlay = useConversationOverlay({
+  const { context: conversationOverlay, inViewConversations } = useConversationOverlay({
     workspaceId,
     streamId,
     enabled: conversationOverlayActive,
@@ -1436,8 +1436,9 @@ export function StreamContent({
               )}
               {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
               {activeConversationOverlay && (
-                <ConversationLegend
+                <ConversationOverlayPanel
                   overlay={activeConversationOverlay}
+                  inViewConversations={inViewConversations}
                   isSearchOpen={isSearchOpen}
                   onClose={closeConversationOverlay}
                 />

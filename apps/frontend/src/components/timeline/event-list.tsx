@@ -179,12 +179,14 @@ export function annotateAuthorGroups(items: TimelineItem[]): TimelineItem[] {
 /**
  * Stamps message timeline items with their primary-conversation membership
  * for the conversation overlay. `blockStart` marks the first message of each
- * contiguous run of one conversation — that's where the topic chip renders.
+ * contiguous run of one conversation — that's where the floating topic chip
+ * renders.
  *
  * Non-message items (session/command cards, membership events) do not break
  * a run: a session card in the middle of a conversation shouldn't restart
  * the chip. Unassigned messages (extraction pending, or membership unknown)
- * carry `conversationId: null` and never start a block.
+ * carry `conversationId: null`, render the dotted "not placed yet" rail, and
+ * never start a block.
  *
  * Pure and export-only, mirroring `annotateAuthorGroups`.
  */

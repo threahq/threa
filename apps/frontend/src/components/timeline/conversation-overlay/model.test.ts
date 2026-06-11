@@ -116,7 +116,7 @@ describe("annotateConversationRows", () => {
     )
   }
 
-  it("marks block starts where the conversation changes", () => {
+  it("stamps each message with its conversation and marks block starts where it changes", () => {
     const result = annotations([messageItem("msg_1"), messageItem("msg_2"), messageItem("msg_3"), messageItem("msg_4")])
 
     expect(result).toEqual([

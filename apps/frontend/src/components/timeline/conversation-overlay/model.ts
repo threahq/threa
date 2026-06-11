@@ -63,7 +63,7 @@ export interface ConversationRowAnnotation {
   conversationId: string | null
   /**
    * True on the first message of a contiguous run of the same conversation —
-   * where the topic chip renders. Always false for unassigned rows.
+   * where the floating topic chip renders. Always false for unassigned rows.
    */
   blockStart: boolean
 }
@@ -71,11 +71,18 @@ export interface ConversationRowAnnotation {
 /** Shared overlay state threaded through `TimelineItemRenderContext`. */
 export interface ConversationOverlayContext {
   model: ConversationOverlayModel
-  /** Conversation being focused via the legend/chips; others dim. */
+  /** Conversation being focused via the in-view panel; others dim. */
   focusedConversationId: string | null
   onToggleFocus: (conversationId: string) => void
   /** User correction: move a message's primary membership. */
   onReassignMessage: (messageId: string, toConversationId: string) => void
   /** messageId of an in-flight correction, for pending affordance state. */
   pendingMessageId: string | null
+  /**
+   * Viewport tracking for the in-view panel: rows register their DOM node +
+   * conversation on mount and return the IntersectionObserver cleanup (React
+   * 19 ref-callback cleanup). Stable identity — observing does not re-render
+   * timeline rows.
+   */
+  observeRow: (element: HTMLElement, conversationId: string) => () => void
 }
