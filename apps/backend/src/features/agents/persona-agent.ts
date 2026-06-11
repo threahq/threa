@@ -13,7 +13,7 @@ import {
 } from "@threa/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
-import { StreamRepository } from "../streams"
+import { StreamPoliciesRepository, StreamRepository } from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository } from "./persona-repository"
@@ -43,7 +43,7 @@ import {
   type AgentRuntimeConfig,
   type NewMessageInfo,
 } from "./runtime"
-import { TurnDigestCollector, generateTurnDigest } from "@threa/agent-runtime"
+import { TurnDigestCollector, generateTurnDigest, negotiateCapabilities } from "@threa/agent-runtime"
 import type { SessionTrace } from "./trace-emitter"
 import {
   SUPERSEDE_RESPONSE_VALIDATOR_MAX_TOKENS,
@@ -216,12 +216,20 @@ export class PersonaAgent {
       const latestSequence = await StreamEventRepository.getLatestSequence(client, streamId)
       const triggerMessageRevision = await MessageVersionRepository.getCurrentRevision(client, messageId)
 
+      // Per-stream tool-privacy policy. Rows live on the non-thread root —
+      // threads inherit their root's policy, mirroring stream access (INV-62).
+      // For a channel mention the eager thread created below inherits from the
+      // channel (= this streamId) the same way.
+      const policyStreamId = stream.type === StreamTypes.THREAD ? (stream.rootStreamId ?? streamId) : streamId
+      const streamToolPolicy = await StreamPoliciesRepository.getToolPolicy(client, workspaceId, policyStreamId)
+
       return {
         skip: false as const,
         persona,
         stream,
         initialSequence: latestSequence ?? BigInt(0),
         triggerMessageRevision,
+        streamToolPolicy,
       }
     })
 
@@ -235,7 +243,7 @@ export class PersonaAgent {
       }
     }
 
-    const { persona, stream, initialSequence, triggerMessageRevision } = precheck
+    const { persona, stream, initialSequence, triggerMessageRevision, streamToolPolicy } = precheck
 
     // Step 2: For channel mentions, create thread eagerly so session events go there
     const isChannelMention = trigger === AgentTriggers.MENTION && stream.type === StreamTypes.CHANNEL
@@ -515,15 +523,20 @@ export class PersonaAgent {
             if (toolName.startsWith("linear_")) return Boolean(linearDeps)
             return true
           })
-          const researcherTools = buildToolSet({
-            enabledTools: researcherEnabledTools,
-            tavilyApiKey,
-            currentTime: agentContext.streamContext.temporal?.currentTime,
-            timezone: agentContext.streamContext.temporal?.timezone,
-            workspace: workspaceDeps,
-            github: githubDeps,
-            linear: linearDeps,
-            supportsVision: false,
+          // The stream's tool policy folds over the sub-loop's toolset too —
+          // general_research must not reach surfaces the stream restricts.
+          const { tools: researcherTools } = negotiateCapabilities({
+            streamPolicy: streamToolPolicy,
+            tools: buildToolSet({
+              enabledTools: researcherEnabledTools,
+              tavilyApiKey,
+              currentTime: agentContext.streamContext.temporal?.currentTime,
+              timezone: agentContext.streamContext.temporal?.timezone,
+              workspace: workspaceDeps,
+              github: githubDeps,
+              linear: linearDeps,
+              supportsVision: false,
+            }),
           })
           const researchCostContext: CostContext = {
             workspaceId,
@@ -548,18 +561,24 @@ export class PersonaAgent {
             })
         }
 
-        const tools = buildToolSet({
-          enabledTools: persona.enabledTools,
-          tavilyApiKey,
-          currentTime: agentContext.streamContext.temporal?.currentTime,
-          timezone: agentContext.streamContext.temporal?.timezone,
-          runWorkspaceAgent,
-          runGeneralResearch,
-          workspace: workspaceDeps,
-          reactions: reactionDeps,
-          github: githubDeps,
-          linear: linearDeps,
-          supportsVision: modelRegistry.supportsVision(persona.model),
+        // The per-stream tool policy gates the persona's toolset (one chokepoint
+        // shared with the enclave). The system prompt follows automatically:
+        // composeSystemPrompt derives tool prose from the surviving toolset.
+        const { tools } = negotiateCapabilities({
+          streamPolicy: streamToolPolicy,
+          tools: buildToolSet({
+            enabledTools: persona.enabledTools,
+            tavilyApiKey,
+            currentTime: agentContext.streamContext.temporal?.currentTime,
+            timezone: agentContext.streamContext.temporal?.timezone,
+            runWorkspaceAgent,
+            runGeneralResearch,
+            workspace: workspaceDeps,
+            reactions: reactionDeps,
+            github: githubDeps,
+            linear: linearDeps,
+            supportsVision: modelRegistry.supportsVision(persona.model),
+          }),
         })
 
         // Stub mode: send canned response, skip AI loop

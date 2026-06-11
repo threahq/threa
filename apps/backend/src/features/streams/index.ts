@@ -60,6 +60,8 @@ export type { StreamMember, UpdateStreamMemberParams } from "./member-repository
 export { StreamStateRepository } from "./state-repository"
 export type { MemoStreamState, StreamReadyToProcess } from "./state-repository"
 
+export { StreamPoliciesRepository } from "./policy-repository"
+
 // Display name utilities
 export { getEffectiveDisplayName, formatParticipantNames, needsAutoNaming } from "./display-name"
 export type { DisplayNameSource, DisplayNameContext, EffectiveDisplayName } from "./display-name"

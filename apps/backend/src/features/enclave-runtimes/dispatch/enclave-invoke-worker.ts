@@ -4,7 +4,7 @@ import { sessionId as newSessionId, eventId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
 import { withTransaction } from "../../../db"
 import { OutboxRepository } from "../../../lib/outbox"
-import { StreamEventRepository, StreamRepository } from "../../streams"
+import { StreamEventRepository, StreamPoliciesRepository, StreamRepository } from "../../streams"
 import { UserRepository } from "../../workspaces"
 import { UserPreferencesService } from "../../user-preferences"
 import type { EnclaveInvokeJobData, JobHandler } from "../../../lib/queue/job-queue"
@@ -104,7 +104,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const trigger = await MessageRepository.findById(pool, triggerId)
     if (!trigger || !trigger.ciphertext) return // gone, or not an E2E message
 
-    const [liveEiks, wraps, surrounding, rootStream, preferences, authors] = await Promise.all([
+    const [liveEiks, wraps, surrounding, rootStream, preferences, authors, allowedToolCategories] = await Promise.all([
       EnclaveRuntimesRepository.listLive(pool, ENCLAVE_RUNTIME_STALENESS_MS),
       // Root's wraps — the thread shares the root's SSK and has no wraps of its own.
       StreamE2eKeyWrapsRepository.listForStream(pool, workspaceId, e2eStreamId),
@@ -114,6 +114,8 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
         : Promise.resolve(triggerStream),
       userPreferencesService.getPreferences(workspaceId, trigger.authorId),
       UserRepository.findByIds(pool, workspaceId, [trigger.authorId]),
+      // Tool-privacy policy, keyed by the root like the rest of the E2E identity.
+      StreamPoliciesRepository.getToolPolicy(pool, workspaceId, e2eStreamId),
     ])
     if (!rootStream) return
     // Display name for the enclave's "Triggered by" CONTEXT step (metadata only).
@@ -182,6 +184,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       },
       replySenderId: ARIADNE_AGENT_ID,
       sessionId: sid,
+      allowedToolCategories,
       attachmentCiphertexts,
       recentDigests,
       // Ask the enclave to seal a title only for an untitled scratchpad: gate on

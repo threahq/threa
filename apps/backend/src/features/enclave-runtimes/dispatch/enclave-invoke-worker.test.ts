@@ -4,7 +4,7 @@ import type { Server } from "socket.io"
 import * as db from "../../../db"
 import * as agents from "../../agents"
 import { AgentSessionRepository } from "../../agents"
-import { StreamRepository, StreamEventRepository } from "../../streams"
+import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../../streams"
 import { OutboxRepository } from "../../../lib/outbox"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
@@ -28,7 +28,6 @@ const E2E: E2eStream = {
   ownerUserId: "usr_owner",
   ownerUserKeyId: "e2ek_owner",
   currentKeyGeneration: 1,
-  allowedToolCategories: null,
   hasSealedName: false,
 }
 const ENCLAVE_ACTOR: E2eStreamActor = { kind: "enclave", actorId: "enclave", keyId: null }
@@ -80,6 +79,7 @@ function arrangeDispatch() {
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
   spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
+  spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
   spyOn(UserPreferencesService.prototype, "getPreferences").mockResolvedValue({} as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
   spyOn(agents, "buildEnclaveSystemPrompt").mockResolvedValue("You are Ariadne.")
@@ -135,6 +135,7 @@ describe("createEnclaveInvokeWorker", () => {
         : { id: "stream_root", workspaceId: "ws_1", rootStreamId: null }) as never)
     const getE2e = spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue({ ...E2E, streamId: "stream_root" })
     const listWraps = spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([WRAP])
+    const getPolicy = spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
     const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
       id: "session_1",
       createdAt: new Date(),
@@ -152,15 +153,40 @@ describe("createEnclaveInvokeWorker", () => {
     })
     await worker(JOB)
 
-    // Key material (e2e row + wraps) is fetched against the root...
+    // Key material (e2e row + wraps) and the tool policy are fetched against the root...
     expect(getE2e).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
     expect(listWraps).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
+    expect(getPolicy).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
     // ...the assignment carries the root id, so the enclave unwraps under the
     // AAD the wraps were sealed with...
     const assignment = assignSession.mock.calls[0]![1] as { streamId: string }
     expect(assignment.streamId).toBe("stream_root")
     // ...but the session (and therefore Ariadne's reply) lands in the thread.
     expect(insertSession.mock.calls[0]![1]).toMatchObject({ streamId: "stream_1" })
+  })
+
+  it("threads the stream's tool-privacy policy from stream_policies onto the assignment", async () => {
+    arrangeDispatch()
+    spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(["web"])
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
+    })
+    await worker(JOB)
+
+    const assignment = assignSession.mock.calls[0]![1] as { allowedToolCategories?: unknown }
+    expect(assignment.allowedToolCategories).toEqual(["web"])
   })
 
   it("ships attachment ciphertext for the trigger AND recent history, trigger first", async () => {

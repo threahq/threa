@@ -12,7 +12,6 @@ const ROW = {
   owner_user_id: "usr_1",
   owner_user_key_id: "e2ek_01",
   current_key_generation: 0,
-  allowed_tool_categories: ["web"],
 }
 
 interface Captured {
@@ -84,7 +83,6 @@ describe("E2eStreamsRepository.getByStreamId", () => {
       ownerUserId: "usr_1",
       ownerUserKeyId: "e2ek_01",
       currentKeyGeneration: 0,
-      allowedToolCategories: ["web"],
       hasSealedName: false,
     })
   })
