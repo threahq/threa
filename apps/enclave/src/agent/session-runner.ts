@@ -75,6 +75,10 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     // populate with request/response content (the enclave never logs payloads).
     const errorName = err instanceof Error ? err.name : typeof err
     logger.error({ errorName, sessionId }, "Enclave session failed")
+    // Stop liveness refresh now, before the (awaited) fail ack — otherwise a
+    // hanging/slow `/fail` would keep beating `heartbeat_at` forward and push
+    // back the orphan-cleanup backstop. (`finally` clears it again; idempotent.)
+    clearInterval(heartbeat)
     // Ack the failure so the backend terminates the session now (clears the
     // inline indicator + open trace dialog) instead of waiting for orphan-cleanup.
     // Best-effort + scrubbed metadata only: if this can't land, heartbeats have
