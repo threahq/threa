@@ -185,9 +185,11 @@ describe("BotRuntimeService outbox emission", () => {
         botId: "bot_alice",
         maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
       })
-      // Each parked invocation is logged for operational visibility.
-      expect(warnSpy).toHaveBeenCalledTimes(1)
-      expect(warnSpy.mock.calls[0]?.[0]).toMatchObject({ invocationId: "inv_dead" })
+      // Each parked invocation is logged for operational visibility. Assert on
+      // the logged content, not the call count — parkExhausted can return any
+      // number of rows (INV-23).
+      const warnedInvocationIds = warnSpy.mock.calls.map((call) => (call[0] as { invocationId?: string }).invocationId)
+      expect(warnedInvocationIds).toContain("inv_dead")
     })
 
     it("does not emit when no row was available to claim", async () => {
@@ -372,7 +374,7 @@ describe("BotRuntimeService outbox emission", () => {
         createdAt: new Date("2026-05-26T11:00:00Z"),
         updatedAt: new Date("2026-05-26T11:45:00Z"),
       }
-      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
+      const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
         available: [makeInvocation()],
         ownedClaims: [],
       })
@@ -390,6 +392,10 @@ describe("BotRuntimeService outbox emission", () => {
       expect(result.available).toHaveLength(1)
       expect(result.activeActorByStream).toEqual([actor])
       expect(result.activeSessionLinks).toEqual([link])
+      // Bootstrap must apply the same attempt ceiling as the claim path, or it
+      // would re-advertise exhausted invocations even though claimOne refuses
+      // them. Pin the plumbing here so a dropped arg fails at the service layer.
+      expect(findSpy.mock.calls[0]?.[1]).toMatchObject({ maxAttempts: BOT_CLAIM_MAX_ATTEMPTS })
     })
 
     it("opens a REPEATABLE READ READ ONLY transaction so all reads share a snapshot", async () => {
