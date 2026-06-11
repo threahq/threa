@@ -76,8 +76,12 @@ export interface ConversationOverlayContext {
   onToggleFocus: (conversationId: string) => void
   /** User correction: move a message's primary membership. */
   onReassignMessage: (messageId: string, toConversationId: string) => void
-  /** messageId of an in-flight correction, for pending affordance state. */
-  pendingMessageId: string | null
+  /**
+   * messageIds with an in-flight correction, for pending affordance state.
+   * A set rather than the latest mutation's variables: two rapid corrections
+   * on different messages each keep their own pending affordance.
+   */
+  pendingMessageIds: ReadonlySet<string>
   /**
    * Viewport tracking for the in-view panel: rows register their DOM node +
    * conversation on mount and return the IntersectionObserver cleanup (React
