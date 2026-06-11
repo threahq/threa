@@ -459,12 +459,84 @@ conversions, no compaction worker, no per-connection replay machinery.
   a membership change is reflected on the next fetch.
 - E2EE passthrough: sealed payloads round-trip the log untouched.
 
+## Part 7: Background sync — fresh on reopen
+
+The recurring complaint: backgrounded or closed on a phone, the app reopens to stale
+data and visible loading. The goal is that by the time the user is looking at the
+screen, the data is already current — which means syncing _before_ the open whenever the
+platform allows it, and making the on-open catch-up cheap enough to hide when it
+doesn't.
+
+### What exists today, and why it's stuck
+
+`apps/frontend/src/sw.ts` already does push-triggered background prefetch, and its shape
+is the two-tier problem wearing a service-worker costume:
+
+- **Stream bootstrap**: the SW fetches and writes events **directly into IDB** — by
+  duplicating a slice of `stream-sync`'s apply logic (`_cachedAt` stamps, preview
+  derivation) inside the SW, a second implementation that has to be kept honest by hand.
+- **Workspace bootstrap**: the SW explicitly **can't** apply it — its own comment says
+  the apply pipeline "is large and lives in workspace-sync; running it from the SW would
+  duplicate that surface" — so it warms an HTTP cache (`PUSH_BOOTSTRAP_CACHE`) and hopes
+  the page's next GET hits it. The cache-interceptor approach has already bitten once
+  (#702 had to stop serving stream bootstraps from the push cache).
+
+The blocker isn't the platform; it's that today's "apply server state" logic is
+main-thread-shaped: spread across socket handlers, TanStack cache patches, and the
+bootstrap merge machinery. A service worker can't run it, so background sync can only
+nibble at the edges.
+
+### What the log changes
+
+Under v2, applying server state is `fetch /sync?after=cursor` → run **the same pure
+entry reducers** (log entries in, IDB writes out) the foreground uses. No React, no
+TanStack, no socket — exactly the dependency profile a service worker has. Background
+sync stops being a parallel implementation and becomes the same code on a different
+trigger:
+
+1. **Sync-on-push** (all platforms with push, including iOS 16.4+ installed PWAs):
+   every push the SW handles runs a catch-up from the persisted cursor inside
+   `event.waitUntil()` before showing the notification. Since most "open the app after
+   being away" moments on mobile are notification taps, the common path lands on
+   already-fresh IDB. This generalizes today's prefetch to _all_ data, not just the
+   notified stream.
+2. **Periodic Background Sync** (Chrome/Android installed PWAs only): register a
+   periodic tag and run the same catch-up on the browser's schedule (engagement-based,
+   roughly hours). Ambient freshness for the Android case; simply absent on iOS, which
+   is why sync-on-push is the primary mechanism, not this.
+3. **One-shot Background Sync** (already used by `queueBootstrapSync`): keeps the
+   retry-on-connectivity semantics for queued work; unchanged role.
+4. **On open, the catch-up is one request.** Coordinated loading already paints from IDB
+   immediately; with a single cursor the freshness pass is one `GET /sync?after=X`
+   applied behind the already-painted UI, instead of N bootstraps racing the reveal
+   gate. "Loading" survives only on cold start and compacted-cursor falls-back — both
+   snapshot paths.
+
+### Constraints to respect
+
+- **E2EE**: catch-up entries carry sealed payloads; the SW writes ciphertext to IDB
+  without needing keys, and decryption stays at render time behind the unlock gate,
+  exactly as today. Background sync must never require key material.
+- **Cross-context reactivity**: the SW writing IDB while a frozen page holds in-memory
+  caches means the resume path must re-read (we've been burned by cross-context
+  liveQuery behavior before — the #700-era SW interceptor lessons). The existing
+  page-resume hook becomes "compare cursor, re-read if it moved", which is cheap and
+  exact.
+- **iOS honesty**: no periodic sync, push requires a visible notification, installed-PWA
+  only. On iOS the achievable promise is "fresh when opened from a notification, one
+  cheap catch-up otherwise" — that is still a large improvement over today's
+  multi-bootstrap reveal.
+- **Battery/quota**: catch-up from a recent cursor is a small delta by construction;
+  push-piggybacked work runs inside the push's existing wake window.
+
 ## Recommendation
 
 1. **Build the single-cursor protocol as an evolution of the existing engine** (Part 2
    migration sketch). It is the only option that keeps E2EE, per-stream ACLs, Postgres
    ownership, offline writes, and the Bun stack all intact, and most of the prerequisites
-   already exist in this codebase.
+   already exist in this codebase. It is also what makes real background sync (Part 7)
+   implementable: a service worker can run "fetch from cursor, apply entries to IDB",
+   but it can never run today's main-thread apply pipeline.
 2. **First concrete step, valuable on its own:** the sync-log spine scoped in Part 6 —
    per-workspace sync ids assigned at the dispatcher, persisted to a `sync_log` table,
    plus a group-filtered catch-up endpoint. From that point a dropped socket emit is no
