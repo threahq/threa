@@ -760,7 +760,15 @@ export const BotRuntimeStatuses = {
   ERROR: "error",
 } as const satisfies Record<string, BotRuntimeStatus>
 
-export const BOT_INVOCATION_STATUSES = ["pending", "claimed", "completed", "failed", "cancelled", "expired"] as const
+export const BOT_INVOCATION_STATUSES = [
+  "pending",
+  "claimed",
+  "completed",
+  "failed",
+  "cancelled",
+  "expired",
+  "parked",
+] as const
 export type BotInvocationStatus = (typeof BOT_INVOCATION_STATUSES)[number]
 
 export const BotInvocationStatuses = {
@@ -770,6 +778,11 @@ export const BotInvocationStatuses = {
   FAILED: "failed",
   CANCELLED: "cancelled",
   EXPIRED: "expired",
+  // Terminal dead-letter state: the claim loop re-dispatched this invocation
+  // `BOT_CLAIM_MAX_ATTEMPTS` times without it ever completing (a runtime that
+  // keeps claiming and going silent), so it is parked instead of retried
+  // forever. No longer claimable; kept for inspection.
+  PARKED: "parked",
 } as const satisfies Record<string, BotInvocationStatus>
 
 export const BOT_INVOCATION_TRIGGERS = ["mention", "active-scratchpad", "session-control"] as const

@@ -23,6 +23,16 @@ export type RuntimeSessionLinkStatus = BotRuntimeSessionLinkStatus
  */
 export const BOT_RUNTIME_BIK_STALENESS_MS = 2 * 60 * 1000
 
+/**
+ * How many times the claim loop will re-dispatch a single invocation before it
+ * is parked (dead-lettered). Each claim increments `attempts`; a claim only
+ * comes back up for grabs when its TTL expires without a `/complete` or
+ * `/fail`, i.e. the runtime took the work and went silent. Bounding this
+ * matches the retry discipline every first-party queue job already has — a
+ * wedged runtime can't pin one invocation in an infinite re-claim loop.
+ */
+export const BOT_CLAIM_MAX_ATTEMPTS = 5
+
 export interface StreamActiveActor {
   id: string
   workspaceId: string
@@ -561,6 +571,7 @@ export const BotInvocationRepository = {
       claimToken: string
       supportedCapabilities: BotInvocationCapability[]
       claimTtlSeconds: number
+      maxAttempts: number
     }
   ): Promise<BotInvocation | null> {
     const result = await db.query<BotInvocationRow>(sql`WITH candidate AS (
@@ -579,6 +590,7 @@ export const BotInvocationRepository = {
           AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
           AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId ?? null})
           AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
+          AND attempts < ${params.maxAttempts}
         ORDER BY created_at ASC, id ASC
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -658,11 +670,40 @@ export const BotInvocationRepository = {
   },
 
   /**
+   * Dead-letter every invocation for this bot that has exhausted its claim
+   * budget — `claimed` with an expired claim and `attempts >= maxAttempts`, so
+   * `claimOne` will never pick it up again. Moves them to terminal `parked`
+   * with an explanatory `error_message` (preserving any failure the runtime
+   * already reported). Run on the claim loop so a wedged invocation is reaped
+   * at the same cadence the work is polled. Returns the rows it parked so the
+   * caller can log them. Idempotent under concurrent claimers: the
+   * `status = 'claimed'` predicate means a second runner's UPDATE no-ops once
+   * the first has flipped the row to `parked` (INV-20).
+   */
+  async parkExhausted(
+    db: Querier,
+    params: { workspaceId: string; botId: string; maxAttempts: number }
+  ): Promise<BotInvocation[]> {
+    const result = await db.query<BotInvocationRow>(sql`UPDATE bot_invocations
+      SET status = 'parked', error_message = COALESCE(error_message, 'Claim attempts exhausted without completion'), updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot'
+        AND actor_id = ${params.botId}
+        AND status = 'claimed'
+        AND claim_expires_at < NOW()
+        AND attempts >= ${params.maxAttempts}
+      RETURNING *`)
+    return result.rows.map(mapInvocation)
+  },
+
+  /**
    * Snapshot for `/bot` namespace bootstrap. Returns two disjoint lists:
    *  - `available`: rows this runtime could claim right now (pending, or
-   *    `claimed` with an expired claim) filtered to its capabilities and the
-   *    steering target. Used to replay anything that piled up while the
-   *    socket was offline.
+   *    `claimed` with an expired claim, and not yet attempt-exhausted)
+   *    filtered to its capabilities and the steering target. Mirrors
+   *    `claimOne`'s claimability predicate so a row advertised here is one a
+   *    follow-up claim can actually win. Used to replay anything that piled
+   *    up while the socket was offline.
    *  - `ownedClaims`: live `claimed` rows already owned by this instance.
    *    Returned regardless of `since` so a reconnect cannot drop work that
    *    is in flight.
@@ -681,6 +722,7 @@ export const BotInvocationRepository = {
       runtimeSessionId: string | null
       supportedCapabilities: BotInvocationCapability[]
       since: Date | null
+      maxAttempts: number
     }
   ): Promise<{ available: BotInvocation[]; ownedClaims: BotInvocation[] }> {
     const [availableResult, ownedClaimsResult] = await Promise.all([
@@ -692,6 +734,7 @@ export const BotInvocationRepository = {
           AND (target_instance_id IS NULL OR target_instance_id = ${params.instanceId})
           AND (target_runtime_session_id IS NULL OR target_runtime_session_id = ${params.runtimeSessionId})
           AND (status = 'pending' OR (status = 'claimed' AND claim_expires_at < NOW()))
+          AND attempts < ${params.maxAttempts}
           AND (${params.since}::timestamptz IS NULL OR created_at >= ${params.since})
         ORDER BY created_at ASC, id ASC
         LIMIT 200`),

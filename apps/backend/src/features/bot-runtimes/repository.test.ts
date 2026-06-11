@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { QueryConfig, QueryResult } from "pg"
 import type { Querier } from "../../db"
-import { BotRuntimeInstanceRepository } from "./repository"
+import { BOT_CLAIM_MAX_ATTEMPTS, BotInvocationRepository, BotRuntimeInstanceRepository } from "./repository"
 
 interface Captured {
   text: string | null
@@ -139,5 +139,120 @@ describe("BotRuntimeInstanceRepository.findLiveWithKeyForBot", () => {
     expect(captured.values).toContain(120_000)
     expect(result[0]?.publicKey).toBe(publicKey)
     expect(result[0]?.publicKeyId).toBe("bik_live")
+  })
+})
+
+// A complete invocation row so `mapInvocation` (which asserts known
+// actor_type/trigger/capability/status) doesn't throw.
+function makeInvocationRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "inv_1",
+    workspace_id: "ws_1",
+    root_stream_id: "stream_root",
+    active_stream_id: "stream_active",
+    source_message_id: "msg_src",
+    response_stream_id: "stream_resp",
+    actor_type: "bot",
+    actor_id: "bot_alice",
+    trigger: "active-scratchpad",
+    required_capability: "active-scratchpad",
+    prompt_markdown: "do a thing",
+    author_user_id: "usr_owner",
+    mentioned_actor_slugs: [],
+    status: "claimed",
+    target_instance_id: null,
+    target_runtime_session_id: null,
+    claimed_by_instance_id: "inst_42",
+    claim_token: "tok_1",
+    claim_expires_at: new Date(),
+    attempts: 1,
+    error_message: null,
+    metadata: {},
+    created_at: new Date(),
+    updated_at: new Date(),
+    completed_at: null,
+    ...overrides,
+  }
+}
+
+describe("BotInvocationRepository.claimOne", () => {
+  afterEach(() => mock.restore())
+
+  it("only claims invocations under the attempt budget and increments attempts", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeInvocationRow()])
+
+    await BotInvocationRepository.claimOne(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      runtimeKind: "pi-local",
+      claimToken: "tok_1",
+      supportedCapabilities: ["active-scratchpad"],
+      claimTtlSeconds: 60,
+      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+    })
+
+    // Bounded re-claim: a wedged invocation can't be picked up forever.
+    expect(captured.text).toContain("attempts < ")
+    expect(captured.text).toContain("attempts = attempts + 1")
+    expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
+  })
+})
+
+describe("BotInvocationRepository.parkExhausted", () => {
+  afterEach(() => mock.restore())
+
+  it("dead-letters expired claims at the attempt ceiling, preserving any reported error", async () => {
+    const captured: Captured = { text: null, values: null }
+    const db = createQuerier(captured, [makeInvocationRow({ status: "parked", attempts: BOT_CLAIM_MAX_ATTEMPTS })])
+
+    const parked = await BotInvocationRepository.parkExhausted(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+    })
+
+    expect(captured.text).toContain("status = 'parked'")
+    expect(captured.text).toContain("claim_expires_at < NOW()")
+    expect(captured.text).toContain("attempts >= ")
+    // Keep the runtime's own failure message if it reported one.
+    expect(captured.text).toContain("COALESCE(error_message,")
+    expect(captured.values).toContain(BOT_CLAIM_MAX_ATTEMPTS)
+    expect(parked[0]?.status).toBe("parked")
+  })
+})
+
+describe("BotInvocationRepository.findBootstrapInvocations", () => {
+  afterEach(() => mock.restore())
+
+  it("excludes attempt-exhausted rows from the available list (mirrors claimOne)", async () => {
+    // Two queries run via Promise.all (available + ownedClaims); capture every
+    // text so the assertion targets the available query specifically.
+    const texts: string[] = []
+    const db: Querier = {
+      query: mock(async (q) => {
+        texts.push((q as QueryConfig).text)
+        return { rows: [], rowCount: 0 } as unknown as QueryResult
+      }),
+    }
+
+    await BotInvocationRepository.findBootstrapInvocations(db, {
+      workspaceId: "ws_1",
+      botId: "bot_alice",
+      instanceId: "inst_42",
+      runtimeSessionId: null,
+      supportedCapabilities: ["active-scratchpad"],
+      since: null,
+      maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+    })
+
+    const availableQuery = texts.find((t) => t.includes("attempts < "))
+    expect(availableQuery).toBeDefined()
+    // The owned-claims query must NOT be attempt-bounded: a runtime keeps its
+    // own in-flight claim regardless of how many times it's been re-dispatched.
+    const ownedClaimsQuery = texts.find((t) => t.includes("claimed_by_instance_id ="))
+    expect(ownedClaimsQuery).toBeDefined()
+    expect(ownedClaimsQuery).not.toContain("attempts < ")
   })
 })

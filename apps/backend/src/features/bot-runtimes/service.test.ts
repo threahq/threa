@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { BotRuntimeService } from "./service"
 import {
+  BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,
   BotRuntimeSessionLinkRepository,
   StreamActiveActorRepository,
@@ -9,6 +10,7 @@ import {
   type StreamActiveActor,
 } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
+import { logger } from "../../lib/logger"
 import * as db from "../../db"
 
 const fakeQuerier = { query: mock(async () => ({ rows: [], rowCount: 0 })) }
@@ -128,7 +130,10 @@ describe("BotRuntimeService outbox emission", () => {
   describe("claimNextInvocation", () => {
     it("emits bot_invocation:claimed when a row is locked", async () => {
       patchWithTransaction()
-      spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(makeInvocation({ status: "claimed" }))
+      spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([])
+      const claimSpy = spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(
+        makeInvocation({ status: "claimed" })
+      )
       const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
       const service = new BotRuntimeService({ pool: fakePool })
@@ -142,6 +147,8 @@ describe("BotRuntimeService outbox emission", () => {
         claimTtlSeconds: 60,
       })
 
+      // The claim is bounded by the attempt ceiling.
+      expect(claimSpy.mock.calls[0]?.[1]).toMatchObject({ maxAttempts: BOT_CLAIM_MAX_ATTEMPTS })
       expect(insertSpy).toHaveBeenCalledTimes(1)
       expect(insertSpy.mock.calls[0]?.[1]).toBe("bot_invocation:claimed")
       const payload = insertSpy.mock.calls[0]?.[2] as unknown as Record<string, unknown>
@@ -150,6 +157,39 @@ describe("BotRuntimeService outbox emission", () => {
         botId: "bot_alice",
         invocationId: "inv_1",
       })
+    })
+
+    it("parks invocations that exhausted their claim budget before handing out fresh work", async () => {
+      patchWithTransaction()
+      const exhausted = makeInvocation({ id: "inv_dead", status: "parked", attempts: BOT_CLAIM_MAX_ATTEMPTS })
+      const parkSpy = spyOn(BotInvocationRepository, "parkExhausted").mockResolvedValue([exhausted])
+      spyOn(BotInvocationRepository, "claimOne").mockResolvedValue(null)
+      spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+      const warnSpy = spyOn(logger, "warn").mockReturnValue(undefined as never)
+
+      const service = new BotRuntimeService({ pool: fakePool })
+      const result = await service.claimNextInvocation({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        instanceId: "inst_42",
+        runtimeKind: "pi-local",
+        claimToken: "tok_1",
+        supportedCapabilities: ["active-scratchpad"],
+        claimTtlSeconds: 60,
+      })
+
+      expect(result).toBeNull()
+      expect(parkSpy).toHaveBeenCalledTimes(1)
+      expect(parkSpy.mock.calls[0]?.[1]).toMatchObject({
+        workspaceId: "ws_1",
+        botId: "bot_alice",
+        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+      })
+      // Each parked invocation is logged for operational visibility. Assert on
+      // the logged content, not the call count — parkExhausted can return any
+      // number of rows (INV-23).
+      const warnedInvocationIds = warnSpy.mock.calls.map((call) => (call[0] as { invocationId?: string }).invocationId)
+      expect(warnedInvocationIds).toContain("inv_dead")
     })
 
     it("does not emit when no row was available to claim", async () => {
@@ -334,7 +374,7 @@ describe("BotRuntimeService outbox emission", () => {
         createdAt: new Date("2026-05-26T11:00:00Z"),
         updatedAt: new Date("2026-05-26T11:45:00Z"),
       }
-      spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
+      const findSpy = spyOn(BotInvocationRepository, "findBootstrapInvocations").mockResolvedValue({
         available: [makeInvocation()],
         ownedClaims: [],
       })
@@ -352,6 +392,10 @@ describe("BotRuntimeService outbox emission", () => {
       expect(result.available).toHaveLength(1)
       expect(result.activeActorByStream).toEqual([actor])
       expect(result.activeSessionLinks).toEqual([link])
+      // Bootstrap must apply the same attempt ceiling as the claim path, or it
+      // would re-advertise exhausted invocations even though claimOne refuses
+      // them. Pin the plumbing here so a dropped arg fails at the service layer.
+      expect(findSpy.mock.calls[0]?.[1]).toMatchObject({ maxAttempts: BOT_CLAIM_MAX_ATTEMPTS })
     })
 
     it("opens a REPEATABLE READ READ ONLY transaction so all reads share a snapshot", async () => {

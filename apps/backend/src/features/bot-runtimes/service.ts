@@ -11,7 +11,9 @@ import { withClient, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { BotRepository, type Bot } from "../public-api/bot-repository"
 import { botInvocationId, botRuntimeInstanceId, botRuntimeSessionLinkId, streamActiveActorId } from "../../lib/id"
+import { logger } from "../../lib/logger"
 import {
+  BOT_CLAIM_MAX_ATTEMPTS,
   BotInvocationRepository,
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
@@ -400,6 +402,7 @@ export class BotRuntimeService {
             runtimeSessionId: params.runtimeSessionId ?? null,
             supportedCapabilities: params.supportedCapabilities,
             since,
+            maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
           }),
           StreamActiveActorRepository.findActiveForBot(db, {
             workspaceId: params.workspaceId,
@@ -437,7 +440,30 @@ export class BotRuntimeService {
     claimTtlSeconds: number
   }): Promise<BotInvocation | null> {
     return withTransaction(this.pool, async (db) => {
-      const claimed = await BotInvocationRepository.claimOne(db, params)
+      // Reap invocations this bot has re-claimed to exhaustion before handing
+      // out fresh work, so a wedged runtime can't keep one pinned in an
+      // infinite re-claim loop. Parking is bot-wide (not instance-scoped):
+      // whichever instance polls next clears the backlog for the bot.
+      const parked = await BotInvocationRepository.parkExhausted(db, {
+        workspaceId: params.workspaceId,
+        botId: params.botId,
+        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+      })
+      for (const invocation of parked) {
+        logger.warn(
+          {
+            invocationId: invocation.id,
+            workspaceId: invocation.workspaceId,
+            botId: invocation.actorId,
+            attempts: invocation.attempts,
+          },
+          "Parked bot invocation after exhausting claim attempts"
+        )
+      }
+      const claimed = await BotInvocationRepository.claimOne(db, {
+        ...params,
+        maxAttempts: BOT_CLAIM_MAX_ATTEMPTS,
+      })
       if (!claimed) return null
       // Siblings on the same bot need to stop racing this invocation. The
       // narrow payload deliberately omits the winning instance — see
