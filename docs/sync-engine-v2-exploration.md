@@ -484,6 +484,30 @@ price of option (b). Option (b) plus the sweep reaches an equivalent guarantee w
 keeping every domain write path untouched, and layer 1 is worth doing for the existing
 consumers regardless of which option wins.
 
+### The read-before-stamp rule: rows visible before their log entry
+
+Option (b) creates a window (~10–60ms, longer for sweep-rescued stragglers) in which a
+domain row is committed and readable — by snapshot endpoints, list APIs, other clients —
+before its sync-log entry exists. One direction of this is safe by construction: **sync
+ids are never assigned into the past.** The sequencer only appends at the head, so an
+entry that doesn't exist yet is, by definition, above every client's cursor when it
+appears. A catch-up that runs inside the window misses the row, saves `head` as its
+cursor, and the entry lands at `head+1` — above the saved cursor, delivered next. Late
+stamping can produce duplicate delivery (snapshot row + log entry), which idempotent
+apply-by-id absorbs; it cannot produce a skipped entry.
+
+The other direction is a real trap. Snapshots are stamped with a log position P, and the
+client skips entries ≤ P. If a snapshot endpoint runs its data queries _first_ and reads
+the current max sync id _after_, an event can commit and get sequenced in between: it is
+absent from the data but its sync id is ≤ P, so the client skips its entry — permanent
+loss. The rule: **read P before the data queries.** P is then a lower bound, anything
+stamped after it gets applied from the log even when it also appears in the snapshot,
+and the race window always falls on the duplicate side (harmless) rather than the gap
+side (loss). The current engine already learned this lesson in miniature — the "prune
+ceiling = max returned sequence, not `latestSequence`" rule in `stream-sync.ts` exists
+for exactly this race shape — v2 promotes it to a stated protocol rule. (Under option
+(a) the same rule applies; the window is just narrower.)
+
 ### Schema (append-only migration, INV-17)
 
 ```sql
