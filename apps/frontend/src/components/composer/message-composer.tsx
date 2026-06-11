@@ -679,6 +679,21 @@ export function MessageComposer({
     (chunkId: string) => richEditorRef.current?.getDictationChunkText(chunkId) ?? null,
     []
   )
+  // Draft text around the caret, captured when a take starts and sent as
+  // read-only context for the polish model — so dictated corrections can match
+  // the spelling of names/terms already in the message and the polished text
+  // flows with the sentence it lands in. Plain text is intentional here: this
+  // is model context, not message content (the INV-58 contentJson rule governs
+  // what we store/send as content, not what we show a model).
+  const getDictationDraftContext = useCallback(() => {
+    const editor = richEditorRef.current?.getEditor()
+    if (!editor) return null
+    const { doc, selection } = editor.state
+    return {
+      before: doc.textBetween(0, selection.from, "\n"),
+      after: doc.textBetween(selection.to, doc.content.size, "\n"),
+    }
+  }, [])
   // Keyed by scopeId so navigating to a different stream remounts the button, tearing down any
   // in-flight dictation session (the unmount cleanup aborts the take) instead of carrying it over.
   const micButton = workspaceId ? (
@@ -693,6 +708,7 @@ export function MessageComposer({
       onChunkSwap={swapDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
       onGetChunkText={getDictationChunkText}
+      onGetDraftContext={getDictationDraftContext}
       disabled={controlsDisabled}
     />
   ) : null
@@ -708,6 +724,7 @@ export function MessageComposer({
       onChunkSwap={swapDictationChunk}
       onLockAllChunks={lockAllDictationChunks}
       onGetChunkText={getDictationChunkText}
+      onGetDraftContext={getDictationDraftContext}
       disabled={controlsDisabled}
       className="h-[30px] w-[30px] rounded-md border bg-background shadow-md"
     />

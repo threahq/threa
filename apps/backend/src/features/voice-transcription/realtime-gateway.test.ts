@@ -1,5 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Server } from "socket.io"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threa/types"
 import { registerVoiceGateway } from "./realtime-gateway"
 import type { TranscriptionSession } from "./transcription/strategy"
 
@@ -406,6 +407,36 @@ describe("registerVoiceGateway polish", () => {
     const polishedIdx = socket.emitted.findIndex((e) => e.event === "voice:transcript:polished")
     expect(polishedIdx).toBeGreaterThanOrEqual(0)
     expect(errorIdx).toBeGreaterThan(polishedIdx)
+  })
+
+  it("forwards the capped draft context from voice:start to every polish pass", async () => {
+    const seen: Array<{ draftBefore?: string; draftAfter?: string }> = []
+    const { socket, upstream } = setup({
+      voicePolishLevel: "opinionated",
+      polishTranscript: async (args: { rawTranscript: string; draftBefore?: string; draftAfter?: string }) => {
+        seen.push({ draftBefore: args.draftBefore, draftAfter: args.draftAfter })
+        return `P(${args.rawTranscript})`
+      },
+    })
+    // Oversized before-text: the gateway keeps the END (closest to the caret).
+    const longBefore = "x".repeat(VOICE_DRAFT_CONTEXT_MAX_CHARS + 1000) + " merge the poor frequence"
+    await socket.trigger(
+      "voice:start",
+      { ...START_PAYLOAD, draftBefore: longBefore, draftAfter: "before the standup" },
+      mock(() => {})
+    )
+
+    upstream.fireDelta({ text: "one", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+    upstream.fireDelta({ text: "two", isFinal: true })
+    await new Promise((r) => setTimeout(r, 0))
+
+    expect(seen).toHaveLength(2)
+    for (const call of seen) {
+      expect(call.draftAfter).toBe("before the standup")
+      expect(call.draftBefore?.length).toBe(VOICE_DRAFT_CONTEXT_MAX_CHARS)
+      expect(call.draftBefore?.endsWith("merge the poor frequence")).toBe(true)
+    }
   })
 
   it("polishes the cumulative raw transcript and reuses the same session chunkId", async () => {

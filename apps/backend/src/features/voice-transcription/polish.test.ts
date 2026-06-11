@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test"
-import { createPolishTranscript, scrubDashes } from "./polish"
+import { buildPolishUserMessage, createPolishTranscript, scrubDashes } from "./polish"
 import { POLISH_MODEL } from "./config"
 import type { AI } from "@threa/agent-runtime"
 
@@ -50,6 +50,36 @@ describe("createPolishTranscript", () => {
     const userMessage = call.messages.find((m: { role: string }) => m.role === "user")
     expect(typeof userMessage?.content).toBe("string")
     expect(userMessage?.content).toContain("one two three and four")
+  })
+
+  it("includes the surrounding draft as read-only context and tells the model never to output it", async () => {
+    const generateText = mock(async (_args: GenerateTextArgs) => textResult("Polished.") as never)
+    const polish = createPolishTranscript({ ai: fakeAI(generateText) })
+
+    await polish({
+      rawTranscript: "pull request not poor frequence",
+      level: "opinionated",
+      workspaceId: "ws_1",
+      userId: "user_1",
+      sessionId: "voicesess_1",
+      draftBefore: "we should merge the poor frequence",
+      draftAfter: "before the standup",
+    })
+
+    const call = generateText.mock.calls[0][0]
+    const userMessage = call.messages.find((m: { role: string }) => m.role === "user")?.content as string
+    expect(userMessage).toContain("Existing draft text before the insertion point")
+    expect(userMessage).toContain("we should merge the poor frequence")
+    expect(userMessage).toContain("Existing draft text after the insertion point")
+    expect(userMessage).toContain("before the standup")
+    expect(userMessage).toContain("Raw transcript:\npull request not poor frequence")
+
+    const sys = call.messages.find((m: { role: string }) => m.role === "system")?.content as string
+    expect(sys).toContain("Existing draft text")
+    expect(sys).toContain("READ-ONLY context")
+    expect(call.telemetry?.metadata).toMatchObject({
+      draftContextLen: "we should merge the poor frequence".length + "before the standup".length,
+    })
   })
 
   it("uses the minor-cleanup system prompt for level=minor", async () => {
@@ -203,6 +233,22 @@ describe("createPolishTranscript", () => {
 
     expect(out).toBe("   ")
     expect(generateText).not.toHaveBeenCalled()
+  })
+})
+
+describe("buildPolishUserMessage", () => {
+  it("omits draft sections when no context is provided or it is whitespace-only", () => {
+    expect(buildPolishUserMessage({ rawTranscript: "hello" })).toBe("Raw transcript:\nhello")
+    expect(buildPolishUserMessage({ rawTranscript: "hello", draftBefore: "  ", draftAfter: "" })).toBe(
+      "Raw transcript:\nhello"
+    )
+  })
+
+  it("includes only the sides that carry text", () => {
+    const message = buildPolishUserMessage({ rawTranscript: "hello", draftBefore: "draft start" })
+    expect(message).toContain("Existing draft text before the insertion point")
+    expect(message).toContain("draft start")
+    expect(message).not.toContain("after the insertion point")
   })
 })
 

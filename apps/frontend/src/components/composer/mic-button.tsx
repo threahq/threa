@@ -84,6 +84,12 @@ interface MicButtonProps {
    * so a parallel prediction in the hook drifts.
    */
   onGetChunkText?: (chunkId: string) => string | null
+  /**
+   * Read the draft text around the caret so the polish model sees the rest of
+   * the message as read-only context. Optional — surfaces without a persistent
+   * draft can leave it off.
+   */
+  onGetDraftContext?: () => { before: string; after: string } | null
   disabled?: boolean
   className?: string
   language?: string
@@ -99,6 +105,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     onChunkSwap,
     onLockAllChunks,
     onGetChunkText,
+    onGetDraftContext,
     disabled,
     className,
     language,
@@ -131,6 +138,7 @@ export const MicButton = forwardRef<MicButtonHandle, MicButtonProps>(function Mi
     onChunkSwap,
     onLockAllChunks,
     onGetChunkText,
+    onGetDraftContext,
     language,
   })
 

@@ -717,6 +717,15 @@ export const E2eKeyWrapRecipientKinds = {
 } as const satisfies Record<string, E2eKeyWrapRecipientKind>
 
 /**
+ * Cap on each side of the composer draft context sent with `voice:start` and
+ * fed to the transcript polish model as surrounding-text context. The frontend
+ * keeps the text closest to the insertion point (the LAST chars before the
+ * caret, the FIRST chars after it); the gateway applies the same cap
+ * defensively. Shared so the two sides cannot drift (INV-33).
+ */
+export const VOICE_DRAFT_CONTEXT_MAX_CHARS = 2_000
+
+/**
  * Floor for interaction-driven socket heartbeats. The frontend throttles
  * interaction-flagged heartbeats to this interval; the backend ignores
  * non-interaction heartbeats faster than this. Shared so the two sides

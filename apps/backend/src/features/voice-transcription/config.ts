@@ -66,6 +66,7 @@ export const POLISH_SHARED_HARD_RULES = `Hard rules:
 - Preserve the speaker's words and intent. Do not paraphrase, summarize, translate, or add information that wasn't dictated.
 - Inline backticks only for words the speaker explicitly said as code (variable names, function names, file paths).
 - Do not invent headings, code blocks, links, or block quotes.
+- The user message may include "Existing draft text" sections: text already sitting in the user's composer around where the dictation will be inserted. Treat it as READ-ONLY context. Use it to spell names and terms the way the draft spells them, to resolve ambiguous words the speaker references, and to make the polished text flow with its surroundings (e.g. start lowercase with no leading period when the dictation continues a sentence from the before-text). NEVER include, repeat, continue, or rewrite the draft text in your output — output only the polished transcript.
 - Output ONLY the polished transcript text. No commentary, no quotes around the result, no prefixes like "Here:" or "Polished:". Do not greet, do not add a leading newline.
 - If the raw text is already clean, return it unchanged.`
 
