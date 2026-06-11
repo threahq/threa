@@ -39,6 +39,7 @@ export type { BoundaryExtractionWorkerDeps } from "./boundary-extraction-worker"
 
 // Repository
 export { ConversationRepository } from "./repository"
+export { ConversationFeedbackRepository } from "./feedback-repository"
 export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
 
 // Staleness

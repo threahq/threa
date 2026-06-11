@@ -16,6 +16,7 @@ import {
   Lock,
   Tag,
   Link2,
+  Layers,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
@@ -99,6 +100,22 @@ export function StreamPage() {
         newParams.set("convView", "open")
       } else {
         newParams.delete("convView")
+      }
+      return newParams
+    })
+  }
+
+  // Conversation overlay: colors timeline rows by conversation membership
+  // (rendered by StreamContent, which reads the same param — INV-59).
+  const isConversationOverlayOn = searchParams.get("convOverlay") === "on"
+
+  const setConversationOverlayOn = (on: boolean) => {
+    setSearchParams((prev) => {
+      const newParams = new URLSearchParams(prev)
+      if (on) {
+        newParams.set("convOverlay", "on")
+      } else {
+        newParams.delete("convOverlay")
       }
       return newParams
     })
@@ -436,6 +453,18 @@ export function StreamPage() {
               onClick={() => setConversationViewOpen(!isConversationViewOpen)}
             >
               <MessageCircle className="h-4 w-4" />
+            </Button>
+          )}
+          {(isChannel || isDm) && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn("h-8 w-8", isConversationOverlayOn && "bg-accent text-accent-foreground")}
+              title="Conversation overlay"
+              aria-pressed={isConversationOverlayOn}
+              onClick={() => setConversationOverlayOn(!isConversationOverlayOn)}
+            >
+              <Layers className="h-4 w-4" />
             </Button>
           )}
           {stream &&

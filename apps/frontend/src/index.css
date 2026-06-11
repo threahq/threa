@@ -93,6 +93,19 @@
 
     /* Activity indicator colors (used in sidebar color strip) */
     --activity-people: 200 60% 50%;
+
+    /* Conversation overlay palette — distinguishable hues that sit quietly on
+       the warm canvas and deliberately avoid the primary gold (38°) so the
+       overlay never competes with selection/highlight semantics. Raw HSL
+       channels; compose with alpha at usage sites: hsl(var(--conversation-1) / 0.1) */
+    --conversation-1: 217 60% 47%;
+    --conversation-2: 152 45% 36%;
+    --conversation-3: 268 45% 56%;
+    --conversation-4: 339 60% 50%;
+    --conversation-5: 187 55% 35%;
+    --conversation-6: 22 70% 47%;
+    --conversation-7: 245 50% 58%;
+    --conversation-8: 88 45% 34%;
   }
 
   .dark {
@@ -154,6 +167,16 @@
 
     /* Activity indicator colors (used in sidebar color strip) */
     --activity-people: 200 60% 50%;
+
+    /* Conversation overlay palette — lifted lightness for dark canvas */
+    --conversation-1: 217 65% 64%;
+    --conversation-2: 152 40% 54%;
+    --conversation-3: 268 50% 70%;
+    --conversation-4: 339 65% 66%;
+    --conversation-5: 187 50% 52%;
+    --conversation-6: 24 75% 60%;
+    --conversation-7: 245 60% 72%;
+    --conversation-8: 88 40% 52%;
   }
 }
 

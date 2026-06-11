@@ -35,4 +35,16 @@ export const conversationsApi = {
     )
     return res.messages
   },
+
+  /**
+   * User correction: make `conversationId` the message's primary conversation.
+   * The backend applies the move and records it as boundary-extraction feedback.
+   */
+  async reassignMessage(
+    workspaceId: string,
+    conversationId: string,
+    messageId: string
+  ): Promise<{ conversation: ConversationWithStaleness; previousConversation: ConversationWithStaleness | null }> {
+    return api.post(`/api/workspaces/${workspaceId}/conversations/${conversationId}/messages/${messageId}/reassign`)
+  },
 }

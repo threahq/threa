@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
 import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
 
@@ -159,4 +159,35 @@ export function useConversations(workspaceId: string, streamId: string, options?
     error,
     refetch,
   }
+}
+
+/**
+ * User correction from the conversation overlay: move a message's primary
+ * membership to another conversation. The server response carries both
+ * updated conversations, which are written straight into the list cache so
+ * the overlay recolors immediately — the `conversation:updated` socket
+ * events that follow are idempotent overwrites of the same rows.
+ */
+export function useReassignConversationMessage(workspaceId: string, streamId: string) {
+  const conversationService = useConversationService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ messageId, toConversationId }: { messageId: string; toConversationId: string }) =>
+      conversationService.reassignMessage(workspaceId, toConversationId, messageId),
+    onSuccess: ({ conversation, previousConversation }) => {
+      const updatedById = new Map(
+        [conversation, ...(previousConversation ? [previousConversation] : [])].map((c) => [c.id, c])
+      )
+      queryClient.setQueryData(
+        conversationKeys.list(workspaceId, streamId, {}),
+        (old: ConversationWithStaleness[] | undefined) => old?.map((c) => updatedById.get(c.id) ?? c)
+      )
+      // The expanded per-conversation message panels refetch their row sets.
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(conversation.id) })
+      if (previousConversation) {
+        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(previousConversation.id) })
+      }
+    },
+  })
 }

@@ -68,5 +68,27 @@ export function createConversationHandlers({ conversationService, streamService 
       const messages = await conversationService.getMessages(conversationId)
       res.json({ messages })
     },
+
+    /**
+     * User correction from the timeline conversation overlay: make
+     * `conversationId` the message's primary conversation. Applies the move
+     * and records it as boundary-extraction feedback.
+     */
+    async reassignMessage(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { conversationId, messageId } = req.params
+
+      const conversation = await conversationService.getById(conversationId)
+      if (!conversation || conversation.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Conversation not found" })
+      }
+
+      // validateStreamAccess handles public visibility + thread root membership
+      await streamService.validateStreamAccess(conversation.streamId, workspaceId, userId)
+
+      const result = await conversationService.reassignMessage({ workspaceId, conversationId, messageId, userId })
+      res.json(result)
+    },
   }
 }
