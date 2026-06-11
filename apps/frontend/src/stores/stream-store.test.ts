@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
-import { loadStreamEvents } from "./stream-store"
+import { loadStreamEvents, shareEventIdentities } from "./stream-store"
 
 const WORKSPACE_ID = "ws_1"
 
@@ -217,5 +217,70 @@ describe("loadStreamEvents", () => {
     const events = await loadStreamEvents(streamId, 100)
 
     expect(events.map((e) => e.id)).toEqual(["evt_stream_floored_100", "evt_stream_floored_101", "temp_above"])
+  })
+})
+
+describe("shareEventIdentities", () => {
+  function reEmit(rows: CachedEvent[]): CachedEvent[] {
+    // Simulate a liveQuery re-run: same stored bytes, all-new object identities.
+    return rows.map((row) => ({ ...row, payload: { ...(row.payload as Record<string, unknown>) } }))
+  }
+
+  it("returns the previous array identity when nothing changed", () => {
+    const prev = [makeRealEvent("stream_1", "100"), makeRealEvent("stream_1", "200")]
+    expect(shareEventIdentities(prev, reEmit(prev))).toBe(prev)
+  })
+
+  it("reuses unchanged row identities when one row changed", () => {
+    const a = makeRealEvent("stream_1", "100")
+    const b = makeRealEvent("stream_1", "200")
+    const next = reEmit([a, b])
+    next[1]._patchedAt = Date.now() // a socket patch landed on b
+
+    const shared = shareEventIdentities([a, b], next)
+    expect(shared).not.toBe(next)
+    expect(shared[0]).toBe(a)
+    expect(shared[1]).toBe(next[1])
+  })
+
+  it("produces a new row identity when each write marker changes", () => {
+    const base = makeRealEvent("stream_1", "100")
+    const markers: Array<Partial<CachedEvent>> = [
+      { _cachedAt: base._cachedAt + 1 },
+      { _patchedAt: 123 },
+      { _status: "pending" },
+      { sequence: "999", _sequenceNum: 999 },
+    ]
+    for (const marker of markers) {
+      const next = { ...reEmit([base])[0], ...marker }
+      const shared = shareEventIdentities([base], [next])
+      expect(shared[0]).toBe(next)
+    }
+  })
+
+  it("keeps unchanged identities when a new row is appended (live message arrival)", () => {
+    const a = makeRealEvent("stream_1", "100")
+    const c = makeRealEvent("stream_1", "300")
+    const next = [...reEmit([a]), c]
+
+    const shared = shareEventIdentities([a], next)
+    expect(shared).not.toBe(next.slice(0, 1))
+    expect(shared[0]).toBe(a)
+    expect(shared[1]).toBe(c)
+    expect(shared).toHaveLength(2)
+  })
+
+  it("keeps unchanged identities when an older page is prepended", () => {
+    const b = makeRealEvent("stream_1", "200")
+    const olderPage = [makeRealEvent("stream_1", "50"), makeRealEvent("stream_1", "100")]
+    const next = [...olderPage, ...reEmit([b])]
+
+    const shared = shareEventIdentities([b], next)
+    expect(shared[2]).toBe(b)
+  })
+
+  it("passes the array through when there is no previous emission", () => {
+    const next = [makeRealEvent("stream_1", "100")]
+    expect(shareEventIdentities(null, next)).toBe(next)
   })
 })
