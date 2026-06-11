@@ -247,6 +247,14 @@ export async function runEnclaveTurn(
       attachments: { refsById, ciphertextById },
     }),
     observers: [traceObserver, digestCollector],
+    // Lead the trace with the CONTEXT step ("Triggered by: …"): the runtime
+    // emits it as a `context:received` event at run start and the observer
+    // seals it like any other step. The body is the decrypted prompt;
+    // id/author/time are clear metadata. Observer failures are isolated by the
+    // runtime's emit (warn + continue), so a trace hiccup never blocks the turn.
+    ...(request.trigger
+      ? { initialContext: { messages: [{ ...request.trigger, content: promptText, isTrigger: true }] } }
+      : {}),
     maxTokens: request.maxTokens,
     temperature: request.temperature,
     // Hand ONLY the long-running research sub-loop the session's cancel signal so
@@ -284,14 +292,6 @@ export async function runEnclaveTurn(
       return { messageId }
     },
   })
-
-  // Lead with the CONTEXT step ("Triggered by: …") before the loop runs — the
-  // enclave's stand-in for the in-process persona-agent orchestration step. The
-  // body is the decrypted prompt, sealed by the observer; metadata is clear.
-  // Best-effort: a trace failure must never block the actual turn.
-  if (request.trigger) {
-    await traceObserver.emitContext({ ...request.trigger, content: promptText }).catch(() => {})
-  }
 
   await runtime.run()
 

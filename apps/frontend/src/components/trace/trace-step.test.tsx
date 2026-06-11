@@ -154,6 +154,64 @@ describe("TraceStep", () => {
     expect(screen.queryByText(/\*\*AI\*\*/)).not.toBeInTheDocument()
   })
 
+  it("labels a synthesized context step as reconstructed", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "context_received",
+            content: JSON.stringify({
+              messages: [
+                {
+                  messageId: "msg_trigger",
+                  authorName: "Kris",
+                  authorType: "user",
+                  createdAt: "2026-02-19T18:00:00.000Z",
+                  content: "@pi what's the tide tomorrow?",
+                  isTrigger: true,
+                },
+              ],
+              synthesized: true,
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText(/Reconstructed from the reply/)).toBeInTheDocument()
+    expect(screen.getByText("Triggered by:")).toBeInTheDocument()
+  })
+
+  it("shows no reconstruction label on a reported context step", () => {
+    render(
+      <MemoryRouter>
+        <TraceStep
+          step={createStep({
+            stepType: "context_received",
+            content: JSON.stringify({
+              messages: [
+                {
+                  messageId: "msg_trigger",
+                  authorName: "Kris",
+                  authorType: "user",
+                  createdAt: "2026-02-19T18:00:00.000Z",
+                  content: "Whats up with this",
+                  isTrigger: true,
+                },
+              ],
+            }),
+          })}
+          workspaceId="ws_1"
+          streamId="stream_1"
+        />
+      </MemoryRouter>
+    )
+
+    expect(screen.queryByText(/Reconstructed from the reply/)).not.toBeInTheDocument()
+  })
+
   it("shows rerun edit context in the initial context step", () => {
     render(
       <MemoryRouter>

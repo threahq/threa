@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AgentStepTypes, type AgentStepType } from "@threa/types"
+import { AgentStepTypes, type AgentStepType, type AuthorType } from "@threa/types"
 import {
   TraceProjector,
   type AgentEvent,
@@ -10,7 +10,7 @@ import {
   type TraceStepSink,
   type TraceSubstepEntry,
 } from "@threa/agent-runtime"
-import { withTransaction } from "../../db"
+import { withTransaction, type Querier } from "../../db"
 import { stepId as generateStepId } from "../../lib/id"
 import { AgentSessionRepository, type AgentSessionStep } from "../agents"
 
@@ -195,4 +195,84 @@ export function createBotInvocationTraceProjector(deps: BotInvocationTraceSinkDe
 } {
   const sink = new BotInvocationTraceSink(deps)
   return { projector: new TraceProjector(sink), sink }
+}
+
+/**
+ * Persist-only sink for reconstructing a trace after the fact: rows land on the
+ * caller's querier (the completion handler owns the transaction, INV-6) and
+ * nothing is emitted — there is no in-flight run to deliver to. The handler
+ * emits `step:completed` frames for the collected rows once they're durable.
+ */
+class SynthesizedTraceSink implements TraceStepSink<BotOpenStep> {
+  readonly steps: AgentSessionStep[] = []
+
+  constructor(
+    private readonly db: Querier,
+    private readonly sessionId: string
+  ) {}
+
+  async record(step: TraceStepRecord): Promise<void> {
+    const completedAt = new Date()
+    this.steps.push(
+      await AgentSessionRepository.appendStep(this.db, {
+        id: generateStepId(),
+        sessionId: this.sessionId,
+        stepType: step.stepType,
+        content: step.content,
+        sources: step.sources,
+        messageId: step.messageId,
+        startedAt: new Date(completedAt.getTime() - (step.durationMs ?? 0)),
+        completedAt,
+      })
+    )
+  }
+
+  async open(params: { stepType: AgentStepType }): Promise<BotOpenStep> {
+    // Reconstruction is post-hoc: like the invocation sink, the row is written
+    // once, at complete.
+    return { stepType: params.stepType }
+  }
+
+  async complete(_step: BotOpenStep, final: TraceStepFinalize): Promise<void> {
+    await this.record({
+      stepType: final.stepType,
+      content: final.content,
+      sources: final.sources,
+      messageId: final.messageId,
+      durationMs: final.durationMs,
+    })
+  }
+
+  async substep(): Promise<void> {
+    // No live run to deliver phase text to.
+  }
+}
+
+/**
+ * The synthesized-trace floor for reply-only harnesses (N-6): a bot that never
+ * POSTs `/steps` would otherwise complete with an empty activity card, so the
+ * completion handler reconstructs the minimal `context_received` →
+ * `message_sent` trace from what it knows — the invocation's prompt and the
+ * reply it just created. The events ride the shared `TraceProjector`, so the
+ * persisted shapes are exactly what every other surface writes; the context
+ * step carries `synthesized: true` so the frontend can label the trace as
+ * reconstructed rather than reported.
+ */
+export async function synthesizeReplyOnlyBotTrace(
+  db: Querier,
+  params: {
+    sessionId: string
+    trigger: { messageId: string; authorName: string; authorType: AuthorType; createdAt: string; content: string }
+    reply: { messageId: string; content: string }
+  }
+): Promise<AgentSessionStep[]> {
+  const sink = new SynthesizedTraceSink(db, params.sessionId)
+  const projector = new TraceProjector(sink)
+  await projector.handle({
+    type: "context:received",
+    messages: [{ ...params.trigger, isTrigger: true }],
+    extras: { synthesized: true },
+  })
+  await projector.handle({ type: "message:sent", messageId: params.reply.messageId, content: params.reply.content })
+  return sink.steps
 }

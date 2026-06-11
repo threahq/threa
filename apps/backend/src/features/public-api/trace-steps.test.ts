@@ -4,7 +4,7 @@ import type { Server } from "socket.io"
 import { AgentStepTypes } from "@threa/types"
 import * as db from "../../db"
 import { AgentSessionRepository, type AgentSessionStep } from "../agents"
-import { botInvocationStepEvents, createBotInvocationTraceProjector } from "./trace-steps"
+import { botInvocationStepEvents, createBotInvocationTraceProjector, synthesizeReplyOnlyBotTrace } from "./trace-steps"
 
 afterEach(() => mock.restore())
 
@@ -149,5 +149,56 @@ describe("BotInvocationTraceSink via the shared projector", () => {
       stepType: AgentStepTypes.THINKING,
       content: "Pondering…",
     })
+  })
+})
+
+describe("synthesizeReplyOnlyBotTrace", () => {
+  it("reconstructs a context_received + message_sent trace through the projector, marked synthesized", async () => {
+    const appendStep = spyOn(AgentSessionRepository, "appendStep").mockImplementation((async (
+      _db: unknown,
+      params: { id: string; stepType: string; content: string }
+    ) => ({ id: params.id, stepType: params.stepType, content: params.content })) as never)
+    const updateCurrentStepType = spyOn(AgentSessionRepository, "updateCurrentStepType").mockResolvedValue(
+      undefined as never
+    )
+
+    const steps = await synthesizeReplyOnlyBotTrace({} as never, {
+      sessionId: "binv_1",
+      trigger: {
+        messageId: "msg_trigger",
+        authorName: "Kris",
+        authorType: "user",
+        createdAt: "2026-06-11T09:00:00.000Z",
+        content: "@pi what's the tide tomorrow?",
+      },
+      reply: { messageId: "msg_reply", content: "High tide is at 14:32." },
+    })
+
+    expect(appendStep).toHaveBeenCalledTimes(2)
+    const contextParams = appendStep.mock.calls[0]?.[1] as unknown as { stepType: string; content: string }
+    expect(contextParams.stepType).toBe(AgentStepTypes.CONTEXT_RECEIVED)
+    expect(JSON.parse(contextParams.content)).toEqual({
+      messages: [
+        {
+          messageId: "msg_trigger",
+          authorName: "Kris",
+          authorType: "user",
+          createdAt: "2026-06-11T09:00:00.000Z",
+          content: "@pi what's the tide tomorrow?",
+          isTrigger: true,
+        },
+      ],
+      synthesized: true,
+    })
+    expect(appendStep.mock.calls[1]?.[1]).toMatchObject({
+      sessionId: "binv_1",
+      stepType: AgentStepTypes.MESSAGE_SENT,
+      content: "High tide is at 14:32.",
+      messageId: "msg_reply",
+    })
+    // The reconstruction rides the caller's transaction and is no live run:
+    // no current-step pointer to advance.
+    expect(updateCurrentStepType).not.toHaveBeenCalled()
+    expect(steps.map((s) => s.stepType)).toEqual([AgentStepTypes.CONTEXT_RECEIVED, AgentStepTypes.MESSAGE_SENT])
   })
 })

@@ -97,8 +97,11 @@ production: it opens a persisted step at `tool:start` so a mid-run refresh shows
 in-progress step, finalizes it at `tool:complete`, and hands persistence to an injected
 sink — the backend's `SessionTraceStepSink` (`runtime/session-trace-sink.ts`) pushes rows
 and live progress to the socket through `trace-emitter.ts`; the enclave and bot-invocation
-surfaces run the same projector over their own sinks. The activity card and the
-step-by-step trace the user sees are this stream of rows.
+surfaces run the same projector over their own sinks. The leading `context_received` step
+rides the same pipeline: hosts pass `AgentRuntimeConfig.initialContext` and the runtime
+emits it as a `context:received` event at run start (reply-only bot invocations, which run
+no loop, get a minimal trace reconstructed at completion, marked `synthesized`). The
+activity card and the step-by-step trace the user sees are this stream of rows.
 
 If you only need the mental model, stop here. The rest is the behavior that makes it correct
 and safe.

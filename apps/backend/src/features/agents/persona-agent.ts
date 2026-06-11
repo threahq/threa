@@ -36,7 +36,13 @@ import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
-import { AgentRuntime, createSessionTraceProjector, OtelObserver, type NewMessageInfo } from "./runtime"
+import {
+  AgentRuntime,
+  createSessionTraceProjector,
+  OtelObserver,
+  type AgentRuntimeConfig,
+  type NewMessageInfo,
+} from "./runtime"
 import { TurnDigestCollector, generateTurnDigest } from "@threa/agent-runtime"
 import type { SessionTrace } from "./trace-emitter"
 import {
@@ -302,7 +308,10 @@ export class PersonaAgent {
         const contextMessageIds = agentContext.streamContext.conversationHistory.map((m) => m.id)
         await AgentSessionRepository.updateContextMessageIds(pool, session.id, contextMessageIds)
 
-        // Record initial context step for trace UI
+        // Initial context for the leading CONTEXT_RECEIVED trace step — the
+        // runtime emits it as a `context:received` event at run start, through
+        // the same projector as every other step.
+        let initialContext: NonNullable<AgentRuntimeConfig["initialContext"]> | undefined
         if (agentContext.streamContext.conversationHistory.length > 0) {
           const history = agentContext.streamContext.conversationHistory
           const triggerIdx = history.findIndex((m) => m.id === messageId)
@@ -332,22 +341,20 @@ export class PersonaAgent {
               }
             : undefined
 
-          const step = await trace.startStep({
-            stepType: AgentStepTypes.CONTEXT_RECEIVED,
-            content: JSON.stringify({
-              messages: contextMessages.map((m) => ({
-                messageId: m.id,
-                authorName: agentContext.authorNames.get(m.authorId) ?? "Unknown",
-                authorType: m.authorType,
-                createdAt: m.createdAt.toISOString(),
-                content: m.contentMarkdown.slice(0, 300),
-                isTrigger: m.id === messageId,
-              })),
+          initialContext = {
+            messages: contextMessages.map((m) => ({
+              messageId: m.id,
+              authorName: agentContext.authorNames.get(m.authorId) ?? "Unknown",
+              authorType: m.authorType,
+              createdAt: m.createdAt.toISOString(),
+              content: m.contentMarkdown,
+              isTrigger: m.id === messageId,
+            })),
+            extras: {
               rerunContext: toTraceRerunContext(rerunContext),
               ...(attachedContext && { attachedContext }),
-            }),
-          })
-          await step.complete({})
+            },
+          }
         }
 
         // Build workspace agent callback for on-demand workspace research.
@@ -593,6 +600,7 @@ export class PersonaAgent {
             resolvedBag
           ),
           messages: agentContext.messages,
+          initialContext,
           tools,
           maxTokens: persona.maxTokens,
           temperature: persona.temperature,

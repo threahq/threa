@@ -316,6 +316,15 @@ function renderStepContent(
 
         return (
           <div className="space-y-3">
+            {/* Synthesized-trace floor: a reply-only bot reported no steps, so
+                the backend reconstructed this trace from the reply — say so
+                instead of presenting it as the agent's own account. */}
+            {structured.synthesized === true && (
+              <div className="text-muted-foreground text-[11px] italic">
+                Reconstructed from the reply — this agent didn't report its steps.
+              </div>
+            )}
+
             {rerunContext && <RerunContextSummary rerunContext={rerunContext} />}
 
             {/* Trigger message - highlighted */}

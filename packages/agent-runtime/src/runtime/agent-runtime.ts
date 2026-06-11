@@ -9,7 +9,7 @@ import { createKeepResponseTool } from "../tools/keep-response-tool"
 import { createSendMessageTool } from "../tools/send-message-tool"
 import type { AgentTool, AgentToolResult } from "./agent-tool"
 import { toVercelToolDefs } from "./agent-tool"
-import type { AgentEvent, NewMessageInfo } from "./agent-events"
+import type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 import type { AgentObserver } from "./agent-observer"
 
 // ---------------------------------------------------------------------------
@@ -73,6 +73,18 @@ export interface AgentRuntimeConfig {
     content: string
     sources: SourceItem[]
   }) => Promise<{ messageId: string; operation?: "created" | "edited" }>
+
+  /**
+   * The turn's initial context for the trace — emitted as one `context:received`
+   * event at run start, so the leading CONTEXT step rides the same observer
+   * pipeline as every other step on every surface (no host hand-builds it).
+   * Omit when the host has no renderable trigger context.
+   */
+  initialContext?: {
+    messages: TraceContextMessage[]
+    /** Spread into the step content JSON alongside `messages` — see the event's `extras`. */
+    extras?: Record<string, unknown>
+  }
 
   /** Optional new-message awareness (companion uses this, simpler agents don't) */
   newMessages?: NewMessageAwareness
@@ -194,6 +206,13 @@ export class AgentRuntime {
     // Emit session start
     const inputSummary = this.extractInputSummary()
     await this.emit({ type: "session:start", sessionId: nm?.sessionId ?? "", inputSummary })
+
+    // Lead the trace with the turn's context. emit() isolates observer failures
+    // (warn + continue), so a trace hiccup can never block the turn.
+    if (this.config.initialContext) {
+      const { messages, extras } = this.config.initialContext
+      await this.emit({ type: "context:received", messages, ...(extras !== undefined ? { extras } : {}) })
+    }
 
     try {
       const result = await this.loop()
