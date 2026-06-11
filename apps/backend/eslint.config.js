@@ -60,7 +60,8 @@ export default [
   // Exceptions:
   //   static-config-resolver.ts — aggregates AI configs from all features
   //   message-formatter — AI utility that resolves author names from member/persona repos
-  //   outbox/broadcast-handler — resolves memberId→userId for socket routing
+  //   outbox/broadcast-handler — resolves memberId→userId for socket routing and
+  //     sequences client-routed events into the sync log (features/sync)
   //   outbox/repository — outbox payload types reference domain types (type-only, no runtime dep)
   {
     files: ["src/lib/**/*.ts"],
@@ -70,6 +71,7 @@ export default [
       "src/lib/ai/message-formatter.ts",
       "src/lib/ai/message-formatter.test.ts",
       "src/lib/outbox/broadcast-handler.ts",
+      "src/lib/outbox/broadcast-handler.test.ts",
       "src/lib/outbox/repository.ts",
     ],
     rules: {

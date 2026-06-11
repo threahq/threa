@@ -1,34 +1,17 @@
 import { Server, type Namespace } from "socket.io"
 import type { Pool } from "pg"
-import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
 import {
   OutboxRepository,
-  isStreamScopedEvent,
   isOutboxEventType,
-  isOneOfOutboxEventType,
-  isAuthorScopedEvent,
-  isUserScopedEvent,
-  isBotScopedEvent,
   type OutboxEvent,
-  type StreamCreatedOutboxPayload,
-  type StreamMemberAddedOutboxPayload,
-  type ActivityCreatedOutboxPayload,
-  type StreamDisplayNameUpdatedPayload,
-  type AttachmentTranscodedOutboxPayload,
-  type AttachmentThumbnailedOutboxPayload,
-  type MessagesMovedOutboxPayload,
   type BotInvocationAvailableOutboxPayload,
   type BotInvocationClaimedOutboxPayload,
   type BotActiveActorChangedOutboxPayload,
   type BotResyncOutboxPayload,
-  type LabelUpsertedOutboxPayload,
-  type LabelDeletedOutboxPayload,
-  type LabelMemberJoinedOutboxPayload,
-  type LabelMemberLeftOutboxPayload,
-  type LabelAssignedOutboxPayload,
-  type LabelUnassignedOutboxPayload,
 } from "./repository"
+import { resolveDeliveryGroups, groupToRoom } from "./delivery-groups"
 import { logger } from "../logger"
+import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "@threa/backend-common"
 import { invalidatePointersForEvent } from "../../features/messaging/sharing"
@@ -41,6 +24,12 @@ export interface BroadcastHandlerConfig {
   refreshIntervalMs?: number
   maxRetries?: number
   baseBackoffMs?: number
+}
+
+/** Per-event routing computed once per batch: delivery groups + assigned sync id. */
+interface RoutedEvent {
+  groups: string[] | null
+  syncId?: bigint
 }
 
 const DEFAULT_CONFIG = {
@@ -120,11 +109,23 @@ export class BroadcastHandler implements OutboxHandler {
         return { status: "no_events" }
       }
 
+      // Sequence the whole batch into the sync log BEFORE any emit: the log
+      // entry is the durable record, the socket emit is best-effort delivery.
+      // A failure here retries the batch via the cursor; appendForWorkspace is
+      // idempotent, so retried events keep their already-assigned sync ids.
+      let routed: Map<bigint, RoutedEvent>
+      try {
+        routed = await this.sequenceEvents(events)
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        return { status: "error", error }
+      }
+
       const seen: bigint[] = []
 
       try {
         for (const event of events) {
-          this.broadcastEvent(event)
+          this.broadcastEvent(event, routed.get(event.id))
           // After the normal per-event emit, fan out any pointer-invalidated
           // hints so clients subscribed to target streams refresh their
           // hydrated pointer content (see features/messaging/sharing, D7).
@@ -145,187 +146,71 @@ export class BroadcastHandler implements OutboxHandler {
     })
   }
 
-  private broadcastEvent(event: OutboxEvent): void {
-    const { workspaceId } = event.payload
+  /**
+   * Resolves every event's delivery groups once and appends client-routed
+   * events to their workspace's sync log, in outbox-visibility order.
+   * Bot-scoped events (groups === null) stay off the log; events with no
+   * resolvable audience (groups === []) are logged by the resolver and
+   * dropped.
+   */
+  private async sequenceEvents(events: OutboxEvent[]): Promise<Map<bigint, RoutedEvent>> {
+    const routed = new Map<bigint, RoutedEvent>()
+    const byWorkspace = new Map<string, SyncLogEntryInput[]>()
+
+    for (const event of events) {
+      const groups = resolveDeliveryGroups(event)
+      routed.set(event.id, { groups })
+      if (groups === null || groups.length === 0) {
+        continue
+      }
+      const { workspaceId } = event.payload
+      let entries = byWorkspace.get(workspaceId)
+      if (!entries) {
+        entries = []
+        byWorkspace.set(workspaceId, entries)
+      }
+      entries.push({ outboxEventId: event.id, eventType: event.eventType, groups, payload: event.payload })
+    }
+
+    for (const [workspaceId, entries] of byWorkspace) {
+      const syncIds = await SyncLogRepository.appendForWorkspace(this.db, workspaceId, entries)
+      for (const [outboxEventId, syncId] of syncIds) {
+        const entry = routed.get(outboxEventId)
+        if (entry) {
+          entry.syncId = syncId
+        }
+      }
+    }
+
+    return routed
+  }
+
+  private broadcastEvent(event: OutboxEvent, routedEvent: RoutedEvent | undefined): void {
+    // Explicit undefined check, not `??`: bot-scoped events carry groups ===
+    // null, which must pass through without re-resolving routing.
+    const groups = routedEvent !== undefined ? routedEvent.groups : resolveDeliveryGroups(event)
 
     // Bot-scoped events ride the `/bot` namespace and use bot/instance/session
     // rooms so siblings on the same bot can stop racing each other (claimed,
     // cancelled) and steered work reaches exactly one instance/session.
-    if (isBotScopedEvent(event)) {
+    if (groups === null) {
       this.dispatchBotEvent(event)
       return
     }
 
-    // User-scoped events: emit to the target user's room
-    if (isUserScopedEvent(event)) {
-      const { targetUserId } = event.payload as ActivityCreatedOutboxPayload
-      this.io.to(`ws:${workspaceId}:user:${targetUserId}`).emit(event.eventType, event.payload)
+    if (groups.length === 0) {
       return
     }
 
-    // Author-scoped events: emit to the author's user room
-    if (isAuthorScopedEvent(event)) {
-      const { authorId } = event.payload as { authorId: string }
-      this.io.to(`ws:${workspaceId}:user:${authorId}`).emit(event.eventType, event.payload)
-      return
-    }
-
-    // Special handling for stream:created - route threads to parent stream room
-    if (isOutboxEventType(event, "stream:created")) {
-      const payload = event.payload as StreamCreatedOutboxPayload
-      if (payload.stream.parentMessageId) {
-        this.io.to(`ws:${workspaceId}:stream:${payload.streamId}`).emit(event.eventType, event.payload)
-      } else if (payload.stream.type === StreamTypes.DM && payload.dmUserIds?.length === 2) {
-        for (const userId of new Set(payload.dmUserIds)) {
-          this.io.to(`ws:${workspaceId}:user:${userId}`).emit(event.eventType, event.payload)
-        }
-      } else if (payload.stream.visibility === Visibilities.PRIVATE) {
-        // Private streams (scratchpads, private channels) — only notify the creator.
-        // Additional members are notified via stream:member_added events.
-        this.io.to(`ws:${workspaceId}:user:${payload.stream.createdBy}`).emit(event.eventType, event.payload)
-      } else {
-        this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
-      }
-      return
-    }
-
-    // stream:member_added: emit to stream room (existing members) AND the added
-    // user's room directly — they haven't joined the stream room yet.
-    if (isOutboxEventType(event, "stream:member_added")) {
-      const { streamId, memberId } = event.payload as StreamMemberAddedOutboxPayload
-      this.io.to(`ws:${workspaceId}:stream:${streamId}`).emit(event.eventType, event.payload)
-      this.io.to(`ws:${workspaceId}:user:${memberId}`).emit(event.eventType, event.payload)
-      return
-    }
-
-    // Conversation events broadcast to stream + optionally parent stream for discoverability.
-    // `conversation:message_assigned` rides the same fan-out so thread-message membership
-    // updates reach parent-channel subscribers; `conversation:message_reassigned` has no
-    // parent dimension (it's keyed to the moved message's own stream).
-    if (
-      isOneOfOutboxEventType(event, ["conversation:created", "conversation:updated", "conversation:message_assigned"])
-    ) {
-      const payload = event.payload as { streamId: string; parentStreamId?: string }
-      this.io.to(`ws:${workspaceId}:stream:${payload.streamId}`).emit(event.eventType, event.payload)
-      if (payload.parentStreamId) {
-        this.io.to(`ws:${workspaceId}:stream:${payload.parentStreamId}`).emit(event.eventType, event.payload)
-      }
-      return
-    }
-
-    if (isOutboxEventType(event, "messages:moved")) {
-      const payload = event.payload as MessagesMovedOutboxPayload
-      this.io
-        .to(`ws:${workspaceId}:stream:${payload.sourceStreamId}`)
-        .to(`ws:${workspaceId}:stream:${payload.destinationStreamId}`)
-        .emit(event.eventType, event.payload)
-      return
-    }
-
-    // Display name updates for public streams go to the workspace room so all
-    // workspace users can update their bootstrap cache (e.g. for activity/search
-    // name resolution on streams the user isn't a member of). Private stream names
-    // stay stream-scoped to avoid leaking DM/scratchpad thread names.
-    if (isOutboxEventType(event, "stream:display_name_updated")) {
-      const payload = event.payload as StreamDisplayNameUpdatedPayload
-      if (payload.visibility === "public") {
-        this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
-      } else {
-        this.io.to(`ws:${workspaceId}:stream:${payload.streamId}`).emit(event.eventType, event.payload)
-      }
-      return
-    }
-
-    // attachment:transcoded — stream-scoped when attached to a message, workspace-scoped otherwise
-    if (isOutboxEventType(event, "attachment:transcoded")) {
-      const payload = event.payload as AttachmentTranscodedOutboxPayload
-      if (payload.streamId) {
-        this.io.to(`ws:${workspaceId}:stream:${payload.streamId}`).emit(event.eventType, event.payload)
-      } else {
-        this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
-      }
-      return
-    }
-
-    // attachment:thumbnailed — same scoping as transcoded
-    if (isOutboxEventType(event, "attachment:thumbnailed")) {
-      const payload = event.payload as AttachmentThumbnailedOutboxPayload
-      if (payload.streamId) {
-        this.io.to(`ws:${workspaceId}:stream:${payload.streamId}`).emit(event.eventType, event.payload)
-      } else {
-        this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
-      }
-      return
-    }
-
-    // Labels: `targetUserId` is the routing discriminator. Private-label
-    // events ship to the creator's user room only; public-label events go
-    // workspace-wide. Membership events ship to the affected member only —
-    // memberships are viewer-scoped on the wire (bootstrap/list), so no other
-    // user needs them in Phase 1.
-    if (isOneOfOutboxEventType(event, ["label:created", "label:updated"])) {
-      const payload = event.payload as LabelUpsertedOutboxPayload
-      if (payload.targetUserId) {
-        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
-      } else {
-        this.io.to(`ws:${workspaceId}`).emit(event.eventType, payload)
-      }
-      return
-    }
-
-    if (isOutboxEventType(event, "label:deleted")) {
-      const payload = event.payload as LabelDeletedOutboxPayload
-      if (payload.targetUserId) {
-        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
-      } else {
-        this.io.to(`ws:${workspaceId}`).emit(event.eventType, payload)
-      }
-      return
-    }
-
-    if (isOneOfOutboxEventType(event, ["label:member_joined", "label:member_left"])) {
-      const payload = event.payload as LabelMemberJoinedOutboxPayload | LabelMemberLeftOutboxPayload
-      this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
-      return
-    }
-
-    // Assignment routing follows the label's visibility (carried as
-    // `targetUserId`). Private-label rows are viewer-scoped — deliver to the
-    // creator's room. Public-label rows (`targetUserId === null`) are a shared
-    // pool scoped to the resource: reuse the stream room so a public label on a
-    // private channel reaches exactly its members, identical to a message.
-    if (isOneOfOutboxEventType(event, ["label:assigned", "label:unassigned"])) {
-      const payload = event.payload as LabelAssignedOutboxPayload | LabelUnassignedOutboxPayload
-      if (payload.targetUserId) {
-        this.io.to(`ws:${workspaceId}:user:${payload.targetUserId}`).emit(event.eventType, payload)
-        return
-      }
-      const { resourceType, resourceId } = "assignment" in payload ? payload.assignment : payload
-      if (resourceType === LabelableResourceTypes.STREAM) {
-        this.io.to(`ws:${workspaceId}:stream:${resourceId}`).emit(event.eventType, payload)
-      } else {
-        // Every labelable resource type must map to an access scope (room) here,
-        // or its public assignments would never broadcast and clients go stale.
-        // The `never` assignment enforces that at build time — adding a type
-        // without wiring a room is a compile error, the safe place to fail.
-        // We log rather than throw because this runs in the background outbox
-        // dispatcher: a throw never marks the event processed, so the cursor
-        // stalls and retries it forever, blocking every later event.
-        const unmapped: never = resourceType
-        logger.error(
-          { eventType: event.eventType, resourceType: unmapped, workspaceId, resourceId },
-          "label assignment: no room mapping for public-label resource type"
-        )
-      }
-      return
-    }
-
-    if (isStreamScopedEvent(event)) {
-      const { streamId } = event.payload
-      this.io.to(`ws:${workspaceId}:stream:${streamId}`).emit(event.eventType, event.payload)
-    } else {
-      this.io.to(`ws:${workspaceId}`).emit(event.eventType, event.payload)
-    }
+    // One emit to the union of rooms — Socket.io dedupes sockets present in
+    // several of them, so an event never reaches the same connection twice.
+    // The payload carries the sync id (string, like stream sequences on the
+    // wire) so future clients can keep a sync-log cursor; current clients
+    // ignore it.
+    const { workspaceId } = event.payload
+    const rooms = groups.map((group) => groupToRoom(workspaceId, group))
+    const payload = routedEvent?.syncId ? { ...event.payload, syncId: routedEvent.syncId.toString() } : event.payload
+    this.io.to(rooms).emit(event.eventType, payload)
   }
 
   /**

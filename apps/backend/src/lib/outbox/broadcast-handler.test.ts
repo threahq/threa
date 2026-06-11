@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { OutboxRepository } from "./repository"
 import * as cursorLockModule from "@threa/backend-common"
 import { BroadcastHandler } from "./broadcast-handler"
+import { SyncLogRepository } from "../../features/sync"
 import type { ProcessResult } from "@threa/backend-common"
 import type { OutboxEvent } from "./repository"
 
@@ -31,9 +32,22 @@ function createMockIo() {
     }),
   })
 
+  // The handler emits once to the union of rooms (string[]); record one chain
+  // entry per room so assertions stay per-room.
+  const makeRoomsChain = (rooms: string | string[]): MockEmitChain => {
+    const roomList = Array.isArray(rooms) ? rooms : [rooms]
+    return {
+      emit: mock((eventType: string, payload: unknown) => {
+        for (const room of roomList) {
+          emitChains.push({ room, eventType, payload })
+        }
+      }),
+    }
+  }
+
   const namespaceCache = new Map<string, { to: (room: string) => MockEmitChain }>()
   const io = {
-    to: mock((room: string): MockEmitChain => makeRoomChain(room)),
+    to: mock((rooms: string | string[]): MockEmitChain => makeRoomsChain(rooms)),
     of: mock((namespace: string) => {
       let ns = namespaceCache.get(namespace)
       if (!ns) {
@@ -60,6 +74,13 @@ function makeEvent(id: bigint, eventType: string, payload: Record<string, unknow
 }
 
 describe("BroadcastHandler", () => {
+  beforeEach(() => {
+    // The handler sequences each batch into the sync log before emitting;
+    // routing tests don't exercise the DB, so resolve with no assigned sync
+    // ids (payloads pass through unchanged).
+    spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
+  })
+
   afterEach(() => {
     mock.restore()
   })
@@ -681,5 +702,85 @@ describe("BroadcastHandler", () => {
       eventType: "label:unassigned",
       payload: event.payload,
     })
+  })
+
+  it("sequences the batch into the sync log per workspace, in outbox order, before emitting", async () => {
+    const event1 = makeEvent(1n, "message:created", { workspaceId: "ws_1", streamId: "stream_1", event: { id: "e1" } })
+    const event2 = makeEvent(2n, "message:created", { workspaceId: "ws_2", streamId: "stream_9", event: { id: "e2" } })
+    const event3 = makeEvent(3n, "stream:activity", { workspaceId: "ws_1", streamId: "stream_1" })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event1, event2, event3])
+    const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockImplementation(
+      async (_pool, _workspaceId, entries) => new Map(entries.map((e, i) => [e.outboxEventId, BigInt(100 + i)]))
+    )
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    const callsByWorkspace = new Map(appendSpy.mock.calls.map((call) => [call[1], call[2]]))
+    expect(callsByWorkspace.get("ws_1")).toEqual([
+      { outboxEventId: 1n, eventType: "message:created", groups: ["stream:stream_1"], payload: event1.payload },
+      { outboxEventId: 3n, eventType: "stream:activity", groups: ["stream:stream_1"], payload: event3.payload },
+    ])
+    expect(callsByWorkspace.get("ws_2")).toEqual([
+      { outboxEventId: 2n, eventType: "message:created", groups: ["stream:stream_9"], payload: event2.payload },
+    ])
+
+    // Emitted payloads carry the assigned sync id as a wire string
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_1",
+      eventType: "message:created",
+      payload: { ...event1.payload, syncId: "100" },
+    })
+    expect(emitChains).toContainEqual({
+      room: "ws:ws_1:stream:stream_1",
+      eventType: "stream:activity",
+      payload: { ...event3.payload, syncId: "101" },
+    })
+  })
+
+  it("keeps bot-scoped events off the sync log", async () => {
+    const event = makeEvent(1n, "bot_invocation:available", {
+      workspaceId: "ws_1",
+      botId: "bot_1",
+      invocationId: "inv_1",
+    })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(appendSpy.mock.calls).toHaveLength(0)
+    expect(emitChains).toContainEqual({
+      room: "bot:ws_1:bot:bot_1",
+      eventType: "bot_invocation:available",
+      payload: event.payload,
+      namespace: "/bot",
+    })
+  })
+
+  it("returns an error without emitting when sequencing fails, so the batch is retried", async () => {
+    const event = makeEvent(1n, "message:created", { workspaceId: "ws_1", streamId: "stream_1", event: { id: "e1" } })
+
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    spyOn(SyncLogRepository, "appendForWorkspace").mockRejectedValue(new Error("sync log unavailable"))
+
+    let result: ProcessResult | undefined
+    mockCursorLock((r) => {
+      result = r
+    })
+
+    const { io, emitChains } = createMockIo()
+    const botNamespace = io.of("/bot")
+    const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(result?.status).toBe("error")
+    expect(emitChains).toHaveLength(0)
   })
 })
