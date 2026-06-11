@@ -19,7 +19,9 @@ import {
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
-import type { EventService } from "../messaging"
+import { MessageRepository, type EventService } from "../messaging"
+import type { AICostServiceLike } from "../ai-usage"
+import { parseModelId } from "@threa/agent-runtime"
 
 /**
  * Session callbacks the enclave calls while it owns an assigned turn. The enclave
@@ -67,7 +69,15 @@ const sealedNameSchema = z.object({
 const completeSchema = z.object({
   messageIds: z.array(z.string().min(1)).max(64),
   model: z.string().min(1),
-  usage: z.object({ promptTokens: z.number().optional(), completionTokens: z.number().optional() }).optional(),
+  usage: z
+    .object({
+      promptTokens: z.number().optional(),
+      completionTokens: z.number().optional(),
+      // OpenRouter's billed cost (USD) for the turn — aggregate accounting, not
+      // content. Recorded against the workspace/user like a companion turn (#9).
+      cost: z.number().optional(),
+    })
+    .optional(),
 })
 
 // The enclave's scrubbed failure classification — `errorName` is the thrown
@@ -122,6 +132,8 @@ interface Dependencies {
   io: Server
   /** Enqueues the catch-up follow-up turn on completion (enclave interjection parity). */
   jobQueue: QueueManager
+  /** Records the turn's token/cost usage at completion, same path companion turns use (#9). */
+  costService: AICostServiceLike
 }
 
 /**
@@ -164,7 +176,7 @@ function emitInlineProgress(
   })
 }
 
-export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue }: Dependencies) {
+export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue, costService }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
@@ -515,6 +527,44 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue 
       // stream room, so the dialog wouldn't otherwise transition until a refetch.
       if (committed && stream) {
         io.to(`ws:${stream.workspaceId}:agent_session:${id}`).emit("agent_session:completed", { sessionId: id })
+      }
+
+      // Record the turn's usage against the workspace + invoking user, the same
+      // recording path a companion turn uses (#9). The enclave runs no OTEL
+      // (egress discipline), so it reports summed token counts + OpenRouter's
+      // billed cost and we record them here — aggregate accounting, never content
+      // (INV-E7). Only after we actually won the RUNNING→COMPLETED transition, so
+      // a redelivery (handled by the already-completed no-op above) can't
+      // double-charge. Best-effort: a recording failure must not fail the ack.
+      if (committed && stream && parsed.data.usage) {
+        const usage = parsed.data.usage
+        try {
+          // The invoking user is the trigger message's author (the session row
+          // stores only the trigger message id). Origin is always "user": the
+          // enclave runs solely for user-sent E2E scratchpad messages.
+          const triggerMessage = await MessageRepository.findById(pool, session.triggerMessageId)
+          // The enclave routes exclusively through OpenRouter and reports the bare
+          // model id (the `openrouter:` prefix is stripped at dispatch), so re-derive
+          // the provider with the same parser the companion records through.
+          const parsedModel = parseModelId(`openrouter:${parsed.data.model}`)
+          await costService.recordUsage({
+            workspaceId: stream.workspaceId,
+            userId: triggerMessage?.authorId,
+            sessionId: id,
+            functionId: "enclave-agent-loop",
+            model: parsedModel.modelId,
+            provider: parsedModel.provider,
+            origin: "user",
+            usage: {
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              totalTokens: (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0),
+              cost: usage.cost,
+            },
+          })
+        } catch (err) {
+          logger.error({ err, sessionId: id, streamId: session.streamId }, "Enclave usage recording failed")
+        }
       }
 
       // Interjection catch-up (parity with the main app's `checkForUnseenMessages`,

@@ -29,7 +29,12 @@ export interface RawChatResult {
     tool_calls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>
   }
   model: string
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  /**
+   * Aggregate accounting for this call: token counts plus OpenRouter's billed
+   * `cost` in USD (present because the request opts into usage accounting). This
+   * is non-secret metadata, not message content — safe to surface to the backend.
+   */
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }
 }
 
 /** Injectable so the agent loop can be tested without network access. */
@@ -50,7 +55,7 @@ interface OpenRouterResponse {
       tool_calls?: Array<{ id?: string; type?: string; function?: { name?: string; arguments?: string } }>
     }
   }>
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number }
 }
 
 /**
@@ -74,6 +79,9 @@ export function createOpenRouterChat(config: EnclaveConfig): RawChatFn {
         ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: "auto" } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+        // Ask OpenRouter to return billed cost (USD) alongside token counts so the
+        // backend can record the turn's spend. Accounting only — no message content.
+        usage: { include: true },
         // Restrict routing to providers that do not retain request data.
         provider: { data_collection: "deny" },
       }),
@@ -102,7 +110,11 @@ export function createOpenRouterChat(config: EnclaveConfig): RawChatFn {
     return {
       message: { content: choice.content ?? null, ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}) },
       model: data.model ?? req.model,
-      usage: { prompt_tokens: data.usage?.prompt_tokens, completion_tokens: data.usage?.completion_tokens },
+      usage: {
+        prompt_tokens: data.usage?.prompt_tokens,
+        completion_tokens: data.usage?.completion_tokens,
+        cost: data.usage?.cost,
+      },
     }
   }
 }
