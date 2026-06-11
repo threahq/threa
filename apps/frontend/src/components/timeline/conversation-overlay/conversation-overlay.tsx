@@ -17,11 +17,14 @@ import { ConversationOverlayRowProvider } from "./row-context"
 
 /**
  * Floating panel listing the conversations that currently have message rows
- * on screen (fed by the overlay's IntersectionObserver tracking). Anchored
- * bottom-right above the composer — the top-right corner belongs to the
- * per-row topic chips, which scroll with the timeline and would slide under
- * a top-anchored panel. Absolutely positioned (INV-21: toggling the overlay
- * never reflows the timeline), collapsible to a compact pill — collapsed by
+ * on screen (fed by the overlay's IntersectionObserver tracking). On desktop
+ * it hangs top-right just below the stream header — visually a dropdown from
+ * the overlay toggle that lives there; the viewport's bottom-right corner is
+ * dead space on wide windows where the timeline column is centered. On
+ * mobile it anchors bottom-right above the composer instead: thumb-reachable,
+ * and the top of the screen stays clear of the dense message header lines.
+ * Absolutely positioned either way (INV-21: toggling the overlay never
+ * reflows the timeline), collapsible to a compact pill — collapsed by
  * default on mobile where space is scarce. Rows toggle focus on a
  * conversation; X closes the overlay (drops the URL param).
  */
@@ -29,10 +32,13 @@ export function ConversationOverlayPanel({
   overlay,
   inViewConversations,
   onClose,
+  searchBarOpen = false,
 }: {
   overlay: ConversationOverlayContext
   inViewConversations: ConversationWithStaleness[]
   onClose: () => void
+  /** Stream search renders a full-width bar at the container top; drop below it. */
+  searchBarOpen?: boolean
 }) {
   const isMobile = useIsMobile()
   // Collapsed by default on mobile; the user's explicit choice wins once made.
@@ -43,14 +49,14 @@ export function ConversationOverlayPanel({
   return (
     <div
       data-testid="conversation-overlay-panel"
-      className="absolute right-2 z-20 flex justify-end"
+      className={cn("absolute right-2 z-20 flex justify-end", !isMobile && (searchBarOpen ? "top-14" : "top-2"))}
       // --composer-height measures the floating pill itself; the pill also
       // floats above the container bottom and has the send-hint line under
       // it, so a plain +0.5rem (what Jump-to-latest uses, which sits flush
       // against the pill) would leave the panel's lower rows behind the
       // composer. 2.5rem clears the pill's own bottom offset with breathing
       // room.
-      style={{ bottom: "calc(var(--composer-height, 0px) + 2.5rem)" }}
+      style={isMobile ? { bottom: "calc(var(--composer-height, 0px) + 2.5rem)" } : undefined}
     >
       {collapsed ? (
         <button

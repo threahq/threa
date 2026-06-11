@@ -1440,6 +1440,7 @@ export function StreamContent({
                   overlay={activeConversationOverlay}
                   inViewConversations={inViewConversations}
                   onClose={closeConversationOverlay}
+                  searchBarOpen={isSearchOpen}
                 />
               )}
               {isDraft && (
