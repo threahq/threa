@@ -251,7 +251,7 @@ describe("ConversationService.reassignMessage", () => {
   })
 
   test("reactivates a resolved-empty conversation when a message moves back into it", async () => {
-    const { convAId, convBId, msg0Id } = await seedTwoConversations()
+    const { convAId, convBId, msg0Id, msg1Id, msg2Id } = await seedTwoConversations()
 
     // Empty conversation B (auto-resolves), then undo: move the message back.
     await service.reassignMessage({
@@ -268,6 +268,13 @@ describe("ConversationService.reassignMessage", () => {
     })
 
     expect(result.conversation).toMatchObject({ id: convBId, messageIds: [msg0Id], status: "active" })
+    // Conversation A still owns msg1+msg2 after the undo: resolve-on-empty
+    // must NOT fire for a previous conversation that has messages left.
+    expect(result.previousConversation).toMatchObject({
+      id: convAId,
+      messageIds: [msg1Id, msg2Id],
+      status: "active",
+    })
 
     const convB = await withTransaction(pool, (client) => ConversationRepository.findById(client, convBId))
     expect(convB?.status).toBe("active")
