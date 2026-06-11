@@ -4,6 +4,7 @@ import {
   bytesToBase64,
   encryptPayload,
   generateStreamKey,
+  serializeSealedPayload,
   wrapStreamKey,
   type StreamEnvelope,
 } from "@threa/crypto"
@@ -318,22 +319,63 @@ describe("parseSealedPayload", () => {
   ]
 
   it("returns a bare markdown string unchanged (the no-attachment shape)", () => {
-    expect(parseSealedPayload("hello **world**")).toEqual({ contentMarkdown: "hello **world**", attachmentRefs: [] })
+    expect(parseSealedPayload("hello **world**")).toEqual({
+      contentMarkdown: "hello **world**",
+      attachmentRefs: [],
+      sources: [],
+    })
   })
 
   it("treats markdown that merely starts with `{` as markdown, not a wrapper", () => {
-    expect(parseSealedPayload("{not json at all")).toEqual({ contentMarkdown: "{not json at all", attachmentRefs: [] })
+    expect(parseSealedPayload("{not json at all")).toEqual({
+      contentMarkdown: "{not json at all",
+      attachmentRefs: [],
+      sources: [],
+    })
     const jsonButNotOurs = JSON.stringify({ foo: "bar" })
-    expect(parseSealedPayload(jsonButNotOurs)).toEqual({ contentMarkdown: jsonButNotOurs, attachmentRefs: [] })
+    expect(parseSealedPayload(jsonButNotOurs)).toEqual({
+      contentMarkdown: jsonButNotOurs,
+      attachmentRefs: [],
+      sources: [],
+    })
   })
 
   it("extracts contentMarkdown and refs from the versioned wrapper", () => {
     const wrapper = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "see attached", attachmentRefs: refs })
-    expect(parseSealedPayload(wrapper)).toEqual({ contentMarkdown: "see attached", attachmentRefs: refs })
+    expect(parseSealedPayload(wrapper)).toEqual({ contentMarkdown: "see attached", attachmentRefs: refs, sources: [] })
   })
 
   it("falls back to no refs when a wrapper's attachmentRefs is not an array", () => {
     const malformed = JSON.stringify({ __e2ePayload: 1, contentMarkdown: "body", attachmentRefs: "oops" })
-    expect(parseSealedPayload(malformed)).toEqual({ contentMarkdown: "body", attachmentRefs: [] })
+    expect(parseSealedPayload(malformed)).toEqual({ contentMarkdown: "body", attachmentRefs: [], sources: [] })
+  })
+
+  it("extracts citation sources sealed into the wrapper (agent replies, E2EE-9)", () => {
+    const sources = [{ type: "web", title: "Tide Atlas", url: "https://tides.example/atlas" }]
+    const wrapper = serializeSealedPayload("Tides come from the moon.", undefined, sources)
+    expect(parseSealedPayload(wrapper)).toEqual({
+      contentMarkdown: "Tides come from the moon.",
+      attachmentRefs: [],
+      sources,
+    })
+  })
+
+  it("drops malformed source elements but keeps valid ones", () => {
+    const wrapper = JSON.stringify({
+      __e2ePayload: 1,
+      contentMarkdown: "body",
+      attachmentRefs: [],
+      sources: [{ title: "Valid", url: "https://example.com" }, { title: 42, url: "https://bad.example" }, "junk"],
+    })
+    expect(parseSealedPayload(wrapper)).toEqual({
+      contentMarkdown: "body",
+      attachmentRefs: [],
+      sources: [{ title: "Valid", url: "https://example.com" }],
+    })
+  })
+
+  it("seals bare markdown (no wrapper) when there are no refs and no sources", () => {
+    expect(serializeSealedPayload("plain body")).toBe("plain body")
+    expect(serializeSealedPayload("plain body", [], [])).toBe("plain body")
   })
 })

@@ -11,7 +11,7 @@ import {
 } from "@threa/crypto"
 import {
   INTERNAL_API_KEY_HEADER,
-  type EnclaveSealedReply,
+  type SealedReply,
   type EnclaveSessionAssignment,
   type EnclaveSessionResult,
 } from "@threa/types"
@@ -130,7 +130,7 @@ describe("createSessionsHandler", () => {
     const assignment = await assignmentFor(keyPair, ssk, "What's the capital of France?")
 
     const rawChat: RawChatFn = async () => ({ message: { content: "Paris." }, model: "stub/model" })
-    const streamed: { sessionId: string; reply: EnclaveSealedReply }[] = []
+    const streamed: { sessionId: string; reply: SealedReply }[] = []
     let completed: { sessionId: string; result: EnclaveSessionResult } | null = null
     const callbacks: BackendCallbacks = {
       heartbeat: async () => {},

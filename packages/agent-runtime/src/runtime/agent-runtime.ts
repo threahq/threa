@@ -60,10 +60,18 @@ export interface AgentRuntimeConfig {
   /** Cost context forwarded to every AI call the runtime makes (enables usage recording). */
   costContext?: CostContext
 
-  /** Terminal action — sends a message to the conversation */
+  /**
+   * Terminal action — sends a message to the conversation.
+   *
+   * `sources` is required on the commit payload (empty array means "none"):
+   * a host that ignores citations no longer compiles, instead of silently
+   * narrowing the contract the way the enclave once did (E2EE-9). For sealed
+   * (E2E) hosts the sources must ride inside the sealed payload — never a
+   * cleartext column or wire field.
+   */
   sendMessage: (input: {
     content: string
-    sources?: SourceItem[]
+    sources: SourceItem[]
   }) => Promise<{ messageId: string; operation?: "created" | "edited" }>
 
   /** Optional new-message awareness (companion uses this, simpler agents don't) */
@@ -722,7 +730,7 @@ export class AgentRuntime {
   ): Promise<number> {
     const sendResult = await this.config.sendMessage({
       content: pending.content,
-      sources: pending.sources.length > 0 ? pending.sources : undefined,
+      sources: pending.sources,
     })
     const operation = sendResult.operation ?? "created"
     sent.ids.push(sendResult.messageId)

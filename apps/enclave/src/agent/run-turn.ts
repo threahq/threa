@@ -10,6 +10,7 @@ import {
   openMessageAsString,
   parseSealedPayload,
   sealMessage,
+  serializeSealedPayload,
   unwrapStreamKey,
   type AttachmentRef,
 } from "@threa/crypto"
@@ -17,7 +18,7 @@ import { AgentToolNames } from "@threa/types"
 import type {
   EnclaveSessionAssignment,
   EnclaveSessionResult,
-  EnclaveSealedReply,
+  SealedReply,
   EnclaveSealedStep,
   EnclaveSealedStepStart,
   EnclaveSealedSubstep,
@@ -65,7 +66,7 @@ export interface EnclaveTurnDeps {
    * continues — an interim "I'll look into it" lands ahead of the final answer
    * rather than batched at completion. A throw here aborts the turn.
    */
-  onMessage: (reply: EnclaveSealedReply) => Promise<void>
+  onMessage: (reply: SealedReply) => Promise<void>
   /**
    * Open a sealed in-flight step the moment the loop starts it (tool:start, and
    * the leading edge of thinking/message_sent). Lets an open trace dialog render
@@ -223,14 +224,17 @@ export async function runEnclaveTurn(
       : {}),
     // Terminal action: mint each reply's id, seal it under the current SSK bound
     // to that id, and stream it back now (awaited, so it's delivered before the
-    // loop moves on). The backend stores ciphertext under this id.
-    sendMessage: async ({ content }) => {
+    // loop moves on). The backend stores ciphertext under this id. Citation
+    // sources ride INSIDE the sealed payload — they reveal what was researched,
+    // so they must never travel as a cleartext column or wire field (E2EE-9). A
+    // sourceless reply seals the bare string, byte-identical to before.
+    sendMessage: async ({ content, sources }) => {
       if (firstReplyText === null) firstReplyText = content
       const messageId = `msg_${ulid()}`
       const sealed = await sealMessage({
         key: replySsk,
         keyGeneration: request.reply.keyGeneration,
-        payload: content,
+        payload: serializeSealedPayload(content, undefined, sources),
         aad: buildMessageAad({
           streamId: request.streamId,
           messageId,

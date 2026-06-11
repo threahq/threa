@@ -9,6 +9,7 @@ import {
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import type { AttachmentRef } from "@/lib/crypto/attachment-crypto"
+import type { SealedSourceItem } from "@threa/crypto"
 
 /**
  * Render-time decryption hook for E2E `message_created` events.
@@ -33,7 +34,14 @@ export type DecryptedMessageContent =
   | { status: "plaintext"; contentMarkdown: string; contentJson: JSONContent | undefined }
   | { status: "locked" }
   | { status: "pending" }
-  | { status: "decrypted"; contentMarkdown: string; contentJson: JSONContent; attachmentRefs: AttachmentRef[] }
+  | {
+      status: "decrypted"
+      contentMarkdown: string
+      contentJson: JSONContent
+      attachmentRefs: AttachmentRef[]
+      /** Citation sources sealed in the payload (agent replies) — E2EE-9. */
+      sources: SealedSourceItem[]
+    }
   | { status: "failed" }
 
 interface EnvelopePayload {
@@ -135,6 +143,7 @@ export function useDecryptedMessageContent(
       contentMarkdown: cached.content.contentMarkdown,
       contentJson: cached.content.contentJson,
       attachmentRefs: cached.content.attachmentRefs ?? [],
+      sources: cached.content.sources ?? [],
     }
   }
   if (cached?.status === "failed") return { status: "failed" }

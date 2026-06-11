@@ -14,6 +14,7 @@ import {
   STREAM_ENVELOPE_VERSION,
   type AttachmentRef,
   type Envelope,
+  type SealedSourceItem,
   type StreamEnvelope,
 } from "@threa/crypto"
 import { resolveStreamKey } from "./stream-key-cache"
@@ -143,6 +144,12 @@ export interface DecryptedMessageContent {
    * the v2 decrypt always populates it, and readers default to `[]`.
    */
   attachmentRefs?: AttachmentRef[]
+  /**
+   * Citation sources sealed in the payload (agent replies). Same optionality
+   * contract as `attachmentRefs` — the v2 decrypt always populates it, readers
+   * default to `[]`. Sources only ever exist inside the ciphertext (E2EE-9).
+   */
+  sources?: SealedSourceItem[]
 }
 
 export interface DecryptMessageOpts {
@@ -207,11 +214,12 @@ async function tryOpenStreamMessage(
       ciphertext: base64ToBytes(payload.ciphertext),
     })
     // The decrypted bytes are either the bare markdown body or the versioned
-    // wrapper carrying attachmentRefs. Surface both: the markdown for the body,
-    // the refs (key/iv/filename/mime) so the viewer can fetch + decrypt the
-    // opaque S3 ciphertext on view.
-    const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
-    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown), attachmentRefs }
+    // wrapper carrying attachmentRefs + citation sources. Surface all of it:
+    // the markdown for the body, the refs (key/iv/filename/mime) so the viewer
+    // can fetch + decrypt the opaque S3 ciphertext on view, and the sources so
+    // an agent reply renders its citations (E2EE-9).
+    const { contentMarkdown, attachmentRefs, sources } = parseSealedPayload(raw)
+    return { contentMarkdown, contentJson: parseMarkdown(contentMarkdown), attachmentRefs, sources }
   } catch {
     return null
   }
@@ -230,8 +238,8 @@ async function tryDecryptFanoutMessage(
       privateKey: opts.privateKey,
       recipientKeyId: opts.recipientKeyId,
     })
-    // The v1 fan-out path predates E2E attachments — no refs to surface.
-    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown), attachmentRefs: [] }
+    // The v1 fan-out path predates E2E attachments and sources — nothing to surface.
+    return { contentMarkdown: markdown, contentJson: parseMarkdown(markdown), attachmentRefs: [], sources: [] }
   } catch {
     return null
   }

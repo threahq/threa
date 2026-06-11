@@ -382,7 +382,9 @@ export class PersonaAgent {
         })
         const isSupersedeRerun = !!supersededMessagePlan
 
-        const doSendMessage = async (msgInput: { content: string; sources?: SourceItem[] }) => {
+        // `sources` is required on the commit payload (empty array = none) so a
+        // caller can't silently drop citations — see AgentRuntimeConfig.sendMessage.
+        const doSendMessage = async (msgInput: { content: string; sources: SourceItem[] }) => {
           const latestSession = await AgentSessionRepository.findById(db, session.id)
           if (!latestSession || latestSession.status !== SessionStatuses.RUNNING) {
             throw new Error(`Session ${session.id} is no longer running`)
@@ -393,6 +395,13 @@ export class PersonaAgent {
             supersededMessagePlan.nextIndex += 1
 
             try {
+              // Deliberately no `sources` here: the message_edited event has
+              // never carried them, and the rerun's citations still reach their
+              // one render surface — the session trace — via the runtime's
+              // message:edited event (SessionTraceObserver persists
+              // event.sources). E2E streams never take this path: editMessage
+              // refuses them and the catch below falls through to
+              // createMessage, which seals sources into the payload.
               const editedMessage = await editMessage({
                 workspaceId,
                 streamId: targetStreamId,
@@ -545,7 +554,7 @@ export class PersonaAgent {
 
         // Stub mode: send canned response, skip AI loop
         if (stubResponse) {
-          const msg = await doSendMessage({ content: stubResponse })
+          const msg = await doSendMessage({ content: stubResponse, sources: [] })
           return {
             messagesSent: 1,
             sentMessageIds: [msg.messageId],
