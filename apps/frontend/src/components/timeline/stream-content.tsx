@@ -336,6 +336,11 @@ export function StreamContent({
       { replace: true }
     )
   }, [setSearchParams])
+  // Batch-selection mode suspends the whole overlay (legend, rails, chips,
+  // correction swatch) — batch turns every row into a selection toggle, and
+  // the overlay's swatch would compete for the same clicks. The URL param is
+  // kept, so the overlay returns when batch mode ends.
+  const activeConversationOverlay = batchMode ? undefined : conversationOverlay
   const parentStreamId = stream?.parentStreamId
   const parentMessageId = stream?.parentMessageId
   const parentCachedEvents = useStreamEvents(parentStreamId ?? undefined)
@@ -1430,9 +1435,9 @@ export function StreamContent({
                 <StreamSearchBar search={streamSearch} onClose={handleSearchClose} onNavigate={handleSearchNavigate} />
               )}
               {batchMode && <BatchSelectionBar count={selectedMessageIds.size} onCancel={cancelBatchMode} />}
-              {conversationOverlay && !batchMode && (
+              {activeConversationOverlay && (
                 <ConversationLegend
-                  overlay={conversationOverlay}
+                  overlay={activeConversationOverlay}
                   isSearchOpen={isSearchOpen}
                   onClose={closeConversationOverlay}
                 />
@@ -1496,7 +1501,7 @@ export function StreamContent({
                     isSearchOpen={isSearchOpen}
                     batch={batchState}
                     batchPointerHandlers={batchPointerHandlers}
-                    conversationOverlay={conversationOverlay}
+                    conversationOverlay={activeConversationOverlay}
                   />
                   {/* Overlay loading indicators — absolutely positioned so they
                     don't cause layout shift when prepending older messages. */}
@@ -1566,7 +1571,7 @@ export function StreamContent({
                     hideSessionCards={isChannel}
                     newMessageIds={newMessageIds}
                     batch={batchState}
-                    conversationOverlay={conversationOverlay}
+                    conversationOverlay={activeConversationOverlay}
                   />
                   {isFetchingNewer && (
                     <div className="flex justify-center py-2">
