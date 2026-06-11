@@ -1,7 +1,15 @@
 import { describe, expect, it, mock } from "bun:test"
 import { AgentToolNames } from "@threa/types"
 import type { AgentEvent } from "./agent-events"
-import { InProcessTurnDriver, TurnDeliveries, type TurnCommit, type TurnRequest } from "./turn-driver"
+import {
+  EnclaveTurnDriver,
+  InProcessTurnDriver,
+  TurnDeliveries,
+  declaredUnsupported,
+  isDeclaredUnsupported,
+  type TurnCommit,
+  type TurnRequest,
+} from "./turn-driver"
 
 function plaintextRequest(overrides?: Partial<TurnRequest>): TurnRequest {
   return {
@@ -12,6 +20,20 @@ function plaintextRequest(overrides?: Partial<TurnRequest>): TurnRequest {
     tools: [],
     ...overrides,
   }
+}
+
+function sealedRequest(overrides?: Partial<TurnRequest>): TurnRequest {
+  return { ...plaintextRequest(), delivery: TurnDeliveries.SEALED, ...overrides }
+}
+
+function commitOnceAI(content: string) {
+  return {
+    generateTextWithTools: async () => ({
+      text: "",
+      toolCalls: [{ toolCallId: "tool_1", toolName: AgentToolNames.SEND_MESSAGE, input: { content } }],
+      response: { messages: [{ role: "assistant", content: "Sending." } as any] },
+    }),
+  } as any
 }
 
 describe("InProcessTurnDriver", () => {
@@ -79,5 +101,56 @@ describe("InProcessTurnDriver", () => {
       })
     ).rejects.toThrow("Agent session aborted: session superseded")
     expect(generateTextWithTools).not.toHaveBeenCalled()
+  })
+})
+
+describe("EnclaveTurnDriver", () => {
+  it("runs a sealed turn through the SAME loop and commits via the sealing sink", async () => {
+    const commits: TurnCommit[] = []
+    const driver = new EnclaveTurnDriver({ ai: commitOnceAI("Sealed reply") })
+
+    expect(driver.delivery).toBe(TurnDeliveries.SEALED)
+    const result = await driver.runTurn(sealedRequest(), {
+      commitMessage: async (commit) => {
+        commits.push(commit)
+        return { messageId: "msg_sealed_1" }
+      },
+      // The enclave declares interjection unsupported rather than omitting it; the
+      // turn must still run and commit, proving the driver folds the sentinel to
+      // "no provider" instead of handing it to the loop as an awareness object.
+      newMessages: declaredUnsupported("encrypted scratchpads"),
+    })
+
+    expect(commits).toEqual([{ content: "Sealed reply", sources: [] }])
+    expect(result.sentMessageIds).toEqual(["msg_sealed_1"])
+    expect(result.messagesSent).toBe(1)
+  })
+
+  it("refuses a non-sealed delivery before any model call", async () => {
+    const generateTextWithTools = mock(async () => {
+      throw new Error("must not be called")
+    })
+    const commitMessage = mock(async () => ({ messageId: "msg_never" }))
+    const driver = new EnclaveTurnDriver({ ai: { generateTextWithTools } as any })
+
+    await expect(
+      driver.runTurn(sealedRequest({ delivery: TurnDeliveries.PLAINTEXT }), { commitMessage })
+    ).rejects.toThrow('serves "sealed" turns')
+    expect(generateTextWithTools).not.toHaveBeenCalled()
+    expect(commitMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe("declaredUnsupported", () => {
+  it("builds a renderable sentinel that narrows true and carries its reason", () => {
+    const declared = declaredUnsupported("encrypted scratchpads")
+    expect(declared).toEqual({ unsupported: true, reason: "encrypted scratchpads" })
+    expect(isDeclaredUnsupported(declared)).toBe(true)
+  })
+
+  it("does not mistake a real awareness provider or nullish for the sentinel", () => {
+    expect(isDeclaredUnsupported(undefined)).toBe(false)
+    expect(isDeclaredUnsupported(null)).toBe(false)
+    expect(isDeclaredUnsupported({ check: async () => [] })).toBe(false)
   })
 })

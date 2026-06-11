@@ -47,6 +47,29 @@ export interface TurnCommitReceipt {
 }
 
 /**
+ * A capability a driver structurally cannot provide, declared with a user-facing
+ * `reason` instead of being silently omitted (§2.2.4). A sink that passes this
+ * for an optional edge is saying "I considered this and can't here" — so a gap
+ * like the enclave's missing mid-turn interjection (UX-12) is a loud, renderable
+ * product decision, not an `undefined` field. Drivers fold it to "no provider"
+ * for the loop while the reason stays available to telemetry and the trace UI.
+ */
+export interface DeclaredUnsupported {
+  readonly unsupported: true
+  readonly reason: string
+}
+
+/** Declare an optional turn capability unsupported, with a renderable reason. */
+export function declaredUnsupported(reason: string): DeclaredUnsupported {
+  return { unsupported: true, reason }
+}
+
+/** Narrow an optional sink edge to its declared-unsupported sentinel. */
+export function isDeclaredUnsupported(value: unknown): value is DeclaredUnsupported {
+  return typeof value === "object" && value !== null && (value as { unsupported?: unknown }).unsupported === true
+}
+
+/**
  * The host edges a turn runs against — what persona-agent used to hand the loop
  * as raw closures. Only the commit path is mandatory; a minimal host (no trace,
  * no interjection) supplies just `commitMessage`.
@@ -56,8 +79,13 @@ export interface TurnSink {
   commitMessage: (commit: TurnCommit) => Promise<TurnCommitReceipt>
   /** Event sink — trace projection, digest collection, OTEL. */
   observers?: AgentObserver[]
-  /** Mid-turn interjection (new-message awareness). Omitted → the host can't see mid-turn messages. */
-  newMessages?: NewMessageAwareness
+  /**
+   * Mid-turn interjection (new-message awareness). A real provider lets the loop
+   * reconsider on messages that land mid-turn; `declaredUnsupported(reason)` says
+   * the host structurally can't (the enclave reads sealed history once — UX-12);
+   * omitted means the host simply didn't wire it.
+   */
+  newMessages?: NewMessageAwareness | DeclaredUnsupported
   /** Hard cancellation: a returned reason aborts the turn (externally deleted/superseded sessions). */
   shouldAbort?: () => Promise<string | null>
   /** Cooperative per-tool cancellation (graceful partial results, not session failure). */
@@ -97,6 +125,39 @@ export interface TurnDriver {
 }
 
 /**
+ * Map a request + sink onto the loop's own constructor shape and run it. Shared
+ * by every in-process-style driver — the companion in plaintext and the enclave
+ * behind its sealing sink — which differ only by `delivery`, never by how the
+ * request and sink reach `AgentRuntime`.
+ */
+function runTurnOnAgentRuntime(ai: AgentRuntimeAI, request: TurnRequest, sink: TurnSink): Promise<TurnResult> {
+  const runtime = new AgentRuntime({
+    ai,
+    model: request.model,
+    modelString: request.modelString,
+    systemPrompt: request.systemPrompt,
+    messages: request.messages,
+    tools: request.tools,
+    maxTokens: request.maxTokens,
+    temperature: request.temperature,
+    maxIterations: request.maxIterations,
+    initialContext: request.initialContext,
+    telemetry: request.telemetry,
+    costContext: request.costContext,
+    allowNoMessageOutput: request.allowNoMessageOutput,
+    validateFinalResponse: request.validateFinalResponse,
+    sendMessage: sink.commitMessage,
+    observers: sink.observers,
+    // A declared-unsupported interjection edge is a real "no provider" to the
+    // loop; the reason rides the seam for rendering, never into the loop.
+    newMessages: isDeclaredUnsupported(sink.newMessages) ? undefined : sink.newMessages,
+    shouldAbort: sink.shouldAbort,
+    toolSignalProvider: sink.toolSignalProvider,
+  })
+  return runtime.run()
+}
+
+/**
  * The plaintext driver: runs `AgentRuntime` in-process (the companion path).
  * Long-lived — construct once with the host's AI; each turn passes its own
  * request and sink.
@@ -110,28 +171,26 @@ export class InProcessTurnDriver implements TurnDriver {
     if (request.delivery !== this.delivery) {
       throw new Error(`InProcessTurnDriver serves "${this.delivery}" turns; got "${request.delivery}"`)
     }
+    return runTurnOnAgentRuntime(this.deps.ai, request, sink)
+  }
+}
 
-    const runtime = new AgentRuntime({
-      ai: this.deps.ai,
-      model: request.model,
-      modelString: request.modelString,
-      systemPrompt: request.systemPrompt,
-      messages: request.messages,
-      tools: request.tools,
-      maxTokens: request.maxTokens,
-      temperature: request.temperature,
-      maxIterations: request.maxIterations,
-      initialContext: request.initialContext,
-      telemetry: request.telemetry,
-      costContext: request.costContext,
-      allowNoMessageOutput: request.allowNoMessageOutput,
-      validateFinalResponse: request.validateFinalResponse,
-      sendMessage: sink.commitMessage,
-      observers: sink.observers,
-      newMessages: sink.newMessages,
-      shouldAbort: sink.shouldAbort,
-      toolSignalProvider: sink.toolSignalProvider,
-    })
-    return runtime.run()
+/**
+ * The sealed driver: runs the SAME `AgentRuntime` loop, but inside the enclave
+ * next to decrypted plaintext, with a sealing sink (its commit and trace edges
+ * seal under the stream SSK before crossing the HTTP callbacks). Constructed per
+ * turn because the enclave's `AgentRuntimeAI` is itself per turn — it accumulates
+ * that turn's token usage — unlike the companion's process-long-lived AI.
+ */
+export class EnclaveTurnDriver implements TurnDriver {
+  readonly delivery: TurnDelivery = TurnDeliveries.SEALED
+
+  constructor(private readonly deps: { ai: AgentRuntimeAI }) {}
+
+  async runTurn(request: TurnRequest, sink: TurnSink): Promise<TurnResult> {
+    if (request.delivery !== this.delivery) {
+      throw new Error(`EnclaveTurnDriver serves "${this.delivery}" turns; got "${request.delivery}"`)
+    }
+    return runTurnOnAgentRuntime(this.deps.ai, request, sink)
   }
 }
