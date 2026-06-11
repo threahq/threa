@@ -39,6 +39,7 @@ import { SidebarQuickLinks } from "./quick-links"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
+import { GettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection } from "./sidebar-config"
@@ -168,6 +169,13 @@ export function Sidebar({ workspaceId }: SidebarProps) {
 
   // System streams are auto-created infrastructure — don't count toward "has content"
   const hasUserStreamsFromStreams = processedStreams.some((s) => s.type !== StreamTypes.SYSTEM)
+
+  // Getting-started "write your first note": content in the auto-created system
+  // scratchpad, or any scratchpad the user made themselves (scratchpads only
+  // persist server-side on first send, so existence implies content).
+  const hasWrittenNote = idbStreams.some((s) =>
+    s.type === StreamTypes.SYSTEM ? s.lastMessagePreview != null : s.type === StreamTypes.SCRATCHPAD
+  )
 
   // Users without existing DM streams are shown as virtual DM drafts.
   const virtualDmStreams = useMemo(() => {
@@ -526,13 +534,22 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           />
         }
         footer={
-          <SidebarFooter
-            workspaceId={workspaceId}
-            currentUser={currentUser}
-            onCreateScratchpad={handleCreateScratchpad}
-            onCreateChannel={handleCreateChannel}
-            scratchpadAddMenuActions={scratchpadAddMenuActions}
-          />
+          <>
+            <GettingStarted
+              workspaceId={workspaceId}
+              currentUser={currentUser}
+              hasWrittenNote={hasWrittenNote}
+              memberCount={workspaceUsers.length}
+              onCreateScratchpad={handleCreateScratchpad}
+            />
+            <SidebarFooter
+              workspaceId={workspaceId}
+              currentUser={currentUser}
+              onCreateScratchpad={handleCreateScratchpad}
+              onCreateChannel={handleCreateChannel}
+              scratchpadAddMenuActions={scratchpadAddMenuActions}
+            />
+          </>
         }
       />
       <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />

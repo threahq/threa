@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest"
-import { SIDEBAR_QUICK_LINKS, type SidebarQuickLinkKey } from "@threa/types"
+import { SETTINGS_TABS, SIDEBAR_QUICK_LINKS, type SidebarQuickLinkKey } from "@threa/types"
 import { commands, type Command, type CommandContext } from "./commands"
 
 describe("commands", () => {
@@ -93,6 +93,7 @@ describe("commands", () => {
         setMode: vi.fn(),
         requestInput: vi.fn(),
         openSettings: vi.fn(),
+        openWorkspaceSettings: vi.fn(),
         openExplorer,
         openStreamSettings: vi.fn(),
         requestArchiveStream: vi.fn(),
@@ -120,6 +121,35 @@ describe("commands", () => {
         command.action(harness.context)
       }
       reachability[key](harness)
+    })
+  })
+
+  // Settings tabs must each be reachable directly from the palette — typing
+  // "notifications" or "keyboard" should land on the right tab without
+  // knowing it lives inside the Settings dialog.
+  describe("settings discoverability", () => {
+    it.each(SETTINGS_TABS)("exposes a palette command that opens the %s settings tab", (tab) => {
+      const cmd = commands.find((c) => c.id === `settings-${tab}`)
+      expect(cmd).toBeDefined()
+
+      const openSettings = vi.fn()
+      const closeDialog = vi.fn()
+      cmd!.action({ openSettings, closeDialog } as unknown as CommandContext)
+
+      expect(closeDialog).toHaveBeenCalled()
+      expect(openSettings).toHaveBeenCalledWith(tab)
+    })
+
+    it("reaches workspace settings and member invites from the palette", () => {
+      const openWorkspaceSettings = vi.fn()
+      const closeDialog = vi.fn()
+      const context = { openWorkspaceSettings, closeDialog } as unknown as CommandContext
+
+      commands.find((c) => c.id === "open-workspace-settings")!.action(context)
+      expect(openWorkspaceSettings).toHaveBeenCalledWith("general")
+
+      commands.find((c) => c.id === "invite-people")!.action(context)
+      expect(openWorkspaceSettings).toHaveBeenCalledWith("users")
     })
   })
 })

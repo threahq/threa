@@ -80,6 +80,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       voicePolishLevel: "opinionated",
       statusPresets: [],
       workSchedule: null,
+      gettingStartedDismissed: false,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

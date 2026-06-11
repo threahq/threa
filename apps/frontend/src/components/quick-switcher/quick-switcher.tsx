@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, useSearchParams } from "react-router-dom"
 import { Search, Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { LabelableResourceTypes } from "@threa/types"
@@ -30,6 +30,7 @@ import { getE2eSessionState } from "@/stores/e2e-session-store"
 import { useCreateChannel } from "@/components/create-channel"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
+import { WS_SETTINGS_PARAM, type WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useStreamItems } from "./use-stream-items"
 import { useCommandItems } from "./use-command-items"
@@ -88,6 +89,7 @@ export function getDisplayQuery(query: string, mode: QuickSwitcherMode): string 
 
 export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, currentStreamId }: QuickSwitcherProps) {
   const navigate = useNavigate()
+  const [, setSearchParams] = useSearchParams()
   const user = useUser()
   const { createDraft, deleteDraft } = useDraftScratchpads(workspaceId)
   const { openSettings } = useSettings()
@@ -230,6 +232,23 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     [handleClose]
   )
 
+  // Workspace settings is URL-param driven like the user settings dialog, but
+  // has no context of its own — set the param directly.
+  const openWorkspaceSettings = useCallback(
+    (tab: WorkspaceSettingsTab) => {
+      handleClose()
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.set(WS_SETTINGS_PARAM, tab)
+          return next
+        },
+        { replace: true }
+      )
+    },
+    [handleClose, setSearchParams]
+  )
+
   const commandContext: CommandContext = useMemo(
     () => ({
       workspaceId,
@@ -241,6 +260,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       setMode,
       requestInput,
       openSettings,
+      openWorkspaceSettings,
       openExplorer,
       currentStreamId,
       currentStreamName,
@@ -258,6 +278,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       setMode,
       requestInput,
       openSettings,
+      openWorkspaceSettings,
       openExplorer,
       currentStreamId,
       currentStreamName,

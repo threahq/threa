@@ -258,6 +258,13 @@ export interface UserPreferences {
    * defaults shown in the status picker. Empty by default.
    */
   statusPresets: StatusPreset[]
+  /**
+   * Whether the user dismissed the sidebar "Getting started" checklist. The
+   * checklist also disappears on its own once every task derives as done;
+   * this flag only records an explicit dismissal so it stays gone across
+   * devices.
+   */
+  gettingStartedDismissed: boolean
   createdAt: string
   updatedAt: string
 }
@@ -286,6 +293,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   accessibility: DEFAULT_ACCESSIBILITY,
   workSchedule: null,
   statusPresets: [],
+  gettingStartedDismissed: false,
 }
 
 // =============================================================================
@@ -316,6 +324,7 @@ export interface UpdateUserPreferencesInput {
   accessibility?: Partial<AccessibilityPreferences>
   workSchedule?: WorkSchedule | null
   statusPresets?: StatusPreset[]
+  gettingStartedDismissed?: boolean
 }
 
 // =============================================================================

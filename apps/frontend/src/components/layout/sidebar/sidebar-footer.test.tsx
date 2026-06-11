@@ -130,9 +130,13 @@ describe("SidebarFooter", () => {
     expect(screen.getByRole("button", { name: "Set a status" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "AI Usage" })).toHaveAttribute("href", "/w/workspace_1/admin/ai-usage")
 
+    // A single Settings entry — Profile is the dialog's default tab, not a
+    // second menu row into the same dialog.
+    expect(screen.queryByRole("button", { name: "Profile" })).not.toBeInTheDocument()
+
     await user.click(screen.getByRole("button", { name: "Settings" }))
 
-    expect(openSettings).toHaveBeenCalledWith("appearance")
+    expect(openSettings).toHaveBeenCalledWith("profile")
     expect(collapseOnMobile).toHaveBeenCalled()
   })
 
@@ -225,7 +229,7 @@ describe("SidebarFooter", () => {
     await user.click(screen.getByRole("button", { name: /kris/i }))
     await user.click(screen.getByText("Settings"))
 
-    expect(openSettings).toHaveBeenCalledWith("appearance")
+    expect(openSettings).toHaveBeenCalledWith("profile")
   })
 
   it("surfaces a do-not-disturb label in the account header when notifications are paused", async () => {
