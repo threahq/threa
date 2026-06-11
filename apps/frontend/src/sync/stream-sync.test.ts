@@ -1446,3 +1446,78 @@ describe("getPersistedTail", () => {
     expect(await getPersistedTail("stream_tail_empty")).toEqual({ latestSequence: null, latestBroadcastSequence: null })
   })
 })
+
+describe("bootstrap no-op rewrite skip (perceived-perf: silence spurious liveQuery emissions)", () => {
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.streams.clear()
+    await db.pendingMessages.clear()
+  })
+
+  it("does not rewrite a row when a second identical bootstrap applies (unchanged _cachedAt)", async () => {
+    const streamId = "stream_noop"
+    const events = [
+      makeEvent({ id: "evt_1", streamId, sequence: "100" }),
+      makeEvent({ id: "evt_2", streamId, sequence: "200" }),
+    ]
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap(events, streamId))
+    // Sentinel: if the second apply rewrites the row, _cachedAt jumps to "now"
+    // and the assertion below catches it even when both applies share a ms.
+    await db.events.update("evt_1", { _cachedAt: 12345 })
+    const first = await db.events.get("evt_1")
+
+    // Same content arrives again (cold open re-bootstrap). Without the skip,
+    // every row would be re-put with a fresh _cachedAt.
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap(events, streamId))
+    const second = await db.events.get("evt_1")
+
+    expect(second).toEqual(first)
+    expect(second?._cachedAt).toBe(12345)
+  })
+
+  it("still rewrites a row whose payload changed", async () => {
+    const streamId = "stream_changed"
+    const original = makeEvent({ id: "evt_1", streamId, sequence: "100" })
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([original], streamId))
+
+    const edited = {
+      ...original,
+      payload: { messageId: "evt_1", contentMarkdown: "edited content" },
+    }
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([edited], streamId))
+
+    const row = await db.events.get("evt_1")
+    expect((row?.payload as { contentMarkdown?: string }).contentMarkdown).toBe("edited content")
+  })
+
+  it("never skips a row carrying optimistic _status (the put intentionally clears it)", async () => {
+    const streamId = "stream_status"
+    const event = makeEvent({ id: "evt_1", streamId, sequence: "100" })
+    await db.events.put({
+      ...event,
+      workspaceId: "ws_1",
+      _sequenceNum: 100,
+      _cachedAt: Date.now(),
+      _status: "sent",
+    })
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([event], streamId))
+
+    const row = await db.events.get("evt_1")
+    expect(row?._status).toBeUndefined()
+  })
+
+  it("skips no-op rewrites for non-message event types too", async () => {
+    const streamId = "stream_member"
+    const joined = makeEvent({ id: "evt_join", streamId, sequence: "100", eventType: "member_joined" })
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([joined], streamId))
+    await db.events.update("evt_join", { _cachedAt: 12345 })
+    const first = await db.events.get("evt_join")
+
+    await applyStreamBootstrap("ws_1", streamId, makeBootstrap([joined], streamId))
+    const second = await db.events.get("evt_join")
+
+    expect(second).toEqual(first)
+    expect(second?._cachedAt).toBe(12345)
+  })
+})
