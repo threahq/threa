@@ -33,10 +33,10 @@ archived cancels any pending reminder.
 
 ## How a user experiences it
 
-- **Saving.** A bookmark button appears when hovering a message; clicking it toggles
-  the save. Hovering the button opens a popover with reminder options and status
-  actions. The message context menu has the same actions: save, unsave, and set
-  reminder.
+- **Saving.** A bookmark button appears when hovering a message. Clicking the button
+  saves or unsaves it; hovering over the button itself opens a popover with reminder
+  options and status actions. The message context menu has the same actions: save,
+  unsave, and set reminder.
 - **The saved page.** Three tabs: Saved, Done, and Archived, each its own URL
   (`/saved`, `/saved/done`, `/saved/archived`), so refresh, back/forward, and shared
   links land on the same tab. Saved is ordered by when you saved; Done and Archived
