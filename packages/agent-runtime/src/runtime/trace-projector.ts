@@ -243,6 +243,19 @@ export class TraceProjector<OpenStep = unknown> implements AgentObserver {
         })
         break
       }
+
+      // Lifecycle events produce no trace steps — listed explicitly (not
+      // dropped through a default) so adding a new AgentEvent variant is a
+      // compile error here instead of a silently unprojected event.
+      case "session:start":
+      case "session:end":
+      case "session:error":
+        break
+
+      default: {
+        const unhandled: never = event
+        throw new Error(`Unhandled AgentEvent: ${JSON.stringify(unhandled)}`)
+      }
     }
   }
 }

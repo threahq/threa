@@ -10,7 +10,7 @@ entry_points:
   - apps/backend/src/features/agents/companion/session.ts
   - apps/backend/src/features/agents/companion-outbox-handler.ts
   - apps/backend/src/features/agents/built-in-agents.ts
-  - apps/backend/src/features/agents/runtime/session-trace-observer.ts
+  - apps/backend/src/features/agents/runtime/session-trace-sink.ts
 public_site: false
 summary: >
   The loop that runs a persona against a stream: read the conversation, call tools,
@@ -213,5 +213,5 @@ What does not exist today, stated plainly:
   `message:created`, applies the companion-mode and e2e gates, queues the `PERSONA_AGENT` job.
 - `apps/backend/src/features/agents/built-in-agents.ts`: personas as data (Ariadne, Empty
   Agent), the patch schema, and the e2e-capability gate.
-- `apps/backend/src/features/agents/runtime/session-trace-observer.ts`: turns loop events
-  into persisted trace steps and socket emissions.
+- `apps/backend/src/features/agents/runtime/session-trace-sink.ts`: the backend sink the
+  shared `TraceProjector` drives — persists trace steps and socket emissions.

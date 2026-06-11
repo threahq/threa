@@ -57,7 +57,9 @@ export class SessionTraceStepSink implements TraceStepSink<ActiveStep> {
     // Persisted substep log update — write the running snapshot to the step's
     // content so a refresh sees the phases collected so far. Fire-and-forget
     // because we don't want to block the event loop on a DB round-trip, and
-    // the worst case on failure is the live socket path still works.
+    // the worst case on failure is the live socket path still works. A write
+    // that lands after the step finalized no-ops (`updateSubsteps` writes with
+    // requireRunning), so it can never clobber the final content.
     void params.step.updateSubsteps(params.snapshot).catch((err) => {
       logger.warn({ err, toolCallId: params.toolCallId, toolName: params.toolName }, "Failed to persist substep update")
     })
