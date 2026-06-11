@@ -126,6 +126,13 @@ export function DictationChunkInspector({ chunks, onToggle }: DictationChunkInsp
 
     function onPointerOut(e: PointerEvent) {
       if (e.pointerType === "touch") return
+      // Only departures from a chunk or the popover can close it. Without
+      // this origin guard, every element boundary the cursor crosses
+      // elsewhere on the page would restart the grace timer below and keep
+      // the popover alive long past HOVER_CLOSE_GRACE_MS.
+      const from = e.target instanceof Node ? e.target : null
+      const fromChunk = from instanceof Element && from.closest("[data-chunk-id]") !== null
+      if (!fromChunk && !isInsidePopover(from)) return
       const next = e.relatedTarget instanceof Node ? e.relatedTarget : null
       // Don't dismiss when the cursor moves onto the popover itself (so the
       // user can hover inside it to click Switch) or onto another chunk

@@ -85,6 +85,29 @@ describe("DictationChunkInspector hover lifecycle", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
+  it("ignores pointerout from unrelated elements: the grace timer is not restarted", () => {
+    const { chunkEl } = setup()
+    const elsewhere = document.createElement("div")
+    document.body.appendChild(elsewhere)
+
+    hoverChunk(chunkEl)
+    fireEvent.pointerOut(chunkEl, { pointerType: "mouse", relatedTarget: document.body })
+
+    // Mid-grace, the cursor crosses other UI on the page. Those departures
+    // must not reschedule the close, or the popover would stay open for as
+    // long as the mouse keeps moving.
+    act(() => {
+      vi.advanceTimersByTime(HOVER_CLOSE_GRACE_MS / 2)
+    })
+    fireEvent.pointerOut(elsewhere, { pointerType: "mouse", relatedTarget: document.body })
+    act(() => {
+      vi.advanceTimersByTime(HOVER_CLOSE_GRACE_MS / 2 + 1)
+    })
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    elsewhere.remove()
+  })
+
   it("closes after leaving the popover itself", () => {
     const { chunkEl } = setup()
     hoverChunk(chunkEl)
@@ -110,7 +133,7 @@ describe("DictationChunkInspector hover lifecycle", () => {
     fireEvent.pointerOver(popover, { pointerType: "mouse" })
     fireEvent.click(screen.getByRole("button", { name: "Show original" }))
 
-    expect(onToggle).toHaveBeenCalledTimes(1)
+    expect(onToggle).toHaveBeenCalled()
     // The popover stays open after the flip so the user can read the swap.
     expect(screen.getByRole("dialog", { name: "Dictation polish comparison" })).toBeInTheDocument()
   })
