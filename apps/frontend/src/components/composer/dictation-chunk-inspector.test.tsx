@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, act, fireEvent } from "@testing-library/react"
 import type { DictationChunkRecord } from "@/hooks/use-voice-dictation"
@@ -18,16 +19,36 @@ function makeChunks(overrides: Partial<DictationChunkRecord> = {}): Map<string, 
   ])
 }
 
-/** Mounts the inspector plus a decoration-style chunk element it can anchor to. */
-function setup(chunks = makeChunks()) {
+/** Appends a decoration-style chunk element the inspector can anchor to. */
+function appendChunkEl() {
   const chunkEl = document.createElement("span")
   chunkEl.dataset.chunkId = "chunk-1"
   chunkEl.textContent = "Hello world"
   document.body.appendChild(chunkEl)
+  return chunkEl
+}
 
+/** Mounts the inspector plus a chunk element it can anchor to. */
+function setup(chunks = makeChunks()) {
+  const chunkEl = appendChunkEl()
   const onToggle = vi.fn()
   render(<DictationChunkInspector chunks={chunks} onToggle={onToggle} />)
   return { chunkEl, onToggle }
+}
+
+/**
+ * Harness that mimics the dictation hook's session toggle: onToggle flips
+ * which version every chunk shows, so the test can assert the user-visible
+ * label swap instead of inspecting the mock.
+ */
+function ToggleHarness() {
+  const [showing, setShowing] = useState<"polished" | "raw">("polished")
+  return (
+    <DictationChunkInspector
+      chunks={makeChunks({ currentlyShowing: showing })}
+      onToggle={() => setShowing((prev) => (prev === "polished" ? "raw" : "polished"))}
+    />
+  )
 }
 
 function hoverChunk(chunkEl: HTMLElement) {
@@ -125,7 +146,8 @@ describe("DictationChunkInspector hover lifecycle", () => {
   })
 
   it("keeps the popover interactive: Switch stays clickable after crossing the gap", () => {
-    const { chunkEl, onToggle } = setup()
+    const chunkEl = appendChunkEl()
+    render(<ToggleHarness />)
     hoverChunk(chunkEl)
     fireEvent.pointerOut(chunkEl, { pointerType: "mouse", relatedTarget: document.body })
 
@@ -133,8 +155,9 @@ describe("DictationChunkInspector hover lifecycle", () => {
     fireEvent.pointerOver(popover, { pointerType: "mouse" })
     fireEvent.click(screen.getByRole("button", { name: "Show original" }))
 
-    expect(onToggle).toHaveBeenCalled()
-    // The popover stays open after the flip so the user can read the swap.
+    // The popover stays open after the flip so the user can read the swap,
+    // and the switch label reflects that the editor now shows the raw take.
     expect(screen.getByRole("dialog", { name: "Dictation polish comparison" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Show polished" })).toBeInTheDocument()
   })
 })
