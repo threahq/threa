@@ -71,7 +71,9 @@ export function parseMessagePayload(payload: unknown): NormalizedMessagePayload 
             messageId: eventPayload.messageId,
             contentMarkdown: (eventPayload.contentMarkdown as string) ?? "",
             contentJson:
-              eventPayload.contentJson && typeof eventPayload.contentJson === "object"
+              eventPayload.contentJson &&
+              typeof eventPayload.contentJson === "object" &&
+              !Array.isArray(eventPayload.contentJson)
                 ? (eventPayload.contentJson as JSONContent)
                 : null,
           },
