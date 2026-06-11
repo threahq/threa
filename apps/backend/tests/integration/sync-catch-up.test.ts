@@ -95,7 +95,8 @@ describe("SyncLogRepository catch-up reads", () => {
     const joiner = uniqueId("usr")
     const streamId = uniqueId("stream")
 
-    const preJoin = await appendEntry(workspaceId, {
+    // Pre-join history: appended before the join, must never surface.
+    await appendEntry(workspaceId, {
       eventType: "message:created",
       groups: [`stream:${streamId}`],
       payload: { workspaceId, kind: "pre-join" },
@@ -113,11 +114,10 @@ describe("SyncLogRepository catch-up reads", () => {
     })
 
     const entries = await listFor(workspaceId, joiner)
-    const syncIds = entries.map((e) => e.syncId)
-    // The join entry itself arrives via the user group; pre-join stream
-    // history stays out of the log path (windowed snapshots cover it).
-    expect(syncIds).toEqual([joinEntry, postJoin])
-    expect(syncIds).not.toContain(preJoin)
+    // Exactly the join entry (via the user group) and post-join content —
+    // the exact-array compare proves the pre-join entry stays hidden
+    // (windowed snapshots cover that history instead).
+    expect(entries.map((e) => e.syncId)).toEqual([joinEntry, postJoin])
   })
 
   test("a membership predating the log (no member_added entry) is unbounded", async () => {
@@ -188,7 +188,8 @@ describe("SyncLogRepository catch-up reads", () => {
     const thread = uniqueId("stream")
     await addThread(workspaceId, thread, channel, channel)
 
-    const preJoinThreadMessage = await appendEntry(workspaceId, {
+    // Thread content from before the channel join, must never surface.
+    await appendEntry(workspaceId, {
       eventType: "message:created",
       groups: [`stream:${thread}`],
       payload: { workspaceId, kind: "thread-pre-join" },
@@ -207,7 +208,6 @@ describe("SyncLogRepository catch-up reads", () => {
 
     const syncIds = (await listFor(workspaceId, joiner)).map((e) => e.syncId)
     expect(syncIds).toEqual([joinEntry, postJoinThreadMessage])
-    expect(syncIds).not.toContain(preJoinThreadMessage)
   })
 
   test("a rejoin moves the bound forward — entries from the left period stay hidden", async () => {
@@ -215,12 +215,13 @@ describe("SyncLogRepository catch-up reads", () => {
     const userId = uniqueId("usr")
     const streamId = uniqueId("stream")
 
-    await appendEntry(workspaceId, {
+    const firstJoin = await appendEntry(workspaceId, {
       eventType: "stream:member_added",
       groups: [`stream:${streamId}`, `user:${userId}`],
       payload: { workspaceId, streamId, memberId: userId },
     })
-    const whileGone = await appendEntry(workspaceId, {
+    // Posted while the user was gone — hidden behind the rejoin bound.
+    await appendEntry(workspaceId, {
       eventType: "message:created",
       groups: [`stream:${streamId}`],
       payload: { workspaceId, kind: "while-gone" },
@@ -237,10 +238,10 @@ describe("SyncLogRepository catch-up reads", () => {
       payload: { workspaceId, kind: "after-rejoin" },
     })
 
+    // Both member_added entries reach the user via their user group (which
+    // the join bound never gates); the while-gone stream entry stays hidden.
     const syncIds = (await listFor(workspaceId, userId)).map((e) => e.syncId)
-    expect(syncIds).not.toContain(whileGone)
-    expect(syncIds).toContain(rejoin)
-    expect(syncIds).toContain(afterRejoin)
+    expect(syncIds).toEqual([firstJoin, rejoin, afterRejoin])
   })
 
   test("pages by cursor and respects the limit", async () => {
