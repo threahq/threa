@@ -343,6 +343,27 @@ export class CursorLock {
       gapCeilingMs: this.gapCeilingMs,
     })
 
+    // The ceiling is the one path that can still lose an event for
+    // non-broadcast listeners, so a ceiling-forced skip must be loud (INV-11):
+    // re-run the guard with no ceiling — any extra cursor advance in the real
+    // result was forced by the ceiling, not proven dead by liveness.
+    const heldWithoutCeiling = compact(cursor, processedIds, newIds, now, this.gapWindowMs, {
+      oldestRunningTxnStart,
+      gapCeilingMs: Number.POSITIVE_INFINITY,
+    })
+    if (guarded.cursor > heldWithoutCeiling.cursor) {
+      logger.error(
+        {
+          listenerId: this.listenerId,
+          skippedToCursor: guarded.cursor.toString(),
+          heldCursor: heldWithoutCeiling.cursor.toString(),
+          gapCeilingMs: this.gapCeilingMs,
+          oldestRunningTxnStart: oldestRunningTxnStart?.toISOString() ?? null,
+        },
+        "Gap ceiling forced the cursor past an unproven gap — a transaction predating it is still running and its events may be skipped"
+      )
+    }
+
     // Compare with the unguarded result purely for observability: a held gap
     // means a long-running transaction may still commit an event into it.
     const unguarded = compact(cursor, processedIds, newIds, now, this.gapWindowMs)

@@ -651,10 +651,19 @@ describe("CursorLock", () => {
         }
 
         await cursorLock.run(processor)
-        // Window expired, but transaction A still runs: the cursor must hold.
+        // Window expired while transaction A still runs. Commit ANOTHER event
+        // so the next run processes a real batch — compaction only happens on
+        // the processed path, so without this the second run would return
+        // no_events and never reach the gap guard at all (the pre-hardening
+        // window would pass a no-op run too).
         await new Promise((r) => setTimeout(r, 50))
+        const laterId = await insertTestEvent()
         await cursorLock.run(processor)
 
+        // The guard must hold the cursor below the gap even though the gap
+        // window expired — the pre-hardening compaction would have expired
+        // visibleId and pulled the cursor past gapId here.
+        expect(processed).toContain(laterId)
         let state = await getListenerState()
         expect(BigInt(state!.last_processed_id)).toBeLessThan(gapId)
 
@@ -665,7 +674,7 @@ describe("CursorLock", () => {
 
         expect(processed).toContain(gapId)
         state = await getListenerState()
-        expect(BigInt(state!.last_processed_id)).toBeGreaterThanOrEqual(visibleId)
+        expect(BigInt(state!.last_processed_id)).toBeGreaterThanOrEqual(laterId)
       } finally {
         txnClient.release()
       }
