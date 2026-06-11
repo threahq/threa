@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { AttachmentRepository, AttachmentExtractionRepository } from "../../attachments"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
@@ -38,6 +38,7 @@ export function createLoadFileSectionTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "load_file_section",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LOAD_FILE_SECTION],
     description: `Load specific lines from a large text file. Only use this when:
 - The file is large (>32KB) and injection strategy is "summary" (full content not in context)
 - You need to read specific sections based on the section metadata

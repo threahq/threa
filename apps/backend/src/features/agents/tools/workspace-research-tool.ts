@@ -1,8 +1,16 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, ToolPrivacyCategories } from "@threa/types"
 import type { WorkspaceAgentResult } from "../researcher"
 import { WORKSPACE_AGENT_TOTAL_BUDGET_MS } from "../researcher/config"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
+
+/**
+ * workspace_research is not a registered `AgentToolName` (it is never persona-
+ * gated via enabledTools — availability follows trigger context), so it has no
+ * `TOOL_CATEGORIES_BY_NAME` row. Its name and categories are declared here, on
+ * the definition, like every other tool.
+ */
+export const WORKSPACE_RESEARCH_TOOL_NAME = "workspace_research"
 
 const WorkspaceResearchSchema = z.object({
   query: z.string().describe("What information you need from the workspace"),
@@ -36,9 +44,26 @@ export function createWorkspaceResearchTool(callbacks: WorkspaceResearchCallback
   const { runWorkspaceAgent } = callbacks
 
   return defineAgentTool({
-    name: "workspace_research",
+    name: WORKSPACE_RESEARCH_TOOL_NAME,
     description:
       "Retrieve relevant workspace memory (messages, memos, attachments) for the current conversation when you need additional context.",
+    categories: [ToolPrivacyCategories.WORKSPACE],
+    promptBlock: `## Workspace Research
+
+You have a \`workspace_research\` tool to retrieve relevant workspace memory (past messages, memos, and shared attachments).
+
+Use workspace_research when:
+- The user references past decisions, conversations, or people in this workspace
+- The user asks about a specific project, document, or file they've shared
+- Answering correctly requires information that lives in workspace history (not general knowledge)
+
+Do NOT use workspace_research for:
+- Greetings, small talk, or acknowledgments (e.g. "hi", "thanks", "pie")
+- General knowledge questions you can answer directly
+- Simple clarification or rephrasing requests
+- Questions where you clearly already have enough context
+
+When you do call it, incorporate retrieved context naturally into your response. The tool may return \`partial: true\` if it was taking too long or the user clicked stop — handle that gracefully by using whatever context is available and acknowledging that your view might be incomplete.`,
     inputSchema: WorkspaceResearchSchema,
 
     execute: async (input, { signal, onProgress }): Promise<AgentToolResult> => {

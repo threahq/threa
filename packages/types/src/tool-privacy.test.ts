@@ -4,6 +4,7 @@ import {
   TOOL_CATEGORIES_BY_NAME,
   TOOL_PRIVACY_CATEGORIES,
   type ToolPrivacyCategory,
+  areToolCategoriesAllowed,
   isToolAllowedByPolicy,
   isToolCategoryAllowed,
 } from "./tool-privacy"
@@ -54,6 +55,28 @@ describe("isToolCategoryAllowed", () => {
     expect(isToolCategoryAllowed(["web"], "web")).toBe(true)
     expect(isToolCategoryAllowed(["web"], "workspace")).toBe(false)
     expect(isToolCategoryAllowed([], "web")).toBe(false)
+  })
+})
+
+describe("areToolCategoriesAllowed", () => {
+  test("null/undefined policy allows any category set", () => {
+    expect(areToolCategoriesAllowed(null, ["web"])).toBe(true)
+    expect(areToolCategoriesAllowed(undefined, ["workspace"])).toBe(true)
+  })
+
+  test("messaging tools survive the strictest policy", () => {
+    expect(areToolCategoriesAllowed([], ["messaging"])).toBe(true)
+  })
+
+  test("an empty category set means conversation-local: never gated", () => {
+    expect(areToolCategoriesAllowed([], [])).toBe(true)
+    expect(areToolCategoriesAllowed(["web"], [])).toBe(true)
+  })
+
+  test("any allowed category permits the tool; none denies it", () => {
+    expect(areToolCategoriesAllowed(["web"], ["github", "web"])).toBe(true)
+    expect(areToolCategoriesAllowed(["github"], ["web"])).toBe(false)
+    expect(areToolCategoriesAllowed([], ["web"])).toBe(false)
   })
 })
 

@@ -595,8 +595,8 @@ export class PersonaAgent {
           },
           systemPrompt: appendBagToSystemPrompt(
             isSupersedeRerun
-              ? buildSupersedeRerunSystemPrompt(agentContext.systemPrompt, rerunContext)
-              : agentContext.systemPrompt,
+              ? buildSupersedeRerunSystemPrompt(agentContext.composeSystemPrompt(tools), rerunContext)
+              : agentContext.composeSystemPrompt(tools),
             resolvedBag
           ),
           messages: agentContext.messages,

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
@@ -27,6 +27,7 @@ export type ListPullRequestsInput = z.infer<typeof ListPullRequestsSchema>
 export function createGithubListPullRequestsTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_pull_requests",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_PULL_REQUESTS],
     description: `List pull requests in a GitHub repository. Filter by state (open/closed/all), base branch, or head. Sort by created/updated/popularity/long-running. Returns PR numbers, titles, authors, branches, state, and timestamps.`,
     inputSchema: ListPullRequestsSchema,
 
@@ -108,6 +109,7 @@ export type GetPullRequestInput = z.infer<typeof GetPullRequestSchema>
 export function createGithubGetPullRequestTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_get_pull_request",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_GET_PULL_REQUEST],
     description: `Fetch detailed PR information including title, body (truncated to ${MAX_PR_BODY_BYTES} bytes), author, branches, merge state, and review summary. For PRs with ≤100 commits the 10 most recent are included inline; larger PRs return null and should be explored via github_list_commits with --sha=<head-branch>. Use github_list_pr_files to see which files changed.`,
     inputSchema: GetPullRequestSchema,
 
@@ -220,6 +222,7 @@ export type ListPrFilesInput = z.infer<typeof ListPrFilesSchema>
 export function createGithubListPrFilesTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_pr_files",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_PR_FILES],
     description: `List files changed by a pull request with additions/deletions per file. Optionally include per-file diff patches (truncated to ${MAX_PR_FILE_PATCH_BYTES} bytes each, max ${MAX_PR_FILES} files per call). Paginate for larger PRs. Use this to see which paths a PR touched and what changed.`,
     inputSchema: ListPrFilesSchema,
 

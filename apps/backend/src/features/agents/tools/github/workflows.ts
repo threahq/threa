@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { logger } from "../../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
@@ -45,6 +45,7 @@ export type ListWorkflowRunsInput = z.infer<typeof ListWorkflowRunsSchema>
 export function createGithubListWorkflowRunsTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_workflow_runs",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_WORKFLOW_RUNS],
     description: `List GitHub Actions workflow runs for a repository, newest first. Filter by status (including failure, success, in_progress), branch, event, or a specific workflow file. Returns run IDs, the triggering event, head branch, commit SHA, status, conclusion, and timing.`,
     inputSchema: ListWorkflowRunsSchema,
 
@@ -133,6 +134,7 @@ export type GetWorkflowRunInput = z.infer<typeof GetWorkflowRunSchema>
 export function createGithubGetWorkflowRunTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_get_workflow_run",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_GET_WORKFLOW_RUN],
     description: `Fetch a GitHub Actions run with job-level detail. When includeFailedJobLogs is true (default) and the run did not succeed, this also fetches the tail of each failed job's log stream (${MAX_JOB_LOG_BYTES} bytes per job, max ${MAX_JOBS_PER_RUN} jobs). Use this to diagnose CI failures. Logs may be rotated or unavailable for very old runs.`,
     inputSchema: GetWorkflowRunSchema,
 

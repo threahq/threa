@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import { MessageRepository } from "../../messaging"
@@ -43,6 +43,7 @@ export function createReactToMessageTool(workspace: WorkspaceToolDeps, reactions
 
   return defineAgentTool({
     name: "react_to_message",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.REACT_TO_MESSAGE],
     description: `React to a message with an emoji (or remove your reaction), acting as yourself.
 
 Use this to acknowledge or respond to a message lightweightly — a 👍 on a decision, a ✅ on a completed task, a 🎉 to celebrate — instead of (or in addition to) sending a message. You can react to any message in the current conversation or in another stream you can see; pass its \`messageId\` (the id in a \`[msg:…]\` tag).

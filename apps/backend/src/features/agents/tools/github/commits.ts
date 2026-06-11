@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
@@ -29,6 +29,7 @@ export type ListCommitsInput = z.infer<typeof ListCommitsSchema>
 export function createGithubListCommitsTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_commits",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_COMMITS],
     description: `List commits on a branch or path in a GitHub repository, newest first. Use this to find recent work, commits touching a specific file or directory, or commits by a particular author. Returns short SHA, author, date, and the first line of each commit message.`,
     inputSchema: ListCommitsSchema,
 
@@ -110,6 +111,7 @@ export type GetCommitInput = z.infer<typeof GetCommitSchema>
 export function createGithubGetCommitTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_get_commit",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_GET_COMMIT],
     description: `Fetch a single commit with full message, author, stats, and optional changed-file patches. Use this after github_list_commits to inspect what a specific commit changed. File patches are truncated to ${MAX_COMMIT_PATCH_BYTES} bytes each and limited to ${MAX_COMMIT_FILES} files; large commits return a summary with per-file addition/deletion counts so the model knows how much was trimmed.`,
     inputSchema: GetCommitSchema,
 

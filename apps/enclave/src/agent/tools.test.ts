@@ -38,4 +38,25 @@ describe("buildEnclaveTools", () => {
     expect(toolNames("tvly-test", [])).toEqual([])
     expect(toolNames("tvly-test", ["workspace"])).toEqual([])
   })
+
+  it("keeps the conversation-local load_attachment under a no-web policy (empty categories)", () => {
+    const tools = buildEnclaveTools({
+      ai,
+      model,
+      modelString: "anthropic/claude-sonnet-4.6",
+      tavilyApiKey: "tvly-test",
+      allowedCategories: [],
+      attachments: { refsById: new Map(), ciphertextById: new Map() },
+    })
+    expect(tools.map((t) => t.name)).toEqual(["load_attachment"])
+  })
+
+  it("advertises web-only research reach — never workspace or integrations", () => {
+    const research = buildEnclaveTools({ ai, model, modelString: "anthropic/claude-sonnet-4.6" }).find(
+      (t) => t.name === "general_research"
+    )
+    expect(research).toBeDefined()
+    const advertised = `${research!.config.description}\n${research!.config.promptBlock}`
+    expect(advertised).not.toMatch(/workspace|GitHub|Linear/)
+  })
 })

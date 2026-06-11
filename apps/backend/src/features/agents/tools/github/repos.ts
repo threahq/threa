@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
@@ -12,6 +12,7 @@ export type ListReposInput = z.infer<typeof ListReposSchema>
 export function createGithubListReposTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_repos",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_REPOS],
     description: `List the GitHub repositories the workspace's GitHub App installation can access. Use this first to discover which owner/repo pairs are available before calling other GitHub tools. Returns repo full names (owner/repo), privacy, and default branch.`,
     inputSchema: ListReposSchema,
 
@@ -69,6 +70,7 @@ export type ListBranchesInput = z.infer<typeof ListBranchesSchema>
 export function createGithubListBranchesTool(deps: GitHubToolDeps) {
   return defineAgentTool({
     name: "github_list_branches",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.GITHUB_LIST_BRANCHES],
     description: `List branches in a GitHub repository. Returns branch names and the commit SHA each branch points at. Paginated; use page/perPage for more.`,
     inputSchema: ListBranchesSchema,
 

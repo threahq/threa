@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
@@ -27,6 +27,17 @@ export function createDescribeMemoTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "describe_memo",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.DESCRIBE_MEMO],
+    promptBlock: `## Describing Memos
+
+You have a \`describe_memo\` tool to look up a memo by id and return its abstract, key points, tags, and the source messages it was derived from.
+
+When to use describe_memo:
+- After \`workspace_research\` surfaces a memo id (look for \`memo:…\` in retrieved-knowledge entries) and you want to forward or quote one of the source messages directly
+- When the abstract is too lossy and you need the original wording from a specific source message
+- To find the conversation that produced a memo so you can reference it with \`shared-message:\` / \`quote:\` pointer URLs
+
+The tool returns each source message's \`messageId\`, \`streamId\`, and \`authorId\` — exactly the ids you need to compose a pointer URL per the "Referring to messages and attachments" section.`,
     description: `Describe a memo by id: returns its abstract, key points, tags, and the source messages it was derived from.
 
 Use this after \`workspace_research\` surfaces a memo id (look for \`memo:…\` in retrieved-knowledge entries) when you need to:

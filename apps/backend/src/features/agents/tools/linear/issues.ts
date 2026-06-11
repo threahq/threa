@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { LinearToolDeps } from "./deps"
 import { isLinearToolError, toToolResult, withLinearClient } from "./client-accessor"
@@ -59,6 +59,7 @@ export type LinearListIssuesInput = z.infer<typeof ListIssuesSchema>
 export function createLinearListIssuesTool(deps: LinearToolDeps) {
   return defineAgentTool({
     name: "linear_list_issues",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LINEAR_LIST_ISSUES],
     description:
       "List recently updated Linear issues visible to the workspace integration. Use this to discover issue identifiers before calling linear_get_issue.",
     inputSchema: ListIssuesSchema,
@@ -164,6 +165,7 @@ export type LinearGetIssueInput = z.infer<typeof GetIssueSchema>
 export function createLinearGetIssueTool(deps: LinearToolDeps) {
   return defineAgentTool({
     name: "linear_get_issue",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LINEAR_GET_ISSUE],
     description: `Fetch a Linear issue by identifier (for example ENG-123) with description, metadata, labels, project, and up to ${MAX_ISSUE_COMMENTS} recent comments.`,
     inputSchema: GetIssueSchema,
 

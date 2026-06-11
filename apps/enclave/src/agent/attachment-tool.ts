@@ -36,6 +36,18 @@ export function createEnclaveLoadAttachmentTool(store: EnclaveAttachmentStore): 
     description: `Load a file attached to this conversation so you can read it. Use the attachment id from the [Attached: "filename" (attachment id)] note on the message that shared it.
 
 Works for any attached file: images and PDFs are loaded for direct viewing; text files (markdown, code, CSV, logs) return their contents.`,
+    // Empty = conversation-local (see the doc comment above): the per-stream
+    // tool-privacy filter in buildEnclaveTools never drops this tool.
+    categories: [],
+    promptBlock: `## Loading Attachments
+
+You have a \`load_attachment\` tool to load a file shared in this conversation for direct analysis.
+
+When to use load_attachment:
+- When the user asks you to look at or analyze an attached file
+- When a message carries an \`[Attached: "filename" (attachment id)]\` note and you need the file's actual content
+
+Images and PDFs are returned for direct viewing; text-readable files return their contents.`,
     inputSchema: LoadAttachmentSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -68,9 +80,7 @@ Works for any attached file: images and PDFs are loaded for direct viewing; text
       if (ref.mimeType === "application/pdf") {
         return {
           output: `File loaded: ${ref.filename} (${ref.mimeType})`,
-          multimodal: [
-            { type: "file", data: bytesToBase64(bytes), mediaType: ref.mimeType, filename: ref.filename },
-          ],
+          multimodal: [{ type: "file", data: bytesToBase64(bytes), mediaType: ref.mimeType, filename: ref.filename }],
         }
       }
 

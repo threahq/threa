@@ -112,13 +112,28 @@ export function isToolCategoryAllowed(
  * `web`-only policy still reaches the GitHub read tools (tagged `github` + `web`)
  * without granting raw `github`/`linear` access. `messaging` is always allowed;
  * a `null`/`undefined` policy allows everything.
+ *
+ * An EMPTY category set is also always allowed: it marks a conversation-local
+ * tool that reads nothing beyond what the model already sees (e.g. the
+ * enclave's in-process `load_attachment`, whose files ride the messages
+ * themselves) — there is no egress or workspace read for a policy to gate.
+ * Registered `AgentToolName`s never carry an empty set (the table below is
+ * non-empty by test), so this case only arises for per-definition categories
+ * on `AgentToolConfig`.
  */
+export function areToolCategoriesAllowed(
+  allowed: ToolPrivacyCategory[] | null | undefined,
+  categories: readonly ToolPrivacyCategory[]
+): boolean {
+  if (categories.length === 0) return true
+  if (categories.includes("messaging")) return true
+  if (allowed === null || allowed === undefined) return true
+  return categories.some((category) => allowed.includes(category))
+}
+
 export function isToolAllowedByPolicy(
   allowed: ToolPrivacyCategory[] | null | undefined,
   toolName: AgentToolName
 ): boolean {
-  const categories: readonly ToolPrivacyCategory[] = TOOL_CATEGORIES_BY_NAME[toolName]
-  if (categories.includes("messaging")) return true
-  if (allowed === null || allowed === undefined) return true
-  return categories.some((category) => allowed.includes(category))
+  return areToolCategoriesAllowed(allowed, TOOL_CATEGORIES_BY_NAME[toolName])
 }

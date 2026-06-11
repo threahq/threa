@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type SourceItem } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type SourceItem } from "@threa/types"
 import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { LinearToolDeps } from "./deps"
 import { isLinearToolError, toToolResult, withLinearClient } from "./client-accessor"
@@ -45,6 +45,7 @@ export type LinearListProjectsInput = z.infer<typeof ListProjectsSchema>
 export function createLinearListProjectsTool(deps: LinearToolDeps) {
   return defineAgentTool({
     name: "linear_list_projects",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LINEAR_LIST_PROJECTS],
     description:
       "List Linear projects visible to the workspace integration. Returns names, status, progress, lead, initiative, and URLs.",
     inputSchema: ListProjectsSchema,
@@ -129,6 +130,7 @@ export type LinearGetProjectInput = z.infer<typeof GetProjectSchema>
 export function createLinearGetProjectTool(deps: LinearToolDeps) {
   return defineAgentTool({
     name: "linear_get_project",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LINEAR_GET_PROJECT],
     description:
       "Fetch a Linear project by ID/slug/short ID with description, status, progress, lead, initiative, and up to 30 linked issues.",
     inputSchema: GetProjectSchema,

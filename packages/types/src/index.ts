@@ -350,6 +350,7 @@ export {
   TOOL_CATEGORIES_BY_NAME,
   isToolCategoryAllowed,
   isToolAllowedByPolicy,
+  areToolCategoriesAllowed,
 } from "./tool-privacy"
 export type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 

@@ -1,5 +1,5 @@
 // Runtime
-export { defineAgentTool, toVercelToolDefs } from "./runtime/agent-tool"
+export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./runtime/agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./runtime/agent-tool"
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./runtime/agent-events"
 export type { AgentObserver } from "./runtime/agent-observer"

@@ -357,6 +357,7 @@ describe("AgentRuntime source commitment", () => {
     const citingTool = defineAgentTool({
       name: "citing_tool",
       description: "test",
+      categories: [],
       inputSchema: z.object({}),
       execute: async () => ({
         output: JSON.stringify({ summary: "found it" }),
@@ -437,6 +438,7 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
     const echoTool = defineAgentTool({
       name: "echo_tool",
       description: "test",
+      categories: [],
       inputSchema: z.object({}),
       execute: async (_input, opts) => {
         receivedSignal = opts.signal
@@ -488,6 +490,7 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
     const progressTool = defineAgentTool({
       name: "progress_tool",
       description: "test",
+      categories: [],
       inputSchema: z.object({}),
       execute: async (_input, { onProgress }) => {
         onProgress?.("Planning queries…")
@@ -552,6 +555,7 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
     const echoTool = defineAgentTool({
       name: "echo_tool",
       description: "test",
+      categories: [],
       inputSchema: z.object({}),
       execute: async (_input, opts) => {
         receivedSignal = opts.signal

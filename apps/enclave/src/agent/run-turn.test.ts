@@ -148,11 +148,13 @@ describe("runEnclaveTurn", () => {
     )
 
     // The model saw the system prompt then the decrypted user turn — never ciphertext —
-    // and was offered the send_message tool.
-    expect(chat.seen[0]?.messages).toEqual([
-      { role: "system", content: "You are Ariadne." },
-      { role: "user", content: "What's the capital of France?" },
-    ])
+    // and was offered the send_message tool. The shipped prompt leads; the
+    // wired tools' prose (read_url + general_research here) is appended in-enclave.
+    const systemMessage = chat.seen[0]?.messages[0]
+    expect(systemMessage?.role).toBe("system")
+    expect(String(systemMessage?.content)).toMatch(/^You are Ariadne\./)
+    expect(String(systemMessage?.content)).toContain("## Reading URLs")
+    expect(chat.seen[0]?.messages.slice(1)).toEqual([{ role: "user", content: "What's the capital of France?" }])
     expect(chat.seen[0]?.tools?.some((t) => t.function.name === "send_message")).toBe(true)
 
     // Exactly one reply, streamed via onMessage, sealed under the same SSK and
@@ -302,8 +304,8 @@ describe("runEnclaveTurn", () => {
       })
     )
 
-    expect(chat.seen[0]?.messages).toEqual([
-      { role: "system", content: "You are Ariadne." },
+    expect(String(chat.seen[0]?.messages[0]?.content)).toMatch(/^You are Ariadne\./)
+    expect(chat.seen[0]?.messages.slice(1)).toEqual([
       { role: "assistant", content: "Earlier, you greeted me." },
       { role: "user", content: "Continue." },
     ])
@@ -364,7 +366,7 @@ describe("runEnclaveTurn", () => {
     expect(system).not.toContain("Stranded digest.")
   })
 
-  it("leaves the system prompt untouched when no digests ride the assignment", async () => {
+  it("appends only the wired tools' prose when no digests ride the assignment", async () => {
     const keyPair = await createEnclaveKeyPair()
     const ssk = generateStreamKey()
     const wrap = await wrapSskToEnclave(keyPair, ssk)
@@ -377,7 +379,14 @@ describe("runEnclaveTurn", () => {
       baseRequest({ wraps: [wrap], prompt })
     )
 
-    expect(chat.seen[0]?.messages[0]?.content).toBe("You are Ariadne.")
+    // No Tavily key in deps → web_search is not wired, so its section must not
+    // be advertised; read_url + general_research are. No digest block.
+    const system = String(chat.seen[0]?.messages[0]?.content)
+    expect(system).toMatch(/^You are Ariadne\./)
+    expect(system).toContain("## Reading URLs")
+    expect(system).toContain("## General Research")
+    expect(system).not.toContain("## Web Search")
+    expect(system).not.toContain("## Prior Tool Work")
   })
 
   it("seals a turn digest step after a tool-using turn, recovered by the owner's SSK", async () => {

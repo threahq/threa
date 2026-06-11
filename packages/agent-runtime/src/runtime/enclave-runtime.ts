@@ -7,7 +7,7 @@
 // createAI for the backend; this entry point is the curated subset that does not.
 export { AgentRuntime } from "./agent-runtime"
 export type { AgentRuntimeAI, AgentRuntimeConfig, AgentRuntimeResult, NewMessageAwareness } from "./agent-runtime"
-export { defineAgentTool, toVercelToolDefs } from "./agent-tool"
+export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./agent-tool"
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 export type { AgentObserver } from "./agent-observer"

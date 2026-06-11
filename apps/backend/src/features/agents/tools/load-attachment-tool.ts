@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
@@ -22,6 +22,17 @@ export function createLoadAttachmentTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "load_attachment",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.LOAD_ATTACHMENT],
+    promptBlock: `## Loading Attachments for Analysis
+
+You have a \`load_attachment\` tool to load an image for direct visual analysis.
+
+When to use load_attachment:
+- When the user asks you to look at or analyze an image
+- When you need to understand visual content in detail
+- When the caption/description from get_attachment isn't sufficient
+
+Note: This tool returns the actual image data so you can see and describe what's in the image.`,
     description: `Load an attachment for direct visual analysis. Only use this for images when you need to:
 - Analyze the actual visual content (not just the text extraction/caption)
 - Identify specific visual elements, colors, or layouts

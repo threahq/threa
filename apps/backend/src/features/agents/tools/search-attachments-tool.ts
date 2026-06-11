@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes, type ExtractionContentType } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, type ExtractionContentType } from "@threa/types"
 import { logger } from "../../../lib/logger"
 import { AttachmentRepository } from "../../attachments"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
@@ -34,6 +34,15 @@ export function createSearchAttachmentsTool(deps: WorkspaceToolDeps) {
 
   return defineAgentTool({
     name: "search_attachments",
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.SEARCH_ATTACHMENTS],
+    promptBlock: `## Searching Attachments
+
+You have a \`search_attachments\` tool to search for files shared in the workspace.
+
+When to use search_attachments:
+- When the user asks about previously shared files or documents
+- To find relevant attachments by name or content
+- To discover what files exist in a conversation or workspace`,
     description: `Search for attachments (images, documents, files) in the workspace. Use this to find:
 - Images or screenshots shared in conversations
 - Documents uploaded to streams

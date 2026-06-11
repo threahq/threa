@@ -148,6 +148,19 @@ tool without the integration just logs a warning and the tool is silently absent
 (`tool-set.ts:77`). Ariadne ships with web search, URL reading, bounded research, memo
 description, and the GitHub and Linear read tools (`built-in-agents.ts:66`).
 
+Each tool definition is self-describing beyond its wire schema: `AgentToolConfig` carries
+the tool's privacy `categories` (sourced from `TOOL_CATEGORIES_BY_NAME` for registered
+names; an empty array marks a conversation-local tool no policy gates) and an optional
+`promptBlock` — the system-prompt prose advertising the tool. Hosts assemble tool prose
+from the ACTUAL built toolset via `buildToolPromptSections` (`agent-tool.ts`): the
+companion composes its prompt after `buildToolSet` (`AgentContext.composeSystemPrompt`),
+and the enclave appends the sections in `run-turn.ts` over the toolset it really wired
+(its own Tavily key, the per-stream `allowedToolCategories` filter in
+`apps/enclave/src/agent/tools.ts`). The backend's `buildEnclaveSystemPrompt` therefore
+ships the base prompt with no tool sections at all — a tool that isn't built is never
+advertised, and a new tool can't be added to one host's toolset without its prose and
+categories coming along.
+
 ### Cancellation is cooperative, and only for the long tools
 
 Two cancel channels exist. `shouldAbort` (`agent-runtime.ts:73`) is the hard one: it throws
@@ -176,11 +189,12 @@ enclave-side wiring lives in the enclave service, not here. See e2e-encrypted-sc
 
 What does not exist today, stated plainly:
 
-- **No per-stream tool policy.** Tool availability is per-persona (`enabledTools`) and
-  per-integration, plus the access-scoping and trust-boundary defenses above. There is no
-  table or setting that restricts an agent's tools on a particular stream. (The inventory's
-  "per-stream tool privacy policies" phrasing predates this verification; the mechanisms are
-  per-persona enablement and per-user access scope, not a per-stream policy.)
+- **No per-stream tool policy on plaintext streams.** Companion tool availability is
+  per-persona (`enabledTools`) and per-integration, plus the access-scoping and
+  trust-boundary defenses above. The one per-stream policy that exists is
+  `e2e_streams.allowed_tool_categories`, enforced by the enclave's toolset filter against
+  each tool's declared `categories`; generalizing it to all streams is planned (the
+  agent-runtimes unification plan, phase 1.4).
 - **Workspace persona overrides are code-complete but not surfaced.** A persona's built-in
   config can be patched per workspace (`built-in-agents.ts:148`, `applyBuiltInAgentPatch`)
   and the override repository exists, but no UI sets these and there is no persona picker, so

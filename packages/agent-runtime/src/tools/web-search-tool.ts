@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { AgentStepTypes } from "@threa/types"
+import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threa/types"
 import { logger } from "../logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime/agent-tool"
 
@@ -67,9 +67,26 @@ export function createWebSearchTool(params: CreateWebSearchToolParams) {
     ? ` Current invocation time is ${currentTime}${timezone ? ` (${timezone})` : ""}; for latest, recent, current, or news queries, include the current date/year in your query and judge results against that invocation time.`
     : ""
 
+  // The system prompt's temporal grounding section only exists when the host
+  // supplied an invocation time, so the recency guidance points at it only then.
+  const recencyGroundingBullet = currentTime
+    ? `- For latest/recent/current/news questions, ground your search and answer against the Current Time section; do not mix stale search results or training-cutoff facts into a "recent" answer`
+    : `- For latest/recent/current/news questions, ground recency in web_search tool metadata and fresh results; do not mix stale results or training-cutoff facts into a "recent" answer`
+
   return defineAgentTool({
     name: "web_search",
     description: `Search the web for current information. Returns relevant results with titles, URLs, and content snippets. Use this when you need up-to-date information or facts not in your training data.${recencyHint}`,
+    categories: TOOL_CATEGORIES_BY_NAME[AgentToolNames.WEB_SEARCH],
+    promptBlock: `## Web Search
+
+You have a \`web_search\` tool to search the web for current information.
+
+When using web search:
+- Search when you need up-to-date information not in your training data
+- Search for facts, current events, or specific details you're uncertain about
+${recencyGroundingBullet}
+- Cite sources in your responses using markdown links: [Title](URL)
+- Use the snippets to answer accurately`,
     inputSchema: WebSearchSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
