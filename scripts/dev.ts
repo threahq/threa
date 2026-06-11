@@ -501,6 +501,11 @@ async function main() {
     stdout: "inherit",
     stderr: "inherit",
     env: {
+      // The enclave requires OPENROUTER_API_KEY. In the main checkout Bun
+      // auto-loads it from the root `.env`, but worktrees only get
+      // `apps/backend/.env` (ensureWorktreeEnv / setup-worktree copy that
+      // one), so fall back to it — listed first so real process env wins.
+      ...(backendEnv.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: backendEnv.OPENROUTER_API_KEY } : {}),
       ...process.env,
       PORT: "3011",
       ENCLAVE_SELF_URL: "http://localhost:3011",
