@@ -8,7 +8,10 @@ import {
   getTimelineItemKey,
   groupTimelineItems,
   injectGapItems,
+  timelineItemEqual,
+  timelineRowPropsEqual,
   type TimelineItem,
+  type TimelineItemRenderContext,
 } from "./event-list"
 
 interface CreateEventParams {
@@ -459,5 +462,140 @@ describe("injectGapItems", () => {
     const items = injectGapItems([messageItem("evt_1")], [{ afterEventId: "evt_1", missingCount: 1 }])
     const visible = filterVisibleItems(items)
     expect(visible.some((item) => item.type === "gap")).toBe(true)
+  })
+})
+
+describe("timelineRowPropsEqual (memoized row comparator)", () => {
+  function makeCtx(overrides: Partial<TimelineItemRenderContext> = {}): TimelineItemRenderContext {
+    return {
+      workspaceId: "ws_1",
+      streamId: "stream_123",
+      sessionLiveCounts: new Map(),
+      sessionLiveSubsteps: new Map(),
+      sessionCanAbort: new Map(),
+      ...overrides,
+    }
+  }
+
+  function messageItem(event: StreamEvent): TimelineItem {
+    return { type: "event", event }
+  }
+
+  const msgA = createEvent({
+    id: "evt_a",
+    sequence: "100",
+    eventType: "message_created",
+    payload: { messageId: "msg_a", contentMarkdown: "a" },
+  })
+  const msgB = createEvent({
+    id: "evt_b",
+    sequence: "200",
+    eventType: "message_created",
+    payload: { messageId: "msg_b", contentMarkdown: "b" },
+  })
+
+  it("equal when ctx is rebuilt with fresh containers but same per-item content", () => {
+    // Simulates a data tick: new ctx object, new Set/Map identities, same content.
+    const prev = {
+      item: messageItem(msgA),
+      ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }),
+      deferSecondaryHydration: false,
+    }
+    const next = {
+      item: { ...prev.item } as TimelineItem,
+      ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }),
+      deferSecondaryHydration: false,
+    }
+    expect(timelineRowPropsEqual(prev, next)).toBe(true)
+  })
+
+  it("not equal when the contained event identity changed (the row's own data changed)", () => {
+    const patched = { ...msgA, payload: { ...(msgA.payload as object), reactions: [{ emoji: "👍" }] } }
+    const prev = { item: messageItem(msgA), ctx: makeCtx(), deferSecondaryHydration: false }
+    const next = { item: messageItem(patched), ctx: makeCtx(), deferSecondaryHydration: false }
+    expect(timelineRowPropsEqual(prev, next)).toBe(false)
+  })
+
+  it("newMessageIds membership change invalidates only the member row", () => {
+    const before = makeCtx({ newMessageIds: new Set<string>() })
+    const after = makeCtx({ newMessageIds: new Set(["evt_a"]) })
+    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
+    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
+    expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
+  })
+
+  it("highlight change invalidates only the highlighted row (both directions)", () => {
+    const off = makeCtx()
+    const on = makeCtx({ highlightMessageId: "msg_a" })
+    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
+    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(rowA(off), rowA(on))).toBe(false)
+    expect(timelineRowPropsEqual(rowA(on), rowA(off))).toBe(false)
+    expect(timelineRowPropsEqual(rowB(off), rowB(on))).toBe(true)
+  })
+
+  it("unread divider position change invalidates the rows gaining/losing the divider", () => {
+    const before = makeCtx({ firstUnreadEventId: "evt_a" })
+    const after = makeCtx({ firstUnreadEventId: "evt_b" })
+    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
+  })
+
+  it("deferSecondaryHydration flip invalidates the row", () => {
+    const prev = { item: messageItem(msgA), ctx: makeCtx(), deferSecondaryHydration: true }
+    const next = { item: messageItem(msgA), ctx: makeCtx(), deferSecondaryHydration: false }
+    expect(timelineRowPropsEqual(prev, next)).toBe(false)
+  })
+
+  it("batch selection membership invalidates only the toggled message", () => {
+    const onToggleMessage = () => {}
+    const batchWith = (selected: string[]) => ({
+      enabled: true,
+      selectedMessageIds: new Set(selected),
+      invalidTargetIds: new Set<string>(),
+      hoveredTargetId: null,
+      onToggleMessage,
+    })
+    const before = makeCtx({ batch: batchWith([]) })
+    const after = makeCtx({ batch: batchWith(["msg_a"]) })
+    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
+    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
+    expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
+  })
+
+  it("agent activity for the row's message invalidates it; other rows stay equal", () => {
+    const activity = {
+      sessionId: "sess_1",
+      personaName: "Ariadne",
+      stepCount: 1,
+      messageCount: 0,
+      substep: null,
+      currentStepType: null,
+    }
+    const before = makeCtx({ agentActivity: new Map() })
+    const after = makeCtx({ agentActivity: new Map([["msg_a", activity]]) })
+    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
+    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
+    expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
+  })
+
+  it("session group: live count value change invalidates; rebuilt-but-equal maps do not", () => {
+    const started = createSessionStartedEvent("evt_s", "300", "sess_1", "msg_a")
+    const item: TimelineItem = { type: "session_group", sessionId: "sess_1", sessionVersion: 1, events: [started] }
+    const counts = (stepCount: number) =>
+      makeCtx({ sessionLiveCounts: new Map([["sess_1", { stepCount, messageCount: 0 }]]) })
+    const row = (ctx: TimelineItemRenderContext) => ({ item, ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(row(counts(1)), row(counts(1)))).toBe(true)
+    expect(timelineRowPropsEqual(row(counts(1)), row(counts(2)))).toBe(false)
+  })
+
+  it("timelineItemEqual: rebuilt wrapper with same event identities is equal; changed groupContinuation is not", () => {
+    const a: TimelineItem = { type: "event", event: msgA }
+    expect(timelineItemEqual(a, { type: "event", event: msgA })).toBe(true)
+    expect(timelineItemEqual(a, { type: "event", event: msgA, groupContinuation: true })).toBe(false)
+    expect(timelineItemEqual(a, { type: "event", event: { ...msgA } })).toBe(false)
   })
 })

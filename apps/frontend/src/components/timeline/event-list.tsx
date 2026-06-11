@@ -415,7 +415,7 @@ function isFirstUnread(item: TimelineItem, firstUnreadEventId?: string): boolean
   return item.event.id === firstUnreadEventId
 }
 
-interface TimelineItemContentProps {
+export interface TimelineItemContentProps {
   item: TimelineItem
   ctx: TimelineItemRenderContext
   /** Defer non-critical per-message hydration (presigns, previews, embeds). */
@@ -500,7 +500,7 @@ function eventsArrayEqual(a: StreamEvent[], b: StreamEvent[]): boolean {
  * objects keep identity when unchanged (structural sharing in
  * `useStreamEvents`), so identity of the contained events is the real signal.
  */
-function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
+export function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
   if (a === b) return true
   if (a.type !== b.type) return false
   switch (a.type) {
@@ -536,8 +536,11 @@ function timelineItemEqual(a: TimelineItem, b: TimelineItem): boolean {
  *
  * IMPORTANT: when adding a field to TimelineItemRenderContext that affects
  * row rendering, it must be compared here, or rows will render stale.
+ *
+ * Exported for isolated coverage (see event-list.test.ts); production callers
+ * go through the memoized TimelineItemContent.
  */
-function timelineRowPropsEqual(prev: TimelineItemContentProps, next: TimelineItemContentProps): boolean {
+export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: TimelineItemContentProps): boolean {
   if (!timelineItemEqual(prev.item, next.item)) return false
   if (prev.deferSecondaryHydration !== next.deferSecondaryHydration) return false
   const p = prev.ctx
