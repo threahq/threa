@@ -978,7 +978,13 @@ export function MessageComposer({
       <div
         ref={mobileRootRef}
         className={cn(
-          "flex flex-col transition-[max-height,min-height] duration-200 ease-out",
+          // No transition on max/min-height: animating the shell's layout box
+          // re-runs layout every frame, and the timeline scroller above resizes
+          // with it — each frame fires its ResizeObserver, re-pins to bottom,
+          // and forces a virtua re-measure (~10fps on low-end Android, see
+          // docs/stream-timeline-perceived-performance.md). Snap instead, same
+          // as the keyboard choreography.
+          "flex flex-col",
           mobileExpanded ? "max-h-[75dvh] min-h-[75dvh]" : "max-h-[380px] min-h-0",
           className
         )}
