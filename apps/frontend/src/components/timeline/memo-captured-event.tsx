@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom"
 import { Sparkles } from "lucide-react"
 import type { MemosCapturedEventPayload, StreamEvent } from "@threa/types"
+import { memoDeepLink } from "@/lib/memo-url"
 
 interface MemoCapturedEventProps {
   event: StreamEvent
@@ -17,7 +18,7 @@ interface MemoCapturedEventProps {
  */
 export function MemoCapturedEvent({ event, workspaceId }: MemoCapturedEventProps) {
   const payload = event.payload as MemosCapturedEventPayload
-  if (!payload.memos || payload.memos.length === 0) return null
+  if (!payload.memos?.length) return null
 
   return (
     <div className="py-2 px-3 sm:px-6 text-center">
@@ -28,7 +29,7 @@ export function MemoCapturedEvent({ event, workspaceId }: MemoCapturedEventProps
           <span key={memo.memoId}>
             {index > 0 && ", "}
             <Link
-              to={`/w/${workspaceId}/memory?memo=${memo.memoId}`}
+              to={memoDeepLink(workspaceId, memo.memoId)}
               className="font-medium text-foreground/80 underline-offset-2 hover:underline"
             >
               {memo.title}

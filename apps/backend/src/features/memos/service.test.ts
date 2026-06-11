@@ -98,6 +98,7 @@ function setupService(options: { memoContents: MemoContent[] }) {
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_1", timezone: "UTC" }] as never)
   spyOn(StreamStateRepository, "markProcessed").mockResolvedValue(undefined as never)
   const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+  const outboxInsertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
 
   const insertedStreamEvent: StreamEvent = {
     id: "evt_capture",
@@ -110,7 +111,7 @@ function setupService(options: { memoContents: MemoContent[] }) {
     actorType: "system",
     createdAt: new Date(),
   }
-  const streamEventInsert = spyOn(StreamEventRepository, "insert").mockResolvedValue(insertedStreamEvent)
+  const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([insertedStreamEvent])
 
   const service = new MemoService({
     pool: {} as never,
@@ -125,22 +126,21 @@ function setupService(options: { memoContents: MemoContent[] }) {
     messageFormatter: { formatMessages: async () => "formatted conversation" } as never,
   })
 
-  return { service, streamEventInsert, outboxInsert, insertedStreamEvent }
+  return { service, streamEventInsertMany, outboxInsert, outboxInsertMany, insertedStreamEvent }
 }
 
 describe("MemoService.processBatch — memos:captured timeline event (INV-62)", () => {
   afterEach(() => mock.restore())
 
   it("appends a memos:captured stream event with memo provenance in the save transaction", async () => {
-    const { service, streamEventInsert, outboxInsert, insertedStreamEvent } = setupService({
+    const { service, streamEventInsertMany, outboxInsertMany, insertedStreamEvent } = setupService({
       memoContents: [memoContent],
     })
 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(1)
-    expect(streamEventInsert).toHaveBeenCalledWith(
-      expect.anything(),
+    expect(streamEventInsertMany).toHaveBeenCalledWith(expect.anything(), [
       expect.objectContaining({
         streamId: STREAM_ID,
         eventType: "memos:captured",
@@ -156,25 +156,25 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-62)", 
             },
           ],
         },
-      })
-    )
+      }),
+    ])
 
     // The full stream event rides the outbox row so clients append it without a fetch
-    expect(outboxInsert).toHaveBeenCalledWith(expect.anything(), "stream:memos_captured", {
-      workspaceId: WORKSPACE_ID,
-      streamId: STREAM_ID,
-      event: insertedStreamEvent,
-    })
+    expect(outboxInsertMany).toHaveBeenCalledWith(expect.anything(), [
+      {
+        eventType: "stream:memos_captured",
+        payload: { workspaceId: WORKSPACE_ID, streamId: STREAM_ID, event: insertedStreamEvent },
+      },
+    ])
   })
 
   it("does not append a capture event when the memorizer yields no memos", async () => {
-    const { service, streamEventInsert, outboxInsert } = setupService({ memoContents: [] })
+    const { service, streamEventInsertMany, outboxInsertMany } = setupService({ memoContents: [] })
 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(0)
-    expect(streamEventInsert).not.toHaveBeenCalled()
-    const outboxTypes = outboxInsert.mock.calls.map((call) => call[1])
-    expect(outboxTypes).not.toContain("stream:memos_captured")
+    expect(streamEventInsertMany).not.toHaveBeenCalled()
+    expect(outboxInsertMany).not.toHaveBeenCalled()
   })
 })
