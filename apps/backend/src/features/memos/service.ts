@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { withTransaction, withClient } from "../../db"
-import { StreamStateRepository } from "../streams"
+import { StreamStateRepository, StreamEventRepository } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
@@ -11,9 +11,15 @@ import { MemoClassifier } from "./classifier"
 import { Memorizer } from "./memorizer"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import type { EmbeddingServiceLike } from "./embedding-service"
-import { memoId } from "../../lib/id"
+import { memoId, eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import { MemoTypes, MemoStatuses } from "@threa/types"
+import {
+  MemoTypes,
+  MemoStatuses,
+  AuthorTypes,
+  type CapturedMemoSummary,
+  type MemosCapturedEventPayload,
+} from "@threa/types"
 import { MEMO_GEM_CONFIDENCE_FLOOR, MEMO_SINGLE_MESSAGE_AGE_GATE_MS } from "./config"
 
 const MEMORY_CONTEXT_LIMIT = 20
@@ -178,6 +184,9 @@ export class MemoService implements MemoServiceLike {
     const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
     const memosToCreate: MemoToCreate[] = []
     const outboxEvents: OutboxEvent[] = []
+    // One `memos:captured` timeline event per source conversation (INV-62) —
+    // inserted in Phase 3 so the capture row commits atomically with the memos.
+    const capturedConversations: Array<{ conversationId: string; memos: CapturedMemoSummary[] }> = []
     const deferredItemIds = new Set<string>()
     let memosCreated = 0
     let itemsFailed = 0
@@ -305,6 +314,7 @@ export class MemoService implements MemoServiceLike {
           )
         }
 
+        const capturedMemos: CapturedMemoSummary[] = []
         for (let i = 0; i < contents.length; i++) {
           const content = contents[i]
 
@@ -333,8 +343,16 @@ export class MemoService implements MemoServiceLike {
               memo: this.toWireMemoFromData(memo),
             },
           })
+          capturedMemos.push({
+            memoId: memo.id,
+            title: memo.title,
+            knowledgeType: memo.knowledgeType,
+            sourceMessageIds: memo.sourceMessageIds,
+          })
           memosCreated++
         }
+
+        capturedConversations.push({ conversationId: conversation.id, memos: capturedMemos })
 
         logger.info(
           { conversationId: conversation.id, isRevision, memoCount: contents.length },
@@ -368,6 +386,25 @@ export class MemoService implements MemoServiceLike {
       // Insert all outbox events
       for (const event of outboxEvents) {
         await OutboxRepository.insert(client, event.eventType, event.payload)
+      }
+
+      // Memory capture is visible in situ (INV-62): append a broadcast
+      // timeline event to the source stream for each conversation that
+      // yielded memos, in the same transaction as the memo rows, so memory
+      // creation is never silent. Per-stream debouncing means this lands
+      // just after the conversation it was extracted from.
+      for (const captured of capturedConversations) {
+        const event = await StreamEventRepository.insert(client, {
+          id: eventId(),
+          streamId,
+          eventType: "memos:captured",
+          payload: {
+            conversationId: captured.conversationId,
+            memos: captured.memos,
+          } satisfies MemosCapturedEventPayload,
+          actorType: AuthorTypes.SYSTEM,
+        })
+        await OutboxRepository.insert(client, "stream:memos_captured", { workspaceId, streamId, event })
       }
 
       // Mark processed items (excluding deferred ones that need retry).

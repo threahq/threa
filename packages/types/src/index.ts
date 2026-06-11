@@ -401,6 +401,8 @@ export type {
   MovedMessagePreview,
   MessagesMovedEventPayload,
   MovedFromProvenance,
+  CapturedMemoSummary,
+  MemosCapturedEventPayload,
   // Workspaces
   CreateWorkspaceInput,
   WorkspaceBootstrap,

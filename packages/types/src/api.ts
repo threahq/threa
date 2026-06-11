@@ -14,6 +14,7 @@ import type {
   ScheduledMessageStatus,
   E2eKeyWrapRecipientKind,
   AgentStepType,
+  KnowledgeType,
 } from "./constants"
 import type { WorkspaceInvitableRole } from "./workspace-permissions"
 import type { ContextBag, ContextIntent } from "./context-bag"
@@ -794,6 +795,32 @@ export interface MessagesMovedEventPayload {
    * loading placeholders.
    */
   vacatedBroadcastSequences?: string[]
+}
+
+/**
+ * One memo's worth of provenance inside a `memos:captured` event — enough
+ * to render the capture row and deep-link without fetching the memo.
+ */
+export interface CapturedMemoSummary {
+  memoId: string
+  title: string
+  knowledgeType: KnowledgeType
+  /** The exact messages this memo was derived from. */
+  sourceMessageIds: string[]
+}
+
+/**
+ * Payload for `memos:captured` timeline events (INV-62): appended to the
+ * source stream when GAM extracts memos from one of its conversations, in
+ * the same transaction as the memo rows. The event lands at the broadcast
+ * position where extraction completed — per-stream debouncing means that is
+ * normally just after the conversation that produced it — and carries the
+ * source conversation/message ids so the row can point back at the messages
+ * the knowledge came from.
+ */
+export interface MemosCapturedEventPayload {
+  conversationId: string
+  memos: CapturedMemoSummary[]
 }
 
 /**
