@@ -33,7 +33,7 @@ export function SavedItem({ saved, workspaceId, onMarkDone, onArchive, onRestore
   const isUnavailable = saved.unavailableReason !== null
   const linkable = !isUnavailable && saved.message !== null
   const href = `/w/${workspaceId}/s/${saved.streamId}?m=${saved.messageId}`
-  const previewText = resolvePreview(saved)
+  const previewText = resolveSavedPreview(saved)
   // The backend snapshot's `streamName` is null for DMs (viewer-specific names
   // aren't persisted on the stream row), so resolve from the workspace caches.
   // The persisted snapshot is the last-resort fallback for rows whose stream
@@ -230,7 +230,12 @@ function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore,
   )
 }
 
-function resolvePreview(saved: SavedMessageView): string {
+/**
+ * Single-line plain-text preview of a saved item's source message, including
+ * the deleted / access-lost / encrypted fallbacks. Shared with
+ * `SavedEditDialog`'s message context block so the two surfaces can't drift.
+ */
+export function resolveSavedPreview(saved: SavedMessageView): string {
   if (saved.message) {
     // E2E messages store a zero-width placeholder on the wire and ship no
     // ciphertext to the Saved surface, so there's nothing to decrypt here —
