@@ -795,4 +795,28 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
       handlers.steps(req("session_1", STEP_BODY, tokenHeader("cbtok_good")), fakeRes())
     ).rejects.toMatchObject({ status: 400, code: "E2E_WRONG_KEY_GENERATION" })
   })
+
+  // Every guarded callback route consults the same chokepoint; these pin the
+  // per-handler wiring so a regression on any one route fails this file.
+  const ENVELOPE = { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" }
+  const mismatchCases: [keyof ReturnType<typeof makeHandlers>["handlers"], unknown][] = [
+    ["sealedName", { ciphertext: "Y3Q=", envelope: ENVELOPE }],
+    ["stepStarted", STEP_START_BODY],
+    ["substep", { stepType: "web_search", ciphertext: "Y3Q=", envelope: ENVELOPE }],
+    ["complete", COMPLETE_BODY],
+    ["fail", { errorName: "Error" }],
+  ]
+  for (const [handlerName, body] of mismatchCases) {
+    it(`binds ${String(handlerName)} — a wrong token is 403 with nothing written or broadcast`, async () => {
+      spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+      const tx = spyOn(db, "withTransaction")
+      const { handlers, emit, createMessage } = makeHandlers()
+      await expect(
+        handlers[handlerName](req("session_1", body, tokenHeader("cbtok_evil")), fakeRes())
+      ).rejects.toMatchObject({ status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+      expect(tx).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+      expect(createMessage).not.toHaveBeenCalled()
+    })
+  }
 })

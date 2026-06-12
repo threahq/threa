@@ -127,8 +127,6 @@ export interface InsertSessionParams {
   supersedesSessionId?: string | null
   status?: SessionStatus
   serverId?: string
-  callbackTokenHash?: string
-  replyKeyGeneration?: number
 }
 
 // Upsert params
@@ -255,7 +253,15 @@ export const AgentSessionRepository = {
    */
   async insertRunningOrSkip(
     db: Querier,
-    params: Omit<InsertSessionParams, "status"> & { initialSequence: bigint }
+    // The callback-binding fields live only on this insert path: they exist
+    // solely for enclave-dispatched sessions, which are always created here.
+    // Keeping them off the shared InsertSessionParams means `insert()` callers
+    // can't pass values that would be silently dropped.
+    params: Omit<InsertSessionParams, "status"> & {
+      initialSequence: bigint
+      callbackTokenHash?: string
+      replyKeyGeneration?: number
+    }
   ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
