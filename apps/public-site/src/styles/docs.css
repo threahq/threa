@@ -1304,3 +1304,38 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- DARK MODE OVERRIDES ----------
+   Tokens flip in global.css; these are the docs-local hardcoded values.
+   The code surfaces (.pg-pre) are always dark and need nothing here. */
+[data-theme="dark"] .ep-method.get {
+  background: hsl(205 35% 22%);
+  color: hsl(205 50% 72%);
+}
+[data-theme="dark"] .ep-method.patch {
+  background: hsl(38 40% 22%);
+}
+[data-theme="dark"] .ep-method.delete {
+  background: hsl(8 40% 22%);
+  color: hsl(8 60% 70%);
+}
+[data-theme="dark"] .api-method.m-patch {
+  color: hsl(28 60% 65%);
+}
+[data-theme="dark"] .api-method.m-delete {
+  color: hsl(8 65% 68%);
+}
+[data-theme="dark"] .pg-output[data-kind="err"] {
+  color: hsl(8 60% 64%);
+}
+[data-theme="dark"] .pg-status[data-state="bad"],
+[data-theme="dark"] .pg-status[data-state="cors"] {
+  color: hsl(8 65% 64%);
+  border-color: hsl(8 65% 64% / 0.4);
+}
+[data-theme="dark"] .api-req {
+  color: hsl(8 60% 64%);
+}
+[data-theme="dark"] .note.warn {
+  border-left-color: hsl(8 55% 55%);
+}

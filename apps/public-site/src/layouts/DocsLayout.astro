@@ -3,6 +3,7 @@ import "../styles/global.css"
 import "../styles/docs.css"
 import BaseHead from "../components/BaseHead.astro"
 import SvgDefs from "../components/SvgDefs.astro"
+import ThemeToggle from "../components/ThemeToggle.astro"
 
 interface Props {
   title?: string
@@ -101,6 +102,7 @@ for (const s of sections) {
           <a href="/llms.txt">llms.txt</a>
           <a class="home" href="/">↩ threa.io</a>
         </nav>
+        <ThemeToggle />
         <button type="button" class="pg-toggle" id="pg-toggle" aria-expanded="false" aria-controls="pg-panel">
           <span class="pg-dot" id="pg-dot" data-state="idle"></span>
           <span id="pg-toggle-label">Credentials</span>
