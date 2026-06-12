@@ -133,7 +133,10 @@ sub-loop returns partial findings and the turn still replies. For in-process
   other shared-key holder can no longer register an EIK and become an SSK wrap
   recipient. Wrap eligibility inherits the boundary without a schema change —
   owner clients wrap to every live `enclave_runtimes` row, and only
-  enclave-credential holders can create rows. There is no fallback: the enclave
+  enclave-credential holders can create rows. The credential is symmetric —
+  the verifying backend holds the same secret — so it authenticates the
+  channel, not the instance; real closure is an asymmetric proof bound to the
+  EIK public key via attestation. There is no fallback: the enclave
   refuses to boot without the var, and a prod-shaped backend (CONTROL_PLANE_URL
   set) does the same — set the same fresh secret on both services, distinct
   from `INTERNAL_API_KEY`. The `/attestation` endpoint remains
