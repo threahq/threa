@@ -1,7 +1,10 @@
+import { useMemo } from "react"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   defaultFeatureFlagValue,
+  FEATURE_FLAG_KEYS,
   type FeatureFlagKey,
+  type FeatureFlags,
   type FeatureFlagValue,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -41,4 +44,37 @@ export function useFeatureFlagWhenKnown<K extends FeatureFlagKey>(
  */
 export function useFeatureFlag<K extends FeatureFlagKey>(workspaceId: string, key: K): FeatureFlagValue<K> {
   return useFeatureFlagWhenKnown(workspaceId, key) ?? defaultFeatureFlagValue(key)
+}
+
+export interface OverriddenFeatureFlag {
+  key: FeatureFlagKey
+  value: FeatureFlagValue
+  defaultValue: FeatureFlagValue
+}
+
+/**
+ * The viewer's feature flags that are set to a non-default value, for the
+ * read-only flags view. Until the bootstrap is cached this returns `[]` —
+ * same "unknown renders as default" stance as {@link useFeatureFlag}, which
+ * here means showing nothing rather than leaking flag state.
+ */
+export function useOverriddenFeatureFlags(workspaceId: string): OverriddenFeatureFlag[] {
+  const queryClient = useQueryClient()
+  const { data } = useQuery({
+    queryKey: workspaceKeys.bootstrap(workspaceId),
+    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
+    enabled: false,
+    staleTime: Infinity,
+    select: (bootstrap) => bootstrap?.featureFlags ?? null,
+  })
+  return useMemo(() => listOverriddenFlags(data), [data])
+}
+
+function listOverriddenFlags(flags: FeatureFlags | null | undefined): OverriddenFeatureFlag[] {
+  if (!flags) return []
+  return FEATURE_FLAG_KEYS.flatMap((key) => {
+    const value = flags[key]
+    const defaultValue = defaultFeatureFlagValue(key)
+    return value !== undefined && value !== defaultValue ? [{ key, value, defaultValue }] : []
+  })
 }
