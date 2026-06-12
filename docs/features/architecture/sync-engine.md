@@ -136,10 +136,12 @@ notice a dropped emit. The backend's `SyncHeartbeatWorker` therefore broadcasts
 each workspace's sync-log head to its room (`sync:heartbeat`, every 15s,
 node-local emits under the Postgres adapter). In active sync-v2 mode the engine
 compares the head against `max(cursor, lastSeenHead)` — the cursor is per-user
-filtered and can sit permanently below the workspace-global head, so catch-up
-responses' `head` is recorded as the known-clean high-water mark. A head still
-ahead after a short grace window (in-flight emits close themselves) pauses the
-gate and runs a normal catch-up. Design and decision record:
+filtered and can sit permanently below the workspace-global head, so a catch-up
+that drains to an empty page records that page's `head` as the known-clean
+high-water mark (`lastSeenHead`; non-empty pages don't move it, so a failed or
+truncated drain is retried by the next heartbeat). A head still ahead after a
+short grace window (in-flight emits close themselves) pauses the gate and runs
+a normal catch-up. Design and decision record:
 `docs/plans/sync-v2-heartbeat.md`.
 
 ### Page resume and zombie sockets

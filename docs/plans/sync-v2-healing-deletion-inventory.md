@@ -46,9 +46,10 @@ author-scoped; migrate if dismissal staleness is ever reported).
 
 ## Decision (2026-06-12): additive first
 
-The rollout isn't complete (no heartbeat, no sync_log retention), so the owner
-chose to finish wiring consumers into the sync system before deleting any more
-healing. PR E therefore ships the **additive** halves only:
+The rollout wasn't complete at decision time (no heartbeat, no sync_log
+retention — the heartbeat has since shipped, see the ground rules above;
+retention is still missing), so the owner chose to finish wiring consumers
+into the sync system before deleting any more healing. PR E therefore ships the **additive** halves only:
 
 - `use-conversations` registers through the engine's event gate (catch-up
   replay now reaches it); its reconnect invalidation **stays**.
