@@ -6,21 +6,21 @@ kind: subsystem
 invariants: [INV-E1, INV-E2, INV-E7]
 entry_points:
   - apps/enclave/src/index.ts
-  - apps/enclave/src/sessions.ts
+  - apps/enclave/src/claim-loop.ts
   - apps/enclave/src/agent/session-runner.ts
   - apps/enclave/src/agent/run-turn.ts
   - apps/enclave/src/agent/trace-observer.ts
-  - apps/backend/src/features/enclave-runtimes/dispatch/enclave-invoke-worker.ts
-  - apps/backend/src/features/enclave-runtimes/forwarder.ts
+  - apps/backend/src/features/enclave-runtimes/claim-service.ts
+  - apps/backend/src/features/enclave-runtimes/invocations-repository.ts
   - apps/backend/src/features/enclave-runtimes/session-handlers.ts
   - packages/crypto/src/stream-key.ts
 public_site: false
 summary: >
   A separate, database-less enclave process runs the Ariadne agent loop for
-  end-to-end encrypted scratchpads: the backend assigns a sealed turn it cannot
-  read, the enclave unwraps the per-stream key in memory, runs the same
-  AgentRuntime as non-E2E personas, and seals every reply and trace step back
-  under that key.
+  end-to-end encrypted scratchpads: the enclave polls the backend and claims a
+  sealed turn the backend cannot read, unwraps the per-stream key in memory,
+  runs the same AgentRuntime as non-E2E personas, and seals every reply and
+  trace step back under that key.
 related: [public/e2e-encrypted-scratchpads.md]
 ---
 
@@ -57,28 +57,41 @@ because a transport worker can't resolve `pino-pretty` from a single-file bundle
 **Lifecycle.** At boot the enclave generates a fresh **Enclave Instance Key (EIK)**
 (X25519), registers it with the backend, and heartbeats every 30s so the backend's
 live set reflects liveness (`apps/enclave/src/index.ts`). It exposes `/pubkey`,
-`/healthz`, and `/attestation` (source commit + build hash). On graceful shutdown
-it best-effort revokes its key; the backend's 2-minute staleness window tombstones
+`/healthz`, and `/attestation` (source commit + build hash) — its **only inbound
+routes**; nothing content-bearing is ever pushed to it. On graceful shutdown it
+best-effort revokes its key; the backend's 2-minute staleness window tombstones
 the row regardless.
 
-**Dispatch (backend → enclave).** When a turn is owed in an encrypted stream, the
-`enclave-invoke-worker` builds an `EnclaveSessionAssignment` — the sealed prompt,
-sealed history, the SSK wrap(s) addressed to a live EIK, the system prompt (clear,
-non-secret), model id, the per-stream `allowedToolCategories` policy (read from
-`stream_policies`, keyed by the root like the rest of the E2E identity), and
-non-secret `trigger` metadata — and `POST`s it to the enclave via the
-`forwarder`. The worker inserts the running session row and its `started` event in
-**one transaction** (INV-7) and, if assignment fails, drives the session through
-`failSessionWithLifecycle` so the card terminates instead of spinning forever.
+**Turn start (the enclave pulls, §2.7).** When a turn is owed in an encrypted
+stream, the dispatch outbox handler enqueues a claimable **`enclave_invocations`**
+row (one per trigger message) — the same pending → claimed (TTL + bounded
+attempts) → completed/failed/parked lifecycle the bot path runs. Each enclave
+instance polls `POST /internal/enclave-runtimes/claims` with its EIK key id; the
+claim predicate (`invocations-repository.ts`) only hands it rows whose stream has
+SSK wraps addressed to that key for **both** the reply's (live current) and the
+prompt's (trigger envelope) generations, race-safely via `FOR UPDATE SKIP LOCKED`
+(INV-20). A row no live EIK can serve just stays pending until the owner's
+unlocked client revives the wrap — then the next poll claims it. On a winning
+claim, `claim-service.ts` builds the `EnclaveSessionAssignment` — the sealed
+prompt, sealed history, the SSK wraps addressed to the claiming EIK, the system
+prompt (clear, non-secret), model id, the per-stream `allowedToolCategories`
+policy (read from `stream_policies`, keyed by the root like the rest of the E2E
+identity), and non-secret `trigger` metadata — inserts the running session row,
+its `started` event, and the claim's `session_id` stamp in **one transaction**
+(INV-7), and returns the assignment as the claim response. There is no
+per-instance URL, no session→instance pinning, no SSRF validation: scaling is
+"run more replicas", and any wrap-capable one that polls first wins.
 
-**Running the turn.** `sessions.ts` validates the assignment (Zod — note that
-`allowedToolCategories` and `trigger` _must_ be declared in the schema, or Zod
-silently strips them and the policy/context step vanish), acks `202`, and runs the
-turn detached. `session-runner.ts` unwraps the SSK with the in-memory EIK, opens
-the sealed messages, and runs the agent loop (`run-turn.ts`) over an enclave-only
+**Running the turn.** The enclave's `claim-loop.ts` validates the claimed
+assignment (Zod — note that `allowedToolCategories` and `trigger` _must_ be
+declared in the schema, or Zod silently strips them and the policy/context step
+vanish) and runs the turn detached, polling on while it runs.
+`session-runner.ts` unwraps the SSK with the in-memory EIK, opens the sealed
+messages, and runs the agent loop (`run-turn.ts`) over an enclave-only
 OpenRouter client (zero-retention, single egress). Each reply is sealed and
 streamed back the moment the loop emits it, so an interim "I'll look into it" lands
-ahead of the final answer; then it acks completion.
+ahead of the final answer; then it acks completion (which also flips the claim,
+in the same transaction as the session's completion).
 
 **Trace parity.** `trace-observer.ts` mirrors the in-process trace lifecycle:
 `step:started` on step open, snapshot `substep`s as research progresses, a CONTEXT
@@ -88,11 +101,14 @@ senderId` (anti-shuffle), and the client reads the AAD off the envelope rather t
 reconstructing it. The backend's `session-handlers.ts` persist these sealed steps
 and relay them over the socket without reading them.
 
-**Abort.** A user's "Stop research" routes by ownership: if the session is owned by
-an enclave, the backend forwards a `POST /sessions/:id/cancel` (the `forwarder`'s
-`cancelSession`), which trips a per-session `AbortController`; the research
-sub-loop returns partial findings and the turn still replies. For in-process
-(non-enclave) sessions the backend uses its local abort registry instead.
+**Abort.** A user's "Stop research" routes by ownership: if the session is owned
+by an enclave, the backend records `abort_requested_at` on the session row and
+the enclave consumes it on its next **session heartbeat** (every 5s while a turn
+runs — the heartbeat response carries `{ abort }`), tripping the turn's
+`AbortController`; the research sub-loop returns partial findings and the turn
+still replies. Cancellation rides the same pull channel as everything else —
+there is no inbound cancel route. For in-process (non-enclave) sessions the
+backend uses its local abort registry instead.
 
 ## Details worth knowing
 
@@ -112,11 +128,12 @@ sub-loop returns partial findings and the turn still replies. For in-process
   unprivileged `node:22-slim`, `EXPOSE 3011`) and `apps/enclave/railway.toml` now
   wires it to a deploy target (`Dockerfile.enclave`, `healthcheckPath = "/healthz"`),
   matching every other service. Bringing up an instance is then just: create the
-  Railway service and set the four required env vars (`ENCLAVE_SELF_URL`,
-  `BACKEND_BASE_URL`, `ENCLAVE_INTERNAL_API_KEY`, `OPENROUTER_API_KEY` — see
+  Railway service and set the three required env vars (`BACKEND_BASE_URL`,
+  `ENCLAVE_INTERNAL_API_KEY`, `OPENROUTER_API_KEY` — see
   `apps/enclave/README.md`); the enclave self-registers with the backend over
-  `BACKEND_BASE_URL`, so no backend config change is needed. Pin the egress
-  allow-list to the backend and OpenRouter only.
+  `BACKEND_BASE_URL` and pulls its own work, so no backend config change is
+  needed and instances need no inbound address. Pin the egress allow-list to
+  the backend and OpenRouter only.
   All E2E DB migrations are **additive** (new tables + new nullable columns; nothing
   dropped), and E2E is opt-in per scratchpad with no global flag, so the encrypted
   path can ship without affecting any existing plaintext stream or user.
@@ -127,8 +144,8 @@ sub-loop returns partial findings and the turn still replies. For in-process
 - **Identity posture (Phase 2.4c, E2EE-22).** Enclave identity rests on
   **`ENCLAVE_INTERNAL_API_KEY` secrecy plus the registration path** — a dedicated
   credential, distinct from the `INTERNAL_API_KEY` other internal consumers hold,
-  gates `/internal/enclave-runtimes/*` (registration, heartbeat, revoke, session
-  callbacks) and the backend's assignment/cancel calls to the enclave. This is
+  gates `/internal/enclave-runtimes/*` (registration, heartbeat, revoke, the
+  claim endpoint, session callbacks). This is
   what makes the `first-party-attested` trust tier honest: a bot-runtime or any
   other shared-key holder can no longer register an EIK and become an SSK wrap
   recipient. Wrap eligibility inherits the boundary without a schema change —
@@ -155,17 +172,20 @@ sub-loop returns partial findings and the turn still replies. For in-process
 
 ## Entry points
 
-- `apps/enclave/src/index.ts` — boot, EIK registration, heartbeat, route table.
-- `apps/enclave/src/sessions.ts` — assignment validation, the `/sessions` and
-  `/sessions/:id/cancel` HTTP shells.
-- `apps/enclave/src/agent/session-runner.ts` — SSK unwrap, abort wiring, turn
-  orchestration.
+- `apps/enclave/src/index.ts` — boot, EIK registration, heartbeat,
+  metadata-only route table, claim-loop wiring.
+- `apps/enclave/src/claim-loop.ts` — the work intake: claim poll + assignment
+  validation (`assignment.ts` holds the schema).
+- `apps/enclave/src/agent/session-runner.ts` — SSK unwrap, heartbeat-carried
+  abort wiring, turn orchestration.
 - `apps/enclave/src/agent/run-turn.ts` — the agent loop, tool gating, CONTEXT step.
 - `apps/enclave/src/agent/trace-observer.ts` — sealed trace lifecycle parity.
-- `apps/backend/src/features/enclave-runtimes/dispatch/enclave-invoke-worker.ts` —
-  builds and dispatches the sealed assignment, owns the session lifecycle.
-- `apps/backend/src/features/enclave-runtimes/forwarder.ts` — backend → enclave
-  HTTP (assign, cancel).
+- `apps/backend/src/features/enclave-runtimes/invocations-repository.ts` — the
+  claimable work queue (claim predicate on the EIK's wraps, TTL, park).
+- `apps/backend/src/features/enclave-runtimes/claim-service.ts` — serves a
+  claim: validates the turn, builds the sealed assignment, owns the session
+  lifecycle.
 - `apps/backend/src/features/enclave-runtimes/session-handlers.ts` — persists and
-  relays sealed steps/messages/completion.
+  relays sealed steps/messages/completion; carries the abort flag and renews
+  the claim on the session heartbeat.
 - `packages/crypto/src/stream-key.ts` — SSK seal/open/wrap primitives.

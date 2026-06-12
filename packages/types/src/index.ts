@@ -383,6 +383,8 @@ export type {
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   EnclaveSessionFailure,
+  EnclaveClaimResponse,
+  EnclaveSessionHeartbeatResponse,
   UpdateStreamInput,
   UpdateCompanionModeInput,
   StreamBootstrap,

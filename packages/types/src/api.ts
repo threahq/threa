@@ -489,7 +489,8 @@ export interface E2eActorRewrapInput {
 }
 
 // ============================================================================
-// Enclave invoke contract (backend forwarder ↔ enclave `/invoke`)
+// Enclave turn contract (enclave pulls assignments via the claim endpoint and
+// reports back over the session callbacks)
 // ============================================================================
 
 /**
@@ -651,11 +652,12 @@ export interface EnclaveSessionAssignment {
   sessionId: string
   streamId: string
   /**
-   * Dispatch-minted secret binding this session's callbacks to the runner the
-   * assignment was delivered to (Phase 2.4b, E2EE-21). The enclave echoes it
-   * on every session callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend
-   * rejects a mismatch. Optional for one release while pre-binding sessions
-   * drain.
+   * Claim-minted secret binding this session's callbacks to the runner that
+   * claimed the turn (Phase 2.4b, E2EE-21; §2.7 transfers it onto the claim).
+   * Delivered only inside this claim response, echoed on every session
+   * callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend rejects a
+   * mismatch. Optional on the wire for schema continuity, but the claim path
+   * always sets it.
    */
   callbackToken?: string
   wraps: EnclaveSskWrap[]
@@ -746,6 +748,31 @@ export interface EnclaveSessionResult {
  */
 export interface EnclaveSessionFailure {
   errorName: string
+}
+
+/**
+ * Response of `POST /internal/enclave-runtimes/claims` when a turn was won
+ * (the no-work case is a bodyless 204). The enclave presents its EIK key id;
+ * the backend claims the oldest invocation that key can actually serve (its
+ * wraps cover the prompt's and the reply's key generations), builds the
+ * assignment for it, and hands it over. Possession of the embedded
+ * `callbackToken` is what authorizes the session callbacks — the claim is
+ * the handoff.
+ */
+export interface EnclaveClaimResponse {
+  assignment: EnclaveSessionAssignment
+}
+
+/**
+ * Response of the per-session heartbeat callback. Cancellation rides the
+ * pull channel: `abort: true` means a user requested "Stop research" for
+ * this session, and the enclave should trip the turn's AbortController (the
+ * graceful research abort — partial findings, the turn still replies). The
+ * enclave has no inbound routes, so this piggybacked flag replaces the old
+ * `POST /sessions/:id/cancel` push.
+ */
+export interface EnclaveSessionHeartbeatResponse {
+  abort: boolean
 }
 
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown

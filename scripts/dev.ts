@@ -512,7 +512,6 @@ async function main() {
       ...(backendEnv.OPENROUTER_API_KEY ? { OPENROUTER_API_KEY: backendEnv.OPENROUTER_API_KEY } : {}),
       ...process.env,
       PORT: "3011",
-      ENCLAVE_SELF_URL: "http://localhost:3011",
       BACKEND_BASE_URL: "http://localhost:3002",
       ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
       // Dev only: persist the EIK across `node --watch` restarts so a code

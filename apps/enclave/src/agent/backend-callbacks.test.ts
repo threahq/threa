@@ -14,7 +14,7 @@ function stubFetch() {
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
       calls.push({ url, headers: init.headers as Record<string, string> })
-      return { ok: true, status: 204 } as Response
+      return { ok: true, status: 200, json: async () => ({ abort: false }) } as Response
     })
   )
   return calls

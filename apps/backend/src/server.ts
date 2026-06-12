@@ -19,12 +19,7 @@ import {
   createPolishTranscript,
 } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
-import {
-  EnclaveRuntimesService,
-  EnclaveForwarder,
-  EnclaveDispatchHandler,
-  createEnclaveInvokeWorker,
-} from "./features/enclave-runtimes"
+import { EnclaveRuntimesService, EnclaveClaimService, EnclaveDispatchHandler } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { GiphyService } from "./features/giphy"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
@@ -580,6 +575,12 @@ export async function startServer(): Promise<ServerInstance> {
   // workspace_id) per INV-8's infra exception.
   const enclaveRuntimesService = new EnclaveRuntimesService(pool)
 
+  // Serves the enclave's claim polls (§2.7 pull transport): hands a live EIK
+  // the oldest claimable E2E turn it can decrypt, building the sealed
+  // assignment at claim time. Routes mount only when the enclave credential
+  // is configured.
+  const enclaveClaimService = new EnclaveClaimService({ pool, storage })
+
   // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
   // namespace. One instance shared between HTTP routes (claim/complete/fail)
   // and the WebSocket namespace handler (presence + bootstrap).
@@ -614,7 +615,6 @@ export async function startServer(): Promise<ServerInstance> {
   registerRoutes(app, {
     pool,
     io,
-    jobQueue,
     poolMonitor,
     authService,
     workspaceService,
@@ -657,7 +657,7 @@ export async function startServer(): Promise<ServerInstance> {
     userApiKeyService,
     voiceTranscriptionService,
     enclaveRuntimesService,
-    enclaveInstanceUrlAllowedPrefixes: config.enclaveInstanceUrlAllowedPrefixes,
+    enclaveClaimService,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -690,13 +690,6 @@ export async function startServer(): Promise<ServerInstance> {
   // claim endpoint every second.
   attachBotNamespace({ io, botRuntimeService, botApiKeyService, botSocketRegistry })
 
-  // Built once here so both the socket layer (forwarding a user "Stop research"
-  // to the enclave that owns an E2E session) and the enclave-invoke worker below
-  // share it. Null when no enclave credential — enclave dispatch/cancel are then off.
-  const enclaveForwarder = config.enclaveInternalApiKey
-    ? new EnclaveForwarder({ enclaveInternalApiKey: config.enclaveInternalApiKey })
-    : undefined
-
   registerSocketHandlers(io, {
     pool,
     authService,
@@ -704,7 +697,6 @@ export async function startServer(): Promise<ServerInstance> {
     pushService,
     userSocketRegistry,
     sessionAbortRegistry,
-    enclaveForwarder,
   })
 
   // Dedicated voice relay on its own namespace so audio frames don't share the
@@ -775,23 +767,6 @@ export async function startServer(): Promise<ServerInstance> {
     tier: QueueTiers.INTERACTIVE,
     fairness: QueueFairness.NONE,
   })
-
-  // Enclave (Ariadne E2E) forwarder + worker. Only wired when an internal key
-  // is configured — the forwarder authenticates to the enclave with it, and the
-  // enclave rejects callers that don't present it.
-  if (enclaveForwarder) {
-    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, io, enclaveForwarder, storage })
-    jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
-      tier: QueueTiers.INTERACTIVE,
-      fairness: QueueFairness.NONE,
-      // A turn with no servable enclave key *parks* (the worker throws) until
-      // the owner's client revives the stream's wrap for a freshly-registered
-      // EIK, or an enclave finishes (re)deploying. The default budget DLQs in
-      // ~8s of backoff — far too short for either healer — so give parked
-      // turns a few minutes (exponential backoff, ~4 min across 10 attempts).
-      maxRetries: 10,
-    })
-  }
 
   // Context-bag pre-compute worker — warms the shared summary cache and
   // persists the initial render snapshot for newly-created bag-attached
@@ -1082,9 +1057,11 @@ export async function startServer(): Promise<ServerInstance> {
   const botNamespace = io.of("/bot")
   const broadcastHandler = new BroadcastHandler(pools.realtime, io, botNamespace)
   const companionHandler = new CompanionHandler(pool, jobQueue)
-  // Mirrors CompanionHandler for E2E streams: enqueue an enclave-invoke job per
-  // user turn when the enclave actor is invited. Gated on the forwarder.
-  const enclaveDispatchHandler = enclaveForwarder ? new EnclaveDispatchHandler(pool, jobQueue) : null
+  // Mirrors CompanionHandler for E2E streams: enqueue a claimable enclave
+  // invocation per user turn when the enclave actor is invited (§2.7 pull
+  // transport — the enclave polls for these). Gated on the enclave credential,
+  // matching the claim/callback routes.
+  const enclaveDispatchHandler = config.enclaveInternalApiKey ? new EnclaveDispatchHandler(pool) : null
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const namingHandler = new NamingHandler(pool, jobQueue)
   const emojiUsageHandler = new EmojiUsageHandler(pool)

@@ -14,7 +14,6 @@ export interface RegisterEnclaveKeyInput {
   instanceId: string
   keyId: string
   publicKey: Uint8Array
-  instanceUrl: string
 }
 
 export class EnclaveRuntimesService {
@@ -26,7 +25,6 @@ export class EnclaveRuntimesService {
       instanceId: input.instanceId,
       keyId: input.keyId,
       publicKey: input.publicKey,
-      instanceUrl: input.instanceUrl,
     }
     return EnclaveRuntimesRepository.registerKey(this.pool, params)
   }
@@ -36,8 +34,8 @@ export class EnclaveRuntimesService {
   }
 
   /**
-   * Live EIK list. Used by the dispatcher to pick an instance to invoke and by
-   * the frontend (via `/enclave/active-keys`) to wrap the SSK to each live EIK.
+   * Live EIK list. Used by the frontend (via `/enclave/active-keys`) to wrap
+   * the SSK to each live EIK, so whichever instance claims a turn can decrypt.
    */
   async listLive(): Promise<EnclaveRuntime[]> {
     return EnclaveRuntimesRepository.listLive(this.pool, ENCLAVE_RUNTIME_STALENESS_MS)

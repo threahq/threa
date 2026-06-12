@@ -6,10 +6,10 @@ import { registerWithBackend, revokeWithBackend } from "./register"
 
 const config: EnclaveConfig = {
   port: 3011,
-  selfUrl: "https://enclave.internal",
   backendBaseUrl: "https://backend.internal",
   internalApiKey: "shared-secret",
   heartbeatIntervalMs: 30_000,
+  claimPollIntervalMs: 1_500,
   sourceCommitSha: "unknown",
   buildHash: "unknown",
   openRouterApiKey: "sk-test",

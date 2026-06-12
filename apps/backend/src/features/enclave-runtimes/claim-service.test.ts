@@ -1,26 +1,42 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Pool } from "pg"
-import type { Server } from "socket.io"
-import * as db from "../../../db"
-import * as agents from "../../agents"
-import { AgentSessionRepository } from "../../agents"
-import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../../streams"
-import { OutboxRepository } from "../../../lib/outbox"
-import { hashCallbackToken } from "../callback-token"
-import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
-import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
-import { MessageRepository } from "../../messaging"
-import { AttachmentRepository } from "../../attachments"
-import type { StorageProvider } from "../../../lib/storage/s3-client"
-import type { Message } from "../../messaging"
-import { UserRepository } from "../../workspaces"
-import { UserPreferencesService } from "../../user-preferences"
-import { EnclaveRuntimesRepository, type EnclaveRuntime } from "../repository"
-import type { EnclaveForwarder } from "../forwarder"
-import { createEnclaveInvokeWorker } from "./enclave-invoke-worker"
+import * as db from "../../db"
+import * as agents from "../agents"
+import { AgentSessionRepository } from "../agents"
+import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../streams"
+import { OutboxRepository } from "../../lib/outbox"
+import { hashCallbackToken } from "./callback-token"
+import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
+import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../e2e-streams"
+import { MessageRepository } from "../messaging"
+import { AttachmentRepository } from "../attachments"
+import type { StorageProvider } from "../../lib/storage/s3-client"
+import type { Message } from "../messaging"
+import { UserRepository } from "../workspaces"
+import { UserPreferencesService } from "../../features/user-preferences"
+import { EnclaveInvocationsRepository, type EnclaveInvocation } from "./invocations-repository"
+import { EnclaveClaimService } from "./claim-service"
 
 const pool = {} as Pool
-const JOB = { data: { workspaceId: "ws_1", streamId: "stream_1", messageId: "msg_trigger" } } as never
+
+const INVOCATION: EnclaveInvocation = {
+  id: "einv_1",
+  workspaceId: "ws_1",
+  streamId: "stream_1",
+  rootStreamId: "stream_1",
+  messageId: "msg_trigger",
+  triggeredBy: "usr_kris",
+  status: "claimed",
+  claimedByKeyId: "eik_live",
+  claimToken: "cbtok_minted",
+  claimExpiresAt: new Date(Date.now() + 60_000),
+  sessionId: null,
+  attempts: 1,
+  errorMessage: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  completedAt: null,
+}
 
 const E2E: E2eStream = {
   streamId: "stream_1",
@@ -32,16 +48,6 @@ const E2E: E2eStream = {
   hasSealedName: false,
 }
 const ENCLAVE_ACTOR: E2eStreamActor = { kind: "enclave", actorId: "enclave", keyId: null }
-const EIK: EnclaveRuntime = {
-  id: "elr_1",
-  instanceId: "enci_1",
-  keyId: "eik_live",
-  publicKey: new Uint8Array([1, 2, 3]),
-  instanceUrl: "https://enclave-1.internal",
-  registeredAt: new Date(),
-  lastSeenAt: new Date(),
-  revokedAt: null,
-}
 const WRAP: StreamE2eKeyWrap = {
   keyGeneration: 1,
   recipientKeyId: "eik_live",
@@ -62,19 +68,18 @@ afterEach(() => mock.restore())
 
 const FAKE_STORAGE = { getObject: async () => Buffer.from("") } as unknown as StorageProvider
 
-function fakeIo() {
-  const emit = mock((_event: string, _payload: unknown) => {})
-  const io = { to: mock((_room: string) => ({ emit })) } as unknown as Server
-  return { io, emit }
-}
-
-/** Stub everything up to the enclave handoff; returns the sentinel tx withTransaction runs on. */
-function arrangeDispatch() {
+/** Stub everything up to the session insert; returns the sentinel tx withTransaction runs on plus the claim-lifecycle spies. */
+function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
+  const claimNext = spyOn(EnclaveInvocationsRepository, "claimNext")
+    .mockResolvedValueOnce(invocation)
+    .mockResolvedValue(null)
+  const completeClaimed = spyOn(EnclaveInvocationsRepository, "completeClaimed").mockResolvedValue(undefined)
+  const attachSession = spyOn(EnclaveInvocationsRepository, "attachSession").mockResolvedValue(undefined)
+  spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
   spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue(E2E)
   spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([ENCLAVE_ACTOR])
   spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue(null)
   spyOn(MessageRepository, "findById").mockResolvedValue(TRIGGER)
-  spyOn(EnclaveRuntimesRepository, "listLive").mockResolvedValue([EIK])
   spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([WRAP])
   spyOn(MessageRepository, "findSurrounding").mockResolvedValue([])
   spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
@@ -88,34 +93,34 @@ function arrangeDispatch() {
   const tx = { __tx: true } as never
   spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
     fn(tx)) as never)
-  return tx
+  return { tx, claimNext, completeClaimed, attachSession }
 }
 
-describe("createEnclaveInvokeWorker", () => {
-  it("commits the session row and the started lifecycle event in one transaction (INV-7)", async () => {
-    const tx = arrangeDispatch()
+function service() {
+  return new EnclaveClaimService({ pool, storage: FAKE_STORAGE })
+}
+
+describe("EnclaveClaimService.claimTurn", () => {
+  it("commits the session row, the started lifecycle event, and the claim's session stamp in one transaction (INV-7)", async () => {
+    const { tx, attachSession: attach } = arrangeClaim()
     const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
       id: "session_1",
       createdAt: new Date("2026-06-02T09:27:01.000Z"),
     } as never)
     const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const assignSession = mock(async () => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await worker(JOB)
+    const assignment = await service().claimTurn("eik_live")
 
-    // Both writes ran on the same transaction client — a crash between them can't
-    // leave a RUNNING session with no started event (invisible to the stream view
-    // yet blocking the one-running guard).
+    expect(assignment).not.toBeNull()
+    // All three writes ran on the same transaction client — a crash between
+    // them can't leave a RUNNING session with no started event (invisible to
+    // the stream view yet blocking the one-running guard) or an unaddressable
+    // claim the session callbacks can't flip.
     expect(insertSession.mock.calls[0]![0]).toBe(tx)
     expect(insertEvent.mock.calls[0]![0]).toBe(tx)
+    expect(attach.mock.calls[0]![0]).toBe(tx)
+    expect(attach.mock.calls[0]![1]).toMatchObject({ id: "einv_1" })
     expect(insertEvent.mock.calls[0]![1]).toMatchObject({
       streamId: "stream_1",
       eventType: "agent_session:started",
@@ -123,43 +128,39 @@ describe("createEnclaveInvokeWorker", () => {
     })
     expect(insertOutbox.mock.calls[0]![0]).toBe(tx)
     expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:started")
-    expect(assignSession).toHaveBeenCalledTimes(1)
   })
 
-  it("binds callbacks to the assigned runner: one minted token on the row AND the assignment, plus the seal generation (Phase 2.4b)", async () => {
-    arrangeDispatch()
+  it("binds callbacks to the claiming runner: the claim token rides the assignment, its hash the row, plus the seal generation (Phase 2.4b)", async () => {
+    arrangeClaim()
     const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
       id: "session_1",
       createdAt: new Date("2026-06-02T09:27:01.000Z"),
     } as never)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await worker(JOB)
+    const assignment = await service().claimTurn("eik_live")
 
-    const inserted = insertSession.mock.calls[0]![1] as { callbackTokenHash: string; replyKeyGeneration: number }
-    const assignment = assignSession.mock.calls[0]![1] as { callbackToken: string; reply: { keyGeneration: number } }
-    // The cleartext secret travels to exactly one place — inside the assignment
-    // to the pinned instance — so echoing it proves the caller is that runner.
-    // The row stores only the digest: a DB read can't impersonate the runner.
-    expect(typeof assignment.callbackToken).toBe("string")
-    expect(assignment.callbackToken.length).toBeGreaterThan(0)
-    expect(inserted.callbackTokenHash).toBe(hashCallbackToken(assignment.callbackToken))
+    const inserted = insertSession.mock.calls[0]![1] as {
+      serverId: string
+      callbackTokenHash: string
+      replyKeyGeneration: number
+    }
+    // The cleartext secret travels to exactly one place — inside the claim
+    // response to the winning instance — so echoing it proves the caller is
+    // that runner. The row stores only the digest: a DB read can't
+    // impersonate the runner.
+    expect(typeof assignment!.callbackToken).toBe("string")
+    expect(assignment!.callbackToken!.length).toBeGreaterThan(0)
+    expect(inserted.callbackTokenHash).toBe(hashCallbackToken(assignment!.callbackToken!))
+    expect(inserted.serverId).toBe("eik_live")
     // The row records the generation the assignment prescribes, so a callback
     // sealed under any other generation is rejected instead of persisted.
-    expect(inserted.replyKeyGeneration).toBe(assignment.reply.keyGeneration)
+    expect(inserted.replyKeyGeneration).toBe(assignment!.reply.keyGeneration)
   })
 
-  it("resolves the SSK + wraps from the root for a thread message (reply still lands in the thread)", async () => {
-    arrangeDispatch()
+  it("resolves the SSK + wraps from the invocation's root for a thread trigger (reply still lands in the thread)", async () => {
+    arrangeClaim({ ...INVOCATION, rootStreamId: "stream_root" })
     // The trigger lives in a THREAD whose root is stream_root; the thread shares
     // the root's SSK and carries no wraps of its own.
     spyOn(StreamRepository, "findById").mockImplementation((async (_p: unknown, id: string) =>
@@ -175,16 +176,8 @@ describe("createEnclaveInvokeWorker", () => {
     } as never)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await worker(JOB)
+    const assignment = await service().claimTurn("eik_live")
 
     // Key material (e2e row + wraps) and the tool policy are fetched against the root...
     expect(getE2e).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
@@ -192,14 +185,13 @@ describe("createEnclaveInvokeWorker", () => {
     expect(getPolicy).toHaveBeenCalledWith(pool, "ws_1", "stream_root")
     // ...the assignment carries the root id, so the enclave unwraps under the
     // AAD the wraps were sealed with...
-    const assignment = assignSession.mock.calls[0]![1] as { streamId: string }
-    expect(assignment.streamId).toBe("stream_root")
+    expect(assignment!.streamId).toBe("stream_root")
     // ...but the session (and therefore Ariadne's reply) lands in the thread.
     expect(insertSession.mock.calls[0]![1]).toMatchObject({ streamId: "stream_1" })
   })
 
   it("threads the stream's tool-privacy policy from stream_policies onto the assignment", async () => {
-    arrangeDispatch()
+    arrangeClaim()
     spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(["web"])
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
       id: "session_1",
@@ -207,23 +199,13 @@ describe("createEnclaveInvokeWorker", () => {
     } as never)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await worker(JOB)
-
-    const assignment = assignSession.mock.calls[0]![1] as { allowedToolCategories?: unknown }
-    expect(assignment.allowedToolCategories).toEqual(["web"])
+    const assignment = await service().claimTurn("eik_live")
+    expect(assignment!.allowedToolCategories).toEqual(["web"])
   })
 
   it("ships attachment ciphertext for the trigger AND recent history, trigger first", async () => {
-    arrangeDispatch()
+    arrangeClaim()
     // One prior message in the window carrying its own E2E attachment.
     spyOn(MessageRepository, "findSurrounding").mockResolvedValue([
       {
@@ -247,26 +229,18 @@ describe("createEnclaveInvokeWorker", () => {
     } as never)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: { getObject } as unknown as StorageProvider,
-    })
-    await worker(JOB)
+    const svc = new EnclaveClaimService({ pool, storage: { getObject } as unknown as StorageProvider })
+    const assignment = await svc.claimTurn("eik_live")
 
-    const assignment = assignSession.mock.calls[0]![1] as { attachmentCiphertexts?: unknown }
-    expect(assignment.attachmentCiphertexts).toEqual([
+    expect(assignment!.attachmentCiphertexts).toEqual([
       { attachmentId: "attach_t", ciphertext: Buffer.from("bytes:p/t").toString("base64") },
       { attachmentId: "attach_h", ciphertext: Buffer.from("bytes:p/h").toString("base64") },
     ])
   })
 
   it("ships the stream's sealed turn digests oldest-first, skipping rows without ciphertext", async () => {
-    arrangeDispatch()
+    arrangeClaim()
     const envelope = { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" }
     // Repo returns newest session first; the assignment must read oldest-first.
     spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([
@@ -301,104 +275,97 @@ describe("createEnclaveInvokeWorker", () => {
     } as never)
     spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await worker(JOB)
+    const assignment = await service().claimTurn("eik_live")
 
-    const assignment = assignSession.mock.calls[0]![1] as { recentDigests?: unknown }
-    expect(assignment.recentDigests).toEqual([
+    expect(assignment!.recentDigests).toEqual([
       { ciphertext: "b2xk", envelope, completedAt: "2026-06-10T10:00:00.000Z" },
       { ciphertext: "bmV3", envelope, completedAt: "2026-06-11T10:00:00.000Z" },
     ])
   })
 
-  it("parks the turn (throws for queue retry) when no live EIK holds the stream's wrap", async () => {
-    arrangeDispatch()
-    // The enclave restarted: the only wrap on file addresses a dead EIK, so the
-    // live one can't open the trigger. The turn must park on the queue's
-    // retry/backoff (the owner's client revives the wrap meanwhile) — never a
-    // silent skip, and no session row before a servable enclave exists.
+  it("returns null without claiming when the queue is empty", async () => {
+    spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
+    spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(null)
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+    expect(insertSession).not.toHaveBeenCalled()
+  })
+
+  it("fails loudly — leaving the row claimed for the TTL to recycle — when the wraps no longer cover the claiming key", async () => {
+    const { completeClaimed } = arrangeClaim()
+    // The claim predicate proved coverage moments ago, but the wrap was revoked
+    // between claim and build (rotation race): never a silent skip, and no
+    // session row for a turn no runner will drive.
     spyOn(StreamE2eKeyWrapsRepository, "listForStream").mockResolvedValue([{ ...WRAP, recipientKeyId: "eik_dead" }])
     const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
-    const assignSession = mock(async () => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await expect(worker(JOB)).rejects.toThrow(/parking turn for retry/)
-
+    await expect(service().claimTurn("eik_live")).rejects.toThrow(/no longer covers/)
     expect(insertSession).not.toHaveBeenCalled()
-    expect(assignSession).not.toHaveBeenCalled()
+    expect(completeClaimed).not.toHaveBeenCalled() // claimed, not completed — retryable
   })
 
-  it("emits no started event when the one-running guard skips the session", async () => {
-    arrangeDispatch()
+  it("completes the claim as a no-op and keeps claiming when the one-running guard skips the session", async () => {
+    const { completeClaimed, claimNext } = arrangeClaim()
     spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null)
     const insertEvent = spyOn(StreamEventRepository, "insert")
-    const assignSession = mock(async () => {})
-    const { io } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    await worker(JOB)
+    expect(await service().claimTurn("eik_live")).toBeNull()
 
     expect(insertEvent).not.toHaveBeenCalled()
-    expect(assignSession).not.toHaveBeenCalled()
+    expect(completeClaimed).toHaveBeenCalledWith(pool, "einv_1")
+    // The loop went back for the next item (and found the queue empty).
+    expect(claimNext).toHaveBeenCalledTimes(2)
   })
 
-  it("fails the session with the full lifecycle when the enclave handoff fails", async () => {
-    arrangeDispatch()
-    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
-      id: "session_1",
-      createdAt: new Date("2026-06-02T09:27:01.000Z"),
+  it("completes the claim as a no-op when the trigger already has a live (fresh-heartbeat) or completed session", async () => {
+    const { completeClaimed } = arrangeClaim()
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
+      id: "session_prior",
+      status: agents.SessionStatuses.RUNNING,
+      heartbeatAt: new Date(), // fresh — genuinely being driven elsewhere
     } as never)
-    const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+    expect(insertSession).not.toHaveBeenCalled()
+    expect(completeClaimed).toHaveBeenCalledWith(pool, "einv_1")
+  })
+
+  it("defers — leaving the claim to its TTL — when the trigger's RUNNING session looks runnerless (stale heartbeat)", async () => {
+    const { completeClaimed, claimNext } = arrangeClaim()
+    // A lost claim response: the session row exists but nothing heartbeats it.
+    // Completing the invocation would silently drop the turn; orphan cleanup is
+    // about to fail the session, after which a later claim re-assigns it.
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
+      id: "session_prior",
+      status: agents.SessionStatuses.RUNNING,
+      heartbeatAt: new Date(Date.now() - 120_000),
+    } as never)
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip")
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+    expect(insertSession).not.toHaveBeenCalled()
+    expect(completeClaimed).not.toHaveBeenCalled()
+    expect(claimNext).toHaveBeenCalledTimes(1) // defer ends the poll, no spin
+  })
+
+  it("re-assigns a fresh session when the trigger's prior session FAILED", async () => {
+    arrangeClaim()
+    spyOn(AgentSessionRepository, "findByTriggerMessage").mockResolvedValue({
+      id: "session_prior",
+      status: agents.SessionStatuses.FAILED,
+    } as never)
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_2",
+      createdAt: new Date(),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    // The helper's internals: RUNNING→FAILED transition won, steps counted.
-    const update = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue({ id: "session_1" } as never)
-    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
-    const assignSession = mock(async () => {
-      throw new Error("enclave unreachable")
-    })
-    const { io, emit } = fakeIo()
 
-    const worker = createEnclaveInvokeWorker({
-      pool,
-      io,
-      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
-      storage: FAKE_STORAGE,
-    })
-    // The original assign error still propagates so the job retries.
-    await expect(worker(JOB)).rejects.toThrow("enclave unreachable")
-
-    // The started card must terminate: orphan-cleanup only scans RUNNING sessions,
-    // so a session marked FAILED here gets no backstop emission.
-    expect(update.mock.calls[0]![3]).toMatchObject({ error: "Enclave assignment failed" })
-    const failedEvent = insertEvent.mock.calls.find(
-      (c) => (c[1] as { eventType: string }).eventType === "agent_session:failed"
-    )
-    expect(failedEvent?.[1]).toMatchObject({
-      streamId: "stream_1",
-      eventType: "agent_session:failed",
-      payload: { sessionId: "session_1", error: "Enclave assignment failed" },
-    })
-    // And a live-open trace dialog hears it directly via the session room.
-    expect(io.to).toHaveBeenCalledWith("ws:ws_1:agent_session:session_1")
-    expect(emit.mock.calls.some((c) => c[0] === "agent_session:failed")).toBe(true)
+    const assignment = await service().claimTurn("eik_live")
+    expect(assignment).not.toBeNull()
+    expect(insertSession).toHaveBeenCalledTimes(1)
   })
 })

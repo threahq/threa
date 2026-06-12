@@ -20,6 +20,7 @@ function makeRunningSession(overrides?: Partial<AgentSession>): AgentSession {
     callbackTokenHash: null,
     replyKeyGeneration: null,
     heartbeatAt: new Date("2026-02-19T12:00:00.000Z"),
+    abortRequestedAt: null,
     responseMessageId: null,
     error: null,
     lastSeenSequence: 10n,

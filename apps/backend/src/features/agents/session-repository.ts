@@ -24,6 +24,7 @@ interface SessionRow {
   callback_token_hash: string | null
   reply_key_generation: number | null
   heartbeat_at: Date | null
+  abort_requested_at: Date | null
   response_message_id: string | null
   error: string | null
   last_seen_sequence: string | null
@@ -78,6 +79,14 @@ export interface AgentSession {
   /** SSK generation the assignment told the enclave to seal under; callbacks sealing another generation are rejected. */
   replyKeyGeneration: number | null
   heartbeatAt: Date | null
+  /**
+   * A user's "Stop research" for an enclave-owned session (§2.7): the enclave
+   * has no inbound routes, so the request is recorded here and delivered on
+   * the session-heartbeat response, where the enclave trips its turn's
+   * AbortController. NULL = no abort requested. In-process sessions never set
+   * this — their abort goes through the in-memory SessionAbortRegistry.
+   */
+  abortRequestedAt: Date | null
   responseMessageId: string | null
   error: string | null
   lastSeenSequence: bigint | null
@@ -175,6 +184,7 @@ function mapRowToSession(row: SessionRow): AgentSession {
     callbackTokenHash: row.callback_token_hash,
     replyKeyGeneration: row.reply_key_generation,
     heartbeatAt: row.heartbeat_at,
+    abortRequestedAt: row.abort_requested_at,
     responseMessageId: row.response_message_id,
     error: row.error,
     lastSeenSequence: row.last_seen_sequence ? BigInt(row.last_seen_sequence) : null,
@@ -205,7 +215,7 @@ function mapRowToStep(row: StepRow): AgentSessionStep {
 const SESSION_SELECT_FIELDS = `
   id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
-  response_message_id, error, last_seen_sequence,
+  abort_requested_at, response_message_id, error, last_seen_sequence,
   sent_message_ids, context_message_ids, created_at, completed_at
 `
 
@@ -436,6 +446,24 @@ export const AgentSessionRepository = {
 
     const result = await db.query<SessionRow>({ text: query, values })
     return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
+   * Record a user's "Stop research" for an enclave-owned session. The flag is
+   * consumed by the session-heartbeat callback (the enclave's only inbound
+   * channel is its own polling). Returns whether a RUNNING session took the
+   * flag — a terminal session has nothing left to abort. Idempotent: a second
+   * request keeps the original timestamp.
+   */
+  async requestAbort(db: Querier, id: string): Promise<boolean> {
+    const result = await db.query(
+      sql`
+        UPDATE agent_sessions
+        SET abort_requested_at = COALESCE(abort_requested_at, NOW())
+        WHERE id = ${id} AND status = ${SessionStatuses.RUNNING}
+      `
+    )
+    return (result.rowCount ?? 0) > 0
   },
 
   async updateHeartbeat(db: Querier, id: string): Promise<void> {

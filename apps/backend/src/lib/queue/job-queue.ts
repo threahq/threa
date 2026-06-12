@@ -40,7 +40,6 @@ export const JobQueues = {
   SAVED_REMINDER_FIRE: "saved.reminder_fire",
   SCHEDULED_MESSAGE_SEND: "scheduled_message.send",
   CONTEXT_BAG_PRECOMPUTE: "context_bag.precompute",
-  ENCLAVE_INVOKE: "enclave.invoke",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -58,14 +57,6 @@ export interface PersonaAgentJobData {
 }
 
 /** A user turn in an E2E scratchpad to forward to the enclave (Ariadne). */
-export interface EnclaveInvokeJobData {
-  workspaceId: string
-  streamId: string
-  /** The triggering (user) message — its ciphertext becomes the enclave prompt. */
-  messageId: string
-  triggeredBy: string
-}
-
 export interface NamingJobData {
   workspaceId: string
   streamId: string
@@ -276,7 +267,6 @@ export interface JobDataMap {
   [JobQueues.SAVED_REMINDER_FIRE]: SavedReminderFireJobData
   [JobQueues.SCHEDULED_MESSAGE_SEND]: ScheduledMessageSendJobData
   [JobQueues.CONTEXT_BAG_PRECOMPUTE]: ContextBagPrecomputeJobData
-  [JobQueues.ENCLAVE_INVOKE]: EnclaveInvokeJobData
 }
 
 /**
