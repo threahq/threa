@@ -16,7 +16,7 @@ afterEach(() => {
 })
 
 describe("loadEnclaveConfig credential resolution (Phase 2.4c, E2EE-22)", () => {
-  it("prefers ENCLAVE_INTERNAL_API_KEY over the shared key", () => {
+  it("reads ENCLAVE_INTERNAL_API_KEY, ignoring the backend's shared key", () => {
     setBaseEnv()
     process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
     process.env.INTERNAL_API_KEY = "shared-key"
@@ -24,15 +24,9 @@ describe("loadEnclaveConfig credential resolution (Phase 2.4c, E2EE-22)", () => 
     expect(loadEnclaveConfig().internalApiKey).toBe("enclave-key")
   })
 
-  it("falls back to INTERNAL_API_KEY when the dedicated key is absent (rollout phase)", () => {
+  it("throws when the dedicated key is absent — the shared key is not a fallback", () => {
     setBaseEnv()
     process.env.INTERNAL_API_KEY = "shared-key"
-
-    expect(loadEnclaveConfig().internalApiKey).toBe("shared-key")
-  })
-
-  it("throws when neither key is set", () => {
-    setBaseEnv()
 
     expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_INTERNAL_API_KEY")
   })

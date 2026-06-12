@@ -127,7 +127,7 @@ interface Dependencies {
   corsAllowedOrigins: string[]
   allowDevAuthRoutes: boolean
   internalApiKey: string | null
-  /** Dedicated enclave-channel secret (already fallback-resolved in env.ts; Phase 2.4c, E2EE-22). */
+  /** Dedicated enclave-channel secret, distinct from internalApiKey (Phase 2.4c, E2EE-22). */
   enclaveInternalApiKey: string | null
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
@@ -301,13 +301,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   }
 
   // Enclave runtime registry — gated by the dedicated enclave credential
-  // (ENCLAVE_INTERNAL_API_KEY; env.ts resolves a transitional fallback to the
-  // shared key, so this is non-null whenever either secret is set). Mounted
-  // independently of the control-plane block above so the enclave channel
-  // doesn't require INTERNAL_API_KEY. A separate middleware instance means a
-  // shared INTERNAL_API_KEY holder (e.g. the bot-runtime) can no longer
-  // register an EIK and become an SSK wrap recipient once the dedicated key
-  // is provisioned (Phase 2.4c, E2EE-22).
+  // (ENCLAVE_INTERNAL_API_KEY), mounted independently of the control-plane
+  // block above so the enclave channel doesn't require INTERNAL_API_KEY. A
+  // separate middleware instance means a shared INTERNAL_API_KEY holder
+  // (e.g. the bot-runtime) cannot register an EIK and become an SSK wrap
+  // recipient (Phase 2.4c, E2EE-22).
   if (enclaveInternalApiKey) {
     const enclaveAuth = createInternalAuthMiddleware(enclaveInternalApiKey)
     app.post("/internal/enclave-runtimes/register-key", enclaveAuth, enclave.registerKey)

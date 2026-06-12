@@ -133,10 +133,10 @@ sub-loop returns partial findings and the turn still replies. For in-process
   other shared-key holder can no longer register an EIK and become an SSK wrap
   recipient. Wrap eligibility inherits the boundary without a schema change —
   owner clients wrap to every live `enclave_runtimes` row, and only
-  enclave-credential holders can create rows. Rollout: while
-  `ENCLAVE_INTERNAL_API_KEY` is unset, both services fall back to the shared key
-  with a boot warning, so separation activates as a config-only event (set the
-  var on backend and enclave together). The `/attestation` endpoint remains
+  enclave-credential holders can create rows. There is no fallback: the enclave
+  refuses to boot without the var, and a prod-shaped backend (CONTROL_PLANE_URL
+  set) does the same — set the same fresh secret on both services, distinct
+  from `INTERNAL_API_KEY`. The `/attestation` endpoint remains
   informational; real TEE evidence (e.g. a Nitro/TDX document binding the EIK
   public key) slots into the registration handler when the infrastructure
   exists — there is deliberately **no verifier seam or `attestation_status`

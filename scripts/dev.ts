@@ -342,8 +342,8 @@ async function main() {
 
   // Shared internal secret. The backend mounts /internal/* only when this is
   // set. The enclave channel runs on its own dedicated secret (Phase 2.4c,
-  // E2EE-22) — distinct values in dev so local runs exercise the separated
-  // path, never the transitional fallback.
+  // E2EE-22) — distinct values in dev so local runs exercise the real
+  // credential boundary.
   const internalApiKey = backendEnv.INTERNAL_API_KEY ?? "dev-internal-key"
   const enclaveInternalApiKey = backendEnv.ENCLAVE_INTERNAL_API_KEY ?? "dev-enclave-internal-key"
 

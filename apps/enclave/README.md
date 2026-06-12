@@ -58,16 +58,15 @@ What the enclave does not do:
 
 ## Environment
 
-| Variable                        | Required                                   | Purpose                                                                                                                                                       |
-| ------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                          | no (default `3011`)                        | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/sessions`.                                                                                           |
-| `ENCLAVE_SELF_URL`              | yes                                        | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`).                                                          |
-| `BACKEND_BASE_URL`              | yes                                        | Regional backend base URL — target for register/heartbeat/revoke + per-session heartbeat/messages/complete callbacks.                                         |
-| `ENCLAVE_INTERNAL_API_KEY`      | recommended (required for full separation) | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*` + inbound `/sessions`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY`. |
-| `INTERNAL_API_KEY`              | no (transitional)                          | Fallback when `ENCLAVE_INTERNAL_API_KEY` is unset (warns at boot). Will be dropped once separation is enforced.                                               |
-| `OPENROUTER_API_KEY`            | yes                                        | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                                                                     |
-| `OPENROUTER_BASE_URL`           | no                                         | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                        |
-| `ENCLAVE_HEARTBEAT_INTERVAL_MS` | no (default `30000`)                       | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                               |
+| Variable                        | Required             | Purpose                                                                                                                                                                                                        |
+| ------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/sessions`.                                                                                                                                            |
+| `ENCLAVE_SELF_URL`              | yes                  | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`).                                                                                                           |
+| `BACKEND_BASE_URL`              | yes                  | Regional backend base URL — target for register/heartbeat/revoke + per-session heartbeat/messages/complete callbacks.                                                                                          |
+| `ENCLAVE_INTERNAL_API_KEY`      | yes                  | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*` + inbound `/sessions`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY` and must NOT equal the shared `INTERNAL_API_KEY`. |
+| `OPENROUTER_API_KEY`            | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                                                                                                                      |
+| `OPENROUTER_BASE_URL`           | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                                                                         |
+| `ENCLAVE_HEARTBEAT_INTERVAL_MS` | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                                                                                |
 
 ## Egress allow-list (operational)
 

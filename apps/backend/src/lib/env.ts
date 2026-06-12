@@ -106,10 +106,10 @@ export interface Config {
   /**
    * Dedicated secret for the enclave↔backend channel — enclave registration,
    * session callbacks, and the backend's assignment calls (Phase 2.4c,
-   * E2EE-22). Resolved here with a transitional fallback to INTERNAL_API_KEY
-   * so a deploy never bricks before the var is provisioned; the fallback
-   * warns at boot, and separation activates the moment the var is set on
-   * both the backend and enclave services.
+   * E2EE-22). Deliberately distinct from INTERNAL_API_KEY so a shared-key
+   * holder (e.g. the bot-runtime) cannot register an EIK and become an SSK
+   * wrap recipient. Absent ⇒ the enclave channel is off; required when
+   * CONTROL_PLANE_URL is set (INV-11), same as INTERNAL_API_KEY.
    */
   enclaveInternalApiKey: string | null
   /** This instance's region name (e.g., "eu-north-1") */
@@ -230,7 +230,7 @@ export function loadConfig(): Config {
     },
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
-    enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || process.env.INTERNAL_API_KEY || null,
+    enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
     region: process.env.REGION || null,
     enclaveInstanceUrlAllowedPrefixes:
       process.env.ENCLAVE_INSTANCE_URL_ALLOWED_PREFIXES?.split(",")
@@ -296,13 +296,12 @@ export function loadConfig(): Config {
     )
   }
 
-  // Phase 2.4c (E2EE-22): the enclave channel should run on its own credential
-  // so an INTERNAL_API_KEY holder (e.g. the bot-runtime) cannot register an EIK
-  // and become an SSK wrap recipient. Warn-and-fall-back rather than fail so the
-  // cutover is a config-only event, not a coordinated deploy.
-  if (process.env.INTERNAL_API_KEY && !process.env.ENCLAVE_INTERNAL_API_KEY) {
-    logger.warn(
-      "ENCLAVE_INTERNAL_API_KEY is not set — enclave registration and session callbacks fall back to the shared INTERNAL_API_KEY. Set a dedicated key on both the backend and enclave services to complete credential separation."
+  // Phase 2.4c (E2EE-22): a prod-shaped backend must carry the dedicated
+  // enclave credential — silently booting without it would unmount the enclave
+  // routes and break registration/heartbeats without a loud signal (INV-11).
+  if (config.controlPlaneUrl && !config.enclaveInternalApiKey) {
+    throw new Error(
+      "ENCLAVE_INTERNAL_API_KEY is required when CONTROL_PLANE_URL is set — the enclave channel runs on its own credential, distinct from INTERNAL_API_KEY"
     )
   }
 
