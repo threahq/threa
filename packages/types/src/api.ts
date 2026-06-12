@@ -259,6 +259,18 @@ export interface SyncCatchUpResponse {
   head: string
 }
 
+/**
+ * Periodic `sync:heartbeat` socket payload: the workspace-global sync-log
+ * head, broadcast to the workspace room so clients can detect a dropped emit
+ * without waiting for a reconnect/resume trigger. Same head semantics as the
+ * catch-up response: a freshness hint to compare against, never a cursor
+ * target. See docs/plans/sync-v2-heartbeat.md.
+ */
+export interface SyncHeartbeatPayload {
+  workspaceId: string
+  head: string
+}
+
 // ============================================================================
 // Messages API
 // ============================================================================

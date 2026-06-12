@@ -9,7 +9,12 @@ the rollout sessions:
 - **One healing deletion per PR**, each with a test proving the cursor covers
   what the deleted healing covered.
 - **Never delete healing that covers dropped live emits** until a socket
-  heartbeat exists.
+  heartbeat exists. _The heartbeat now exists_
+  (`docs/plans/sync-v2-heartbeat.md`): the server broadcasts each workspace's
+  sync-log head every 15s and active-mode clients trigger catch-up when
+  behind, bounding dropped-emit detection to ~interval+grace. Deletions it
+  gates are unblocked on this axis — but the big ones (reconnect-bootstrap
+  slimming, `usePageResumeRefresh`) ALSO require sync_log retention.
 - Coverage proof method (established in #885): event type → scoping list in
   `apps/backend/src/lib/outbox/repository.ts` → delivery group
   (`delivery-groups.ts`, single source of truth for log + emit) → `sync_log`
@@ -161,8 +166,10 @@ treating such a flag as real healing — it may be dead code (labels was).
 - **Per-stream reconnect delta** (`joinStreamForCatchUp` + `bootstrap?after=`):
   this _is_ the per-stream cursor mechanism, already delta-shaped. Keep.
 - **`backfillStreamGap` / `detectSequenceGap` / `computeTimelineHoles`**
-  (INV-61): the only healing with in-band dropped-emit _detection_ (a gap is
-  visible the moment the next event arrives). Keep until a heartbeat exists.
+  (INV-61): in-band dropped-emit _detection_ (a gap is visible the moment the
+  next event arrives). The heartbeat now exists but these stay anyway: their
+  detection is instant where the heartbeat's is a ≤interval+grace floor, and
+  the in-place placeholder rendering is UX, not just healing.
 - **Ephemeral raw-socket handlers** (`agent_session:activity_started`,
   `:progress`, `:step:*`, voice, `bot_runtime:presence`,
   `pointer:invalidated`): not outbox-routed, never in the log; no healing
