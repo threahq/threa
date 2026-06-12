@@ -17,13 +17,14 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { filterSearchMentionables, filterUsersOnly, useMentionables } from "@/hooks/use-mentionables"
+import { filterUsersOnly, useMentionables } from "@/hooks/use-mentionables"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
+import { STATUS_FILTER_OPTIONS } from "@/components/editor/triggers/status-filter-extension"
 import { formatISODate, getFutureDatePresets, getPastDatePresets } from "@/lib/dates"
 import { addFilterToQuery, type FilterType } from "@/lib/search-query-parser"
+import { getStreamName, streamLabel } from "@/lib/streams"
 import { cn } from "@/lib/utils"
-import type { StreamType } from "@threa/types"
-import type { ArchiveStatus } from "@/api"
 
 /**
  * One menu entry per filter the query syntax supports. `in:` appears twice
@@ -49,18 +50,6 @@ const FILTER_KINDS: FilterKindDef[] = [
   { kind: "status", label: "Status", syntax: "status:archived", icon: Archive },
   { kind: "after", label: "After date", syntax: "after:2026-01-01", icon: CalendarIcon },
   { kind: "before", label: "Before date", syntax: "before:2026-01-01", icon: CalendarIcon },
-]
-
-const STREAM_TYPE_OPTIONS: { value: StreamType; label: string }[] = [
-  { value: "scratchpad", label: "Scratchpad" },
-  { value: "channel", label: "Channel" },
-  { value: "dm", label: "Direct message" },
-  { value: "thread", label: "Thread" },
-]
-
-const ARCHIVE_STATUS_OPTIONS: { value: ArchiveStatus; label: string }[] = [
-  { value: "active", label: "Active" },
-  { value: "archived", label: "Archived" },
 ]
 
 interface SearchFilterMenuProps {
@@ -208,17 +197,17 @@ function FilterValuePicker({
 }) {
   switch (kind) {
     case "from":
-      return <MentionablePicker usersOnly={false} onSelect={(slug) => onCommit("from", slug)} />
+      return <UserPicker onSelect={(slug) => onCommit("from", slug)} />
     case "with":
-      return <MentionablePicker usersOnly={false} onSelect={(slug) => onCommit("with", slug)} />
+      return <UserPicker onSelect={(slug) => onCommit("with", slug)} />
     case "in-dm":
-      return <MentionablePicker usersOnly onSelect={(slug) => onCommit("in", slug)} />
+      return <UserPicker onSelect={(slug) => onCommit("in", slug)} />
     case "in-channel":
       return <ChannelPicker workspaceId={workspaceId} onSelect={(slug) => onCommit("in", `#${slug}`)} />
     case "type":
-      return <StaticOptionPicker options={STREAM_TYPE_OPTIONS} onSelect={(value) => onCommit("type", value)} />
+      return <StaticOptionPicker options={FILTER_TYPE_OPTIONS} onSelect={(value) => onCommit("type", value)} />
     case "status":
-      return <StaticOptionPicker options={ARCHIVE_STATUS_OPTIONS} onSelect={(value) => onCommit("status", value)} />
+      return <StaticOptionPicker options={STATUS_FILTER_OPTIONS} onSelect={(value) => onCommit("status", value)} />
     case "after":
     case "before":
       return <DateValuePicker type={kind} onSelect={(isoDate) => onCommit(kind, isoDate)} />
@@ -226,19 +215,16 @@ function FilterValuePicker({
 }
 
 /**
- * User/persona/bot picker for `from:`/`with:` (search mentionables) and
- * `in:@` (users only — DMs only exist with users). Same data sources and
- * filter semantics as the typed `from:@…` autocomplete, including the "me"
- * shortcut matching the current user.
+ * User picker for `from:`/`with:`/`in:@`. Users only: `useMessageSearch`
+ * resolves these slugs against workspace users exclusively, so offering
+ * personas/bots here would commit a chip whose filter silently never applies.
+ * Keeps the "me" shortcut matching the current user.
  */
-function MentionablePicker({ usersOnly, onSelect }: { usersOnly: boolean; onSelect: (slug: string) => void }) {
+function UserPicker({ onSelect }: { onSelect: (slug: string) => void }) {
   const { mentionables } = useMentionables()
   const [search, setSearch] = useState("")
 
-  const filtered = useMemo(
-    () => (usersOnly ? filterUsersOnly(mentionables, search) : filterSearchMentionables(mentionables, search)),
-    [mentionables, search, usersOnly]
-  )
+  const filtered = useMemo(() => filterUsersOnly(mentionables, search), [mentionables, search])
 
   return (
     <Command shouldFilter={false}>
@@ -268,7 +254,8 @@ function ChannelPicker({ workspaceId, onSelect }: { workspaceId: string; onSelec
     if (!search) return withSlugs
     const lowerQuery = search.toLowerCase()
     return withSlugs.filter(
-      (s) => s.slug.toLowerCase().includes(lowerQuery) || s.displayName?.toLowerCase().includes(lowerQuery)
+      (s) =>
+        s.slug.toLowerCase().includes(lowerQuery) || (getStreamName(s)?.toLowerCase().includes(lowerQuery) ?? false)
     )
   }, [streams, search])
 
@@ -278,12 +265,19 @@ function ChannelPicker({ workspaceId, onSelect }: { workspaceId: string; onSelec
       <CommandList className="max-h-[min(60vh,300px)] overscroll-contain">
         <CommandEmpty>No channels found.</CommandEmpty>
         <CommandGroup>
-          {channels.slice(0, 20).map((stream) => (
-            <CommandItem key={stream.id} value={stream.id} onSelect={() => onSelect(stream.slug)}>
-              <Hash className="h-4 w-4 text-muted-foreground" />
-              <span className="truncate">{stream.slug}</span>
-            </CommandItem>
-          ))}
+          {channels.slice(0, 20).map((stream) => {
+            // streamLabel is "#slug" for channels; slugged non-channels (e.g.
+            // scratchpads) label by display name, so surface the slug alongside
+            const label = streamLabel(stream)
+            return (
+              <CommandItem key={stream.id} value={stream.id} onSelect={() => onSelect(stream.slug)}>
+                <span className="truncate">{label}</span>
+                {label !== `#${stream.slug}` && (
+                  <span className="ml-auto pl-2 text-xs text-muted-foreground">#{stream.slug}</span>
+                )}
+              </CommandItem>
+            )
+          })}
         </CommandGroup>
       </CommandList>
     </Command>
@@ -294,7 +288,7 @@ function StaticOptionPicker<T extends string>({
   options,
   onSelect,
 }: {
-  options: { value: T; label: string }[]
+  options: { value: T; label: string; description?: string }[]
   onSelect: (value: T) => void
 }) {
   const commandRef = useCommandFocusOnMount()
@@ -303,8 +297,14 @@ function StaticOptionPicker<T extends string>({
       <CommandList>
         <CommandGroup>
           {options.map((option) => (
-            <CommandItem key={option.value} value={option.value} onSelect={() => onSelect(option.value)}>
-              {option.label}
+            <CommandItem
+              key={option.value}
+              value={option.value}
+              onSelect={() => onSelect(option.value)}
+              className="flex-col items-start gap-0"
+            >
+              <span>{option.label}</span>
+              {option.description && <span className="text-xs text-muted-foreground">{option.description}</span>}
             </CommandItem>
           ))}
         </CommandGroup>

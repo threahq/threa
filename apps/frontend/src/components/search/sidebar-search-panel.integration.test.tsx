@@ -469,7 +469,8 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await waitFor(() => {
         expect(screen.getByPlaceholderText("Search channels...")).toBeInTheDocument()
       })
-      await user.click(screen.getByText("general"))
+      // streamLabel renders channels as #slug
+      await user.click(screen.getByText("#general"))
 
       const editor = screen.getByLabelText("Search messages")
       await waitFor(() => {
