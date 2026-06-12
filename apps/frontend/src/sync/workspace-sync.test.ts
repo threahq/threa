@@ -964,3 +964,350 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 })
+
+describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
+  const preview = {
+    authorId: "member_2",
+    authorType: "user" as const,
+    content: "hello",
+    createdAt: new Date().toISOString(),
+  }
+
+  function membership(streamId: string) {
+    return {
+      streamId,
+      memberId: "member_1",
+      notificationLevel: null,
+      lastReadEventId: null,
+      lastReadAt: null,
+      joinedAt: new Date().toISOString(),
+    }
+  }
+
+  /**
+   * Fixture: stream_1 has 5 messages, 1 unread (implied read position 4),
+   * 1 mention + 1 activity; stream_2 contributes 1 activity to the total.
+   */
+  async function seedCounterFixture(queryClient: QueryClient) {
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({
+        users: [makeWorkspaceUser()],
+        streamMemberships: [membership("stream_1"), membership("stream_2")],
+        unreadCounts: { stream_1: 1 },
+        mentionCounts: { stream_1: 1 },
+        activityCounts: { stream_1: 1, stream_2: 1 },
+        unreadActivityCount: 2,
+        messageCounts: { stream_1: 5 },
+      })
+    )
+
+    const now = Date.now()
+    await db.workspaceUsers.put({ ...makeWorkspaceUser(), _cachedAt: now })
+    await db.streamMemberships.bulkPut(
+      ["stream_1", "stream_2"].map((streamId) => ({
+        ...membership(streamId),
+        id: `ws_1:${streamId}`,
+        workspaceId: "ws_1",
+        _cachedAt: now,
+      }))
+    )
+    await db.unreadState.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      unreadCounts: { stream_1: 1 },
+      mentionCounts: { stream_1: 1 },
+      activityCounts: { stream_1: 1, stream_2: 1 },
+      unreadActivityCount: 2,
+      latestOrdinals: { stream_1: 5 },
+      mutedStreamIds: [],
+      _cachedAt: now,
+    })
+  }
+
+  function register(queryClient: QueryClient, currentStreamId?: string) {
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => currentStreamId,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+    return { emit, cleanup }
+  }
+
+  beforeEach(async () => {
+    await Promise.all([
+      db.streams.clear(),
+      db.streamMemberships.clear(),
+      db.workspaceUsers.clear(),
+      db.unreadState.clear(),
+    ])
+  })
+
+  it("applies stream:activity ordinals as absolutes — duplicates converge", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    const payload = {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    }
+    emit("stream:activity", payload)
+    emit("stream:activity", payload)
+
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(2)
+    expect(bootstrap?.messageCounts?.stream_1).toBe(6)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(2)
+      expect(state?.latestOrdinals?.stream_1).toBe(6)
+    })
+
+    cleanup()
+  })
+
+  it("advances the read position for own messages instead of skipping the event", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_1",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    })
+
+    // The server auto-advances the author's read pointer in the send
+    // transaction, so the prior unread message clears too.
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(0)
+      expect(state?.latestOrdinals?.stream_1).toBe(6)
+    })
+
+    cleanup()
+  })
+
+  it("pins the read position to latest while viewing the stream", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient, "stream_1")
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "9",
+      messageOrdinal: 6,
+      lastMessagePreview: preview,
+    })
+
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(0)
+    })
+
+    cleanup()
+  })
+
+  it("falls back to the legacy increment when stream:activity lacks an ordinal", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      lastMessagePreview: preview,
+    })
+
+    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
+    })
+
+    cleanup()
+  })
+
+  it("applies stream:read absolute positions — newer messages stay unread", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    // 7 messages now exist; the read position covers 6 of them.
+    emit("stream:activity", {
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+      authorId: "member_2",
+      sequence: "10",
+      messageOrdinal: 7,
+      lastMessagePreview: preview,
+    })
+    emit("stream:read", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamId: "stream_1",
+      lastReadEventId: "event_6",
+      lastReadSequence: "8",
+      lastReadOrdinal: 6,
+    })
+
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(1)
+    expect(bootstrap?.mentionCounts.stream_1).toBe(0)
+    expect(bootstrap?.activityCounts.stream_1).toBe(0)
+    // Σ activityCounts: stream_2's activity survives.
+    expect(bootstrap?.unreadActivityCount).toBe(1)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(1)
+      expect(state?.unreadActivityCount).toBe(1)
+    })
+
+    cleanup()
+  })
+
+  it("applies stream:read_all reads as absolute positions", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    emit("stream:read_all", {
+      workspaceId: "ws_1",
+      authorId: "member_1",
+      streamIds: ["stream_1", "stream_2"],
+      reads: [
+        { streamId: "stream_1", lastReadOrdinal: 5 },
+        { streamId: "stream_2", lastReadOrdinal: 3 },
+      ],
+    })
+
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.unreadCounts.stream_1).toBe(0)
+    expect(bootstrap?.activityCounts).toEqual({ stream_1: 0, stream_2: 0 })
+    expect(bootstrap?.unreadActivityCount).toBe(0)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.unreadCounts.stream_1).toBe(0)
+      expect(state?.unreadActivityCount).toBe(0)
+    })
+
+    cleanup()
+  })
+
+  it("sets activity:created counts as absolutes — duplicates converge, decreases apply", async () => {
+    const queryClient = new QueryClient()
+    await seedCounterFixture(queryClient)
+    const { emit, cleanup } = register(queryClient)
+
+    const payload = {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      counts: { mentionCount: 2, activityCount: 3 },
+      activity: {
+        id: "act_1",
+        activityType: "mention",
+        streamId: "stream_1",
+        messageId: "msg_1",
+        actorId: "member_2",
+        actorType: "user",
+        context: {},
+        createdAt: new Date().toISOString(),
+        isSelf: false,
+        emoji: null,
+      },
+    }
+    emit("activity:created", payload)
+    emit("activity:created", payload)
+
+    let bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.mentionCounts.stream_1).toBe(2)
+    expect(bootstrap?.activityCounts.stream_1).toBe(3)
+    expect(bootstrap?.unreadActivityCount).toBe(4) // 3 + stream_2's 1
+
+    // A lower absolute (reaction removal raced an insert) applies as-is (LWW).
+    emit("activity:created", {
+      ...payload,
+      counts: { mentionCount: 1, activityCount: 1 },
+      activity: { ...payload.activity, id: "act_2" },
+    })
+    bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(bootstrap?.activityCounts.stream_1).toBe(1)
+    expect(bootstrap?.unreadActivityCount).toBe(2)
+
+    await vi.waitFor(async () => {
+      const state = await db.unreadState.get("ws_1")
+      expect(state?.activityCounts.stream_1).toBe(1)
+      expect(state?.unreadActivityCount).toBe(2)
+    })
+
+    cleanup()
+  })
+})
+
+describe("latest ordinal seeding and reconnect merge (sync-v2 phase 2c)", () => {
+  beforeEach(async () => {
+    await db.unreadState.clear()
+  })
+
+  it("applyWorkspaceBootstrap seeds latestOrdinals from messageCounts", async () => {
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({
+        unreadCounts: { stream_1: 2 },
+        messageCounts: { stream_1: 7 },
+      })
+    )
+
+    expect((await db.unreadState.get("ws_1"))?.latestOrdinals).toEqual({ stream_1: 7 })
+  })
+
+  it("mergeReconnectWorkspaceBootstrap keeps each stream's ordinal paired with its winning unread source", () => {
+    const fetchStartedAt = Date.now() - 1000
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({
+        unreadCounts: { stream_fresh: 9, stream_stale: 9, stream_gone: 9 },
+        messageCounts: { stream_fresh: 9, stream_stale: 9, stream_gone: 9 },
+      }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(["stream_stale"]),
+      terminalStreamIds: new Set(["stream_gone"]),
+      localStreams: [],
+      localMemberships: [],
+      localUnreadState: {
+        id: "ws_1",
+        workspaceId: "ws_1",
+        // Fresher than the fetch: stream_fresh's local pair wins; stream_stale
+        // has a local unread but NO local ordinal — its baseline must drop
+        // rather than pair the server ordinal with the local unread.
+        unreadCounts: { stream_fresh: 2, stream_stale: 1 },
+        mentionCounts: {},
+        activityCounts: {},
+        unreadActivityCount: 0,
+        latestOrdinals: { stream_fresh: 11 },
+        mutedStreamIds: [],
+        _cachedAt: fetchStartedAt + 500,
+      },
+      fetchStartedAt,
+    })
+
+    expect(merged.unreadCounts).toEqual({ stream_fresh: 2, stream_stale: 1 })
+    expect(merged.messageCounts).toEqual({ stream_fresh: 11 })
+  })
+})

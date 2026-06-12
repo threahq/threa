@@ -143,7 +143,7 @@ export class SocketEventGate implements SyncEventSource {
    * splice from there. Reopening here would let live events flow into the
    * new cycle's bootstrap window.
    */
-  async resume(applyIf: (eventType: string, syncId: bigint) => boolean): Promise<void> {
+  async resume(applyIf: (eventType: string, syncId: bigint, payload: unknown) => boolean): Promise<void> {
     const epoch = this.pauseEpoch
     while (this.buffer.length > 0) {
       if (this.disposed) return
@@ -161,7 +161,7 @@ export class SocketEventGate implements SyncEventSource {
           return
         }
         const event = batch[i]
-        if (!applyIf(event.eventType, event.syncId)) continue
+        if (!applyIf(event.eventType, event.syncId, event.payload)) continue
         await this.dispatch(event.eventType, event.payload)
         this.opts.onApplied?.(event.syncId.toString())
       }

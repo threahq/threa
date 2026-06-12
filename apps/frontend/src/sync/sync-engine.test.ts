@@ -1086,7 +1086,7 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     engine.destroy()
   })
 
-  it("skips unread-counter entries from the log but still advances the cursor past them", async () => {
+  it("skips LEGACY unread-counter entries (no absolute fields) but still advances the cursor past them", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     const catchUp = vi
       .fn()
@@ -1146,7 +1146,7 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     engine.destroy()
   })
 
-  it("applies buffered counter events at the splice even when at or below the catch-up position", async () => {
+  it("applies buffered LEGACY counter events at the splice even when at or below the catch-up position", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
     const catchUp = vi
@@ -1168,8 +1168,9 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     }
     socket.trigger("activity:created", activityPayload)
 
-    // The same event is also in the log (duplicate by design) — catch-up
-    // skips it there; the buffered live copy applies exactly once at splice.
+    // The same legacy event is also in the log (duplicate by design) —
+    // catch-up skips it there; the buffered live copy applies exactly once
+    // at splice.
     resolveFirstPage!({
       entries: [
         {
@@ -1186,6 +1187,167 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     await vi.waitFor(async () => {
       expect((await db.unreadState.get("ws_1"))?.unreadActivityCount).toBe(1)
     })
+    expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
+    engine.destroy()
+  })
+
+  /** Active deps whose bootstrap carries counter baselines for stream_x:
+   *  5 messages, 1 unread (implied read position 4), 1 activity, plus a
+   *  membership so the live handlers' IDB writes pass the member check. */
+  function makeCounterDeps(catchUp: ReturnType<typeof vi.fn>) {
+    const deps = makeActiveDeps(catchUp)
+    deps.workspaceService.bootstrap = vi.fn(async () => ({
+      ...makeWorkspaceBootstrap(),
+      streamMemberships: [
+        {
+          streamId: "stream_x",
+          memberId: "member_1",
+          notificationLevel: null,
+          lastReadEventId: null,
+          lastReadAt: null,
+          joinedAt: new Date().toISOString(),
+        },
+      ],
+      unreadCounts: { stream_x: 1 },
+      mentionCounts: { stream_x: 0 },
+      activityCounts: { stream_x: 1 },
+      unreadActivityCount: 1,
+      messageCounts: { stream_x: 5 },
+    }))
+    return deps
+  }
+
+  function streamActivityEntry(syncId: string, messageOrdinal: number): SyncCatchUpResponse["entries"][number] {
+    return {
+      syncId,
+      eventType: "stream:activity",
+      payload: {
+        workspaceId: "ws_1",
+        streamId: "stream_x",
+        authorId: "member_other",
+        sequence: String(messageOrdinal),
+        messageOrdinal,
+        lastMessagePreview: {
+          authorId: "member_other",
+          authorType: "user",
+          content: "hi",
+          createdAt: new Date().toISOString(),
+        },
+      },
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  function activityCountsEntry(
+    syncId: string,
+    counts: { mentionCount: number; activityCount: number }
+  ): SyncCatchUpResponse["entries"][number] {
+    return {
+      syncId,
+      eventType: "activity:created",
+      payload: {
+        workspaceId: "ws_1",
+        targetUserId: "member_1",
+        counts,
+        activity: { id: `act_${syncId}`, streamId: "stream_x", activityType: "mention", isSelf: false },
+      },
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  it("applies absolute counter entries from the log without double-counting the bootstrap snapshot", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      // Entry 11 (ordinal 5) is already reflected in the snapshot — the safe
+      // duplicate side of read-before-stamp; entry 12 (ordinal 6) is new.
+      .mockResolvedValueOnce({ entries: [streamActivityEntry("11", 5), streamActivityEntry("12", 6)], head: "12" })
+      .mockResolvedValue(emptyPage("12"))
+    const engine = new SyncEngine(makeCounterDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => {
+      const unread = await db.unreadState.get("ws_1")
+      expect(unread?.unreadCounts["stream_x"]).toBe(2)
+      expect(unread?.latestOrdinals?.["stream_x"]).toBe(6)
+    })
+    expect(engine.getSyncCursor()).toBe("12")
+    engine.destroy()
+  })
+
+  it("replays a read-zero between two absolute activity entries in log order", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce({
+        entries: [
+          activityCountsEntry("11", { mentionCount: 2, activityCount: 2 }),
+          {
+            syncId: "12",
+            eventType: "stream:read",
+            payload: {
+              workspaceId: "ws_1",
+              authorId: "member_1",
+              streamId: "stream_x",
+              lastReadEventId: "evt_5",
+              lastReadSequence: "5",
+              lastReadOrdinal: 5,
+            },
+            createdAt: new Date().toISOString(),
+          },
+          activityCountsEntry("13", { mentionCount: 0, activityCount: 1 }),
+        ],
+        head: "13",
+      })
+      .mockResolvedValue(emptyPage("13"))
+    const engine = new SyncEngine(makeCounterDeps(catchUp))
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    await vi.waitFor(async () => {
+      const unread = await db.unreadState.get("ws_1")
+      // Log order: counts set to 2, read zeroes them, counts set to 1.
+      expect(unread?.activityCounts["stream_x"]).toBe(1)
+      expect(unread?.mentionCounts["stream_x"]).toBe(0)
+      expect(unread?.unreadActivityCount).toBe(1)
+      // The read position covers all 5 snapshot messages.
+      expect(unread?.unreadCounts["stream_x"]).toBe(0)
+    })
+    expect(engine.getSyncCursor()).toBe("13")
+    engine.destroy()
+  })
+
+  it("does not re-apply a buffered ABSOLUTE counter duplicate at or below the catch-up position", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
+    const catchUp = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
+      .mockResolvedValue(emptyPage("12"))
+    const engine = new SyncEngine(makeCounterDeps(catchUp))
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
+
+    // Live duplicate of log entry 11 lands during the pause window. Its log
+    // copy applies below; re-applying the buffered copy AFTER entry 12 would
+    // regress the LWW activity counts back to 2.
+    const duplicate = activityCountsEntry("11", { mentionCount: 0, activityCount: 2 })
+    socket.trigger("activity:created", { ...(duplicate.payload as object), syncId: "11" })
+
+    resolveFirstPage!({
+      entries: [duplicate, activityCountsEntry("12", { mentionCount: 0, activityCount: 1 })],
+      head: "12",
+    })
+
+    await vi.waitFor(async () => {
+      expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
+    })
+    expect(engine.getSyncCursor()).toBe("12")
+    // Give any stray (incorrect) splice apply a chance to land before re-checking.
+    await new Promise((resolve) => setTimeout(resolve, 10))
     expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
     engine.destroy()
   })
