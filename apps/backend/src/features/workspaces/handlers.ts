@@ -186,8 +186,10 @@ export function createWorkspaceHandlers({
         activityService?.getUnreadCounts(userId, workspaceId),
       ])
       const unreadCounts: Record<string, number> = {}
-      for (const [streamId, count] of unreadCountsMap) {
-        unreadCounts[streamId] = count
+      const messageCounts: Record<string, number> = {}
+      for (const [streamId, counts] of unreadCountsMap) {
+        unreadCounts[streamId] = counts.unreadCount
+        messageCounts[streamId] = counts.totalCount
       }
 
       const mentionCounts: Record<string, number> = {}
@@ -240,6 +242,7 @@ export function createWorkspaceHandlers({
           emojiWeights,
           commands,
           unreadCounts,
+          messageCounts,
           mentionCounts,
           activityCounts: activityCountsPerStream,
           unreadActivityCount: activityCounts?.total ?? 0,
