@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach, vi } from "vitest"
+import { renderHook, act, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
+import { createElement, type ReactNode } from "react"
 import type { SavedMessageView } from "@threa/types"
 import { db } from "@/db"
-import { persistSavedRows, replaceSavedPage } from "./use-saved"
+import * as contextsModule from "@/contexts"
+import * as syncEngineModule from "@/sync/sync-engine"
+import { persistSavedRows, replaceSavedPage, savedKeys, useSavedList } from "./use-saved"
 
 const WORKSPACE_ID = "ws_test"
 
@@ -191,6 +196,87 @@ describe("replaceSavedPage", () => {
 
     const remaining = await db.savedMessages.toArray()
     expect(remaining.map((r) => r.id).sort()).toEqual(["saved_page1", "saved_page2"])
+  })
+})
+
+describe("useSavedList refetchOnReconnect (sync-v2 mode gate)", () => {
+  let listFn: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    onlineManager.setOnline(true)
+    await db.savedMessages.clear()
+    listFn = vi.fn().mockResolvedValue({ saved: [], nextCursor: null })
+    vi.spyOn(contextsModule, "useSavedService").mockReturnValue({
+      list: listFn,
+    } as unknown as contextsModule.SavedService)
+  })
+
+  function mockEngine(mode: "off" | "shadow" | "active" | null) {
+    vi.spyOn(syncEngineModule, "useOptionalSyncEngine").mockReturnValue(
+      mode === null ? null : ({ syncCursorMode: mode } as unknown as syncEngineModule.SyncEngine)
+    )
+  }
+
+  /**
+   * Mounts the list, lets the initial fetch land, then marks the query
+   * invalidated while the browser is offline. `staleTime: Infinity` means the
+   * reconnect refetch only ever fires for an invalidated query, so this is
+   * the state that distinguishes `refetchOnReconnect` true from false on the
+   * online flip.
+   */
+  async function mountInvalidatedOffline() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    renderHook(() => useSavedList(WORKSPACE_ID, "saved"), { wrapper })
+    // Wait for the fetch to SETTLE (not just for listFn to be called) — a
+    // success landing after the invalidation would reset isInvalidated and
+    // neutralise the reconnect refetch in every mode.
+    await waitFor(() =>
+      expect(queryClient.getQueryData(savedKeys.list(WORKSPACE_ID, "saved"))).toEqual({ saved: [], nextCursor: null })
+    )
+    await act(async () => {
+      onlineManager.setOnline(false)
+      await queryClient.invalidateQueries({
+        queryKey: savedKeys.list(WORKSPACE_ID, "saved"),
+        refetchType: "none",
+      })
+    })
+  }
+
+  it("skips the reconnect refetch in active sync-v2 mode (resume catch-up covers the online flip)", async () => {
+    mockEngine("active")
+    await mountInvalidatedOffline()
+
+    await act(async () => {
+      onlineManager.setOnline(true)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(listFn).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(["off", "shadow"] as const)("keeps the reconnect refetch in %s sync-v2 mode", async (mode) => {
+    mockEngine(mode)
+    await mountInvalidatedOffline()
+
+    act(() => {
+      onlineManager.setOnline(true)
+    })
+
+    await waitFor(() => expect(listFn).toHaveBeenCalledTimes(2))
+  })
+
+  it("keeps the reconnect refetch without a sync engine", async () => {
+    mockEngine(null)
+    await mountInvalidatedOffline()
+
+    act(() => {
+      onlineManager.setOnline(true)
+    })
+
+    await waitFor(() => expect(listFn).toHaveBeenCalledTimes(2))
   })
 })
 

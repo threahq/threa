@@ -8,6 +8,7 @@ import {
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
 import { readMirroredSyncV2Mode } from "./sync-v2-mode"
+import { SocketEventGate } from "./socket-event-gate"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
@@ -16,6 +17,8 @@ import {
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
   defaultFeatureFlags,
+  type SavedMessageView,
+  type ScheduledMessageView,
   type StreamBootstrap,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -703,6 +706,68 @@ describe("registerWorkspaceSocketHandlers", () => {
       cleanup()
     }
   )
+
+  it("applies gate-dispatched saved/scheduled catch-up replays to IDB in active mode", async () => {
+    // The coverage the mode-gated `refetchOnReconnect` is traded for: in
+    // active mode these handlers register on the engine's event gate, so a
+    // catch-up replay (gate.dispatch, never the raw socket) writes the rows
+    // through the same code path as a live emit.
+    await Promise.all([db.savedMessages.clear(), db.scheduledMessages.clear()])
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+
+    const now = new Date().toISOString()
+    const saved: SavedMessageView = {
+      id: "saved_replay",
+      workspaceId: "ws_1",
+      userId: "member_1",
+      messageId: "msg_1",
+      streamId: "stream_1",
+      status: "saved",
+      title: null,
+      note: null,
+      remindAt: null,
+      reminderSentAt: null,
+      savedAt: now,
+      statusChangedAt: now,
+      message: null,
+      unavailableReason: null,
+    }
+    const scheduled: ScheduledMessageView = {
+      id: "sched_replay",
+      workspaceId: "ws_1",
+      userId: "member_1",
+      streamId: "stream_1",
+      parentMessageId: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      attachmentIds: [],
+      metadata: null,
+      scheduledFor: now,
+      status: "pending",
+      sentMessageId: null,
+      lastError: null,
+      editActiveUntil: null,
+      clientMessageId: null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      statusChangedAt: now,
+    }
+
+    await gate.dispatch("saved:upserted", { workspaceId: "ws_1", saved })
+    await gate.dispatch("scheduled_message:upserted", { workspaceId: "ws_1", scheduled })
+
+    // The handlers persist fire-and-forget, so poll IDB for the rows.
+    await vi.waitFor(async () => {
+      expect(await db.savedMessages.get("saved_replay")).toBeTruthy()
+      expect(await db.scheduledMessages.get("sched_replay")).toBeTruthy()
+    })
+
+    cleanup()
+    gate.dispose()
+  })
 
   it("invalidates the memo search queries when a memo:created event lands", () => {
     const queryClient = new QueryClient()
