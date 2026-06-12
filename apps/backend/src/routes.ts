@@ -34,6 +34,7 @@ import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
 import { createSyncHandlers } from "./features/sync"
 import { createSavedMessagesHandlers } from "./features/saved-messages"
+import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createLabelHandlers } from "./features/labels"
 import { createPushHandlers } from "./features/push"
@@ -73,6 +74,7 @@ import type { InvitationService } from "./features/invitations"
 import type { ActivityService } from "./features/activity"
 import type { SyncService } from "./features/sync"
 import type { SavedMessagesService } from "./features/saved-messages"
+import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { LabelService, LabelAssignmentService } from "./features/labels"
 import type { PushService } from "./features/push"
@@ -116,6 +118,7 @@ interface Dependencies {
   activityService: ActivityService
   syncService: SyncService
   savedMessagesService: SavedMessagesService
+  savedSuggestionsService: SavedSuggestionsService
   scheduledMessagesService: ScheduledMessagesService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
@@ -171,6 +174,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     activityService,
     syncService,
     savedMessagesService,
+    savedSuggestionsService,
     scheduledMessagesService,
     labelService,
     labelAssignmentService,
@@ -266,6 +270,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const activity = createActivityHandlers({ activityService })
   const sync = createSyncHandlers({ syncService })
   const savedMessages = createSavedMessagesHandlers({ savedMessagesService })
+  const savedSuggestions = createSavedSuggestionsHandlers({ savedSuggestionsService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const label = createLabelHandlers({ labelService, labelAssignmentService })
   const agentSession = createAgentSessionHandlers({ pool })
@@ -550,6 +555,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/saved", ...authed, savedMessages.create)
   app.patch("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.update)
   app.delete("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.delete)
+
+  // Saved suggestions (passively collected to-do candidates)
+  app.get("/api/workspaces/:workspaceId/saved/suggestions", ...authed, savedSuggestions.list)
+  app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/accept", ...authed, savedSuggestions.accept)
+  app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/dismiss", ...authed, savedSuggestions.dismiss)
 
   // Labels
   app.get("/api/workspaces/:workspaceId/labels", ...authed, label.list)

@@ -57,6 +57,11 @@ export interface MemoMemorizerConfig extends ComponentConfig {
   temperature: number
 }
 
+/** Config for the saved-suggestion (to-do) extractor */
+export interface SuggestionExtractorConfig extends ComponentConfig {
+  temperature: number
+}
+
 /** Config for researcher agent */
 export interface ResearcherConfig extends ComponentConfig {
   maxIterations?: number
@@ -86,6 +91,7 @@ export const COMPONENT_PATHS = {
   STREAM_NAMING: "stream-naming",
   MEMO_CLASSIFIER: "memo:classifier",
   MEMO_MEMORIZER: "memo:memorizer",
+  SUGGESTION_EXTRACTOR: "saved-suggestions:extractor",
   COMPANION_AGENT: "companion:agent",
   COMPANION_RESEARCHER: "companion:researcher",
   GENERAL_RESEARCHER: "general:researcher",
@@ -107,6 +113,7 @@ export interface PathConfigMap {
   "stream-naming": StreamNamingConfig
   "memo:classifier": MemoClassifierConfig
   "memo:memorizer": MemoMemorizerConfig
+  "saved-suggestions:extractor": SuggestionExtractorConfig
   "companion:agent": CompanionAgentConfig
   "companion:researcher": ResearcherConfig
   "general:researcher": GeneralResearcherConfig

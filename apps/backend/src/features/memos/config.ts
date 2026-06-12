@@ -164,6 +164,12 @@ export const conversationClassificationSchema = z.object({
     .nullable()
     .describe("What is new or changed relative to the existing memos (if shouldReviseExisting is true)"),
   confidence: z.number().min(0).max(1).nullable().describe("Confidence in this classification (0.0 to 1.0)"),
+  containsActionItems: z
+    .boolean()
+    .nullable()
+    .describe(
+      "Whether anyone in the conversation committed to do something or was directly asked to (a to-do, task, or follow-up). Independent of knowledge-worthiness — a 'send me the deck by Friday' chat has action items but no durable knowledge."
+    ),
 })
 
 export type ConversationClassificationOutput = z.infer<typeof conversationClassificationSchema>
@@ -226,6 +232,8 @@ NOT knowledge-worthy:
 - Brief status exchanges
 - Conversations where important information is in external links only
 - Incomplete discussions that trail off without resolution
+
+Separately, flag containsActionItems true when someone committed to do something or was directly asked to (a task, to-do, or follow-up). This is independent of knowledge-worthiness: "send me the deck by Friday" has an action item but no durable knowledge, while a recorded decision may have knowledge but no open task.
 
 When comparing to an existing memo, recommend revision if:
 - Significant new information was added

@@ -131,6 +131,10 @@ export {
   SAVED_STATUSES,
   type SavedStatus,
   SavedStatuses,
+  // Saved suggestions
+  SAVED_SUGGESTION_STATUSES,
+  type SavedSuggestionStatus,
+  SavedSuggestionStatuses,
   // Scheduled messages
   SCHEDULED_MESSAGE_STATUSES,
   type ScheduledMessageStatus,
@@ -438,6 +442,11 @@ export type {
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
+  // Saved suggestions
+  SavedSuggestionView,
+  SavedSuggestionListResponse,
+  AcceptSavedSuggestionResponse,
+  SavedSuggestionUpsertedPayload,
   // Scheduled messages
   ScheduledMessageView,
   ScheduleMessageInput,

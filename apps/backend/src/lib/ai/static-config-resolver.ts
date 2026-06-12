@@ -18,6 +18,10 @@ import {
 import { STREAM_NAMING_MODEL_ID, STREAM_NAMING_TEMPERATURE } from "../../features/streams"
 import { MEMO_CLASSIFIER_MODEL_ID, MEMO_MEMORIZER_MODEL_ID, MEMO_TEMPERATURES } from "../../features/memos"
 import {
+  SUGGESTION_EXTRACTOR_MODEL_ID,
+  SUGGESTION_EXTRACTOR_TEMPERATURE,
+} from "../../features/saved-suggestions/config"
+import {
   WORKSPACE_AGENT_MODEL_ID,
   WORKSPACE_AGENT_TEMPERATURE,
   WORKSPACE_AGENT_MAX_ITERATIONS,
@@ -60,6 +64,11 @@ function buildDefaultConfigs(): Map<string, ComponentConfig> {
   configs.set(COMPONENT_PATHS.MEMO_MEMORIZER, {
     modelId: MEMO_MEMORIZER_MODEL_ID,
     temperature: MEMO_TEMPERATURES.memorization,
+  })
+
+  configs.set(COMPONENT_PATHS.SUGGESTION_EXTRACTOR, {
+    modelId: SUGGESTION_EXTRACTOR_MODEL_ID,
+    temperature: SUGGESTION_EXTRACTOR_TEMPERATURE,
   })
 
   configs.set(COMPONENT_PATHS.COMPANION_AGENT, {

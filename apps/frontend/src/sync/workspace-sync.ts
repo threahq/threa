@@ -22,6 +22,7 @@ import type {
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
+  SavedSuggestionUpsertedPayload,
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
@@ -34,6 +35,7 @@ import type {
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { memoKeys } from "@/hooks/use-memos"
+import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import {
@@ -1590,6 +1592,15 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "saved") })
   }
 
+  // Saved suggestions — pull-only pile. Any upsert (new suggestion, accept, or
+  // dismiss elsewhere) just invalidates the suggested list; the query refetches
+  // the authoritative page. No IDB: suggestions are low-volume and never the
+  // offline-critical surface.
+  const handleSavedSuggestionUpserted = (payload: SavedSuggestionUpsertedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    queryClient.invalidateQueries({ queryKey: savedSuggestionKeys.list(workspaceId, "suggested") })
+  }
+
   // Scheduled messages — write-through to IDB and invalidate TanStack lists
   // so the To send / Sent tabs and the per-stream composer popover reflect
   // cross-tab and cross-device state without a refresh.
@@ -1785,6 +1796,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("saved:upserted", handleSavedUpserted)
   socket.on("saved:deleted", handleSavedDeleted)
   socket.on("saved_reminder:fired", handleSavedReminderFired)
+  socket.on("saved_suggestion:upserted", handleSavedSuggestionUpserted)
   socket.on("scheduled_message:upserted", handleScheduledUpserted)
   socket.on("scheduled_message:sent", handleScheduledSent)
   socket.on("scheduled_message:cancelled", handleScheduledCancelled)
@@ -1826,6 +1838,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("saved:upserted", handleSavedUpserted)
     socket.off("saved:deleted", handleSavedDeleted)
     socket.off("saved_reminder:fired", handleSavedReminderFired)
+    socket.off("saved_suggestion:upserted", handleSavedSuggestionUpserted)
     socket.off("scheduled_message:upserted", handleScheduledUpserted)
     socket.off("scheduled_message:sent", handleScheduledSent)
     socket.off("scheduled_message:cancelled", handleScheduledCancelled)

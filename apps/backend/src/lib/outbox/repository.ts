@@ -18,6 +18,7 @@ import type {
   LabelAssignment,
   LabelableResourceType,
   SavedMessageView,
+  SavedSuggestionView,
   ScheduledMessageView,
   WorkspaceInvitableRole,
   AuthorType,
@@ -78,6 +79,7 @@ export type OutboxEventType =
   | "saved:upserted"
   | "saved:deleted"
   | "saved_reminder:fired"
+  | "saved_suggestion:upserted"
   | "scheduled_message:upserted"
   | "scheduled_message:sent"
   | "scheduled_message:cancelled"
@@ -573,6 +575,11 @@ export interface SavedReminderFiredOutboxPayload extends WorkspaceScopedPayload 
   saved: SavedMessageView
 }
 
+export interface SavedSuggestionUpsertedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  suggestion: SavedSuggestionView
+}
+
 // Scheduled message event payloads
 export interface ScheduledMessageUpsertedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
@@ -766,6 +773,7 @@ export interface OutboxEventPayloadMap {
   "saved:upserted": SavedUpsertedOutboxPayload
   "saved:deleted": SavedDeletedOutboxPayload
   "saved_reminder:fired": SavedReminderFiredOutboxPayload
+  "saved_suggestion:upserted": SavedSuggestionUpsertedOutboxPayload
   "scheduled_message:upserted": ScheduledMessageUpsertedOutboxPayload
   "scheduled_message:sent": ScheduledMessageSentOutboxPayload
   "scheduled_message:cancelled": ScheduledMessageCancelledOutboxPayload
@@ -883,6 +891,7 @@ export type UserScopedEventType =
   | "saved:upserted"
   | "saved:deleted"
   | "saved_reminder:fired"
+  | "saved_suggestion:upserted"
   | "scheduled_message:upserted"
   | "scheduled_message:sent"
   | "scheduled_message:cancelled"
@@ -893,6 +902,7 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "saved:upserted",
   "saved:deleted",
   "saved_reminder:fired",
+  "saved_suggestion:upserted",
   "scheduled_message:upserted",
   "scheduled_message:sent",
   "scheduled_message:cancelled",
