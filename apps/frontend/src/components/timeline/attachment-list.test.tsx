@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
+import { API_BASE } from "@/api/client"
 import { AttachmentList } from "./attachment-list"
 import type { AttachmentSummary } from "@threa/types"
 
@@ -82,7 +83,10 @@ describe("AttachmentList", () => {
       // Inline view renders the stable thumbnail-variant content URL
       // synchronously — no presign request before the <img> has a src.
       const image = screen.getByAltText("photo.png")
-      expect(image).toHaveAttribute("src", `/api/workspaces/${workspaceId}/attachments/img_1/content?variant=thumbnail`)
+      expect(image).toHaveAttribute(
+        "src",
+        `${API_BASE}/api/workspaces/${workspaceId}/attachments/img_1/content?variant=thumbnail`
+      )
       expect(mockGetDownloadUrl).not.toHaveBeenCalled()
     })
 
@@ -157,7 +161,7 @@ describe("AttachmentList", () => {
 
       expect(screen.getByAltText("clip.mov")).toHaveAttribute(
         "src",
-        `/api/workspaces/${workspaceId}/attachments/video_1/content?variant=thumbnail`
+        `${API_BASE}/api/workspaces/${workspaceId}/attachments/video_1/content?variant=thumbnail`
       )
     })
   })

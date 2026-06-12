@@ -279,6 +279,41 @@ describe("attachment handlers safety gating", () => {
     expect(res.body).toEqual({ url: "https://download", expiresIn: 900 })
   })
 
+  it("presigns the generated thumbnail with a filename matching the served webp bytes", async () => {
+    const attachment = {
+      ...buildAttachment(AttachmentSafetyStatuses.CLEAN),
+      thumbnailStoragePath: "ws_1/attach_1/thumbnail.webp",
+    }
+    const attachmentService = {
+      getById: mock(() => Promise.resolve(attachment)),
+      getDownloadUrl: mock(() => Promise.resolve("https://download")),
+      getSharingBlockReason: mock(() => null),
+    } as any
+    const storage = {
+      getSignedDownloadUrl: mock(() => Promise.resolve("https://thumbnail")),
+    } as any
+
+    const handlers = createAttachmentHandlers({ attachmentService, streamService: {} as any, storage, pool: {} as any })
+    const res = createResponse()
+
+    await handlers.getDownloadUrl(
+      {
+        user: { id: "usr_1" },
+        workspaceId: "ws_1",
+        params: { attachmentId: "attach_1" },
+        query: { download: "true", variant: "thumbnail" },
+      } as any,
+      res
+    )
+
+    expect(storage.getSignedDownloadUrl).toHaveBeenCalledWith("ws_1/attach_1/thumbnail.webp", {
+      // The original is test.png, but the thumbnail bytes are webp.
+      responseContentDisposition: expect.stringContaining('filename="test.webp"'),
+    })
+    expect(res.body).toEqual({ url: "https://thumbnail", expiresIn: 900 })
+    expect(attachmentService.getDownloadUrl).not.toHaveBeenCalled()
+  })
+
   it("denies download when user has no direct stream access nor share grant nor inline reference", async () => {
     const attachment = {
       ...buildAttachment(AttachmentSafetyStatuses.CLEAN),
@@ -628,10 +663,13 @@ function createStreamingResponse() {
   const res: any = new Writable({
     write(chunk, _encoding, callback) {
       chunks.push(Buffer.from(chunk))
+      // Mirror http.ServerResponse: the first body write flushes the headers.
+      res.headersSent = true
       callback()
     },
   })
   res.statusCode = 200
+  res.headersSent = false
   res.headers = {} as Record<string, string>
   res.set = mock((name: string, value: string) => {
     res.headers[name.toLowerCase()] = value
@@ -899,5 +937,36 @@ describe("attachment content handler", () => {
 
     expect(res.statusCode).toBe(400)
     expect(storage.getObjectContent).not.toHaveBeenCalled()
+  })
+
+  it("aborts the response when the object stream errors mid-transfer", async () => {
+    // A truncated body must surface as a failed transfer (socket abort), never
+    // as a cleanly-terminated 200 the client would treat as complete.
+    async function* failingBytes() {
+      yield Buffer.from("partial-")
+      throw new Error("S3 connection reset")
+    }
+    const storage = {
+      getObjectContent: mock(async () => ({
+        stream: Readable.from(failingBytes()),
+        contentLength: 100,
+        contentRange: undefined,
+      })),
+    } as any
+    const { handlers } = makeHandlers({ storage })
+    const res = createStreamingResponse()
+    const resErrors: Error[] = []
+    res.on("error", (err: Error) => resErrors.push(err))
+    const closed = new Promise<void>((resolve) => res.on("close", resolve))
+
+    await handlers.getContent(contentRequest(), res)
+    await closed
+
+    expect(storage.getObjectContent).toHaveBeenCalledWith("ws_1/attach_1/test.png", { range: undefined })
+    expect(res.sentBytes().toString()).toBe("partial-")
+    expect(res.destroyed).toBe(true)
+    // Headers were already flushed when the stream failed — the handler must
+    // abort rather than rewrite the status to 500.
+    expect(res.statusCode).toBe(200)
   })
 })

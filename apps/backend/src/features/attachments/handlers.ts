@@ -351,7 +351,11 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
 interface ResolvedAttachmentVariant {
   storagePath: string
   contentType: string
-  /** Filename for content-disposition downloads (processed video renames to .mp4). */
+  /**
+   * Filename for content-disposition downloads, with its extension matching
+   * the served bytes (.webp/.jpg thumbnails, .mp4 processed video) rather
+   * than the original upload's.
+   */
   filename: string
   /**
    * False when a generated variant was requested but isn't available yet —
@@ -380,7 +384,7 @@ async function resolveAttachmentVariant(
       return {
         storagePath: attachment.thumbnailStoragePath,
         contentType: "image/webp",
-        filename: attachment.filename,
+        filename: attachment.filename.replace(/\.[^.]+$/, ".webp"),
         ready: true,
       }
     }
@@ -391,7 +395,7 @@ async function resolveAttachmentVariant(
       return {
         storagePath: path,
         contentType: variant === "processed" ? "video/mp4" : "image/jpeg",
-        filename: variant === "processed" ? attachment.filename.replace(/\.[^.]+$/, ".mp4") : attachment.filename,
+        filename: attachment.filename.replace(/\.[^.]+$/, variant === "processed" ? ".mp4" : ".jpg"),
         ready: true,
       }
     }

@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { api } from "./client"
+import { api, API_BASE } from "./client"
 import { attachmentContentUrl, attachmentsApi, resetAttachmentUrlCache } from "./attachments"
 
 describe("attachmentContentUrl", () => {
-  it("builds a deterministic same-origin content URL per (attachment, variant)", () => {
-    expect(attachmentContentUrl("ws_1", "attach_1")).toBe("/api/workspaces/ws_1/attachments/attach_1/content")
+  it("builds a deterministic content URL on the API origin per (attachment, variant)", () => {
+    expect(attachmentContentUrl("ws_1", "attach_1")).toBe(
+      `${API_BASE}/api/workspaces/ws_1/attachments/attach_1/content`
+    )
     expect(attachmentContentUrl("ws_1", "attach_1", { variant: "thumbnail" })).toBe(
-      "/api/workspaces/ws_1/attachments/attach_1/content?variant=thumbnail"
+      `${API_BASE}/api/workspaces/ws_1/attachments/attach_1/content?variant=thumbnail`
     )
   })
 })
