@@ -3,6 +3,7 @@ export { OutboxDispatcher, type OutboxHandler, type OutboxDispatcherConfig } fro
 export { OutboxRetentionWorker, type OutboxRetentionWorkerConfig } from "@threa/backend-common"
 
 // Domain-specific outbox code
+export { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig } from "./debounced-handler"
 export { BroadcastHandler, type BroadcastHandlerConfig } from "./broadcast-handler"
 export {
   resolveDeliveryGroups,
