@@ -18,6 +18,8 @@ function makeView(overrides: Partial<SavedMessageView> = {}): SavedMessageView {
     messageId: "msg_1",
     streamId: "stream_dm",
     status: "saved",
+    title: null,
+    note: null,
     remindAt: null,
     reminderSentAt: null,
     savedAt: now,
@@ -122,6 +124,45 @@ describe("SavedItem stream label", () => {
     )
 
     expect(getByText("Unknown")).toBeTruthy()
+  })
+})
+
+describe("SavedItem standalone to-dos", () => {
+  it("renders the title as the main line with no stream eyebrow or link", () => {
+    mockStore()
+    const { getByText, queryByText, container } = mount(
+      makeView({ messageId: null, streamId: null, message: null, title: "Call the landlord" })
+    )
+
+    expect(getByText("Call the landlord")).toBeTruthy()
+    expect(queryByText("Saved from")).toBeNull()
+    // No source message — the content area must not be a navigation link.
+    expect(container.querySelector("a")).toBeNull()
+  })
+
+  it("renders the note under the title when present", () => {
+    mockStore()
+    const { getByText } = mount(
+      makeView({
+        messageId: null,
+        streamId: null,
+        message: null,
+        title: "Renew lease",
+        note: "Landlord wants an answer by Friday",
+      })
+    )
+
+    expect(getByText("Landlord wants an answer by Friday")).toBeTruthy()
+  })
+})
+
+describe("SavedItem note on message-anchored rows", () => {
+  it("renders the note alongside the message preview", () => {
+    mockStore()
+    const { getByText } = mount(makeView({ note: "context I added later" }))
+
+    expect(getByText("hello there")).toBeTruthy()
+    expect(getByText("context I added later")).toBeTruthy()
   })
 })
 

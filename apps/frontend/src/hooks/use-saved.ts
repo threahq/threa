@@ -25,6 +25,8 @@ function toCached(view: SavedMessageView): CachedSavedMessage {
     messageId: view.messageId,
     streamId: view.streamId,
     status: view.status,
+    title: view.title,
+    note: view.note,
     remindAt: view.remindAt,
     reminderSentAt: view.reminderSentAt,
     savedAt: view.savedAt,
@@ -48,6 +50,10 @@ function fromCached(row: CachedSavedMessage): SavedMessageView {
     messageId: row.messageId,
     streamId: row.streamId,
     status: row.status as SavedStatus,
+    // Rows cached before the saved-items upgrade predate these fields; treat
+    // missing as null instead of bumping the Dexie schema version.
+    title: row.title ?? null,
+    note: row.note ?? null,
     remindAt: row.remindAt,
     reminderSentAt: row.reminderSentAt,
     savedAt: row.savedAt,

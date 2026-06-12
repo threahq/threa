@@ -13,6 +13,8 @@ const SAVED_ROW = {
   message_id: "msg_1",
   stream_id: "stream_1",
   status: SavedStatuses.SAVED,
+  title: null,
+  note: null,
   remind_at: null,
   reminder_sent_at: null,
   reminder_queue_message_id: null,
@@ -58,7 +60,12 @@ describe("SavedMessagesRepository.upsert", () => {
     })
 
     expect(captured.text).toContain("INSERT INTO saved_messages")
-    expect(captured.text).toContain("ON CONFLICT (workspace_id, user_id, message_id) DO UPDATE")
+    // The unique index is partial (standalone rows have NULL message_id), so
+    // the conflict target must repeat the index predicate for Postgres to
+    // match it.
+    expect(captured.text).toContain(
+      "ON CONFLICT (workspace_id, user_id, message_id) WHERE message_id IS NOT NULL DO UPDATE"
+    )
     expect(captured.text).toContain("status = $")
     expect(captured.text).toContain("reminder_sent_at = NULL")
     expect(captured.text).toContain("reminder_queue_message_id = NULL")
@@ -147,6 +154,63 @@ describe("SavedMessagesRepository.upsert", () => {
     expect(update).toContain("reminder_sent_at = NULL")
     expect(update).toContain("reminder_queue_message_id = NULL")
     expect(captured.values).toContain(SavedStatuses.SAVED)
+  })
+})
+
+describe("SavedMessagesRepository.insertStandalone", () => {
+  afterEach(() => mock.restore())
+
+  it("inserts a message-less row with title/note and no conflict clause", async () => {
+    const captured: Captured = { text: null, values: null }
+    const row = { ...SAVED_ROW, message_id: null, stream_id: null, title: "Call the landlord", note: "About the lease" }
+    const db = createQuerier(captured, [row])
+
+    const result = await SavedMessagesRepository.insertStandalone(db, {
+      workspaceId: "ws_1",
+      userId: "usr_1",
+      title: "Call the landlord",
+      note: "About the lease",
+      remindAt: null,
+    })
+
+    expect(captured.text).toContain("INSERT INTO saved_messages")
+    expect(captured.text).not.toContain("ON CONFLICT")
+    expect(captured.values).toContain("Call the landlord")
+    expect(result).toMatchObject({
+      messageId: null,
+      streamId: null,
+      title: "Call the landlord",
+      note: "About the lease",
+      status: SavedStatuses.SAVED,
+    })
+  })
+})
+
+describe("SavedMessagesRepository.updateContent", () => {
+  afterEach(() => mock.restore())
+
+  it("updates only provided fields in a single owner-scoped UPDATE", async () => {
+    const captured: Captured = { text: null, values: null }
+    const row = { ...SAVED_ROW, note: "remember why" }
+    const db = createQuerier(captured, [row])
+
+    const result = await SavedMessagesRepository.updateContent(db, "ws_1", "usr_1", "saved_01", {
+      note: "remember why",
+    })
+
+    expect(captured.text).toContain("UPDATE saved_messages")
+    expect(captured.text).toContain("WHERE id = $")
+    expect(captured.text).toContain("AND workspace_id = $")
+    expect(captured.text).toContain("AND user_id = $")
+    // Undefined title must leave the column untouched (CASE guard, not blind SET)
+    expect(captured.values).toContain(false)
+    expect(result?.note).toBe("remember why")
+  })
+
+  it("returns null when the row does not exist", async () => {
+    const db = createQuerier({ text: null, values: null }, [], 0)
+    const result = await SavedMessagesRepository.updateContent(db, "ws_1", "usr_1", "saved_missing", { note: "x" })
+    expect(result).toBeNull()
   })
 })
 

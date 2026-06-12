@@ -28,6 +28,22 @@ export interface SaveParams {
   remindAt: Date | null
 }
 
+export interface CreateStandaloneParams {
+  workspaceId: string
+  userId: string
+  title: string
+  note: string | null
+  remindAt: Date | null
+}
+
+export interface UpdateContentParams {
+  workspaceId: string
+  userId: string
+  savedId: string
+  title?: string
+  note?: string | null
+}
+
 export interface UpdateStatusParams {
   workspaceId: string
   userId: string
@@ -110,6 +126,69 @@ export class SavedMessagesService {
         : upsert.saved
 
       const [view] = await resolveSavedView(client, params.userId, [finalRow])
+
+      await OutboxRepository.insert(client, "saved:upserted", {
+        workspaceId: params.workspaceId,
+        targetUserId: params.userId,
+        saved: view!,
+      })
+
+      return view!
+    })
+  }
+
+  /**
+   * Create a standalone (message-less) saved item — a manual to-do. No
+   * access checks: the item references nothing beyond its own text. Reminder
+   * handling matches `save()`: past values clamp to NOW().
+   */
+  async createStandalone(params: CreateStandaloneParams): Promise<SavedMessageView> {
+    const clampedRemindAt = clampRemindAt(params.remindAt)
+
+    return withTransaction(this.pool, async (client) => {
+      const inserted = await SavedMessagesRepository.insertStandalone(client, {
+        workspaceId: params.workspaceId,
+        userId: params.userId,
+        title: params.title,
+        note: params.note,
+        remindAt: clampedRemindAt,
+      })
+
+      const finalRow = clampedRemindAt
+        ? await enqueueReminder(client, { saved: inserted, remindAt: clampedRemindAt })
+        : inserted
+
+      const [view] = await resolveSavedView(client, params.userId, [finalRow])
+
+      await OutboxRepository.insert(client, "saved:upserted", {
+        workspaceId: params.workspaceId,
+        targetUserId: params.userId,
+        saved: view!,
+      })
+
+      return view!
+    })
+  }
+
+  /**
+   * Edit title and/or note. Titles are required on standalone items (their
+   * only display line), so clearing one is rejected at the schema level —
+   * only non-empty title updates reach this method.
+   */
+  async updateContent(params: UpdateContentParams): Promise<SavedMessageView> {
+    return withTransaction(this.pool, async (client) => {
+      const updated = await SavedMessagesRepository.updateContent(
+        client,
+        params.workspaceId,
+        params.userId,
+        params.savedId,
+        { title: params.title, note: params.note }
+      )
+      if (!updated) {
+        throw new HttpError("Saved item not found", { status: 404, code: "SAVED_NOT_FOUND" })
+      }
+
+      const [view] = await resolveSavedView(client, params.userId, [updated])
 
       await OutboxRepository.insert(client, "saved:upserted", {
         workspaceId: params.workspaceId,

@@ -1123,8 +1123,9 @@ export interface Activity {
   workspaceId: string
   userId: string
   activityType: string
-  streamId: string
-  messageId: string
+  /** Null only for saved_reminder rows fired by standalone (message-less) saved items. */
+  streamId: string | null
+  messageId: string | null
   actorId: string
   actorType: string
   context: Record<string, unknown>
@@ -1331,17 +1332,24 @@ export const DEVICE_KEY_LENGTH = 16
 // ============================================================================
 
 /**
- * Wire shape for a saved-message row. Absolute timestamps are ISO strings; the
- * live-resolved message snapshot is null when the underlying message has been
- * deleted or the owner has lost access to the stream.
+ * Wire shape for a saved-item row. Items are either anchored to a message
+ * (`messageId`/`streamId` set, the original bookmark flow) or standalone
+ * to-dos (`messageId`/`streamId` null, `title` set). Absolute timestamps are
+ * ISO strings; the live-resolved message snapshot is null when the item is
+ * standalone, the underlying message has been deleted, or the owner has lost
+ * access to the stream — `unavailableReason` distinguishes the latter two.
  */
 export interface SavedMessageView {
   id: string
   workspaceId: string
   userId: string
-  messageId: string
-  streamId: string
+  messageId: string | null
+  streamId: string | null
   status: SavedStatus
+  /** Display line for standalone items; null for message-anchored rows. */
+  title: string | null
+  /** Optional free-text context, editable on both variants. */
+  note: string | null
   remindAt: string | null
   reminderSentAt: string | null
   savedAt: string
@@ -1360,14 +1368,28 @@ export interface SavedMessageSnapshot {
   streamName: string | null
 }
 
+/**
+ * Create input: exactly one of `messageId` (save a message) or `title`
+ * (standalone to-do). `note` is accepted only with `title` — message saves
+ * start without a note; it's added later via update.
+ */
 export interface SaveMessageInput {
-  messageId: string
+  messageId?: string
+  title?: string
+  note?: string
   remindAt?: string | null
 }
 
+/**
+ * Update input: exactly one mutation group per request — `status`, `remindAt`,
+ * or content (`title` and/or `note`) — so each PATCH is one transaction and
+ * one socket event. `note: null` clears the note; titles can't be cleared.
+ */
 export interface UpdateSavedMessageInput {
   status?: SavedStatus
   remindAt?: string | null
+  title?: string
+  note?: string | null
 }
 
 export interface SavedMessageListResponse {
@@ -1387,7 +1409,8 @@ export interface SavedDeletedPayload {
   workspaceId: string
   targetUserId: string
   savedId: string
-  messageId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
 }
 
 /** Wire payload broadcast on `saved_reminder:fired` socket events. */
@@ -1395,8 +1418,9 @@ export interface SavedReminderFiredPayload {
   workspaceId: string
   targetUserId: string
   savedId: string
-  messageId: string
-  streamId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
+  streamId: string | null
   saved: SavedMessageView
 }
 

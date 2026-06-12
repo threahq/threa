@@ -11,7 +11,8 @@ import { useEffectiveWorkSchedule } from "@/hooks/use-work-schedule"
 
 interface ReminderPopoverContentProps {
   workspaceId: string
-  messageId: string
+  /** Null for standalone saved items — those always carry a `saved` row, so the save-new path never runs. */
+  messageId: string | null
   saved: SavedMessageView | null
 }
 
@@ -45,6 +46,7 @@ export function ReminderPopoverContent({ workspaceId, messageId, saved }: Remind
 
   const setReminder = (date: Date | null) => {
     if (!saved) {
+      if (!messageId) return
       saveMutation.mutate(
         { messageId, remindAt: date?.toISOString() ?? null },
         {

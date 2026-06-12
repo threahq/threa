@@ -16,7 +16,8 @@ interface ReminderPickerSheetProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   workspaceId: string
-  messageId: string
+  /** Null for standalone saved items — those always carry a `saved` row, so the save-new path never runs. */
+  messageId: string | null
   /** Current saved state (null if not yet saved). Controls save-vs-update behaviour. */
   saved: SavedMessageView | null
 }
@@ -64,6 +65,7 @@ export function ReminderPickerSheet({ open, onOpenChange, workspaceId, messageId
 
   const setReminder = (date: Date | null) => {
     if (!saved) {
+      if (!messageId) return
       saveMutation.mutate(
         { messageId, remindAt: date?.toISOString() ?? null },
         {

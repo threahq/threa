@@ -18,6 +18,10 @@ const ACTIVITY_DISPLAY: Record<string, ActivityDisplay> = {
   member_added: { kind: "actor-prefixed", verb: "added you to", selfVerb: "You were added to" },
 }
 
+// Standalone (message-less) saved-item reminders have no stream to name —
+// the row reads "Reminder" followed by the item's title preview.
+const STANDALONE_REMINDER_VERB = "Reminder"
+
 const DEFAULT_DISPLAY: ActivityDisplay = ACTIVITY_DISPLAY.message
 
 interface ActivityPreviewProps {
@@ -62,7 +66,10 @@ export function ActivityContent({
   isSelf,
 }: ActivityContentProps) {
   const display = ACTIVITY_DISPLAY[activityType] ?? DEFAULT_DISPLAY
-  const verb = display.kind === "actor-prefixed" && isSelf ? display.selfVerb : display.verb
+  // Empty streamName marks a stream-less row (standalone saved-item reminder)
+  const hasStream = streamName !== ""
+  let verb = display.kind === "actor-prefixed" && isSelf ? display.selfVerb : display.verb
+  if (!hasStream && activityType === "saved_reminder") verb = STANDALONE_REMINDER_VERB
   const showActor = display.kind === "actor-prefixed" && !isSelf
   const showEmoji = activityType === "reaction" && emoji
 
@@ -71,7 +78,7 @@ export function ActivityContent({
       <div className="flex items-baseline gap-1.5 text-sm">
         {showActor && <span className={cn("font-medium", isUnread && "font-semibold")}>{actorName}</span>}
         <span className="text-muted-foreground">{verb}</span>
-        <span className="font-medium truncate">{streamName}</span>
+        {hasStream && <span className="font-medium truncate">{streamName}</span>}
         {showEmoji && <span className="shrink-0">{emoji}</span>}
       </div>
 

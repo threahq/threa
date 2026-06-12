@@ -103,6 +103,56 @@ describe("createSavedMessagesHandlers.update", () => {
 
     await expect(handlers.update(req, fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
+
+  it("routes title/note PATCH to updateContent as one content group", async () => {
+    let received: { title?: string; note?: string | null } | undefined
+    const updateContent = mock(async (p: any) => {
+      received = { title: p.title, note: p.note }
+      return { id: "saved_01" } as any
+    })
+    const handlers = createSavedMessagesHandlers({
+      savedMessagesService: { updateContent } as any,
+    })
+    const req = fakeReq({
+      params: { savedId: "saved_01" } as any,
+      body: { title: "Renamed", note: "more context" },
+    })
+
+    await handlers.update(req, fakeRes())
+
+    expect(updateContent).toHaveBeenCalledTimes(1)
+    expect(received).toEqual({ title: "Renamed", note: "more context" })
+  })
+
+  it("accepts note: null to clear the note", async () => {
+    let received: string | null | undefined = undefined
+    const updateContent = mock(async (p: any) => {
+      received = p.note
+      return { id: "saved_01" } as any
+    })
+    const handlers = createSavedMessagesHandlers({
+      savedMessagesService: { updateContent } as any,
+    })
+    const req = fakeReq({ params: { savedId: "saved_01" } as any, body: { note: null } })
+
+    await handlers.update(req, fakeRes())
+    expect(received).toBeNull()
+  })
+
+  it("rejects PATCH mixing content with status with 400", async () => {
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: {} as any })
+    const req = fakeReq({
+      params: { savedId: "saved_01" } as any,
+      body: { status: SavedStatuses.DONE, note: "x" },
+    })
+    await expect(handlers.update(req, fakeRes())).rejects.toBeInstanceOf(HttpError)
+  })
+
+  it("rejects empty-string title with 400 (titles cannot be cleared)", async () => {
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: {} as any })
+    const req = fakeReq({ params: { savedId: "saved_01" } as any, body: { title: "  " } })
+    await expect(handlers.update(req, fakeRes())).rejects.toBeInstanceOf(HttpError)
+  })
 })
 
 describe("createSavedMessagesHandlers.list", () => {
@@ -130,9 +180,21 @@ describe("createSavedMessagesHandlers.list", () => {
 describe("createSavedMessagesHandlers.create", () => {
   afterEach(() => mock.restore())
 
-  it("validates messageId presence", async () => {
+  it("rejects a body with neither messageId nor title", async () => {
     const handlers = createSavedMessagesHandlers({ savedMessagesService: {} as any })
     const req = fakeReq({ body: {} })
+    await expect(handlers.create(req, fakeRes())).rejects.toBeInstanceOf(HttpError)
+  })
+
+  it("rejects a body with both messageId and title", async () => {
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: {} as any })
+    const req = fakeReq({ body: { messageId: "msg_1", title: "Standalone" } })
+    await expect(handlers.create(req, fakeRes())).rejects.toBeInstanceOf(HttpError)
+  })
+
+  it("rejects note alongside messageId (notes are added via PATCH)", async () => {
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: {} as any })
+    const req = fakeReq({ body: { messageId: "msg_1", note: "context" } })
     await expect(handlers.create(req, fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
 
@@ -146,5 +208,22 @@ describe("createSavedMessagesHandlers.create", () => {
     const req = fakeReq({ body: { messageId: "msg_1" } })
     await handlers.create(req, fakeRes())
     expect(capturedRemindAt).toBeNull()
+  })
+
+  it("routes title-only bodies to createStandalone with trimmed title and null note", async () => {
+    let received: { title: string; note: string | null } | undefined
+    const createStandalone = mock(async (p: any) => {
+      received = { title: p.title, note: p.note }
+      return { id: "saved_01" } as any
+    })
+    const save = mock(async () => ({}) as any)
+    const handlers = createSavedMessagesHandlers({ savedMessagesService: { createStandalone, save } as any })
+    const req = fakeReq({ body: { title: "  Call the landlord  " } })
+
+    await handlers.create(req, fakeRes())
+
+    expect(save).not.toHaveBeenCalled()
+    expect(createStandalone).toHaveBeenCalledTimes(1)
+    expect(received).toEqual({ title: "Call the landlord", note: null })
   })
 })

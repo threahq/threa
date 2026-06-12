@@ -429,9 +429,17 @@ export interface CachedSavedMessage {
   id: string
   workspaceId: string
   userId: string
-  messageId: string
-  streamId: string
+  /**
+   * Null for standalone (message-less) saved items. IndexedDB simply omits
+   * null keys from the `messageId` index, so standalone rows never collide
+   * with the by-message lookups.
+   */
+  messageId: string | null
+  streamId: string | null
   status: string
+  /** Display line for standalone items; null for message-anchored rows. */
+  title: string | null
+  note: string | null
   remindAt: string | null
   reminderSentAt: string | null
   savedAt: string
