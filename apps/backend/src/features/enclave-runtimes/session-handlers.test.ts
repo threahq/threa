@@ -36,7 +36,16 @@ function fakeRes(): Response & { statusCode: number; jsonBody?: unknown } {
   return res as unknown as Response & { statusCode: number; jsonBody?: unknown }
 }
 
-function req(id: string | undefined, body: unknown, headers: Record<string, string> = {}): Request {
+// Callbacks are token-bound (Phase 2.4b, reject-if-absent): the default
+// request carries the session's token so handler tests exercise the
+// authenticated path. Binding tests override `headers` ({} = absent token).
+const CB_TOKEN = "cbtok_good"
+
+function req(
+  id: string | undefined,
+  body: unknown,
+  headers: Record<string, string> = { [ENCLAVE_CALLBACK_TOKEN_HEADER]: CB_TOKEN }
+): Request {
   return {
     params: { id },
     body,
@@ -51,6 +60,7 @@ const SESSION = {
   status: SessionStatuses.RUNNING,
   lastSeenSequence: null,
   triggerMessageId: "msg_trigger",
+  callbackTokenHash: hashCallbackToken(CB_TOKEN),
   createdAt: new Date("2026-05-30T00:00:00.000Z"),
 } as unknown as Awaited<ReturnType<typeof AgentSessionRepository.findById>>
 
@@ -707,7 +717,6 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   // The row stores only the digest; the runner echoes the cleartext.
   const BOUND_SESSION = {
     ...SESSION!,
-    callbackTokenHash: hashCallbackToken("cbtok_good"),
     replyKeyGeneration: 0,
   } as typeof SESSION
 
@@ -723,7 +732,10 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   })
 
   it("403s a presented token when the session row carries none", async () => {
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...SESSION!,
+      callbackTokenHash: null,
+    } as typeof SESSION)
     const { handlers } = makeHandlers()
     await expect(
       handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_any")), fakeRes())
@@ -740,13 +752,14 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
     expect(createMessage).toHaveBeenCalled()
   })
 
-  it("tolerates an absent token on a token-bearing session — rollout phase 1, in-flight sessions drain", async () => {
+  it("403s an absent token without writing anything — rollout tolerance is over", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
-    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
-    const { handlers } = makeHandlers()
-    const res = fakeRes()
-    await handlers.message(req("session_1", MESSAGE_BODY), res)
-    expect(res.statusCode).toBe(204)
+    const { handlers, createMessage } = makeHandlers()
+    await expect(handlers.message(req("session_1", MESSAGE_BODY, {}), fakeRes())).rejects.toMatchObject({
+      status: 403,
+      code: "CALLBACK_TOKEN_MISSING",
+    })
+    expect(createMessage).not.toHaveBeenCalled()
   })
 
   it("rejects a wrong-generation seal loudly instead of persisting an undecryptable reply", async () => {
@@ -762,17 +775,17 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
     expect(createMessage).not.toHaveBeenCalled()
   })
 
-  it("passes any generation for sessions dispatched before the column shipped (NULL)", async () => {
+  it("403s pre-2.4b sessions (NULL hash) called without a token — no caller can satisfy them", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue({
       ...SESSION!,
       callbackTokenHash: null,
       replyKeyGeneration: null,
     } as typeof SESSION)
-    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
     const { handlers } = makeHandlers()
-    const res = fakeRes()
-    await handlers.message(req("session_1", MESSAGE_BODY), res)
-    expect(res.statusCode).toBe(204)
+    await expect(handlers.message(req("session_1", MESSAGE_BODY, {}), fakeRes())).rejects.toMatchObject({
+      status: 403,
+      code: "CALLBACK_TOKEN_MISSING",
+    })
   })
 
   it("binds the heartbeat too — wrong token never refreshes", async () => {
