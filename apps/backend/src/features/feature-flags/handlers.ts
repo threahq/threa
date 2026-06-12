@@ -3,13 +3,14 @@ import { z } from "zod"
 import { HttpError } from "../../lib/errors"
 import type { FeatureFlagService } from "./service"
 
-// Flag keys are not constrained to the registry here: the control plane can
-// deploy with a new key ahead of this region's release. Unknown keys are
-// stored and ignored at read time (resolveFeatureFlags filters them).
+// Flag keys/values are not constrained to the registry here: the control
+// plane can deploy with a new key or value ahead of this region's release.
+// Unknown entries are stored and ignored at read time (resolveFeatureFlags
+// filters them).
 const syncSchema = z.object({
   workspaceId: z.string().min(1),
   workosUserId: z.string().min(1),
-  flags: z.record(z.string().min(1), z.boolean()),
+  flags: z.record(z.string().min(1), z.string().min(1)),
 })
 
 interface Dependencies {

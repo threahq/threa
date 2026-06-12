@@ -1,14 +1,14 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threa/backend-common"
-import { FEATURE_FLAG_KEYS } from "@threa/types"
+import { FEATURE_FLAGS, FEATURE_FLAG_KEYS } from "@threa/types"
 import type { ControlPlaneFeatureFlagService } from "./service"
 
 const setFlagSchema = z.object({
   workosUserId: z.string().min(1),
   flagKey: z.string().min(1),
-  /** `null` clears the override (back to the code default: off). */
-  enabled: z.boolean().nullable(),
+  /** Must be one of the flag's declared values; the default (first) value clears the override. */
+  value: z.string().min(1),
 })
 
 interface Dependencies {
@@ -19,8 +19,9 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
   return {
     /**
      * GET /api/backoffice/workspaces/:id/feature-flags
-     * Registry keys + stored per-user overrides for the workspace. The
-     * backoffice renders the member × flag grid from these two lists.
+     * Registry (key + declared values, first value is the default) plus the
+     * stored per-user overrides. The backoffice renders the member × flag
+     * grid from these two lists.
      */
     async listWorkspaceFlags(req: Request, res: Response) {
       const id = req.params.id
@@ -29,11 +30,11 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
       }
       const overrides = await featureFlagService.listWorkspaceOverrides(id)
       res.json({
-        flagKeys: FEATURE_FLAG_KEYS,
+        flags: FEATURE_FLAG_KEYS.map((key) => ({ key, values: FEATURE_FLAGS[key] })),
         overrides: overrides.map((o) => ({
           workosUserId: o.workosUserId,
           flagKey: o.flagKey,
-          enabled: o.enabled,
+          value: o.value,
           updatedAt: o.updatedAt.toISOString(),
         })),
       })
@@ -53,7 +54,7 @@ export function createFeatureFlagHandlers({ featureFlagService }: Dependencies) 
         workspaceId: id,
         workosUserId: parsed.data.workosUserId,
         flagKey: parsed.data.flagKey,
-        enabled: parsed.data.enabled,
+        value: parsed.data.value,
       })
       res.status(204).end()
     },

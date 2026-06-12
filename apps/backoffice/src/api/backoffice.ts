@@ -120,14 +120,20 @@ export interface WaitlistOverview {
 export interface WorkspaceFeatureFlagOverride {
   workosUserId: string
   flagKey: string
-  enabled: boolean
+  value: string
   updatedAt: string
 }
 
+export interface WorkspaceFeatureFlagDefinition {
+  key: string
+  /** Declared values for the flag; the first one is the default. */
+  values: string[]
+}
+
 export interface WorkspaceFeatureFlags {
-  /** Flag keys currently in the code registry (@threa/types FEATURE_FLAG_KEYS). */
-  flagKeys: string[]
-  /** Stored per-user overrides; absence of an override means the default (off). */
+  /** Flags currently in the code registry (@threa/types FEATURE_FLAGS). */
+  flags: WorkspaceFeatureFlagDefinition[]
+  /** Stored per-user overrides; absence of an override means the default value. */
   overrides: WorkspaceFeatureFlagOverride[]
 }
 
@@ -227,10 +233,10 @@ export function getWorkspaceFeatureFlags(workspaceId: string): Promise<Workspace
   return api.get<WorkspaceFeatureFlags>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`)
 }
 
-/** `enabled: null` clears the override (back to the default: off). */
+/** Setting a flag to its default (first declared) value clears the override. */
 export function setWorkspaceFeatureFlag(
   workspaceId: string,
-  params: { workosUserId: string; flagKey: string; enabled: boolean | null }
+  params: { workosUserId: string; flagKey: string; value: string }
 ): Promise<void> {
   return api.put<void>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`, params)
 }

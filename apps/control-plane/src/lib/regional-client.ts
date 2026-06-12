@@ -168,7 +168,7 @@ export class RegionalClient {
    */
   async syncUserFeatureFlags(
     region: string,
-    data: { workspaceId: string; workosUserId: string; flags: Record<string, boolean> }
+    data: { workspaceId: string; workosUserId: string; flags: Record<string, string> }
   ): Promise<void> {
     const url = `${this.getRegionUrl(region)}/internal/feature-flags`
     let res: Response

@@ -11,38 +11,43 @@ entry_points:
   - apps/frontend/src/hooks/use-feature-flags.ts
 public_site: false
 summary: >
-  Per-user rollout switches managed from the backoffice; the control plane fans a
-  resolved snapshot out to the owning region, which broadcasts it to the user's live
-  sessions, so a flag flips at runtime without a deploy.
+  Per-user, enum-valued rollout switches managed from the backoffice; the control
+  plane fans a resolved snapshot out to the owning region, which broadcasts it to the
+  user's live sessions, so a flag changes at runtime without a deploy.
 related: [architecture/outbox-pattern.md]
 ---
 
 ## The gist
 
-A feature flag is a boolean looked up by string key, scoped to one user in one
-workspace. Flags default to **off**; a platform admin turns one on for a specific
-member from the backoffice, and the change reaches that member's running frontend
-sessions within a second or two — no env vars, no redeploy. The backend resolves the
-same key through the same data, so a flag means the same thing on both sides of the
-stack.
+A feature flag is an enum value looked up by string key, scoped to one user in one
+workspace. Each flag declares its allowed values in code and the **first value is the
+default** — a plain on/off flag is just the two-value case (`["off", "on"]`), while a
+staged rollout can declare richer variants (`["off", "shadow", "active"]`, the shape
+`VITE_SYNC_V2_CURSOR` uses) without resorting to flag combinations. A platform admin
+sets a member's value from the backoffice and the change reaches that member's running
+frontend sessions within a second or two — no env vars, no redeploy. The backend
+resolves the same key through the same data, so a flag means the same thing on both
+sides of the stack.
 
-Flags are deliberately temporary. The registry of keys lives in code
-(`FEATURE_FLAG_KEYS` in `packages/types/src/feature-flags.ts`), and every read path
-filters stored rows through it. Deleting a key from that array retires the flag
-everywhere in one line — leftover database rows become inert, with no migration. A flag
-that survives long in the registry is a smell.
+Flags are deliberately temporary. The registry lives in code (`FEATURE_FLAGS` in
+`packages/types/src/feature-flags.ts`), and every read path filters stored rows
+through it — both unknown keys and undeclared values resolve to the default. Deleting
+a key retires the flag everywhere in one line; leftover database rows become inert,
+with no migration. A flag that survives long in the registry is a smell.
 
 There is no cohort logic, no percentage rollout, no environment dimension. The unit is
-(workspace, user, flag) → boolean, and that's it.
+(workspace, user, flag) → declared value, and that's it.
 
 ## How it works
 
 **Source of truth — control plane.** `feature_flag_overrides` stores one row per
-(workspace, WorkOS user, flag key); absence of a row means the default (off). The
-backoffice workspace detail page gets a "Feature flags" tab (members × flags toggle
-grid) backed by `GET`/`PUT /api/backoffice/workspaces/:id/feature-flags`, both gated by
-`requirePlatformAdmin`. Turning a flag off from the UI _clears_ the override rather
-than storing an explicit false, so the table only ever holds deviations from default.
+(workspace, WorkOS user, flag key) with a TEXT `value` validated in code (INV-3);
+absence of a row means the default (first declared value). The backoffice workspace
+detail page gets a "Feature flags" tab (a value select per member × flag) backed by
+`GET`/`PUT /api/backoffice/workspaces/:id/feature-flags`, both gated by
+`requirePlatformAdmin`. Selecting the default value _clears_ the override rather than
+storing it, so the table only ever holds deviations from default (the same sparse
+semantics as workspace settings).
 
 **Fan-out — control plane → region.** `ControlPlaneFeatureFlagService.setFlag` writes
 the override and a `feature_flags_sync` outbox event in one transaction (INV-7). The CP
@@ -60,13 +65,13 @@ the regional user row, then `FeatureFlagService.applySync` replaces the user's r
 (`targetUserId`), so the broadcast reaches exactly that user's socket rooms, carrying
 the full resolved map.
 
-**Read paths.** Backend code calls `featureFlagService.isEnabled(workspaceId, userId,
-key)` (or `getFlags` for the whole map). The frontend receives `featureFlags` on
-`WorkspaceBootstrap`, kept live by the socket handler in
+**Read paths.** Backend code calls `featureFlagService.getFlag(workspaceId, userId,
+key)` (or `getFlags` for the whole map) and compares the typed value. The frontend
+receives `featureFlags` on `WorkspaceBootstrap`, kept live by the socket handler in
 `apps/frontend/src/sync/workspace-sync.ts` (same shape as `workspace_settings:updated`:
 bootstrap-cache-only, no IDB table), and components read it through
-`useFeatureFlag(workspaceId, "key")` — a cache-only observer that returns `false` until
-the bootstrap lands, which is indistinguishable from the default.
+`useFeatureFlag(workspaceId, "key")` — a cache-only observer returning the flag's typed
+value union; until the bootstrap lands it returns the default, which renders the same.
 
 That's the whole loop: backoffice toggle → CP outbox → regional snapshot → user-scoped
 broadcast → bootstrap cache → hook re-render. If you only wanted the model, you can
@@ -74,13 +79,14 @@ stop here.
 
 ## Details worth knowing
 
-- **Adding a flag** is one line in `FEATURE_FLAG_KEYS` plus the `isEnabled` /
-  `useFeatureFlag` call sites. **Removing one** is deleting that line and those call
-  sites; stale rows on both planes are filtered out at read time by
-  `resolveFeatureFlags`.
-- **Unknown keys are tolerated on the wire.** The regional internal endpoint accepts
-  keys outside its registry (the control plane may deploy a new key ahead of the
-  region) and stores them; they stay invisible until the region's registry catches up.
+- **Adding a flag** is one entry in `FEATURE_FLAGS` (key → declared values, first is
+  the default) plus the `getFlag` / `useFeatureFlag` call sites. **Removing one** is
+  deleting that entry and those call sites; stale rows on both planes are filtered out
+  at read time by `resolveFeatureFlags`.
+- **Unknown keys and values are tolerated on the wire.** The regional internal
+  endpoint accepts entries outside its registry (the control plane may deploy a new
+  key or value ahead of the region) and stores them; they stay invisible until the
+  region's registry catches up.
 - **User not provisioned yet.** If a flag is set for someone who has never signed into
   the region, `applySync` logs a warning and skips (returns 204 so the CP outbox event
   isn't poisoned). The next toggle after the user exists re-syncs the full snapshot.
@@ -88,10 +94,10 @@ stop here.
   `WorkspaceBootstrap`, and reconnect invalidation (INV-53) refetches it; the
   `feature_flags:updated` handler is also idempotent under sync-log catch-up replay
   (full-map replacement, no increments).
-- **Verification surface.** The registry ships with one deliberately-temporary key,
-  `demo-banner`, rendered by `FeatureFlagDemoBadge` (a fixed pill in the workspace
-  shell) purely to prove the pipeline end to end. Delete both together once a real
-  flag exists.
+- **Verification surface.** The registry ships with one deliberately-temporary flag,
+  `demo-banner: ["off", "on"]`, rendered by `FeatureFlagDemoBadge` (a fixed pill in
+  the workspace shell, shown while the value is `"on"`) purely to prove the pipeline
+  end to end. Delete both together once a real flag exists.
 
 ## Invariants
 

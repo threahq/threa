@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { PoolClient } from "pg"
-import { FEATURE_FLAG_KEYS } from "@threa/types"
+import { FEATURE_FLAGS, FEATURE_FLAG_KEYS, defaultFeatureFlags } from "@threa/types"
 import { FeatureFlagService } from "./service"
 import { UserFeatureFlagRepository } from "./repository"
 import { UserRepository } from "../workspaces"
@@ -11,6 +11,8 @@ const WORKSPACE_ID = "ws_1"
 const USER_ID = "user_1"
 const WORKOS_USER_ID = "workos_user_1"
 const FLAG = FEATURE_FLAG_KEYS[0]
+// Every flag has at least one non-default value; use the first one.
+const NON_DEFAULT_VALUE = FEATURE_FLAGS[FLAG][1]
 
 function setupTransaction() {
   spyOn(dbModule, "withTransaction").mockImplementation(async (_pool: any, fn: any) => fn({} as PoolClient))
@@ -19,37 +21,38 @@ function setupTransaction() {
 describe("FeatureFlagService.getFlags", () => {
   afterEach(() => mock.restore())
 
-  it("defaults every registry flag to off when nothing is stored", async () => {
+  it("defaults every registry flag to its first declared value when nothing is stored", async () => {
     spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([])
     const service = new FeatureFlagService({} as any)
 
     const flags = await service.getFlags(WORKSPACE_ID, USER_ID)
 
-    expect(flags).toEqual(Object.fromEntries(FEATURE_FLAG_KEYS.map((key) => [key, false])) as typeof flags)
+    expect(flags).toEqual(defaultFeatureFlags())
   })
 
-  it("applies stored rows and ignores keys retired from the registry", async () => {
+  it("applies stored rows and ignores retired keys and undeclared values", async () => {
     spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([
-      { flagKey: FLAG, enabled: true },
-      { flagKey: "retired-flag-not-in-registry", enabled: true },
+      { flagKey: FLAG, value: NON_DEFAULT_VALUE },
+      { flagKey: "retired-flag-not-in-registry", value: "on" },
+      { flagKey: FLAG, value: "value-never-declared-for-this-flag" },
     ])
     const service = new FeatureFlagService({} as any)
 
     const flags = await service.getFlags(WORKSPACE_ID, USER_ID)
 
-    expect(flags[FLAG]).toBe(true)
+    expect(flags[FLAG]).toBe(NON_DEFAULT_VALUE)
     expect(Object.keys(flags).sort()).toEqual([...FEATURE_FLAG_KEYS].sort())
   })
 })
 
-describe("FeatureFlagService.isEnabled", () => {
+describe("FeatureFlagService.getFlag", () => {
   afterEach(() => mock.restore())
 
-  it("reflects the stored value for a registry key", async () => {
-    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([{ flagKey: FLAG, enabled: true }])
+  it("returns the stored value for a registry key", async () => {
+    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([{ flagKey: FLAG, value: NON_DEFAULT_VALUE }])
     const service = new FeatureFlagService({} as any)
 
-    expect(await service.isEnabled(WORKSPACE_ID, USER_ID, FLAG)).toBe(true)
+    expect(await service.getFlag(WORKSPACE_ID, USER_ID, FLAG)).toBe(NON_DEFAULT_VALUE)
   })
 })
 
@@ -60,23 +63,23 @@ describe("FeatureFlagService.applySync", () => {
     setupTransaction()
     spyOn(UserRepository, "findByWorkosUserIdInWorkspace").mockResolvedValue({ id: USER_ID } as any)
     const replace = spyOn(UserFeatureFlagRepository, "replaceForUser").mockResolvedValue()
-    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([{ flagKey: FLAG, enabled: true }])
+    spyOn(UserFeatureFlagRepository, "findForUser").mockResolvedValue([{ flagKey: FLAG, value: NON_DEFAULT_VALUE }])
     const insert = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
     const service = new FeatureFlagService({} as any)
 
     const applied = await service.applySync({
       workspaceId: WORKSPACE_ID,
       workosUserId: WORKOS_USER_ID,
-      flags: { [FLAG]: true },
+      flags: { [FLAG]: NON_DEFAULT_VALUE },
     })
 
     expect(applied).toBe(true)
-    expect(replace).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, { [FLAG]: true })
+    expect(replace).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, { [FLAG]: NON_DEFAULT_VALUE })
     // User-scoped broadcast carrying the full resolved map (INV-7: same transaction).
     expect(insert).toHaveBeenCalledWith({}, "feature_flags:updated", {
       workspaceId: WORKSPACE_ID,
       targetUserId: USER_ID,
-      featureFlags: expect.objectContaining({ [FLAG]: true }),
+      featureFlags: expect.objectContaining({ [FLAG]: NON_DEFAULT_VALUE }),
     })
   })
 
@@ -89,7 +92,7 @@ describe("FeatureFlagService.applySync", () => {
     const applied = await service.applySync({
       workspaceId: WORKSPACE_ID,
       workosUserId: WORKOS_USER_ID,
-      flags: { [FLAG]: true },
+      flags: { [FLAG]: NON_DEFAULT_VALUE },
     })
 
     expect(applied).toBe(false)

@@ -1,6 +1,12 @@
 import type { Pool } from "pg"
 import { HttpError, withTransaction, logger, OutboxRepository } from "@threa/backend-common"
-import { isFeatureFlagKey, resolveFeatureFlags, type FeatureFlags } from "@threa/types"
+import {
+  defaultFeatureFlagValue,
+  isFeatureFlagKey,
+  isFeatureFlagValue,
+  resolveFeatureFlags,
+  type FeatureFlags,
+} from "@threa/types"
 import { FeatureFlagOverrideRepository, type FeatureFlagOverrideRecord } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import type { RegionalClient } from "../../lib/regional-client"
@@ -10,7 +16,7 @@ export const OUTBOX_FEATURE_FLAGS_SYNC = "feature_flags_sync"
 /**
  * Outbox payload for the regional fan-out. Carries only identity — the
  * handler re-reads the overrides at delivery time and pushes a full snapshot,
- * so rapid toggles collapse to the latest state and replays are idempotent.
+ * so rapid changes collapse to the latest state and replays are idempotent.
  */
 export interface FeatureFlagsSyncPayload extends Record<string, unknown> {
   workspaceId: string
@@ -23,10 +29,10 @@ interface Dependencies {
 }
 
 /**
- * Source of truth for per-user feature flags. Backoffice admins toggle
- * overrides here; every write emits a durable outbox event that pushes the
- * user's resolved flag snapshot to the workspace's regional backend, which in
- * turn broadcasts it to the user's live sessions.
+ * Source of truth for per-user feature flags. Backoffice admins set values
+ * here; every write emits a durable outbox event that pushes the user's
+ * resolved flag snapshot to the workspace's regional backend, which in turn
+ * broadcasts it to the user's live sessions.
  */
 export class ControlPlaneFeatureFlagService {
   private pool: Pool
@@ -38,27 +44,27 @@ export class ControlPlaneFeatureFlagService {
   }
 
   /**
-   * All overrides stored for a workspace, filtered to keys still in the code
-   * registry so the backoffice never renders toggles for retired flags.
+   * All overrides stored for a workspace, filtered to keys/values still in
+   * the code registry so the backoffice never renders retired flags.
    */
   async listWorkspaceOverrides(workspaceId: string): Promise<FeatureFlagOverrideRecord[]> {
     const rows = await FeatureFlagOverrideRepository.listByWorkspace(this.pool, workspaceId)
-    return rows.filter((row) => isFeatureFlagKey(row.flagKey))
+    return rows.filter((row) => isFeatureFlagKey(row.flagKey) && isFeatureFlagValue(row.flagKey, row.value))
   }
 
   /**
-   * Set or clear one user's flag override. `enabled: null` deletes the
-   * override (back to the code default: off). The override write and the
-   * fan-out outbox event commit atomically (INV-7).
+   * Set one user's flag to a declared value. Choosing the default (first
+   * declared) value clears the override — only deviations from default are
+   * stored, mirroring workspace-settings. The override write and the fan-out
+   * outbox event commit atomically (INV-7).
    */
-  async setFlag(params: {
-    workspaceId: string
-    workosUserId: string
-    flagKey: string
-    enabled: boolean | null
-  }): Promise<void> {
-    if (!isFeatureFlagKey(params.flagKey)) {
+  async setFlag(params: { workspaceId: string; workosUserId: string; flagKey: string; value: string }): Promise<void> {
+    const { flagKey, value } = params
+    if (!isFeatureFlagKey(flagKey)) {
       throw new HttpError("Unknown feature flag", { status: 400, code: "UNKNOWN_FLAG" })
+    }
+    if (!isFeatureFlagValue(flagKey, value)) {
+      throw new HttpError("Value is not declared for this feature flag", { status: 400, code: "UNKNOWN_FLAG_VALUE" })
     }
     const workspace = await WorkspaceRegistryRepository.findById(this.pool, params.workspaceId)
     if (!workspace) {
@@ -66,14 +72,18 @@ export class ControlPlaneFeatureFlagService {
     }
 
     await withTransaction(this.pool, async (client) => {
-      if (params.enabled === null) {
-        await FeatureFlagOverrideRepository.deleteOverride(client, params)
+      if (value === defaultFeatureFlagValue(flagKey)) {
+        await FeatureFlagOverrideRepository.deleteOverride(client, {
+          workspaceId: params.workspaceId,
+          workosUserId: params.workosUserId,
+          flagKey,
+        })
       } else {
         await FeatureFlagOverrideRepository.setOverride(client, {
           workspaceId: params.workspaceId,
           workosUserId: params.workosUserId,
-          flagKey: params.flagKey,
-          enabled: params.enabled,
+          flagKey,
+          value,
         })
       }
       await OutboxRepository.insert(client, OUTBOX_FEATURE_FLAGS_SYNC, {

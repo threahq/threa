@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { resolveFeatureFlags, type FeatureFlagKey, type FeatureFlags } from "@threa/types"
+import { resolveFeatureFlags, type FeatureFlagKey, type FeatureFlagValue, type FeatureFlags } from "@threa/types"
 import { withTransaction } from "../../db"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
@@ -10,28 +10,28 @@ export interface ApplyFeatureFlagSyncInput {
   workspaceId: string
   workosUserId: string
   /** Full resolved snapshot from the control plane — replaces stored rows wholesale. */
-  flags: Record<string, boolean>
+  flags: Record<string, string>
 }
 
 /**
  * Regional read/write surface for per-user feature flags. The control plane
  * owns the data and pushes snapshots through `applySync`; everything else in
- * the backend resolves flags via `getFlags`/`isEnabled`, which mirror the
+ * the backend resolves flags via `getFlags`/`getFlag`, which mirror the
  * frontend's bootstrap-backed lookup so a flag means the same thing on both
  * sides of the stack.
  */
 export class FeatureFlagService {
   constructor(private pool: Pool) {}
 
-  /** The user's resolved flags: registry defaults (off) + stored snapshot. */
+  /** The user's resolved flags: registry defaults (first value) + stored snapshot. */
   async getFlags(workspaceId: string, userId: string): Promise<FeatureFlags> {
     // Single query, INV-30
     const rows = await UserFeatureFlagRepository.findForUser(this.pool, workspaceId, userId)
     return resolveFeatureFlags(rows)
   }
 
-  /** Backend-side flag check — the counterpart of the frontend's `useFeatureFlag`. */
-  async isEnabled(workspaceId: string, userId: string, key: FeatureFlagKey): Promise<boolean> {
+  /** Backend-side flag lookup — the counterpart of the frontend's `useFeatureFlag`. */
+  async getFlag<K extends FeatureFlagKey>(workspaceId: string, userId: string, key: K): Promise<FeatureFlagValue<K>> {
     const flags = await this.getFlags(workspaceId, userId)
     return flags[key]
   }
@@ -44,7 +44,7 @@ export class FeatureFlagService {
    *
    * Returns false when the WorkOS user has no regional user row yet (flag set
    * before first sign-in). Safe to drop: the regional state already equals the
-   * default the snapshot would mostly encode, and the next backoffice toggle
+   * default the snapshot would mostly encode, and the next backoffice change
    * re-syncs after the user exists.
    */
   async applySync(input: ApplyFeatureFlagSyncInput): Promise<boolean> {

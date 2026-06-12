@@ -2,12 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useParams } from "react-router-dom"
 import { Section } from "@/components/layout/section"
 import { InlineBanner } from "@/components/inline-banner"
-import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
 import {
   backofficeKeys,
   getWorkspaceFeatureFlags,
   listWorkspaceMembers,
   setWorkspaceFeatureFlag,
+  type WorkspaceFeatureFlagDefinition,
   type WorkspaceFeatureFlags,
   type WorkspaceMember,
 } from "@/api/backoffice"
@@ -42,19 +43,24 @@ export function WorkspaceDetailFlagsPage() {
     enabled: !!id,
   })
 
-  const toggleMutation = useMutation({
-    mutationFn: (vars: { workosUserId: string; flagKey: string; enabled: boolean | null }) => {
+  const setMutation = useMutation({
+    mutationFn: (vars: { workosUserId: string; flagKey: string; value: string; defaultValue: string }) => {
       if (!id) throw new Error("Missing workspace id")
-      return setWorkspaceFeatureFlag(id, vars)
+      return setWorkspaceFeatureFlag(id, {
+        workosUserId: vars.workosUserId,
+        flagKey: vars.flagKey,
+        value: vars.value,
+      })
     },
     onSuccess: (_data, vars) => {
       if (!id) return
       // Patch the overrides cache in place — the write is synchronous on the
-      // control plane, so what we wrote is what a refetch would return.
+      // control plane, so what we wrote is what a refetch would return. The
+      // default value clears the override (only deviations are stored).
       queryClient.setQueryData<WorkspaceFeatureFlags>(backofficeKeys.workspaceFeatureFlags(id), (prev) => {
         if (!prev) return prev
         const rest = prev.overrides.filter((o) => !(o.workosUserId === vars.workosUserId && o.flagKey === vars.flagKey))
-        if (vars.enabled === null) return { ...prev, overrides: rest }
+        if (vars.value === vars.defaultValue) return { ...prev, overrides: rest }
         return {
           ...prev,
           overrides: [
@@ -62,7 +68,7 @@ export function WorkspaceDetailFlagsPage() {
             {
               workosUserId: vars.workosUserId,
               flagKey: vars.flagKey,
-              enabled: vars.enabled,
+              value: vars.value,
               updatedAt: new Date().toISOString(),
             },
           ],
@@ -71,25 +77,25 @@ export function WorkspaceDetailFlagsPage() {
     },
   })
 
-  const toggleError = readApiError(toggleMutation.error)
-  const busyKey = toggleMutation.isPending
-    ? `${toggleMutation.variables?.workosUserId}:${toggleMutation.variables?.flagKey}`
+  const setError = readApiError(setMutation.error)
+  const busyKey = setMutation.isPending
+    ? `${setMutation.variables?.workosUserId}:${setMutation.variables?.flagKey}`
     : null
 
   return (
     <div className="flex flex-col gap-10">
       <Section
         label="Feature flags"
-        description="Per-member rollout switches. Flags default to off; enabling one here propagates to the member's live sessions within seconds. Flags are temporary — retire the key from FEATURE_FLAG_KEYS once the rollout is done."
+        description="Per-member rollout switches. Each flag's first declared value is the default; setting a different value propagates to the member's live sessions within seconds. Flags are temporary — retire the key from FEATURE_FLAGS once the rollout is done."
       >
-        {toggleError ? <InlineBanner tone="error">Couldn't update flag: {toggleError}</InlineBanner> : null}
+        {setError ? <InlineBanner tone="error">Couldn't update flag: {setError}</InlineBanner> : null}
         <FlagsBody
           loading={flagsQ.isLoading || membersQ.isLoading}
           error={flagsQ.error ?? membersQ.error}
           flags={flagsQ.data}
           members={membersQ.data}
           busyKey={busyKey}
-          onToggle={(vars) => toggleMutation.mutate(vars)}
+          onSet={(vars) => setMutation.mutate(vars)}
         />
       </Section>
     </div>
@@ -102,14 +108,14 @@ function FlagsBody({
   flags,
   members,
   busyKey,
-  onToggle,
+  onSet,
 }: {
   loading: boolean
   error: unknown
   flags: WorkspaceFeatureFlags | undefined
   members: WorkspaceMember[] | undefined
   busyKey: string | null
-  onToggle: (vars: { workosUserId: string; flagKey: string; enabled: boolean | null }) => void
+  onSet: (vars: { workosUserId: string; flagKey: string; value: string; defaultValue: string }) => void
 }) {
   if (loading) {
     return <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">Loading feature flags…</div>
@@ -124,10 +130,10 @@ function FlagsBody({
     )
   }
 
-  if (!flags || flags.flagKeys.length === 0) {
+  if (!flags || flags.flags.length === 0) {
     return (
       <div className="border-y px-1 py-10 text-center text-sm text-muted-foreground">
-        No flags in the registry — add a key to FEATURE_FLAG_KEYS in @threa/types to start a rollout.
+        No flags in the registry — add a key to FEATURE_FLAGS in @threa/types to start a rollout.
       </div>
     )
   }
@@ -140,8 +146,8 @@ function FlagsBody({
     )
   }
 
-  const enabledFor = (workosUserId: string, flagKey: string): boolean =>
-    flags.overrides.some((o) => o.workosUserId === workosUserId && o.flagKey === flagKey && o.enabled)
+  const valueFor = (workosUserId: string, flag: WorkspaceFeatureFlagDefinition): string =>
+    flags.overrides.find((o) => o.workosUserId === workosUserId && o.flagKey === flag.key)?.value ?? flag.values[0]
 
   return (
     <ul className="divide-y border-y">
@@ -151,58 +157,51 @@ function FlagsBody({
             <span className="truncate text-sm font-medium text-foreground">{memberDisplayName(member)}</span>
             {member.email ? <span className="truncate text-xs text-muted-foreground">{member.email}</span> : null}
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-2">
-            {flags.flagKeys.map((flagKey) => {
-              const enabled = enabledFor(member.workosUserId, flagKey)
-              const busy = busyKey === `${member.workosUserId}:${flagKey}`
+          <div className="flex shrink-0 flex-wrap items-center gap-4">
+            {flags.flags.map((flag) => {
+              const value = valueFor(member.workosUserId, flag)
+              const isDefault = value === flag.values[0]
+              const busy = busyKey === `${member.workosUserId}:${flag.key}`
               return (
-                <FlagToggle
-                  key={flagKey}
-                  flagKey={flagKey}
-                  enabled={enabled}
-                  busy={busy}
-                  // Turning a flag off clears the override entirely (back to
-                  // the default) rather than storing an explicit false.
-                  onToggle={() =>
-                    onToggle({ workosUserId: member.workosUserId, flagKey, enabled: enabled ? null : true })
-                  }
-                />
+                <div key={flag.key} className="flex items-center gap-2">
+                  <Label
+                    htmlFor={`flag-${member.workosUserId}-${flag.key}`}
+                    className="font-mono text-xs text-muted-foreground"
+                  >
+                    {flag.key}
+                  </Label>
+                  <select
+                    id={`flag-${member.workosUserId}-${flag.key}`}
+                    value={value}
+                    disabled={busy}
+                    onChange={(e) =>
+                      onSet({
+                        workosUserId: member.workosUserId,
+                        flagKey: flag.key,
+                        value: e.target.value,
+                        defaultValue: flag.values[0],
+                      })
+                    }
+                    className={cn(
+                      "h-8 rounded-input border border-input bg-background px-2 font-mono text-xs",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                      !isDefault && "border-emerald-500/50 bg-emerald-500/10"
+                    )}
+                  >
+                    {flag.values.map((v, idx) => (
+                      <option key={v} value={v}>
+                        {v}
+                        {idx === 0 ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )
             })}
           </div>
         </li>
       ))}
     </ul>
-  )
-}
-
-function FlagToggle({
-  flagKey,
-  enabled,
-  busy,
-  onToggle,
-}: {
-  flagKey: string
-  enabled: boolean
-  busy: boolean
-  onToggle: () => void
-}) {
-  return (
-    <Button
-      size="sm"
-      variant="outline"
-      role="switch"
-      aria-checked={enabled}
-      disabled={busy}
-      onClick={onToggle}
-      className={cn("gap-2 font-mono text-xs", enabled && "border-emerald-500/50 bg-emerald-500/10")}
-    >
-      <span
-        className={cn("size-2 rounded-full", enabled ? "bg-emerald-500" : "bg-muted-foreground/40")}
-        aria-hidden="true"
-      />
-      {flagKey}
-      <span className="text-muted-foreground">{enabled ? "on" : "off"}</span>
-    </Button>
   )
 }

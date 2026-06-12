@@ -649,10 +649,14 @@ export {
 
 // Feature flags (per-user rollout switches, managed from the backoffice)
 export {
+  FEATURE_FLAGS,
   FEATURE_FLAG_KEYS,
   type FeatureFlagKey,
+  type FeatureFlagValue,
   type FeatureFlags,
   isFeatureFlagKey,
+  isFeatureFlagValue,
+  defaultFeatureFlagValue,
   defaultFeatureFlags,
   resolveFeatureFlags,
 } from "./feature-flags"

@@ -4,45 +4,67 @@
 // fanned out to regional backends, where they ride WorkspaceBootstrap and a
 // user-scoped socket event so both sides of the stack resolve the same value.
 //
+// Flags are enum-valued, not boolean: each flag declares its allowed values
+// and the FIRST value is the default. A plain on/off flag is just the
+// two-value case (["off", "on"]); staged rollouts get richer variants
+// (e.g. ["off", "shadow", "active"]) without inventing flag combinations.
+//
 // Flags are TEMPORARY by design: the registry below is the only source of
-// truth for which keys exist. Deleting a key here makes any lingering DB
-// override rows inert everywhere (they are filtered through the registry at
-// read time), so removing a finished flag is a one-line change.
+// truth for which keys and values exist. Deleting a key here makes any
+// lingering DB override rows inert everywhere (they are filtered through the
+// registry at read time), so removing a finished flag is a one-line change.
 // =============================================================================
 
 /**
- * Every live feature flag. Add a key while rolling a feature out; delete it
- * the moment the rollout is done. A flag that survives long here is a smell.
+ * Every live feature flag, mapping key → allowed values. The first value is
+ * the default. Add a flag while rolling a feature out; delete it the moment
+ * the rollout is done. A flag that survives long here is a smell.
  */
-export const FEATURE_FLAG_KEYS = [
+export const FEATURE_FLAGS = {
   /** Demo flag for verifying the flag pipeline end to end. Safe to toggle anywhere. */
-  "demo-banner",
-] as const
+  "demo-banner": ["off", "on"],
+} as const satisfies Record<string, readonly [string, ...string[]]>
 
-export type FeatureFlagKey = (typeof FEATURE_FLAG_KEYS)[number]
+export type FeatureFlagKey = keyof typeof FEATURE_FLAGS
+
+/** The allowed values for one flag (or any flag, when unparameterized). */
+export type FeatureFlagValue<K extends FeatureFlagKey = FeatureFlagKey> = (typeof FEATURE_FLAGS)[K][number]
 
 /** Fully resolved flag map for one user in one workspace (wire format). */
-export type FeatureFlags = Record<FeatureFlagKey, boolean>
+export type FeatureFlags = { [K in FeatureFlagKey]: FeatureFlagValue<K> }
+
+export const FEATURE_FLAG_KEYS = Object.keys(FEATURE_FLAGS) as FeatureFlagKey[]
 
 export function isFeatureFlagKey(value: string): value is FeatureFlagKey {
-  return (FEATURE_FLAG_KEYS as readonly string[]).includes(value)
+  return value in FEATURE_FLAGS
 }
 
-/** Flags are off unless an override turns them on. */
+/** Whether `value` is one of the declared values for `key`. */
+export function isFeatureFlagValue(key: FeatureFlagKey, value: string): boolean {
+  return (FEATURE_FLAGS[key] as readonly string[]).includes(value)
+}
+
+/** The default for a flag is the first declared value. */
+export function defaultFeatureFlagValue<K extends FeatureFlagKey>(key: K): FeatureFlagValue<K> {
+  return FEATURE_FLAGS[key][0] as FeatureFlagValue<K>
+}
+
+/** Every flag at its default (first declared) value. */
 export function defaultFeatureFlags(): FeatureFlags {
-  return Object.fromEntries(FEATURE_FLAG_KEYS.map((key) => [key, false])) as FeatureFlags
+  return Object.fromEntries(FEATURE_FLAG_KEYS.map((key) => [key, defaultFeatureFlagValue(key)])) as FeatureFlags
 }
 
 /**
- * Layer stored overrides onto defaults, dropping overrides for keys no longer
- * in the registry — this is what makes deleting a flag from
- * {@link FEATURE_FLAG_KEYS} sufficient to retire it.
+ * Layer stored overrides onto defaults, dropping overrides whose key is no
+ * longer in the registry or whose value is no longer declared for that key —
+ * this is what makes deleting a flag (or renaming a value) in
+ * {@link FEATURE_FLAGS} sufficient to retire it.
  */
-export function resolveFeatureFlags(overrides: Iterable<{ flagKey: string; enabled: boolean }>): FeatureFlags {
+export function resolveFeatureFlags(overrides: Iterable<{ flagKey: string; value: string }>): FeatureFlags {
   const flags = defaultFeatureFlags()
-  for (const { flagKey, enabled } of overrides) {
-    if (isFeatureFlagKey(flagKey)) {
-      flags[flagKey] = enabled
+  for (const { flagKey, value } of overrides) {
+    if (isFeatureFlagKey(flagKey) && isFeatureFlagValue(flagKey, value)) {
+      flags[flagKey] = value as FeatureFlags[typeof flagKey]
     }
   }
   return flags
