@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { MemoryRouter } from "react-router-dom"
 import { MediaGalleryProvider } from "@/contexts"
 import { attachmentsApi } from "@/api"
+import { API_BASE } from "@/api/client"
 import { AttachmentList } from "./attachment-list"
 import type { AttachmentSummary } from "@threa/types"
 
@@ -71,7 +72,7 @@ describe("AttachmentList", () => {
       expect(screen.getByText("file2.txt")).toBeInTheDocument()
     })
 
-    it("should render image attachments as thumbnails", async () => {
+    it("should render image attachments as thumbnails", () => {
       const attachment = createAttachment({
         id: "img_1",
         filename: "photo.png",
@@ -79,16 +80,17 @@ describe("AttachmentList", () => {
       })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
-      // Inline view requests the small thumbnail variant, not the original
-      await waitFor(() => {
-        expect(mockGetDownloadUrl).toHaveBeenCalledWith(workspaceId, "img_1", { variant: "thumbnail" })
-      })
-
-      // Image should be present with alt text for accessibility
-      expect(screen.getByAltText("photo.png")).toBeInTheDocument()
+      // Inline view renders the stable thumbnail-variant content URL
+      // synchronously — no presign request before the <img> has a src.
+      const image = screen.getByAltText("photo.png")
+      expect(image).toHaveAttribute(
+        "src",
+        `${API_BASE}/api/workspaces/${workspaceId}/attachments/img_1/content?variant=thumbnail`
+      )
+      expect(mockGetDownloadUrl).not.toHaveBeenCalled()
     })
 
-    it("should defer image URL hydration when requested", async () => {
+    it("should defer image hydration when requested", () => {
       const attachment = createAttachment({
         id: "img_1",
         filename: "photo.png",
@@ -99,15 +101,11 @@ describe("AttachmentList", () => {
         renderOpts
       )
 
-      await waitFor(() => {
-        expect(mockGetDownloadUrl).not.toHaveBeenCalled()
-      })
+      expect(screen.queryByAltText("photo.png")).not.toBeInTheDocument()
 
       rerender(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} deferHydration={false} />)
 
-      await waitFor(() => {
-        expect(mockGetDownloadUrl).toHaveBeenCalledWith(workspaceId, "img_1", { variant: "thumbnail" })
-      })
+      expect(screen.getByAltText("photo.png")).toBeInTheDocument()
     })
 
     it("should separate images and files into different groups", async () => {
@@ -124,7 +122,7 @@ describe("AttachmentList", () => {
       expect(screen.getByText("doc.pdf")).toBeInTheDocument()
     })
 
-    it("should not fetch thumbnails while videos are processing", async () => {
+    it("should not render a thumbnail while videos are processing", () => {
       const attachment = createAttachment({
         id: "video_1",
         filename: "clip.mov",
@@ -134,12 +132,10 @@ describe("AttachmentList", () => {
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
       expect(screen.getByText("Processing...")).toBeInTheDocument()
-      await waitFor(() => {
-        expect(mockGetDownloadUrl).not.toHaveBeenCalled()
-      })
+      expect(screen.queryByAltText("clip.mov")).not.toBeInTheDocument()
     })
 
-    it("should render skipped videos without requesting a missing thumbnail", async () => {
+    it("should render skipped videos without a thumbnail src", () => {
       const attachment = createAttachment({
         id: "video_1",
         filename: "clip.mov",
@@ -149,12 +145,12 @@ describe("AttachmentList", () => {
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
       expect(screen.getByRole("button", { name: "clip.mov" })).toBeInTheDocument()
-      await waitFor(() => {
-        expect(mockGetDownloadUrl).not.toHaveBeenCalled()
-      })
+      // A skipped transcode has no thumbnail object — the variant URL would
+      // fall through to raw video bytes, which an <img> can't render.
+      expect(screen.getByAltText("clip.mov")).not.toHaveAttribute("src")
     })
 
-    it("should fetch thumbnail URL for completed videos", async () => {
+    it("should render the thumbnail content URL for completed videos", () => {
       const attachment = createAttachment({
         id: "video_1",
         filename: "clip.mov",
@@ -163,9 +159,10 @@ describe("AttachmentList", () => {
       })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
-      await waitFor(() => {
-        expect(mockGetDownloadUrl).toHaveBeenCalledWith(workspaceId, "video_1", { variant: "thumbnail" })
-      })
+      expect(screen.getByAltText("clip.mov")).toHaveAttribute(
+        "src",
+        `${API_BASE}/api/workspaces/${workspaceId}/attachments/video_1/content?variant=thumbnail`
+      )
     })
   })
 
@@ -309,8 +306,6 @@ describe("AttachmentList", () => {
 
   describe("error handling", () => {
     it("should show error state when image fails to load", async () => {
-      mockGetDownloadUrl.mockRejectedValue(new Error("Failed to load"))
-
       const attachment = createAttachment({
         id: "img_1",
         filename: "broken.png",
@@ -318,7 +313,8 @@ describe("AttachmentList", () => {
       })
       render(<AttachmentList attachments={[attachment]} workspaceId={workspaceId} />, renderOpts)
 
-      // Wait for error state to appear
+      fireEvent.error(screen.getByAltText("broken.png"))
+
       expect(await screen.findByText("Failed to load image")).toBeInTheDocument()
     })
   })

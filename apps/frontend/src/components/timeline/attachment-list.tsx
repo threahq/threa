@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { MediaGallery, type GalleryItem } from "@/components/image-gallery"
 import { Skeleton } from "@/components/ui/skeleton"
-import { attachmentsApi, peekDownloadUrl } from "@/api"
+import { attachmentsApi, attachmentContentUrl } from "@/api"
 import { cn } from "@/lib/utils"
 import { downloadImage, copyImage, triggerDownload } from "@/lib/image-utils"
 import { formatFileSize } from "@/lib/file-size"
@@ -27,10 +27,6 @@ interface AttachmentItemProps {
   attachment: AttachmentSummary
   workspaceId: string
   onImageClick?: (attachmentId: string) => void
-  /** Image variant: surface the resolved thumbnail URL to the parent so the
-   *  gallery sidebar can render the same small image instead of waiting for the
-   *  full-resolution variant to lazy-fetch on open. */
-  onThumbnailLoaded?: (attachmentId: string, thumbnailUrl: string) => void
   isHighlighted?: boolean
   deferHydration?: boolean
 }
@@ -39,7 +35,6 @@ interface VideoAttachmentItemProps {
   attachment: AttachmentSummary
   workspaceId: string
   onVideoClick?: (attachmentId: string) => void
-  onThumbnailLoaded?: (attachmentId: string, thumbnailUrl: string) => void
   isHighlighted?: boolean
   deferHydration?: boolean
 }
@@ -131,48 +126,21 @@ function ImageAttachment({
   attachment,
   workspaceId,
   onImageClick,
-  onThumbnailLoaded,
   isHighlighted,
   deferHydration = false,
 }: AttachmentItemProps) {
-  // Seed from the resolved-presign cache so a warm remount (virtua
-  // unmount/remount, bootstrap rewrite) renders the <img> on the very first
-  // frame instead of replaying skeleton → async presign → fade.
-  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(() =>
-    peekDownloadUrl(workspaceId, attachment.id, { variant: "thumbnail" })
-  )
+  // Deterministic content URL — no presign round trip before the <img> has a
+  // src, and the browser HTTP cache keys on it across sessions, so a warm
+  // open paints from disk cache without re-downloading.
+  const thumbnailUrl = deferHydration
+    ? null
+    : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
   const [imgDecoded, setImgDecoded] = useState(false)
   const [error, setError] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const isMobile = useIsMobile()
 
   const box = inlineImageBox(attachment.width, attachment.height)
-
-  useEffect(() => {
-    if (deferHydration) return
-
-    let mounted = true
-
-    async function loadImage() {
-      try {
-        const url = await attachmentsApi.getDownloadUrl(workspaceId, attachment.id, { variant: "thumbnail" })
-        if (mounted) {
-          setThumbnailUrl(url)
-          onThumbnailLoaded?.(attachment.id, url)
-        }
-      } catch {
-        if (mounted) {
-          setError(true)
-        }
-      }
-    }
-
-    loadImage()
-
-    return () => {
-      mounted = false
-    }
-  }, [workspaceId, attachment.id, deferHydration, onThumbnailLoaded])
 
   // The box is interactable as soon as it mounts — the gallery fetches the
   // full-resolution image itself, so opening it never depends on the inline
@@ -334,56 +302,23 @@ function VideoAttachment({
   attachment,
   workspaceId,
   onVideoClick,
-  onThumbnailLoaded,
   isHighlighted,
   deferHydration = false,
 }: VideoAttachmentItemProps) {
-  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(false)
 
   const isProcessing = attachment.processingStatus === "pending" || attachment.processingStatus === "processing"
   const isFailed = attachment.processingStatus === "failed"
   const isSkipped = attachment.processingStatus === "skipped"
 
-  useEffect(() => {
-    if (deferHydration || isFailed || isProcessing) return
-
-    if (isSkipped) {
-      setThumbnailUrl(null)
-      setIsLoading(false)
-      setError(false)
-      return
-    }
-
-    let mounted = true
-
-    async function loadThumbnail() {
-      try {
-        setIsLoading(true)
-        setError(false)
-        const url = await attachmentsApi.getDownloadUrl(workspaceId, attachment.id, { variant: "thumbnail" })
-        if (mounted) {
-          setThumbnailUrl(url)
-          onThumbnailLoaded?.(attachment.id, url)
-        }
-      } catch {
-        if (mounted) {
-          setError(true)
-        }
-      } finally {
-        if (mounted) {
-          setIsLoading(false)
-        }
-      }
-    }
-
-    loadThumbnail()
-
-    return () => {
-      mounted = false
-    }
-  }, [workspaceId, attachment.id, onThumbnailLoaded, deferHydration, isFailed, isProcessing, isSkipped])
+  // Deterministic content URL (see ImageAttachment). Skipped transcodes have
+  // no thumbnail object — the variant would fall through to raw video bytes,
+  // which an <img> can't render, so they keep a null src.
+  const thumbnailUrl =
+    deferHydration || isProcessing || isFailed || isSkipped
+      ? null
+      : attachmentContentUrl(workspaceId, attachment.id, { variant: "thumbnail" })
+  const isLoading = deferHydration
 
   const handleClick = useCallback(() => {
     if (!isProcessing && !isFailed) {
@@ -493,8 +428,6 @@ function FileAttachment({ attachment, workspaceId, isHighlighted }: AttachmentIt
 }
 
 export function AttachmentList({ attachments, workspaceId, className, deferHydration = false }: AttachmentListProps) {
-  const [loadedFullImageUrls, setLoadedFullImageUrls] = useState<Map<string, string>>(new Map())
-  const [loadedThumbnails, setLoadedThumbnails] = useState<Map<string, string>>(new Map())
   const [loadedVideoUrls, setLoadedVideoUrls] = useState<Map<string, string>>(new Map())
   // Markdown, HTML, and PDF attachments share a single URL cache: each viewer
   // just needs a presigned URL (the markdown viewer fetches text from it, the
@@ -552,15 +485,17 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     [attachments]
   )
 
-  // Build gallery items — images + completed videos. Image items exist for
-  // every image attachment (url empty until the full-resolution variant is
-  // fetched on open) so the gallery can open instantly and show a loader,
-  // mirroring the video lazy-fetch path.
+  // Build gallery items — images + completed videos. Image URLs are
+  // deterministic content URLs (no presign), so they're set synchronously;
+  // the gallery only loads the current item's full-resolution bytes, and the
+  // sidebar reuses the inline thumbnail variant straight from browser cache.
+  // Video playback keeps the lazy presigned URL (bytes stream straight from
+  // S3 with native Range support).
   const galleryItems: GalleryItem[] = useMemo(() => {
     const imageItems: GalleryItem[] = imageAttachments.map((a) => ({
       type: "image" as const,
-      url: loadedFullImageUrls.get(a.id) ?? "",
-      thumbnailUrl: loadedThumbnails.get(a.id) ?? "",
+      url: attachmentContentUrl(workspaceId, a.id),
+      thumbnailUrl: attachmentContentUrl(workspaceId, a.id, { variant: "thumbnail" }),
       filename: a.filename,
       attachmentId: a.id,
     }))
@@ -569,7 +504,10 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
       .filter((a) => a.processingStatus === "completed" || a.processingStatus === "skipped")
       .map((a) => {
         const videoUrl = loadedVideoUrls.get(a.id) ?? ""
-        const thumbnailUrl = loadedThumbnails.get(a.id) ?? ""
+        // Skipped transcodes have no thumbnail object; the variant URL would
+        // fall through to raw video bytes, which an <img> can't render.
+        const thumbnailUrl =
+          a.processingStatus === "completed" ? attachmentContentUrl(workspaceId, a.id, { variant: "thumbnail" }) : ""
         return {
           type: "video" as const,
           url: videoUrl,
@@ -602,26 +540,15 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
 
     return [...imageItems, ...videoItems, ...markdownItems, ...htmlItems, ...pdfItems]
   }, [
+    workspaceId,
     imageAttachments,
     videoAttachments,
     markdownAttachments,
     htmlAttachments,
     pdfAttachments,
-    loadedFullImageUrls,
-    loadedThumbnails,
     loadedVideoUrls,
     loadedTextUrls,
   ])
-
-  // Called by VideoAttachment children when their thumbnail loads
-  const registerThumbnailUrl = useCallback((attachmentId: string, thumbnailUrl: string) => {
-    setLoadedThumbnails((prev) => {
-      if (prev.get(attachmentId) === thumbnailUrl) return prev
-      const next = new Map(prev)
-      next.set(attachmentId, thumbnailUrl)
-      return next
-    })
-  }, [])
 
   // Track selected item by ID — derived index stays correct even as galleryItems grows
   const galleryIndex = selectedAttachmentId
@@ -689,35 +616,6 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
     }
   }, [selectedAttachmentId, videoAttachments, loadedVideoUrls, workspaceId])
 
-  // Lazily fetch the full-resolution original when an image is opened in the
-  // gallery. The inline view only ever loads the small thumbnail variant, so
-  // the lightbox must fetch the original itself on demand.
-  useEffect(() => {
-    if (!selectedAttachmentId) return
-    const isImage = imageAttachments.some((a) => a.id === selectedAttachmentId)
-    if (!isImage || loadedFullImageUrls.has(selectedAttachmentId)) return
-
-    let mounted = true
-    async function fetchFullImage() {
-      try {
-        const url = await attachmentsApi.getDownloadUrl(workspaceId, selectedAttachmentId!)
-        if (mounted) {
-          setLoadedFullImageUrls((prev) => {
-            const next = new Map(prev)
-            next.set(selectedAttachmentId!, url)
-            return next
-          })
-        }
-      } catch {
-        console.error("Failed to get image URL")
-      }
-    }
-    fetchFullImage()
-    return () => {
-      mounted = false
-    }
-  }, [selectedAttachmentId, imageAttachments, loadedFullImageUrls, workspaceId])
-
   // Lazy-fetch presigned URLs for markdown/html/pdf attachments when opened.
   useEffect(() => {
     if (!selectedAttachmentId) return
@@ -765,7 +663,6 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
                 attachment={attachment}
                 workspaceId={workspaceId}
                 onImageClick={handleImageClick}
-                onThumbnailLoaded={registerThumbnailUrl}
                 isHighlighted={attachment.id === hoveredAttachmentId}
                 deferHydration={deferHydration}
               />
@@ -776,7 +673,6 @@ export function AttachmentList({ attachments, workspaceId, className, deferHydra
                 attachment={attachment}
                 workspaceId={workspaceId}
                 onVideoClick={handleVideoClick}
-                onThumbnailLoaded={registerThumbnailUrl}
                 isHighlighted={attachment.id === hoveredAttachmentId}
                 deferHydration={deferHydration}
               />

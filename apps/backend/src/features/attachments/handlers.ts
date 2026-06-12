@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto"
 import type { Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
 import { buildContentDisposition, buildUploadParams, parseE2eUploadFlag, type AttachmentService } from "./service"
 import { isAttachmentReadableViaShareOrReference } from "./access"
-import { AttachmentRepository, type AttachmentSearchCursor, type AttachmentSearchRow } from "./repository"
+import {
+  AttachmentRepository,
+  type Attachment,
+  type AttachmentSearchCursor,
+  type AttachmentSearchRow,
+} from "./repository"
 import { AttachmentExtractionRepository } from "./extraction-repository"
 import type { StreamService } from "../streams"
 import { VideoTranscodeJobRepository } from "./video"
@@ -113,35 +119,110 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (!parsed.success) return res.status(400).json({ error: "Invalid query parameters" })
       const { download, variant } = parsed.data
 
-      // Image thumbnail: serve the sharp-generated WebP variant when ready.
-      // Generated asynchronously by the IMAGE_THUMBNAIL worker; if not yet
-      // available, fall through to the raw original.
-      if (variant === "thumbnail" && isImageAttachment(attachment.mimeType, attachment.filename)) {
-        if (attachment.thumbnailStoragePath) {
-          const responseContentDisposition =
-            download === "true" ? buildContentDisposition(attachment.filename) : undefined
-          const url = await storage.getSignedDownloadUrl(attachment.thumbnailStoragePath, {
-            responseContentDisposition,
-          })
-          return res.json({ url, expiresIn: 900 })
-        }
-        // Thumbnail not generated yet — fall through to raw original.
-      } else if (variant === "processed" || variant === "thumbnail") {
-        // For video variants (processed/thumbnail), look up the transcode job
-        const job = await VideoTranscodeJobRepository.findByAttachmentId(pool, attachmentId)
-        const path = variant === "processed" ? job?.processedStoragePath : job?.thumbnailStoragePath
-        if (job?.status === "completed" && path) {
-          const filename =
-            variant === "processed" ? attachment.filename.replace(/\.[^.]+$/, ".mp4") : attachment.filename
-          const responseContentDisposition = download === "true" ? buildContentDisposition(filename) : undefined
-          const url = await storage.getSignedDownloadUrl(path, { responseContentDisposition })
-          return res.json({ url, expiresIn: 900 })
-        }
-        // Fall through to raw file if variant not available
+      // A generated variant resolved to its own object → presign it. Raw
+      // requests and not-ready fall-throughs presign the original below.
+      const resolved = await resolveAttachmentVariant(pool, attachment, variant)
+      if (resolved.ready && resolved.storagePath !== attachment.storagePath) {
+        const responseContentDisposition = download === "true" ? buildContentDisposition(resolved.filename) : undefined
+        const url = await storage.getSignedDownloadUrl(resolved.storagePath, { responseContentDisposition })
+        return res.json({ url, expiresIn: 900 })
       }
 
       const url = await attachmentService.getDownloadUrl(attachment, { download: download === "true" })
       res.json({ url, expiresIn: 900 })
+    },
+
+    /**
+     * Serve attachment bytes through the backend at a deterministic URL per
+     * (attachment, variant), so the browser HTTP cache works across sessions —
+     * unlike presigned URLs from `getDownloadUrl`, whose fresh signature
+     * defeats cache keying and forces a re-download every cold open.
+     *
+     * Same ACL chain as `getDownloadUrl`: workspace scoping, sharing-safety
+     * gate, direct stream access with the share-grant/inline-reference
+     * fallback.
+     *
+     * The stored object for a given (attachment, variant) never changes after
+     * processing completes, so ready variants are served `immutable`. The
+     * not-ready fall-through (thumbnail/processed not generated yet) serves
+     * the raw original with `no-store` — caching fallback bytes under the
+     * variant URL would pin them and the real variant would never appear.
+     */
+    async getContent(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { attachmentId } = req.params
+
+      const attachment = await attachmentService.getById(attachmentId)
+      if (!attachment || attachment.workspaceId !== workspaceId) {
+        return res.status(404).json({ error: "Attachment not found" })
+      }
+
+      const sharingBlockReason = attachmentService.getSharingBlockReason(attachment)
+      if (sharingBlockReason) {
+        return res.status(403).json({ error: sharingBlockReason })
+      }
+
+      if (attachment.streamId) {
+        const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
+        if (!accessible) {
+          const granted = await isAttachmentReadableViaShareOrReference(pool, attachment, workspaceId, userId)
+          if (!granted) {
+            return res.status(403).json({ error: "Access denied" })
+          }
+        }
+      }
+
+      const parsed = z
+        .object({
+          variant: z.enum(["raw", "processed", "thumbnail"]).optional(),
+        })
+        .safeParse(req.query)
+      if (!parsed.success) return res.status(400).json({ error: "Invalid query parameters" })
+      const { variant } = parsed.data
+
+      const resolved = await resolveAttachmentVariant(pool, attachment, variant)
+
+      // The storage path uniquely identifies the served bytes (objects are
+      // written once), so a path-derived ETag is a valid validator. The
+      // fall-through gets no validator — a 304 must never extend the life of
+      // fallback bytes under the variant URL.
+      const etag = `"${createHash("sha256").update(resolved.storagePath).digest("hex")}"`
+      const cacheControl = resolved.ready ? "private, max-age=31536000, immutable" : "private, no-store"
+
+      res.set("Cache-Control", cacheControl)
+      res.set("X-Content-Type-Options", "nosniff")
+      // User-authored bytes served from the app origin must never execute as a
+      // document (HTML/SVG navigated to directly).
+      res.set("Content-Security-Policy", "sandbox")
+      if (resolved.ready) res.set("ETag", etag)
+
+      if (resolved.ready && req.headers["if-none-match"] === etag) {
+        return res.status(304).end()
+      }
+
+      const range = typeof req.headers.range === "string" ? req.headers.range : undefined
+      const object = await storage.getObjectContent(resolved.storagePath, { range })
+
+      res.set("Content-Type", resolved.contentType)
+      res.set("Accept-Ranges", "bytes")
+      if (object.contentLength !== undefined) res.set("Content-Length", String(object.contentLength))
+      if (object.contentRange) {
+        res.status(206)
+        res.set("Content-Range", object.contentRange)
+      }
+
+      object.stream.on("error", (err) => {
+        if (!res.headersSent) {
+          res.status(500).end()
+        } else {
+          // Headers (including Content-Length) are already on the wire — abort
+          // the socket so the client sees a failed transfer instead of a
+          // cleanly-terminated truncated 200 it would treat as complete.
+          res.destroy(err)
+        }
+      })
+      object.stream.pipe(res)
     },
 
     /**
@@ -264,6 +345,76 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         nextCursor,
       })
     },
+  }
+}
+
+interface ResolvedAttachmentVariant {
+  storagePath: string
+  contentType: string
+  /**
+   * Filename for content-disposition downloads, with its extension matching
+   * the served bytes (.webp/.jpg thumbnails, .mp4 processed video) rather
+   * than the original upload's.
+   */
+  filename: string
+  /**
+   * False when a generated variant was requested but isn't available yet —
+   * callers serve the raw original instead and must NOT let it be cached
+   * under the variant URL.
+   */
+  ready: boolean
+}
+
+/**
+ * Resolve which stored object a (attachment, variant) pair maps to — the one
+ * rule shared by `getDownloadUrl` (presign) and `getContent` (streaming).
+ *
+ * Image thumbnails are sharp-generated WebP, produced asynchronously by the
+ * IMAGE_THUMBNAIL worker; video processed/thumbnail variants come from the
+ * MediaConvert transcode job. Either may not exist yet, in which case the
+ * raw original is the fall-through with `ready: false`.
+ */
+async function resolveAttachmentVariant(
+  pool: Pool,
+  attachment: Attachment,
+  variant: "raw" | "processed" | "thumbnail" | undefined
+): Promise<ResolvedAttachmentVariant> {
+  if (variant === "thumbnail" && isImageAttachment(attachment.mimeType, attachment.filename)) {
+    if (attachment.thumbnailStoragePath) {
+      return {
+        storagePath: attachment.thumbnailStoragePath,
+        contentType: "image/webp",
+        filename: attachment.filename.replace(/\.[^.]+$/, ".webp"),
+        ready: true,
+      }
+    }
+  } else if (variant === "processed" || variant === "thumbnail") {
+    const job = await VideoTranscodeJobRepository.findByAttachmentId(pool, attachment.id)
+    const path = variant === "processed" ? job?.processedStoragePath : job?.thumbnailStoragePath
+    if (job?.status === "completed" && path) {
+      return {
+        storagePath: path,
+        contentType: variant === "processed" ? "video/mp4" : "image/jpeg",
+        filename: attachment.filename.replace(/\.[^.]+$/, variant === "processed" ? ".mp4" : ".jpg"),
+        ready: true,
+      }
+    }
+  } else {
+    // Raw (or no variant) requested — the original is always available.
+    return {
+      storagePath: attachment.storagePath,
+      contentType: attachment.mimeType,
+      filename: attachment.filename,
+      ready: true,
+    }
+  }
+
+  // Requested variant not generated yet — raw fall-through.
+  return {
+    storagePath: attachment.storagePath,
+    contentType: attachment.mimeType,
+    filename: attachment.filename,
+    ready: false,
   }
 }
 

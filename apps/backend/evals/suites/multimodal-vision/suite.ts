@@ -123,6 +123,9 @@ function createMockStorage(images: Map<string, Buffer>): StorageProvider {
     async getObjectStream(): Promise<never> {
       throw new Error("Not implemented in mock")
     },
+    async getObjectContent(): Promise<never> {
+      throw new Error("Not implemented in mock")
+    },
     async putObject(): Promise<void> {
       // No-op for mock
     },
