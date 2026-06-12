@@ -10,7 +10,11 @@ import { logger } from "../logger"
  */
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message, ...(err.code && { code: err.code }) })
+    res.status(err.status).json({
+      error: err.message,
+      ...(err.code && { code: err.code }),
+      ...(err.details !== undefined && { details: err.details }),
+    })
     return
   }
 

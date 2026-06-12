@@ -17,6 +17,7 @@ import { getEffectiveLevel } from "../streams"
 import { BotRepository, serializeBot } from "../public-api"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threa/backend-common"
 import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import { setStatusSchema, setNotificationPauseSchema } from "../../lib/schemas"
 import {
   parseJwtPermissions,
@@ -109,13 +110,7 @@ export function createWorkspaceHandlers({
       const workosUserId = req.workosUserId!
       const authUser = req.authUser
 
-      const result = createWorkspaceSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(createWorkspaceSchema, req.body)
 
       if (!authUser) {
         throw new HttpError("Not authenticated", { status: 401, code: "NOT_AUTHENTICATED" })
@@ -123,7 +118,7 @@ export function createWorkspaceHandlers({
 
       const userName = displayNameFromWorkos(authUser)
       const workspace = await workspaceService.createWorkspace({
-        name: result.data.name,
+        name: data.name,
         workosUserId,
         email: authUser.email,
         userName,
@@ -288,15 +283,9 @@ export function createWorkspaceHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = completeUserSetupSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(completeUserSetupSchema, req.body)
 
-      const user = await workspaceService.completeUserSetup(userId, workspaceId, result.data)
+      const user = await workspaceService.completeUserSetup(userId, workspaceId, data)
 
       res.json({ user })
     },
@@ -305,15 +294,9 @@ export function createWorkspaceHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
 
-      const result = checkSlugAvailableSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const query = validateRequest(checkSlugAvailableSchema, req.query)
 
-      const available = await workspaceService.isSlugAvailable(workspaceId, result.data.slug, userId)
+      const available = await workspaceService.isSlugAvailable(workspaceId, query.slug, userId)
       res.json({ available })
     },
 
@@ -321,15 +304,9 @@ export function createWorkspaceHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = updateProfileSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updateProfileSchema, req.body)
 
-      const user = await workspaceService.updateUserProfile(userId, workspaceId, result.data)
+      const user = await workspaceService.updateUserProfile(userId, workspaceId, data)
       res.json({ user })
     },
 
@@ -337,19 +314,13 @@ export function createWorkspaceHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = setStatusSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(setStatusSchema, req.body)
 
       const user = await workspaceService.setUserStatus(userId, workspaceId, {
-        statusEmoji: result.data.emoji,
-        statusText: result.data.text,
-        statusExpiresAt: result.data.expiresAt ? new Date(result.data.expiresAt) : null,
-        statusPausesNotifications: result.data.pausesNotifications,
+        statusEmoji: data.emoji,
+        statusText: data.text,
+        statusExpiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+        statusPausesNotifications: data.pausesNotifications,
       })
       res.json({ user })
     },
@@ -371,16 +342,10 @@ export function createWorkspaceHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = setNotificationPauseSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(setNotificationPauseSchema, req.body)
 
       const user = await workspaceService.setNotificationPause(userId, workspaceId, {
-        until: result.data.until ? new Date(result.data.until) : null,
+        until: data.until ? new Date(data.until) : null,
       })
       res.json({ user })
     },

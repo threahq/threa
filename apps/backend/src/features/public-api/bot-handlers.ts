@@ -15,6 +15,7 @@ import { sql, withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "@threa/backend-common"
 import { isUniqueViolation } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import {
   API_KEY_ELIGIBLE_SCOPES,
   BOT_TRAITS,
@@ -100,15 +101,14 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
     async create(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = createBotSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { type, name, description, avatarEmoji, traits } = result.data
+      const {
+        type,
+        name,
+        description,
+        avatarEmoji,
+        traits,
+        slug: slugInput,
+      } = validateRequest(createBotSchema, req.body)
 
       // Gate depends on the `type` field in the request body, which isn't
       // known at route registration time, so the check lives in the handler.
@@ -138,10 +138,11 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       }
       const ownerUserId = type === BotTypes.PERSONAL ? actorId : null
 
-      const slug = generateSlug(result.data.slug)
+      const slug = generateSlug(slugInput)
       if (!slug) {
-        return res.status(400).json({
-          error: "Validation failed",
+        throw new HttpError("Validation failed", {
+          status: 400,
+          code: "VALIDATION_ERROR",
           details: { slug: ["Slug cannot be empty after normalization"] },
         })
       }
@@ -184,20 +185,15 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       const { botId: id } = req.params
       // req.bot set by requireBotManagement middleware
 
-      const result = updateBotSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updateBotSchema, req.body)
 
-      const fields = { ...result.data }
+      const fields = { ...data }
       if (fields.slug) {
         fields.slug = generateSlug(fields.slug)
         if (!fields.slug) {
-          return res.status(400).json({
-            error: "Validation failed",
+          throw new HttpError("Validation failed", {
+            status: 400,
+            code: "VALIDATION_ERROR",
             details: { slug: ["Slug cannot be empty after normalization"] },
           })
         }
@@ -339,20 +335,14 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
         throw new HttpError("Bot is archived", { status: 409, code: "BOT_ARCHIVED" })
       }
 
-      const result = createBotKeySchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(createBotKeySchema, req.body)
 
       const { row, value } = await botApiKeyService.createKey({
         workspaceId,
         botId: id,
-        name: result.data.name,
-        scopes: result.data.scopes as WorkspacePermissionSlug[],
-        expiresAt: result.data.expiresAt ? new Date(result.data.expiresAt) : null,
+        name: data.name,
+        scopes: data.scopes as WorkspacePermissionSlug[],
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
       })
 
       res.status(201).json({ key: serializeBotKey(row), value })
@@ -362,18 +352,12 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
     async updateKey(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const { botId: id, keyId } = req.params
-      const result = updateBotKeySchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updateBotKeySchema, req.body)
       const row = await botApiKeyService.updateScopes({
         workspaceId,
         botId: id,
         keyId,
-        scopes: result.data.scopes as WorkspacePermissionSlug[],
+        scopes: data.scopes as WorkspacePermissionSlug[],
       })
       res.json({ data: serializeBotKey(row) })
     },

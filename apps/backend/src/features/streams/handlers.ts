@@ -21,6 +21,7 @@ import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
 
 const createStreamSchema = z
@@ -462,13 +463,7 @@ export function createStreamHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = createStreamSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(createStreamSchema, req.body)
 
       const {
         type,
@@ -484,7 +479,7 @@ export function createStreamHandlers({
         contextBag,
         e2eEnabled,
         e2eOwnerKeyId,
-      } = result.data
+      } = data
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
       // the service. Phase 1 invariant: the stream's `owner_user_key_id`
@@ -592,15 +587,9 @@ export function createStreamHandlers({
         throw new HttpError("Cannot update this stream type", { status: 403, code: "STREAM_IMMUTABLE" })
       }
 
-      const result = schema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(schema, req.body)
 
-      const { displayName, slug, description, visibility, sealedNameCiphertext, sealedNameEnvelope } = result.data
+      const { displayName, slug, description, visibility, sealedNameCiphertext, sealedNameEnvelope } = data
 
       // Schema guarantees one of: both set, both null (clear), or both omitted.
       let sealedName: { ciphertext: string; envelope: unknown } | null | undefined
@@ -625,14 +614,7 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const result = listEventsQuerySchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-      const { type, limit, after, before } = result.data
+      const { type, limit, after, before } = validateRequest(listEventsQuerySchema, req.query)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
@@ -657,14 +639,7 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const parsed = listEventsAroundQuerySchema.safeParse(req.query)
-      if (!parsed.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(parsed.error).fieldErrors,
-        })
-      }
-      const { eventId, messageId, limit } = parsed.data
+      const { eventId, messageId, limit } = validateRequest(listEventsAroundQuerySchema, req.query)
       const targetId = (eventId ?? messageId)!
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
@@ -697,15 +672,7 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const result = updateCompanionModeSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { companionMode, companionPersonaId } = result.data
+      const { companionMode, companionPersonaId } = validateRequest(updateCompanionModeSchema, req.body)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
@@ -724,17 +691,11 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const result = setNotificationLevelSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(setNotificationLevelSchema, req.body)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const membership = await streamService.setNotificationLevel(streamId, userId, result.data.notificationLevel)
+      const membership = await streamService.setNotificationLevel(streamId, userId, data.notificationLevel)
       if (!membership) {
         return res.status(404).json({ error: "Not a member of this stream" })
       }
@@ -747,17 +708,11 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const result = markAsReadSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(markAsReadSchema, req.body)
 
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const membership = await streamService.markAsRead(workspaceId, streamId, userId, result.data.lastEventId)
+      const membership = await streamService.markAsRead(workspaceId, streamId, userId, data.lastEventId)
       if (!membership) {
         return res.status(404).json({ error: "Not a member of this stream" })
       }
@@ -811,14 +766,8 @@ export function createStreamHandlers({
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
-      const parsed = streamBootstrapQuerySchema.safeParse(req.query)
-      if (!parsed.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(parsed.error).fieldErrors,
-        })
-      }
-      const afterSequence = parsed.data.after ? BigInt(parsed.data.after) : undefined
+      const query = validateRequest(streamBootstrapQuerySchema, req.query)
+      const afterSequence = query.after ? BigInt(query.after) : undefined
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
@@ -932,15 +881,9 @@ export function createStreamHandlers({
     async checkSlugAvailable(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = checkSlugAvailableSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const query = validateRequest(checkSlugAvailableSchema, req.query)
 
-      const available = await streamService.checkSlugAvailable(workspaceId, result.data.slug, result.data.exclude)
+      const available = await streamService.checkSlugAvailable(workspaceId, query.slug, query.exclude)
       res.json({ available })
     },
 
@@ -949,13 +892,7 @@ export function createStreamHandlers({
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const result = addMemberSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(addMemberSchema, req.body)
 
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, actorId)
 
@@ -963,7 +900,7 @@ export function createStreamHandlers({
         throw new HttpError("Cannot add members to this stream type", { status: 400, code: "ADD_MEMBER_NOT_ALLOWED" })
       }
 
-      const membership = await streamService.addMember(streamId, result.data.memberId, workspaceId, actorId)
+      const membership = await streamService.addMember(streamId, data.memberId, workspaceId, actorId)
       res.status(201).json({ membership })
     },
 

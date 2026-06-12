@@ -1,5 +1,6 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
+import { validateRequest } from "../../lib/validation"
 import type { UserApiKeyService } from "./service"
 import type { UserApiKeyRow } from "./repository"
 import { API_KEY_ELIGIBLE_SCOPES, type WorkspacePermissionSlug, type UserApiKey } from "@threa/types"
@@ -56,20 +57,14 @@ export function createUserApiKeyHandlers({ userApiKeyService }: Dependencies) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
 
-      const result = createKeySchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(createKeySchema, req.body)
 
       const { row, value } = await userApiKeyService.createKey({
         workspaceId,
         userId,
-        name: result.data.name,
-        scopes: result.data.scopes as WorkspacePermissionSlug[],
-        expiresAt: result.data.expiresAt ? new Date(result.data.expiresAt) : null,
+        name: data.name,
+        scopes: data.scopes as WorkspacePermissionSlug[],
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
       })
 
       res.status(201).json({ key: serializeKey(row), value })
@@ -80,19 +75,13 @@ export function createUserApiKeyHandlers({ userApiKeyService }: Dependencies) {
       const userId = req.user!.id
       const { keyId } = req.params
 
-      const result = updateKeySchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updateKeySchema, req.body)
 
       const row = await userApiKeyService.updateScopes({
         workspaceId,
         userId,
         keyId,
-        scopes: result.data.scopes as WorkspacePermissionSlug[],
+        scopes: data.scopes as WorkspacePermissionSlug[],
       })
       res.json({ key: serializeKey(row) })
     },
