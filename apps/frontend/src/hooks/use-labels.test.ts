@@ -1,7 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+import { renderHook, act, waitFor } from "@testing-library/react"
+import { QueryClient, QueryClientProvider, onlineManager } from "@tanstack/react-query"
+import { createElement, type ReactNode } from "react"
 import { LabelableResourceTypes, type Label, type LabelAssignment, type LabelMember } from "@threa/types"
 import { db } from "@/db"
-import { reconcileLabels, selectLabelStreams, type CachedLabelAssignment } from "./use-labels"
+import * as contextsModule from "@/contexts"
+import { labelKeys, reconcileLabels, selectLabelStreams, useLabelsSync, type CachedLabelAssignment } from "./use-labels"
 import type { CachedStream } from "@/db"
 
 const WORKSPACE_ID = "ws_test"
@@ -235,5 +239,49 @@ describe("selectLabelStreams", () => {
     expect(
       selectLabelStreams([cachedAssignment("label_a", "stream_1")], [cachedStream("stream_1")], "label_z")
     ).toEqual([])
+  })
+})
+
+describe("useLabelsSync refetchOnReconnect", () => {
+  let listFn: ReturnType<typeof vi.fn>
+  const response = { labels: [], memberships: [], assignments: [] }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    onlineManager.setOnline(true)
+    await Promise.all([db.labels.clear(), db.labelMemberships.clear(), db.labelAssignments.clear()])
+    listFn = vi.fn().mockResolvedValue(response)
+    vi.spyOn(contextsModule, "useLabelService").mockReturnValue({
+      list: listFn,
+    } as unknown as contextsModule.LabelService)
+  })
+
+  it("does not refetch on the online flip even when invalidated while offline", async () => {
+    // With staleTime Infinity, a reconnect refetch only ever fires for an
+    // invalidated query, so invalidated-while-offline is the one state where
+    // `refetchOnReconnect: true` and `false` behave differently on the online
+    // flip. Pin that the flip does not refetch: reconnect healing for labels
+    // is the engine's bootstrap reconcile plus catch-up replay through the
+    // gate-registered workspace-sync handlers, not this query.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: queryClient }, children)
+    renderHook(() => useLabelsSync(WORKSPACE_ID), { wrapper })
+    // Wait for the fetch to SETTLE (not just for listFn to be called) — a
+    // success landing after the invalidation would reset isInvalidated and
+    // make the assertion pass for the wrong reason.
+    await waitFor(() => expect(queryClient.getQueryData(labelKeys.list(WORKSPACE_ID))).toEqual(response))
+
+    await act(async () => {
+      onlineManager.setOnline(false)
+      await queryClient.invalidateQueries({ queryKey: labelKeys.list(WORKSPACE_ID), refetchType: "none" })
+    })
+
+    await act(async () => {
+      onlineManager.setOnline(true)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(listFn).toHaveBeenCalledTimes(1)
   })
 })
