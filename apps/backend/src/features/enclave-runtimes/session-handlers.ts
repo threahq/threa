@@ -157,14 +157,16 @@ interface Dependencies {
  * the runner this session was assigned to (a stronger binding than a
  * self-reported keyId, which any internal-key holder could copy). The row
  * holds only the sha256 digest, so the presented value is hashed before the
- * timing-safe compare (both sides are fixed-length hex). Rollout phase 1: a
- * presented token must match; an absent token is tolerated so sessions in
- * flight across the deploy boundary drain cleanly. The reject-if-absent flip
- * (for rows that carry a hash) is the later one-liner.
+ * timing-safe compare (both sides are fixed-length hex). The token is
+ * mandatory: the rollout-phase tolerance for tokenless in-flight sessions has
+ * drained (all pre-2.4b rows are terminal), so an absent token — like a NULL
+ * row hash, which no token can match — is rejected outright.
  */
 function assertCallbackBound(session: AgentSession, req: Request): void {
   const presented = req.header(ENCLAVE_CALLBACK_TOKEN_HEADER)
-  if (!presented) return
+  if (!presented) {
+    throw new HttpError("Missing callback token", { status: 403, code: "CALLBACK_TOKEN_MISSING" })
+  }
   const expected = session.callbackTokenHash
   const presentedHash = Buffer.from(hashCallbackToken(presented))
   if (!expected || !timingSafeEqual(presentedHash, Buffer.from(expected))) {
