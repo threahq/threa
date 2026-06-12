@@ -43,11 +43,13 @@ interface DragState {
 /**
  * A rendered slot in the strip. `key` is the slot's identity and survives
  * in-place content replacement (draft promotion swaps `draft:…` for the real
- * thread id without closing the slot).
+ * thread id without closing the slot). A `closing` slot is no longer in the
+ * panel list but stays mounted while its width animates to zero.
  */
 interface SlotItem {
   id: string
   key: string
+  closing?: boolean
 }
 
 /**
@@ -55,22 +57,41 @@ interface SlotItem {
  * - ids that remain keep their slot (and its width/animation state)
  * - a single same-position id swap transfers the slot key (in-place content
  *   replacement — the panel must not close and reopen)
+ * - removed ids enter a closing phase at their old position instead of
+ *   unmounting; reopening an id mid-close revives its slot
  */
 export function reconcileSlots(prev: SlotItem[], panels: string[], nextKey: () => string): SlotItem[] {
-  const prevIds = prev.map((it) => it.id)
-  if (prevIds.length === panels.length && prevIds.every((id, i) => id === panels[i])) {
+  const prevLive = prev.filter((it) => !it.closing)
+  const prevLiveIds = prevLive.map((it) => it.id)
+  if (prevLiveIds.length === panels.length && prevLiveIds.every((id, i) => id === panels[i])) {
     return prev
   }
 
-  const removed = prev.filter((it) => !panels.includes(it.id))
-  const added = panels.filter((id) => !prevIds.includes(id))
+  const removed = prevLive.filter((it) => !panels.includes(it.id))
+  const added = panels.filter((id) => !prevLiveIds.includes(id))
   const replacedInPlace =
-    removed.length === 1 && added.length === 1 && prevIds.indexOf(removed[0].id) === panels.indexOf(added[0])
+    removed.length === 1 && added.length === 1 && prevLiveIds.indexOf(removed[0].id) === panels.indexOf(added[0])
 
-  const keyById = new Map(prev.map((it) => [it.id, it.key]))
+  const keyById = new Map(prevLive.map((it) => [it.id, it.key]))
   if (replacedInPlace) keyById.set(added[0], removed[0].key)
+  for (const it of prev) {
+    if (it.closing && panels.includes(it.id) && !keyById.has(it.id)) keyById.set(it.id, it.key)
+  }
 
-  return panels.map((id) => ({ id, key: keyById.get(id) ?? nextKey() }))
+  const next: SlotItem[] = panels.map((id) => ({ id, key: keyById.get(id) ?? nextKey() }))
+
+  const usedKeys = new Set(next.map((it) => it.key))
+  const closing = [
+    ...prev.filter((it) => it.closing && !usedKeys.has(it.key)),
+    ...(replacedInPlace ? [] : removed.map((it) => ({ ...it, closing: true }))),
+  ]
+  // Keep each closing slot at (or near) the position it occupied, so the
+  // strip collapses in place rather than reshuffling.
+  for (const it of closing) {
+    const prevIndex = prev.findIndex((p) => p.key === it.key)
+    next.splice(Math.min(prevIndex < 0 ? next.length : prevIndex, next.length), 0, it)
+  }
+  return next
 }
 
 interface WorkspacePanelAreaProps {
@@ -119,6 +140,11 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
     else slotElsRef.current.delete(panelId)
   }, [])
 
+  /** Drop a closing slot once its width transition has finished. */
+  const finishClose = useCallback((slotKey: string) => {
+    setSlots((prev) => prev.filter((it) => !(it.key === slotKey && it.closing)))
+  }, [])
+
   // ---- Pane widths ---------------------------------------------------------
 
   // Widths are keyed by slot identity (not pane id) so they survive in-place
@@ -135,7 +161,7 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
   const equalizeAllPanes = useCallback(() => {
     const container = containerRef.current
     if (!container) return
-    const openSlots = slotsRef.current
+    const openSlots = slotsRef.current.filter((it) => !it.closing)
     if (openSlots.length === 0) return
     const per = Math.max(MIN_PANEL_WIDTH, Math.floor(container.offsetWidth / (openSlots.length + 1)))
     setSlotWidths((prev) => {
@@ -151,7 +177,7 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
    * halving the slot's share is enough there).
    */
   const equalizePairAt = useCallback((slotKey: string) => {
-    const openSlots = slotsRef.current
+    const openSlots = slotsRef.current.filter((it) => !it.closing)
     const idx = openSlots.findIndex((it) => it.key === slotKey)
     if (idx === -1) return
     const ownEl = slotElsRef.current.get(openSlots[idx].id)
@@ -458,6 +484,8 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
           workspaceId={workspaceId}
           containerRef={containerRef}
           animateEntry={areaMountedRef.current}
+          closing={slot.closing ?? false}
+          onCloseFinished={finishClose}
           isDragSource={drag?.panelId === slot.id}
           dragHandleProps={getDragHandleProps(slot.id)}
           width={slotWidths[slot.key] ?? DEFAULT_PANEL_WIDTH}
@@ -497,6 +525,9 @@ interface PanelSlotProps {
   workspaceId: string
   containerRef: React.RefObject<HTMLDivElement | null>
   animateEntry: boolean
+  /** The panel was closed; animate the slot's width to zero, then unmount. */
+  closing: boolean
+  onCloseFinished: (slotKey: string) => void
   isDragSource: boolean
   dragHandleProps: { onPointerDown: (e: React.PointerEvent) => void }
   width: number
@@ -512,6 +543,8 @@ function PanelSlot({
   workspaceId,
   containerRef,
   animateEntry,
+  closing,
+  onCloseFinished,
   isDragSource,
   dragHandleProps,
   width,
@@ -520,31 +553,48 @@ function PanelSlot({
   onRegisterEl,
 }: PanelSlotProps) {
   const { closePanel, setFocusedPane } = usePanel()
-  // Fly-in, not grow-in: the slot claims its full width immediately (one
-  // reflow, like the conversations panel taking over) and the content slides
-  // in from the right via transform — compositor-only, content at final size
-  // the whole time. Close is instant.
+  // Open/close animate the OUTER box's width (pushing the main view over
+  // smoothly) while the INNER box stays fixed at the final width, left-anchored
+  // and clipped by overflow-hidden — content slides in from the right edge and
+  // never reshapes. This is the original thread-panel model.
   const [entered, setEntered] = useState(!animateEntry)
-  const [slideDone, setSlideDone] = useState(!animateEntry)
+  const [entering, setEntering] = useState(animateEntry)
+  const [enableTransition, setEnableTransition] = useState(false)
 
+  // One frame after mount: enable transitions (so close always animates, even
+  // for deep-link slots that appeared at full width) and release the width
+  // from 0 to its target, which is what plays the open animation.
   useEffect(() => {
-    if (entered) return
-    const frame = requestAnimationFrame(() => setEntered(true))
+    const frame = requestAnimationFrame(() => {
+      setEnableTransition(true)
+      setEntered(true)
+    })
     return () => cancelAnimationFrame(frame)
-  }, [entered])
-
-  // Transition-end is the primary signal; the timeout is a fallback in case
-  // no transform transition fires.
-  useEffect(() => {
-    if (slideDone) return
-    const t = setTimeout(() => setSlideDone(true), SLIDE_MS * 2)
-    return () => clearTimeout(t)
-  }, [slideDone])
-
-  const handleTransitionEnd = useCallback((e: React.TransitionEvent) => {
-    if (e.propertyName !== "transform") return
-    setSlideDone(true)
   }, [])
+
+  // Fallbacks in case the width transition never fires (reduced motion,
+  // zero-distance transitions): settle the phase on a timer.
+  useEffect(() => {
+    if (!entering) return
+    const t = setTimeout(() => setEntering(false), SLIDE_MS * 2)
+    return () => clearTimeout(t)
+  }, [entering])
+
+  useEffect(() => {
+    if (!closing) return
+    const t = setTimeout(() => onCloseFinished(slotKey), SLIDE_MS * 2)
+    return () => clearTimeout(t)
+  }, [closing, onCloseFinished, slotKey])
+
+  const handleTransitionEnd = useCallback(
+    (e: React.TransitionEvent) => {
+      // Only our own width transition, not bubbled child transitions.
+      if (e.propertyName !== "width" || e.target !== e.currentTarget) return
+      if (closing) onCloseFinished(slotKey)
+      else setEntering(false)
+    },
+    [closing, onCloseFinished, slotKey]
+  )
 
   const handleWidthChange = useCallback(
     (newWidth: number) => {
@@ -576,7 +626,11 @@ function PanelSlot({
   )
 
   const maxWidth = Math.round((containerRef.current?.offsetWidth ?? 0) * MAX_PANEL_RATIO)
-  const isSliding = !slideDone
+  // While animating, the outer box owns the motion: its width tweens between 0
+  // and the target while flex is barred from interfering (shrink-0, minWidth 0).
+  // At rest it returns to normal flex behavior so crowded strips can squeeze.
+  const isAnimating = entering || closing
+  const displayWidth = closing || !entered ? 0 : width
 
   return (
     <div
@@ -584,23 +638,20 @@ function PanelSlot({
       data-testid="panel"
       data-panel-id={panelId}
       tabIndex={-1}
-      className={cn("relative flex overflow-hidden outline-none", isDragSource && "opacity-60")}
-      style={{ width, minWidth: Math.min(width, MIN_PANEL_WIDTH) }}
+      className={cn(
+        "relative flex overflow-hidden outline-none",
+        isAnimating && "shrink-0",
+        enableTransition && isAnimating && !isResizing && "transition-[width] duration-200 ease-out",
+        isDragSource && "opacity-60"
+      )}
+      style={isAnimating ? { width: displayWidth, minWidth: 0 } : { width, minWidth: Math.min(width, MIN_PANEL_WIDTH) }}
       onPointerDownCapture={() => setFocusedPane(panelId)}
       onFocusCapture={() => setFocusedPane(panelId)}
+      onTransitionEnd={handleTransitionEnd}
     >
       <div
-        className={cn(
-          "flex",
-          !isSliding && "min-w-0 flex-1",
-          isSliding && "transition-transform duration-200 ease-out"
-        )}
-        style={
-          isSliding
-            ? { width, minWidth: width, maxWidth: width, transform: entered ? "translateX(0)" : "translateX(100%)" }
-            : undefined
-        }
-        onTransitionEnd={handleTransitionEnd}
+        className={cn("flex", !isAnimating && "min-w-0 flex-1")}
+        style={isAnimating ? { width, minWidth: width, maxWidth: width } : undefined}
       >
         <PanelResizeHandle
           isResizing={isResizing}
