@@ -22,14 +22,13 @@
  */
 export const FEATURE_FLAGS = {
   /**
-   * Sync-engine v2 cursor rollout stage: "shadow" tracks the workspace
-   * sync-log cursor and logs what active mode WOULD apply (the default while
-   * production shadow logs prove the cursor heals correctly), "active"
-   * applies catch-up entries through the live handlers, "off" is the runtime
-   * kill switch. The mode is fixed per SyncEngine lifetime — see
+   * Sync-engine v2 cursor rollout stage: "active" (the default) applies
+   * catch-up entries through the live handlers, "off" is the runtime kill
+   * switch, "shadow" tracks the workspace sync-log cursor and only logs what
+   * active mode would apply. The mode is fixed per SyncEngine lifetime — see
    * apps/frontend/src/sync/sync-v2-mode.ts.
    */
-  "sync-v2-cursor": ["shadow", "off", "active"],
+  "sync-v2-cursor": ["active", "off", "shadow"],
 } as const satisfies Record<string, readonly [string, ...string[]]>
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS

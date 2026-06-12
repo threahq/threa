@@ -22,7 +22,7 @@ related: [architecture/outbox-pattern.md]
 A feature flag is an enum value looked up by string key, scoped to one user in one
 workspace. Each flag declares its allowed values in code and the **first value is the
 default** — a plain on/off flag is just the two-value case (`["off", "on"]`), while a
-staged rollout can declare richer variants (`["shadow", "off", "active"]`, the shape
+staged rollout can declare richer variants (`["active", "off", "shadow"]`, the shape
 `sync-v2-cursor` uses) without resorting to flag combinations. A platform admin
 sets a member's value from the backoffice and the change reaches that member's running
 frontend sessions within a second or two — no env vars, no redeploy. The backend
