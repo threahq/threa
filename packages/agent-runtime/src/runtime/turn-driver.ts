@@ -1,5 +1,5 @@
 import type { LanguageModel, ModelMessage } from "ai"
-import type { BotInvocationCapability, BotInvocationTrigger, SourceItem } from "@threa/types"
+import type { AuthorType, BotInvocationCapability, BotInvocationTrigger, SourceItem } from "@threa/types"
 import type { CostContext } from "../ai/ai"
 import {
   AgentRuntime,
@@ -152,6 +152,34 @@ export type TurnTrigger = BotInvocationTrigger
 export type DispatchedTurnRequest = Pick<TurnRequest, "delivery" | "messages">
 
 /**
+ * One prior conversation message shipped to a dispatched runner. The runner
+ * brings its own model and prompt assembly, so this is wire-shaped (ISO
+ * timestamps, markdown content), not the loop's `ModelMessage`.
+ */
+export interface ExternalHistoryMessage {
+  messageId: string
+  /** `assistant` = authored by the claiming bot itself; everything else — users, other bots, personas — is conversational input. */
+  role: "user" | "assistant"
+  authorId: string
+  authorType: AuthorType
+  authorDisplayName?: string
+  contentMarkdown: string
+  createdAt: string
+}
+
+/**
+ * Recent, location-scoped conversation context for a dispatched turn,
+ * discriminated on `kind` so a fetch-back `ref` variant can be added later
+ * without a wire break. Only the inline variant exists today: the last N
+ * messages preceding the trigger, oldest → newest, trigger excluded (it
+ * already travels as the invocation's prompt).
+ */
+export interface ExternalContextHandle {
+  kind: "inline"
+  messages: ExternalHistoryMessage[]
+}
+
+/**
  * What dispatch knows at hand-off that the LATER verb handlers need to resolve
  * the turn's sink edges. The durable analogue of `TurnSink`: instead of
  * closures invoked in one stack frame, it names the rows the verb handlers
@@ -171,6 +199,14 @@ export interface TurnDispatchBinding {
   mentionedActorSlugs?: string[]
   targetInstanceId?: string | null
   targetRuntimeSessionId?: string | null
+  /**
+   * Forward-compat slot for a transport that resolves context AT dispatch. The
+   * external bot path does not: it hydrates context at claim time, so history
+   * is fresh when the runner picks the turn up and is never double-stored on
+   * the invocation row (INV-57) — `ExternalTurnDriver` rejects a pre-resolved
+   * handle loudly rather than dropping it.
+   */
+  contextHandle?: ExternalContextHandle
   metadata?: Record<string, unknown>
 }
 

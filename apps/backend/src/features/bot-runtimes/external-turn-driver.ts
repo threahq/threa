@@ -39,6 +39,13 @@ export class ExternalTurnDriver implements DispatchedTurnDriver {
     if (request.delivery !== this.delivery) {
       throw new Error(`ExternalTurnDriver serves "${this.delivery}" turns; got "${request.delivery}"`)
     }
+    // Context on this wire is hydrated by the claim handler when the runner
+    // picks the turn up (fresh history, nothing double-stored on the
+    // invocation row — INV-57). A pre-resolved handle has no carrier here, so
+    // accepting one would silently drop it (INV-11).
+    if (binding.contextHandle) {
+      throw new Error("external context is hydrated at claim time; a pre-resolved context handle has no carrier")
+    }
     const { invocation, wasNewlyInserted } = await this.deps.service.createInvocation({
       workspaceId: binding.workspaceId,
       rootStreamId: binding.rootStreamId,

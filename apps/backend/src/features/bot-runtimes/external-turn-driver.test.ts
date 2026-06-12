@@ -98,6 +98,18 @@ describe("ExternalTurnDriver", () => {
     expect(createInvocation).not.toHaveBeenCalled()
   })
 
+  it("rejects a pre-resolved context handle — external context is hydrated at claim time", async () => {
+    const { driver, createInvocation } = makeDriver({ wasNewlyInserted: true })
+
+    await expect(
+      driver.dispatchTurn(externalRequest("hi"), {
+        ...binding,
+        contextHandle: { kind: "inline", messages: [] },
+      })
+    ).rejects.toThrow("hydrated at claim time")
+    expect(createInvocation).not.toHaveBeenCalled()
+  })
+
   it("declares its sink edges: durable verbs for commit and trace, loud gaps for the rest", () => {
     const { driver } = makeDriver({ wasNewlyInserted: true })
 

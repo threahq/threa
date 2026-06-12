@@ -5,7 +5,8 @@ import type { Server } from "socket.io"
 import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
-import type { EventService } from "../messaging"
+import { MessageRepository, type EventService } from "../messaging"
+import type { ExternalContextHandle } from "@threa/agent-runtime"
 import {
   StreamRepository,
   StreamEventRepository,
@@ -354,6 +355,65 @@ async function resolveAuthorDisplayNames(
 
   await Promise.all(fetches)
   return nameMap
+}
+
+/** Mirrors the enclave assignment's history cap (`MAX_HISTORY_MESSAGES`, enclave-invoke-worker). */
+const CLAIM_CONTEXT_MAX_MESSAGES = 30
+
+/**
+ * Hydrate the inline context handle for a freshly claimed invocation (N-4):
+ * the last messages preceding the trigger, from the invocation's own stream,
+ * oldest → newest. The trigger itself already travels as `promptMarkdown`.
+ *
+ * Scoping is per-location (INV-62): the invocation's location is the grant —
+ * an agent's access derives from WHERE it was invoked, and every surface's
+ * access spec includes the surface itself. So no `stream_members` or
+ * bot-channel-grant filter applies here: either would silently drop thread
+ * context (threads carry no membership of their own; access resolves through
+ * the root), and standing grants are the wrong axis anyway.
+ *
+ * Returns `undefined` when context is WITHHELD (stream gone, cross-workspace,
+ * or E2E — plaintext history never leaves the enclave path). An empty
+ * conversation instead yields an explicit empty inline handle, so the runner
+ * can tell "nothing came before" from "context unavailable".
+ */
+async function buildClaimContext(
+  pool: Pool,
+  invocation: { workspaceId: string; activeStreamId: string; sourceMessageId: string; actorId: string }
+): Promise<ExternalContextHandle | undefined> {
+  const stream = await StreamRepository.findById(pool, invocation.activeStreamId)
+  if (!stream || stream.workspaceId !== invocation.workspaceId) return undefined
+  // External dispatch into E2E streams is already blocked upstream
+  // (invocation-outbox-handler); this guards invocations that predate a later
+  // E2E enablement of the stream.
+  if (stream.e2eEnabled === true) return undefined
+
+  const surrounding = await MessageRepository.findSurrounding(
+    pool,
+    invocation.sourceMessageId,
+    invocation.activeStreamId,
+    CLAIM_CONTEXT_MAX_MESSAGES,
+    0
+  )
+  const prior = surrounding.filter((m) => m.id !== invocation.sourceMessageId)
+  const authorNames = await resolveAuthorDisplayNames(pool, invocation.workspaceId, prior)
+  return {
+    kind: "inline",
+    messages: prior.map((m) => {
+      const authorDisplayName = authorNames.get(m.authorId)
+      return {
+        messageId: m.id,
+        // "assistant" = this runner's own prior replies; other bots and
+        // personas are conversational input like any other participant.
+        role: m.authorType === AuthorTypes.BOT && m.authorId === invocation.actorId ? "assistant" : "user",
+        authorId: m.authorId,
+        authorType: m.authorType,
+        ...(authorDisplayName != null && { authorDisplayName }),
+        contentMarkdown: m.contentMarkdown,
+        createdAt: m.createdAt.toISOString(),
+      }
+    }),
+  }
 }
 
 export interface PublicApiDeps {
@@ -935,6 +995,7 @@ export function createPublicApiHandlers({
           })
         })
       }
+      const context = await buildClaimContext(pool, invocation)
       res.json({
         data: {
           id: invocation.id,
@@ -953,6 +1014,7 @@ export function createPublicApiHandlers({
           claimExpiresAt: invocation.claimExpiresAt!.toISOString(),
           runtimeSessionId: invocation.targetRuntimeSessionId,
           metadata: invocation.metadata,
+          ...(context && { context }),
         },
       })
     },
