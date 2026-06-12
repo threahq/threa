@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
+import type { Querier } from "../../db"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
@@ -18,15 +19,20 @@ const ORPHAN_ERROR = "Session orphaned (stale heartbeat)"
  * Mark one RUNNING session FAILED and emit the failure lifecycle (stream event +
  * outbox + session-room socket), mirroring the in-process failure path. Returns
  * whether we won the RUNNING→FAILED transition (false if it terminated under us).
- * Shared by orphan cleanup and the enclave dispatch worker (assign-failure path),
- * which can't rely on cleanup as a backstop: cleanup only scans RUNNING sessions,
- * so a session it marks FAILED itself must emit its own lifecycle.
+ * Shared by orphan cleanup and the enclave session callbacks, which can't rely
+ * on cleanup as a backstop: cleanup only scans RUNNING sessions, so a session
+ * marked FAILED here must emit its own lifecycle.
+ *
+ * `onFailed` runs inside the same transaction, only after the transition is
+ * won — for bookkeeping that must flip atomically with the session (INV-7),
+ * e.g. the enclave claim's terminal-fail.
  */
 export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
   session: { id: string; streamId: string; personaId: string },
-  error: string
+  error: string,
+  onFailed?: (tx: Querier) => Promise<void>
 ): Promise<boolean> {
   const { id: sessionId, streamId, personaId } = session
   // Resolve the workspace from the stream (agent_sessions don't carry it) so we
@@ -42,6 +48,7 @@ export async function failSessionWithLifecycle(
       onlyIfStatus: SessionStatuses.RUNNING,
     })
     if (!failed) return false
+    if (onFailed) await onFailed(tx)
     // The stream event + outbox is what unblocks the UI (clears the inline
     // indicator and keeps a refresh consistent). Without a stream we can't address
     // the rooms, but the session is still durably FAILED.

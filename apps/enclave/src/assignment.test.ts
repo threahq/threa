@@ -4,6 +4,7 @@ import { sessionAssignmentSchema } from "./assignment"
 
 const BASE: EnclaveSessionAssignment = {
   sessionId: "session_test",
+  callbackToken: "cbtok_1",
   streamId: "stream_x",
   wraps: [{ keyGeneration: 0, wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],
   history: [],
@@ -28,8 +29,13 @@ describe("sessionAssignmentSchema", () => {
   })
 
   it("keeps callbackToken through parsing (a stripped token would break every session callback)", () => {
-    const parsed = sessionAssignmentSchema.parse({ ...BASE, callbackToken: "cbtok_1" })
+    const parsed = sessionAssignmentSchema.parse(BASE)
     expect(parsed.callbackToken).toBe("cbtok_1")
+  })
+
+  it("rejects an assignment without a callbackToken — a tokenless turn could never report a result", () => {
+    const { callbackToken: _token, ...rest } = BASE
+    expect(sessionAssignmentSchema.safeParse(rest).success).toBe(false)
   })
 
   it("keeps recentDigests through parsing", () => {

@@ -654,12 +654,12 @@ export interface EnclaveSessionAssignment {
   /**
    * Claim-minted secret binding this session's callbacks to the runner that
    * claimed the turn (Phase 2.4b, E2EE-21; §2.7 transfers it onto the claim).
-   * Delivered only inside this claim response, echoed on every session
+   * Delivered only inside this claim response and echoed on every session
    * callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend rejects a
-   * mismatch. Optional on the wire for schema continuity, but the claim path
-   * always sets it.
+   * mismatch or an absent token, so the field is required — an assignment
+   * without it could never complete a single callback.
    */
-  callbackToken?: string
+  callbackToken: string
   wraps: EnclaveSskWrap[]
   history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
   prompt: EnclaveSealedMessage

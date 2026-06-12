@@ -445,12 +445,14 @@ describe("createEnclaveSessionHandlers.fail", () => {
     await handlers.fail(req("session_1", FAIL_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    // The turn's claim is terminal-failed with the session — a loop error is
-    // not retried (same semantics the push transport had).
-    expect(failClaim).toHaveBeenCalledWith(
-      pool,
-      expect.objectContaining({ sessionId: "session_1", errorMessage: "Enclave session failed: AbortError" })
-    )
+    // The turn's claim is terminal-failed with the session, in the SAME
+    // transaction as the RUNNING→FAILED flip (INV-7) — a loop error is not
+    // retried (same semantics the push transport had).
+    expect(failClaim.mock.calls[0]![0]).toBe(tx)
+    expect(failClaim.mock.calls[0]![1]).toMatchObject({
+      sessionId: "session_1",
+      errorMessage: "Enclave session failed: AbortError",
+    })
     // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
     // classification — the error's class name, never plaintext content (INV-E7).
     expect(updateStatus.mock.calls[0]![2]).toBe(SessionStatuses.FAILED)

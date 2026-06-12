@@ -13,7 +13,7 @@ import { AttachmentRepository } from "../attachments"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { Message } from "../messaging"
 import { UserRepository } from "../workspaces"
-import { UserPreferencesService } from "../../features/user-preferences"
+import type { UserPreferencesService } from "../user-preferences"
 import { EnclaveInvocationsRepository, type EnclaveInvocation } from "./invocations-repository"
 import { EnclaveClaimService } from "./claim-service"
 
@@ -67,6 +67,7 @@ const TRIGGER = {
 afterEach(() => mock.restore())
 
 const FAKE_STORAGE = { getObject: async () => Buffer.from("") } as unknown as StorageProvider
+const FAKE_PREFERENCES = { getPreferences: async () => ({}) } as unknown as UserPreferencesService
 
 /** Stub everything up to the session insert; returns the sentinel tx withTransaction runs on plus the claim-lifecycle spies. */
 function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
@@ -86,7 +87,6 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
   spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", workspaceId: "ws_1" } as never)
   spyOn(StreamPoliciesRepository, "getToolPolicy").mockResolvedValue(null)
-  spyOn(UserPreferencesService.prototype, "getPreferences").mockResolvedValue({} as never)
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ name: "Kris" }] as never)
   spyOn(agents, "buildEnclaveSystemPrompt").mockResolvedValue("You are Ariadne.")
 
@@ -97,7 +97,7 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
 }
 
 function service() {
-  return new EnclaveClaimService({ pool, storage: FAKE_STORAGE })
+  return new EnclaveClaimService({ pool, storage: FAKE_STORAGE, userPreferencesService: FAKE_PREFERENCES })
 }
 
 describe("EnclaveClaimService.claimTurn", () => {
@@ -230,7 +230,11 @@ describe("EnclaveClaimService.claimTurn", () => {
     spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
 
-    const svc = new EnclaveClaimService({ pool, storage: { getObject } as unknown as StorageProvider })
+    const svc = new EnclaveClaimService({
+      pool,
+      storage: { getObject } as unknown as StorageProvider,
+      userPreferencesService: FAKE_PREFERENCES,
+    })
     const assignment = await svc.claimTurn("eik_live")
 
     expect(assignment!.attachmentCiphertexts).toEqual([

@@ -9,7 +9,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { StreamEventRepository, StreamPoliciesRepository, StreamRepository } from "../streams"
 import { UserRepository } from "../workspaces"
-import { UserPreferencesService } from "../user-preferences"
+import type { UserPreferencesService } from "../user-preferences"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
 import { MessageRepository } from "../messaging"
 import { AttachmentRepository } from "../attachments"
@@ -82,6 +82,8 @@ export interface EnclaveClaimServiceDeps {
    * backend + OpenRouter.
    */
   storage: StorageProvider
+  /** Trigger author's preferences feed the shared system-prompt builder (temporal grounding). */
+  userPreferencesService: UserPreferencesService
 }
 
 /**
@@ -103,7 +105,7 @@ export class EnclaveClaimService {
   constructor(deps: EnclaveClaimServiceDeps) {
     this.pool = deps.pool
     this.storage = deps.storage
-    this.userPreferencesService = new UserPreferencesService(deps.pool)
+    this.userPreferencesService = deps.userPreferencesService
   }
 
   /**

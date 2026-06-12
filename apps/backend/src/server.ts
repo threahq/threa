@@ -579,7 +579,7 @@ export async function startServer(): Promise<ServerInstance> {
   // the oldest claimable E2E turn it can decrypt, building the sealed
   // assignment at claim time. Routes mount only when the enclave credential
   // is configured.
-  const enclaveClaimService = new EnclaveClaimService({ pool, storage })
+  const enclaveClaimService = new EnclaveClaimService({ pool, storage, userPreferencesService })
 
   // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
   // namespace. One instance shared between HTTP routes (claim/complete/fail)

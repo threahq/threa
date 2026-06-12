@@ -706,14 +706,15 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       assertRunning(session)
       assertCallbackBound(session, req)
 
-      await failSessionWithLifecycle(pool, io, session, `Enclave session failed: ${parsed.data.errorName}`)
-      // Terminal-fail the turn's claim too: a loop error is not retried (same
-      // semantics the push transport had). Guarded on `claimed`, so if a
-      // concurrent completion won instead this no-ops (INV-20).
-      await EnclaveInvocationsRepository.failBySession(pool, {
-        sessionId: id,
-        errorMessage: `Enclave session failed: ${parsed.data.errorName}`,
-      })
+      // Terminal-fail the turn's claim in the same transaction as the session
+      // flip (INV-7, mirroring the complete path): a loop error is not retried
+      // (same semantics the push transport had). The callback only runs when
+      // the RUNNING→FAILED transition is won, so a raced completion keeps its
+      // own claim flip.
+      const error = `Enclave session failed: ${parsed.data.errorName}`
+      await failSessionWithLifecycle(pool, io, session, error, (tx) =>
+        EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
+      )
 
       res.status(204).end()
     },

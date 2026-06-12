@@ -47,11 +47,12 @@ export const sessionAssignmentSchema = z.object({
   sessionId: z.string().min(1),
   /**
    * Claim-minted callback-binding secret (Phase 2.4b, E2EE-21), echoed on
-   * every session callback. MUST be declared — Zod strips unknown keys, and a
-   * silently dropped token would make the backend reject every callback for
-   * this turn.
+   * every session callback. Required: the backend rejects tokenless
+   * callbacks outright, so an assignment without it could never report a
+   * single result — better to fail the parse loudly here than run a turn
+   * whose every callback 403s.
    */
-  callbackToken: z.string().min(1).optional(),
+  callbackToken: z.string().min(1),
   streamId: z.string().min(1),
   /** One SSK wrap per generation referenced by `history`/`prompt`, addressed to this EIK. */
   wraps: z
