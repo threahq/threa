@@ -1,5 +1,6 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
-import { useSearchParams, useLocation } from "react-router-dom"
+import { useSearchParams, useLocation, useNavigate, useParams } from "react-router-dom"
+import { panelIdToMainPath, mainPathToPanelId } from "@/lib/panel-locations"
 
 /**
  * Which pane the user most recently interacted with. "main" is the routed
@@ -7,37 +8,9 @@ import { useSearchParams, useLocation } from "react-router-dom"
  */
 export type FocusedPane = "main" | string
 
-/**
- * Check if a panel ID represents a draft thread
- */
-export function isDraftPanel(panelId: string): boolean {
-  return panelId.startsWith("draft:")
-}
-
-/**
- * Parse draft panel ID to get parent stream and message IDs
- * Returns null if not a draft panel
- */
-export function parseDraftPanel(panelId: string): { parentStreamId: string; parentMessageId: string } | null {
-  if (!isDraftPanel(panelId)) return null
-  const parts = panelId.split(":")
-  if (parts.length !== 3) return null
-  const [, parentStreamId, parentMessageId] = parts
-  if (!parentStreamId || !parentMessageId) return null
-  return { parentStreamId, parentMessageId }
-}
-
-/**
- * Create a draft panel ID from parent stream and message IDs
- */
-export function createDraftPanelId(parentStreamId: string, parentMessageId: string): string {
-  return `draft:${parentStreamId}:${parentMessageId}`
-}
-
-/** Check if a panel ID is a named view surface (e.g. "view:saved"). */
-export function isViewPanel(panelId: string): boolean {
-  return panelId.startsWith("view:")
-}
+// Pane id helpers live with the route mapping; re-exported here for the many
+// existing call sites that import them from the context module.
+export { isDraftPanel, parseDraftPanel, createDraftPanelId, isViewPanel } from "@/lib/panel-locations"
 
 export interface OpenPanelOptions {
   /**
@@ -116,6 +89,23 @@ interface PanelContextValue {
   /** Swap a panel's content with another id in place (e.g. draft promotion). */
   replacePanel: (panelId: string, nextId: string) => void
 
+  /**
+   * The id of pane 0 — the surface the routed page shows — or null when the
+   * current page has no pane equivalent (settings-ish pages). Pane 0 is not a
+   * special kind of pane; the URL just encodes its surface in the path
+   * instead of a `?panel=` param.
+   */
+  paneZeroId: string | null
+  /** Every open pane in visual order: pane 0 (when managed) plus the strip. */
+  panes: string[]
+  /**
+   * Move a pane to a new index in the combined order. Moving across index 0
+   * navigates: the surface at index 0 is the routed page.
+   */
+  movePane: (paneId: string, toIndex: number) => void
+  /** Close any pane. Closing pane 0 promotes the next pane to the route. */
+  closePane: (paneId: string) => void
+
   /** Record which pane the user is interacting with. */
   setFocusedPane: (pane: FocusedPane) => void
   /** Read the most recently focused pane without subscribing. */
@@ -130,16 +120,33 @@ interface PanelProviderProps {
   children: ReactNode
 }
 
+/**
+ * How many side panels fit comfortably. Mobile gets exactly one; desktop
+ * scales with viewport width (a wide monitor fits many, a laptop two or
+ * three). Interactive opens beyond the cap replace the last panel instead of
+ * appending — deep links with more panels still render them all.
+ */
+export function maxSidePanels(viewportWidth: number): number {
+  if (viewportWidth < 640) return 1
+  return Math.max(1, Math.min(8, Math.floor((viewportWidth - 600) / 360)))
+}
+
 export function PanelProvider({ children }: PanelProviderProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  const navigate = useNavigate()
+  const { workspaceId } = useParams<{ workspaceId: string }>()
 
   const panels = useMemo(() => searchParams.getAll("panel"), [searchParams])
   const panelId = panels.length > 0 ? panels[panels.length - 1] : null
   const isPanelOpen = panels.length > 0
+  const paneZeroId = useMemo(() => mainPathToPanelId(location.pathname), [location.pathname])
+  const panes = useMemo(() => (paneZeroId ? [paneZeroId, ...panels] : panels), [paneZeroId, panels])
 
   const panelsRef = useRef(panels)
   panelsRef.current = panels
+  const locationRef = useRef(location)
+  locationRef.current = location
 
   const storeRef = useRef<FocusedPaneStore | null>(null)
   if (!storeRef.current) {
@@ -166,6 +173,74 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [setSearchParams]
   )
 
+  /**
+   * Write a new combined pane order. Index 0 is encoded in the path, the rest
+   * in `?panel=` params — when index 0 changes this navigates (a history
+   * entry: the routed surface changed), otherwise it rewrites params in
+   * place. Non-routable panes (drafts) are clamped out of index 0.
+   */
+  const writePanes = useCallback(
+    (transform: (prev: string[]) => string[]) => {
+      const loc = locationRef.current
+      const prevZero = mainPathToPanelId(loc.pathname)
+      const prevPanels = new URLSearchParams(loc.search).getAll("panel")
+      const prev = prevZero ? [prevZero, ...prevPanels] : prevPanels
+      const next = transform(prev)
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return
+
+      if (!prevZero) {
+        // The routed page has no pane equivalent — everything lives in params.
+        writePanels(() => next)
+        return
+      }
+
+      const params = new URLSearchParams(loc.search)
+      params.delete("panel")
+      const nextZero = next[0] ?? null
+      for (const id of next.slice(1)) params.append("panel", id)
+
+      if (!nextZero) {
+        navigate(`/w/${workspaceId}`)
+        return
+      }
+      if (nextZero === prevZero) {
+        setSearchParams(params, { replace: true })
+        return
+      }
+      const path = panelIdToMainPath(workspaceId ?? "", nextZero)
+      if (!path) return
+      const search = params.toString()
+      navigate(`${path}${search ? `?${search}` : ""}`)
+    },
+    [writePanels, setSearchParams, navigate, workspaceId]
+  )
+
+  const movePane = useCallback(
+    (paneId: string, toIndex: number) => {
+      writePanes((prev) => {
+        const from = prev.indexOf(paneId)
+        if (from === -1) return prev
+        // When index 0 is the routed page, a pane with no route can't take it.
+        const zeroIsRouted = mainPathToPanelId(locationRef.current.pathname) != null
+        const floor = !zeroIsRouted || panelIdToMainPath(workspaceId ?? "", paneId) ? 0 : 1
+        const to = Math.max(floor, Math.min(toIndex, prev.length - 1))
+        if (to === from) return prev
+        const next = [...prev]
+        next.splice(from, 1)
+        next.splice(to, 0, paneId)
+        return next
+      })
+    },
+    [writePanes, workspaceId]
+  )
+
+  const closePane = useCallback(
+    (paneId: string) => {
+      writePanes((prev) => prev.filter((p) => p !== paneId))
+    },
+    [writePanes]
+  )
+
   const getPanelUrl = useCallback(
     (streamId: string, options?: OpenPanelOptions) => {
       const newParams = new URLSearchParams(searchParams)
@@ -179,7 +254,13 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const openPanel = useCallback(
     (streamId: string, options?: OpenPanelOptions) => {
-      writePanels((prev) => applyOpenPanel(prev, streamId, options))
+      writePanels((prev) => {
+        // Appending beyond what the viewport fits degrades to replacing the
+        // last panel — mobile gets exactly one, wide screens get many.
+        const cap = maxSidePanels(typeof window === "undefined" ? Infinity : window.innerWidth)
+        const effective = options?.mode === "new" && prev.length >= cap ? { ...options, mode: undefined } : options
+        return applyOpenPanel(prev, streamId, effective)
+      })
       focusedPaneStore.set(streamId)
     },
     [writePanels, focusedPaneStore]
@@ -251,6 +332,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
       closeAllPanels,
       movePanel,
       replacePanel,
+      paneZeroId,
+      panes,
+      movePane,
+      closePane,
       setFocusedPane,
       getFocusedPane,
       focusedPaneStore,
@@ -265,6 +350,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
       closeAllPanels,
       movePanel,
       replacePanel,
+      paneZeroId,
+      panes,
+      movePane,
+      closePane,
       setFocusedPane,
       getFocusedPane,
       focusedPaneStore,

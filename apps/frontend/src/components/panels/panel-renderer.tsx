@@ -4,7 +4,7 @@ import { isViewPanel } from "@/contexts/panel-context"
 import { Skeleton } from "@/components/ui/skeleton"
 import { SidePanel, SidePanelHeader, SidePanelClose, SidePanelContent } from "@/components/ui/side-panel"
 import { Button } from "@/components/ui/button"
-import { parseViewPanel } from "./panel-locations"
+import { parseViewPanel } from "@/lib/panel-locations"
 
 // Lazy chunks: stream/thread panels ride with the timeline+composer bundle the
 // stream page already loads; view panels ride with their page chunks.

@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { useLocation, useNavigate } from "react-router-dom"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import { usePanel, useSidebar } from "@/contexts"
 import { PanelInstanceProvider, useFocusedPane } from "@/contexts/panel-instance-context"
 import { useKeyboardShortcuts } from "@/hooks"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelContentRenderer } from "@/components/panels/panel-renderer"
-import { panelIdToMainPath, mainPathToPanelId } from "@/components/panels/panel-locations"
+import { panelIdToMainPath } from "@/lib/panel-locations"
 import { PanelResizeHandle } from "./panel-resize-handle"
 
 const DEFAULT_PANEL_WIDTH = 480
@@ -16,6 +15,8 @@ const MAX_PANEL_RATIO = 0.6
 const DRAG_THRESHOLD_PX = 6
 /** Right edge of the main view that acts as a "dock panel here" zone. */
 const MAIN_EDGE_ZONE_PX = 120
+/** Open/close slide duration; the exit fallback must outlive the transition. */
+const SLIDE_MS = 200
 
 interface OverlayRect {
   left: number
@@ -24,7 +25,11 @@ interface OverlayRect {
   height: number
 }
 
-type DropTarget = { kind: "insert"; index: number; rect: OverlayRect } | { kind: "main"; rect: OverlayRect }
+/** All drop targets are positions in the combined pane order — pane 0 included. */
+interface DropTarget {
+  index: number
+  rect: OverlayRect
+}
 
 interface DragState {
   panelId: string
@@ -33,6 +38,58 @@ interface DragState {
   x: number
   y: number
   target: DropTarget | null
+}
+
+/**
+ * A rendered slot in the strip. `key` is the slot's identity and survives
+ * in-place content replacement (draft promotion swaps `draft:…` for the real
+ * thread id without closing the slot); `closing` marks a slot playing its
+ * exit slide before unmounting.
+ */
+interface SlotItem {
+  id: string
+  key: string
+  closing: boolean
+}
+
+/**
+ * Compute the next slot list for a new panel id list. Slot keys are stable:
+ * - ids that remain keep their slot (and its width/animation state)
+ * - a single same-position id swap transfers the slot key (in-place content
+ *   replacement — the panel must not close and reopen)
+ * - removed ids stay as `closing` slots until their exit slide finishes
+ */
+export function reconcileSlots(prev: SlotItem[], panels: string[], nextKey: () => string): SlotItem[] {
+  const openItems = prev.filter((it) => !it.closing)
+  const openIds = openItems.map((it) => it.id)
+  if (
+    openIds.length === panels.length &&
+    openIds.every((id, i) => id === panels[i]) &&
+    openItems.length === prev.length
+  ) {
+    return prev
+  }
+
+  const panelSet = new Set(panels)
+  const removed = openItems.filter((it) => !panelSet.has(it.id))
+  const added = panels.filter((id) => !openIds.includes(id))
+  const replacedInPlace =
+    removed.length === 1 && added.length === 1 && openIds.indexOf(removed[0].id) === panels.indexOf(added[0])
+
+  const keyById = new Map(openItems.map((it) => [it.id, it.key]))
+  if (replacedInPlace) keyById.set(added[0], removed[0].key)
+
+  const next: SlotItem[] = panels.map((id) => ({ id, key: keyById.get(id) ?? nextKey(), closing: false }))
+
+  // Re-insert exiting slots near their previous position so the close slide
+  // plays where the panel was. A reopened id cancels its pending exit.
+  prev.forEach((it, idx) => {
+    if (panelSet.has(it.id)) return
+    if (replacedInPlace && it.key === removed[0].key) return
+    next.splice(Math.min(idx, next.length), 0, { id: it.id, key: it.key, closing: true })
+  })
+
+  return next
 }
 
 interface WorkspacePanelAreaProps {
@@ -50,10 +107,8 @@ interface WorkspacePanelAreaProps {
  * matching the previous full-screen thread behavior.
  */
 export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelAreaProps) {
-  const { panels, closePanel, movePanel, setFocusedPane, getFocusedPane } = usePanel()
+  const { panels, panes, paneZeroId, closePanel, closePane, movePane, setFocusedPane, getFocusedPane } = usePanel()
   const { isMobile } = useSidebar()
-  const navigate = useNavigate()
-  const location = useLocation()
 
   const containerRef = useRef<HTMLDivElement>(null)
   const mainRef = useRef<HTMLDivElement>(null)
@@ -66,6 +121,22 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
     areaMountedRef.current = true
   }, [])
 
+  // ---- Slot lifecycle (stable identity + exit animation) -------------------
+
+  const slotKeyCounterRef = useRef(0)
+  const nextSlotKey = useCallback(() => `slot-${slotKeyCounterRef.current++}`, [])
+  const [slots, setSlots] = useState<SlotItem[]>(() => panels.map((id) => ({ id, key: nextSlotKey(), closing: false })))
+
+  // Layout effect so a removed panel becomes a `closing` slot in the same
+  // paint — a passive effect would flash it gone before the exit slide.
+  useLayoutEffect(() => {
+    setSlots((prev) => reconcileSlots(prev, panels, nextSlotKey))
+  }, [panels, nextSlotKey])
+
+  const handleSlotExited = useCallback((slotKey: string) => {
+    setSlots((prev) => prev.filter((it) => it.key !== slotKey || !it.closing))
+  }, [])
+
   const registerSlotEl = useCallback((panelId: string, el: HTMLDivElement | null) => {
     if (el) slotElsRef.current.set(panelId, el)
     else slotElsRef.current.delete(panelId)
@@ -76,10 +147,10 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
   const [drag, setDrag] = useState<DragState | null>(null)
   const dragRef = useRef<DragState | null>(null)
   dragRef.current = drag
-  const panelsRef = useRef(panels)
-  panelsRef.current = panels
-  const locationRef = useRef(location)
-  locationRef.current = location
+  const panesRef = useRef(panes)
+  panesRef.current = panes
+  const paneZeroRef = useRef(paneZeroId)
+  paneZeroRef.current = paneZeroId
 
   const endDrag = useCallback(() => {
     setDrag(null)
@@ -91,36 +162,11 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
     (state: DragState) => {
       const target = state.target
       if (!target) return
-      const currentPanels = panelsRef.current
-      if (target.kind === "insert") {
-        const from = currentPanels.indexOf(state.panelId)
-        if (from === -1) return
-        movePanel(state.panelId, from < target.index ? target.index - 1 : target.index)
-        return
-      }
-      // Promote to main view; the previous main view takes over the vacated
-      // slot when it has a panel-able equivalent (a swap), otherwise the slot
-      // just closes.
-      const mainPath = panelIdToMainPath(workspaceId, state.panelId)
-      if (!mainPath) return
-      const loc = locationRef.current
-      const previousMain = mainPathToPanelId(loc.pathname)
-      const params = new URLSearchParams(loc.search)
-      const current = params.getAll("panel")
-      params.delete("panel")
-      for (const id of current) {
-        if (id === state.panelId) {
-          if (previousMain && previousMain !== state.panelId && !current.includes(previousMain)) {
-            params.append("panel", previousMain)
-          }
-        } else {
-          params.append("panel", id)
-        }
-      }
-      const search = params.toString()
-      navigate(`${mainPath}${search ? `?${search}` : ""}`)
+      const from = panesRef.current.indexOf(state.panelId)
+      if (from === -1) return
+      movePane(state.panelId, from < target.index ? target.index - 1 : target.index)
     },
-    [movePanel, navigate, workspaceId]
+    [movePane]
   )
 
   const computeTarget = useCallback(
@@ -144,20 +190,21 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
         height,
       })
 
-      const currentPanels = panelsRef.current
-      const draggedIndex = currentPanels.indexOf(draggedId)
+      // All panes are positions in one combined order. Each pane contributes
+      // two half-zones: left half inserts before it, right half after it.
+      const currentPanes = panesRef.current
+      const paneZero = paneZeroRef.current
+      const draggedIndex = currentPanes.indexOf(draggedId)
+      const draggedIsRoutable = panelIdToMainPath(workspaceId, draggedId) != null
 
-      for (let i = 0; i < currentPanels.length; i++) {
-        const el = slotElsRef.current.get(currentPanels[i])
-        if (!el) continue
-        const r = el.getBoundingClientRect()
-        if (clientX < r.left || clientX > r.right) continue
+      const zoneFor = (r: DOMRect, paneIndex: number): DropTarget | null => {
         const before = clientX < r.left + r.width / 2
-        const index = before ? i : i + 1
+        const index = before ? paneIndex : paneIndex + 1
         // Dropping back onto its own position is a no-op — no zone to show.
         if (index === draggedIndex || index === draggedIndex + 1) return null
+        // Index 0 is the routed page; a pane with no route can't take it.
+        if (index === 0 && paneZero && !draggedIsRoutable) return null
         return {
-          kind: "insert",
           index,
           rect: before
             ? rel(r.left, r.top, r.width / 2, r.height)
@@ -165,21 +212,24 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
         }
       }
 
+      const sideBase = paneZero ? 1 : 0
+      const sidePanes = currentPanes.slice(sideBase)
+      for (let i = 0; i < sidePanes.length; i++) {
+        const el = slotElsRef.current.get(sidePanes[i])
+        if (!el) continue
+        const r = el.getBoundingClientRect()
+        if (clientX < r.left || clientX > r.right) continue
+        return zoneFor(r, sideBase + i)
+      }
+
       const mainRect = main.getBoundingClientRect()
       if (clientX >= mainRect.left && clientX <= mainRect.right) {
-        if (clientX > mainRect.right - MAIN_EDGE_ZONE_PX) {
-          if (draggedIndex === 0) return null
+        if (paneZero) return zoneFor(mainRect, 0)
+        // The routed page has no pane equivalent — only the right edge acts
+        // as an "insert first panel here" zone.
+        if (clientX > mainRect.right - MAIN_EDGE_ZONE_PX && draggedIndex !== 0) {
           const stripWidth = Math.min(360, mainRect.width * 0.35)
-          return {
-            kind: "insert",
-            index: 0,
-            rect: rel(mainRect.right - stripWidth, mainRect.top, stripWidth, mainRect.height),
-          }
-        }
-        if (!panelIdToMainPath(workspaceId, draggedId)) return null
-        return {
-          kind: "main",
-          rect: rel(mainRect.left + 6, mainRect.top + 6, mainRect.width - 12, mainRect.height - 12),
+          return { index: 0, rect: rel(mainRect.right - stripWidth, mainRect.top, stripWidth, mainRect.height) }
         }
       }
       return null
@@ -203,7 +253,8 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
           if (!started) {
             if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD_PX) return
             started = true
-            const headerEl = slotElsRef.current.get(panelId)?.querySelector("header")
+            const paneEl = slotElsRef.current.get(panelId) ?? (panelId === paneZeroRef.current ? mainRef.current : null)
+            const headerEl = paneEl?.querySelector("header")
             // The title element, not the whole header — header textContent
             // would also pick up button labels ("Close", "Panel actions").
             const headerText = headerEl?.querySelector("h1, h2, h3")?.textContent?.trim()
@@ -276,7 +327,8 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
 
   const cycleFocus = useCallback(
     (direction: 1 | -1) => {
-      const order = ["main", ...panelsRef.current]
+      const sidePanes = paneZeroRef.current ? panesRef.current.slice(1) : panesRef.current
+      const order = ["main", ...sidePanes]
       if (order.length < 2) return
       const idx = Math.max(0, order.indexOf(getFocusedPane()))
       focusPane(order[(idx + direction + order.length) % order.length])
@@ -284,24 +336,38 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
     [focusPane, getFocusedPane]
   )
 
+  /** The focused pane's id in the combined order ("main" = pane 0). */
+  const focusedPaneId = useCallback(() => {
+    const focused = getFocusedPane()
+    return focused === "main" ? paneZeroRef.current : focused
+  }, [getFocusedPane])
+
   useKeyboardShortcuts(
     {
       focusNextPane: () => cycleFocus(1),
       focusPreviousPane: () => cycleFocus(-1),
       closeFocusedPanel: () => {
-        const focused = getFocusedPane()
-        if (focused !== "main") closePanel(focused)
-        else if (panelsRef.current.length > 0) closePanel()
+        const id = focusedPaneId()
+        if (id) closePane(id)
+        else if (panesRef.current.length > 0) closePanel()
       },
       movePanelLeft: () => {
-        const focused = getFocusedPane()
-        const i = panelsRef.current.indexOf(focused)
-        if (i > 0) movePanel(focused, i - 1)
+        const id = focusedPaneId()
+        if (!id) return
+        const i = panesRef.current.indexOf(id)
+        if (i > 0) {
+          movePane(id, i - 1)
+          setFocusedPane(id)
+        }
       },
       movePanelRight: () => {
-        const focused = getFocusedPane()
-        const i = panelsRef.current.indexOf(focused)
-        if (i !== -1 && i < panelsRef.current.length - 1) movePanel(focused, i + 1)
+        const id = focusedPaneId()
+        if (!id) return
+        const i = panesRef.current.indexOf(id)
+        if (i !== -1 && i < panesRef.current.length - 1) {
+          movePane(id, i + 1)
+          setFocusedPane(id)
+        }
       },
     },
     !isMobile
@@ -331,41 +397,52 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
         // flex-1 has basis 0 — without a min-width, enough panels would
         // squeeze the main view to nothing before the panels start shrinking.
         className="min-w-[360px] flex-1 outline-none"
-        onPointerDownCapture={() => setFocusedPane("main")}
+        onPointerDownCapture={(e) => {
+          setFocusedPane("main")
+          // Pane 0 is a pane like any other — its page header doubles as the
+          // drag handle. Only the topmost header counts; headers nested in
+          // page content keep their own behavior.
+          const paneZero = paneZeroRef.current
+          if (!paneZero) return
+          const target = e.target as HTMLElement
+          const header = target.closest("header")
+          if (!header || !mainRef.current) return
+          const headerRect = header.getBoundingClientRect()
+          const mainRect = mainRef.current.getBoundingClientRect()
+          if (headerRect.top - mainRect.top > 8) return
+          getDragHandleProps(paneZero).onPointerDown(e)
+        }}
         onFocusCapture={() => setFocusedPane("main")}
       >
         {children}
       </div>
 
-      {panels.map((panelId) => (
+      {slots.map((slot) => (
         <PanelSlot
-          key={panelId}
-          panelId={panelId}
+          key={slot.key}
+          slotKey={slot.key}
+          panelId={slot.id}
+          closing={slot.closing}
           workspaceId={workspaceId}
           containerRef={containerRef}
           animateEntry={areaMountedRef.current}
-          isDragSource={drag?.panelId === panelId}
-          dragHandleProps={getDragHandleProps(panelId)}
+          isDragSource={drag?.panelId === slot.id}
+          dragHandleProps={getDragHandleProps(slot.id)}
           onRegisterEl={registerSlotEl}
+          onExited={handleSlotExited}
         />
       ))}
 
       {drag?.target && (
         <div
-          className="pointer-events-none absolute z-50 flex items-center justify-center rounded-lg border-2 border-primary/60 bg-primary/10 transition-all duration-150 ease-out"
+          className="pointer-events-none absolute z-50 rounded-lg border-2 border-primary/60 bg-primary/10 transition-all duration-150 ease-out"
           style={{
             left: drag.target.rect.left,
             top: drag.target.rect.top,
             width: drag.target.rect.width,
             height: drag.target.rect.height,
           }}
-        >
-          {drag.target.kind === "main" && (
-            <span className="rounded-md bg-background/90 px-3 py-1.5 text-sm font-medium text-foreground shadow-sm">
-              Open in main view
-            </span>
-          )}
-        </div>
+        />
       )}
 
       {drag && (
@@ -381,34 +458,64 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
 }
 
 interface PanelSlotProps {
+  slotKey: string
   panelId: string
+  closing: boolean
   workspaceId: string
   containerRef: React.RefObject<HTMLDivElement | null>
   animateEntry: boolean
   isDragSource: boolean
   dragHandleProps: { onPointerDown: (e: React.PointerEvent) => void }
   onRegisterEl: (panelId: string, el: HTMLDivElement | null) => void
+  onExited: (slotKey: string) => void
 }
 
 function PanelSlot({
+  slotKey,
   panelId,
+  closing,
   workspaceId,
   containerRef,
   animateEntry,
   isDragSource,
   dragHandleProps,
   onRegisterEl,
+  onExited,
 }: PanelSlotProps) {
   const { closePanel, setFocusedPane } = usePanel()
   const focusedPane = useFocusedPane()
   const [width, setWidth] = useState(DEFAULT_PANEL_WIDTH)
   const [entered, setEntered] = useState(!animateEntry)
+  const [slideDone, setSlideDone] = useState(!animateEntry)
 
   useEffect(() => {
     if (entered) return
     const frame = requestAnimationFrame(() => setEntered(true))
     return () => cancelAnimationFrame(frame)
   }, [entered])
+
+  // Transition-end is the primary signal; the timeout is a fallback for the
+  // cases where no width transition fires (e.g. closed before it entered).
+  useEffect(() => {
+    if (slideDone || closing) return
+    const t = setTimeout(() => setSlideDone(true), SLIDE_MS * 2)
+    return () => clearTimeout(t)
+  }, [slideDone, closing])
+
+  useEffect(() => {
+    if (!closing) return
+    const t = setTimeout(() => onExited(slotKey), SLIDE_MS * 2)
+    return () => clearTimeout(t)
+  }, [closing, onExited, slotKey])
+
+  const handleTransitionEnd = useCallback(
+    (e: React.TransitionEvent) => {
+      if (e.propertyName !== "width" || e.target !== e.currentTarget) return
+      if (closing) onExited(slotKey)
+      else setSlideDone(true)
+    },
+    [closing, onExited, slotKey]
+  )
 
   const handleWidthChange = useCallback(
     (newWidth: number) => {
@@ -440,35 +547,51 @@ function PanelSlot({
   )
 
   const maxWidth = Math.round((containerRef.current?.offsetWidth ?? 0) * MAX_PANEL_RATIO)
-  const isFocused = focusedPane === panelId
+  const isFocused = !closing && focusedPane === panelId
+  const isSliding = closing || !slideDone
+  const displayWidth = closing || !entered ? 0 : width
 
   return (
     <div
-      ref={(el) => onRegisterEl(panelId, el)}
+      ref={(el) => {
+        // Closing slots don't take part in drag targeting or keyboard focus —
+        // a reopened twin must own the registration.
+        if (!closing) onRegisterEl(panelId, el)
+      }}
       data-testid="panel"
       data-panel-id={panelId}
       tabIndex={-1}
+      // justify-end + a fixed-width inner box during the slide: the bounding
+      // box animates, but the content is laid out at its final size and
+      // slides in from the right edge. Content must never reshape while the
+      // panel opens or closes.
       className={cn(
-        "relative flex overflow-hidden outline-none",
+        "relative flex justify-end overflow-hidden outline-none",
         !isResizing && "transition-[width] duration-200 ease-out",
         isDragSource && "opacity-60"
       )}
-      style={{ width: entered ? width : 0, minWidth: entered ? Math.min(width, MIN_PANEL_WIDTH) : 0 }}
+      style={{ width: displayWidth, minWidth: isSliding ? 0 : Math.min(width, MIN_PANEL_WIDTH) }}
+      onTransitionEnd={handleTransitionEnd}
       onPointerDownCapture={() => setFocusedPane(panelId)}
       onFocusCapture={() => setFocusedPane(panelId)}
     >
-      <PanelResizeHandle
-        isResizing={isResizing}
-        panelWidth={width}
-        minWidth={MIN_PANEL_WIDTH}
-        maxWidth={maxWidth}
-        onMouseDown={handleResizeStart}
-        onKeyDown={handleResizeKeyDown}
-      />
-      <div className="min-w-0 flex-1 overflow-hidden">
-        <PanelInstanceProvider panelId={panelId} dragHandleProps={dragHandleProps}>
-          <PanelContentRenderer panelId={panelId} workspaceId={workspaceId} onClose={() => closePanel(panelId)} />
-        </PanelInstanceProvider>
+      <div
+        className={cn("flex", !isSliding && "min-w-0 flex-1")}
+        style={isSliding ? { width, minWidth: width, maxWidth: width } : undefined}
+      >
+        <PanelResizeHandle
+          isResizing={isResizing}
+          panelWidth={width}
+          minWidth={MIN_PANEL_WIDTH}
+          maxWidth={maxWidth}
+          onMouseDown={handleResizeStart}
+          onKeyDown={handleResizeKeyDown}
+        />
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <PanelInstanceProvider key={panelId} panelId={panelId} dragHandleProps={dragHandleProps}>
+            <PanelContentRenderer panelId={panelId} workspaceId={workspaceId} onClose={() => closePanel(panelId)} />
+          </PanelInstanceProvider>
+        </div>
       </div>
       {/* Focus indicator: a hairline under the header of the focused panel. */}
       <div

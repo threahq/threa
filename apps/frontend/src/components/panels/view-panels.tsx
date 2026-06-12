@@ -5,7 +5,7 @@ import { SavedTabs, SavedList } from "@/pages/saved"
 import { ActivityTabs, ActivityList, MarkAllActivityReadButton, type ActivityFilter } from "@/pages/activity"
 import { usePanelNavigation } from "@/contexts/panel-instance-context"
 import { WorkspacePanel } from "./workspace-panel"
-import { createViewPanelId } from "./panel-locations"
+import { createViewPanelId } from "@/lib/panel-locations"
 
 /**
  * Side-panel renderings of the routed view surfaces. Each one reuses the

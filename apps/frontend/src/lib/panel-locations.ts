@@ -1,13 +1,39 @@
-import { isDraftPanel, isViewPanel } from "@/contexts/panel-context"
+/**
+ * Pane id classification and the mapping between pane ids and routed paths.
+ * A pane id is either a stream id (renders the stream/thread surface), a
+ * "draft:parent:message" draft thread (panel-only — it has no route of its
+ * own), or a "view:<name>" named surface ("view:saved",
+ * "view:activity:unread", …) whose extra segments carry the sub-view so tab
+ * state stays URL-driven inside a panel (INV-59).
+ */
+
+/** Check if a panel ID represents a draft thread. */
+export function isDraftPanel(panelId: string): boolean {
+  return panelId.startsWith("draft:")
+}
 
 /**
- * Mapping between panel ids and main-view routes. A panel id is either a
- * stream id (renders the stream/thread surface), a "draft:parent:message"
- * draft thread (panel-only — it has no route of its own), or a "view:<name>"
- * named surface ("view:saved", "view:activity:unread", …) whose extra
- * segments carry the sub-view so tab state stays URL-driven inside a panel
- * (INV-59).
+ * Parse draft panel ID to get parent stream and message IDs.
+ * Returns null if not a draft panel.
  */
+export function parseDraftPanel(panelId: string): { parentStreamId: string; parentMessageId: string } | null {
+  if (!isDraftPanel(panelId)) return null
+  const parts = panelId.split(":")
+  if (parts.length !== 3) return null
+  const [, parentStreamId, parentMessageId] = parts
+  if (!parentStreamId || !parentMessageId) return null
+  return { parentStreamId, parentMessageId }
+}
+
+/** Create a draft panel ID from parent stream and message IDs. */
+export function createDraftPanelId(parentStreamId: string, parentMessageId: string): string {
+  return `draft:${parentStreamId}:${parentMessageId}`
+}
+
+/** Check if a panel ID is a named view surface (e.g. "view:saved"). */
+export function isViewPanel(panelId: string): boolean {
+  return panelId.startsWith("view:")
+}
 
 /** Named view surfaces that can render both as a routed page and in a panel. */
 export const PANEL_VIEWS = ["saved", "activity"] as const

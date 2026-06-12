@@ -345,9 +345,10 @@ export function WorkspaceLayout() {
   const streamMatch = useMatch("/w/:workspaceId/s/:streamId")
   const streamId = streamMatch?.params.streamId
 
-  // Collect all stream IDs: main stream + any open panels
+  // Collect all stream IDs: main stream + any open panels. View panels
+  // ("view:saved") aren't streams — joining them would just 404.
   const streamIds = useMemo(() => {
-    const panelIds = searchParams.getAll("panel")
+    const panelIds = searchParams.getAll("panel").filter((id) => !isViewPanel(id))
     return [streamId, ...panelIds].filter((id): id is string => Boolean(id))
   }, [streamId, searchParams])
 
