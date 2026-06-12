@@ -44,6 +44,11 @@ import {
   type AuthzMembershipChangedPayload,
   type AuthzMembershipRemovedPayload,
 } from "./features/workos-authz"
+import {
+  ControlPlaneFeatureFlagService,
+  OUTBOX_FEATURE_FLAGS_SYNC,
+  type FeatureFlagsSyncPayload,
+} from "./features/feature-flags"
 import { WorkosEventPollerLock } from "./lib/workos-event-poller-lock"
 import { CONTROL_PLANE_LISTENER_ID } from "./lib/outbox-listeners"
 
@@ -101,6 +106,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   })
 
   const authzFanOut = new RegionalAuthzFanOut({ pool, regionalClient })
+  const featureFlagService = new ControlPlaneFeatureFlagService({ pool, regionalClient })
 
   const processEvents = async () => {
     await cursorLock.run(async (cursor, processedIds) => {
@@ -111,7 +117,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       let lastError: Error | undefined
       for (const event of events) {
         try {
-          await dispatchEvent(event, { workspaceService, authzFanOut })
+          await dispatchEvent(event, { workspaceService, authzFanOut, featureFlagService })
           seen.push(event.id)
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
@@ -206,6 +212,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       waitlistService,
       backofficeService,
       workosAuthzAdminService,
+      featureFlagService,
       internalApiKey: config.internalApiKey,
       allowDevAuthRoutes: config.useStubAuth && !isProduction,
       frontendUrl: config.frontendUrl,
@@ -269,7 +276,11 @@ export async function startServer(): Promise<ControlPlaneInstance> {
 /** Dispatch a single outbox event to the appropriate service method (INV-34) */
 async function dispatchEvent(
   event: OutboxEvent,
-  deps: { workspaceService: ControlPlaneWorkspaceService; authzFanOut: RegionalAuthzFanOut }
+  deps: {
+    workspaceService: ControlPlaneWorkspaceService
+    authzFanOut: RegionalAuthzFanOut
+    featureFlagService: ControlPlaneFeatureFlagService
+  }
 ): Promise<void> {
   const payload = event.payload as unknown
   switch (event.eventType) {
@@ -284,6 +295,9 @@ async function dispatchEvent(
       break
     case OUTBOX_AUTHZ_MEMBERSHIP_REMOVED:
       await deps.authzFanOut.handleMembershipRemoved(payload as AuthzMembershipRemovedPayload)
+      break
+    case OUTBOX_FEATURE_FLAGS_SYNC:
+      await deps.featureFlagService.syncToRegion(payload as FeatureFlagsSyncPayload)
       break
     default:
       logger.warn({ eventType: event.eventType }, "Unknown outbox event type")

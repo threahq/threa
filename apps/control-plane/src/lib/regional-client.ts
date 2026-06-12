@@ -162,6 +162,39 @@ export class RegionalClient {
   }
 
   /**
+   * Push one user's resolved feature-flag snapshot to the regional backend.
+   * Full-snapshot semantics keep the call idempotent and replay-safe — the
+   * region replaces the user's rows wholesale.
+   */
+  async syncUserFeatureFlags(
+    region: string,
+    data: { workspaceId: string; workosUserId: string; flags: Record<string, boolean> }
+  ): Promise<void> {
+    const url = `${this.getRegionUrl(region)}/internal/feature-flags`
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+        },
+        body: JSON.stringify(data),
+        signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
+      })
+    } catch (err) {
+      logger.error({ err, region, url }, "Regional feature flag sync request failed")
+      throw err
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error({ region, status: res.status, body }, "Regional feature flag sync failed")
+      throw new Error(`Regional backend returned ${res.status}: ${body}`)
+    }
+  }
+
+  /**
    * Forward a link-invitation claim from CP to the regional backend that owns
    * the row. Regional performs the atomic claim (INV-20). On 4xx, surfaces the
    * upstream error code so CP can map it to an HTTP status without parsing.

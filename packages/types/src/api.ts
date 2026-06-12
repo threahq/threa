@@ -37,6 +37,7 @@ import type {
 } from "./domain"
 import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
+import type { FeatureFlags } from "./feature-flags"
 import type { SidebarConfig } from "./sidebar"
 import type { ToolPrivacyCategory } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
@@ -1045,6 +1046,11 @@ export interface WorkspaceBootstrap {
   viewerPermissions: WorkspacePermissionSlug[]
   /** Workspace-wide settings (e.g. the default working schedule members inherit). */
   workspaceSettings: WorkspaceSettings
+  /**
+   * The viewer's resolved feature flags (defaults + backoffice-managed
+   * per-user overrides). Kept live by the `feature_flags:updated` socket event.
+   */
+  featureFlags: FeatureFlags
 }
 
 // ============================================================================

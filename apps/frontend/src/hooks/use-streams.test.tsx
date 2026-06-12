@@ -5,7 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import { clearAllCachedData, db } from "@/db"
 import type { CreateStreamInput } from "@/api"
-import { DEFAULT_SIDEBAR_CONFIG, DEFAULT_WORKSPACE_SETTINGS, type Stream, type WorkspaceBootstrap } from "@threa/types"
+import {
+  DEFAULT_SIDEBAR_CONFIG,
+  DEFAULT_WORKSPACE_SETTINGS,
+  defaultFeatureFlags,
+  type Stream,
+  type WorkspaceBootstrap,
+} from "@threa/types"
 import { workspaceKeys } from "./use-workspaces"
 import { useCreateStream } from "./use-streams"
 import * as syncEngineModule from "@/sync/sync-engine"
@@ -91,6 +97,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     },
+    featureFlags: defaultFeatureFlags(),
     workspaceSettings: {
       ...DEFAULT_WORKSPACE_SETTINGS,
       workspaceId: "ws_1",

@@ -36,6 +36,8 @@ export { useEvents, eventKeys } from "./use-events"
 
 export { useSidebarConfig } from "./use-sidebar-config"
 
+export { useFeatureFlag } from "./use-feature-flags"
+
 export { useDraftScratchpads } from "./use-draft-scratchpads"
 
 export {

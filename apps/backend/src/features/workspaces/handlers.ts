@@ -4,6 +4,7 @@ import type { WorkspaceService } from "./service"
 import type { StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceSettingsService } from "../workspace-settings"
+import type { FeatureFlagService } from "../feature-flags"
 import type { SidebarConfigService } from "../sidebar-config"
 import type { InvitationService } from "../invitations"
 import type { ActivityService } from "../activity"
@@ -53,6 +54,7 @@ interface Dependencies {
   streamService: StreamService
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
+  featureFlagService: FeatureFlagService
   sidebarConfigService: SidebarConfigService
   invitationService: InvitationService
   activityService?: ActivityService
@@ -69,6 +71,7 @@ export function createWorkspaceHandlers({
   streamService,
   userPreferencesService,
   workspaceSettingsService,
+  featureFlagService,
   sidebarConfigService,
   invitationService,
   activityService,
@@ -145,6 +148,7 @@ export function createWorkspaceHandlers({
         emojiWeights,
         userPreferences,
         workspaceSettings,
+        featureFlags,
         sidebarConfig,
         dmPeers,
         labels,
@@ -159,6 +163,7 @@ export function createWorkspaceHandlers({
         workspaceService.getEmojiWeights(workspaceId, userId),
         userPreferencesService.getPreferences(workspaceId, userId),
         workspaceSettingsService.getSettings(workspaceId),
+        featureFlagService.getFlags(workspaceId, userId),
         sidebarConfigService.getConfig(workspaceId, userId),
         streamService.listDmPeers(workspaceId, userId),
         labelService.listVisibleTo(workspaceId, userId),
@@ -250,6 +255,7 @@ export function createWorkspaceHandlers({
           dmPeers,
           userPreferences,
           workspaceSettings,
+          featureFlags,
           sidebarConfig,
           labels,
           labelMemberships,

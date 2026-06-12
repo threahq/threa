@@ -647,6 +647,16 @@ export {
   type WorkspaceSettingKey,
 } from "./workspace-settings"
 
+// Feature flags (per-user rollout switches, managed from the backoffice)
+export {
+  FEATURE_FLAG_KEYS,
+  type FeatureFlagKey,
+  type FeatureFlags,
+  isFeatureFlagKey,
+  defaultFeatureFlags,
+  resolveFeatureFlags,
+} from "./feature-flags"
+
 // User statuses (cosmetic emoji + text shown beside the avatar)
 export {
   type StatusDuration,

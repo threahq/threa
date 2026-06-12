@@ -117,11 +117,26 @@ export interface WaitlistOverview {
   truncated: boolean
 }
 
+export interface WorkspaceFeatureFlagOverride {
+  workosUserId: string
+  flagKey: string
+  enabled: boolean
+  updatedAt: string
+}
+
+export interface WorkspaceFeatureFlags {
+  /** Flag keys currently in the code registry (@threa/types FEATURE_FLAG_KEYS). */
+  flagKeys: string[]
+  /** Stored per-user overrides; absence of an override means the default (off). */
+  overrides: WorkspaceFeatureFlagOverride[]
+}
+
 export const backofficeKeys = {
   workspaces: ["backoffice", "workspaces"] as const,
   workspace: (id: string) => ["backoffice", "workspaces", id] as const,
   workspaceMembers: (id: string) => ["backoffice", "workspaces", id, "members"] as const,
   workspaceInvitations: (id: string) => ["backoffice", "workspaces", id, "invitations"] as const,
+  workspaceFeatureFlags: (id: string) => ["backoffice", "workspaces", id, "feature-flags"] as const,
   invitations: ["backoffice", "invitations"] as const,
   waitlist: ["backoffice", "waitlist"] as const,
   config: ["backoffice", "config"] as const,
@@ -206,6 +221,18 @@ export function listWorkspaceInvitations(id: string): Promise<WorkspaceInvitatio
   return api
     .get<{ invitations: WorkspaceInvitation[] }>(`/api/backoffice/workspaces/${encodeURIComponent(id)}/invitations`)
     .then((r) => r.invitations)
+}
+
+export function getWorkspaceFeatureFlags(workspaceId: string): Promise<WorkspaceFeatureFlags> {
+  return api.get<WorkspaceFeatureFlags>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`)
+}
+
+/** `enabled: null` clears the override (back to the default: off). */
+export function setWorkspaceFeatureFlag(
+  workspaceId: string,
+  params: { workosUserId: string; flagKey: string; enabled: boolean | null }
+): Promise<void> {
+  return api.put<void>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/feature-flags`, params)
 }
 
 export function assignWorkspaceMember(

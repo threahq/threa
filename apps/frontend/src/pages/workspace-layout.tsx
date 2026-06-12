@@ -65,6 +65,7 @@ import { WorkspaceSettingsDialog } from "@/components/workspace-settings/workspa
 import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-switcher"
 import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
+import { FeatureFlagDemoBadge } from "@/components/feature-flag-demo-badge"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { TraceDialog } from "@/components/trace"
@@ -428,6 +429,7 @@ export function WorkspaceLayout() {
                                       <CreateChannelDialog workspaceId={workspaceId} />
                                       <AttachmentExplorer workspaceId={workspaceId} />
                                       <TraceDialogContainer />
+                                      <FeatureFlagDemoBadge workspaceId={workspaceId} />
                                       <Toaster />
                                     </TraceProvider>
                                   </MediaGalleryProvider>
