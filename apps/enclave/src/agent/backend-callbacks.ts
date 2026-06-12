@@ -1,4 +1,5 @@
 import {
+  ENCLAVE_CALLBACK_TOKEN_HEADER,
   INTERNAL_API_KEY_HEADER,
   type SealedReply,
   type EnclaveSealedName,
@@ -41,11 +42,14 @@ const MESSAGE_TIMEOUT_MS = 30_000
 const STEP_TIMEOUT_MS = 30_000
 const COMPLETE_TIMEOUT_MS = 30_000
 
-export function createBackendCallbacks(config: EnclaveConfig): BackendCallbacks {
+export function createBackendCallbacks(config: EnclaveConfig, callbackToken?: string): BackendCallbacks {
   const base = config.backendBaseUrl
   const headers = {
     "Content-Type": "application/json",
     [INTERNAL_API_KEY_HEADER]: config.internalApiKey,
+    // Per-session binding (Phase 2.4b, E2EE-21): echo the assignment's token
+    // so the backend can verify these callbacks come from the assigned runner.
+    ...(callbackToken ? { [ENCLAVE_CALLBACK_TOKEN_HEADER]: callbackToken } : {}),
   }
 
   return {

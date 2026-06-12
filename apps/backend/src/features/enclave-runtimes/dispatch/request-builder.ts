@@ -43,6 +43,8 @@ export interface BuildInvokeInputs {
   replySenderId: string
   /** The server-created agent_sessions id the enclave drives this turn under. */
   sessionId: string
+  /** Dispatch-minted secret the enclave echoes on every session callback (Phase 2.4b, E2EE-21). */
+  callbackToken: string
   /**
    * The stream's tool-privacy policy (from `stream_policies`, resolved at the
    * root scratchpad — threads inherit). `null` = no restriction. Shipped on the
@@ -110,6 +112,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
 
   const assignment: EnclaveSessionAssignment = {
     sessionId: inputs.sessionId,
+    callbackToken: inputs.callbackToken,
     streamId: e2e.streamId,
     wraps: chosenWraps,
     history,

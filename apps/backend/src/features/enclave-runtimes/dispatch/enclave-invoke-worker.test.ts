@@ -6,6 +6,7 @@ import * as agents from "../../agents"
 import { AgentSessionRepository } from "../../agents"
 import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../../streams"
 import { OutboxRepository } from "../../../lib/outbox"
+import { hashCallbackToken } from "../callback-token"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import { MessageRepository } from "../../messaging"
@@ -123,6 +124,38 @@ describe("createEnclaveInvokeWorker", () => {
     expect(insertOutbox.mock.calls[0]![0]).toBe(tx)
     expect(insertOutbox.mock.calls[0]![1]).toBe("agent_session:started")
     expect(assignSession).toHaveBeenCalledTimes(1)
+  })
+
+  it("binds callbacks to the assigned runner: one minted token on the row AND the assignment, plus the seal generation (Phase 2.4b)", async () => {
+    arrangeDispatch()
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date("2026-06-02T09:27:01.000Z"),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
+    })
+    await worker(JOB)
+
+    const inserted = insertSession.mock.calls[0]![1] as { callbackTokenHash: string; replyKeyGeneration: number }
+    const assignment = assignSession.mock.calls[0]![1] as { callbackToken: string; reply: { keyGeneration: number } }
+    // The cleartext secret travels to exactly one place — inside the assignment
+    // to the pinned instance — so echoing it proves the caller is that runner.
+    // The row stores only the digest: a DB read can't impersonate the runner.
+    expect(typeof assignment.callbackToken).toBe("string")
+    expect(assignment.callbackToken.length).toBeGreaterThan(0)
+    expect(inserted.callbackTokenHash).toBe(hashCallbackToken(assignment.callbackToken))
+    // The row records the generation the assignment prescribes, so a callback
+    // sealed under any other generation is rejected instead of persisted.
+    expect(inserted.replyKeyGeneration).toBe(assignment.reply.keyGeneration)
   })
 
   it("resolves the SSK + wraps from the root for a thread message (reply still lands in the thread)", async () => {

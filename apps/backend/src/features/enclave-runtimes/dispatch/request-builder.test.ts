@@ -69,6 +69,7 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
     persona: PERSONA,
     replySenderId: "persona_ariadne",
     sessionId: "session_test",
+    callbackToken: "cbtok_test",
     allowedToolCategories: null,
     ...over,
   }

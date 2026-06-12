@@ -46,7 +46,6 @@ async function main() {
   // run the agent loop asynchronously, reporting replies back over the session
   // callbacks. OpenRouter is the enclave's sole outbound LLM dependency.
   const rawChat = createOpenRouterChat(config)
-  const callbacks = createBackendCallbacks(config)
   const inFlight = new Set<string>()
   const aborts = new Map<string, AbortController>()
   app.post(
@@ -59,7 +58,7 @@ async function main() {
     createSessionsHandler({
       keyPair,
       rawChat,
-      callbacks,
+      createCallbacks: (callbackToken) => createBackendCallbacks(config, callbackToken),
       inFlight,
       aborts,
       toolConfig: { tavilyApiKey: config.tavilyApiKey },

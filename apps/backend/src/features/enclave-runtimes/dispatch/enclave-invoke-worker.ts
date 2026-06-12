@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
+import { randomUUID } from "node:crypto"
 import { sessionId as newSessionId, eventId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
 import { withTransaction } from "../../../db"
@@ -23,6 +24,7 @@ import {
 } from "../../agents"
 import { EnclaveRuntimesRepository } from "../repository"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "../service"
+import { hashCallbackToken } from "../callback-token"
 import type { EnclaveForwarder } from "../forwarder"
 import { buildEnclaveSessionAssignment } from "./request-builder"
 import { StreamTypes, type EnclaveStreamEnvelope } from "@threa/types"
@@ -85,6 +87,9 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, e2eStreamId)
     if (!e2e) return
 
+    // Execution-time re-validation of the enqueue-time delivery verdict (the
+    // dispatch handler holds the Phase 2.4a gate); the rows also feed the
+    // assignment payload, so the fetch is not just a presence check.
     const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
     if (!actors.some((a) => a.kind === "enclave")) return
 
@@ -168,7 +173,13 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       }))
 
     const sid = newSessionId()
+    // Callback binding (Phase 2.4b, E2EE-21): the cleartext token travels only
+    // inside this assignment to the chosen EIK's instance, so echoing it proves
+    // the caller is the runner this session was assigned to. Only its sha256
+    // digest is persisted — a DB read can never impersonate the runner.
+    const callbackToken = randomUUID()
     const built = buildEnclaveSessionAssignment({
+      callbackToken,
       e2e,
       actors,
       liveEiks,
@@ -227,6 +238,8 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
         personaId: ARIADNE_AGENT_ID,
         triggerMessageId: triggerId,
         serverId: built.keyId,
+        callbackTokenHash: hashCallbackToken(callbackToken),
+        replyKeyGeneration: built.assignment.reply.keyGeneration,
         initialSequence: 0n,
       })
       if (!created) return null

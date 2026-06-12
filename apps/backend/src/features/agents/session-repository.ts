@@ -21,6 +21,8 @@ interface SessionRow {
   current_step: number
   current_step_type: string | null
   server_id: string | null
+  callback_token_hash: string | null
+  reply_key_generation: number | null
   heartbeat_at: Date | null
   response_message_id: string | null
   error: string | null
@@ -65,6 +67,16 @@ export interface AgentSession {
   currentStep: number
   currentStepType: StepType | null
   serverId: string | null
+  /**
+   * Phase 2.4b (E2EE-21): sha256 of the dispatch-minted secret delivered only
+   * inside the session assignment to the pinned runner; callbacks must echo
+   * the cleartext, verified against this digest. Only the hash is at rest, so
+   * a DB read can never impersonate the runner. NULL for non-enclave sessions
+   * and sessions dispatched before the binding shipped.
+   */
+  callbackTokenHash: string | null
+  /** SSK generation the assignment told the enclave to seal under; callbacks sealing another generation are rejected. */
+  replyKeyGeneration: number | null
   heartbeatAt: Date | null
   responseMessageId: string | null
   error: string | null
@@ -160,6 +172,8 @@ function mapRowToSession(row: SessionRow): AgentSession {
     currentStep: row.current_step,
     currentStepType: row.current_step_type as StepType | null,
     serverId: row.server_id,
+    callbackTokenHash: row.callback_token_hash,
+    replyKeyGeneration: row.reply_key_generation,
     heartbeatAt: row.heartbeat_at,
     responseMessageId: row.response_message_id,
     error: row.error,
@@ -190,7 +204,7 @@ function mapRowToStep(row: StepRow): AgentSessionStep {
 
 const SESSION_SELECT_FIELDS = `
   id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
-  status, current_step, current_step_type, server_id, heartbeat_at,
+  status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   response_message_id, error, last_seen_sequence,
   sent_message_ids, context_message_ids, created_at, completed_at
 `
@@ -239,14 +253,22 @@ export const AgentSessionRepository = {
    */
   async insertRunningOrSkip(
     db: Querier,
-    params: Omit<InsertSessionParams, "status"> & { initialSequence: bigint }
+    // The callback-binding fields live only on this insert path: they exist
+    // solely for enclave-dispatched sessions, which are always created here.
+    // Keeping them off the shared InsertSessionParams means `insert()` callers
+    // can't pass values that would be silently dropped.
+    params: Omit<InsertSessionParams, "status"> & {
+      initialSequence: bigint
+      callbackTokenHash?: string
+      replyKeyGeneration?: number
+    }
   ): Promise<AgentSession | null> {
     const result = await db.query<SessionRow>(
       sql`
         INSERT INTO agent_sessions (
           id, stream_id, persona_id, trigger_message_id,
           trigger_message_revision, supersedes_session_id,
-          status, server_id, heartbeat_at, last_seen_sequence
+          status, server_id, callback_token_hash, reply_key_generation, heartbeat_at, last_seen_sequence
         ) VALUES (
           ${params.id},
           ${params.streamId},
@@ -256,6 +278,8 @@ export const AgentSessionRepository = {
           ${params.supersedesSessionId ?? null},
           ${SessionStatuses.RUNNING},
           ${params.serverId ?? null},
+          ${params.callbackTokenHash ?? null},
+          ${params.replyKeyGeneration ?? null},
           ${params.serverId ? new Date() : null},
           ${params.initialSequence.toString()}
         )
