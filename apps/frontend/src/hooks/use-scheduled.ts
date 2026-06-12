@@ -3,7 +3,7 @@ import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { useScheduledService } from "@/contexts"
-import { useSyncEngine } from "@/sync/sync-engine"
+import { useSyncEngine, useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useUser } from "@/auth"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { db, type CachedScheduledMessage } from "@/db"
@@ -183,6 +183,10 @@ export async function replaceScheduledPage(
  */
 export function useScheduledList(workspaceId: string, status: ScheduledMessageStatus, streamId?: string) {
   const scheduledService = useScheduledService()
+  // Optional: the Scheduled views normally mount inside the workspace
+  // SyncEngine provider, but the hook must stay safe (and keep its healing)
+  // without one.
+  const syncEngine = useOptionalSyncEngine()
 
   const serverQuery = useQuery({
     queryKey: scheduledKeys.list(workspaceId, status, streamId),
@@ -195,12 +199,19 @@ export function useScheduledList(workspaceId: string, status: ScheduledMessageSt
     // INV-53: workspace-sync invalidates `scheduledKeys.all` on reconnect at
     // the top of `registerWorkspaceSocketHandlers` (in active sync-v2 mode
     // the catch-up cursor replays the missed events instead);
-    // refetchOnReconnect catches the pure online/offline case; refetchOnMount
-    // + staleTime: Infinity makes the invalidation actually fire on next render.
+    // refetchOnReconnect catches the pure online/offline case. In active mode
+    // that same online flip already runs `refreshAfterConnectivityResume()` →
+    // catch-up (workspace-layout's isOnline effect), replaying the user-scoped
+    // scheduled entries through the gate-registered workspace-sync handlers,
+    // so active skips the blanket refetch — "off" (kill switch), "shadow",
+    // and mounts without an engine keep it. The mode is fixed per engine
+    // lifetime; a flag flip recreates the engine and re-renders with the new
+    // option. refetchOnMount + staleTime: Infinity makes the invalidation
+    // actually fire on next render.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: syncEngine?.syncCursorMode !== "active",
     enabled: !!workspaceId,
   })
 
