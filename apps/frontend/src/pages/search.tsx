@@ -10,6 +10,7 @@ import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useMessageSearch, SEARCH_DEBOUNCE_MS } from "@/components/search/use-message-search"
 import { extractSearchTerms } from "@/components/search/highlight"
 import { SearchFilterChips } from "@/components/search/search-filter-chips"
+import { SearchFilterMenu } from "@/components/search/search-filter-menu"
 import { SearchResults } from "@/components/search/search-results"
 import { useIsMobile } from "@/hooks/use-mobile"
 
@@ -97,11 +98,15 @@ export function SearchPage() {
           </span>
         </div>
 
-        {parsedFilters.length > 0 && (
-          <div className="border-t border-border/40 px-4 py-2">
-            <SearchFilterChips query={localQuery} parsedFilters={parsedFilters} onQueryChange={handleQueryChange} />
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 px-4 py-2">
+          <SearchFilterChips query={localQuery} parsedFilters={parsedFilters} onQueryChange={handleQueryChange} />
+          <SearchFilterMenu
+            workspaceId={workspaceId}
+            query={localQuery}
+            onQueryChange={handleQueryChange}
+            className="h-7"
+          />
+        </div>
       </header>
 
       <ScrollArea className="min-h-0 flex-1 [&>div>div]:!block [&>div>div]:!w-full">

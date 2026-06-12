@@ -407,6 +407,156 @@ describe("SidebarSearchPanel Integration Tests", () => {
     })
   })
 
+  describe("add-filter menu", () => {
+    async function openFilterMenu(user: ReturnType<typeof userEvent.setup>) {
+      await user.click(screen.getByRole("button", { name: /add search filter/i }))
+      await waitFor(() => {
+        expect(screen.getByText("From user")).toBeInTheDocument()
+      })
+    }
+
+    it("lists every filter kind with its typed syntax as the hint", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      for (const label of [
+        "From user",
+        "With user",
+        "In channel",
+        "In DM with",
+        "Stream type",
+        "Status",
+        "After date",
+        "Before date",
+      ]) {
+        expect(screen.getByText(label)).toBeInTheDocument()
+      }
+      // Each entry teaches the typed syntax (in:@user only exists in the menu,
+      // unlike from:@user which the empty-state hint also shows)
+      expect(screen.getByText("in:@user")).toBeInTheDocument()
+    })
+
+    it("adds a from: filter without typing any syntax", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("From user"))
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Search users...")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Martin"))
+
+      // The query string is rewritten with the filter syntax and renders as a chip
+      const editor = screen.getByLabelText("Search messages")
+      await waitFor(() => {
+        expect(editor.textContent).toContain("from:@martin")
+        expect(screen.getByRole("button", { name: /remove filter @martin/i })).toBeInTheDocument()
+      })
+      // The slug resolves to the user id in the API call, same as the typed path
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { from: "member_1" })
+      })
+    })
+
+    it("adds an in:#channel filter via the menu", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("In channel"))
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Search channels...")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("general"))
+
+      const editor = screen.getByLabelText("Search messages")
+      await waitFor(() => {
+        expect(editor.textContent).toContain("in:#general")
+      })
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { in: ["stream_channel1"] })
+      })
+    })
+
+    it("adds a status filter from the fixed options", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("Status"))
+      await waitFor(() => {
+        expect(screen.getByText("Archived")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Archived"))
+
+      const editor = screen.getByLabelText("Search messages")
+      await waitFor(() => {
+        expect(editor.textContent).toContain("status:archived")
+      })
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { status: ["archived"] })
+      })
+    })
+
+    it("adds a date filter from the relative presets", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("After date"))
+      await waitFor(() => {
+        expect(screen.getByText("Yesterday")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Yesterday"))
+
+      const editor = screen.getByLabelText("Search messages")
+      await waitFor(() => {
+        expect(editor.textContent).toMatch(/after:\d{4}-\d{2}-\d{2}/)
+      })
+    })
+
+    it("navigates back from a value picker to the kind list", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("Status"))
+      await waitFor(() => {
+        expect(screen.getByText("Archived")).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole("button", { name: /back to filter list/i }))
+      await waitFor(() => {
+        expect(screen.getByText("From user")).toBeInTheDocument()
+      })
+      // Still inside the menu, the panel did not close
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
+    })
+
+    it("keeps menu keystrokes away from result navigation", async () => {
+      mockSearchState.results = mockSearchResultsList
+
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "hello")
+      await waitFor(() => {
+        expect(screen.getByText(/from the search results/)).toBeInTheDocument()
+      })
+
+      await openFilterMenu(user)
+      await user.keyboard("{ArrowDown}{Enter}")
+
+      // The keystrokes drove the menu (now in a value picker), not the results
+      expect(mockNavigate).not.toHaveBeenCalled()
+      expect(document.querySelector('[aria-current="true"]')).toBeNull()
+    })
+  })
+
   // Moved from quick-switcher.integration.test.tsx — the mention suggestion
   // popover behaviors ride with SEARCH_TRIGGERS, which now render here.
   describe("suggestion popover", () => {
