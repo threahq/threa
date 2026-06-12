@@ -7,6 +7,7 @@ import {
   mergeReconnectWorkspaceBootstrap,
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
+import { readMirroredSyncV2Mode } from "./sync-v2-mode"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
@@ -287,6 +288,17 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap())
 
     expect(await db.streams.get("stream_keep")).toBeDefined()
+  })
+
+  it("mirrors the sync-v2 mode so the next engine construction sees the delivered value", async () => {
+    localStorage.removeItem("sync-v2-mode:ws_1")
+
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({ featureFlags: { ...defaultFeatureFlags(), "sync-v2-cursor": "active" } })
+    )
+
+    expect(readMirroredSyncV2Mode("ws_1")).toBe("active")
   })
 })
 
@@ -702,6 +714,31 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     expect(subscribeStream).toHaveBeenCalledWith("stream_new")
     expect(await db.streamMemberships.get("ws_1:stream_new")).toBeDefined()
+
+    cleanup()
+  })
+
+  it("applies feature_flags:updated to the bootstrap cache and the sync-v2 mode mirror", () => {
+    localStorage.removeItem("sync-v2-mode:ws_1")
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    emit("feature_flags:updated", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      featureFlags: { ...defaultFeatureFlags(), "sync-v2-cursor": "off" },
+    })
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.featureFlags["sync-v2-cursor"]).toBe("off")
+    expect(readMirroredSyncV2Mode("ws_1")).toBe("off")
 
     cleanup()
   })

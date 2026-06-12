@@ -19,13 +19,14 @@ import {
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
-import { SyncLogCursor, SYNC_V2_CURSOR_MODE, type SyncV2CursorMode } from "./sync-log-cursor"
+import { SyncLogCursor } from "./sync-log-cursor"
+import type { SyncV2CursorMode } from "./sync-v2-mode"
 import { isLegacyUnreadCounterEntry } from "./unread-counters"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
-import type { WorkspaceBootstrap } from "@threa/types"
+import { defaultFeatureFlagValue, type WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
   workspaceId: string
@@ -62,7 +63,9 @@ interface SyncEngineDeps {
       signal?: AbortSignal
     ) => Promise<import("@threa/types").SyncCatchUpResponse>
   }
-  /** Test override for the VITE_SYNC_V2_CURSOR flag. */
+  /** Resolved `sync-v2-cursor` flag value, fixed for this engine's lifetime —
+   *  the workspace layout recreates the engine when the flag changes (see
+   *  shouldRecreateSyncEngine). Defaults to the registry default. */
   syncCursorMode?: SyncV2CursorMode
 }
 
@@ -109,7 +112,8 @@ export class SyncEngine {
   // advanced by live events and exercised against the catch-up endpoint
   // without owning any healing; in active mode catch-up entries are applied
   // through the live handlers via the event gate. See sync-log-cursor.ts.
-  private readonly syncCursorMode: SyncV2CursorMode
+  // Public so the React layer can detect a flag change (shouldRecreateSyncEngine).
+  readonly syncCursorMode: SyncV2CursorMode
   private readonly eventGate: SocketEventGate | null
   private syncLogCursor: SyncLogCursor | null = null
   private syncCursorCleanup: (() => void) | null = null
@@ -133,7 +137,7 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
-    this.syncCursorMode = deps.syncService ? (deps.syncCursorMode ?? SYNC_V2_CURSOR_MODE) : "off"
+    this.syncCursorMode = deps.syncService ? (deps.syncCursorMode ?? defaultFeatureFlagValue("sync-v2-cursor")) : "off"
     this.eventGate =
       this.syncCursorMode === "active"
         ? new SocketEventGate(this.workspaceId, {
@@ -1109,6 +1113,24 @@ export class SyncEngine {
     this.cleanupStreamHandlers()
     this.cleanupSyncCursorTracking()
   }
+}
+
+/**
+ * Whether `engine` can keep serving this workspace at this sync-v2 cursor
+ * mode; when false, the React layer destroys it and constructs a fresh one.
+ * The mode is fixed per engine lifetime — mutating it mid-cycle would break
+ * the gate/cursor ordering invariants — so a flag change is handled like a
+ * workspace switch: destroy → construct. The fresh engine runs a full cycle
+ * (pause → cursor read → bootstrap → catch-up), so every ordering invariant
+ * holds per instance. This is what makes "off" a runtime kill switch and
+ * "active" flippable without a reload.
+ */
+export function isSyncEngineCurrent(
+  engine: SyncEngine,
+  workspaceId: string,
+  syncCursorMode: SyncV2CursorMode
+): boolean {
+  return engine.workspaceId === workspaceId && !engine.isDestroyed && engine.syncCursorMode === syncCursorMode
 }
 
 // React context for accessing the SyncEngine from any component

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import type { Socket } from "socket.io-client"
 import { QueryClient } from "@tanstack/react-query"
-import { SyncEngine } from "./sync-engine"
+import { SyncEngine, isSyncEngineCurrent } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -10,6 +10,7 @@ import {
   DEFAULT_USER_PREFERENCES,
   DEFAULT_WORKSPACE_SETTINGS,
   defaultFeatureFlags,
+  defaultFeatureFlagValue,
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
@@ -1433,5 +1434,41 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(await db.workspaceUsers.get("user_live")).toBeUndefined()
+  })
+})
+
+describe("SyncEngine sync-v2 cursor mode wiring", () => {
+  function makeSyncDeps(syncCursorMode?: "shadow" | "off" | "active") {
+    const catchUp = vi.fn(async (): Promise<SyncCatchUpResponse> => ({ entries: [], head: "0" }))
+    return { ...makeDeps(), syncService: { catchUp }, syncCursorMode }
+  }
+
+  it("resolves the mode from deps, falling back to the registry default, and forces off without a sync service", () => {
+    const fromRegistry = new SyncEngine(makeSyncDeps())
+    expect(fromRegistry.syncCursorMode).toBe(defaultFeatureFlagValue("sync-v2-cursor"))
+    fromRegistry.destroy()
+
+    const explicit = new SyncEngine(makeSyncDeps("active"))
+    expect(explicit.syncCursorMode).toBe("active")
+    // Active mode is the only one that owns an event gate.
+    expect(explicit.getLiveEventSource()).not.toBeNull()
+    explicit.destroy()
+
+    const withoutSyncService = new SyncEngine(makeDeps())
+    expect(withoutSyncService.syncCursorMode).toBe("off")
+    expect(withoutSyncService.getLiveEventSource()).toBeNull()
+    withoutSyncService.destroy()
+  })
+
+  it("isSyncEngineCurrent forces recreation on workspace change, destroy, and a mode change only", () => {
+    const engine = new SyncEngine(makeSyncDeps("shadow"))
+
+    expect(isSyncEngineCurrent(engine, "ws_other", "shadow")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1", "active")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1", "off")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1", "shadow")).toBe(true)
+
+    engine.destroy()
+    expect(isSyncEngineCurrent(engine, "ws_1", "shadow")).toBe(false)
   })
 })
