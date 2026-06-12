@@ -11,6 +11,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
+  defaultFeatureFlags,
   type StreamBootstrap,
   type WorkspaceBootstrap,
 } from "@threa/types"
@@ -43,6 +44,7 @@ function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBo
     activityCounts: {},
     unreadActivityCount: 0,
     mutedStreamIds: [],
+    featureFlags: defaultFeatureFlags(),
     sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId: "ws_1",
