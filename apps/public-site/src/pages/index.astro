@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
+import ThemeToggle from "../components/ThemeToggle.astro"
 
 // Where the waitlist form POSTs. The marketing site is a separate origin from
 // the API, so this is a cross-origin call to the workspace-router, which proxies
@@ -22,6 +23,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://app.threa.io"
         <nav class="nav-links">
           <a href="/" aria-current="page">Product</a><a href="/developers">Developer</a><a href="/about">About</a>
         </nav>
+        <ThemeToggle />
       </div>
       <div class="hero-stage">
         <div>

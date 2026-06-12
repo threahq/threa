@@ -36,6 +36,33 @@
 
   /* total animation cycle for the chat widget */
   --cycle: 22s;
+
+  color-scheme: light;
+}
+
+/* ---------- DARK THEME TOKENS ----------
+   data-theme is resolved before first paint by the head bootstrap in
+   BaseHead.astro: a stored choice wins, otherwise the system preference.
+   Same warm hue family inverted — espresso canvas, parchment ink, gold
+   lifted for contrast. The always-dark surfaces (--night terminals/code)
+   drop BELOW the canvas so they still read as sunk panels. */
+:root[data-theme="dark"] {
+  --gold: 40 62% 56%;
+  --gold-soft: 42 70% 68%;
+  --gold-dim: 38 35% 58%;
+  --paper: 26 12% 13%;
+  --paper-warm: 26 14% 11%;
+  --paper-sunk: 26 15% 9%;
+  --ink: 38 16% 90%;
+  --ink-soft: 35 11% 74%;
+  --night: 26 16% 7%;
+  --night-soft: 26 12% 15%;
+  --line: 26 8% 24%;
+  --muted: 32 7% 57%;
+  --emerald: 142 45% 52%;
+  --emerald-soft: 142 28% 16%;
+
+  color-scheme: dark;
 }
 
 * {
@@ -2244,4 +2271,93 @@ body::after {
     width: 100%;
     justify-content: center;
   }
+}
+
+/* ---------- THEME TOGGLE ---------- */
+.theme-toggle {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: hsl(var(--muted));
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+}
+.theme-toggle:hover {
+  color: hsl(var(--ink));
+  border-color: hsl(var(--line));
+  background: hsl(var(--paper));
+}
+/* Show the icon of the mode a click switches TO. */
+.theme-toggle .tt-sun {
+  display: none;
+}
+[data-theme="dark"] .theme-toggle .tt-sun {
+  display: block;
+}
+[data-theme="dark"] .theme-toggle .tt-moon {
+  display: none;
+}
+/* Marketing nav-row gains a third child; keep the links hugging the toggle
+   on the right instead of letting space-between spread all three apart. */
+.nav-row .nav-links {
+  margin-left: auto;
+}
+.nav-row .theme-toggle {
+  margin-left: 20px;
+}
+
+/* ---------- DARK MODE OVERRIDES ----------
+   Everything token-based flips automatically; these are the hardcoded
+   light-surface values that need explicit dark counterparts. */
+
+/* Multiplied noise is invisible on a dark canvas — switch to screen so the
+   grain lightens instead, at lower strength. */
+[data-theme="dark"] body::after {
+  mix-blend-mode: screen;
+  opacity: 0.4;
+}
+
+/* Chat-demo avatar pastels: same hues, inverted value. */
+[data-theme="dark"] .tl-avatar.av-alex,
+[data-theme="dark"] .capture-row .c-avatar.av-sam {
+  background: hsl(28 18% 26%);
+  color: hsl(28 28% 80%);
+}
+[data-theme="dark"] .tl-avatar.av-jordan,
+[data-theme="dark"] .capture-row .c-avatar.av-jordan {
+  background: hsl(200 20% 27%);
+  color: hsl(200 30% 80%);
+}
+[data-theme="dark"] .tl-avatar.av-maya,
+[data-theme="dark"] .capture-row .c-avatar.av-maya,
+[data-theme="dark"] .recall-row .r-avatar.av-maya {
+  background: hsl(20 22% 27%);
+  color: hsl(20 30% 80%);
+}
+
+/* Floating composer: dark border, black-based shadows (an ink-derived shadow
+   would glow white on the inverted palette). */
+[data-theme="dark"] .composer {
+  border-color: hsl(26 10% 26%);
+  box-shadow:
+    0 1px 0 hsl(26 12% 17%) inset,
+    0 8px 24px -14px hsl(0 0% 0% / 0.55),
+    0 2px 6px -2px hsl(0 0% 0% / 0.3);
+}
+[data-theme="dark"] .trace-card {
+  background: hsl(26 10% 17%);
+}
+[data-theme="dark"] .memory-card {
+  box-shadow: 0 6px 20px -10px hsl(0 0% 0% / 0.55);
+}
+/* Terminal borders lift a step so the sunk panel still has an edge against
+   the dark canvas. */
+[data-theme="dark"] .os-terminal {
+  border-color: hsl(26 12% 26%);
 }

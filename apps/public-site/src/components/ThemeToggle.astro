@@ -1,0 +1,36 @@
+---
+/*
+ * Light/dark toggle. The head bootstrap (BaseHead.astro) resolves the initial
+ * theme (stored choice, else system); clicking here stores an explicit choice
+ * and flips `data-theme` on <html>. Both icons ship in the markup and CSS
+ * shows the one for the mode a click switches TO (moon in light, sun in dark),
+ * so there's no icon swap script and no layout shift.
+ */
+---
+
+<button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle light and dark mode">
+  <svg class="tt-moon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+  </svg>
+  <svg class="tt-sun" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+  </svg>
+</button>
+
+<script is:inline>
+  /* One listener for every toggle on the page (nav + drawer can both have one). */
+  if (!window.__threaThemeToggleBound) {
+    window.__threaThemeToggleBound = true
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("[data-theme-toggle]")) return
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark"
+      document.documentElement.dataset.theme = next
+      try {
+        localStorage.setItem("threa:theme", next)
+      } catch {
+        /* storage blocked — the flip still applies for this page view */
+      }
+    })
+  }
+</script>

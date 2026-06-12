@@ -9,6 +9,30 @@ const { title, description } = Astro.props
 
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<script is:inline>
+  /* Theme bootstrap — must run before first paint (hence inline in <head>).
+     No stored choice → follow the system; a stored choice wins. The toggle
+     (ThemeToggle.astro) writes the choice; here we only resolve it. */
+  ;(() => {
+    let stored = null
+    try {
+      stored = localStorage.getItem("threa:theme")
+    } catch {
+      /* storage blocked — fall through to system */
+    }
+    const dark = stored === "dark" || (stored !== "light" && matchMedia("(prefers-color-scheme: dark)").matches)
+    document.documentElement.dataset.theme = dark ? "dark" : "light"
+    /* Live-follow OS changes while the user hasn't chosen explicitly. */
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+      try {
+        if (localStorage.getItem("threa:theme")) return
+      } catch {
+        /* no storage — always follow the system */
+      }
+      document.documentElement.dataset.theme = e.matches ? "dark" : "light"
+    })
+  })()
+</script>
 <meta name="description" content={description} />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 <!-- Agent entry points: a markdown index of the developer docs and the full
