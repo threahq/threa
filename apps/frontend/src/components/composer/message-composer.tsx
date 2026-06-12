@@ -1142,16 +1142,13 @@ export function MessageComposer({
                               variant="ghost"
                               size="icon"
                               aria-label="More composer actions"
-                              // Same affordance as the expanded editor's FAB:
-                              // a bordered circle whose + rotates to × while
-                              // the menu is open.
                               className={cn(
-                                "group/more h-7 w-7 shrink-0 rounded-full border border-input",
+                                "h-7 w-7 shrink-0 rounded-full border border-input",
                                 "data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
                               )}
                               disabled={controlsDisabled}
                             >
-                              <Plus className="h-4 w-4 transition-transform duration-150 group-data-[state=open]/more:rotate-45" />
+                              <Plus className="h-4 w-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent side="top" align="start" className="min-w-[160px]">
