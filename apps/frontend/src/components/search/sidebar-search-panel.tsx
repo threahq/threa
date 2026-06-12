@@ -13,6 +13,7 @@ import { useSearchPanel } from "./search-panel-context"
 import { useMessageSearch } from "./use-message-search"
 import { extractSearchTerms } from "./highlight"
 import { SearchFilterChips } from "./search-filter-chips"
+import { SearchFilterMenu } from "./search-filter-menu"
 import { SearchResults } from "./search-results"
 
 /**
@@ -144,17 +145,16 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 triggers={SEARCH_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
-                editorClassName="h-8 py-1.5 text-[13px]"
+                editorClassName="h-auto min-h-8 py-1.5 text-[13px]"
                 autoFocus
               />
             </div>
           </div>
 
-          {parsedFilters.length > 0 && (
-            <div className="px-3 pb-2">
-              <SearchFilterChips query={query} parsedFilters={parsedFilters} onQueryChange={setQuery} />
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2">
+            <SearchFilterChips query={query} parsedFilters={parsedFilters} onQueryChange={setQuery} />
+            <SearchFilterMenu workspaceId={workspaceId} query={query} onQueryChange={setQuery} />
+          </div>
 
           {hasQuery && !isLoading && !error && (
             <p className="px-3 pb-2 text-[11px] tabular-nums text-muted-foreground/70">

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react"
 import { useSearch } from "@/hooks"
+import { localStartOfDayISO } from "@/lib/dates"
 import { useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import { parseSearchQuery, type ParsedFilter } from "@/lib/search-query-parser"
 import type { SearchFilters, SearchResultItem } from "@/api"
@@ -66,12 +67,20 @@ export function useMessageSearch(workspaceId: string, query: string): MessageSea
           if (id) filters.in = [...(filters.in ?? []), id]
           break
         }
-        case "after":
-          filters.after = filter.value
+        // The syntax carries date-only values; the API validates full ISO
+        // datetimes. Widen to the start of that date in the device's local
+        // timezone, and drop values that aren't dates (same silent-skip as
+        // unresolved user/stream slugs above).
+        case "after": {
+          const iso = localStartOfDayISO(filter.value)
+          if (iso) filters.after = iso
           break
-        case "before":
-          filters.before = filter.value
+        }
+        case "before": {
+          const iso = localStartOfDayISO(filter.value)
+          if (iso) filters.before = iso
           break
+        }
       }
     }
 

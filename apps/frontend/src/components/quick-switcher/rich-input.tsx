@@ -252,6 +252,11 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
   const editor = useEditor({
     extensions,
     content: value ? `<p>${escapeHtml(value)}</p>` : "",
+    // Trailing whitespace is significant: a query ending in a space (e.g. set
+    // by the add-filter menu's "status:active ") keeps the cursor OUT of the
+    // filter token. The default HTML parser collapses it, which re-arms the
+    // filter suggestion popover the moment the input regains focus.
+    parseOptions: { preserveWhitespace: "full" },
     editable: !disabled,
     onUpdate: ({ editor }) => {
       if (isInternalUpdate.current) return
@@ -293,7 +298,10 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     const currentText = editor.getText()
     if (value !== currentText) {
       isInternalUpdate.current = true
-      editor.commands.setContent(value ? `<p>${escapeHtml(value)}</p>` : "")
+      // preserveWhitespace keeps trailing spaces (see parseOptions on useEditor)
+      editor.commands.setContent(value ? `<p>${escapeHtml(value)}</p>` : "", {
+        parseOptions: { preserveWhitespace: "full" },
+      })
       isInternalUpdate.current = false
     }
   }, [value, editor])
