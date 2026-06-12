@@ -495,27 +495,33 @@ export function SidebarFooter({
   )
 }
 
-// Shared face for the create control. A gold "thread" chip carries the emphasis
-// (per the design system, --primary is the single accent that signals primary
-// actions), the label sits left-aligned so the control reads as a sidebar row
-// rather than a form button, and the trailing chevron telegraphs the upward
-// menu — rhyming with the account row beneath it. The whole face reacts to the
-// trigger's `data-state` so hover and open share one warm treatment; both the
-// Radix desktop trigger and the manual mobile button expose that attribute.
+// Shared face for the create control. This is the sidebar's one deliberate
+// golden-thread moment: a centered, bordered gold pill (the accent token pair
+// keeps the label legible on the tint in both modes) so it reads as the app's
+// primary creation action rather than another list row. The plus rotates into
+// an × while the menu is open — the face reacts to the trigger's `data-state`,
+// which both the Radix desktop trigger and the manual mobile button expose.
 function SidebarCreateButtonFace() {
   return (
     <>
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary transition-colors group-hover/new:bg-primary/25 group-data-[state=open]/new:bg-primary/25">
-        <Plus className="h-4 w-4" />
-      </span>
-      <span className="flex-1 text-left font-medium">New</span>
-      <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/new:rotate-180" />
+      <Plus className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]/new:rotate-45" />
+      <span className="font-medium">New</span>
     </>
   )
 }
 
-const CREATE_BUTTON_CLASS =
-  "group/new w-full justify-start gap-2.5 px-3 bg-primary/[0.04] hover:bg-primary/10 hover:text-foreground data-[state=open]:bg-primary/10 data-[state=open]:text-foreground"
+// Hover and open share one warm treatment: deeper border, warmer gradient, and
+// a soft golden glow (the design system's "key moment" cue). Border and sizing
+// are constant across states, so nothing shifts (INV-21).
+const CREATE_BUTTON_CLASS = cn(
+  "group/new w-full justify-center gap-1.5 rounded-lg border border-primary/25",
+  "bg-gradient-to-b from-primary/15 to-primary/5 text-accent-foreground shadow-sm",
+  "transition-all duration-200",
+  "hover:border-primary/50 hover:from-primary/20 hover:to-primary/10 hover:text-accent-foreground",
+  "hover:shadow-[0_0_14px_hsl(var(--primary)/0.25)]",
+  "data-[state=open]:border-primary/50 data-[state=open]:from-primary/20 data-[state=open]:to-primary/10",
+  "data-[state=open]:text-accent-foreground data-[state=open]:shadow-[0_0_14px_hsl(var(--primary)/0.25)]"
+)
 
 /**
  * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
