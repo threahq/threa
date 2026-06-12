@@ -17,11 +17,13 @@ import {
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
   defaultFeatureFlags,
+  type LabelAssignment,
   type SavedMessageView,
   type ScheduledMessageView,
   type StreamBootstrap,
   type WorkspaceBootstrap,
 } from "@threa/types"
+import { assignmentId } from "@/hooks/use-labels"
 import type { Socket } from "socket.io-client"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
@@ -763,6 +765,48 @@ describe("registerWorkspaceSocketHandlers", () => {
     await vi.waitFor(async () => {
       expect(await db.savedMessages.get("saved_replay")).toBeTruthy()
       expect(await db.scheduledMessages.get("sched_replay")).toBeTruthy()
+    })
+
+    cleanup()
+    gate.dispose()
+  })
+
+  it("applies gate-dispatched label assignment catch-up replays to IDB", async () => {
+    // The coverage labels' dropped `refetchOnReconnect` is traded for in
+    // active mode: the label handlers register on the engine's event gate, so
+    // a catch-up replay (gate.dispatch, never the raw socket) lands assignment
+    // rows in IDB through the same code path as a live emit.
+    await db.labelAssignments.clear()
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+
+    const assignment: LabelAssignment = {
+      workspaceId: "ws_1",
+      labelId: "label_1",
+      resourceType: "stream",
+      resourceId: "stream_1",
+      userId: "member_1",
+      assignedAt: new Date().toISOString(),
+    }
+    const rowId = assignmentId("ws_1", "stream", "stream_1", "label_1", "member_1")
+
+    await gate.dispatch("label:assigned", { workspaceId: "ws_1", targetUserId: null, assignment })
+    // The handlers persist fire-and-forget, so poll IDB for the row.
+    await vi.waitFor(async () => {
+      expect(await db.labelAssignments.get(rowId)).toBeTruthy()
+    })
+
+    await gate.dispatch("label:unassigned", {
+      workspaceId: "ws_1",
+      targetUserId: null,
+      labelId: "label_1",
+      resourceType: "stream",
+      resourceId: "stream_1",
+      userId: "member_1",
+    })
+    await vi.waitFor(async () => {
+      expect(await db.labelAssignments.get(rowId)).toBeUndefined()
     })
 
     cleanup()

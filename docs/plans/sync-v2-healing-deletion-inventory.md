@@ -79,36 +79,69 @@ following #891): the invalidation now skips when
 
 **Verdict: covered; deleted.**
 
-### `refetchOnReconnect: true` on saved + scheduled lists
+### `refetchOnReconnect: true` on saved + scheduled lists — DONE
 
-`use-saved.ts:150`, `use-scheduled.ts:203`. Kept by #885 to cover the pure
-browser online/offline flip (no socket.io reconnect cycle).
+`use-saved.ts:useSavedList`, `use-scheduled.ts:useScheduledList`. Kept by #885
+to cover the pure browser online/offline flip (no socket.io reconnect cycle).
+**Gated on active mode (#900):** both hooks read the engine via
+`useOptionalSyncEngine()` and set
+`refetchOnReconnect: syncEngine?.syncCursorMode !== "active"` (null engine →
+`true`), so off/shadow/no-engine mounts keep the refetch.
 
 - The same flip already triggers `refreshAfterConnectivityResume()`
   (workspace-layout.tsx isOnline effect) → `runCatchUp("resume")` → replays
   the user-scoped saved/scheduled entries through the gate-registered
   workspace-sync handlers — the exact PR-B proof chain, on the exact same
   trigger.
-- Needs the hooks to read the engine mode (engine context) to set the option
-  per mode; keep `true` in off/shadow.
+- Tests pin the mode matrix (an invalidated-while-offline query refetches on
+  the flip in off/shadow/no-engine, not in active) and the replacement path
+  (`gate.dispatch("saved:upserted"/"scheduled_message:upserted")` lands rows
+  in IDB).
 
-**Verdict: covered in active mode. Same shape and risk profile as #885.**
+**Verdict: covered; gated (#900).**
 
-### `refetchOnReconnect: true` on `useLabelsSync`
+### `refetchOnReconnect: true` on `useLabelsSync` — DONE
 
-`use-labels.ts:194`. All seven `label:*` events have delivery groups and
+`use-labels.ts`. All seven `label:*` events have delivery groups and
 gate-registered handlers in workspace-sync, so the reconnect gap is replayed
-in active mode.
+in active mode. **Removed outright (explicit `refetchOnReconnect: false`, not
+mode-gated — owner decision)** after investigation showed the flag was inert
+in every mode:
 
-- **One open edge:** public-label `label:assigned`/`unassigned` on a _stream_
-  resource is stream-group-scoped. Catch-up only returns stream groups for
-  member streams, but a non-member can be viewing a public stream live (live
-  emit reaches the room; catch-up won't return it). The labels query has
-  `staleTime: Infinity`, so without `refetchOnReconnect` that viewer's
-  assignment state stays stale until a reload or another invalidation.
+- With `staleTime: Infinity`, `refetchOnReconnect: true` only fires on the
+  online flip for an invalidated query (mechanic 3 below), and the only
+  invalidators of `labelKeys.list` are the label mutation hooks themselves —
+  which cannot run while offline. The flag could never fire, in any mode.
+- The non-member public-stream edge flagged earlier is real for catch-up
+  (`listEntriesForUser` builds `visible_streams` from `stream_members` only,
+  so a stream-group-scoped public `label:assigned` never replays to a
+  non-member viewing the public stream) — but it is already healed by a kept
+  mechanism: the engine's reconnect workspace bootstrap fetches
+  `labelAssignmentService.listForViewer` (public rows gated through
+  `listAccessibleStreamIds`, which includes non-member public streams per
+  INV-62) and the frontend reconciles labels/memberships/assignments into IDB
+  (bulkPut + stale-delete). IDB is the render source; the `useLabelsSync`
+  query data is only read for `isFetched`.
+- The hook mounts only on the labels catalog and label-detail pages, so there
+  was no workspace-wide query for the flag to heal in the first place.
+- Tests pin both sides: the hook does not refetch on the online flip even
+  when invalidated while offline, and a gate-dispatched
+  `label:assigned`/`unassigned` replay lands/removes the assignment row in
+  IDB.
 
-**Verdict: mostly covered; resolve or accept the non-member public-stream
-edge before deleting.**
+**Verdict: inert healing; deleted. The catch-up gap for non-member public
+streams is owned by the reconnect bootstrap reconcile (kept, see below).**
+
+### Mechanic 3 (added with the labels deletion): when `refetchOnReconnect` can fire
+
+TanStack v5 (5.99.0, verified in source): on the online flip,
+`shouldFetchOnReconnect` → `shouldFetchOn` → `isStale` → `query.isStaleByTime`
+(`shouldFetchOn` also returns false outright for `staleTime: "static"`). With
+`staleTime: Infinity` and data present, `isStaleByTime` is true only when
+`state.isInvalidated` — and a fetch success resets `isInvalidated`. So for an
+Infinity-staleTime query, `refetchOnReconnect: true` is only live if something
+invalidates the query while offline. Audit that invalidator set before
+treating such a flag as real healing — it may be dead code (labels was).
 
 ## Not deletable / keep as-is
 
