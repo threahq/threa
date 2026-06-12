@@ -122,9 +122,9 @@ edge before deleting.**
   catch-up), not a one-line deletion. Owner decision; not next.
 - **Engine reconnect workspace bootstrap** (`runBootstrap(true)`): blocked.
   Bootstrap is still the authority for legacy unread-counter entries (until
-  sync*log retention ships and `isLegacyUnreadCounterEntry` dies), heals the
-  accepted #874 drift, and active-mode seeding is read-before-stamp \_against
-  this fetch*.
+  `sync_log` retention ships and `isLegacyUnreadCounterEntry` dies), heals the
+  accepted #874 drift, and active-mode seeding is read-before-stamp against
+  this very fetch.
 - **Per-stream reconnect delta** (`joinStreamForCatchUp` + `bootstrap?after=`):
   this _is_ the per-stream cursor mechanism, already delta-shaped. Keep.
 - **`backfillStreamGap` / `detectSequenceGap` / `computeTimelineHoles`**
