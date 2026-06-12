@@ -47,7 +47,9 @@ export interface CommandContext {
    */
   createEncryptedScratchpad: (withAriadne: boolean) => Promise<string>
   openCreateChannel: () => void
-  setMode?: (mode: "stream" | "command" | "search") => void
+  setMode?: (mode: "stream" | "command") => void
+  /** Open the workspace search surface (sidebar panel on desktop, /search page on mobile). */
+  openSearch: () => void
   requestInput: (request: InputRequest) => void
   openSettings: (tab?: SettingsTab) => void
   /** Open the workspace settings dialog at a tab (URL-param driven, like openSettings). */
@@ -171,8 +173,9 @@ export const commands: Command[] = [
     label: "Search messages",
     icon: Search,
     keywords: ["find", "query"],
-    action: ({ setMode }) => {
-      setMode?.("search")
+    action: ({ closeDialog, openSearch }) => {
+      closeDialog()
+      openSearch()
     },
   },
   // Destination commands mirror the sidebar's Quick Links block (drafts, saved,

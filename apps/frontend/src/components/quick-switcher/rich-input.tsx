@@ -69,6 +69,11 @@ export interface RichInputProps {
   /** Accessible label for the input (used by screen readers and testing) */
   ariaLabel?: string
   className?: string
+  /**
+   * Extra classes merged onto the editable element itself — use to override
+   * the default `h-11 py-3` sizing (e.g. `h-8 py-1.5` for compact inputs).
+   */
+  editorClassName?: string
   autoFocus?: boolean
   disabled?: boolean
 }
@@ -107,6 +112,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     placeholder = "Type here...",
     ariaLabel = "Text input",
     className,
+    editorClassName,
     autoFocus = false,
     disabled = false,
   },
@@ -257,7 +263,8 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
         class: cn(
           "flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none",
           "placeholder:text-muted-foreground",
-          "disabled:cursor-not-allowed disabled:opacity-50"
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          editorClassName
         ),
         "aria-label": ariaLabel,
       },
