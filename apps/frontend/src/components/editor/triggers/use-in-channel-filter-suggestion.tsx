@@ -3,18 +3,15 @@ import { useParams } from "react-router-dom"
 import type { ChannelItem } from "./types"
 import { ChannelList } from "./channel-list"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { rankMatches } from "@/lib/match-score"
 import { useSuggestion } from "./use-suggestion"
 
 /**
- * Filter channels by query string.
+ * Filter and rank channels by query string: exact/prefix matches on slug or
+ * name rank above mid-word substring hits.
  */
 function filterChannels(items: ChannelItem[], query: string): ChannelItem[] {
-  if (!query) return items
-  const lowerQuery = query.toLowerCase()
-  return items.filter(
-    (item) =>
-      item.slug.toLowerCase().includes(lowerQuery) || (item.name && item.name.toLowerCase().includes(lowerQuery))
-  )
+  return rankMatches(items, query, (item) => ({ labels: item.name ? [item.slug, item.name] : [item.slug] }))
 }
 
 /**

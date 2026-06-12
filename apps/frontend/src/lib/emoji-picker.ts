@@ -1,4 +1,5 @@
 import type { EmojiEntry } from "@threa/types"
+import { rankMatches } from "@/lib/match-score"
 
 export const EMOJI_GROUP_ORDER = [
   "smileys",
@@ -113,10 +114,20 @@ export function buildQuickEmojis(
   return result
 }
 
+/**
+ * Filter and rank emojis for a search query. The canonical shortcode is the
+ * primary match target; other aliases score a tier below, so `:smile:` ranks
+ * above an emoji that merely lists "smile" as a hidden alias. Ties keep input
+ * order (default order for the grid, weight order for recents).
+ *
+ * `aliases` includes the primary shortcode (see EmojiEntry), so it is
+ * excluded from the keyword band to keep the tier intent explicit.
+ */
 export function filterBySearch(emojis: EmojiEntry[], query: string): EmojiEntry[] {
-  if (!query) return emojis
-  const q = query.toLowerCase()
-  return emojis.filter((e) => e.aliases.some((a) => a.includes(q)))
+  return rankMatches(emojis, query, (e) => ({
+    labels: [e.shortcode],
+    keywords: e.aliases.filter((alias) => alias !== e.shortcode),
+  }))
 }
 
 export type Section = "recent" | "all"

@@ -7,6 +7,7 @@ import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
 import { MEMO_SEARCH_SLASH_ACTION, GIPHY_SLASH_ACTION } from "./command-extension"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
+import { rankMatches } from "@/lib/match-score"
 import { streamKeys } from "@/hooks/use-streams"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { useSuggestion } from "./use-suggestion"
@@ -25,17 +26,15 @@ function slashOpensMessage(editor: Editor | undefined, query: string): boolean {
 /**
  * Filter commands by query string and cursor context.
  *
- * Matches name/description case-insensitively, and drops whole-message commands
- * (anything not `placement: "inline"`) unless the slash opens the message.
+ * Drops whole-message commands (anything not `placement: "inline"`) unless the
+ * slash opens the message, then ranks by match location: the command name is
+ * the visible label, the description a hidden alias a tier below, so
+ * name matches always sort above description-only matches.
  */
 export function filterCommands(items: CommandItem[], query: string, editor?: Editor): CommandItem[] {
   const opensMessage = slashOpensMessage(editor, query)
-  const lowerQuery = query.toLowerCase()
-  return items.filter((item) => {
-    if (item.placement !== "inline" && !opensMessage) return false
-    if (!lowerQuery) return true
-    return item.name.toLowerCase().includes(lowerQuery) || item.description.toLowerCase().includes(lowerQuery)
-  })
+  const placed = items.filter((item) => item.placement === "inline" || opensMessage)
+  return rankMatches(placed, query, (item) => ({ labels: [item.name], keywords: [item.description] }))
 }
 
 export function resolveEffectiveCommandInfos(

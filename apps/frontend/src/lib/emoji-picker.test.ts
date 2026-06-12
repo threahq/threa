@@ -76,6 +76,12 @@ describe("filterBySearch", () => {
     const matches = filterBySearch([smile, poop], "HANKEY")
     expect(matches.map((e) => e.shortcode)).toEqual(["poop"])
   })
+
+  it("ranks visible shortcode matches above hidden alias matches regardless of input order", () => {
+    const happy = make("happy_face", "people", 1, ["happy_face", "smile_alt"])
+    const matches = filterBySearch([happy, smile], "smile")
+    expect(matches.map((e) => e.shortcode)).toEqual(["smile", "happy_face"])
+  })
 })
 
 describe("indexToCoord", () => {

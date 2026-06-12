@@ -8,6 +8,7 @@ import {
 } from "@/stores/workspace-store"
 import { useParams } from "react-router-dom"
 import { useUser } from "@/auth"
+import { rankMatches } from "@/lib/match-score"
 import { useStreamBootstrap } from "./use-streams"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { StreamTypes, type StreamType } from "@threa/types"
@@ -228,24 +229,22 @@ export function useMentionables(streamContext?: MentionStreamContext) {
 }
 
 /**
- * Filter mentionables by query string.
- * Matches against slug and name, case-insensitive.
+ * Filter and rank mentionables by query string.
+ * Matches against slug and name (both visible in the row), case-insensitive;
+ * exact/prefix matches rank above mid-word substring hits, ties keep input
+ * order (current user stays first among equals).
  * Special case: "me" matches the current user.
  */
 export function filterMentionables(items: Mentionable[], query: string): Mentionable[] {
   if (!query) return items
 
-  const lowerQuery = query.toLowerCase()
-
   // Special case: "me" should match the current user
-  if (lowerQuery === "me") {
+  if (query.toLowerCase() === "me") {
     const currentUser = items.find((item) => item.isCurrentUser)
     if (currentUser) return [currentUser]
   }
 
-  return items.filter(
-    (item) => item.slug.toLowerCase().includes(lowerQuery) || item.name.toLowerCase().includes(lowerQuery)
-  )
+  return rankMatches(items, query, (item) => ({ labels: [item.slug, item.name] }))
 }
 
 /**
