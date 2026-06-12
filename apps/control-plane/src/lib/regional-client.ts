@@ -100,14 +100,19 @@ export class RegionalClient {
       lastEventAt: Date
     }
   ): Promise<void> {
-    await this.postToAuthzMemberships(region, "sync", {
-      kind: "upsert",
-      workspaceId: data.workspaceId,
-      workosUserId: data.workosUserId,
-      roleSlugs: data.roleSlugs,
-      status: data.status,
-      lastEventAt: data.lastEventAt.toISOString(),
-    })
+    await this.postInternal(
+      region,
+      "/internal/authz/memberships",
+      {
+        kind: "upsert",
+        workspaceId: data.workspaceId,
+        workosUserId: data.workosUserId,
+        roleSlugs: data.roleSlugs,
+        status: data.status,
+        lastEventAt: data.lastEventAt.toISOString(),
+      },
+      "Regional authz membership sync"
+    )
   }
 
   /**
@@ -119,25 +124,31 @@ export class RegionalClient {
     region: string,
     data: { workspaceId: string; workosUserId: string; eventCreatedAt: Date }
   ): Promise<void> {
-    await this.postToAuthzMemberships(region, "removal", {
-      kind: "remove",
-      workspaceId: data.workspaceId,
-      workosUserId: data.workosUserId,
-      eventCreatedAt: data.eventCreatedAt.toISOString(),
-    })
+    await this.postInternal(
+      region,
+      "/internal/authz/memberships",
+      {
+        kind: "remove",
+        workspaceId: data.workspaceId,
+        workosUserId: data.workosUserId,
+        eventCreatedAt: data.eventCreatedAt.toISOString(),
+      },
+      "Regional authz membership removal"
+    )
   }
 
   /**
-   * Shared transport for `POST /internal/authz/memberships`. The two callers
-   * differ only in the discriminated-union body and the log verb, so headers,
-   * timeout, error normalization, and HTTP plumbing live here once.
+   * Shared transport for fire-and-forget internal POSTs (no response body
+   * needed). Headers, timeout, error normalization, and HTTP plumbing live
+   * here once; callers differ only in path, body, and the log label.
    */
-  private async postToAuthzMemberships(
+  private async postInternal(
     region: string,
-    op: "sync" | "removal",
-    body: Record<string, unknown>
+    path: string,
+    body: Record<string, unknown>,
+    logContext: string
   ): Promise<void> {
-    const url = `${this.getRegionUrl(region)}/internal/authz/memberships`
+    const url = `${this.getRegionUrl(region)}${path}`
     let res: Response
     try {
       res = await fetch(url, {
@@ -150,13 +161,13 @@ export class RegionalClient {
         signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
-      logger.error({ err, region, url }, `Regional authz membership ${op} request failed`)
+      logger.error({ err, region, url }, `${logContext} request failed`)
       throw err
     }
 
     if (!res.ok) {
       const responseBody = await res.text().catch(() => "")
-      logger.error({ region, status: res.status, body: responseBody }, `Regional authz membership ${op} failed`)
+      logger.error({ region, status: res.status, body: responseBody }, `${logContext} failed`)
       throw new Error(`Regional backend returned ${res.status}: ${responseBody}`)
     }
   }
@@ -170,28 +181,7 @@ export class RegionalClient {
     region: string,
     data: { workspaceId: string; workosUserId: string; flags: Record<string, string> }
   ): Promise<void> {
-    const url = `${this.getRegionUrl(region)}/internal/feature-flags`
-    let res: Response
-    try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
-        },
-        body: JSON.stringify(data),
-        signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
-      })
-    } catch (err) {
-      logger.error({ err, region, url }, "Regional feature flag sync request failed")
-      throw err
-    }
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "")
-      logger.error({ region, status: res.status, body }, "Regional feature flag sync failed")
-      throw new Error(`Regional backend returned ${res.status}: ${body}`)
-    }
+    await this.postInternal(region, "/internal/feature-flags", data, "Regional feature flag sync")
   }
 
   /**
@@ -203,28 +193,7 @@ export class RegionalClient {
     region: string,
     data: { workspaceId: string; workosUserId: string; isPlatformAdmin: boolean }
   ): Promise<void> {
-    const url = `${this.getRegionUrl(region)}/internal/platform-admin`
-    let res: Response
-    try {
-      res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
-        },
-        body: JSON.stringify(data),
-        signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
-      })
-    } catch (err) {
-      logger.error({ err, region, url }, "Regional platform-admin sync request failed")
-      throw err
-    }
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "")
-      logger.error({ region, status: res.status, body }, "Regional platform-admin sync failed")
-      throw new Error(`Regional backend returned ${res.status}: ${body}`)
-    }
+    await this.postInternal(region, "/internal/platform-admin", data, "Regional platform-admin sync")
   }
 
   /**

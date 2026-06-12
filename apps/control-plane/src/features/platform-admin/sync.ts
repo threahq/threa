@@ -45,11 +45,19 @@ export class PlatformAdminSyncService {
     this.regionalClient = regionalClient
   }
 
-  /** Enqueue a fan-out for one user. Pass the transaction client to commit atomically (INV-7). */
-  async enqueue(db: Querier, workosUserId: string): Promise<void> {
-    await OutboxRepository.insert(db, OUTBOX_PLATFORM_ADMIN_SYNC, {
-      workosUserId,
-    } satisfies PlatformAdminSyncPayload)
+  /**
+   * Enqueue fan-outs for a batch of users in one round-trip (INV-56) — the
+   * startup-seeding path. Pass the transaction client to commit atomically
+   * with surrounding writes (INV-7).
+   */
+  async enqueueMany(db: Querier, workosUserIds: string[]): Promise<void> {
+    await OutboxRepository.insertMany(
+      db,
+      workosUserIds.map((workosUserId) => ({
+        eventType: OUTBOX_PLATFORM_ADMIN_SYNC,
+        payload: { workosUserId } satisfies PlatformAdminSyncPayload,
+      }))
+    )
   }
 
   /**
@@ -61,7 +69,9 @@ export class PlatformAdminSyncService {
   async enqueueIfAdmin(db: Querier, workosUserId: string): Promise<void> {
     const row = await PlatformRoleRepository.findByWorkosUserId(db, workosUserId)
     if (row?.role === "admin") {
-      await this.enqueue(db, workosUserId)
+      await OutboxRepository.insert(db, OUTBOX_PLATFORM_ADMIN_SYNC, {
+        workosUserId,
+      } satisfies PlatformAdminSyncPayload)
     }
   }
 

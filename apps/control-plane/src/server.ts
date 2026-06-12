@@ -103,9 +103,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   // Re-emitting the fan-out for every seeded admin on each boot is the
   // self-heal path: idempotent snapshots, tiny N, and it converges regions
   // that missed a membership-time emit or were unreachable during one.
-  for (const workosUserId of config.platformAdminWorkosUserIds) {
-    await platformAdminSync.enqueue(pool, workosUserId)
-  }
+  await platformAdminSync.enqueueMany(pool, config.platformAdminWorkosUserIds)
 
   // Outbox — single handler for all control-plane events (no sharding needed)
   const cursorLock = new CursorLock({
