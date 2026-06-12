@@ -37,6 +37,15 @@
   /* total animation cycle for the chat widget */
   --cycle: 22s;
 
+  /* Chat-demo send button. Tokens rather than literals because the armed/idle
+     swap lives in @keyframes (send-arm), which a [data-theme] selector cannot
+     reach — the vars resolve per-theme inside the keyframes instead. Idle is
+     the app's disabled-primary; armed is full primary. */
+  --send-idle-bg: 38 50% 75%;
+  --send-idle-fg: 42 55% 97%;
+  --send-armed-bg: 38 62% 53%;
+  --send-armed-fg: 42 40% 98%;
+
   color-scheme: light;
 }
 
@@ -61,6 +70,13 @@
   --muted: 32 7% 57%;
   --emerald: 142 45% 52%;
   --emerald-soft: 142 28% 16%;
+
+  /* Dark disabled-primary: dimmed olive-gold with a light arrow, matching
+     the real app's dark composer. */
+  --send-idle-bg: 44 32% 35%;
+  --send-idle-fg: 44 40% 90%;
+  --send-armed-bg: 40 62% 56%;
+  --send-armed-fg: 26 16% 10%;
 
   color-scheme: dark;
 }
@@ -682,8 +698,8 @@ body::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: hsl(38 50% 75%);
-  color: hsl(42 55% 97%);
+  background: hsl(var(--send-idle-bg));
+  color: hsl(var(--send-idle-fg));
   border: none;
   margin-left: 4px;
   flex-shrink: 0;
@@ -1099,18 +1115,18 @@ body::after {
        button), arms to full gold while content is typed. */
   0%,
   29.9% {
-    background: hsl(38 50% 75%);
-    color: hsl(42 55% 97%);
+    background: hsl(var(--send-idle-bg));
+    color: hsl(var(--send-idle-fg));
   }
   30%,
   48.9% {
-    background: hsl(38 62% 53%);
-    color: hsl(42 40% 98%);
+    background: hsl(var(--send-armed-bg));
+    color: hsl(var(--send-armed-fg));
   }
   49%,
   100% {
-    background: hsl(38 50% 75%);
-    color: hsl(42 55% 97%);
+    background: hsl(var(--send-idle-bg));
+    color: hsl(var(--send-idle-fg));
   }
 }
 
