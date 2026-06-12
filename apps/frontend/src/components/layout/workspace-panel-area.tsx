@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
 import { usePanel, useSidebar } from "@/contexts"
 import { PanelInstanceProvider, useFocusedPane } from "@/contexts/panel-instance-context"
@@ -345,6 +345,8 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
         const cleanup = () => {
           window.removeEventListener("pointermove", handleMove)
           window.removeEventListener("pointerup", handleUp)
+          window.removeEventListener("pointercancel", handleCancel)
+          window.removeEventListener("blur", handleCancel)
           window.removeEventListener("keydown", handleKey, { capture: true })
           endDrag()
         }
@@ -354,6 +356,12 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
           if (started && state) commitDrag(state)
           cleanup()
         }
+
+        // A pointer that never delivers pointerup (released outside the
+        // window, touch interruption, cmd-tab away) must still end the drag —
+        // otherwise the listeners and the grabbing cursor are stuck until the
+        // next click inside the window.
+        const handleCancel = () => cleanup()
 
         // Escape cancels the drag and restores the previous order (capture
         // phase so dialogs/popovers underneath don't also react).
@@ -366,6 +374,8 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
 
         window.addEventListener("pointermove", handleMove)
         window.addEventListener("pointerup", handleUp)
+        window.addEventListener("pointercancel", handleCancel)
+        window.addEventListener("blur", handleCancel)
         window.addEventListener("keydown", handleKey, { capture: true })
       },
     }),
@@ -487,7 +497,7 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
           closing={slot.closing ?? false}
           onCloseFinished={finishClose}
           isDragSource={drag?.panelId === slot.id}
-          dragHandleProps={getDragHandleProps(slot.id)}
+          getDragHandleProps={getDragHandleProps}
           width={slotWidths[slot.key] ?? DEFAULT_PANEL_WIDTH}
           onWidthChange={setSlotWidth}
           onEqualizePair={equalizePairAt}
@@ -529,7 +539,7 @@ interface PanelSlotProps {
   closing: boolean
   onCloseFinished: (slotKey: string) => void
   isDragSource: boolean
-  dragHandleProps: { onPointerDown: (e: React.PointerEvent) => void }
+  getDragHandleProps: (panelId: string) => { onPointerDown: (e: React.PointerEvent) => void }
   width: number
   onWidthChange: (slotKey: string, width: number) => void
   /** Double-click on the divider: equalize this pane with its left neighbor. */
@@ -537,7 +547,10 @@ interface PanelSlotProps {
   onRegisterEl: (panelId: string, el: HTMLDivElement | null) => void
 }
 
-function PanelSlot({
+// Memoized: during a drag or resize the area re-renders every pointer frame
+// (ghost pill, drop overlay, widths) — slots whose props are unchanged must
+// not re-render their whole content tree along with it.
+const PanelSlot = memo(function PanelSlot({
   slotKey,
   panelId,
   workspaceId,
@@ -546,13 +559,17 @@ function PanelSlot({
   closing,
   onCloseFinished,
   isDragSource,
-  dragHandleProps,
+  getDragHandleProps,
   width,
   onWidthChange,
   onEqualizePair,
   onRegisterEl,
 }: PanelSlotProps) {
   const { closePanel, setFocusedPane } = usePanel()
+  // Built here, not at the render site: a fresh object per parent render
+  // would feed PanelInstanceProvider's value memo and re-render every
+  // usePanelInstance consumer inside the panel.
+  const dragHandleProps = useMemo(() => getDragHandleProps(panelId), [getDragHandleProps, panelId])
   // Open/close animate the OUTER box's width (pushing the main view over
   // smoothly) while the INNER box stays fixed at the final width, left-anchored
   // and clipped by overflow-hidden — content slides in from the right edge and
@@ -671,7 +688,7 @@ function PanelSlot({
       <PaneFocusIndicator active pane={panelId} />
     </div>
   )
-}
+})
 
 /**
  * The hairline under a pane's header marking it as the focused pane. Every
