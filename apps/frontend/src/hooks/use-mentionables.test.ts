@@ -85,6 +85,16 @@ describe("filterMentionables", () => {
     // Matches: alice (slug), Ariadne (slug/name), Channel (name)
     expect(result.length).toBeGreaterThanOrEqual(2)
   })
+
+  it("should rank prefix matches above mid-word substring matches", () => {
+    const withMidWordMatch: Mentionable[] = [
+      // Defined first and matches "ali" only mid-word; the prefix match must win.
+      { id: "usr_9", slug: "natalie", name: "Natalie Doe", type: "user" },
+      { id: "usr_1", slug: "alice", name: "Alice Smith", type: "user" },
+    ]
+    const result = filterMentionables(withMidWordMatch, "ali")
+    expect(result.map((item) => item.slug)).toEqual(["alice", "natalie"])
+  })
 })
 
 describe("filterBroadcastMentions", () => {
