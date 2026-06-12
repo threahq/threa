@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
-import { provisionOwnerStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
+import { computeMissingActorWraps, provisionOwnerStreamKey, reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { useE2eSession } from "@/stores/e2e-session-store"
@@ -154,17 +154,16 @@ function useActorWrapRevive(workspaceId: string, streamId: string): void {
     if (!sessionReady || !data || !userId || !ownerKeyId || !ownerPrivateKey || !rootStreamId) return
     if (data.ownerUserId !== userId) return
 
-    const live = data.liveActorRecipients ?? []
-    const missing = live.filter(
-      (r) =>
-        !data.wraps.some((w) => w.keyGeneration === data.currentKeyGeneration && w.recipientKeyId === r.recipientKeyId)
-    )
+    // The shared slot computation (current generation for every actor, plus
+    // the enclave's already-held older generations — E2EE-7) so this probe
+    // can't drift from what `reviveStaleActorWraps` actually heals.
+    const missing = computeMissingActorWraps(data)
     if (missing.length === 0) return
 
-    const signature = `${data.currentKeyGeneration}:${missing
-      .map((r) => r.recipientKeyId)
+    const signature = missing
+      .map((m) => `${m.keyGeneration}:${m.recipient.recipientKeyId}`)
       .sort()
-      .join(",")}`
+      .join(",")
     if (attemptedRef.current === signature) return
     attemptedRef.current = signature
 

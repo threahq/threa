@@ -454,21 +454,26 @@ export interface E2eKeyRollInput {
 }
 
 /**
- * Body for `POST …/e2e/actor-key-wraps`: re-wraps of the *current* SSK to
- * invited actors' live keys that are missing a wrap at that generation —
+ * Body for `POST …/e2e/actor-key-wraps`: re-wraps of already-granted SSK
+ * generations to invited actors' live keys that are missing their wrap —
  * the revive path for an actor whose key changed after the invite (an
  * enclave restart mints a fresh EIK, orphaning every stream wrapped to the
  * old one). Unlike a key roll, no fresh SSK is minted and the generation
- * does not advance: the actor was already granted this generation, so
- * re-addressing the same key to its new instance preserves exactly the
- * prior access — and keeps a pending turn (sealed under the current
- * generation) decryptable, which a roll would strand. `keyGeneration` must
- * equal the stream's current generation; recipients must be live keys of
- * currently-invited actors (never `user` wraps).
+ * does not advance: the actor was already granted these generations, so
+ * re-addressing the same keys to its new instance preserves exactly the
+ * prior access — and keeps a pending turn decryptable, which a roll would
+ * strand. The top-level `keyGeneration` must equal the stream's current
+ * generation (the client's freshness assertion); each wrap defaults to it.
+ * A wrap may name an older generation only for the enclave actor (a
+ * singleton, so any prior enclave wrap at that generation proves the actor
+ * held it) — re-wrapping every generation the owner can open is what
+ * un-strands a parked turn, sealed history, and turn digests after an
+ * enclave restart that follows a key roll (E2EE-7). Recipients must be
+ * live keys of currently-invited actors (never `user` wraps).
  */
 export interface E2eActorRewrapInput {
   keyGeneration: number
-  wraps: E2eKeyWrapInput[]
+  wraps: (E2eKeyWrapInput & { keyGeneration?: number })[]
 }
 
 // ============================================================================

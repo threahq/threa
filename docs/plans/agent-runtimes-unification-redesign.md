@@ -751,7 +751,9 @@ ship earlier as the UX-12 fix without inverting turn start.
    the former; read-path simplicity suggests the latter.
 4. **`sources: []` willful defeat** (prior doc's spike #3): add the test that
    a turn whose tool results carried sources commits non-empty sources, so the
-   required-field guarantee isn't quietly defeated.
+   required-field guarantee isn't quietly defeated. _Resolved: the test
+   shipped with #818 (`agent-runtime.test.ts`, "AgentRuntime source
+   commitment")._
 5. **Digest authorship and trust (C-1):** the turn digest is model-generated
    text that future turns treat as ground truth. Does it need the same
    trust-boundary wrap as tool output, and should the trace UI render it so
@@ -760,7 +762,13 @@ ship earlier as the UX-12 fix without inverting turn start.
    sealed under generation N must be re-wrapped or rebuilt when the stream
    key rolls, or it becomes the same stranded-data class as parked turns.
    Decide: re-wrap on revive (preferred) or rebuild from scratch on
-   generation mismatch.
+   generation mismatch. _Resolved as re-wrap on revive: the actor-wrap revive
+   path re-wraps every owner-openable generation the enclave already held
+   (proven by a prior enclave wrap row at that generation; bots stay
+   current-only — no per-bot generation attribution), so a parked turn, old
+   sealed history, and turn digests survive an enclave restart that follows a
+   key roll (E2EE-7). Sealed rolling summaries don't exist yet; when they do,
+   the same generation wraps cover them._
 7. **Where does the budgeted window live for mentions/channels?** Scratchpads
    want deep continuity; a channel mention probably still wants the shallow
    window. The `ContextWindowPolicy` should be per-trigger-kind (deep for

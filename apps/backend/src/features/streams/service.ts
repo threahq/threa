@@ -1046,20 +1046,29 @@ export class StreamService {
   }
 
   /**
-   * Re-wrap the *current* SSK to invited actors' live keys that lost their
-   * wrap — the revive path for an actor whose key changed after the invite
-   * (an enclave restart mints a fresh EIK, orphaning every stream wrapped to
-   * the old one; until revived, enclave turns for the stream park in the
-   * queue). No fresh SSK and no generation bump: the actor already held this
-   * generation, so re-addressing the same key to its new instance restores
-   * exactly the prior access — and keeps a parked turn (sealed under the
-   * current generation) decryptable, which a roll would strand.
+   * Re-wrap already-granted SSK generations to invited actors' live keys that
+   * lost their wrap — the revive path for an actor whose key changed after
+   * the invite (an enclave restart mints a fresh EIK, orphaning every stream
+   * wrapped to the old one; until revived, enclave turns for the stream park
+   * in the queue). No fresh SSK and no generation bump: the actor already
+   * held these generations, so re-addressing the same keys to its new
+   * instance restores exactly the prior access — and keeps a parked turn
+   * decryptable, which a roll would strand.
    *
-   * Owner-only, generation must be exactly current (same advisory lock as
-   * `rollStreamKey` so a concurrent roll can't slip a stale-generation wrap
-   * in), and every wrap must address a currently-live key of a currently-
-   * invited actor — never a `user` wrap, so this can't become a side door
-   * for adding readers.
+   * Owner-only, and the top-level generation must be exactly current (same
+   * advisory lock as `rollStreamKey` so a concurrent roll can't slip a
+   * stale-generation wrap in). Each wrap defaults to that generation; it may
+   * name an older one only for the enclave — a singleton actor, so any
+   * existing enclave wrap at that generation proves the actor held it. That
+   * is what un-strands a turn parked under a pre-roll generation, and what
+   * keeps old sealed history and turn digests readable after an enclave
+   * restart (E2EE-7). Bots stay current-generation-only: their wraps carry
+   * no per-bot identity, so an older generation can't be attributed to the
+   * specific bot that held it — and widening one bot's revive to another's
+   * history would breach the invite-time boundary `rekeyStream` documents.
+   * Every wrap must address a currently-live key of a currently-invited
+   * actor, matching the server-resolved kind — never a `user` wrap, so this
+   * can't become a side door for adding readers.
    */
   async reviveActorKeyWraps(
     workspaceId: string,
@@ -1090,12 +1099,48 @@ export class StreamService {
       }
 
       const live = await this.resolveActorRecipients(client, e2e)
-      const liveKeyIds = new Set(live.map((r) => r.recipientKeyId))
+      const liveByKeyId = new Map(live.map((r) => [r.recipientKeyId, r]))
+
+      // Generations the enclave actor already held, proven by an existing
+      // enclave wrap row at that generation (wraps are immutable, so a dead
+      // EIK's rows remain as the record). Fetched only when some wrap asks
+      // for an older generation — the common current-only heal skips it.
+      const wantsOlderGeneration = input.wraps.some(
+        (w) => (w.keyGeneration ?? input.keyGeneration) !== e2e.currentKeyGeneration
+      )
+      const enclaveHeldGenerations = wantsOlderGeneration
+        ? new Set(
+            (await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId))
+              .filter((w) => w.recipientKind === E2eKeyWrapRecipientKinds.ENCLAVE)
+              .map((w) => w.keyGeneration)
+          )
+        : new Set<number>()
+
       for (const wrap of input.wraps) {
-        if (wrap.recipientKind === E2eKeyWrapRecipientKinds.USER || !liveKeyIds.has(wrap.recipientKeyId)) {
+        // Kind is taken from the server-resolved live entry, never the
+        // client's label — a relabeled key id must not widen what the
+        // generation rule below allows.
+        const liveRecipient = liveByKeyId.get(wrap.recipientKeyId)
+        if (
+          wrap.recipientKind === E2eKeyWrapRecipientKinds.USER ||
+          !liveRecipient ||
+          liveRecipient.recipientKind !== wrap.recipientKind
+        ) {
           throw new HttpError("Wrap recipient is not a live key of an invited actor", {
             status: 400,
             code: "E2E_RECIPIENT_NOT_LIVE_ACTOR",
+          })
+        }
+        const generation = wrap.keyGeneration ?? input.keyGeneration
+        if (generation === e2e.currentKeyGeneration) continue
+        if (
+          generation > e2e.currentKeyGeneration ||
+          liveRecipient.recipientKind !== E2eKeyWrapRecipientKinds.ENCLAVE ||
+          !enclaveHeldGenerations.has(generation)
+        ) {
+          throw new HttpError("Wrap generation was never granted to this actor", {
+            status: 400,
+            code: "E2E_GENERATION_NOT_HELD",
           })
         }
       }
@@ -1108,7 +1153,7 @@ export class StreamService {
         input.wraps.map((w) => ({
           workspaceId,
           streamId,
-          keyGeneration: input.keyGeneration,
+          keyGeneration: w.keyGeneration ?? input.keyGeneration,
           recipientKeyId: w.recipientKeyId,
           recipientKind: w.recipientKind,
           wrapEnc: w.wrapEnc,
