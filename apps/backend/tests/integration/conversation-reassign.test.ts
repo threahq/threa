@@ -223,6 +223,63 @@ describe("ConversationService.reassignMessage", () => {
     })
   })
 
+  test("resolves the previous conversation when its only message moves out", async () => {
+    const { convAId, convBId, msg0Id } = await seedTwoConversations()
+
+    // Conversation B owns only msg0; moving it out empties B.
+    const result = await service.reassignMessage({
+      workspaceId: testWorkspaceId,
+      conversationId: convAId,
+      messageId: msg0Id,
+      userId: testUserId,
+    })
+
+    expect(result.previousConversation).toMatchObject({ id: convBId, messageIds: [], status: "resolved" })
+
+    const convB = await withTransaction(pool, (client) => ConversationRepository.findById(client, convBId))
+    expect(convB?.status).toBe("resolved")
+
+    // The conversation:updated payload must carry the new status (INV-4, INV-7).
+    const events = await withTransaction(pool, async (client) => {
+      const res = await client.query<{ payload: { conversationId: string; conversation: { status: string } } }>(
+        `SELECT payload FROM outbox WHERE event_type = 'conversation:updated'`
+      )
+      return res.rows
+    })
+    const updatedB = events.find((e) => e.payload.conversationId === convBId)
+    expect(updatedB?.payload.conversation).toMatchObject({ id: convBId, status: "resolved" })
+  })
+
+  test("reactivates a resolved-empty conversation when a message moves back into it", async () => {
+    const { convAId, convBId, msg0Id, msg1Id, msg2Id } = await seedTwoConversations()
+
+    // Empty conversation B (auto-resolves), then undo: move the message back.
+    await service.reassignMessage({
+      workspaceId: testWorkspaceId,
+      conversationId: convAId,
+      messageId: msg0Id,
+      userId: testUserId,
+    })
+    const result = await service.reassignMessage({
+      workspaceId: testWorkspaceId,
+      conversationId: convBId,
+      messageId: msg0Id,
+      userId: testUserId,
+    })
+
+    expect(result.conversation).toMatchObject({ id: convBId, messageIds: [msg0Id], status: "active" })
+    // Conversation A still owns msg1+msg2 after the undo: resolve-on-empty
+    // must NOT fire for a previous conversation that has messages left.
+    expect(result.previousConversation).toMatchObject({
+      id: convAId,
+      messageIds: [msg1Id, msg2Id],
+      status: "active",
+    })
+
+    const convB = await withTransaction(pool, (client) => ConversationRepository.findById(client, convBId))
+    expect(convB?.status).toBe("active")
+  })
+
   test("no-ops when the message is already primary in the target conversation", async () => {
     const { convAId, msg2Id } = await seedTwoConversations()
 

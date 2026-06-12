@@ -113,8 +113,16 @@ export class ConversationService {
 
       if (previous) {
         await ConversationRepository.removePrimaryMessage(client, workspaceId, previous.id, messageId)
+        // Moving a conversation's only message out leaves an empty shell that
+        // would otherwise stay "active" forever; resolve it. Moving a message
+        // back into it (the undo path) reactivates it below.
+        await ConversationRepository.resolveIfEmpty(client, workspaceId, previous.id)
       }
       await ConversationRepository.addPrimaryMessage(client, workspaceId, target.id, messageId, message.authorId)
+      // Deliberately unconditional, not just for the undo path: a user moving
+      // a message into ANY resolved conversation is declaring it has activity
+      // again, so it returns to the active lifecycle.
+      await ConversationRepository.reactivateIfResolved(client, workspaceId, target.id)
 
       await ConversationFeedbackRepository.insert(client, {
         id: conversationFeedbackId(),
