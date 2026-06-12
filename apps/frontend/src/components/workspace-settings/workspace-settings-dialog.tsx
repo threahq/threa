@@ -15,7 +15,9 @@ import {
   WS_SETTINGS_PARAM,
   type WorkspaceSettingsTab,
 } from "./tab-config"
+import { useOverriddenFeatureFlags } from "@/hooks/use-feature-flags"
 import { GeneralTab } from "./general-tab"
+import { FeatureFlagsTab } from "./feature-flags-tab"
 import { UsersTab } from "./users-tab"
 import { ApiKeysTab } from "./api-keys-tab"
 import { BotsTab } from "./bots-tab"
@@ -31,11 +33,18 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
   const [searchParams, setSearchParams] = useSearchParams()
   const [mounted, setMounted] = useState(false)
 
+  // The feature flags view is read-only and deliberately absent (including via
+  // deep link) when the viewer has no non-default flags, so flag state is
+  // never surfaced beyond what is actually set for them.
+  const overriddenFlags = useOverriddenFeatureFlags(workspaceId)
+  const visibleTabs: readonly WorkspaceSettingsTab[] =
+    overriddenFlags.length > 0 ? WORKSPACE_SETTINGS_TABS : WORKSPACE_SETTINGS_TABS.filter((t) => t !== "feature-flags")
+
   const settingsParam = searchParams.get(WS_SETTINGS_PARAM)
   const normalizedSettingsParam = settingsParam === "members" ? "users" : settingsParam
   const isOpen = settingsParam !== null
   const activeTab: WorkspaceSettingsTab =
-    normalizedSettingsParam && WORKSPACE_SETTINGS_TABS.includes(normalizedSettingsParam as WorkspaceSettingsTab)
+    normalizedSettingsParam && visibleTabs.includes(normalizedSettingsParam as WorkspaceSettingsTab)
       ? (normalizedSettingsParam as WorkspaceSettingsTab)
       : "general"
 
@@ -79,7 +88,7 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
         >
           <div data-slot="settings-panels" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.panels}>
             <ResponsiveSettingsNav
-              tabs={WORKSPACE_SETTINGS_TABS}
+              tabs={visibleTabs}
               items={WORKSPACE_SETTINGS_TAB_CONFIG}
               value={activeTab}
               onValueChange={setTab}
@@ -106,6 +115,9 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
               </TabsContent>
               <TabsContent value="api-keys" className="mt-0">
                 <ApiKeysTab workspaceId={workspaceId} />
+              </TabsContent>
+              <TabsContent value="feature-flags" className="mt-0">
+                <FeatureFlagsTab workspaceId={workspaceId} />
               </TabsContent>
             </div>
           </div>

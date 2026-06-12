@@ -9,6 +9,7 @@ export const WORKSPACE_SETTINGS_TABS = [
   "integrations",
   "bots",
   "api-keys",
+  "feature-flags",
 ] as const
 export type WorkspaceSettingsTab = (typeof WORKSPACE_SETTINGS_TABS)[number]
 
@@ -20,4 +21,5 @@ export const WORKSPACE_SETTINGS_TAB_CONFIG: Record<WorkspaceSettingsTab, { label
   integrations: { label: "Integrations", description: "Shared third-party connections" },
   bots: { label: "Bots", description: "Workspace automation accounts" },
   "api-keys": { label: "API Keys", description: "Create and revoke access keys" },
+  "feature-flags": { label: "Feature flags", description: "Rollout flags set on your account" },
 }
