@@ -481,6 +481,26 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
     })
 
+    it("adds an in:@user DM filter via the menu", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderPanel()
+      await openFilterMenu(user)
+
+      await user.click(screen.getByText("In DM with"))
+      await waitFor(() => {
+        expect(screen.getByPlaceholderText("Search users...")).toBeInTheDocument()
+      })
+      await user.click(screen.getByText("Martin"))
+
+      const editor = screen.getByLabelText("Search messages")
+      await waitFor(() => {
+        expect(editor.textContent).toContain("in:@martin")
+      })
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenCalledWith("", { in: ["member_1"] })
+      })
+    })
+
     it("adds a status filter from the fixed options", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       renderPanel()

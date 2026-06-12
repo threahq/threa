@@ -48,9 +48,12 @@ const FILTER_KINDS: FilterKindDef[] = [
   { kind: "in-dm", label: "In DM with", syntax: "in:@user", icon: MessageCircle },
   { kind: "type", label: "Stream type", syntax: "is:thread", icon: Layers },
   { kind: "status", label: "Status", syntax: "status:archived", icon: Archive },
-  { kind: "after", label: "After date", syntax: "after:2026-01-01", icon: CalendarIcon },
-  { kind: "before", label: "Before date", syntax: "before:2026-01-01", icon: CalendarIcon },
+  { kind: "after", label: "After date", syntax: `after:${new Date().getFullYear()}-01-01`, icon: CalendarIcon },
+  { kind: "before", label: "Before date", syntax: `before:${new Date().getFullYear()}-01-01`, icon: CalendarIcon },
 ]
+
+/** Cap on rows rendered in the searchable pickers; a hint row says how to narrow. */
+const PICKER_RESULT_CAP = 20
 
 interface SearchFilterMenuProps {
   workspaceId: string
@@ -232,13 +235,14 @@ function UserPicker({ onSelect }: { onSelect: (slug: string) => void }) {
       <CommandList className="max-h-[min(60vh,300px)] overscroll-contain">
         <CommandEmpty>No users found.</CommandEmpty>
         <CommandGroup>
-          {filtered.slice(0, 20).map((item) => (
+          {filtered.slice(0, PICKER_RESULT_CAP).map((item) => (
             <CommandItem key={item.id} value={item.id} onSelect={() => onSelect(item.slug)}>
               <span className="truncate">{item.name}</span>
               <span className="ml-auto pl-2 text-xs text-muted-foreground">@{item.slug}</span>
             </CommandItem>
           ))}
         </CommandGroup>
+        {filtered.length > PICKER_RESULT_CAP && <PickerCapHint />}
       </CommandList>
     </Command>
   )
@@ -265,7 +269,7 @@ function ChannelPicker({ workspaceId, onSelect }: { workspaceId: string; onSelec
       <CommandList className="max-h-[min(60vh,300px)] overscroll-contain">
         <CommandEmpty>No channels found.</CommandEmpty>
         <CommandGroup>
-          {channels.slice(0, 20).map((stream) => {
+          {channels.slice(0, PICKER_RESULT_CAP).map((stream) => {
             // streamLabel is "#slug" for channels; slugged non-channels (e.g.
             // scratchpads) label by display name, so surface the slug alongside
             const label = streamLabel(stream)
@@ -279,8 +283,17 @@ function ChannelPicker({ workspaceId, onSelect }: { workspaceId: string; onSelec
             )
           })}
         </CommandGroup>
+        {channels.length > PICKER_RESULT_CAP && <PickerCapHint />}
       </CommandList>
     </Command>
+  )
+}
+
+function PickerCapHint() {
+  return (
+    <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+      Showing first {PICKER_RESULT_CAP} — keep typing to narrow
+    </p>
   )
 }
 
@@ -329,6 +342,15 @@ function DateValuePicker({ type, onSelect }: { type: "after" | "before"; onSelec
   if (showCalendar) {
     return (
       <div className="p-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="mb-1 h-6 gap-1 px-1.5 text-xs text-muted-foreground"
+          onClick={() => setShowCalendar(false)}
+        >
+          <ChevronLeft className="h-3 w-3" />
+          Date presets
+        </Button>
         <Calendar
           mode="single"
           onSelect={(date) => {
