@@ -1,5 +1,6 @@
+import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { sql, composeSql } from "../../db"
 import { Visibilities } from "@threa/types"
 import { StreamRepository, type Stream } from "./repository"
 import { StreamMemberRepository } from "./member-repository"
@@ -92,15 +93,69 @@ export async function checkStreamAccess(
 }
 
 /**
+ * Canonical SQL predicate for the "thread → root" stream-access rule
+ * (INV-62), as a reusable `EXISTS` fragment correlated to a stream-id
+ * column. This is the single source of truth for the *set-based* form of
+ * the same three rules `checkStreamAccess` enforces per-id (workspace
+ * boundary, public root grants read without a `stream_members` row, threads
+ * inherit from their root). When the thread→root resolution rule changes,
+ * this fragment and the per-id helpers update together.
+ *
+ * The returned `QueryConfig` is spliced into a larger query via
+ * {@link composeSql} (squid's own `sql` tag cannot nest fragments — it would
+ * parametrize the whole object). Any row source can gate on stream access by
+ * dropping this into its WHERE:
+ *
+ * ```ts
+ * composeSql`... WHERE ${streamAccessPredicateSql(ws, user, "a.stream_id")}`
+ * ```
+ *
+ * `streamIdColumn` is injected raw (squid `raw`) because it is a SQL column
+ * reference, not a value — so it MUST be a trusted constant column ref
+ * supplied by call-site code (e.g. `"a.stream_id"`, `"s.id"`), NEVER derived
+ * from user input. The fragment is fully self-contained: it re-checks the
+ * workspace boundary inside the EXISTS, so it is correct even when the outer
+ * query does not otherwise constrain the stream's workspace.
+ */
+export function streamAccessPredicateSql(
+  workspaceId: string,
+  userId: string,
+  streamIdColumn: string
+): QueryConfig {
+  return sql`EXISTS (
+    SELECT 1
+    FROM streams eff_s
+    LEFT JOIN streams eff_root ON eff_root.id = eff_s.root_stream_id
+    WHERE eff_s.id = ${sql.raw(streamIdColumn)}
+      AND eff_s.workspace_id = ${workspaceId}
+      AND (
+        (eff_s.root_stream_id IS NULL AND (
+          eff_s.visibility = ${Visibilities.PUBLIC}
+          OR EXISTS (
+            SELECT 1 FROM stream_members
+            WHERE stream_id = eff_s.id AND member_id = ${userId}
+          )
+        ))
+        OR
+        (eff_s.root_stream_id IS NOT NULL AND eff_root.id IS NOT NULL AND (
+          eff_root.visibility = ${Visibilities.PUBLIC}
+          OR EXISTS (
+            SELECT 1 FROM stream_members
+            WHERE stream_id = eff_s.root_stream_id AND member_id = ${userId}
+          )
+        ))
+      )
+  )`
+}
+
+/**
  * Batched equivalent of {@link checkStreamAccess}. Given a candidate set
  * of stream ids in a workspace, returns the subset the viewer can read.
  *
- * Encodes the same three rules as `checkStreamAccess` /
- * {@link resolveEffectiveAccessStream} in one SQL round-trip so
- * cross-cutting features (pointer hydration, search, activity feeds) can
- * filter many stream ids at once without an N+1. Keep the predicate in
- * sync with the per-id helpers — when the rule for thread → root
- * resolution changes, both code paths update together.
+ * Routes through {@link streamAccessPredicateSql} so the thread → root
+ * access rule has exactly one definition shared with the cross-cutting
+ * features (search, attachments) that filter many stream ids at once
+ * without an N+1.
  *
  * Empty input → empty Set; missing/cross-workspace ids are silently dropped
  * exactly like the per-id helper returning `null`.
@@ -112,29 +167,12 @@ export async function listAccessibleStreamIds(
   candidateStreamIds: readonly string[]
 ): Promise<Set<string>> {
   if (candidateStreamIds.length === 0) return new Set()
-  const result = await db.query<{ id: string }>(sql`
+  const result = await db.query<{ id: string }>(composeSql`
     SELECT s.id
     FROM streams s
-    LEFT JOIN streams root ON root.id = s.root_stream_id
     WHERE s.workspace_id = ${workspaceId}
       AND s.id = ANY(${candidateStreamIds as string[]})
-      AND (
-        (s.root_stream_id IS NULL AND (
-          s.visibility = ${Visibilities.PUBLIC}
-          OR EXISTS (
-            SELECT 1 FROM stream_members
-            WHERE stream_id = s.id AND member_id = ${userId}
-          )
-        ))
-        OR
-        (s.root_stream_id IS NOT NULL AND root.id IS NOT NULL AND (
-          root.visibility = ${Visibilities.PUBLIC}
-          OR EXISTS (
-            SELECT 1 FROM stream_members
-            WHERE stream_id = s.root_stream_id AND member_id = ${userId}
-          )
-        ))
-      )
+      AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
   `)
   return new Set(result.rows.map((r) => r.id))
 }
