@@ -1,34 +1,15 @@
 import type { Pool } from "pg"
-import { OutboxRepository, type ReactionOutboxPayload } from "../../lib/outbox"
+import { type ReactionOutboxPayload } from "../../lib/outbox"
 import { EmojiUsageRepository } from "./usage-repository"
 import { parseMessagePayload } from "../../lib/outbox"
 import { AuthorTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 import { emojiUsageId } from "../../lib/id"
 import { isValidShortcode } from "./emoji"
-import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
-import type { OutboxHandler } from "../../lib/outbox"
+import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
 
-export interface EmojiUsageHandlerConfig {
-  batchSize?: number
-  debounceMs?: number
-  maxWaitMs?: number
-  lockDurationMs?: number
-  refreshIntervalMs?: number
-  maxRetries?: number
-  baseBackoffMs?: number
-}
-
-const DEFAULT_CONFIG = {
-  batchSize: 100,
-  debounceMs: 50,
-  maxWaitMs: 200,
-  lockDurationMs: 10_000,
-  refreshIntervalMs: 5_000,
-  maxRetries: 5,
-  baseBackoffMs: 1_000,
-}
+export type EmojiUsageHandlerConfig = DebouncedOutboxHandlerConfig
 
 /**
  * Extract shortcodes from normalized message content.
@@ -68,76 +49,17 @@ function stripColons(shortcode: string): string {
  * 2. Extract emoji shortcodes from content or reaction
  * 3. Insert usage records for personalized emoji ordering
  */
-export class EmojiUsageHandler implements OutboxHandler {
-  readonly listenerId = "emoji-usage"
-
-  private readonly db: Pool
-  private readonly cursorLock: CursorLock
-  private readonly debouncer: DebounceWithMaxWait
-  private readonly batchSize: number
-
+export class EmojiUsageHandler extends DebouncedOutboxHandler {
   constructor(db: Pool, config?: EmojiUsageHandlerConfig) {
-    this.db = db
-    this.batchSize = config?.batchSize ?? DEFAULT_CONFIG.batchSize
-
-    this.cursorLock = new CursorLock({
-      pool: db,
-      listenerId: this.listenerId,
-      lockDurationMs: config?.lockDurationMs ?? DEFAULT_CONFIG.lockDurationMs,
-      refreshIntervalMs: config?.refreshIntervalMs ?? DEFAULT_CONFIG.refreshIntervalMs,
-      maxRetries: config?.maxRetries ?? DEFAULT_CONFIG.maxRetries,
-      baseBackoffMs: config?.baseBackoffMs ?? DEFAULT_CONFIG.baseBackoffMs,
-      batchSize: this.batchSize,
-    })
-
-    this.debouncer = new DebounceWithMaxWait(
-      () => this.processEvents(),
-      config?.debounceMs ?? DEFAULT_CONFIG.debounceMs,
-      config?.maxWaitMs ?? DEFAULT_CONFIG.maxWaitMs,
-      (err) => logger.error({ err, listenerId: this.listenerId }, "EmojiUsageHandler debouncer error")
-    )
+    super(db, { listenerId: "emoji-usage", ...config })
   }
 
-  async ensureListener(): Promise<void> {
-    await ensureListenerFromLatest(this.db, this.listenerId)
-  }
-
-  handle(): void {
-    this.debouncer.trigger()
-  }
-
-  private async processEvents(): Promise<void> {
-    await this.cursorLock.run(async (cursor, processedIds): Promise<ProcessResult> => {
-      const events = await OutboxRepository.fetchAfterId(this.db, cursor, this.batchSize, processedIds)
-
-      if (events.length === 0) {
-        return { status: "no_events" }
-      }
-
-      const seen: bigint[] = []
-
-      try {
-        for (const event of events) {
-          if (event.eventType === "message:created") {
-            await this.handleMessageCreated(event)
-          } else if (event.eventType === "reaction:added") {
-            await this.handleReactionAdded(event)
-          }
-
-          seen.push(event.id)
-        }
-
-        return { status: "processed", processedIds: seen }
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err))
-
-        if (seen.length > 0) {
-          return { status: "error", error, processedIds: seen }
-        }
-
-        return { status: "error", error }
-      }
-    })
+  protected async processEvent(event: OutboxEvent): Promise<void> {
+    if (event.eventType === "message:created") {
+      await this.handleMessageCreated(event)
+    } else if (event.eventType === "reaction:added") {
+      await this.handleReactionAdded(event)
+    }
   }
 
   private async handleMessageCreated(outboxEvent: { id: bigint; payload: unknown }): Promise<void> {

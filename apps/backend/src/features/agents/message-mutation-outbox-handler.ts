@@ -3,15 +3,9 @@ import { AuthorTypes, type AgentSessionRerunContext } from "@threa/types"
 import { withTransaction } from "../../db"
 import { eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
-import {
-  CursorLock,
-  ensureListenerFromLatest,
-  DebounceWithMaxWait,
-  serializeBigInt,
-  type ProcessResult,
-} from "@threa/backend-common"
+import { serializeBigInt } from "@threa/backend-common"
 import { OutboxRepository } from "../../lib/outbox"
-import type { OutboxHandler } from "../../lib/outbox"
+import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { JobQueues, type QueueManager } from "../../lib/queue"
 import type { EventService } from "../messaging"
 import { MessageVersionRepository } from "../messaging"
@@ -19,25 +13,7 @@ import { StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 
-export interface AgentMessageMutationHandlerConfig {
-  batchSize?: number
-  debounceMs?: number
-  maxWaitMs?: number
-  lockDurationMs?: number
-  refreshIntervalMs?: number
-  maxRetries?: number
-  baseBackoffMs?: number
-}
-
-const DEFAULT_CONFIG = {
-  batchSize: 100,
-  debounceMs: 50,
-  maxWaitMs: 200,
-  lockDurationMs: 10_000,
-  refreshIntervalMs: 5_000,
-  maxRetries: 5,
-  baseBackoffMs: 1_000,
-}
+export type AgentMessageMutationHandlerConfig = DebouncedOutboxHandlerConfig
 
 function rerunQueueMessageId(sessionId: string): string {
   return `queue_rerun_${sessionId}`
@@ -128,15 +104,9 @@ function parseMessageDeletedPayload(payload: unknown): NormalizedMessageDeletedP
  *   The rerun reconciles prior sent messages (edit/delete) on completion.
  * - In-flight edit/delete reconsideration is handled by runtime context polling (no extra dispatch here).
  */
-export class AgentMessageMutationHandler implements OutboxHandler {
-  readonly listenerId = "agent-message-mutations"
-
-  private readonly db: Pool
+export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager
   private readonly eventService: EventService
-  private readonly cursorLock: CursorLock
-  private readonly debouncer: DebounceWithMaxWait
-  private readonly batchSize: number
 
   constructor(
     db: Pool,
@@ -144,85 +114,32 @@ export class AgentMessageMutationHandler implements OutboxHandler {
     eventService: EventService,
     config?: AgentMessageMutationHandlerConfig
   ) {
-    this.db = db
+    super(db, { listenerId: "agent-message-mutations", ...config })
     this.jobQueue = jobQueue
     this.eventService = eventService
-    this.batchSize = config?.batchSize ?? DEFAULT_CONFIG.batchSize
-
-    this.cursorLock = new CursorLock({
-      pool: db,
-      listenerId: this.listenerId,
-      lockDurationMs: config?.lockDurationMs ?? DEFAULT_CONFIG.lockDurationMs,
-      refreshIntervalMs: config?.refreshIntervalMs ?? DEFAULT_CONFIG.refreshIntervalMs,
-      maxRetries: config?.maxRetries ?? DEFAULT_CONFIG.maxRetries,
-      baseBackoffMs: config?.baseBackoffMs ?? DEFAULT_CONFIG.baseBackoffMs,
-      batchSize: this.batchSize,
-    })
-
-    this.debouncer = new DebounceWithMaxWait(
-      () => this.processEvents(),
-      config?.debounceMs ?? DEFAULT_CONFIG.debounceMs,
-      config?.maxWaitMs ?? DEFAULT_CONFIG.maxWaitMs,
-      (err) => logger.error({ err, listenerId: this.listenerId }, "AgentMessageMutationHandler debouncer error")
-    )
   }
 
-  async ensureListener(): Promise<void> {
-    await ensureListenerFromLatest(this.db, this.listenerId)
-  }
-
-  handle(): void {
-    this.debouncer.trigger()
-  }
-
-  private async processEvents(): Promise<void> {
-    await this.cursorLock.run(async (cursor, processedIds): Promise<ProcessResult> => {
-      const events = await OutboxRepository.fetchAfterId(this.db, cursor, this.batchSize, processedIds)
-
-      if (events.length === 0) {
-        return { status: "no_events" }
-      }
-
-      const seen: bigint[] = []
-
-      try {
-        for (const event of events) {
-          if (event.eventType === "message:edited") {
-            const payload = parseMessageEditedPayload(event.payload)
-            if (payload) {
-              // E2E streams: Phase 1 doesn't allow agent recipients, so there
-              // are no sessions to rerun. Ciphertext edits are also invisible
-              // to the backend, so skip without inspecting the message.
-              if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
-                seen.push(event.id)
-                continue
-              }
-              await this.handleInvokingMessageEdited(payload, event.createdAt)
-            }
-          } else if (event.eventType === "message:deleted") {
-            const payload = parseMessageDeletedPayload(event.payload)
-            if (payload) {
-              // E2E streams: no agent sessions exist for E2E streams in Phase 1
-              // (agents not allowed), so the session lookup is a natural no-op.
-              // We still call through; the repository returns no rows.
-              await this.handleInvokingMessageDeleted(payload)
-            }
-          }
-
-          seen.push(event.id)
+  protected async processEvent(event: OutboxEvent): Promise<void> {
+    if (event.eventType === "message:edited") {
+      const payload = parseMessageEditedPayload(event.payload)
+      if (payload) {
+        // E2E streams: Phase 1 doesn't allow agent recipients, so there
+        // are no sessions to rerun. Ciphertext edits are also invisible
+        // to the backend, so skip without inspecting the message.
+        if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+          return
         }
-
-        return { status: "processed", processedIds: seen }
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err))
-
-        if (seen.length > 0) {
-          return { status: "error", error, processedIds: seen }
-        }
-
-        return { status: "error", error }
+        await this.handleInvokingMessageEdited(payload, event.createdAt)
       }
-    })
+    } else if (event.eventType === "message:deleted") {
+      const payload = parseMessageDeletedPayload(event.payload)
+      if (payload) {
+        // E2E streams: no agent sessions exist for E2E streams in Phase 1
+        // (agents not allowed), so the session lookup is a natural no-op.
+        // We still call through; the repository returns no rows.
+        await this.handleInvokingMessageDeleted(payload)
+      }
+    }
   }
 
   private async handleInvokingMessageEdited(payload: NormalizedMessageEditedPayload, occurredAt: Date): Promise<void> {
