@@ -195,6 +195,39 @@ export class RegionalClient {
   }
 
   /**
+   * Push one workspace user's platform-admin grant to the regional
+   * `platform_admin_access` mirror. Snapshot semantics keep the call
+   * idempotent and replay-safe — a grant upserts the row, a revoke deletes it.
+   */
+  async syncPlatformAdminAccess(
+    region: string,
+    data: { workspaceId: string; workosUserId: string; isPlatformAdmin: boolean }
+  ): Promise<void> {
+    const url = `${this.getRegionUrl(region)}/internal/platform-admin`
+    let res: Response
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+        },
+        body: JSON.stringify(data),
+        signal: AbortSignal.timeout(REGIONAL_REQUEST_TIMEOUT_MS),
+      })
+    } catch (err) {
+      logger.error({ err, region, url }, "Regional platform-admin sync request failed")
+      throw err
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      logger.error({ region, status: res.status, body }, "Regional platform-admin sync failed")
+      throw new Error(`Regional backend returned ${res.status}: ${body}`)
+    }
+  }
+
+  /**
    * Forward a link-invitation claim from CP to the regional backend that owns
    * the row. Regional performs the atomic claim (INV-20). On 4xx, surfaces the
    * upstream error code so CP can map it to an HTTP status without parsing.

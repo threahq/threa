@@ -25,6 +25,8 @@ export interface SidebarActionItem {
   /** Optional muted second line under the label (e.g. "Clears in 2 hours"). */
   description?: string | null
   href?: string
+  /** Render `href` as a plain anchor opening in a new tab (cross-origin destinations). */
+  external?: boolean
   onSelect?: () => void | Promise<void>
   variant?: "default" | "destructive"
   separatorBefore?: boolean
@@ -92,31 +94,54 @@ function SidebarActionContent({ action, iconClassName }: { action: SidebarAction
 function SidebarActionMenuEntry({ action }: { action: SidebarActionItem }) {
   const isDestructive = action.variant === "destructive"
   const content = <SidebarActionContent action={action} iconClassName="mr-2 h-4 w-4" />
+  const itemClassName = cn(isDestructive && "text-destructive focus:text-destructive")
 
-  return (
-    <div>
-      {action.separatorBefore && <DropdownMenuSeparator />}
-      {action.href ? (
-        <DropdownMenuItem asChild className={cn(isDestructive && "text-destructive focus:text-destructive")}>
-          <Link
-            to={action.href}
-            onClick={() => {
-              void runSidebarAction(action)
-            }}
-          >
-            {content}
-          </Link>
-        </DropdownMenuItem>
-      ) : (
-        <DropdownMenuItem
-          className={cn(isDestructive && "text-destructive focus:text-destructive")}
-          onSelect={() => {
+  let item: ReactNode
+  if (action.href && action.external) {
+    item = (
+      <DropdownMenuItem asChild className={itemClassName}>
+        <a
+          href={action.href}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => {
             void runSidebarAction(action)
           }}
         >
           {content}
-        </DropdownMenuItem>
-      )}
+        </a>
+      </DropdownMenuItem>
+    )
+  } else if (action.href) {
+    item = (
+      <DropdownMenuItem asChild className={itemClassName}>
+        <Link
+          to={action.href}
+          onClick={() => {
+            void runSidebarAction(action)
+          }}
+        >
+          {content}
+        </Link>
+      </DropdownMenuItem>
+    )
+  } else {
+    item = (
+      <DropdownMenuItem
+        className={itemClassName}
+        onSelect={() => {
+          void runSidebarAction(action)
+        }}
+      >
+        {content}
+      </DropdownMenuItem>
+    )
+  }
+
+  return (
+    <div>
+      {action.separatorBefore && <DropdownMenuSeparator />}
+      {item}
     </div>
   )
 }
@@ -250,32 +275,36 @@ function SidebarActionDrawerEntry({ action, onClose }: { action: SidebarActionIt
     />
   )
 
+  const handleClick = () => {
+    onClose()
+    void runSidebarAction(action)
+  }
+
+  let item: ReactNode
+  if (action.href && action.external) {
+    item = (
+      <a href={action.href} target="_blank" rel="noreferrer" className={className} onClick={handleClick}>
+        {content}
+      </a>
+    )
+  } else if (action.href) {
+    item = (
+      <Link to={action.href} className={className} onClick={handleClick}>
+        {content}
+      </Link>
+    )
+  } else {
+    item = (
+      <button type="button" className={className} onClick={handleClick}>
+        {content}
+      </button>
+    )
+  }
+
   return (
     <div>
       {action.separatorBefore && <Divider />}
-      {action.href ? (
-        <Link
-          to={action.href}
-          className={className}
-          onClick={() => {
-            onClose()
-            void runSidebarAction(action)
-          }}
-        >
-          {content}
-        </Link>
-      ) : (
-        <button
-          type="button"
-          className={className}
-          onClick={() => {
-            onClose()
-            void runSidebarAction(action)
-          }}
-        >
-          {content}
-        </button>
-      )}
+      {item}
     </div>
   )
 }

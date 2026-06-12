@@ -49,6 +49,11 @@ import {
   OUTBOX_FEATURE_FLAGS_SYNC,
   type FeatureFlagsSyncPayload,
 } from "./features/feature-flags"
+import {
+  PlatformAdminSyncService,
+  OUTBOX_PLATFORM_ADMIN_SYNC,
+  type PlatformAdminSyncPayload,
+} from "./features/platform-admin"
 import { WorkosEventPollerLock } from "./lib/workos-event-poller-lock"
 import { CONTROL_PLANE_LISTENER_ID } from "./lib/outbox-listeners"
 
@@ -78,21 +83,29 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const kvClient: KvClient = config.cloudflareKv ? new CloudflareKvClient(config.cloudflareKv) : new NoopKvClient()
 
   const availableRegions = Object.keys(config.regions)
+  const platformAdminSync = new PlatformAdminSyncService({ pool, regionalClient })
   const workspaceService = new ControlPlaneWorkspaceService({
     pool,
     regionalClient,
     workosOrgService,
     kvClient,
+    platformAdminSync,
     availableRegions,
     requireWorkspaceCreationInvite: config.workspaceCreationRequiresInvite,
   })
-  const shadowService = new InvitationShadowService({ pool, regionalClient, workosOrgService })
+  const shadowService = new InvitationShadowService({ pool, regionalClient, workosOrgService, platformAdminSync })
   const waitlistEmailSender = config.waitlist.resendApiKey
     ? new ResendWaitlistEmailSender({ apiKey: config.waitlist.resendApiKey, from: config.waitlist.fromEmail })
     : new StubWaitlistEmailSender()
   const waitlistService = new WaitlistService({ pool, emailSender: waitlistEmailSender })
   const workosAuthzAdminService = new WorkosAuthzAdminService({ pool, workosOrgService })
   await seedPlatformAdmins(pool, config.platformAdminWorkosUserIds)
+  // Re-emitting the fan-out for every seeded admin on each boot is the
+  // self-heal path: idempotent snapshots, tiny N, and it converges regions
+  // that missed a membership-time emit or were unreachable during one.
+  for (const workosUserId of config.platformAdminWorkosUserIds) {
+    await platformAdminSync.enqueue(pool, workosUserId)
+  }
 
   // Outbox — single handler for all control-plane events (no sharding needed)
   const cursorLock = new CursorLock({
@@ -117,7 +130,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       let lastError: Error | undefined
       for (const event of events) {
         try {
-          await dispatchEvent(event, { workspaceService, authzFanOut, featureFlagService })
+          await dispatchEvent(event, { workspaceService, authzFanOut, featureFlagService, platformAdminSync })
           seen.push(event.id)
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
@@ -280,6 +293,7 @@ async function dispatchEvent(
     workspaceService: ControlPlaneWorkspaceService
     authzFanOut: RegionalAuthzFanOut
     featureFlagService: ControlPlaneFeatureFlagService
+    platformAdminSync: PlatformAdminSyncService
   }
 ): Promise<void> {
   const payload = event.payload as unknown
@@ -298,6 +312,9 @@ async function dispatchEvent(
       break
     case OUTBOX_FEATURE_FLAGS_SYNC:
       await deps.featureFlagService.syncToRegion(payload as FeatureFlagsSyncPayload)
+      break
+    case OUTBOX_PLATFORM_ADMIN_SYNC:
+      await deps.platformAdminSync.syncToRegions(payload as PlatformAdminSyncPayload)
       break
     default:
       logger.warn({ eventType: event.eventType }, "Unknown outbox event type")

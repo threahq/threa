@@ -5,6 +5,7 @@ import type { StreamService } from "../streams"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceSettingsService } from "../workspace-settings"
 import type { FeatureFlagService } from "../feature-flags"
+import type { PlatformAdminService } from "../platform-admin"
 import type { SidebarConfigService } from "../sidebar-config"
 import type { InvitationService } from "../invitations"
 import type { ActivityService } from "../activity"
@@ -55,6 +56,7 @@ interface Dependencies {
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   featureFlagService: FeatureFlagService
+  platformAdminService: PlatformAdminService
   sidebarConfigService: SidebarConfigService
   invitationService: InvitationService
   activityService?: ActivityService
@@ -72,6 +74,7 @@ export function createWorkspaceHandlers({
   userPreferencesService,
   workspaceSettingsService,
   featureFlagService,
+  platformAdminService,
   sidebarConfigService,
   invitationService,
   activityService,
@@ -149,6 +152,7 @@ export function createWorkspaceHandlers({
         userPreferences,
         workspaceSettings,
         featureFlags,
+        viewerIsPlatformAdmin,
         sidebarConfig,
         dmPeers,
         labels,
@@ -164,6 +168,7 @@ export function createWorkspaceHandlers({
         userPreferencesService.getPreferences(workspaceId, userId),
         workspaceSettingsService.getSettings(workspaceId),
         featureFlagService.getFlags(workspaceId, userId),
+        platformAdminService.hasAccess(workspaceId, req.user!.workosUserId),
         sidebarConfigService.getConfig(workspaceId, userId),
         streamService.listDmPeers(workspaceId, userId),
         labelService.listVisibleTo(workspaceId, userId),
@@ -262,6 +267,7 @@ export function createWorkspaceHandlers({
           labelAssignments,
           invitations,
           viewerPermissions,
+          viewerIsPlatformAdmin,
         },
       })
     },
