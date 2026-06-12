@@ -43,7 +43,7 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
-import { mirrorSyncV2Mode } from "./sync-v2-mode"
+import { mirrorSyncV2Mode, type SyncV2CursorMode } from "./sync-v2-mode"
 import {
   applyActivityCounts,
   applyStreamActivityOrdinal,
@@ -459,7 +459,8 @@ export function registerWorkspaceSocketHandlers(
     getCurrentStreamId: () => string | undefined
     getCurrentUser: () => { id: string } | null
     subscribeStream: (streamId: string) => void
-  }
+  },
+  syncCursorMode: SyncV2CursorMode
 ): () => void {
   const abortController = new AbortController()
 
@@ -468,8 +469,17 @@ export function registerWorkspaceSocketHandlers(
   // and rehydrates IDB with any rows whose upsert/delete events we missed
   // during the disconnect. `refetchOnReconnect: true` alone only covers
   // browser network online/offline, not socket.io reconnects.
-  queryClient.invalidateQueries({ queryKey: savedKeys.all })
-  queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
+  //
+  // In active sync-v2 mode the workspace catch-up cursor replays the missed
+  // saved/scheduled events (user-scoped sync-log entries) through these same
+  // handlers, so the blanket refetch is redundant there — but "off" is the
+  // runtime kill switch and "shadow" applies nothing, so both must keep this
+  // healing. The mode is fixed per SyncEngine lifetime; a flag flip recreates
+  // the engine and re-registers these handlers with the new mode.
+  if (syncCursorMode !== "active") {
+    queryClient.invalidateQueries({ queryKey: savedKeys.all })
+    queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
+  }
 
   // Handle stream created
   const handleStreamCreated = (payload: StreamPayload) => {

@@ -139,10 +139,11 @@ export function useSavedList(workspaceId: string, status: SavedStatus) {
       return res
     },
     // INV-53: socket reconnects close their own event gap by invalidating
-    // `savedKeys.all` at the top of `registerWorkspaceSocketHandlers`;
-    // `refetchOnReconnect: true` then catches the pure browser online/offline
-    // case. `refetchOnMount: true` plus `staleTime: Infinity` makes the
-    // invalidation land on the next render.
+    // `savedKeys.all` at the top of `registerWorkspaceSocketHandlers` (in
+    // active sync-v2 mode the catch-up cursor replays the missed events
+    // instead); `refetchOnReconnect: true` then catches the pure browser
+    // online/offline case. `refetchOnMount: true` plus `staleTime: Infinity`
+    // makes the invalidation land on the next render.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
