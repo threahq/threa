@@ -29,7 +29,7 @@ describe("EnclaveForwarder.assignSession", () => {
       return new Response(null, { status: 202 })
     }) as unknown as typeof fetch
 
-    const forwarder = new EnclaveForwarder({ internalApiKey: "shared-secret" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "shared-secret" })
     await forwarder.assignSession("https://enclave-1.internal/", ASSIGNMENT)
 
     expect(captured.url).toBe("https://enclave-1.internal/sessions")
@@ -40,7 +40,7 @@ describe("EnclaveForwarder.assignSession", () => {
   it("throws EnclaveForwardError with the status when the enclave does not ack 202", async () => {
     // 200 (not 202) is a failed handoff — the enclave didn't take ownership.
     globalThis.fetch = mock(async () => new Response(null, { status: 200 })) as unknown as typeof fetch
-    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "s" })
 
     const err = await forwarder.assignSession("https://enclave-1.internal", ASSIGNMENT).catch((e) => e)
     expect(err).toBeInstanceOf(EnclaveForwardError)
@@ -49,7 +49,7 @@ describe("EnclaveForwarder.assignSession", () => {
 
   it("throws EnclaveForwardError on a 5xx", async () => {
     globalThis.fetch = mock(async () => new Response(null, { status: 503 })) as unknown as typeof fetch
-    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "s" })
 
     const err = await forwarder.assignSession("https://enclave-1.internal", ASSIGNMENT).catch((e) => e)
     expect(err).toBeInstanceOf(EnclaveForwardError)
@@ -60,7 +60,7 @@ describe("EnclaveForwarder.assignSession", () => {
     globalThis.fetch = mock(async () => {
       throw new Error("ECONNREFUSED")
     }) as unknown as typeof fetch
-    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "s" })
 
     const err = await forwarder.assignSession("https://enclave-1.internal", ASSIGNMENT).catch((e) => e)
     expect(err).toBeInstanceOf(EnclaveForwardError)
@@ -83,7 +83,7 @@ describe("EnclaveForwarder.cancelSession", () => {
       return new Response(null, { status: 202 })
     }) as unknown as typeof fetch
 
-    const forwarder = new EnclaveForwarder({ internalApiKey: "shared-secret" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "shared-secret" })
     const ok = await forwarder.cancelSession("https://enclave-1.internal/", "session_1")
 
     expect(ok).toBe(true)
@@ -94,7 +94,7 @@ describe("EnclaveForwarder.cancelSession", () => {
 
   it("returns false (not throw) on a non-202 — the turn may have already finished", async () => {
     globalThis.fetch = mock(async () => new Response(null, { status: 404 })) as unknown as typeof fetch
-    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "s" })
     expect(await forwarder.cancelSession("https://enclave-1.internal", "session_1")).toBe(false)
   })
 
@@ -102,7 +102,7 @@ describe("EnclaveForwarder.cancelSession", () => {
     globalThis.fetch = mock(async () => {
       throw new Error("ECONNREFUSED")
     }) as unknown as typeof fetch
-    const forwarder = new EnclaveForwarder({ internalApiKey: "s" })
+    const forwarder = new EnclaveForwarder({ enclaveInternalApiKey: "s" })
     expect(await forwarder.cancelSession("https://enclave-1.internal", "session_1")).toBe(false)
   })
 })

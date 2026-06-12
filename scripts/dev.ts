@@ -340,10 +340,12 @@ async function main() {
   const dbBase = backendEnv.DATABASE_URL ?? process.env.DATABASE_URL ?? "postgresql://threa:threa@localhost:5454/threa"
   const useStubAuth = backendEnv.USE_STUB_AUTH ?? process.env.USE_STUB_AUTH ?? "false"
 
-  // Shared internal secret. The backend mounts /internal/enclave-runtimes/* only
-  // when this is set, and the enclave must present the same value — so they
-  // resolve from one source to avoid drift.
+  // Shared internal secret. The backend mounts /internal/* only when this is
+  // set. The enclave channel runs on its own dedicated secret (Phase 2.4c,
+  // E2EE-22) — distinct values in dev so local runs exercise the real
+  // credential boundary.
   const internalApiKey = backendEnv.INTERNAL_API_KEY ?? "dev-internal-key"
+  const enclaveInternalApiKey = backendEnv.ENCLAVE_INTERNAL_API_KEY ?? "dev-enclave-internal-key"
 
   // Derive control-plane DB URL from the backend's DATABASE_URL by appending _cp
   const cpDbUrl = dbBase.replace(/\/([^/?]+)(\?.*)?$/, "/$1_cp$2")
@@ -439,6 +441,7 @@ async function main() {
       USE_STUB_AUTH: useStubAuth,
       CONTROL_PLANE_URL: "http://localhost:3003",
       INTERNAL_API_KEY: internalApiKey,
+      ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
       CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
       REGION: "local",
     },
@@ -482,7 +485,8 @@ async function main() {
   // lacks X25519 `deriveBits`, which the enclave needs to unwrap the per-stream
   // key. Bun only bundles it. Build once up front so `node --watch` has a file
   // to load, then run a rebuild-watcher beside the Node process. It registers
-  // with the backend at :3002 (not the :3001 router) using the shared key.
+  // with the backend at :3002 (not the :3001 router) using the dedicated
+  // ENCLAVE_INTERNAL_API_KEY.
   const enclaveDir = path.join(process.cwd(), "apps/enclave")
   console.log("Building enclave bundle...")
   await $`bun build src/index.ts --target=node --format=esm --outfile dist/index.mjs`.cwd(enclaveDir).quiet()
@@ -510,7 +514,7 @@ async function main() {
       PORT: "3011",
       ENCLAVE_SELF_URL: "http://localhost:3011",
       BACKEND_BASE_URL: "http://localhost:3002",
-      INTERNAL_API_KEY: internalApiKey,
+      ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
       // Dev only: persist the EIK across `node --watch` restarts so a code
       // change doesn't mint a fresh key and silently break every E2E stream's
       // wraps. Prod never sets this — the key stays ephemeral.

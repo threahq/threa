@@ -9,9 +9,12 @@ import type { AgentTool } from "./agent-tool"
  * a runner-supplied manifest: a manifest is the runner's claim, and the tier
  * gates key material.
  *
- * `FIRST_PARTY_ATTESTED` is operational, not adversarial, until E2EE-21/22
- * close (Phase 2.4b/c): enclave identity currently rests on internal-key
- * secrecy, not verified attestation.
+ * `FIRST_PARTY_ATTESTED` means "authenticated as the enclave", not "hardware
+ * attested": session callbacks are token-bound (Phase 2.4b, E2EE-21) and
+ * registration runs on a dedicated credential distinct from the shared
+ * internal key (Phase 2.4c, E2EE-22), so the tier rests on
+ * ENCLAVE_INTERNAL_API_KEY secrecy. Real TEE evidence is a documented
+ * upgrade path — see docs/features/architecture/e2e-enclave.md.
  */
 export const TrustTiers = {
   /** First-party persona constructed in-process (the companion). */

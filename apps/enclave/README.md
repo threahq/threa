@@ -58,15 +58,15 @@ What the enclave does not do:
 
 ## Environment
 
-| Variable                        | Required             | Purpose                                                                                                               |
-| ------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/sessions`.                                                   |
-| `ENCLAVE_SELF_URL`              | yes                  | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`).                  |
-| `BACKEND_BASE_URL`              | yes                  | Regional backend base URL — target for register/heartbeat/revoke + per-session heartbeat/messages/complete callbacks. |
-| `INTERNAL_API_KEY`              | yes                  | Shared bearer secret guarding the enclave's calls to `/internal/enclave-runtimes/*`.                                  |
-| `OPENROUTER_API_KEY`            | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                             |
-| `OPENROUTER_BASE_URL`           | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                |
-| `ENCLAVE_HEARTBEAT_INTERVAL_MS` | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                       |
+| Variable                        | Required             | Purpose                                                                                                                                                                                                        |
+| ------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                          | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation`, `/sessions`.                                                                                                                                            |
+| `ENCLAVE_SELF_URL`              | yes                  | URL the backend stores as this instance's reachable address (e.g. `https://enclave-eu-1.threa.dev`).                                                                                                           |
+| `BACKEND_BASE_URL`              | yes                  | Regional backend base URL — target for register/heartbeat/revoke + per-session heartbeat/messages/complete callbacks.                                                                                          |
+| `ENCLAVE_INTERNAL_API_KEY`      | yes                  | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*` + inbound `/sessions`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY` and must NOT equal the shared `INTERNAL_API_KEY`. |
+| `OPENROUTER_API_KEY`            | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                                                                                                                      |
+| `OPENROUTER_BASE_URL`           | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                                                                         |
+| `ENCLAVE_HEARTBEAT_INTERVAL_MS` | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                                                                                |
 
 ## Egress allow-list (operational)
 
@@ -85,7 +85,7 @@ No other outbound traffic is required.
 ```sh
 ENCLAVE_SELF_URL=http://localhost:3011 \
 BACKEND_BASE_URL=http://localhost:3001 \
-INTERNAL_API_KEY=$INTERNAL_API_KEY \
+ENCLAVE_INTERNAL_API_KEY=$ENCLAVE_INTERNAL_API_KEY \
 OPENROUTER_API_KEY=$OPENROUTER_API_KEY \
 bun run dev
 ```
@@ -112,12 +112,13 @@ All Railway services listen on the injected `PORT` (8080); internal URLs use
 # 1. Create the service in the existing project and point it at the repo.
 railway add --service enclave
 
-# 2. Set its variables. INTERNAL_API_KEY must MATCH the backend's — read it with
-#    `railway variables --service backend` and reuse the same value. OPENROUTER_API_KEY
-#    is your zero-retention OpenRouter key (billing-attached, so set it yourself).
+# 2. Set its variables. ENCLAVE_INTERNAL_API_KEY must MATCH the backend's — set the
+#    same fresh secret on both services (it is dedicated to the enclave channel and
+#    must NOT equal the shared INTERNAL_API_KEY). OPENROUTER_API_KEY is your
+#    zero-retention OpenRouter key (billing-attached, so set it yourself).
 railway variables --service enclave \
   --set "BACKEND_BASE_URL=http://backend.railway.internal:8080" \
-  --set "INTERNAL_API_KEY=<same value as backend>" \
+  --set "ENCLAVE_INTERNAL_API_KEY=<same value as backend's ENCLAVE_INTERNAL_API_KEY>" \
   --set "OPENROUTER_API_KEY=<your openrouter key>" \
   --set "ENCLAVE_SELF_URL=http://enclave.railway.internal:8080"
 

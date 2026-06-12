@@ -127,6 +127,8 @@ interface Dependencies {
   corsAllowedOrigins: string[]
   allowDevAuthRoutes: boolean
   internalApiKey: string | null
+  /** Dedicated enclave-channel secret, distinct from internalApiKey (Phase 2.4c, E2EE-22). */
+  enclaveInternalApiKey: string | null
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
   linkPreviewService: LinkPreviewService
@@ -180,6 +182,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     corsAllowedOrigins,
     allowDevAuthRoutes,
     internalApiKey,
+    enclaveInternalApiKey,
     apiKeyService,
     botChannelService,
     linkPreviewService,
@@ -295,15 +298,22 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
+  }
 
-    // Enclave runtime registry — each enclave instance authenticates with the
-    // same shared internal secret to register/refresh/retire its EIK.
-    app.post("/internal/enclave-runtimes/register-key", internalAuth, enclave.registerKey)
-    app.post("/internal/enclave-runtimes/heartbeat", internalAuth, enclave.heartbeat)
-    app.post("/internal/enclave-runtimes/revoke", internalAuth, enclave.revoke)
+  // Enclave runtime registry — gated by the dedicated enclave credential
+  // (ENCLAVE_INTERNAL_API_KEY), mounted independently of the control-plane
+  // block above so the enclave channel doesn't require INTERNAL_API_KEY. A
+  // separate middleware instance means a shared INTERNAL_API_KEY holder
+  // (e.g. the bot-runtime) cannot register an EIK and become an SSK wrap
+  // recipient (Phase 2.4c, E2EE-22).
+  if (enclaveInternalApiKey) {
+    const enclaveAuth = createInternalAuthMiddleware(enclaveInternalApiKey)
+    app.post("/internal/enclave-runtimes/register-key", enclaveAuth, enclave.registerKey)
+    app.post("/internal/enclave-runtimes/heartbeat", enclaveAuth, enclave.heartbeat)
+    app.post("/internal/enclave-runtimes/revoke", enclaveAuth, enclave.revoke)
 
     // Session callbacks: a live enclave drives an assigned turn over these
-    // (liveness refresh + sealed replies on completion). Same shared-secret gate.
+    // (liveness refresh + sealed replies on completion). Same enclave-credential gate.
     const enclaveSession = createEnclaveSessionHandlers({
       pool,
       eventService,
@@ -311,14 +321,14 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       jobQueue: deps.jobQueue,
       costService: deps.costService,
     })
-    app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
-    app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
-    app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", internalAuth, enclaveSession.sealedName)
-    app.post("/internal/enclave-runtimes/sessions/:id/steps/started", internalAuth, enclaveSession.stepStarted)
-    app.post("/internal/enclave-runtimes/sessions/:id/steps", internalAuth, enclaveSession.steps)
-    app.post("/internal/enclave-runtimes/sessions/:id/substeps", internalAuth, enclaveSession.substep)
-    app.post("/internal/enclave-runtimes/sessions/:id/complete", internalAuth, enclaveSession.complete)
-    app.post("/internal/enclave-runtimes/sessions/:id/fail", internalAuth, enclaveSession.fail)
+    app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", enclaveAuth, enclaveSession.heartbeat)
+    app.post("/internal/enclave-runtimes/sessions/:id/messages", enclaveAuth, enclaveSession.message)
+    app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", enclaveAuth, enclaveSession.sealedName)
+    app.post("/internal/enclave-runtimes/sessions/:id/steps/started", enclaveAuth, enclaveSession.stepStarted)
+    app.post("/internal/enclave-runtimes/sessions/:id/steps", enclaveAuth, enclaveSession.steps)
+    app.post("/internal/enclave-runtimes/sessions/:id/substeps", enclaveAuth, enclaveSession.substep)
+    app.post("/internal/enclave-runtimes/sessions/:id/complete", enclaveAuth, enclaveSession.complete)
+    app.post("/internal/enclave-runtimes/sessions/:id/fail", enclaveAuth, enclaveSession.fail)
   }
 
   // Global baseline rate limit

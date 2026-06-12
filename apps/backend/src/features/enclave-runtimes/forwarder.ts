@@ -8,8 +8,9 @@ import { INTERNAL_API_KEY_HEADER, type EnclaveSessionAssignment } from "@threa/t
  * session callbacks (heartbeat / complete). The backend never sees plaintext —
  * only opaque envelopes cross this boundary.
  *
- * Authenticated with the shared internal-API-key header (the same secret the
- * enclave uses to call `/internal/enclave-runtimes/*`). The `instanceUrl` is
+ * Authenticated with the dedicated enclave-channel secret on the internal-API-key
+ * header (the same credential the enclave uses to call
+ * `/internal/enclave-runtimes/*`; Phase 2.4c, E2EE-22). The `instanceUrl` is
  * the address the enclave registered, already SSRF-validated at registration.
  */
 
@@ -26,11 +27,11 @@ export class EnclaveForwardError extends Error {
 }
 
 export class EnclaveForwarder {
-  private readonly internalApiKey: string
+  private readonly enclaveInternalApiKey: string
   private readonly timeoutMs: number
 
-  constructor(deps: { internalApiKey: string; timeoutMs?: number }) {
-    this.internalApiKey = deps.internalApiKey
+  constructor(deps: { enclaveInternalApiKey: string; timeoutMs?: number }) {
+    this.enclaveInternalApiKey = deps.enclaveInternalApiKey
     this.timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
@@ -43,7 +44,7 @@ export class EnclaveForwarder {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+          [INTERNAL_API_KEY_HEADER]: this.enclaveInternalApiKey,
         },
         body: JSON.stringify(assignment),
         signal: AbortSignal.timeout(this.timeoutMs),
@@ -71,7 +72,7 @@ export class EnclaveForwarder {
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { [INTERNAL_API_KEY_HEADER]: this.internalApiKey },
+        headers: { [INTERNAL_API_KEY_HEADER]: this.enclaveInternalApiKey },
         signal: AbortSignal.timeout(this.timeoutMs),
       })
       return res.status === 202

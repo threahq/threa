@@ -636,6 +636,7 @@ export async function startServer(): Promise<ServerInstance> {
     corsAllowedOrigins: config.corsAllowedOrigins,
     allowDevAuthRoutes: config.useStubAuth && !isProduction,
     internalApiKey: config.internalApiKey,
+    enclaveInternalApiKey: config.enclaveInternalApiKey,
     apiKeyService,
     botChannelService,
     linkPreviewService,
@@ -681,9 +682,9 @@ export async function startServer(): Promise<ServerInstance> {
 
   // Built once here so both the socket layer (forwarding a user "Stop research"
   // to the enclave that owns an E2E session) and the enclave-invoke worker below
-  // share it. Null when no internal key — enclave dispatch/cancel are then off.
-  const enclaveForwarder = config.internalApiKey
-    ? new EnclaveForwarder({ internalApiKey: config.internalApiKey })
+  // share it. Null when no enclave credential — enclave dispatch/cancel are then off.
+  const enclaveForwarder = config.enclaveInternalApiKey
+    ? new EnclaveForwarder({ enclaveInternalApiKey: config.enclaveInternalApiKey })
     : undefined
 
   registerSocketHandlers(io, {

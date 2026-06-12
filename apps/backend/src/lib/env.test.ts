@@ -17,6 +17,10 @@ function setBaseEnv() {
   delete process.env.MEDIACONVERT_ENABLED
   delete process.env.MEDIACONVERT_ROLE_ARN
   delete process.env.MEDIACONVERT_ENDPOINT
+  delete process.env.INTERNAL_API_KEY
+  delete process.env.ENCLAVE_INTERNAL_API_KEY
+  delete process.env.CONTROL_PLANE_URL
+  delete process.env.REGION
 }
 
 afterEach(() => {
@@ -188,5 +192,40 @@ describe("loadConfig MediaConvert configuration", () => {
     const config = loadConfig()
     expect(config.mediaConvert.enabled).toBe(true)
     expect(config.mediaConvert.roleArn).toBe("arn:aws:iam::123456789012:role/threa-mediaconvert-dev")
+  })
+})
+
+describe("loadConfig enclave credential separation (Phase 2.4c, E2EE-22)", () => {
+  test("reads the dedicated key and never falls back to INTERNAL_API_KEY", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.INTERNAL_API_KEY = "shared-key"
+    process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+
+    const config = loadConfig()
+    expect(config.internalApiKey).toBe("shared-key")
+    expect(config.enclaveInternalApiKey).toBe("enclave-key")
+  })
+
+  test("stays null when only the shared key is set — the enclave channel is then off", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.INTERNAL_API_KEY = "shared-key"
+
+    const config = loadConfig()
+    expect(config.enclaveInternalApiKey).toBeNull()
+  })
+
+  test("throws when CONTROL_PLANE_URL is set without the dedicated key (INV-11)", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CONTROL_PLANE_URL = "http://localhost:3003"
+    process.env.REGION = "local"
+    process.env.INTERNAL_API_KEY = "shared-key"
+
+    expect(() => loadConfig()).toThrow("ENCLAVE_INTERNAL_API_KEY is required when CONTROL_PLANE_URL is set")
   })
 })

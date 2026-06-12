@@ -4,7 +4,12 @@ export interface EnclaveConfig {
   selfUrl: string
   /** Backend base URL — target for register/heartbeat/revoke. */
   backendBaseUrl: string
-  /** Shared secret for the enclave's calls to /internal/enclave-runtimes/*. */
+  /**
+   * Dedicated secret for the enclave↔backend channel — the enclave's calls to
+   * /internal/enclave-runtimes/* and the gate on the backend's inbound
+   * /sessions assignment (ENCLAVE_INTERNAL_API_KEY; Phase 2.4c, E2EE-22).
+   * Deliberately distinct from the backend's shared INTERNAL_API_KEY.
+   */
   internalApiKey: string
   /** Heartbeat interval. Backend's staleness window is 2min, so 30s keeps us with 3 retries of grace. */
   heartbeatIntervalMs: number
@@ -25,7 +30,7 @@ export interface EnclaveConfig {
 }
 
 export function loadEnclaveConfig(): EnclaveConfig {
-  const required = ["INTERNAL_API_KEY", "BACKEND_BASE_URL", "ENCLAVE_SELF_URL", "OPENROUTER_API_KEY"]
+  const required = ["ENCLAVE_INTERNAL_API_KEY", "BACKEND_BASE_URL", "ENCLAVE_SELF_URL", "OPENROUTER_API_KEY"]
   const missing = required.filter((k) => !process.env[k])
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`)
@@ -35,7 +40,7 @@ export function loadEnclaveConfig(): EnclaveConfig {
     port: Number(process.env.PORT) || 3011,
     selfUrl: process.env.ENCLAVE_SELF_URL!,
     backendBaseUrl: process.env.BACKEND_BASE_URL!.replace(/\/$/, ""),
-    internalApiKey: process.env.INTERNAL_API_KEY!,
+    internalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY!,
     heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",
