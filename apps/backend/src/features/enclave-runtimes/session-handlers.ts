@@ -33,9 +33,9 @@ import { parseModelId } from "@threa/agent-runtime"
 
 /**
  * Session callbacks the enclave calls while it owns an assigned turn. The enclave
- * authenticates with the shared internal-api-key (same gate as register/heartbeat),
- * and everything it sends is ciphertext — the backend writes sealed replies but
- * never sees plaintext (INV-E7).
+ * authenticates with the dedicated enclave credential (same gate as
+ * register/heartbeat; Phase 2.4c, E2EE-22), and everything it sends is ciphertext
+ * — the backend writes sealed replies but never sees plaintext (INV-E7).
  *
  *   POST /internal/enclave-runtimes/sessions/:id/heartbeat  — liveness refresh
  *   POST /internal/enclave-runtimes/sessions/:id/messages   — one sealed reply, streamed

@@ -1,10 +1,17 @@
+import { logger } from "@threa/agent-runtime/logger"
+
 export interface EnclaveConfig {
   port: number
   /** URL the backend stores as this instance's reachable address (registration `instanceUrl`). */
   selfUrl: string
   /** Backend base URL — target for register/heartbeat/revoke. */
   backendBaseUrl: string
-  /** Shared secret for the enclave's calls to /internal/enclave-runtimes/*. */
+  /**
+   * Secret for the enclave↔backend channel — the enclave's calls to
+   * /internal/enclave-runtimes/* and the gate on the backend's inbound
+   * /sessions assignment. ENCLAVE_INTERNAL_API_KEY (dedicated, Phase 2.4c /
+   * E2EE-22) with a transitional fallback to the shared INTERNAL_API_KEY.
+   */
   internalApiKey: string
   /** Heartbeat interval. Backend's staleness window is 2min, so 30s keeps us with 3 retries of grace. */
   heartbeatIntervalMs: number
@@ -25,17 +32,26 @@ export interface EnclaveConfig {
 }
 
 export function loadEnclaveConfig(): EnclaveConfig {
-  const required = ["INTERNAL_API_KEY", "BACKEND_BASE_URL", "ENCLAVE_SELF_URL", "OPENROUTER_API_KEY"]
+  const required = ["BACKEND_BASE_URL", "ENCLAVE_SELF_URL", "OPENROUTER_API_KEY"]
   const missing = required.filter((k) => !process.env[k])
+  const internalApiKey = process.env.ENCLAVE_INTERNAL_API_KEY || process.env.INTERNAL_API_KEY
+  if (!internalApiKey) {
+    missing.push("ENCLAVE_INTERNAL_API_KEY")
+  }
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`)
+  }
+  if (!process.env.ENCLAVE_INTERNAL_API_KEY) {
+    logger.warn(
+      "ENCLAVE_INTERNAL_API_KEY is not set — falling back to the shared INTERNAL_API_KEY. Set the dedicated key here and on the backend to complete credential separation (Phase 2.4c, E2EE-22)."
+    )
   }
 
   return {
     port: Number(process.env.PORT) || 3011,
     selfUrl: process.env.ENCLAVE_SELF_URL!,
     backendBaseUrl: process.env.BACKEND_BASE_URL!.replace(/\/$/, ""),
-    internalApiKey: process.env.INTERNAL_API_KEY!,
+    internalApiKey: internalApiKey!,
     heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",

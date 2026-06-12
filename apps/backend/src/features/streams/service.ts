@@ -894,6 +894,11 @@ export class StreamService {
 
     for (const actor of actors) {
       if (actor.kind === "enclave") {
+        // Wrap eligibility inherits the registration boundary (Phase 2.4c,
+        // E2EE-22): enclave_runtimes rows are only creatable through the
+        // /internal/enclave-runtimes routes, gated by the dedicated enclave
+        // credential — so "every live EIK" means every key registered by an
+        // enclave-credential holder, not by any internal-key holder.
         const eiks = await EnclaveRuntimesRepository.listLive(db, ENCLAVE_RUNTIME_STALENESS_MS)
         for (const eik of eiks) {
           recipients.push({

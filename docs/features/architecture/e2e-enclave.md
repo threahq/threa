@@ -113,7 +113,7 @@ sub-loop returns partial findings and the turn still replies. For in-process
   wires it to a deploy target (`Dockerfile.enclave`, `healthcheckPath = "/healthz"`),
   matching every other service. Bringing up an instance is then just: create the
   Railway service and set the four required env vars (`ENCLAVE_SELF_URL`,
-  `BACKEND_BASE_URL`, `INTERNAL_API_KEY`, `OPENROUTER_API_KEY` — see
+  `BACKEND_BASE_URL`, `ENCLAVE_INTERNAL_API_KEY`, `OPENROUTER_API_KEY` — see
   `apps/enclave/README.md`); the enclave self-registers with the backend over
   `BACKEND_BASE_URL`, so no backend config change is needed. Pin the egress
   allow-list to the backend and OpenRouter only.
@@ -124,6 +124,23 @@ sub-loop returns partial findings and the turn still replies. For in-process
   the enclave is operationally separated, not yet a hardware TEE. Migrating to a
   real TEE (Nitro / Confidential VM / Confidential Space) is a deployment-shape
   change, not a protocol change — the sealed envelope is portable.
+- **Identity posture (Phase 2.4c, E2EE-22).** Enclave identity rests on
+  **`ENCLAVE_INTERNAL_API_KEY` secrecy plus the registration path** — a dedicated
+  credential, distinct from the `INTERNAL_API_KEY` other internal consumers hold,
+  gates `/internal/enclave-runtimes/*` (registration, heartbeat, revoke, session
+  callbacks) and the backend's assignment/cancel calls to the enclave. This is
+  what makes the `first-party-attested` trust tier honest: a bot-runtime or any
+  other shared-key holder can no longer register an EIK and become an SSK wrap
+  recipient. Wrap eligibility inherits the boundary without a schema change —
+  owner clients wrap to every live `enclave_runtimes` row, and only
+  enclave-credential holders can create rows. Rollout: while
+  `ENCLAVE_INTERNAL_API_KEY` is unset, both services fall back to the shared key
+  with a boot warning, so separation activates as a config-only event (set the
+  var on backend and enclave together). The `/attestation` endpoint remains
+  informational; real TEE evidence (e.g. a Nitro/TDX document binding the EIK
+  public key) slots into the registration handler when the infrastructure
+  exists — there is deliberately **no verifier seam or `attestation_status`
+  column** ahead of that day (INV-36): the registration handler is the seam.
 
 ## Invariants
 

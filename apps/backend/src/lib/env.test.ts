@@ -17,6 +17,8 @@ function setBaseEnv() {
   delete process.env.MEDIACONVERT_ENABLED
   delete process.env.MEDIACONVERT_ROLE_ARN
   delete process.env.MEDIACONVERT_ENDPOINT
+  delete process.env.INTERNAL_API_KEY
+  delete process.env.ENCLAVE_INTERNAL_API_KEY
 }
 
 afterEach(() => {
@@ -188,5 +190,46 @@ describe("loadConfig MediaConvert configuration", () => {
     const config = loadConfig()
     expect(config.mediaConvert.enabled).toBe(true)
     expect(config.mediaConvert.roleArn).toBe("arn:aws:iam::123456789012:role/threa-mediaconvert-dev")
+  })
+})
+
+describe("loadConfig enclave credential separation (Phase 2.4c, E2EE-22)", () => {
+  test("prefers ENCLAVE_INTERNAL_API_KEY when both keys are set, without warning", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.INTERNAL_API_KEY = "shared-key"
+    process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+
+    const warnSpy = spyOn(logger, "warn")
+    const config = loadConfig()
+
+    expect(config.internalApiKey).toBe("shared-key")
+    expect(config.enclaveInternalApiKey).toBe("enclave-key")
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("ENCLAVE_INTERNAL_API_KEY"))).toBe(false)
+    warnSpy.mockRestore()
+  })
+
+  test("falls back to INTERNAL_API_KEY with a warning when the dedicated key is absent", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.INTERNAL_API_KEY = "shared-key"
+
+    const warnSpy = spyOn(logger, "warn")
+    const config = loadConfig()
+
+    expect(config.enclaveInternalApiKey).toBe("shared-key")
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes("ENCLAVE_INTERNAL_API_KEY"))).toBe(true)
+    warnSpy.mockRestore()
+  })
+
+  test("is null when neither key is set", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+
+    const config = loadConfig()
+    expect(config.enclaveInternalApiKey).toBeNull()
   })
 })
