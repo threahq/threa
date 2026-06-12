@@ -1667,6 +1667,7 @@ export function StreamContent({
                   <EventList
                     timelineItems={timelineItems}
                     isLoading={isLoading}
+                    isConfirmedEmpty={isConfirmedEmpty}
                     workspaceId={workspaceId}
                     streamId={streamId}
                     highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}

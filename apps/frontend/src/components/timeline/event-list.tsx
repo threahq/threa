@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import {
   COMMAND_EVENT_TYPES,
   AGENT_SESSION_EVENT_TYPES,
@@ -27,9 +27,20 @@ import type {
   ConversationRowAnnotation,
 } from "./conversation-overlay/model"
 
+/** How long a load must be pending before the skeleton appears. */
+const SKELETON_DELAY_MS = 200
+
 interface EventListProps {
   timelineItems: TimelineItem[]
   isLoading: boolean
+  /**
+   * Whether an empty `timelineItems` is a *confirmed* empty stream (both IDB
+   * and bootstrap answered) rather than a transient catch-up gap. Callers
+   * with access to the timeline load state must pass it — rendering
+   * "No messages yet" during the gap is exactly the flash it guards against.
+   * Defaults to true for callers whose empty branch is unreachable.
+   */
+  isConfirmedEmpty?: boolean
   workspaceId: string
   streamId: string
   highlightMessageId?: string | null
@@ -727,6 +738,7 @@ export const TimelineItemContent = memo(TimelineItemContentImpl, timelineRowProp
 export function EventList({
   timelineItems,
   isLoading,
+  isConfirmedEmpty = true,
   workspaceId,
   streamId,
   highlightMessageId,
@@ -764,7 +776,22 @@ export function EventList({
     [abortResearch, workspaceId]
   )
 
+  // Delayed-skeleton gate (coordinated-loading style): only show the loading
+  // skeleton when the load has been pending long enough for a user to notice.
+  const [showSkeleton, setShowSkeleton] = useState(false)
+  useEffect(() => {
+    if (!isLoading) {
+      setShowSkeleton(false)
+      return
+    }
+    const timer = setTimeout(() => setShowSkeleton(true), SKELETON_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [isLoading])
+
   if (isLoading) {
+    // Skeletons only after a beat — a sub-200ms load resolving through a
+    // one-frame skeleton flash reads as jank, not feedback.
+    if (!showSkeleton) return null
     return (
       <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
         <div className="flex gap-3">
@@ -794,6 +821,9 @@ export function EventList({
   const firstMessageId = findFirstMessageId(timelineItems)
 
   if (timelineItems.length === 0) {
+    // A transient empty (IDB re-subscribing, grouping catching up) renders
+    // blank, never the empty state — only a confirmed-empty stream says so.
+    if (!isConfirmedEmpty) return null
     return (
       <div className="flex h-full items-center justify-center">
         <div className="text-center">
