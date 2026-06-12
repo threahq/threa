@@ -24,6 +24,7 @@ import {
 } from "../../agents"
 import { EnclaveRuntimesRepository } from "../repository"
 import { ENCLAVE_RUNTIME_STALENESS_MS } from "../service"
+import { hashCallbackToken } from "../callback-token"
 import type { EnclaveForwarder } from "../forwarder"
 import { buildEnclaveSessionAssignment } from "./request-builder"
 import { StreamTypes, type EnclaveStreamEnvelope } from "@threa/types"
@@ -172,9 +173,10 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       }))
 
     const sid = newSessionId()
-    // Callback binding (Phase 2.4b, E2EE-21): the token travels only inside
-    // this assignment to the chosen EIK's instance, so echoing it proves the
-    // caller is the runner this session was assigned to.
+    // Callback binding (Phase 2.4b, E2EE-21): the cleartext token travels only
+    // inside this assignment to the chosen EIK's instance, so echoing it proves
+    // the caller is the runner this session was assigned to. Only its sha256
+    // digest is persisted — a DB read can never impersonate the runner.
     const callbackToken = randomUUID()
     const built = buildEnclaveSessionAssignment({
       callbackToken,
@@ -236,7 +238,7 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
         personaId: ARIADNE_AGENT_ID,
         triggerMessageId: triggerId,
         serverId: built.keyId,
-        callbackToken,
+        callbackTokenHash: hashCallbackToken(callbackToken),
         replyKeyGeneration: built.assignment.reply.keyGeneration,
         initialSequence: 0n,
       })

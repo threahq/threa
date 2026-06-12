@@ -17,7 +17,7 @@ function makeRunningSession(overrides?: Partial<AgentSession>): AgentSession {
     currentStep: 0,
     currentStepType: null,
     serverId: "server_1",
-    callbackToken: null,
+    callbackTokenHash: null,
     replyKeyGeneration: null,
     heartbeatAt: new Date("2026-02-19T12:00:00.000Z"),
     responseMessageId: null,

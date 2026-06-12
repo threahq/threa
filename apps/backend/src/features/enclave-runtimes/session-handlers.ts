@@ -28,6 +28,7 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
 import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
+import { hashCallbackToken } from "./callback-token"
 import { parseModelId } from "@threa/agent-runtime"
 
 /**
@@ -151,21 +152,22 @@ interface Dependencies {
  */
 /**
  * Phase 2.4b (E2EE-21): bind callbacks to the session's assigned runner. The
- * token was minted at dispatch, stored on the row, and delivered only inside
- * the sealed assignment to the pinned EIK's instance — possession proves the
- * caller is the runner this session was assigned to (a stronger binding than
- * a self-reported keyId, which any internal-key holder could copy). Rollout
- * phase 1: a presented token must match; an absent token is tolerated so
- * sessions in flight across the deploy boundary drain cleanly. The
- * reject-if-absent flip (for rows that carry a token) is the later one-liner.
+ * cleartext token was minted at dispatch and delivered only inside the sealed
+ * assignment to the pinned EIK's instance — possession proves the caller is
+ * the runner this session was assigned to (a stronger binding than a
+ * self-reported keyId, which any internal-key holder could copy). The row
+ * holds only the sha256 digest, so the presented value is hashed before the
+ * timing-safe compare (both sides are fixed-length hex). Rollout phase 1: a
+ * presented token must match; an absent token is tolerated so sessions in
+ * flight across the deploy boundary drain cleanly. The reject-if-absent flip
+ * (for rows that carry a hash) is the later one-liner.
  */
 function assertCallbackBound(session: AgentSession, req: Request): void {
   const presented = req.header(ENCLAVE_CALLBACK_TOKEN_HEADER)
   if (!presented) return
-  const expected = session.callbackToken
-  const presentedBytes = Buffer.from(presented)
-  const expectedBytes = Buffer.from(expected ?? "")
-  if (!expected || presentedBytes.length !== expectedBytes.length || !timingSafeEqual(presentedBytes, expectedBytes)) {
+  const expected = session.callbackTokenHash
+  const presentedHash = Buffer.from(hashCallbackToken(presented))
+  if (!expected || !timingSafeEqual(presentedHash, Buffer.from(expected))) {
     throw new HttpError("Callback token mismatch", { status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
   }
 }

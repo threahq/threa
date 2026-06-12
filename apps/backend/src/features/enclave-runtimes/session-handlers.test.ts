@@ -13,6 +13,7 @@ import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
 import type { QueueManager } from "../../lib/queue"
 import { createEnclaveSessionHandlers } from "./session-handlers"
+import { hashCallbackToken } from "./callback-token"
 
 const pool = {} as Pool
 
@@ -703,9 +704,10 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
 // dispatch-minted token, and a seal under the wrong generation is rejected
 // loudly instead of persisting a permanently undecryptable row.
 describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
+  // The row stores only the digest; the runner echoes the cleartext.
   const BOUND_SESSION = {
     ...SESSION!,
-    callbackToken: "cbtok_good",
+    callbackTokenHash: hashCallbackToken("cbtok_good"),
     replyKeyGeneration: 0,
   } as typeof SESSION
 
@@ -763,7 +765,7 @@ describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
   it("passes any generation for sessions dispatched before the column shipped (NULL)", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue({
       ...SESSION!,
-      callbackToken: null,
+      callbackTokenHash: null,
       replyKeyGeneration: null,
     } as typeof SESSION)
     spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)

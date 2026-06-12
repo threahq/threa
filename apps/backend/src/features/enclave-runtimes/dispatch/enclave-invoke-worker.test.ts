@@ -6,6 +6,7 @@ import * as agents from "../../agents"
 import { AgentSessionRepository } from "../../agents"
 import { StreamRepository, StreamEventRepository, StreamPoliciesRepository } from "../../streams"
 import { OutboxRepository } from "../../../lib/outbox"
+import { hashCallbackToken } from "../callback-token"
 import { E2eStreamActorsRepository, E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../e2e-streams"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import { MessageRepository } from "../../messaging"
@@ -144,13 +145,14 @@ describe("createEnclaveInvokeWorker", () => {
     })
     await worker(JOB)
 
-    const inserted = insertSession.mock.calls[0]![1] as { callbackToken: string; replyKeyGeneration: number }
+    const inserted = insertSession.mock.calls[0]![1] as { callbackTokenHash: string; replyKeyGeneration: number }
     const assignment = assignSession.mock.calls[0]![1] as { callbackToken: string; reply: { keyGeneration: number } }
-    // The same secret travels to exactly one place — inside the assignment to
-    // the pinned instance — so echoing it proves the caller is that runner.
-    expect(typeof inserted.callbackToken).toBe("string")
-    expect(inserted.callbackToken.length).toBeGreaterThan(0)
-    expect(assignment.callbackToken).toBe(inserted.callbackToken)
+    // The cleartext secret travels to exactly one place — inside the assignment
+    // to the pinned instance — so echoing it proves the caller is that runner.
+    // The row stores only the digest: a DB read can't impersonate the runner.
+    expect(typeof assignment.callbackToken).toBe("string")
+    expect(assignment.callbackToken.length).toBeGreaterThan(0)
+    expect(inserted.callbackTokenHash).toBe(hashCallbackToken(assignment.callbackToken))
     // The row records the generation the assignment prescribes, so a callback
     // sealed under any other generation is rejected instead of persisted.
     expect(inserted.replyKeyGeneration).toBe(assignment.reply.keyGeneration)
