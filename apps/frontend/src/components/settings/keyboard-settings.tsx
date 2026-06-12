@@ -5,6 +5,7 @@ import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
+import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { RotateCcw } from "lucide-react"
 import { usePreferences } from "@/contexts"
@@ -391,6 +392,30 @@ export function KeyboardSettings({ onCaptureStateChange }: KeyboardSettingsProps
             </div>
           ))}
         </RadioGroup>
+      </section>
+
+      <Separator />
+
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">Modifier Click</h3>
+          <p className="text-sm text-muted-foreground">What ⌘/Ctrl-clicking a conversation or view link does</p>
+        </div>
+        <div className="flex items-start justify-between gap-3">
+          <div className="grid gap-0.5">
+            <Label htmlFor="cmd-click-opens-panel" className="cursor-pointer font-medium">
+              Open in a side panel
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              When off, ⌘/Ctrl-click keeps the browser default and opens a new tab
+            </p>
+          </div>
+          <Switch
+            id="cmd-click-opens-panel"
+            checked={preferences?.cmdClickOpensPanel ?? true}
+            onCheckedChange={(checked) => updatePreference("cmdClickOpensPanel", checked)}
+          />
+        </div>
       </section>
 
       {shortcuts.navigation.length > 0 && (

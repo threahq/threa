@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react"
 import { useLocation } from "react-router-dom"
-import { usePanel, useSidebar } from "@/contexts"
+import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
 import { panelIdFromHref } from "@/lib/panel-locations"
 
 /**
@@ -18,18 +18,21 @@ export function PanelCmdClickHandler({ workspaceId }: { workspaceId: string }) {
   const { panels, openPanel } = usePanel()
   const { isMobile } = useSidebar()
   const location = useLocation()
+  // Users can turn the gesture off and keep the browser's native new-tab
+  // behavior (default on; absent preferences mean defaults).
+  const enabled = usePreferencesOptional()?.preferences?.cmdClickOpensPanel ?? true
 
   // The listener binds once; state it consults lives in refs.
-  const stateRef = useRef({ panels, isMobile, pathname: location.pathname })
-  stateRef.current = { panels, isMobile, pathname: location.pathname }
+  const stateRef = useRef({ panels, isMobile, enabled, pathname: location.pathname })
+  stateRef.current = { panels, isMobile, enabled, pathname: location.pathname }
   const openPanelRef = useRef(openPanel)
   openPanelRef.current = openPanel
 
   useEffect(() => {
     const onClickCapture = (e: MouseEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
-      const { panels: currentPanels, isMobile: mobile, pathname } = stateRef.current
-      if (mobile) return
+      const { panels: currentPanels, isMobile: mobile, enabled: on, pathname } = stateRef.current
+      if (mobile || !on) return
       const target = e.target as HTMLElement | null
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null
       if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return

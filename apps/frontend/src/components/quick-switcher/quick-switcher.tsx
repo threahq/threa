@@ -23,7 +23,7 @@ import {
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { usePanel, useSettings } from "@/contexts"
+import { usePanel, usePreferencesOptional, useSettings } from "@/contexts"
 import { panelIdFromHref } from "@/lib/panel-locations"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
@@ -95,6 +95,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   const [, setSearchParams] = useSearchParams()
   const location = useLocation()
   const { panels, openPanel } = usePanel()
+  const preferences = usePreferencesOptional()?.preferences ?? null
   const user = useUser()
   const { createDraft, deleteDraft } = useDraftScratchpads(workspaceId)
   const { openSettings } = useSettings()
@@ -339,7 +340,9 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       if (withModifier && item.href) {
         // The global cmd-click rule: panel-able destinations open in a new
         // side panel; everything else keeps the new-browser-tab behavior.
-        const targetPanelId = panelIdFromHref(item.href, workspaceId, panels, location.pathname)
+        // Users can turn the gesture off entirely (cmdClickOpensPanel).
+        const panelGestureOn = preferences?.cmdClickOpensPanel ?? true
+        const targetPanelId = panelGestureOn ? panelIdFromHref(item.href, workspaceId, panels, location.pathname) : null
         if (targetPanelId) {
           openPanel(targetPanelId, { mode: "new" })
           handleClose()
@@ -350,7 +353,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       }
       item.onSelect()
     },
-    [workspaceId, panels, openPanel, handleClose, location.pathname]
+    [workspaceId, panels, openPanel, handleClose, location.pathname, preferences?.cmdClickOpensPanel]
   )
 
   // Reset selection when items change

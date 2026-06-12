@@ -245,6 +245,12 @@ export interface UserPreferences {
    */
   voicePolishLevel: VoicePolishLevel
   keyboardShortcuts: KeyboardShortcuts
+  /**
+   * Whether cmd/ctrl-click on an internal conversation/view link opens it in
+   * a side panel. When false, modifier clicks keep the browser default
+   * (open in a new tab).
+   */
+  cmdClickOpensPanel: boolean
   accessibility: AccessibilityPreferences
   /**
    * The user's personal working week + working hours. `null` means "inherit the
@@ -290,6 +296,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   voiceTranscriptionModel: null,
   voicePolishLevel: "opinionated",
   keyboardShortcuts: {},
+  cmdClickOpensPanel: true,
   accessibility: DEFAULT_ACCESSIBILITY,
   workSchedule: null,
   statusPresets: [],
@@ -321,6 +328,7 @@ export interface UpdateUserPreferencesInput {
   voiceTranscriptionModel?: string | null
   voicePolishLevel?: VoicePolishLevel
   keyboardShortcuts?: KeyboardShortcuts
+  cmdClickOpensPanel?: boolean
   accessibility?: Partial<AccessibilityPreferences>
   workSchedule?: WorkSchedule | null
   statusPresets?: StatusPreset[]

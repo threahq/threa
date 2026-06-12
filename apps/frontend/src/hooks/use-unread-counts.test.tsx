@@ -93,6 +93,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       statusPresets: [],
       workSchedule: null,
       gettingStartedDismissed: false,
+      cmdClickOpensPanel: true,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",
