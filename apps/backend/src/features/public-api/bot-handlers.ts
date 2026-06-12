@@ -101,7 +101,14 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
     async create(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const { type, name, description, avatarEmoji, traits, slug: slugInput } = validateRequest(createBotSchema, req.body)
+      const {
+        type,
+        name,
+        description,
+        avatarEmoji,
+        traits,
+        slug: slugInput,
+      } = validateRequest(createBotSchema, req.body)
 
       // Gate depends on the `type` field in the request body, which isn't
       // known at route registration time, so the check lives in the handler.
@@ -133,8 +140,9 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
 
       const slug = generateSlug(slugInput)
       if (!slug) {
-        return res.status(400).json({
-          error: "Validation failed",
+        throw new HttpError("Validation failed", {
+          status: 400,
+          code: "VALIDATION_ERROR",
           details: { slug: ["Slug cannot be empty after normalization"] },
         })
       }
@@ -183,8 +191,9 @@ export function createBotHandlers({ botApiKeyService, avatarService, streamServi
       if (fields.slug) {
         fields.slug = generateSlug(fields.slug)
         if (!fields.slug) {
-          return res.status(400).json({
-            error: "Validation failed",
+          throw new HttpError("Validation failed", {
+            status: 400,
+            code: "VALIDATION_ERROR",
             details: { slug: ["Slug cannot be empty after normalization"] },
           })
         }
