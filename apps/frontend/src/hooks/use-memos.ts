@@ -3,8 +3,10 @@ import { getMemo, searchMemos, type MemoSearchRequest } from "@/api"
 
 export const memoKeys = {
   all: ["memos"] as const,
-  search: (workspaceId: string, request: MemoSearchRequest) =>
-    [...memoKeys.all, "search", workspaceId, request] as const,
+  /** Prefix for every search query in one workspace — the invalidation target
+   *  when a `memo:created` event lands (workspace-sync). */
+  searches: (workspaceId: string) => [...memoKeys.all, "search", workspaceId] as const,
+  search: (workspaceId: string, request: MemoSearchRequest) => [...memoKeys.searches(workspaceId), request] as const,
   detail: (workspaceId: string, memoId: string) => [...memoKeys.all, "detail", workspaceId, memoId] as const,
 }
 
