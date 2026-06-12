@@ -520,17 +520,16 @@ export function SidebarFooter({
   )
 }
 
-// Shared face for the create control. A gold "thread" chip carries the emphasis
-// (per the design system, --primary is the single accent that signals primary
-// actions), the label sits left-aligned so the control reads as a sidebar row
-// rather than a form button, and the trailing chevron telegraphs the upward
-// menu — rhyming with the account row beneath it. The whole face reacts to the
-// trigger's `data-state` so hover and open share one warm treatment; both the
-// Radix desktop trigger and the manual mobile button expose that attribute.
+// Shared face for the create control. Same anatomy as the account row beneath
+// it (left-aligned label, trailing chevron) so the footer reads as one stack;
+// the gold plus chip is the only accent and carries the create affordance.
+// The chevron flips while the menu is open — the face reacts to the trigger's
+// `data-state`, which both the Radix desktop trigger and the manual mobile
+// button expose.
 function SidebarCreateButtonFace() {
   return (
     <>
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary transition-colors group-hover/new:bg-primary/25 group-data-[state=open]/new:bg-primary/25">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/20 text-primary transition-colors group-hover/new:bg-primary/30 group-data-[state=open]/new:bg-primary/30">
         <Plus className="h-4 w-4" />
       </span>
       <span className="flex-1 text-left font-medium">New</span>
@@ -539,8 +538,15 @@ function SidebarCreateButtonFace() {
   )
 }
 
-const CREATE_BUTTON_CLASS =
-  "group/new w-full justify-start gap-2.5 px-3 bg-primary/[0.04] hover:bg-primary/10 hover:text-foreground data-[state=open]:bg-primary/10 data-[state=open]:text-foreground"
+// No resting wash — the row sits flush like its neighbors until interaction.
+// Hover/open use the account row's own bg-muted/50 so the two footer rows
+// behave identically; the chip warming is the only gold response (INV-21:
+// constant sizing, nothing shifts).
+const CREATE_BUTTON_CLASS = cn(
+  "group/new w-full justify-start gap-2.5 px-3",
+  "hover:bg-muted/50 hover:text-foreground",
+  "data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
+)
 
 /**
  * The always-visible "New" control at the bottom of the sidebar. Opens a menu of
