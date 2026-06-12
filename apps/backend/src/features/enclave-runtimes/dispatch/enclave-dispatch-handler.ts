@@ -3,7 +3,8 @@ import { AuthorTypes, CompanionModes, StreamTypes } from "@threa/types"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../../lib/outbox"
 import { JobQueues, type QueueManager } from "../../../lib/queue"
-import { E2eStreamActorsRepository, E2eStreamsRepository } from "../../e2e-streams"
+import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
+import { resolveSealingContext } from "../../e2e-streams"
 import { StreamRepository } from "../../streams"
 import { logger } from "../../../lib/logger"
 
@@ -87,12 +88,17 @@ export class EnclaveDispatchHandler implements OutboxHandler {
             seen.push(event.id)
             continue
           }
-          if (!(await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId))) {
-            seen.push(event.id)
-            continue
-          }
-          const actors = await E2eStreamActorsRepository.listForStream(this.db, workspaceId, streamId)
-          if (!actors.some((a) => a.kind === "enclave")) {
+          // The enclave is a sealed driver: it only takes turns the delivery
+          // verdict seals — an E2E stream with the enclave actor invited.
+          // Plaintext streams and uninvited E2E streams both come back
+          // non-sealed and are the companion's (or nobody's) turn.
+          const sealing = await resolveSealingContext(this.db, {
+            workspaceId,
+            streamId,
+            actor: { kind: "enclave" },
+          })
+          const verdict = resolveDeliveryVerdict({ trust: TrustTiers.FIRST_PARTY_ATTESTED, sealing })
+          if (verdict.delivery !== "sealed") {
             seen.push(event.id)
             continue
           }

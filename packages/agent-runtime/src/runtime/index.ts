@@ -2,8 +2,19 @@
 // `import { defineAgentTool, type AgentToolResult } from "../runtime"` shape.
 export { defineAgentTool, toVercelToolDefs, buildToolPromptSections } from "./agent-tool"
 export type { AgentTool, AgentToolConfig, AgentToolResult, ExecutionPhase } from "./agent-tool"
-export { negotiateCapabilities } from "./negotiate-capabilities"
-export type { NegotiateCapabilitiesParams, NegotiatedCapabilities } from "./negotiate-capabilities"
+export {
+  negotiateCapabilities,
+  resolveDeliveryVerdict,
+  TrustTiers,
+  EXTERNAL_SEALED_DELIVERY,
+} from "./negotiate-capabilities"
+export type {
+  NegotiateCapabilitiesParams,
+  NegotiatedCapabilities,
+  TrustTier,
+  SealingContext,
+  DeliveryVerdict,
+} from "./negotiate-capabilities"
 export type { AgentEvent, NewMessageInfo, TraceContextMessage } from "./agent-events"
 export type { AgentObserver } from "./agent-observer"
 export { OtelObserver } from "./otel-observer"

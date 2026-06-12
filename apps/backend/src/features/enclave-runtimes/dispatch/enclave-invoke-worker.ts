@@ -85,6 +85,9 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
     const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, e2eStreamId)
     if (!e2e) return
 
+    // Execution-time re-validation of the enqueue-time delivery verdict (the
+    // dispatch handler holds the Phase 2.4a gate); the rows also feed the
+    // assignment payload, so the fetch is not just a presence check.
     const actors = await E2eStreamActorsRepository.listForStream(pool, workspaceId, streamId)
     if (!actors.some((a) => a.kind === "enclave")) return
 

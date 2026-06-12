@@ -6,7 +6,7 @@ import type { SearchFilters, SearchService } from "../search"
 import { serializeSearchResult, resolveUserAccessibleStreamIds } from "../search"
 import { BotChannelAccessRepository, type BotChannelService } from "../api-keys"
 import { MessageRepository, type EventService } from "../messaging"
-import type { ExternalContextHandle } from "@threa/agent-runtime"
+import { resolveDeliveryVerdict, TrustTiers, type ExternalContextHandle } from "@threa/agent-runtime"
 import {
   StreamRepository,
   StreamEventRepository,
@@ -17,7 +17,7 @@ import {
   type StreamService,
 } from "../streams"
 import { UserRepository } from "../workspaces"
-import { E2eStreamsRepository } from "../e2e-streams"
+import { E2eStreamsRepository, resolveSealingContext } from "../e2e-streams"
 import { PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -383,10 +383,17 @@ async function buildClaimContext(
 ): Promise<ExternalContextHandle | undefined> {
   const stream = await StreamRepository.findById(pool, invocation.activeStreamId)
   if (!stream || stream.workspaceId !== invocation.workspaceId) return undefined
-  // External dispatch into E2E streams is already blocked upstream
-  // (invocation-outbox-handler); this guards invocations that predate a later
-  // E2E enablement of the stream.
-  if (stream.e2eEnabled === true) return undefined
+  // Same predicate the dispatch sites consult (Phase 2.4a): plaintext history
+  // is only served where a plaintext turn may be minted for this bot. This
+  // guards invocations that predate a later E2E enablement of the stream —
+  // the dispatch-time check already blocks new ones.
+  const sealing = await resolveSealingContext(pool, {
+    workspaceId: invocation.workspaceId,
+    streamId: invocation.activeStreamId,
+    actor: { kind: "bot", botId: invocation.actorId },
+  })
+  const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
+  if (verdict.delivery !== "plaintext") return undefined
 
   const surrounding = await MessageRepository.findSurrounding(
     pool,

@@ -11,6 +11,7 @@ import { StreamRepository } from "../streams"
 import { BotRepository } from "../public-api/bot-repository"
 import { PersonaRepository } from "../agents"
 import { EventService } from "../messaging"
+import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import * as outbox from "../../lib/outbox"
 import { E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
 
@@ -56,8 +57,8 @@ const docWithMention = (slug: string) => ({
   ],
 })
 
-describe("BotInvocationOutboxHandler E2E short-circuit", () => {
-  it("does not create any invocation for a message in an E2E stream", async () => {
+describe("BotInvocationOutboxHandler E2E delivery verdict", () => {
+  it("skips an active-scratchpad bot on an E2E stream before any side effect — no invocation, no plaintext notice", async () => {
     spyOn(outbox, "parseMessagePayload").mockReturnValue({
       streamId: "stream_1",
       workspaceId: "ws_1",
@@ -67,23 +68,41 @@ describe("BotInvocationOutboxHandler E2E short-circuit", () => {
         payload: { messageId: "msg_1", contentMarkdown: E2E_PLACEHOLDER_CONTENT_MARKDOWN, contentJson: null },
       },
     } as never)
-    const findById = spyOn(StreamRepository, "findById").mockResolvedValue({
+    spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_1",
       workspaceId: "ws_1",
       archivedAt: null,
       rootStreamId: null,
+      type: "scratchpad",
       e2eEnabled: true,
     } as never)
+    spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
+      actorType: "bot",
+      actorId: "bot_1",
+    } as never)
+    spyOn(BotRepository, "findById").mockResolvedValue({
+      id: "bot_1",
+      slug: "scout",
+      name: "Scout",
+      archivedAt: null,
+      traits: ["active-scratchpad"],
+    } as never)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(true)
+    spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([])
     const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
       invocation: { id: "inv_1" },
       wasNewlyInserted: true,
     } as never)
+    // The missing-link notice would be a plaintext system message — on an E2E
+    // stream the verdict gate must fire before that write (INV-E1).
+    const createMessage = spyOn(EventService.prototype, "createMessage").mockResolvedValue(undefined as never)
+    const findActiveLink = spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream")
 
     await runProcessMessageCreated({})
 
     expect(createInvocation).not.toHaveBeenCalled()
-    // Returned at the E2E gate — never resolved the root stream (the next lookup).
-    expect(findById).toHaveBeenCalledTimes(1)
+    expect(createMessage).not.toHaveBeenCalled()
+    expect(findActiveLink).not.toHaveBeenCalled()
   })
 })
 
@@ -99,6 +118,7 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
 
   it("dispatches a mention invocation from a contentJson mention node with a non-ASCII slug", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     const findVisibleBySlugs = spyOn(BotRepository, "findVisibleBySlugs").mockResolvedValue([
       { id: "bot_1", slug: "аріадна", name: "Аріадна", archivedAt: null, traits: ["mentionable"] },
     ] as never)
@@ -165,6 +185,7 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
     createMessage: ReturnType<typeof spyOn>
   } => {
     spyOn(StreamRepository, "findById").mockResolvedValue(scratchpadStream as never)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",

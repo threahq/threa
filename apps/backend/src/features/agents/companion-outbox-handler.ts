@@ -1,7 +1,8 @@
 import type { Pool } from "pg"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository } from "../streams"
-import { E2eStreamsRepository } from "../e2e-streams"
+import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
+import { resolveSealingContext } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
 import { AgentSessionRepository, SessionStatuses } from "./session-repository"
 import { parseMessagePayload } from "../../lib/outbox"
@@ -111,9 +112,17 @@ export class CompanionHandler implements OutboxHandler {
 
           const { streamId, workspaceId, event: messageEvent } = payload
 
-          // E2E streams: Ariadne can't see ciphertext, so the companion can
-          // never have anything to say. Skip without inspecting the message.
-          if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+          // The companion is an in-process plaintext driver: it only takes
+          // turns the delivery verdict says may be minted plaintext. E2E
+          // streams come back denied (no grant by construction — Ariadne
+          // can't see ciphertext) and route through the enclave instead.
+          const sealing = await resolveSealingContext(this.db, {
+            workspaceId,
+            streamId,
+            actor: { kind: "companion" },
+          })
+          const verdict = resolveDeliveryVerdict({ trust: TrustTiers.FIRST_PARTY_INPROC, sealing })
+          if (verdict.delivery !== "plaintext") {
             seen.push(event.id)
             continue
           }
