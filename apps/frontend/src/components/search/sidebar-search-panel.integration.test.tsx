@@ -448,10 +448,13 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
       await user.click(screen.getByText("Martin"))
 
-      // The query string is rewritten with the filter syntax and renders as a chip
+      // The query string is rewritten with the filter syntax and renders as a
+      // chip. The trailing space must survive the editor round-trip — without
+      // it the cursor sits inside the filter token and re-opens the typed
+      // suggestion popover when the input regains focus.
       const editor = screen.getByLabelText("Search messages")
       await waitFor(() => {
-        expect(editor.textContent).toContain("from:@martin")
+        expect(editor.textContent).toContain("from:@martin ")
         expect(screen.getByRole("button", { name: /remove filter @martin/i })).toBeInTheDocument()
       })
       // The slug resolves to the user id in the API call, same as the typed path
@@ -514,7 +517,7 @@ describe("SidebarSearchPanel Integration Tests", () => {
 
       const editor = screen.getByLabelText("Search messages")
       await waitFor(() => {
-        expect(editor.textContent).toContain("status:archived")
+        expect(editor.textContent).toContain("status:archived ")
       })
       await waitFor(() => {
         expect(mockSearchState.search).toHaveBeenCalledWith("", { status: ["archived"] })
