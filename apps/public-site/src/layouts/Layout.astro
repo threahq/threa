@@ -5,18 +5,21 @@ import BaseHead from "../components/BaseHead.astro"
 interface Props {
   title?: string
   description?: string
+  /** Page-specific JSON-LD blocks, forwarded to BaseHead. */
+  schema?: Record<string, unknown>[]
 }
 
 const {
   title = "Threa — workplace chat that remembers",
   description = "Threa is workplace chat built with memory at its core. Every decision and the reasoning behind it stays with the conversation, surfaced when it matters again. Open source, self-hostable, your data yours to take.",
+  schema,
 } = Astro.props
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
-    <BaseHead title={title} description={description} />
+    <BaseHead title={title} description={description} schema={schema} />
   </head>
   <body>
     <slot />

@@ -7,9 +7,27 @@ import ThemeToggle from "../components/ThemeToggle.astro"
 // the API, so this is a cross-origin call to the workspace-router, which proxies
 // /api/waitlist to the control-plane. Overridable at build via PUBLIC_API_BASE.
 const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://app.threa.io"
+
+// URLs derive from astro.config.mjs's site so the @id cross-reference always
+// matches the Organization entity BaseHead emits.
+const site = Astro.site!
+const schema = [
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "Threa",
+    url: site.href,
+    description:
+      "Team chat with memory at its core: decisions and the reasoning behind them are captured as searchable memos with provenance back to the conversation. Open source and self-hostable, with a public REST API and a bot runtime for connecting your own AI agents.",
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    softwareHelp: { "@type": "CreativeWork", url: new URL("/developers", site).href },
+    publisher: { "@id": new URL("/#organization", site).href },
+  },
+]
 ---
 
-<Layout>
+<Layout schema={schema}>
   <SvgDefs />
 
 <div class="frame">

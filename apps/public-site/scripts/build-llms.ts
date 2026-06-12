@@ -324,8 +324,20 @@ const llmsTxt = `# Threa
 > "Authorization: Bearer <api key>". Keys are created in the app (Settings > API keys)
 > and carry scopes; GET /me verifies a key with no scope required.
 
+Threa is open source (https://github.com/threahq/threa) and self-hostable. Things
+an agent can do over the API today:
+
+- Search memos — the durable record of what a team decided and why — and follow
+  provenance links back to the exact source messages.
+- Send, edit, search, and delete messages; list streams, members, and users.
+- Search attachments and read their extracted text.
+- Run as a persistent workspace agent through the pull-based bot runtime: claim
+  invocations, stream steps, post results. No inbound ports or webhooks needed,
+  so it works from a laptop, CI, or anywhere with outbound HTTPS.
+
 There is no MCP server yet — agents integrate over the REST API and the pull-based
-bot-runtime protocol (no inbound ports needed). All docs below are markdown.
+bot-runtime protocol. All docs below are markdown; the HTML pages under
+${SITE}/developers mirror them one-to-one.
 
 ## Docs
 
@@ -339,6 +351,7 @@ ${PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n")}
 ## Optional
 
 - [About Threa](${SITE}/about): what the product is and how memos work
+- [Source code](https://github.com/threahq/threa): the whole product, developed in the open
 `
 
 writeFileSync(dist("llms.txt"), llmsTxt)
