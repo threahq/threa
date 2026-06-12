@@ -298,14 +298,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
+  }
 
-    // Enclave runtime registry — gated by the dedicated enclave credential
-    // (ENCLAVE_INTERNAL_API_KEY; transitional fallback to the shared key is
-    // resolved in env.ts). A separate middleware instance means a shared
-    // INTERNAL_API_KEY holder (e.g. the bot-runtime) can no longer register an
-    // EIK and become an SSK wrap recipient once the dedicated key is
-    // provisioned (Phase 2.4c, E2EE-22).
-    const enclaveAuth = createInternalAuthMiddleware(enclaveInternalApiKey ?? internalApiKey)
+  // Enclave runtime registry — gated by the dedicated enclave credential
+  // (ENCLAVE_INTERNAL_API_KEY; env.ts resolves a transitional fallback to the
+  // shared key, so this is non-null whenever either secret is set). Mounted
+  // independently of the control-plane block above so the enclave channel
+  // doesn't require INTERNAL_API_KEY. A separate middleware instance means a
+  // shared INTERNAL_API_KEY holder (e.g. the bot-runtime) can no longer
+  // register an EIK and become an SSK wrap recipient once the dedicated key
+  // is provisioned (Phase 2.4c, E2EE-22).
+  if (enclaveInternalApiKey) {
+    const enclaveAuth = createInternalAuthMiddleware(enclaveInternalApiKey)
     app.post("/internal/enclave-runtimes/register-key", enclaveAuth, enclave.registerKey)
     app.post("/internal/enclave-runtimes/heartbeat", enclaveAuth, enclave.heartbeat)
     app.post("/internal/enclave-runtimes/revoke", enclaveAuth, enclave.revoke)

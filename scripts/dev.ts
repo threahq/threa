@@ -485,7 +485,8 @@ async function main() {
   // lacks X25519 `deriveBits`, which the enclave needs to unwrap the per-stream
   // key. Bun only bundles it. Build once up front so `node --watch` has a file
   // to load, then run a rebuild-watcher beside the Node process. It registers
-  // with the backend at :3002 (not the :3001 router) using the shared key.
+  // with the backend at :3002 (not the :3001 router) using the dedicated
+  // ENCLAVE_INTERNAL_API_KEY.
   const enclaveDir = path.join(process.cwd(), "apps/enclave")
   console.log("Building enclave bundle...")
   await $`bun build src/index.ts --target=node --format=esm --outfile dist/index.mjs`.cwd(enclaveDir).quiet()
