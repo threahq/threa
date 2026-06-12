@@ -11,7 +11,7 @@ import {
   useId,
 } from "react"
 import { flushSync } from "react-dom"
-import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2 } from "lucide-react"
+import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2, ChevronDown } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -1131,7 +1131,53 @@ export function MessageComposer({
                 ) : (
                   <div className="flex items-center gap-1">
                     {isNarrowBar ? (
-                      <div className="flex-1" />
+                      <>
+                        {/* The overflow menu anchors the left edge; a bordered
+                            pill with a chevron so it reads as "more options",
+                            not just another action. */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label="More composer actions"
+                              className={cn(
+                                "h-7 w-10 shrink-0 gap-0 rounded-full border border-input bg-muted/40",
+                                "data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
+                              )}
+                              disabled={controlsDisabled}
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              <ChevronDown className="h-2.5 w-2.5 opacity-60" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent side="top" align="start" className="min-w-[160px]">
+                            <DropdownMenuItem
+                              className="gap-2 cursor-pointer"
+                              onSelect={() => richEditorRef.current?.insertEmoji()}
+                            >
+                              <span className="text-sm leading-none">😊</span>
+                              Emoji
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 cursor-pointer"
+                              onSelect={() => richEditorRef.current?.insertMention()}
+                            >
+                              <AtSign className="h-4 w-4 text-muted-foreground" />
+                              Mention
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="gap-2 cursor-pointer"
+                              onSelect={() => richEditorRef.current?.insertSlash()}
+                            >
+                              <Slash className="h-4 w-4 text-muted-foreground" />
+                              Command
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                        <div className="flex-1" />
+                      </>
                     ) : (
                       <span className="text-[11px] text-muted-foreground flex-1 select-none pointer-events-none">
                         Select text to format
@@ -1252,45 +1298,7 @@ export function MessageComposer({
                         Attach files
                       </TooltipContent>
                     </Tooltip>
-                    {isNarrowBar ? (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            aria-label="More composer actions"
-                            className="h-7 w-7 shrink-0"
-                            disabled={controlsDisabled}
-                          >
-                            <Plus className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="min-w-[160px]">
-                          <DropdownMenuItem
-                            className="gap-2 cursor-pointer"
-                            onSelect={() => richEditorRef.current?.insertEmoji()}
-                          >
-                            <span className="text-sm leading-none">😊</span>
-                            Emoji
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="gap-2 cursor-pointer"
-                            onSelect={() => richEditorRef.current?.insertMention()}
-                          >
-                            <AtSign className="h-4 w-4 text-muted-foreground" />
-                            Mention
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            className="gap-2 cursor-pointer"
-                            onSelect={() => richEditorRef.current?.insertSlash()}
-                          >
-                            <Slash className="h-4 w-4 text-muted-foreground" />
-                            Command
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    ) : (
+                    {!isNarrowBar && (
                       <>
                         {micButton}
                         {stashedDraftsTrigger}
