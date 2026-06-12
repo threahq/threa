@@ -7,6 +7,7 @@ import {
   DollarSign,
   FileText,
   Hash,
+  ListChecks,
   LogOut,
   Moon,
   Plus,
@@ -55,6 +56,12 @@ interface SidebarFooterProps {
    * the always-visible footer button.
    */
   scratchpadAddMenuActions?: SidebarActionItem[]
+  /**
+   * Restores the dismissed getting-started checklist. Only provided while the
+   * checklist is dismissed with tasks remaining — undefined hides the menu row,
+   * so a finished checklist never leaves a dead entry behind.
+   */
+  onShowGettingStarted?: () => void
 }
 
 /**
@@ -207,6 +214,7 @@ export function SidebarFooter({
   onCreateScratchpad,
   onCreateChannel,
   scratchpadAddMenuActions,
+  onShowGettingStarted,
 }: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
   const { openSettings } = useSettings()
@@ -365,6 +373,18 @@ export function SidebarFooter({
             onSelect: openPause,
             separatorBefore: true,
           },
+      // Re-entry point for the dismissed checklist — restoring shows the card
+      // in the sidebar itself, so no collapseOnMobile here.
+      ...(onShowGettingStarted
+        ? [
+            {
+              id: "getting-started",
+              label: "Getting started",
+              icon: ListChecks,
+              onSelect: onShowGettingStarted,
+            } satisfies SidebarActionItem,
+          ]
+        : []),
       {
         id: "settings",
         label: "Settings",
@@ -404,6 +424,7 @@ export function SidebarFooter({
       dndLabel,
       openPause,
       resumeNotificationsFromMenu,
+      onShowGettingStarted,
       handleOpenSettings,
       openWorkspaceSettings,
       openAccountSwitcher,

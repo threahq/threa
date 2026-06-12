@@ -17,7 +17,7 @@ interface GettingStartedTask {
   onSelect: () => void
 }
 
-interface GettingStartedProps {
+export interface UseGettingStartedOptions {
   workspaceId: string
   currentUser: User | null
   /** True once the user has put content in a scratchpad (system note or own scratchpad). */
@@ -27,20 +27,33 @@ interface GettingStartedProps {
   onCreateScratchpad: () => void | Promise<void>
 }
 
+export interface GettingStartedState {
+  tasks: GettingStartedTask[]
+  doneCount: number
+  /** Render the sidebar card (preferences hydrated, not dismissed, tasks remain). */
+  showCard: boolean
+  /** Offer a re-entry point (account menu): dismissed but tasks remain. */
+  canRestore: boolean
+  dismiss: () => void
+  restore: () => void
+}
+
 /**
- * New-user checklist pinned above the sidebar footer. Every task's completion
- * is DERIVED from real state (push subscription, avatar, stream content,
- * member count) rather than tracked, so the card self-completes and never
- * shows a stale "to do". The only persisted bit is the explicit dismissal
- * (`gettingStartedDismissed` in user preferences, synced across devices).
+ * New-user checklist state, shared by the sidebar card and the account menu's
+ * "Getting started" re-entry row. Every task's completion is DERIVED from real
+ * state (push subscription, avatar, stream content, member count) rather than
+ * tracked, so the checklist self-completes and never shows a stale "to do".
+ * The only persisted bit is the explicit dismissal (`gettingStartedDismissed`
+ * in user preferences, synced across devices) — and it's reversible: restore()
+ * clears it so the card comes back until the tasks are actually done.
  */
-export function GettingStarted({
+export function useGettingStarted({
   workspaceId,
   currentUser,
   hasWrittenNote,
   memberCount,
   onCreateScratchpad,
-}: GettingStartedProps) {
+}: UseGettingStartedOptions): GettingStartedState {
   const preferencesContext = usePreferencesOptional()
   const { openSettings } = useSettings()
   const { collapseOnMobile } = useSidebar()
@@ -71,54 +84,76 @@ export function GettingStarted({
     void preferencesContext?.updatePreference("gettingStartedDismissed", true)
   }, [preferencesContext])
 
-  // Until preferences hydrate we can't know whether the card was dismissed —
-  // render nothing rather than flashing it in.
-  if (!currentUser || !preferencesContext?.preferences) return null
-  if (preferencesContext.preferences.gettingStartedDismissed) return null
+  // No collapseOnMobile here — the card being restored lives in the sidebar,
+  // so collapsing it would hide the thing the user just asked to see.
+  const restore = useCallback(() => {
+    void preferencesContext?.updatePreference("gettingStartedDismissed", false)
+  }, [preferencesContext])
 
   const tasks: GettingStartedTask[] = []
 
-  if (push.permission !== "unsupported" && !push.pushDisabledOnServer) {
+  if (currentUser) {
+    if (push.permission !== "unsupported" && !push.pushDisabledOnServer) {
+      tasks.push({
+        id: "notifications",
+        label: "Turn on notifications",
+        icon: Bell,
+        done: push.isSubscribed,
+        hint:
+          push.permission === "denied" ? "Blocked by the browser — allow notifications for this site first" : undefined,
+        onSelect: () => void push.requestPermission(),
+      })
+    }
+
     tasks.push({
-      id: "notifications",
-      label: "Turn on notifications",
-      icon: Bell,
-      done: push.isSubscribed,
-      hint:
-        push.permission === "denied" ? "Blocked by the browser — allow notifications for this site first" : undefined,
-      onSelect: () => void push.requestPermission(),
+      id: "avatar",
+      label: "Add a profile photo",
+      icon: Camera,
+      done: currentUser.avatarUrl != null,
+      onSelect: openProfileSettings,
     })
-  }
 
-  tasks.push({
-    id: "avatar",
-    label: "Add a profile photo",
-    icon: Camera,
-    done: currentUser.avatarUrl != null,
-    onSelect: openProfileSettings,
-  })
-
-  tasks.push({
-    id: "first-note",
-    label: "Write your first note",
-    icon: PenLine,
-    done: hasWrittenNote,
-    onSelect: () => void onCreateScratchpad(),
-  })
-
-  const canInvite = currentUser.role === WORKSPACE_ROLE_SLUGS.OWNER || currentUser.role === WORKSPACE_ROLE_SLUGS.ADMIN
-  if (canInvite) {
     tasks.push({
-      id: "invite",
-      label: "Invite your team",
-      icon: UserPlus,
-      done: memberCount > 1,
-      onSelect: openInvites,
+      id: "first-note",
+      label: "Write your first note",
+      icon: PenLine,
+      done: hasWrittenNote,
+      onSelect: () => void onCreateScratchpad(),
     })
+
+    const canInvite = currentUser.role === WORKSPACE_ROLE_SLUGS.OWNER || currentUser.role === WORKSPACE_ROLE_SLUGS.ADMIN
+    if (canInvite) {
+      tasks.push({
+        id: "invite",
+        label: "Invite your team",
+        icon: UserPlus,
+        done: memberCount > 1,
+        onSelect: openInvites,
+      })
+    }
   }
 
   const doneCount = tasks.filter((task) => task.done).length
-  if (doneCount === tasks.length) return null
+  const allDone = tasks.length === 0 || doneCount === tasks.length
+  // Until preferences hydrate we can't know whether the card was dismissed —
+  // surface nothing rather than flashing it in.
+  const hydrated = Boolean(currentUser && preferencesContext?.preferences)
+  const dismissed = preferencesContext?.preferences?.gettingStartedDismissed ?? false
+
+  return {
+    tasks,
+    doneCount,
+    showCard: hydrated && !dismissed && !allDone,
+    canRestore: hydrated && dismissed && !allDone,
+    dismiss,
+    restore,
+  }
+}
+
+/** Checklist card pinned above the sidebar footer. Renders from useGettingStarted state. */
+export function GettingStarted({ state }: { state: GettingStartedState }) {
+  if (!state.showCard) return null
+  const { tasks, doneCount, dismiss } = state
 
   return (
     <div className="mb-2 rounded-lg border bg-muted/30 p-1.5">

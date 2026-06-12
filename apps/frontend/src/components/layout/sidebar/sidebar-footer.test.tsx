@@ -133,11 +133,56 @@ describe("SidebarFooter", () => {
     // A single Settings entry — Profile is the dialog's default tab, not a
     // second menu row into the same dialog.
     expect(screen.queryByRole("button", { name: "Profile" })).not.toBeInTheDocument()
+    // No restore callback provided → no Getting started row.
+    expect(screen.queryByText("Getting started")).not.toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Settings" }))
 
     expect(openSettings).toHaveBeenCalledWith("profile")
     expect(collapseOnMobile).toHaveBeenCalled()
+  })
+
+  it("offers a Getting started row that restores the dismissed checklist", async () => {
+    const user = userEvent.setup()
+    const onShowGettingStarted = vi.fn()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        onShowGettingStarted={onShowGettingStarted}
+        currentUser={{
+          id: "user_1",
+          workspaceId: "workspace_1",
+          workosUserId: "workos_user_1",
+          email: "kris@example.com",
+          role: "member",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en-SE",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
+          setupCompleted: true,
+          joinedAt: "2026-03-03T10:00:00Z",
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+    await user.click(screen.getByText("Getting started"))
+
+    expect(onShowGettingStarted).toHaveBeenCalled()
   })
 
   it("opens the create drawer from the New button and exposes every stream flavor", async () => {

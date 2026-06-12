@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import { render, screen, userEvent } from "@/test"
-import { GettingStarted } from "./getting-started"
+import { GettingStarted, useGettingStarted, type UseGettingStartedOptions } from "./getting-started"
 import * as contextsModule from "@/contexts"
 import * as pushModule from "@/hooks/use-push-notifications"
 import type { User } from "@threa/types"
@@ -66,10 +66,27 @@ function LocationProbe() {
   return <div data-testid="location-search">{location.search}</div>
 }
 
-function renderCard(props: Partial<React.ComponentProps<typeof GettingStarted>> = {}) {
+/**
+ * Mounts the hook the way Sidebar does and renders the card from its state,
+ * plus a probe for the account-menu restore path (canRestore + restore()).
+ */
+function Harness(props: UseGettingStartedOptions) {
+  const state = useGettingStarted(props)
+  return (
+    <>
+      <GettingStarted state={state} />
+      <div data-testid="can-restore">{String(state.canRestore)}</div>
+      <button type="button" onClick={state.restore}>
+        restore-probe
+      </button>
+    </>
+  )
+}
+
+function renderCard(props: Partial<UseGettingStartedOptions> = {}) {
   return render(
     <MemoryRouter>
-      <GettingStarted
+      <Harness
         workspaceId="workspace_1"
         currentUser={baseUser}
         hasWrittenNote={false}
@@ -165,10 +182,27 @@ describe("GettingStarted", () => {
     expect(updatePreference).toHaveBeenCalledWith("gettingStartedDismissed", true)
   })
 
-  it("renders nothing when previously dismissed", () => {
+  it("renders nothing when previously dismissed but offers the restore path", async () => {
+    const user = userEvent.setup()
     mockPreferences(true)
     renderCard()
 
-    expect(screen.queryByText(/Getting started/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Getting started ·/)).not.toBeInTheDocument()
+    expect(screen.getByTestId("can-restore")).toHaveTextContent("true")
+
+    await user.click(screen.getByRole("button", { name: "restore-probe" }))
+    expect(updatePreference).toHaveBeenCalledWith("gettingStartedDismissed", false)
+  })
+
+  it("offers no restore path once every task derives as done", () => {
+    mockPreferences(true)
+    mockPush({ isSubscribed: true, permission: "granted" })
+    renderCard({
+      currentUser: { ...baseUser, avatarUrl: "https://cdn/avatar.png" },
+      hasWrittenNote: true,
+      memberCount: 3,
+    })
+
+    expect(screen.getByTestId("can-restore")).toHaveTextContent("false")
   })
 })
