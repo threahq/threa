@@ -495,28 +495,32 @@ export function SidebarFooter({
   )
 }
 
-// Shared face for the create control. Quiet and structural: it borrows the
-// bordered-neutral language of the header's quick-action pills so top and
-// bottom of the sidebar bookend each other, and the gold is confined to the
-// plus glyph — the golden thread used sparingly. The plus rotates into an ×
-// while the menu is open — the face reacts to the trigger's `data-state`,
-// which both the Radix desktop trigger and the manual mobile button expose.
+// Shared face for the create control. Same anatomy as the account row beneath
+// it (left-aligned label, trailing chevron) so the footer reads as one stack;
+// the gold plus chip is the only accent and carries the create affordance.
+// The chevron flips while the menu is open — the face reacts to the trigger's
+// `data-state`, which both the Radix desktop trigger and the manual mobile
+// button expose.
 function SidebarCreateButtonFace() {
   return (
     <>
-      <Plus className="h-4 w-4 shrink-0 text-primary transition-transform duration-200 group-data-[state=open]/new:rotate-45" />
-      <span className="font-medium">New</span>
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/20 text-primary transition-colors group-hover/new:bg-primary/30 group-data-[state=open]/new:bg-primary/30">
+        <Plus className="h-4 w-4" />
+      </span>
+      <span className="flex-1 text-left font-medium">New</span>
+      <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/new:rotate-180" />
     </>
   )
 }
 
-// Hover and open share the same quiet treatment as the quick-action pills:
-// the surface deepens to muted, nothing else changes. Border and sizing are
-// constant across states, so nothing shifts (INV-21).
+// No resting wash — the row sits flush like its neighbors until interaction.
+// Hover/open use the account row's own bg-muted/50 so the two footer rows
+// behave identically; the chip warming is the only gold response (INV-21:
+// constant sizing, nothing shifts).
 const CREATE_BUTTON_CLASS = cn(
-  "group/new w-full justify-center gap-1.5 rounded-lg border border-border bg-background text-foreground",
-  "transition-colors hover:bg-muted/60 hover:text-foreground",
-  "data-[state=open]:bg-muted/60 data-[state=open]:text-foreground"
+  "group/new w-full justify-start gap-2.5 px-3",
+  "hover:bg-muted/50 hover:text-foreground",
+  "data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
 )
 
 /**
