@@ -56,6 +56,13 @@ const sealedMessageSchema = z.object({
 
 export const sessionAssignmentSchema = z.object({
   sessionId: z.string().min(1),
+  /**
+   * Dispatch-minted callback-binding secret (Phase 2.4b, E2EE-21), echoed on
+   * every session callback. MUST be declared — Zod strips unknown keys, and a
+   * silently dropped token would make the backend's enforcement flip reject
+   * every callback from this enclave.
+   */
+  callbackToken: z.string().min(1).optional(),
   streamId: z.string().min(1),
   /** One SSK wrap per generation referenced by `history`/`prompt`, addressed to this EIK. */
   wraps: z
@@ -138,7 +145,12 @@ export const sessionAssignmentSchema = z.object({
 export interface SessionsDeps {
   keyPair: EnclaveKeyPair
   rawChat: RawChatFn
-  callbacks: BackendCallbacks
+  /**
+   * Per-session callback construction: the assignment's `callbackToken` rides
+   * a header on every callback, so the instance binds each turn's callbacks
+   * to the session it was assigned (Phase 2.4b, E2EE-21).
+   */
+  createCallbacks: (callbackToken?: string) => BackendCallbacks
   /** Session ids currently running in this process, to dedupe a redelivered assignment. */
   inFlight: Set<string>
   /** Per-session cancel controllers so `/sessions/:id/cancel` can abort a turn's research. */
@@ -200,7 +212,7 @@ export function createSessionsHandler(deps: SessionsDeps) {
       {
         keyPair: deps.keyPair,
         rawChat: deps.rawChat,
-        callbacks: deps.callbacks,
+        callbacks: deps.createCallbacks(assignment.callbackToken),
         toolConfig: deps.toolConfig,
         aborts: deps.aborts,
       },

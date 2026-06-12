@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes, ENCLAVE_CALLBACK_TOKEN_HEADER } from "@threa/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
@@ -35,8 +35,12 @@ function fakeRes(): Response & { statusCode: number; jsonBody?: unknown } {
   return res as unknown as Response & { statusCode: number; jsonBody?: unknown }
 }
 
-function req(id: string | undefined, body: unknown): Request {
-  return { params: { id }, body } as unknown as Request
+function req(id: string | undefined, body: unknown, headers: Record<string, string> = {}): Request {
+  return {
+    params: { id },
+    body,
+    header: (name: string) => headers[name],
+  } as unknown as Request
 }
 
 const SESSION = {
@@ -679,6 +683,7 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
   })
 
   it("refreshes the heartbeat and 204s", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
     const handlers = createEnclaveSessionHandlers({
       pool,
@@ -691,5 +696,101 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
     await handlers.heartbeat(req("session_1", {}), res)
     expect(beat).toHaveBeenCalledWith(pool, "session_1")
     expect(res.statusCode).toBe(204)
+  })
+})
+
+// Phase 2.4b (E2EE-21): callbacks bind to the session's assigned runner via the
+// dispatch-minted token, and a seal under the wrong generation is rejected
+// loudly instead of persisting a permanently undecryptable row.
+describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
+  const BOUND_SESSION = {
+    ...SESSION!,
+    callbackToken: "cbtok_good",
+    replyKeyGeneration: 0,
+  } as typeof SESSION
+
+  const tokenHeader = (token: string) => ({ [ENCLAVE_CALLBACK_TOKEN_HEADER]: token })
+
+  it("403s a mismatched token without writing anything", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    const { handlers, createMessage } = makeHandlers()
+    await expect(
+      handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_evil")), fakeRes())
+    ).rejects.toMatchObject({ status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("403s a presented token when the session row carries none", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    const { handlers } = makeHandlers()
+    await expect(
+      handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_any")), fakeRes())
+    ).rejects.toMatchObject({ status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+  })
+
+  it("accepts the matching token and writes the reply", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const { handlers, createMessage } = makeHandlers()
+    const res = fakeRes()
+    await handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_good")), res)
+    expect(res.statusCode).toBe(204)
+    expect(createMessage).toHaveBeenCalled()
+  })
+
+  it("tolerates an absent token on a token-bearing session — rollout phase 1, in-flight sessions drain", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+    await handlers.message(req("session_1", MESSAGE_BODY), res)
+    expect(res.statusCode).toBe(204)
+  })
+
+  it("rejects a wrong-generation seal loudly instead of persisting an undecryptable reply", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...BOUND_SESSION!,
+      replyKeyGeneration: 2,
+    } as typeof SESSION)
+    const { handlers, createMessage } = makeHandlers()
+    await expect(
+      // MESSAGE_BODY seals under keyGeneration 0; the session expects 2.
+      handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_good")), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "E2E_WRONG_KEY_GENERATION" })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("passes any generation for sessions dispatched before the column shipped (NULL)", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...SESSION!,
+      callbackToken: null,
+      replyKeyGeneration: null,
+    } as typeof SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+    await handlers.message(req("session_1", MESSAGE_BODY), res)
+    expect(res.statusCode).toBe(204)
+  })
+
+  it("binds the heartbeat too — wrong token never refreshes", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
+    const { handlers } = makeHandlers()
+    await expect(handlers.heartbeat(req("session_1", {}, tokenHeader("cbtok_evil")), fakeRes())).rejects.toMatchObject({
+      status: 403,
+    })
+    expect(beat).not.toHaveBeenCalled()
+  })
+
+  it("rejects a wrong-generation sealed step", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...BOUND_SESSION!,
+      replyKeyGeneration: 1,
+    } as typeof SESSION)
+    const { handlers } = makeHandlers()
+    await expect(
+      handlers.steps(req("session_1", STEP_BODY, tokenHeader("cbtok_good")), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "E2E_WRONG_KEY_GENERATION" })
   })
 })

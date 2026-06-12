@@ -2,7 +2,14 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AGENT_STEP_TYPES, AuthorTypes, E2E_PLACEHOLDER_CONTENT_MARKDOWN, type JSONContent } from "@threa/types"
+import { timingSafeEqual } from "node:crypto"
+import {
+  AGENT_STEP_TYPES,
+  AuthorTypes,
+  E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  ENCLAVE_CALLBACK_TOKEN_HEADER,
+  type JSONContent,
+} from "@threa/types"
 import { withTransaction } from "../../db"
 import { eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
@@ -142,6 +149,43 @@ interface Dependencies {
  * finished, cancelled, or reclaimed, so the enclave should stop and discard.
  * Callers that special-case COMPLETED (idempotent acks) check it before this.
  */
+/**
+ * Phase 2.4b (E2EE-21): bind callbacks to the session's assigned runner. The
+ * token was minted at dispatch, stored on the row, and delivered only inside
+ * the sealed assignment to the pinned EIK's instance — possession proves the
+ * caller is the runner this session was assigned to (a stronger binding than
+ * a self-reported keyId, which any internal-key holder could copy). Rollout
+ * phase 1: a presented token must match; an absent token is tolerated so
+ * sessions in flight across the deploy boundary drain cleanly. The
+ * reject-if-absent flip (for rows that carry a token) is the later one-liner.
+ */
+function assertCallbackBound(session: AgentSession, req: Request): void {
+  const presented = req.header(ENCLAVE_CALLBACK_TOKEN_HEADER)
+  if (!presented) return
+  const expected = session.callbackToken
+  const presentedBytes = Buffer.from(presented)
+  const expectedBytes = Buffer.from(expected ?? "")
+  if (!expected || presentedBytes.length !== expectedBytes.length || !timingSafeEqual(presentedBytes, expectedBytes)) {
+    throw new HttpError("Callback token mismatch", { status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+  }
+}
+
+/**
+ * Phase 2.4b (E2EE-21): a seal under any generation other than the one the
+ * assignment prescribed would persist as a permanently undecryptable row —
+ * reject it loudly so the turn fails visibly instead. Sessions dispatched
+ * before the column shipped (NULL) are exempt.
+ */
+function assertReplyGeneration(session: AgentSession, envelope: { keyGeneration: number } | undefined): void {
+  if (!envelope || session.replyKeyGeneration == null) return
+  if (envelope.keyGeneration !== session.replyKeyGeneration) {
+    throw new HttpError(
+      `Sealed payload uses key generation ${envelope.keyGeneration}; this session seals under ${session.replyKeyGeneration}`,
+      { status: 400, code: "E2E_WRONG_KEY_GENERATION" }
+    )
+  }
+}
+
 function assertRunning(session: AgentSession | null): asserts session is AgentSession {
   if (!session) throw new HttpError("Session not found", { status: 404, code: "SESSION_NOT_FOUND" })
   if (session.status !== SessionStatuses.RUNNING) {
@@ -186,6 +230,10 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
     async heartbeat(req: Request, res: Response) {
       const id = req.params.id
       if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+      // No assertRunning here on purpose — a late heartbeat against a finished
+      // session has always been a harmless no-op, only the binding is enforced.
+      const session = await AgentSessionRepository.findById(pool, id)
+      if (session) assertCallbackBound(session, req)
       await AgentSessionRepository.updateHeartbeat(pool, id)
       res.status(204).end()
     },
@@ -205,6 +253,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      assertCallbackBound(session, req)
+      assertReplyGeneration(session, parsed.data.envelope)
       const stream = await StreamRepository.findById(pool, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
@@ -251,6 +301,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      assertCallbackBound(session, req)
+      assertReplyGeneration(session, parsed.data.envelope)
       const stream = await StreamRepository.findById(pool, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
@@ -289,6 +341,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      assertCallbackBound(session, req)
+      assertReplyGeneration(session, parsed.data.envelope)
       // The session room is workspace-scoped; the enclave's internal-auth context
       // carries no workspace, so resolve it from the session's stream (as /messages does).
       const stream = await StreamRepository.findById(pool, session.streamId)
@@ -347,6 +401,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      assertCallbackBound(session, req)
+      assertReplyGeneration(session, parsed.data.envelope)
       const stream = await StreamRepository.findById(pool, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
@@ -416,6 +472,9 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      assertCallbackBound(session, req)
+      assertReplyGeneration(session, parsed.data.envelope)
+      assertReplyGeneration(session, parsed.data.snapshotEnvelope)
       const stream = await StreamRepository.findById(pool, session.streamId)
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
 
@@ -471,6 +530,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
         return
       }
       assertRunning(session)
+      assertCallbackBound(session, req)
 
       const messageIds = parsed.data.messageIds
       // Resolve the workspace from the stream (the internal-auth context carries
@@ -625,6 +685,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
 
       const session = await AgentSessionRepository.findById(pool, id)
       assertRunning(session)
+      assertCallbackBound(session, req)
 
       await failSessionWithLifecycle(pool, io, session, `Enclave session failed: ${parsed.data.errorName}`)
 

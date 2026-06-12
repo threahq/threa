@@ -125,6 +125,16 @@ describe("sessionAssignmentSchema", () => {
     expect(parsed.success).toBe(true)
     expect(parsed.data!.recentDigests).toEqual(recentDigests)
   })
+
+  it("keeps callbackToken through parsing (a silently stripped token would break the backend's enforcement flip)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const assignment = await assignmentFor(keyPair, ssk, "hello")
+
+    const parsed = sessionAssignmentSchema.safeParse({ ...assignment, callbackToken: "cbtok_1" })
+    expect(parsed.success).toBe(true)
+    expect(parsed.data!.callbackToken).toBe("cbtok_1")
+  })
 })
 
 describe("createSessionsHandler", () => {
@@ -134,13 +144,50 @@ describe("createSessionsHandler", () => {
       rawChat: (() => {
         throw new Error("should not run")
       }) as unknown as RawChatFn,
-      callbacks: {} as BackendCallbacks,
+      createCallbacks: () => ({}) as BackendCallbacks,
       inFlight: new Set(),
       aborts: new Map(),
     })
     const res = fakeRes()
     handler({ body: { not: "valid" } } as unknown as Request, res)
     expect(res.statusCode).toBe(400)
+  })
+
+  it("constructs the turn's callbacks bound to the assignment's callbackToken (Phase 2.4b)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const assignment = { ...(await assignmentFor(keyPair, ssk, "hi")), callbackToken: "cbtok_1" }
+
+    const rawChat: RawChatFn = async () => ({ message: { content: "ok" }, model: "stub/model" })
+    const tokensSeen: (string | undefined)[] = []
+    const callbacks: BackendCallbacks = {
+      heartbeat: async () => {},
+      message: async () => {},
+      stepStarted: async () => {},
+      step: async () => {},
+      substep: async () => {},
+      sealedName: async () => {},
+      complete: async () => {},
+      fail: async () => {},
+    }
+    const inFlight = new Set<string>()
+    const handler = createSessionsHandler({
+      keyPair,
+      rawChat,
+      createCallbacks: (token) => {
+        tokensSeen.push(token)
+        return callbacks
+      },
+      inFlight,
+      aborts: new Map(),
+    })
+
+    const res = fakeRes()
+    handler({ body: assignment } as unknown as Request, res)
+    expect(res.statusCode).toBe(202)
+    await vi.waitFor(() => expect(inFlight.size).toBe(0))
+
+    expect(tokensSeen).toEqual(["cbtok_1"])
   })
 
   it("acks 202 and completes the session with a reply the SSK can open", async () => {
@@ -166,7 +213,13 @@ describe("createSessionsHandler", () => {
       fail: async () => {},
     }
     const inFlight = new Set<string>()
-    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, aborts: new Map() })
+    const handler = createSessionsHandler({
+      keyPair,
+      rawChat,
+      createCallbacks: () => callbacks,
+      inFlight,
+      aborts: new Map(),
+    })
 
     const res = fakeRes()
     handler({ body: assignment } as unknown as Request, res)
@@ -215,7 +268,13 @@ describe("createSessionsHandler", () => {
       },
     }
     const inFlight = new Set<string>()
-    const handler = createSessionsHandler({ keyPair, rawChat, callbacks, inFlight, aborts: new Map() })
+    const handler = createSessionsHandler({
+      keyPair,
+      rawChat,
+      createCallbacks: () => callbacks,
+      inFlight,
+      aborts: new Map(),
+    })
 
     const res = fakeRes()
     handler({ body: assignment } as unknown as Request, res)
@@ -240,7 +299,7 @@ describe("createSessionsHandler", () => {
         ran = true
         return { message: { content: "x" }, model: "stub" }
       }) as RawChatFn,
-      callbacks: {
+      createCallbacks: () => ({
         heartbeat: async () => {},
         message: async () => {},
         stepStarted: async () => {},
@@ -249,7 +308,7 @@ describe("createSessionsHandler", () => {
         sealedName: async () => {},
         complete: async () => {},
         fail: async () => {},
-      },
+      }),
       inFlight: new Set([assignment.sessionId]), // already running
       aborts: new Map(),
     })

@@ -125,6 +125,37 @@ describe("createEnclaveInvokeWorker", () => {
     expect(assignSession).toHaveBeenCalledTimes(1)
   })
 
+  it("binds callbacks to the assigned runner: one minted token on the row AND the assignment, plus the seal generation (Phase 2.4b)", async () => {
+    arrangeDispatch()
+    const insertSession = spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({
+      id: "session_1",
+      createdAt: new Date("2026-06-02T09:27:01.000Z"),
+    } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    const assignSession = mock(async (_instanceUrl: string, _assignment: unknown) => {})
+    const { io } = fakeIo()
+
+    const worker = createEnclaveInvokeWorker({
+      pool,
+      io,
+      enclaveForwarder: { assignSession } as unknown as EnclaveForwarder,
+      storage: FAKE_STORAGE,
+    })
+    await worker(JOB)
+
+    const inserted = insertSession.mock.calls[0]![1] as { callbackToken: string; replyKeyGeneration: number }
+    const assignment = assignSession.mock.calls[0]![1] as { callbackToken: string; reply: { keyGeneration: number } }
+    // The same secret travels to exactly one place — inside the assignment to
+    // the pinned instance — so echoing it proves the caller is that runner.
+    expect(typeof inserted.callbackToken).toBe("string")
+    expect(inserted.callbackToken.length).toBeGreaterThan(0)
+    expect(assignment.callbackToken).toBe(inserted.callbackToken)
+    // The row records the generation the assignment prescribes, so a callback
+    // sealed under any other generation is rejected instead of persisted.
+    expect(inserted.replyKeyGeneration).toBe(assignment.reply.keyGeneration)
+  })
+
   it("resolves the SSK + wraps from the root for a thread message (reply still lands in the thread)", async () => {
     arrangeDispatch()
     // The trigger lives in a THREAD whose root is stream_root; the thread shares

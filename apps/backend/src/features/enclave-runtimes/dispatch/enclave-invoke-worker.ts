@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
+import { randomUUID } from "node:crypto"
 import { sessionId as newSessionId, eventId } from "../../../lib/id"
 import { logger } from "../../../lib/logger"
 import { withTransaction } from "../../../db"
@@ -171,7 +172,12 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
       }))
 
     const sid = newSessionId()
+    // Callback binding (Phase 2.4b, E2EE-21): the token travels only inside
+    // this assignment to the chosen EIK's instance, so echoing it proves the
+    // caller is the runner this session was assigned to.
+    const callbackToken = randomUUID()
     const built = buildEnclaveSessionAssignment({
+      callbackToken,
       e2e,
       actors,
       liveEiks,
@@ -230,6 +236,8 @@ export function createEnclaveInvokeWorker(deps: EnclaveInvokeWorkerDeps): JobHan
         personaId: ARIADNE_AGENT_ID,
         triggerMessageId: triggerId,
         serverId: built.keyId,
+        callbackToken,
+        replyKeyGeneration: built.assignment.reply.keyGeneration,
         initialSequence: 0n,
       })
       if (!created) return null

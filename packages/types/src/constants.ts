@@ -672,6 +672,12 @@ export const ShareErrorCodes = {
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
 export const INTERNAL_API_KEY_HEADER = "X-Internal-Api-Key"
 
+// Per-session callback binding for enclave turns (Phase 2.4b, E2EE-21): the
+// dispatch-minted token from the session assignment, echoed by the enclave on
+// every session callback so the backend can verify the caller is the runner
+// the session was assigned to — the internal key alone proves only "internal".
+export const ENCLAVE_CALLBACK_TOKEN_HEADER = "X-Enclave-Callback-Token"
+
 // Original client-facing host (e.g. `admin.threa.io`, `pr-204-staging.threa.io`)
 // carried from the Cloudflare routers to the control-plane.
 //

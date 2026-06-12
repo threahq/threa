@@ -632,6 +632,14 @@ export interface EnclaveSealedSubstep {
 export interface EnclaveSessionAssignment {
   sessionId: string
   streamId: string
+  /**
+   * Dispatch-minted secret binding this session's callbacks to the runner the
+   * assignment was delivered to (Phase 2.4b, E2EE-21). The enclave echoes it
+   * on every session callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend
+   * rejects a mismatch. Optional for one release while pre-binding sessions
+   * drain.
+   */
+  callbackToken?: string
   wraps: EnclaveSskWrap[]
   history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
   prompt: EnclaveSealedMessage
