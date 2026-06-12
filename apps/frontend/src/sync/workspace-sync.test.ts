@@ -10,6 +10,7 @@ import {
 import { readMirroredSyncV2Mode } from "./sync-v2-mode"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
+import { memoKeys } from "@/hooks/use-memos"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
@@ -702,6 +703,31 @@ describe("registerWorkspaceSocketHandlers", () => {
       cleanup()
     }
   )
+
+  it("invalidates the memo search queries when a memo:created event lands", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    emit("memo:created", { workspaceId: "ws_1", memoId: "memo_1" })
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
+    cleanup()
+  })
+
+  it("ignores memo:created events from other workspaces", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    emit("memo:created", { workspaceId: "ws_other", memoId: "memo_1" })
+
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_other") })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
+    cleanup()
+  })
 
   it("subscribes the creator when a new stream is created at runtime", async () => {
     const queryClient = new QueryClient()

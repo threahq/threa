@@ -33,6 +33,7 @@ import type {
   LabelUnassignedPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
+import { memoKeys } from "@/hooks/use-memos"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import {
@@ -1437,6 +1438,17 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
   }
 
+  // GAM memo extraction: surface new memos in the memory explorer without a
+  // manual refresh. memo:created is workspace-group routed (sync log + emit),
+  // so registering here puts memos on the sync-v2 catch-up path like every
+  // other workspace-level event — a reconnect replay invalidates the same
+  // queries a live emit does. The in-situ timeline row rides the separate
+  // stream:memos_captured event (stream-sync).
+  const handleMemoCreated = (payload: { workspaceId: string; memoId: string }) => {
+    if (payload.workspaceId !== workspaceId) return
+    queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })
+  }
+
   // Handle attachment transcoded (video processing completed or failed)
   const handleAttachmentTranscoded = async (payload: {
     workspaceId: string
@@ -1769,6 +1781,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
+  socket.on("memo:created", handleMemoCreated)
   socket.on("saved:upserted", handleSavedUpserted)
   socket.on("saved:deleted", handleSavedDeleted)
   socket.on("saved_reminder:fired", handleSavedReminderFired)
@@ -1809,6 +1822,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)
+    socket.off("memo:created", handleMemoCreated)
     socket.off("saved:upserted", handleSavedUpserted)
     socket.off("saved:deleted", handleSavedDeleted)
     socket.off("saved_reminder:fired", handleSavedReminderFired)
