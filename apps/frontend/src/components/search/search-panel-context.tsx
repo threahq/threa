@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react"
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 import { useSidebar } from "@/contexts/sidebar-context"
 
@@ -23,6 +23,12 @@ interface SearchPanelContextValue {
   openSearch: (options?: OpenSearchOptions) => void
   /** Leave search mode and return the sidebar to the stream list. */
   closeSearch: () => void
+  /**
+   * The mounted panel registers how to focus its input so `openSearch` can
+   * refocus it when the panel is already open (mod+shift+f after focus
+   * wandered elsewhere). Pass null on unmount.
+   */
+  registerFocusHandler: (handler: (() => void) | null) => void
 }
 
 const SearchPanelContext = createContext<SearchPanelContextValue | null>(null)
@@ -33,6 +39,11 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
   const [isOpen, setIsOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [activeResultId, setActiveResultId] = useState<string | null>(null)
+
+  const focusInputRef = useRef<(() => void) | null>(null)
+  const registerFocusHandler = useCallback((handler: (() => void) | null) => {
+    focusInputRef.current = handler
+  }, [])
 
   const openSearch = useCallback(
     (options?: OpenSearchOptions) => {
@@ -57,6 +68,9 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
       if (state !== "pinned") {
         togglePinned()
       }
+      // Already-open panel: refocus the input (first open is handled by the
+      // panel's own autoFocus — no handler is registered yet at that point).
+      focusInputRef.current?.()
     },
     [isMobile, collapse, navigate, workspaceId, state, togglePinned]
   )
@@ -66,8 +80,17 @@ export function SearchPanelProvider({ workspaceId, children }: { workspaceId: st
   }, [])
 
   const value = useMemo(
-    () => ({ isOpen, query, setQuery, activeResultId, setActiveResultId, openSearch, closeSearch }),
-    [isOpen, query, activeResultId, openSearch, closeSearch]
+    () => ({
+      isOpen,
+      query,
+      setQuery,
+      activeResultId,
+      setActiveResultId,
+      openSearch,
+      closeSearch,
+      registerFocusHandler,
+    }),
+    [isOpen, query, activeResultId, openSearch, closeSearch, registerFocusHandler]
   )
 
   return <SearchPanelContext.Provider value={value}>{children}</SearchPanelContext.Provider>

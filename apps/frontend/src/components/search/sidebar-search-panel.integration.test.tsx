@@ -89,8 +89,14 @@ function RouterWrapper({ children }: { children: React.ReactNode }) {
 
 /** Exposes provider state so tests can assert open/close transitions. */
 function SearchPanelProbe() {
-  const { isOpen, query } = useSearchPanel()
-  return <div data-testid="search-panel-probe" data-open={String(isOpen)} data-query={query} />
+  const { isOpen, query, openSearch } = useSearchPanel()
+  return (
+    <>
+      <div data-testid="search-panel-probe" data-open={String(isOpen)} data-query={query} />
+      {/* Stands in for the global mod+shift+f handler, which calls openSearch() */}
+      <button onClick={() => openSearch()}>Trigger open search</button>
+    </>
+  )
 }
 
 /** Opens the panel on mount so `closeSearch` transitions are observable. */
@@ -209,6 +215,27 @@ describe("SidebarSearchPanel Integration Tests", () => {
       await user.click(screen.getByRole("button", { name: /back to streams/i }))
 
       expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "false")
+    })
+
+    it("refocuses the search input when openSearch fires while the panel is already open", async () => {
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      expect(editor).toHaveFocus()
+
+      // Focus wanders elsewhere (the user tabbed out, clicked another control...)
+      const trigger = screen.getByRole("button", { name: /trigger open search/i })
+      trigger.focus()
+      expect(editor).not.toHaveFocus()
+
+      // mod+shift+f calls openSearch() again — the input regains focus
+      await user.click(trigger)
+
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
+      // TipTap defers focus to the next animation frame
+      await waitFor(() => expect(editor).toHaveFocus())
     })
 
     it("closes the panel with Escape when no popover is open", async () => {
