@@ -61,6 +61,7 @@ import {
   findMessageItemIndex,
   getTimelineItemKey,
   filterVisibleItems,
+  OLDER_SKELETON_ITEMS,
   type TimelineItem,
   type TimelineItemRenderContext,
   type BatchTimelineState,
@@ -209,6 +210,38 @@ export function shouldPrefetchOlderHistory(args: {
 }): boolean {
   if (!args.hasOlderEvents || args.isFetchingOlder) return false
   return !(args.followingLiveTail && args.scrollerScrollable)
+}
+
+/** How long an older-page fetch must be in flight before skeleton rows render,
+ *  so a fast response never flashes them. */
+export const OLDER_SKELETON_APPEAR_DELAY_MS = 150
+
+/** Grace period after the fetch settles for the prepend to land (IDB live-query
+ *  propagation runs a couple of renders behind the query). Past it the tracker
+ *  clears so a failed or empty page can't leave skeletons hanging. */
+export const OLDER_SKELETON_SETTLE_GRACE_MS = 1000
+
+/**
+ * Whether skeleton placeholder rows render at the head of the timeline while
+ * an older page is in flight.
+ *
+ * `trackedOldestEventId` is the oldest rendered event id captured when the
+ * fetch started (null = no fetch tracked, which also covers top-of-history:
+ * with `hasOlderEvents` false no fetch ever starts, so nothing is tracked).
+ * Comparing it against the CURRENT oldest id — instead of `isFetchingOlder`,
+ * which flips false a render or two before the IDB live query re-emits with
+ * the new page — makes removal land in the same render as the prepend: the
+ * skeletons leave and the real rows arrive in one items-array swap, one
+ * `shift` computation, with no intermediate frame where the list is N rows
+ * shorter (INV-21).
+ */
+export function shouldShowOlderSkeletons(args: {
+  trackedOldestEventId: string | null
+  currentOldestEventId: string | null
+  appearDelayElapsed: boolean
+}): boolean {
+  if (args.trackedOldestEventId === null || !args.appearDelayElapsed) return false
+  return args.currentOldestEventId === args.trackedOldestEventId
 }
 
 interface StreamContentProps {
@@ -802,13 +835,84 @@ export function StreamContent({
   // Use virtualized scroll for non-thread views, plain scroll for threads
   const useVirtualized = !isThread
 
+  // --- Skeleton rows while an older page is in flight ---
+  // A fast scroll can reach the top of the loaded window before the older
+  // page lands; without placeholders that space is plain blank and reads as
+  // broken. Track each older fetch from its start: capture the oldest
+  // rendered event id, show skeletons once the fetch outlives the appear
+  // delay, and hide them the moment the oldest id changes — i.e. in the same
+  // render the prepend lands (see shouldShowOlderSkeletons). Virtualized
+  // streams only: threads load all history up front and render their own
+  // inline loading row. Deep-link jumps (jumpToEvent) never set
+  // isFetchingOlder, so a programmatic jump's window fetch can't trigger this.
+  const oldestEventId = events.length > 0 ? events[0].id : null
+  const oldestEventIdRef = useRef(oldestEventId)
+  oldestEventIdRef.current = oldestEventId
+  const [olderSkeletonTrackedId, setOlderSkeletonTrackedId] = useState<string | null>(null)
+  const [olderSkeletonReady, setOlderSkeletonReady] = useState(false)
+
+  // Arm the tracker whenever a fetch is in flight and nothing is tracked.
+  // Gated on the tracker being empty (not just the isFetchingOlder rising
+  // edge) so it self-re-arms when a prepend lands mid-fetch: with
+  // back-to-back pages, fetch N+1 can start before fetch N's rows have
+  // propagated out of IDB, so a rising-edge capture would record the stale
+  // pre-page-N head — page N landing would then retire the tracker and leave
+  // fetch N+1 with no skeleton coverage. Instead the landed cleanup below
+  // clears the tracker and this effect immediately re-arms it against the
+  // new head while the fetch is still in flight.
+  useEffect(() => {
+    if (!isFetchingOlder || !useVirtualized || olderSkeletonTrackedId !== null) return
+    setOlderSkeletonTrackedId(oldestEventIdRef.current)
+  }, [isFetchingOlder, useVirtualized, olderSkeletonTrackedId])
+
+  // Appear delay: commit to skeletons only once the fetch has been in flight
+  // long enough that they won't flash for a fast response.
+  useEffect(() => {
+    if (olderSkeletonTrackedId === null) {
+      setOlderSkeletonReady(false)
+      return
+    }
+    const timer = window.setTimeout(() => setOlderSkeletonReady(true), OLDER_SKELETON_APPEAR_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [olderSkeletonTrackedId])
+
+  // The prepend landed (or the stream switched): visibility already dropped in
+  // that same render via shouldShowOlderSkeletons; this just retires the
+  // tracker so the next fetch starts clean.
+  const olderPrependLanded = olderSkeletonTrackedId !== null && oldestEventId !== olderSkeletonTrackedId
+  useEffect(() => {
+    if (olderPrependLanded) setOlderSkeletonTrackedId(null)
+  }, [olderPrependLanded])
+
+  // Fetch settled without a prepend (failed request, or the final page was
+  // empty): give the IDB live query a grace window, then clear so skeletons
+  // can't hang. A new fetch re-arms via the rising-edge effect above.
+  useEffect(() => {
+    if (olderSkeletonTrackedId === null || isFetchingOlder) return
+    const timer = window.setTimeout(() => setOlderSkeletonTrackedId(null), OLDER_SKELETON_SETTLE_GRACE_MS)
+    return () => window.clearTimeout(timer)
+  }, [olderSkeletonTrackedId, isFetchingOlder])
+
+  const showOlderSkeletons =
+    useVirtualized &&
+    shouldShowOlderSkeletons({
+      trackedOldestEventId: olderSkeletonTrackedId,
+      currentOldestEventId: oldestEventId,
+      appearDelayElapsed: olderSkeletonReady,
+    })
+
   // Filter out zero-height items (reactions, hidden session cards) for the virtualizer.
   // Without this, items that render as empty wrappers get measured as 0px, causing
   // subsequent items to overlap at the same Y position.
-  const visibleItems = useMemo(
-    () => (useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems),
-    [timelineItems, useVirtualized, isChannel]
-  )
+  //
+  // Skeleton rows are prepended here — inside the array the shift computation
+  // reads — so adding them changes the first item's key and useTimelineScroll
+  // passes `shift` to virtua for that render, holding the viewport exactly
+  // like a real older-page prepend (INV-21).
+  const visibleItems = useMemo(() => {
+    const base = useVirtualized ? filterVisibleItems(timelineItems, isChannel) : timelineItems
+    return showOlderSkeletons ? [...OLDER_SKELETON_ITEMS, ...base] : base
+  }, [timelineItems, useVirtualized, isChannel, showOlderSkeletons])
 
   // Mirror of `visibleItems` for the long-lived scrollToMessage retry loop:
   // its closure is created once per scroll but runs for up to ~1.2s, during

@@ -199,6 +199,101 @@ test.describe("Infinite Scroll", () => {
       .toBeGreaterThan(0)
   })
 
+  test("should show skeleton rows while the older page is in flight and hold the viewport when it lands", async ({
+    page,
+  }) => {
+    // Same short-viewport setup as the scroll-older test: forces genuine
+    // virtualization so reaching the top is a real boundary crossing.
+    await page.setViewportSize({ width: 1024, height: 400 })
+
+    const PAGED_MESSAGE_COUNT = 51
+    const channelName = `scroll-skeleton-${testId}`
+    await createChannel(page, channelName)
+
+    const { workspaceId, streamId } = extractIds(page)
+    const prefix = `[${testId}]`
+
+    // Seed from another route, then reload for a cold bootstrap window with
+    // hasOlderEvents: true — see the scroll-older test for why.
+    await page.goto(`/w/${workspaceId}/drafts`)
+    await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/drafts`))
+    await seedMessages(page, workspaceId, streamId, PAGED_MESSAGE_COUNT, prefix)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 20000 })
+    await page.reload()
+    await expect(page.getByRole("main").locator(".message-item").first()).toBeVisible({ timeout: 20000 })
+
+    // Gate the older-page request so the fetch deterministically stays in
+    // flight (well past the skeleton appear delay) until we release it.
+    let releaseOlderPage = () => {}
+    const olderPageGate = new Promise<void>((resolve) => {
+      releaseOlderPage = resolve
+    })
+    await page.route(
+      (url) => url.pathname.endsWith("/events") && url.searchParams.has("before"),
+      async (route) => {
+        await olderPageGate
+        await route.continue()
+      }
+    )
+
+    // Scroll to the top until the older fetch arms and the skeleton rows
+    // render at the head of the timeline.
+    const skeletonRows = page.getByTestId("older-skeleton-row")
+    await expect
+      .poll(
+        async () => {
+          await scrollToTop(page)
+          return await skeletonRows.count()
+        },
+        { timeout: 30000, message: "should render skeleton rows while the older page is in flight" }
+      )
+      .toBeGreaterThan(0)
+
+    // The blank space above the loaded window must read as loading: wheel into
+    // the skeleton zone and confirm the rows are actually on screen.
+    const scroller = page.locator("[data-suppress-pull-refresh]")
+    const box = await scroller.boundingBox()
+    if (box) await page.mouse.move(box.x + box.width / 2, box.y + 24)
+    for (let i = 0; i < 2; i++) {
+      await page.mouse.wheel(0, -2000)
+      await page.waitForTimeout(50)
+    }
+    await expect(skeletonRows.first()).toBeVisible()
+
+    // Park the viewport just below the skeleton block — the INV-21 guarantee
+    // is for content the user is reading below the in-flight zone (a viewport
+    // pinned *inside* the skeletons necessarily morphs as they become real
+    // rows of different heights).
+    await page.evaluate(() => {
+      const container = document.querySelector("[data-suppress-pull-refresh]")
+      const skeletons = document.querySelectorAll('[data-testid="older-skeleton-row"]')
+      const last = skeletons[skeletons.length - 1]
+      if (container instanceof HTMLElement && last instanceof HTMLElement) {
+        container.scrollTop += last.getBoundingClientRect().bottom - container.getBoundingClientRect().top
+      }
+    })
+
+    // Anchor on the oldest message of the bootstrap window, sitting at the
+    // viewport top directly under the skeleton block.
+    const anchor = messageLocator(page, prefix, 2)
+    const before = await anchor.boundingBox()
+    expect(before).not.toBeNull()
+
+    releaseOlderPage()
+
+    // The page lands: skeletons leave and the older message arrives in one
+    // swap...
+    const oldestMessage = messageLocator(page, prefix, 1)
+    await expect(oldestMessage).toBeAttached({ timeout: 15000 })
+    await expect(skeletonRows).toHaveCount(0)
+
+    // ...and the anchored message must not move on screen (INV-21).
+    const after = await anchor.boundingBox()
+    expect(after).not.toBeNull()
+    expect(Math.abs(after!.y - before!.y)).toBeLessThanOrEqual(5)
+  })
+
   test("should show 'Jump to latest' when scrolled far from bottom and hide when scrolled back", async ({ page }) => {
     // The "Jump to latest" affordance keys off Virtuoso's rendered range
     // (`distFromEnd > 10` items), so it only appears once the bottom of the list
@@ -280,5 +375,9 @@ test.describe("Infinite Scroll", () => {
 
     // No pagination requests should have been made
     expect(eventRequests.length).toBe(0)
+
+    // And with no fetch in flight at the top of history, no skeleton rows
+    // may render either.
+    await expect(page.getByTestId("older-skeleton-row")).toHaveCount(0)
   })
 })
