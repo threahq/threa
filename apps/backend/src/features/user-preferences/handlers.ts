@@ -53,6 +53,7 @@ const updatePreferencesSchema = z.object({
   workSchedule: workScheduleSchema.nullable().optional(),
   // Per-user custom status presets, additive to the workspace/system defaults.
   statusPresets: statusPresetsSchema.optional(),
+  gettingStartedDismissed: z.boolean().optional(),
   keyboardShortcuts: z.record(z.string(), z.string()).optional(),
   accessibility: z
     .object({

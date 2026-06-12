@@ -7,11 +7,11 @@ import {
   DollarSign,
   FileText,
   Hash,
+  ListChecks,
   LogOut,
   Moon,
   Plus,
   Settings,
-  User as UserIcon,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -33,6 +33,7 @@ import { useResumeNotifications } from "@/hooks"
 import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { StatusPicker } from "@/components/status/status-picker"
 import { PauseNotificationsDialog } from "@/components/notifications/pause-notifications-dialog"
+import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
 /** Resolved, expiry-masked status glyph + text for the footer's own user. */
@@ -55,6 +56,12 @@ interface SidebarFooterProps {
    * the always-visible footer button.
    */
   scratchpadAddMenuActions?: SidebarActionItem[]
+  /**
+   * Restores the dismissed getting-started checklist. Only provided while the
+   * checklist is dismissed with tasks remaining — undefined hides the menu row,
+   * so a finished checklist never leaves a dead entry behind.
+   */
+  onShowGettingStarted?: () => void
 }
 
 /**
@@ -207,6 +214,7 @@ export function SidebarFooter({
   onCreateScratchpad,
   onCreateChannel,
   scratchpadAddMenuActions,
+  onShowGettingStarted,
 }: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
   const { openSettings } = useSettings()
@@ -280,20 +288,20 @@ export function SidebarFooter({
     ]
   }, [scratchpadAddMenuActions, onCreateScratchpad, onCreateChannel])
 
-  const handleOpenSettings = useCallback(
-    (tab: "profile" | "appearance") => {
-      collapseOnMobile()
-      openSettings(tab)
-    },
-    [collapseOnMobile, openSettings]
-  )
+  // One Settings entry; it opens on the default (profile) tab. Profile no
+  // longer has its own menu row — two entries into the same dialog read as
+  // two different surfaces.
+  const handleOpenSettings = useCallback(() => {
+    collapseOnMobile()
+    openSettings("profile")
+  }, [collapseOnMobile, openSettings])
 
   const openWorkspaceSettings = useCallback(() => {
     collapseOnMobile()
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        next.set("ws-settings", "users")
+        next.set(WS_SETTINGS_PARAM, "users")
         return next
       },
       { replace: true }
@@ -365,17 +373,23 @@ export function SidebarFooter({
             onSelect: openPause,
             separatorBefore: true,
           },
-      {
-        id: "profile",
-        label: "Profile",
-        icon: UserIcon,
-        onSelect: () => handleOpenSettings("profile"),
-      },
+      // Re-entry point for the dismissed checklist — restoring shows the card
+      // in the sidebar itself, so no collapseOnMobile here.
+      ...(onShowGettingStarted
+        ? [
+            {
+              id: "getting-started",
+              label: "Getting started",
+              icon: ListChecks,
+              onSelect: onShowGettingStarted,
+            } satisfies SidebarActionItem,
+          ]
+        : []),
       {
         id: "settings",
         label: "Settings",
         icon: Settings,
-        onSelect: () => handleOpenSettings("appearance"),
+        onSelect: handleOpenSettings,
       },
       {
         id: "workspace-settings",
@@ -410,6 +424,7 @@ export function SidebarFooter({
       dndLabel,
       openPause,
       resumeNotificationsFromMenu,
+      onShowGettingStarted,
       handleOpenSettings,
       openWorkspaceSettings,
       openAccountSwitcher,

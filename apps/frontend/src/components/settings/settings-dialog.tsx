@@ -10,6 +10,7 @@ import { ResponsiveSettingsNav, SETTINGS_DIALOG_LAYOUT_CLASSNAMES } from "@/comp
 import { Tabs, TabsContent } from "@/components/ui/tabs"
 import { useSettings } from "@/contexts"
 import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
+import { SETTINGS_TAB_CONFIG } from "./tab-config"
 import { AISettings } from "./ai-settings"
 import { ProfileSettings } from "./profile-settings"
 import { AppearanceSettings } from "./appearance-settings"
@@ -18,17 +19,6 @@ import { ScheduleSettings } from "./schedule-settings"
 import { NotificationsSettings } from "./notifications-settings"
 import { KeyboardSettings } from "./keyboard-settings"
 import { AccessibilitySettings } from "./accessibility-settings"
-
-const TAB_CONFIG: Record<SettingsTab, { label: string; description: string }> = {
-  profile: { label: "Profile", description: "Identity and account details" },
-  ai: { label: "AI", description: "Scratchpad behavior, guidance, and voice dictation" },
-  appearance: { label: "Appearance", description: "Theme and message density" },
-  datetime: { label: "Date & Time", description: "Timezone and formatting" },
-  schedule: { label: "Working hours", description: "Working week and shifts" },
-  notifications: { label: "Notifications", description: "Alerts and push behavior" },
-  keyboard: { label: "Keyboard", description: "Shortcuts and send behavior" },
-  accessibility: { label: "Accessibility", description: "Motion, contrast, and fonts" },
-}
 
 export function SettingsDialog() {
   const { isOpen, activeTab, closeSettings, setActiveTab } = useSettings()
@@ -70,7 +60,7 @@ export function SettingsDialog() {
           <div data-slot="settings-panels" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.panels}>
             <ResponsiveSettingsNav
               tabs={SETTINGS_TABS}
-              items={TAB_CONFIG}
+              items={SETTINGS_TAB_CONFIG}
               value={activeTab}
               onValueChange={(value) => setActiveTab(value as SettingsTab)}
             />

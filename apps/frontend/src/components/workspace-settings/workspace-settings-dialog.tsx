@@ -9,6 +9,12 @@ import {
 } from "@/components/ui/responsive-dialog"
 import { ResponsiveSettingsNav, SETTINGS_DIALOG_LAYOUT_CLASSNAMES } from "@/components/ui/responsive-settings-nav"
 import { Tabs, TabsContent } from "@/components/ui/tabs"
+import {
+  WORKSPACE_SETTINGS_TABS,
+  WORKSPACE_SETTINGS_TAB_CONFIG,
+  WS_SETTINGS_PARAM,
+  type WorkspaceSettingsTab,
+} from "./tab-config"
 import { GeneralTab } from "./general-tab"
 import { UsersTab } from "./users-tab"
 import { ApiKeysTab } from "./api-keys-tab"
@@ -16,19 +22,6 @@ import { BotsTab } from "./bots-tab"
 import { IntegrationsTab } from "./integrations-tab"
 import { ScheduleTab } from "./schedule-tab"
 import { StatusesTab } from "./statuses-tab"
-
-const ALL_TABS = ["general", "schedule", "statuses", "users", "integrations", "bots", "api-keys"] as const
-type WorkspaceSettingsTab = (typeof ALL_TABS)[number]
-
-const TAB_CONFIG: Record<WorkspaceSettingsTab, { label: string; description: string }> = {
-  general: { label: "General", description: "Workspace identity and region" },
-  schedule: { label: "Working hours", description: "Default working week and shifts" },
-  statuses: { label: "Statuses", description: "Default status presets for members" },
-  users: { label: "Users", description: "Members and pending invites" },
-  integrations: { label: "Integrations", description: "Shared third-party connections" },
-  bots: { label: "Bots", description: "Workspace automation accounts" },
-  "api-keys": { label: "API Keys", description: "Create and revoke access keys" },
-}
 
 interface WorkspaceSettingsDialogProps {
   workspaceId: string
@@ -38,11 +31,11 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
   const [searchParams, setSearchParams] = useSearchParams()
   const [mounted, setMounted] = useState(false)
 
-  const settingsParam = searchParams.get("ws-settings")
+  const settingsParam = searchParams.get(WS_SETTINGS_PARAM)
   const normalizedSettingsParam = settingsParam === "members" ? "users" : settingsParam
   const isOpen = settingsParam !== null
   const activeTab: WorkspaceSettingsTab =
-    normalizedSettingsParam && ALL_TABS.includes(normalizedSettingsParam as WorkspaceSettingsTab)
+    normalizedSettingsParam && WORKSPACE_SETTINGS_TABS.includes(normalizedSettingsParam as WorkspaceSettingsTab)
       ? (normalizedSettingsParam as WorkspaceSettingsTab)
       : "general"
 
@@ -54,13 +47,13 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
 
   const close = () => {
     const newParams = new URLSearchParams(searchParams)
-    newParams.delete("ws-settings")
+    newParams.delete(WS_SETTINGS_PARAM)
     setSearchParams(newParams, { replace: true })
   }
 
   const setTab = (tab: string) => {
     const newParams = new URLSearchParams(searchParams)
-    newParams.set("ws-settings", tab)
+    newParams.set(WS_SETTINGS_PARAM, tab)
     setSearchParams(newParams, { replace: true })
   }
 
@@ -85,7 +78,12 @@ export function WorkspaceSettingsDialog({ workspaceId }: WorkspaceSettingsDialog
           className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.tabs}
         >
           <div data-slot="settings-panels" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.panels}>
-            <ResponsiveSettingsNav tabs={ALL_TABS} items={TAB_CONFIG} value={activeTab} onValueChange={setTab} />
+            <ResponsiveSettingsNav
+              tabs={WORKSPACE_SETTINGS_TABS}
+              items={WORKSPACE_SETTINGS_TAB_CONFIG}
+              value={activeTab}
+              onValueChange={setTab}
+            />
 
             <div data-slot="settings-content" className={SETTINGS_DIALOG_LAYOUT_CLASSNAMES.content}>
               <TabsContent value="general" className="mt-0">

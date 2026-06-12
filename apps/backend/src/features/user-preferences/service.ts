@@ -91,6 +91,7 @@ function flattenUpdates(updates: UpdateUserPreferencesInput): Array<{ key: strin
     "voicePolishLevel",
     "workSchedule",
     "statusPresets",
+    "gettingStartedDismissed",
   ] as const
 
   for (const key of simpleKeys) {

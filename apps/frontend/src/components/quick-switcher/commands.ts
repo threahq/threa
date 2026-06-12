@@ -13,9 +13,12 @@ import {
   Settings,
   StickyNote,
   Tag,
+  UserPlus,
 } from "lucide-react"
 import { toast } from "sonner"
-import type { SettingsTab } from "@threa/types"
+import { SETTINGS_TABS, type SettingsTab } from "@threa/types"
+import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
+import type { WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
 
 /**
@@ -47,6 +50,8 @@ export interface CommandContext {
   setMode?: (mode: "stream" | "command" | "search") => void
   requestInput: (request: InputRequest) => void
   openSettings: (tab?: SettingsTab) => void
+  /** Open the workspace settings dialog at a tab (URL-param driven, like openSettings). */
+  openWorkspaceSettings: (tab: WorkspaceSettingsTab) => void
   openExplorer: (overrides?: Partial<ExplorerFilters>) => void
   /**
    * The stream currently in view (route param), or null on non-stream routes.
@@ -251,6 +256,42 @@ export const commands: Command[] = [
     action: ({ closeDialog, openSettings }) => {
       closeDialog()
       openSettings()
+    },
+  },
+  // One palette entry per user-settings tab, so typing "notifications",
+  // "keyboard", or "timezone" finds the right surface without knowing it
+  // lives inside the Settings dialog.
+  ...SETTINGS_TABS.map((tab): Command => {
+    const config = SETTINGS_TAB_CONFIG[tab]
+    return {
+      id: `settings-${tab}`,
+      label: `Settings: ${config.label}`,
+      icon: Settings,
+      keywords: ["preferences", ...config.keywords],
+      action: ({ closeDialog, openSettings }) => {
+        closeDialog()
+        openSettings(tab)
+      },
+    }
+  }),
+  {
+    id: "open-workspace-settings",
+    label: "Workspace Settings",
+    icon: Settings,
+    keywords: ["admin", "members", "bots", "api keys", "integrations", "statuses"],
+    action: ({ closeDialog, openWorkspaceSettings }) => {
+      closeDialog()
+      openWorkspaceSettings("general")
+    },
+  },
+  {
+    id: "invite-people",
+    label: "Invite People",
+    icon: UserPlus,
+    keywords: ["invitation", "add member", "teammate", "team", "share workspace"],
+    action: ({ closeDialog, openWorkspaceSettings }) => {
+      closeDialog()
+      openWorkspaceSettings("users")
     },
   },
 ]

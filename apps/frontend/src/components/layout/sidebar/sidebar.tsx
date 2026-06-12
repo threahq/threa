@@ -39,6 +39,7 @@ import { SidebarQuickLinks } from "./quick-links"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
+import { GettingStarted, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection } from "./sidebar-config"
@@ -169,6 +170,13 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // System streams are auto-created infrastructure — don't count toward "has content"
   const hasUserStreamsFromStreams = processedStreams.some((s) => s.type !== StreamTypes.SYSTEM)
 
+  // Getting-started "write your first note": content in the auto-created system
+  // scratchpad, or any scratchpad the user made themselves (scratchpads only
+  // persist server-side on first send, so existence implies content).
+  const hasWrittenNote = idbStreams.some((s) =>
+    s.type === StreamTypes.SYSTEM ? s.lastMessagePreview != null : s.type === StreamTypes.SCRATCHPAD
+  )
+
   // Users without existing DM streams are shown as virtual DM drafts.
   const virtualDmStreams = useMemo(() => {
     if (workspaceUsers.length === 0 || !currentUser) return []
@@ -290,6 +298,27 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     }
   }, [setSidebarHeight, setScrollContainerOffset, bumpScrollVersion])
 
+  const handleCreateScratchpad = async () => {
+    try {
+      const draftId = await createDraft("on")
+      collapseOnMobile()
+      navigate(`/w/${workspaceId}/s/${draftId}`)
+    } catch {
+      toast.error("Failed to create scratchpad")
+    }
+  }
+
+  // Shared checklist state: the card renders above the footer, and the footer's
+  // account menu offers a "Getting started" re-entry row while it's dismissed
+  // with tasks remaining. Must run before the skeleton/error early returns.
+  const gettingStarted = useGettingStarted({
+    workspaceId,
+    currentUser,
+    hasWrittenNote,
+    memberCount: workspaceUsers.length,
+    onCreateScratchpad: handleCreateScratchpad,
+  })
+
   // During initial coordinated loading, show skeleton
   if (phase !== "ready") {
     return (
@@ -321,16 +350,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         }
       />
     )
-  }
-
-  const handleCreateScratchpad = async () => {
-    try {
-      const draftId = await createDraft("on")
-      collapseOnMobile()
-      navigate(`/w/${workspaceId}/s/${draftId}`)
-    } catch {
-      toast.error("Failed to create scratchpad")
-    }
   }
 
   const handleCreateQuickNote = async () => {
@@ -526,13 +545,17 @@ export function Sidebar({ workspaceId }: SidebarProps) {
           />
         }
         footer={
-          <SidebarFooter
-            workspaceId={workspaceId}
-            currentUser={currentUser}
-            onCreateScratchpad={handleCreateScratchpad}
-            onCreateChannel={handleCreateChannel}
-            scratchpadAddMenuActions={scratchpadAddMenuActions}
-          />
+          <>
+            <GettingStarted state={gettingStarted} />
+            <SidebarFooter
+              workspaceId={workspaceId}
+              currentUser={currentUser}
+              onCreateScratchpad={handleCreateScratchpad}
+              onCreateChannel={handleCreateChannel}
+              scratchpadAddMenuActions={scratchpadAddMenuActions}
+              onShowGettingStarted={gettingStarted.canRestore ? gettingStarted.restore : undefined}
+            />
+          </>
         }
       />
       <SidebarEditorDialog workspaceId={workspaceId} open={isEditorOpen} onOpenChange={setIsEditorOpen} />
