@@ -432,14 +432,11 @@ callback is wired to `failSessionWithLifecycle`. 0.4 — `/complete` records
 usage through `costService.recordUsage`, gated on winning the
 RUNNING→COMPLETED transition. 0.5 — bot claims carry bounded `attempts` +
 park. 0.7 — turn digests are sealed as trailing `turn_digest` steps and ship
-back as `recentDigests`. **0.6 is the only Phase 0 item still open, and only
-half of it:** the bot-invocation outbox handler already reads `contentJson`
-mention nodes (`collectMentionSlugs`, with the INV-54/INV-58 rationale
-commented in place), but the persona mention dispatch
-(`agents/mention-invoke-outbox-handler.ts`) and the activity mention path
-(`activity/service.ts`'s `processMessageMentions`, which also resolves
-broadcast slugs) still run the `MENTION_PATTERN` regex over serialized
-markdown.
+back as `recentDigests`. 0.6 — all three mention consumers (bot-invocation
+dispatch, persona mention dispatch, activity mentions including broadcast
+slugs) read the canonical `contentJson` mention nodes via
+`collectMentionSlugs`; the markdown-regex extractor is deleted. **Phase 0 is
+complete.**
 
 **Phase 1 — One projector, one gate**
 

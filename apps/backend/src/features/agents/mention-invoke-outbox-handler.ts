@@ -3,7 +3,7 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { PersonaRepository } from "./persona-repository"
 import { parseMessagePayload } from "../../lib/outbox"
 import { AgentTriggers, AuthorTypes } from "@threa/types"
-import { extractMentionSlugs } from "./mention-extractor"
+import { collectMentionSlugs } from "@threa/prosemirror"
 import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
@@ -61,7 +61,14 @@ export class MentionInvokeHandler extends DebouncedOutboxHandler {
 
     const triggeredBy = messageEvent.actorId
 
-    const mentionSlugs = extractMentionSlugs(messageEvent.payload.contentMarkdown)
+    // Mentions come from the canonical contentJson mention nodes (INV-58) —
+    // produced by the editor's mention picker and by parseMarkdown on the
+    // API path — not from a pattern over serialized markdown, so non-Latin
+    // slugs invoke the same as ASCII ones (INV-54). Null contentJson (events
+    // predating it) means "no structural mentions". Deduped: one job per
+    // persona no matter how many times it's mentioned in the message.
+    const contentJson = messageEvent.payload.contentJson
+    const mentionSlugs = contentJson ? Array.from(new Set(collectMentionSlugs(contentJson))) : []
     if (mentionSlugs.length === 0) {
       return
     }

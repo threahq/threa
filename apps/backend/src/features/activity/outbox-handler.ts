@@ -155,6 +155,7 @@ export class ActivityFeedHandler implements OutboxHandler {
       actorId: messageEvent.actorId,
       actorType: messageEvent.actorType,
       contentMarkdown: messageEvent.payload.contentMarkdown,
+      contentJson: messageEvent.payload.contentJson,
     }
 
     // Sequential: mentions first, then notification-level activities.

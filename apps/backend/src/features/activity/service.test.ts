@@ -722,3 +722,118 @@ describe("ActivityService.processSavedReminderFired", () => {
     })
   })
 })
+
+describe("ActivityService mention extraction", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  function mentionDoc(...slugs: string[]) {
+    return {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: slugs.flatMap((slug, i) => [
+            { type: "text", text: i === 0 ? "hey " : " and " },
+            { type: "mention", attrs: { id: `usr_${i}`, slug, mentionType: "user" } },
+          ]),
+        },
+      ],
+    }
+  }
+
+  it("creates mention activities from contentJson mention nodes, deduped, for any slug script (INV-54)", async () => {
+    const service = setupService()
+    // Public stream → filterByAccess passes all candidates without a member lookup.
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PUBLIC }))
+    const findBySlugs = spyOn(UserRepository, "findBySlugs").mockResolvedValue([
+      { id: TARGET_USER_ID, slug: "лена" },
+    ] as any)
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
+      fakeActivity(params.context)
+    )
+
+    const activities = await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hey @лена and @лена",
+      contentJson: mentionDoc("лена", "лена"),
+    })
+
+    expect(activities).toHaveLength(1)
+    // The non-Latin slug reached the user lookup intact, once.
+    expect(findBySlugs).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, ["лена"])
+    expect(insertBatch.mock.calls[0][1]).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      userIds: [TARGET_USER_ID],
+      activityType: ActivityTypes.MENTION,
+    })
+  })
+
+  it("creates no mention activities when contentJson is null, even if the markdown contains @-text", async () => {
+    const service = setupService()
+    const findBySlugs = spyOn(UserRepository, "findBySlugs").mockResolvedValue([] as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockResolvedValue([])
+
+    const activities = await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "hey @alice look at this",
+      contentJson: null,
+    })
+
+    expect(activities).toEqual([])
+    expect(findBySlugs).not.toHaveBeenCalled()
+    expect(insertBatch).not.toHaveBeenCalled()
+  })
+
+  it("resolves broadcast mention nodes (@here) to direct stream members", async () => {
+    const service = setupService()
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      fakeStream({ type: StreamTypes.CHANNEL, visibility: Visibilities.PUBLIC })
+    )
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([
+      { memberId: TARGET_USER_ID },
+      { memberId: USER_ID },
+    ] as any)
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: USER_ID, name: "Alice" } as any)
+    const insertBatch = spyOn(ActivityRepository, "insertBatch").mockImplementation(async (_db: any, params: any) =>
+      fakeActivity(params.context)
+    )
+
+    await service.processMessageMentions({
+      workspaceId: WORKSPACE_ID,
+      streamId: STREAM_ID,
+      messageId: MESSAGE_ID,
+      actorId: USER_ID,
+      actorType: AuthorTypes.USER,
+      contentMarkdown: "heads up @here",
+      contentJson: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "heads up " },
+              { type: "mention", attrs: { id: "broadcast_here", slug: "here", mentionType: "broadcast" } },
+            ],
+          },
+        ],
+      },
+    })
+
+    // The actor is excluded; the remaining direct member gets the mention row.
+    expect(insertBatch.mock.calls[0][1]).toMatchObject({
+      userIds: [TARGET_USER_ID],
+      activityType: ActivityTypes.MENTION,
+    })
+  })
+})
