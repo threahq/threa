@@ -16,7 +16,7 @@ import { ActivitySkeleton } from "@/components/activity/activity-skeleton"
 import { SidebarToggle } from "@/components/layout"
 import type { AuthorType, Activity } from "@threa/types"
 
-type ActivityFilter = "all" | "unread" | "me"
+export type ActivityFilter = "all" | "unread" | "me"
 
 const VALID_FILTERS = new Set<string>(["all", "unread", "me"])
 
@@ -48,28 +48,78 @@ interface InnerProps {
   filter: ActivityFilter
 }
 
-function ActivityPageInner({ workspaceId, filter }: InnerProps) {
+/**
+ * Filter tab strip shared by the routed page and the side-panel rendering.
+ * Tabs are links, not buttons (INV-40); the caller supplies hrefs (route
+ * segments on the page, panel URLs in a panel) so the view stays URL-driven
+ * in both surfaces (INV-59).
+ */
+export function ActivityTabs({
+  value,
+  filterHref,
+}: {
+  value: ActivityFilter
+  filterHref: (next: ActivityFilter) => string
+}) {
+  return (
+    <Tabs value={value}>
+      <TabsList className="h-8">
+        <TabsTrigger value="all" asChild>
+          <Link to={filterHref("all")} className="text-xs px-2.5 py-1">
+            All
+          </Link>
+        </TabsTrigger>
+        <TabsTrigger value="unread" asChild>
+          <Link to={filterHref("unread")} className="text-xs px-2.5 py-1">
+            Unread
+          </Link>
+        </TabsTrigger>
+        <TabsTrigger value="me" asChild>
+          <Link to={filterHref("me")} className="text-xs px-2.5 py-1">
+            Me
+          </Link>
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  )
+}
+
+/** "Mark all read" affordance — shared by the page header and the panel. */
+export function MarkAllActivityReadButton({ workspaceId }: { workspaceId: string }) {
+  const markAllRead = useMarkAllActivityRead(workspaceId)
+  const { unreadActivityCount } = useActivityCounts(workspaceId)
+
+  if (unreadActivityCount === 0) return null
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={() => markAllRead.mutate()}
+      disabled={markAllRead.isPending}
+      className="text-xs gap-1.5 max-sm:h-8 max-sm:w-8 max-sm:p-0"
+      title="Mark all read"
+    >
+      <Check className="h-3.5 w-3.5" />
+      <span className="max-sm:hidden">Mark all read</span>
+    </Button>
+  )
+}
+
+/** The activity feed list for one filter — shared by the page and the side panel. */
+export function ActivityList({ workspaceId, filter }: InnerProps) {
   const { data: activities, isLoading } = useActivityFeed(workspaceId, {
     unreadOnly: filter === "unread",
     mineOnly: filter === "me",
     othersOnly: filter === "all",
   })
   const markRead = useMarkActivityRead(workspaceId)
-  const markAllRead = useMarkAllActivityRead(workspaceId)
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const idbStreams = useWorkspaceStreams(workspaceId)
-  const { unreadActivityCount } = useActivityCounts(workspaceId)
 
   const streamById = useMemo(() => {
     return new Map(idbStreams.map((s) => [s.id, s]))
   }, [idbStreams])
-
-  // Filter tabs are links, not buttons (INV-40). The Tabs primitive is still
-  // used for the visual "active" styling — controlled via `value` — but each
-  // trigger is an <a>, so cmd-click / right-click / middle-click all work.
-  const filterHref = (next: ActivityFilter) =>
-    next === "all" ? `/w/${workspaceId}/activity` : `/w/${workspaceId}/activity/${next}`
 
   function resolveActivityStreamName(activity: Activity): string {
     const stream = streamById.get(activity.streamId)
@@ -106,29 +156,29 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
     return streamFallbackLabel("thread", "activity")
   }
 
-  let content = <ActivitySkeleton />
-  if (!isLoading) {
-    if (!activities?.length) {
-      content = <ActivityEmpty isFiltered={filter !== "all"} />
-    } else {
-      content = (
-        <div className="flex flex-col gap-0.5">
-          {activities.map((activity) => (
-            <ActivityItem
-              key={activity.id}
-              activity={activity}
-              actorName={getActorName(activity.actorId, activity.actorType as AuthorType)}
-              actorAvatar={getActorAvatar(activity.actorId, activity.actorType as AuthorType)}
-              streamName={resolveActivityStreamName(activity)}
-              workspaceId={workspaceId}
-              toEmoji={toEmoji}
-              onMarkAsRead={(id) => markRead.mutate(id)}
-            />
-          ))}
-        </div>
-      )
-    }
-  }
+  if (isLoading) return <ActivitySkeleton />
+  if (!activities?.length) return <ActivityEmpty isFiltered={filter !== "all"} />
+  return (
+    <div className="flex flex-col gap-0.5">
+      {activities.map((activity) => (
+        <ActivityItem
+          key={activity.id}
+          activity={activity}
+          actorName={getActorName(activity.actorId, activity.actorType as AuthorType)}
+          actorAvatar={getActorAvatar(activity.actorId, activity.actorType as AuthorType)}
+          streamName={resolveActivityStreamName(activity)}
+          workspaceId={workspaceId}
+          toEmoji={toEmoji}
+          onMarkAsRead={(id) => markRead.mutate(id)}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ActivityPageInner({ workspaceId, filter }: InnerProps) {
+  const filterHref = (next: ActivityFilter) =>
+    next === "all" ? `/w/${workspaceId}/activity` : `/w/${workspaceId}/activity/${next}`
 
   return (
     <div className="flex h-full flex-col">
@@ -149,44 +199,15 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
-          <Tabs value={filter}>
-            <TabsList className="h-8">
-              <TabsTrigger value="all" asChild>
-                <Link to={filterHref("all")} className="text-xs px-2.5 py-1">
-                  All
-                </Link>
-              </TabsTrigger>
-              <TabsTrigger value="unread" asChild>
-                <Link to={filterHref("unread")} className="text-xs px-2.5 py-1">
-                  Unread
-                </Link>
-              </TabsTrigger>
-              <TabsTrigger value="me" asChild>
-                <Link to={filterHref("me")} className="text-xs px-2.5 py-1">
-                  Me
-                </Link>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          {unreadActivityCount > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => markAllRead.mutate()}
-              disabled={markAllRead.isPending}
-              className="text-xs gap-1.5 max-sm:h-8 max-sm:w-8 max-sm:p-0"
-              title="Mark all read"
-            >
-              <Check className="h-3.5 w-3.5" />
-              <span className="max-sm:hidden">Mark all read</span>
-            </Button>
-          )}
+          <ActivityTabs value={filter} filterHref={filterHref} />
+          <MarkAllActivityReadButton workspaceId={workspaceId} />
         </div>
       </header>
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="py-2">{content}</main>
+        <main className="py-2">
+          <ActivityList workspaceId={workspaceId} filter={filter} />
+        </main>
       </ScrollArea>
     </div>
   )

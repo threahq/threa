@@ -16,7 +16,14 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { MessageContextBadge } from "@/components/composer"
 import { RelativeTime } from "@/components/relative-time"
 import { ActorAvatar } from "@/components/actor-avatar"
-import { usePendingMessages, usePanel, createDraftPanelId, useTrace, useMessageService } from "@/contexts"
+import {
+  usePendingMessages,
+  usePanel,
+  usePanelNavigation,
+  createDraftPanelId,
+  useTrace,
+  useMessageService,
+} from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
 import { formatStatusClearLabel } from "@/lib/status"
@@ -842,7 +849,8 @@ function SentMessageEvent({
   e2eDecryptedMarkdown,
   batch,
 }: MessageEventInnerProps) {
-  const { panelId, getPanelUrl } = usePanel()
+  const { panels } = usePanel()
+  const { getPanelUrl } = usePanelNavigation()
   const messageService = useMessageService()
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { getTraceUrl } = useTrace()
@@ -1061,7 +1069,7 @@ function SentMessageEvent({
       contentMarkdown: payload.contentMarkdown,
       actorType: event.actorType,
       sessionId: payload.sessionId,
-      isThreadParent: panelId === threadId || isThreadParentProp,
+      isThreadParent: (threadId != null && panels.includes(threadId)) || isThreadParentProp,
       replyUrl: effectiveThreadId ? getPanelUrl(effectiveThreadId) : draftPanelUrl,
       traceUrl:
         event.actorType === "persona" && payload.sessionId
@@ -1168,7 +1176,7 @@ function SentMessageEvent({
       e2eEnabled,
       event.actorType,
       event.actorId,
-      panelId,
+      panels,
       threadId,
       isThreadParentProp,
       effectiveThreadId,

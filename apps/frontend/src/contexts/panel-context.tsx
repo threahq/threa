@@ -1,8 +1,11 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { useSearchParams, useLocation } from "react-router-dom"
 
-/** Which pane the user most recently interacted with — drives "copy current link" (mod+L). */
-export type FocusedPane = "main" | "panel"
+/**
+ * Which pane the user most recently interacted with. "main" is the routed
+ * page; any other value is the id of an open side panel.
+ */
+export type FocusedPane = "main" | string
 
 /**
  * Check if a panel ID represents a draft thread
@@ -31,23 +34,94 @@ export function createDraftPanelId(parentStreamId: string, parentMessageId: stri
   return `draft:${parentStreamId}:${parentMessageId}`
 }
 
+/** Check if a panel ID is a named view surface (e.g. "view:saved"). */
+export function isViewPanel(panelId: string): boolean {
+  return panelId.startsWith("view:")
+}
+
+export interface OpenPanelOptions {
+  /**
+   * "replace" (default) swaps the target panel's content in place — the
+   * single-panel behavior every existing call site expects. "new" appends
+   * another panel to the strip (used by cmd-click and explicit split actions).
+   */
+  mode?: "replace" | "new"
+  /**
+   * Which open panel to replace in "replace" mode. Defaults to the most
+   * recently opened panel. Content rendered inside a panel should pass its
+   * own panel id (via usePanelInstance) so in-panel navigation stays in that
+   * panel instead of hijacking its neighbor.
+   */
+  target?: string
+}
+
+/**
+ * Pure transform: the next ordered panel list after opening `id`.
+ * Opening an already-open panel is a no-op (the caller focuses it instead).
+ */
+export function applyOpenPanel(panels: string[], id: string, options?: OpenPanelOptions): string[] {
+  if (panels.includes(id)) return panels
+  if (options?.mode === "new" || panels.length === 0) return [...panels, id]
+  const target = options?.target && panels.includes(options.target) ? options.target : panels[panels.length - 1]
+  return panels.map((p) => (p === target ? id : p))
+}
+
+/**
+ * Reactive store for the focused pane. Kept outside React state so that
+ * read-on-keypress consumers (copy-link) never re-render, while visual
+ * consumers (focus ring, keyboard cycling) can subscribe via
+ * useSyncExternalStore in useFocusedPane().
+ */
+export interface FocusedPaneStore {
+  get: () => FocusedPane
+  set: (pane: FocusedPane) => void
+  subscribe: (listener: () => void) => () => void
+}
+
+function createFocusedPaneStore(initial: FocusedPane): FocusedPaneStore {
+  let current = initial
+  const listeners = new Set<() => void>()
+  return {
+    get: () => current,
+    set: (pane) => {
+      if (pane === current) return
+      current = pane
+      listeners.forEach((l) => l())
+    },
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+  }
+}
+
 interface PanelContextValue {
-  /** ID of the currently open panel (stream ID or draft panel ID) */
+  /** Ordered ids of the open side panels (left to right). */
+  panels: string[]
+  /** Most recently opened panel id, or null. */
   panelId: string | null
-  /** Whether a panel is currently open */
+  /** Whether any panel is open. */
   isPanelOpen: boolean
 
-  /** Generate URL for opening a panel (for use in <a> or <Link> href) */
-  getPanelUrl: (streamId: string) => string
-  /** Open a panel - streamId can be real stream or "draft:parentStreamId:parentMessageId" */
-  openPanel: (streamId: string) => void
-  /** Close the current panel */
-  closePanel: () => void
+  /** Generate URL for opening a panel (for use in <a> or <Link> href). */
+  getPanelUrl: (streamId: string, options?: OpenPanelOptions) => string
+  /** Open a panel — stream id, "draft:parent:message", or "view:<name>". */
+  openPanel: (streamId: string, options?: OpenPanelOptions) => void
+  /** Close one panel (defaults to the last/most recent). */
+  closePanel: (panelId?: string) => void
+  /** Close every open panel, optionally keeping one. */
+  closeAllPanels: (exceptId?: string) => void
+  /** Move an open panel to a new index in the strip. */
+  movePanel: (panelId: string, toIndex: number) => void
+  /** Swap a panel's content with another id in place (e.g. draft promotion). */
+  replacePanel: (panelId: string, nextId: string) => void
 
-  /** Record which pane the user is interacting with (main view vs thread panel). */
+  /** Record which pane the user is interacting with. */
   setFocusedPane: (pane: FocusedPane) => void
-  /** Read the most recently focused pane. Defaults to "main". */
+  /** Read the most recently focused pane without subscribing. */
   getFocusedPane: () => FocusedPane
+  /** Subscription store backing useFocusedPane(). */
+  focusedPaneStore: FocusedPaneStore
 }
 
 const PanelContext = createContext<PanelContextValue | null>(null)
@@ -60,28 +134,30 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
 
-  // Parse panel ID from URL - single panel only
-  const panelId = useMemo(() => {
-    return searchParams.get("panel")
-  }, [searchParams])
+  const panels = useMemo(() => searchParams.getAll("panel"), [searchParams])
+  const panelId = panels.length > 0 ? panels[panels.length - 1] : null
+  const isPanelOpen = panels.length > 0
 
-  const isPanelOpen = panelId !== null
+  const panelsRef = useRef(panels)
+  panelsRef.current = panels
 
-  const getPanelUrl = useCallback(
-    (streamId: string) => {
-      const newParams = new URLSearchParams(searchParams)
-      newParams.set("panel", streamId)
-      return `${location.pathname}?${newParams.toString()}`
-    },
-    [searchParams, location.pathname]
-  )
+  const storeRef = useRef<FocusedPaneStore | null>(null)
+  if (!storeRef.current) {
+    // Seed from the initial URL so a deep link that opens a panel (which then
+    // autofocuses) reports the panel before any pointer interaction.
+    storeRef.current = createFocusedPaneStore(panelId ?? "main")
+  }
+  const focusedPaneStore = storeRef.current
 
-  const openPanel = useCallback(
-    (streamId: string) => {
+  const writePanels = useCallback(
+    (transform: (prev: string[]) => string[]) => {
       setSearchParams(
         (prev) => {
+          const current = prev.getAll("panel")
+          const nextPanels = transform(current)
           const next = new URLSearchParams(prev)
-          next.set("panel", streamId)
+          next.delete("panel")
+          for (const id of nextPanels) next.append("panel", id)
           return next
         },
         { replace: true }
@@ -90,43 +166,109 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [setSearchParams]
   )
 
-  const closePanel = useCallback(() => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.delete("panel")
+  const getPanelUrl = useCallback(
+    (streamId: string, options?: OpenPanelOptions) => {
+      const newParams = new URLSearchParams(searchParams)
+      const nextPanels = applyOpenPanel(searchParams.getAll("panel"), streamId, options)
+      newParams.delete("panel")
+      for (const id of nextPanels) newParams.append("panel", id)
+      return `${location.pathname}?${newParams.toString()}`
+    },
+    [searchParams, location.pathname]
+  )
+
+  const openPanel = useCallback(
+    (streamId: string, options?: OpenPanelOptions) => {
+      writePanels((prev) => applyOpenPanel(prev, streamId, options))
+      focusedPaneStore.set(streamId)
+    },
+    [writePanels, focusedPaneStore]
+  )
+
+  const closePanel = useCallback(
+    (id?: string) => {
+      writePanels((prev) => {
+        const target = id ?? prev[prev.length - 1]
+        return prev.filter((p) => p !== target)
+      })
+    },
+    [writePanels]
+  )
+
+  const closeAllPanels = useCallback(
+    (exceptId?: string) => {
+      writePanels((prev) => prev.filter((p) => p === exceptId))
+    },
+    [writePanels]
+  )
+
+  const movePanel = useCallback(
+    (id: string, toIndex: number) => {
+      writePanels((prev) => {
+        const from = prev.indexOf(id)
+        if (from === -1) return prev
+        const next = [...prev]
+        next.splice(from, 1)
+        next.splice(Math.max(0, Math.min(toIndex, next.length)), 0, id)
         return next
-      },
-      { replace: true }
-    )
-  }, [setSearchParams])
+      })
+    },
+    [writePanels]
+  )
 
-  // Tracked via a ref, not state: only the copy-link shortcut reads it (on
-  // keypress), so updating it on every click/focus must not re-render panel
-  // consumers. Seed from the initial URL so a deep link that opens a panel
-  // (which then autofocuses) reports the panel before any pointer interaction.
-  const focusedPaneRef = useRef<FocusedPane>(panelId !== null ? "panel" : "main")
-  const setFocusedPane = useCallback((pane: FocusedPane) => {
-    focusedPaneRef.current = pane
-  }, [])
-  const getFocusedPane = useCallback(() => focusedPaneRef.current, [])
+  const replacePanel = useCallback(
+    (id: string, nextId: string) => {
+      if (id === nextId) return
+      writePanels((prev) => {
+        // If the replacement is already open elsewhere, just drop the old one.
+        if (prev.includes(nextId)) return prev.filter((p) => p !== id)
+        return prev.map((p) => (p === id ? nextId : p))
+      })
+      if (focusedPaneStore.get() === id) focusedPaneStore.set(nextId)
+    },
+    [writePanels, focusedPaneStore]
+  )
 
-  // When the panel closes, focus belongs to the main pane again.
+  const setFocusedPane = useCallback((pane: FocusedPane) => focusedPaneStore.set(pane), [focusedPaneStore])
+  const getFocusedPane = useCallback(() => focusedPaneStore.get(), [focusedPaneStore])
+
+  // When the focused panel closes, focus belongs to the main pane again.
   useEffect(() => {
-    if (panelId === null) focusedPaneRef.current = "main"
-  }, [panelId])
+    const focused = focusedPaneStore.get()
+    if (focused !== "main" && !panels.includes(focused)) {
+      focusedPaneStore.set("main")
+    }
+  }, [panels, focusedPaneStore])
 
   const value = useMemo<PanelContextValue>(
     () => ({
+      panels,
       panelId,
       isPanelOpen,
       getPanelUrl,
       openPanel,
       closePanel,
+      closeAllPanels,
+      movePanel,
+      replacePanel,
       setFocusedPane,
       getFocusedPane,
+      focusedPaneStore,
     }),
-    [panelId, isPanelOpen, getPanelUrl, openPanel, closePanel, setFocusedPane, getFocusedPane]
+    [
+      panels,
+      panelId,
+      isPanelOpen,
+      getPanelUrl,
+      openPanel,
+      closePanel,
+      closeAllPanels,
+      movePanel,
+      replacePanel,
+      setFocusedPane,
+      getFocusedPane,
+      focusedPaneStore,
+    ]
   )
 
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>

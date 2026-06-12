@@ -54,11 +54,13 @@ const noopSavedService: SavedService = {
 function Wrapper({ children }: { children: React.ReactNode }) {
   return (
     <MemoryRouter>
-      <QueryClientProvider client={queryClient}>
-        <ServicesProvider services={{ saved: noopSavedService }}>
-          <TooltipProvider>{children}</TooltipProvider>
-        </ServicesProvider>
-      </QueryClientProvider>
+      <contextsModule.PanelProvider>
+        <QueryClientProvider client={queryClient}>
+          <ServicesProvider services={{ saved: noopSavedService }}>
+            <TooltipProvider>{children}</TooltipProvider>
+          </ServicesProvider>
+        </QueryClientProvider>
+      </contextsModule.PanelProvider>
     </MemoryRouter>
   )
 }
@@ -345,15 +347,17 @@ describe("MessageEvent", () => {
 
       render(
         <MemoryRouter>
-          <QueryClientProvider client={queryClientLocal}>
-            <ServicesProvider services={{ saved: noopSavedService }}>
-              <TooltipProvider>
-                <EditLastMessageContext.Provider value={{ registerMessage, triggerEditLast: vi.fn() }}>
-                  <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
-                </EditLastMessageContext.Provider>
-              </TooltipProvider>
-            </ServicesProvider>
-          </QueryClientProvider>
+          <contextsModule.PanelProvider>
+            <QueryClientProvider client={queryClientLocal}>
+              <ServicesProvider services={{ saved: noopSavedService }}>
+                <TooltipProvider>
+                  <EditLastMessageContext.Provider value={{ registerMessage, triggerEditLast: vi.fn() }}>
+                    <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
+                  </EditLastMessageContext.Provider>
+                </TooltipProvider>
+              </ServicesProvider>
+            </QueryClientProvider>
+          </contextsModule.PanelProvider>
         </MemoryRouter>
       )
 
@@ -396,15 +400,17 @@ describe("MessageEvent", () => {
         <div data-editor-zone="main">
           <div data-testid="zone-editor" contentEditable />
           <MemoryRouter>
-            <QueryClientProvider client={queryClientLocal}>
-              <ServicesProvider services={{ saved: noopSavedService }}>
-                <TooltipProvider>
-                  <EditLastMessageContext.Provider value={{ registerMessage, triggerEditLast: vi.fn() }}>
-                    <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
-                  </EditLastMessageContext.Provider>
-                </TooltipProvider>
-              </ServicesProvider>
-            </QueryClientProvider>
+            <contextsModule.PanelProvider>
+              <QueryClientProvider client={queryClientLocal}>
+                <ServicesProvider services={{ saved: noopSavedService }}>
+                  <TooltipProvider>
+                    <EditLastMessageContext.Provider value={{ registerMessage, triggerEditLast: vi.fn() }}>
+                      <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
+                    </EditLastMessageContext.Provider>
+                  </TooltipProvider>
+                </ServicesProvider>
+              </QueryClientProvider>
+            </contextsModule.PanelProvider>
           </MemoryRouter>
         </div>
       )

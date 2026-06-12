@@ -30,7 +30,18 @@ export {
   type SocketStatus,
 } from "./socket-context"
 export { PendingMessagesProvider, usePendingMessages } from "./pending-messages-context"
-export { PanelProvider, usePanel, isDraftPanel, parseDraftPanel, createDraftPanelId } from "./panel-context"
+export {
+  PanelProvider,
+  usePanel,
+  isDraftPanel,
+  parseDraftPanel,
+  createDraftPanelId,
+  isViewPanel,
+  applyOpenPanel,
+  type OpenPanelOptions,
+  type FocusedPane,
+} from "./panel-context"
+export { PanelInstanceProvider, usePanelInstance, usePanelNavigation, useFocusedPane } from "./panel-instance-context"
 export { QuickSwitcherProvider, useQuickSwitcher } from "./quick-switcher-context"
 export { PreferencesProvider, usePreferences, usePreferencesOptional, useResolvedTheme } from "./preferences-context"
 export { SettingsProvider, useSettings } from "./settings-context"

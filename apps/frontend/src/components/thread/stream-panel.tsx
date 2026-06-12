@@ -34,7 +34,16 @@ import {
   useStashComposer,
   useWorkspaceUserId,
 } from "@/hooks"
-import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
+import {
+  useCoordinatedLoading,
+  usePanel,
+  usePanelInstance,
+  usePanelNavigation,
+  isDraftPanel,
+  parseDraftPanel,
+  useSidebar,
+} from "@/contexts"
+import { usePanelStandardActions } from "@/components/panels/use-panel-standard-actions"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { onDraftPromoted } from "@/lib/draft-promotions"
@@ -66,15 +75,20 @@ import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 
 interface StreamPanelProps {
   workspaceId: string
+  /** The id of the panel slot this instance renders inside. */
+  panelId: string
   onClose: () => void
 }
 
-export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
+export function StreamPanel({ workspaceId, panelId, onClose }: StreamPanelProps) {
   const { isMobile } = useSidebar()
   const { getStreamState } = useCoordinatedLoading()
   const [searchParams] = useSearchParams()
   const highlightMessageId = searchParams.get("m")
-  const { panelId, openPanel, getPanelUrl, closePanel, setFocusedPane } = usePanel()
+  const { replacePanel } = usePanel()
+  const { getPanelUrl } = usePanelNavigation()
+  const { dragHandleProps } = usePanelInstance()
+  const standardActions = usePanelStandardActions(panelId)
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
@@ -159,8 +173,11 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
 
   useEffect(() => {
     if (!isDraft || !externalThreadId) return
-    openPanel(externalThreadId)
-  }, [isDraft, externalThreadId, openPanel])
+    // At queue time the parent's threadId is optimistically set to this draft
+    // panel's own id — only a real stream id means an external thread exists.
+    if (externalThreadId === panelId || isDraftPanel(externalThreadId)) return
+    replacePanel(panelId, externalThreadId)
+  }, [isDraft, externalThreadId, panelId, replacePanel])
 
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", parentMessageId: draftInfo.parentMessageId }) : ""
@@ -254,6 +271,9 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
       if (panelId) openExplorer({ streamIds: [panelId] })
     },
   })
+  // Panel-management actions (open in main view, move, close others) come
+  // last; on mobile the panel is full-screen so they don't apply.
+  if (!isMobile) panelMenuActions.push(...standardActions)
   const setDraftPortalTarget = useCallback((el: HTMLElement | null) => {
     draftPortalTargetRef.current = el
   }, [])
@@ -326,10 +346,10 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
     if (!isDraft || !panelId) return
     return onDraftPromoted((promotion) => {
       if (promotion.draftId === panelId && promotion.workspaceId === workspaceId) {
-        openPanel(promotion.realStreamId)
+        replacePanel(panelId, promotion.realStreamId)
       }
     })
-  }, [isDraft, panelId, workspaceId, openPanel])
+  }, [isDraft, panelId, workspaceId, replacePanel])
 
   // Handle draft thread submission
   const handleSubmit = useCallback(async () => {
@@ -424,7 +444,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
           ancestors={fullChain}
           currentLabel="New thread"
           isMainViewStream={isMainViewStream}
-          onClosePanel={closePanel}
+          onClosePanel={onClose}
           getNavigationUrl={getPanelUrl}
         />
       </div>
@@ -436,12 +456,8 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   }
 
   return (
-    <SidePanel
-      data-editor-zone="panel"
-      onPointerDownCapture={() => setFocusedPane("panel")}
-      onFocusCapture={() => setFocusedPane("panel")}
-    >
-      <SidePanelHeader className="relative">
+    <SidePanel data-editor-zone="panel">
+      <SidePanelHeader className="relative select-none" {...(!isMobile ? dragHandleProps : {})}>
         <StreamLoadingIndicator isLoading={showLoadingIndicator} />
         {/* Mobile: thread view takes over the full screen, so the sidebar
              toggle needs to be reachable from here too. */}

@@ -2,6 +2,7 @@ import { Bell, Bookmark, Brain, CalendarClock, FileEdit, Paperclip, Tag, type Lu
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
+import { usePanelAwareLink } from "@/components/panels/use-panel-aware-nav"
 import { QUICK_LINKS_SECTION_ID } from "@threa/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
@@ -45,6 +46,46 @@ interface QuickLinkItem {
   isActive: boolean
   unreadCount: number
   signalSlot: ReactNode
+}
+
+/** Quick links whose surface can also open as a side panel (cmd/ctrl-click). */
+const PANEL_IDS_BY_KEY: Partial<Record<SidebarQuickLinkKey, string>> = {
+  saved: "view:saved",
+  activity: "view:activity",
+}
+
+function QuickLinkRow({
+  linkKey,
+  item,
+  onNavigate,
+}: {
+  linkKey: SidebarQuickLinkKey
+  item: QuickLinkItem
+  onNavigate: () => void
+}) {
+  const { label, icon: Icon } = QUICK_LINK_META[linkKey]
+  const { isActive, unreadCount, signalSlot } = item
+  const link = usePanelAwareLink(item.to, PANEL_IDS_BY_KEY[linkKey] ?? null)
+
+  return (
+    <Link
+      to={link.to}
+      onClick={(e) => {
+        // Cmd/ctrl-click opens the surface in a side panel when it has one.
+        link.onClick(e)
+        if (!e.defaultPrevented) onNavigate()
+      }}
+      className={cn(
+        "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+        isActive ? "bg-primary/10" : "hover:bg-muted/50",
+        !isActive && unreadCount === 0 && "text-muted-foreground"
+      )}
+    >
+      <Icon className="h-4 w-4" />
+      {label}
+      {signalSlot}
+    </Link>
+  )
 }
 
 // Collapse-state key for the block; also its section id in the config, so the
@@ -137,26 +178,9 @@ export function SidebarQuickLinks({
       />
 
       {isOpen &&
-        visible.map(({ key }) => {
-          const { label, icon: Icon } = QUICK_LINK_META[key]
-          const { to, isActive, unreadCount, signalSlot } = itemByKey[key]
-          return (
-            <Link
-              key={key}
-              to={to}
-              onClick={collapseOnMobile}
-              className={cn(
-                "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
-                isActive ? "bg-primary/10" : "hover:bg-muted/50",
-                !isActive && unreadCount === 0 && "text-muted-foreground"
-              )}
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-              {signalSlot}
-            </Link>
-          )
-        })}
+        visible.map(({ key }) => (
+          <QuickLinkRow key={key} linkKey={key} item={itemByKey[key]} onNavigate={collapseOnMobile} />
+        ))}
     </div>
   )
 }

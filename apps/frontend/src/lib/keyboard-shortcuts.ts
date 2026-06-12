@@ -86,6 +86,48 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     category: "navigation",
     global: true,
   },
+  // Pane / side-panel management
+  {
+    id: "focusNextPane",
+    label: "Focus Next Pane",
+    description: "Move focus to the next pane (main view and side panels)",
+    defaultKey: "mod+alt+arrowright",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "focusPreviousPane",
+    label: "Focus Previous Pane",
+    description: "Move focus to the previous pane (main view and side panels)",
+    defaultKey: "mod+alt+arrowleft",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "closeFocusedPanel",
+    label: "Close Panel",
+    // mod+w is reserved by browsers (close tab) and can't be intercepted.
+    description: "Close the focused side panel",
+    defaultKey: "mod+alt+w",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "movePanelLeft",
+    label: "Move Panel Left",
+    description: "Move the focused side panel one slot to the left",
+    defaultKey: "mod+alt+shift+arrowleft",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "movePanelRight",
+    label: "Move Panel Right",
+    description: "Move the focused side panel one slot to the right",
+    defaultKey: "mod+alt+shift+arrowright",
+    category: "view",
+    global: true,
+  },
   // Editor formatting shortcuts (not global — only active when editor is focused)
   {
     id: "formatBold",

@@ -6,6 +6,7 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
+import { PanelProvider } from "@/contexts"
 import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
@@ -119,7 +120,9 @@ function renderWithProviders(ui: React.ReactElement) {
   const queryClient = createTestQueryClient()
   return render(
     <QueryClientProvider client={queryClient}>
-      <RouterWrapper>{ui}</RouterWrapper>
+      <RouterWrapper>
+        <PanelProvider>{ui}</PanelProvider>
+      </RouterWrapper>
     </QueryClientProvider>
   )
 }
@@ -294,7 +297,9 @@ describe("QuickSwitcher Integration Tests", () => {
       const { rerender } = render(
         <QueryClientProvider client={queryClient}>
           <RouterWrapper>
-            <QuickSwitcher {...defaultProps} open={true} />
+            <PanelProvider>
+              <QuickSwitcher {...defaultProps} open={true} />
+            </PanelProvider>
           </RouterWrapper>
         </QueryClientProvider>
       )
@@ -307,7 +312,9 @@ describe("QuickSwitcher Integration Tests", () => {
       rerender(
         <QueryClientProvider client={queryClient}>
           <RouterWrapper>
-            <QuickSwitcher {...defaultProps} open={false} />
+            <PanelProvider>
+              <QuickSwitcher {...defaultProps} open={false} />
+            </PanelProvider>
           </RouterWrapper>
         </QueryClientProvider>
       )
@@ -316,7 +323,9 @@ describe("QuickSwitcher Integration Tests", () => {
       rerender(
         <QueryClientProvider client={queryClient}>
           <RouterWrapper>
-            <QuickSwitcher {...defaultProps} open={true} />
+            <PanelProvider>
+              <QuickSwitcher {...defaultProps} open={true} />
+            </PanelProvider>
           </RouterWrapper>
         </QueryClientProvider>
       )

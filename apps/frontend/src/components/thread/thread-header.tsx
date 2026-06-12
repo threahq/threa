@@ -2,7 +2,7 @@ import { useMemo } from "react"
 import { useParams } from "react-router-dom"
 import { useThreadAncestors } from "@/hooks"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { usePanel } from "@/contexts"
+import { usePanelNavigation } from "@/contexts"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { streamLabel } from "@/lib/streams"
 import type { StreamType } from "@threa/types"
@@ -53,7 +53,7 @@ export function ThreadHeader({ workspaceId, stream, inPanel = false }: ThreadHea
     return []
   }, [hookAncestors, stream.rootStreamId, streams])
 
-  const { getPanelUrl, closePanel } = usePanel()
+  const { getPanelUrl, closeOwnPanel } = usePanelNavigation()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const getNavigationUrl = (streamId: string) => {
@@ -72,7 +72,7 @@ export function ThreadHeader({ workspaceId, stream, inPanel = false }: ThreadHea
         ancestors={ancestors}
         currentLabel={streamLabel(stream, "breadcrumb")}
         isMainViewStream={isMainViewStream}
-        onClosePanel={closePanel}
+        onClosePanel={closeOwnPanel}
         getNavigationUrl={getNavigationUrl}
         isLoading={!!showLoadingPlaceholder}
       />

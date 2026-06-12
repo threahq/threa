@@ -30,9 +30,9 @@ import {
   type SidebarActionItem,
 } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
-import { useStreamOrDraft, useStreamError, usePanelLayout, isDmDraftId, useTypeToFocus } from "@/hooks"
+import { useStreamOrDraft, useStreamError, isDmDraftId, useTypeToFocus } from "@/hooks"
 import { useWorkspaceDmPeers } from "@/stores/workspace-store"
-import { usePanel, useSidebar } from "@/contexts"
+import { useSidebar } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
@@ -42,8 +42,8 @@ import { StreamLabelStack } from "@/components/labels/stream-label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-gate"
 import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
-import { StreamPanel, ThreadHeader } from "@/components/thread"
-import { ThreadPanelSlot, SidebarToggle } from "@/components/layout"
+import { ThreadHeader } from "@/components/thread"
+import { SidebarToggle } from "@/components/layout"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { InviteActorButton } from "@/components/encryption"
@@ -73,20 +73,6 @@ export function StreamPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const { stream, isDraft, error, rename, archive, unarchive } = useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
-  const {
-    containerRef,
-    panelWidth,
-    maxWidth,
-    minWidth,
-    displayWidth,
-    shouldAnimate,
-    isResizing,
-    showContent,
-    handleResizeStart,
-    handleResizeKeyDown,
-    handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen)
 
   useTypeToFocus()
 
@@ -601,44 +587,11 @@ export function StreamPage() {
     </>
   )
 
-  // On mobile, thread panel takes over the full screen
-  if (isMobile && isPanelOpen) {
-    return (
-      <>
-        <div className="flex h-full flex-col">
-          <StreamPanel key={panelId} workspaceId={workspaceId} onClose={closePanel} />
-        </div>
-        {conversationPanel}
-      </>
-    )
-  }
-
+  // Side panels (threads, drafts, views) are rendered by WorkspacePanelArea
+  // in the workspace layout — this page only renders the main stream.
   return (
     <>
-      <div ref={containerRef} className="flex h-full">
-        <div
-          className="flex-1 min-w-0 overflow-hidden"
-          onPointerDownCapture={() => setFocusedPane("main")}
-          onFocusCapture={() => setFocusedPane("main")}
-        >
-          {mainStreamContent}
-        </div>
-
-        <ThreadPanelSlot
-          displayWidth={displayWidth}
-          panelWidth={panelWidth}
-          shouldAnimate={shouldAnimate}
-          showContent={showContent}
-          isResizing={isResizing}
-          maxWidth={maxWidth}
-          minWidth={minWidth}
-          onTransitionEnd={handleTransitionEnd}
-          onResizeStart={handleResizeStart}
-          onResizeKeyDown={handleResizeKeyDown}
-        >
-          <StreamPanel key={panelId} workspaceId={workspaceId} onClose={closePanel} />
-        </ThreadPanelSlot>
-      </div>
+      <div className="h-full min-w-0 overflow-hidden">{mainStreamContent}</div>
       {conversationPanel}
     </>
   )

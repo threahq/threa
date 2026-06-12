@@ -13,6 +13,8 @@ import {
 import { flushSync } from "react-dom"
 import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2 } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useElementWidth } from "@/hooks/use-element-width"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
@@ -286,6 +288,11 @@ export function MessageComposer({
 
   const richEditorRef = useRef<RichEditorHandle>(null)
   const mobileRootRef = useRef<HTMLDivElement>(null)
+  // Container-driven layout: in a narrow side panel the full action bar
+  // overflows even on large screens, so the secondary controls collapse into
+  // a "+" menu based on the composer's own width, not the viewport.
+  const composerWidth = useElementWidth(mobileRootRef)
+  const isNarrowBar = composerWidth > 0 && composerWidth < 420
   const expandedShellRef = useRef<HTMLDivElement>(null)
   const actionBarWrapperRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
@@ -1123,9 +1130,13 @@ export function MessageComposer({
                   />
                 ) : (
                   <div className="flex items-center gap-1">
-                    <span className="text-[11px] text-muted-foreground flex-1 select-none pointer-events-none">
-                      Select text to format
-                    </span>
+                    {isNarrowBar ? (
+                      <div className="flex-1" />
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground flex-1 select-none pointer-events-none">
+                        Select text to format
+                      </span>
+                    )}
                     {onExpandClick && (
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1165,60 +1176,64 @@ export function MessageComposer({
                         Formatting
                       </TooltipContent>
                     </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Insert emoji"
-                          className="h-7 w-7 shrink-0"
-                          onClick={() => richEditorRef.current?.insertEmoji()}
-                          disabled={controlsDisabled}
-                        >
-                          <span className="text-sm leading-none">😊</span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Emoji
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Insert mention"
-                          className="h-7 w-7 shrink-0"
-                          onClick={() => richEditorRef.current?.insertMention()}
-                          disabled={controlsDisabled}
-                        >
-                          <AtSign className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Mention
-                      </TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Insert command"
-                          className="h-7 w-7 shrink-0 hidden sm:inline-flex"
-                          onClick={() => richEditorRef.current?.insertSlash()}
-                          disabled={controlsDisabled}
-                        >
-                          <Slash className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Command
-                      </TooltipContent>
-                    </Tooltip>
+                    {!isNarrowBar && (
+                      <>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Insert emoji"
+                              className="h-7 w-7 shrink-0"
+                              onClick={() => richEditorRef.current?.insertEmoji()}
+                              disabled={controlsDisabled}
+                            >
+                              <span className="text-sm leading-none">😊</span>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-xs">
+                            Emoji
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Insert mention"
+                              className="h-7 w-7 shrink-0"
+                              onClick={() => richEditorRef.current?.insertMention()}
+                              disabled={controlsDisabled}
+                            >
+                              <AtSign className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-xs">
+                            Mention
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              aria-label="Insert command"
+                              className="h-7 w-7 shrink-0 hidden sm:inline-flex"
+                              onClick={() => richEditorRef.current?.insertSlash()}
+                              disabled={controlsDisabled}
+                            >
+                              <Slash className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-xs">
+                            Command
+                          </TooltipContent>
+                        </Tooltip>
+                      </>
+                    )}
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -1237,9 +1252,51 @@ export function MessageComposer({
                         Attach files
                       </TooltipContent>
                     </Tooltip>
-                    {micButton}
-                    {stashedDraftsTrigger}
-                    {scheduledMessagesTrigger}
+                    {isNarrowBar ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            aria-label="More composer actions"
+                            className="h-7 w-7 shrink-0"
+                            disabled={controlsDisabled}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="min-w-[160px]">
+                          <DropdownMenuItem
+                            className="gap-2 cursor-pointer"
+                            onSelect={() => richEditorRef.current?.insertEmoji()}
+                          >
+                            <span className="text-sm leading-none">😊</span>
+                            Emoji
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="gap-2 cursor-pointer"
+                            onSelect={() => richEditorRef.current?.insertMention()}
+                          >
+                            <AtSign className="h-4 w-4 text-muted-foreground" />
+                            Mention
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="gap-2 cursor-pointer"
+                            onSelect={() => richEditorRef.current?.insertSlash()}
+                          >
+                            <Slash className="h-4 w-4 text-muted-foreground" />
+                            Command
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <>
+                        {micButton}
+                        {stashedDraftsTrigger}
+                        {scheduledMessagesTrigger}
+                      </>
+                    )}
                     {sendButton}
                   </div>
                 )}

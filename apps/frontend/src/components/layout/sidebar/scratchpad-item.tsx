@@ -21,6 +21,7 @@ import {
 import { UrgencyStrip, StreamItemAvatar, StreamItemPreview } from "./stream-item"
 import { StreamLabelDots } from "./sidebar-labels"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
+import { usePanelAwareLink } from "@/components/panels/use-panel-aware-nav"
 import { truncateContent } from "./utils"
 import type { StreamItemData } from "./types"
 
@@ -129,6 +130,7 @@ export function ScratchpadItem({
     canOpenDrawer: actions.length > 0,
     collapseOnMobile,
   })
+  const streamLink = usePanelAwareLink(`/w/${workspaceId}/s/${streamWithPreview.id}`, streamWithPreview.id)
 
   const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
 
@@ -147,8 +149,12 @@ export function ScratchpadItem({
       <div className="group relative">
         <Link
           ref={itemRef}
-          to={`/w/${workspaceId}/s/${streamWithPreview.id}`}
-          onClick={handleClick}
+          to={streamLink.to}
+          onClick={(e) => {
+            // Cmd/ctrl-click opens the scratchpad in a new side panel.
+            streamLink.onClick(e)
+            if (!e.defaultPrevented) handleClick(e)
+          }}
           onTouchStart={isMobile ? longPress.handlers.onTouchStart : undefined}
           onTouchEnd={isMobile ? longPress.handlers.onTouchEnd : undefined}
           onTouchMove={isMobile ? longPress.handlers.onTouchMove : undefined}

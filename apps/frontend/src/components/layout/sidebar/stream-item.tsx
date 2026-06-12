@@ -22,6 +22,7 @@ import {
   type SidebarActionPreview,
 } from "./sidebar-actions"
 import { useSidebarItemDrawer } from "./use-sidebar-item-drawer"
+import { usePanelAwareLink } from "@/components/panels/use-panel-aware-nav"
 import { useUrgencyTracking } from "./use-urgency-tracking"
 import { StreamLabelDots } from "./sidebar-labels"
 import { truncateContent } from "./utils"
@@ -319,6 +320,7 @@ export function StreamItem({
     canOpenDrawer,
     collapseOnMobile,
   })
+  const streamLink = usePanelAwareLink(`/w/${workspaceId}/s/${stream.id}`, stream.id)
 
   const showHoverPreview = compact && showPreviewOnHover && !isMobile && !!preview?.content
 
@@ -344,8 +346,13 @@ export function StreamItem({
       <div className="group relative">
         <Link
           ref={itemRef}
-          to={`/w/${workspaceId}/s/${stream.id}`}
-          onClick={handleClick}
+          to={streamLink.to}
+          onClick={(e) => {
+            // Cmd/ctrl-click opens the stream in a new side panel instead of
+            // navigating the main view.
+            streamLink.onClick(e)
+            if (!e.defaultPrevented) handleClick(e)
+          }}
           onTouchStart={isMobile ? longPress.handlers.onTouchStart : undefined}
           onTouchEnd={isMobile ? longPress.handlers.onTouchEnd : undefined}
           onTouchMove={isMobile ? longPress.handlers.onTouchMove : undefined}

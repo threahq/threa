@@ -23,22 +23,24 @@ function stubSidebar(quickLinksState: CollapseState = "open"): { toggleSectionSt
 function renderQuickLinks(props: Partial<Parameters<typeof SidebarQuickLinks>[0]> = {}) {
   return render(
     <MemoryRouter>
-      <SidebarQuickLinks
-        workspaceId="workspace_1"
-        quickLinks={DEFAULT_QUICK_LINKS}
-        isDraftsPage={false}
-        draftCount={0}
-        isSavedPage={false}
-        savedCount={0}
-        isScheduledPage={false}
-        scheduledCount={0}
-        isActivityPage={false}
-        isMemoryPage={false}
-        isFilesPage={false}
-        isLabelsPage={false}
-        unreadActivityCount={0}
-        {...props}
-      />
+      <Contexts.PanelProvider>
+        <SidebarQuickLinks
+          workspaceId="workspace_1"
+          quickLinks={DEFAULT_QUICK_LINKS}
+          isDraftsPage={false}
+          draftCount={0}
+          isSavedPage={false}
+          savedCount={0}
+          isScheduledPage={false}
+          scheduledCount={0}
+          isActivityPage={false}
+          isMemoryPage={false}
+          isFilesPage={false}
+          isLabelsPage={false}
+          unreadActivityCount={0}
+          {...props}
+        />
+      </Contexts.PanelProvider>
     </MemoryRouter>
   )
 }
@@ -89,21 +91,23 @@ describe("SidebarQuickLinks", () => {
 
     rerender(
       <MemoryRouter>
-        <SidebarQuickLinks
-          workspaceId="workspace_1"
-          quickLinks={[{ key: "drafts", visibility: "active" }]}
-          isDraftsPage={false}
-          draftCount={3}
-          isSavedPage={false}
-          savedCount={0}
-          isScheduledPage={false}
-          scheduledCount={0}
-          isActivityPage={false}
-          isMemoryPage={false}
-          isFilesPage={false}
-          isLabelsPage={false}
-          unreadActivityCount={0}
-        />
+        <Contexts.PanelProvider>
+          <SidebarQuickLinks
+            workspaceId="workspace_1"
+            quickLinks={[{ key: "drafts", visibility: "active" }]}
+            isDraftsPage={false}
+            draftCount={3}
+            isSavedPage={false}
+            savedCount={0}
+            isScheduledPage={false}
+            scheduledCount={0}
+            isActivityPage={false}
+            isMemoryPage={false}
+            isFilesPage={false}
+            isLabelsPage={false}
+            unreadActivityCount={0}
+          />
+        </Contexts.PanelProvider>
       </MemoryRouter>
     )
     expect(screen.getByText("Drafts")).toBeInTheDocument()

@@ -11,6 +11,7 @@ import {
 import { Outlet, useParams, useSearchParams, useMatch, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/app-shell"
 import { Sidebar } from "@/components/layout/sidebar"
+import { WorkspacePanelArea } from "@/components/layout/workspace-panel-area"
 import { Toaster } from "@/components/ui/sonner"
 import { MentionableMarkdownWrapper, type MentionableMarkdownWrapperProps } from "@/components/ui/markdown-content"
 import type { MentionType } from "@/lib/markdown/mention-context"
@@ -42,6 +43,7 @@ import {
   MediaGalleryProvider,
   usePanel,
   isDraftPanel,
+  isViewPanel,
 } from "@/contexts"
 import {
   useKeyboardShortcuts,
@@ -127,11 +129,14 @@ function StreamLinkKeyboardHandler({
   workspaceId: string
   mainStreamId: string | undefined
 }) {
-  const { panelId, getFocusedPane } = usePanel()
+  const { panels, getFocusedPane } = usePanel()
 
   useKeyboardShortcuts({
     copyStreamLink: () => {
-      const targetStreamId = getFocusedPane() === "panel" && panelId && !isDraftPanel(panelId) ? panelId : mainStreamId
+      const focused = getFocusedPane()
+      const focusedPanel = focused !== "main" && panels.includes(focused) ? focused : null
+      const targetStreamId =
+        focusedPanel && !isDraftPanel(focusedPanel) && !isViewPanel(focusedPanel) ? focusedPanel : mainStreamId
       if (!targetStreamId) return
       void copyStreamLink(workspaceId, targetStreamId)
     },
@@ -409,7 +414,9 @@ export function WorkspaceLayout() {
                                         <CoordinatedLoadingGate>
                                           <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
                                             <MainContentGate>
-                                              <Outlet />
+                                              <WorkspacePanelArea workspaceId={workspaceId}>
+                                                <Outlet />
+                                              </WorkspacePanelArea>
                                             </MainContentGate>
                                           </AppShell>
                                         </CoordinatedLoadingGate>

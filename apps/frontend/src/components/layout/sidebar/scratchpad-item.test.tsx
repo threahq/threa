@@ -28,10 +28,10 @@ function renderWithRouter(ui: React.ReactElement, initialPath = "/w/workspace_1/
         <Route
           path="*"
           element={
-            <>
+            <contextsModule.PanelProvider>
               {ui}
               <LocationEcho />
-            </>
+            </contextsModule.PanelProvider>
           }
         />
       </Routes>

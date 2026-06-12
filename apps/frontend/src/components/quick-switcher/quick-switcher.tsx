@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import { Search, Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { LabelableResourceTypes } from "@threa/types"
@@ -15,6 +15,7 @@ import {
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
 import { useDraftScratchpads, useArchiveStream, useStreamName, isDraftId } from "@/hooks"
+import { usePanelPreservingNavigate } from "@/components/panels/use-panel-aware-nav"
 import {
   useWorkspaceUsers,
   useWorkspaceStreams,
@@ -88,7 +89,8 @@ export function getDisplayQuery(query: string, mode: QuickSwitcherMode): string 
 }
 
 export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, currentStreamId }: QuickSwitcherProps) {
-  const navigate = useNavigate()
+  // Panel-preserving: switching streams via the switcher keeps side panels open.
+  const navigate = usePanelPreservingNavigate()
   const [, setSearchParams] = useSearchParams()
   const user = useUser()
   const { createDraft, deleteDraft } = useDraftScratchpads(workspaceId)

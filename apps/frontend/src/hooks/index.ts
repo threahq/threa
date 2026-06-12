@@ -138,8 +138,6 @@ export { useAbortResearch } from "./use-abort-research"
 
 export { usePreloadImages } from "./use-preload-images"
 
-export { usePanelLayout } from "./use-panel-layout"
-
 export { useResizeDrag } from "./use-resize-drag"
 
 export { useTypeToFocus, focusAtEnd } from "./use-type-to-focus"
@@ -165,6 +163,7 @@ export { useBackgroundBootstrapSync } from "./use-background-bootstrap-sync"
 export { useQueueDraftMessage } from "./use-queue-draft-message"
 
 export { useComposerHeightPublish } from "./use-composer-height-publish"
+export { useElementWidth } from "./use-element-width"
 
 export { useUnreadTabIndicator } from "./use-unread-tab-indicator"
 

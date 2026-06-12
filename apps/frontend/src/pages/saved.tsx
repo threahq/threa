@@ -52,7 +52,30 @@ interface InnerProps {
   tab: SavedStatus
 }
 
-function SavedPageInner({ workspaceId, tab }: InnerProps) {
+/**
+ * Tab strip shared by the routed page and the side-panel rendering. Tabs are
+ * navigation — rendered as <a> so cmd-click / context menu work (INV-40); the
+ * caller supplies hrefs (route segments on the page, panel URLs in a panel)
+ * so the view stays URL-driven in both surfaces (INV-59).
+ */
+export function SavedTabs({ value, tabHref }: { value: SavedStatus; tabHref: (next: SavedStatus) => string }) {
+  return (
+    <Tabs value={value}>
+      <TabsList className="h-8">
+        {TABS.map((t) => (
+          <TabsTrigger key={t.value} value={t.value} asChild>
+            <Link to={tabHref(t.value)} className="text-xs px-2.5 py-1">
+              {t.label}
+            </Link>
+          </TabsTrigger>
+        ))}
+      </TabsList>
+    </Tabs>
+  )
+}
+
+/** The saved-items list for one tab — shared by the page and the side panel. */
+export function SavedList({ workspaceId, tab }: InnerProps) {
   const { items, isLoading } = useSavedList(workspaceId, tab)
   const updateMutation = useUpdateSaved(workspaceId)
   const deleteMutation = useDeleteSaved(workspaceId)
@@ -74,31 +97,26 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
     })
   }
 
-  let content = <SavedSkeleton />
-  if (!isLoading) {
-    if (items.length === 0) {
-      content = <SavedEmpty status={tab} />
-    } else {
-      content = (
-        <div className="flex flex-col">
-          {items.map((saved) => (
-            <SavedItem
-              key={saved.id}
-              saved={saved}
-              workspaceId={workspaceId}
-              onMarkDone={tab === "saved" ? () => handleUpdate(saved.id, "done", "Marked done") : undefined}
-              onArchive={tab === "saved" ? () => handleUpdate(saved.id, "archived", "Archived") : undefined}
-              onRestore={tab !== "saved" ? () => handleUpdate(saved.id, "saved", "Restored") : undefined}
-              onDelete={() => handleDelete(saved.id)}
-            />
-          ))}
-        </div>
-      )
-    }
-  }
+  if (isLoading) return <SavedSkeleton />
+  if (items.length === 0) return <SavedEmpty status={tab} />
+  return (
+    <div className="flex flex-col">
+      {items.map((saved) => (
+        <SavedItem
+          key={saved.id}
+          saved={saved}
+          workspaceId={workspaceId}
+          onMarkDone={tab === "saved" ? () => handleUpdate(saved.id, "done", "Marked done") : undefined}
+          onArchive={tab === "saved" ? () => handleUpdate(saved.id, "archived", "Archived") : undefined}
+          onRestore={tab !== "saved" ? () => handleUpdate(saved.id, "saved", "Restored") : undefined}
+          onDelete={() => handleDelete(saved.id)}
+        />
+      ))}
+    </div>
+  )
+}
 
-  // Tabs are navigation — rendered as <a> so cmd-click / context menu work
-  // (INV-40). The Tabs primitive keeps the active-state styling via `value`.
+function SavedPageInner({ workspaceId, tab }: InnerProps) {
   const tabHref = (next: SavedStatus) =>
     next === "saved" ? `/w/${workspaceId}/saved` : `/w/${workspaceId}/saved/${next}`
 
@@ -120,21 +138,13 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
           </div>
         </div>
 
-        <Tabs value={tab}>
-          <TabsList className="h-8">
-            {TABS.map((t) => (
-              <TabsTrigger key={t.value} value={t.value} asChild>
-                <Link to={tabHref(t.value)} className="text-xs px-2.5 py-1">
-                  {t.label}
-                </Link>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <SavedTabs value={tab} tabHref={tabHref} />
       </header>
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="py-1">{content}</main>
+        <main className="py-1">
+          <SavedList workspaceId={workspaceId} tab={tab} />
+        </main>
       </ScrollArea>
     </div>
   )

@@ -22,7 +22,12 @@ const mobileState = {
 }
 
 function renderWithRouter(ui: React.ReactElement) {
-  return render(<MemoryRouter>{ui}</MemoryRouter>)
+  // PanelProvider backs the cmd-click "open in panel" affordance on the link.
+  return render(
+    <MemoryRouter>
+      <contextsModule.PanelProvider>{ui}</contextsModule.PanelProvider>
+    </MemoryRouter>
+  )
 }
 
 function createStream(overrides: Partial<StreamItemData> = {}): StreamItemData {
