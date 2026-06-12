@@ -1,5 +1,6 @@
 export {
   sql,
+  composeSql,
   createDatabasePool,
   createDatabasePools,
   withTransaction,

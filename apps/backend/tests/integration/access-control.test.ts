@@ -13,12 +13,14 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository, WorkspaceService } from "../../src/features/workspaces"
-import { StreamEventRepository, StreamService } from "../../src/features/streams"
+import { StreamEventRepository, StreamService, listAccessibleStreamIds } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
+import { SearchRepository } from "../../src/features/search"
+import { AttachmentRepository } from "../../src/features/attachments"
 import { StreamNotFoundError } from "../../src/lib/errors"
 import { setupTestDatabase, testMessageContent } from "./setup"
-import { userId, workspaceId, eventId, commandId } from "../../src/lib/id"
-import { StreamTypes, Visibilities } from "@threa/types"
+import { userId, workspaceId, eventId, commandId, attachmentId } from "../../src/lib/id"
+import { StreamTypes, Visibilities, AttachmentSafetyStatuses } from "@threa/types"
 
 describe("Access Control", () => {
   let pool: Pool
@@ -884,6 +886,177 @@ describe("Access Control", () => {
       const userBEventTypes = userBEvents.map((e) => e.eventType)
       expect(userBEventTypes).not.toContain("command_dispatched")
       expect(userBEventTypes).not.toContain("command_failed")
+    })
+  })
+
+  /**
+   * INV-62: stream access is inherited via thread → root, and membership ≠
+   * access. These cases pin the SQL-side predicate
+   * (`streamAccessPredicateSql`, now the single definition shared by
+   * `listAccessibleStreamIds`, the search repo, and the attachment explorer
+   * search) against the three scenarios the inlined copies used to get
+   * wrong, on each cross-cutting surface:
+   *   (a) a thread inside a channel the viewer is a member of (but not a
+   *       member of the thread itself) IS visible;
+   *   (b) a public channel the viewer is NOT a member of IS visible;
+   *   (c) a private channel the viewer is NOT a member of is NOT visible.
+   */
+  describe("Thread → root SQL access predicate (INV-62)", () => {
+    /**
+     * Builds one workspace containing, for a viewer who is ONLY a member of
+     * `memberPrivateChannel`:
+     *   - memberThread: a thread inside that private channel (viewer is NOT a
+     *     thread member) → must be visible via root inheritance
+     *   - publicChannel: a public channel the viewer is not a member of →
+     *     visible
+     *   - otherPrivateChannel: a private channel the viewer is not a member of
+     *     → not visible
+     */
+    async function buildFixture() {
+      const ownerId = userId()
+      const wsId = workspaceId()
+      let viewerId = ""
+
+      await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: wsId,
+          name: "INV-62 Predicate Workspace",
+          slug: `inv62-ws-${wsId}`,
+          createdBy: ownerId,
+        })
+        viewerId = (await addTestMember(client, wsId, userId())).id
+      })
+
+      const memberPrivateChannel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `inv62-member-private-${Date.now()}`,
+        displayName: "Member Private Channel",
+        createdBy: ownerId,
+        visibility: Visibilities.PRIVATE,
+      })
+      await streamService.addMember(memberPrivateChannel.id, viewerId, wsId)
+
+      // Thread inside the member channel; viewer is NOT added to the thread.
+      const parentMessage = await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: memberPrivateChannel.id,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("Parent message spawning a thread"),
+      })
+      const memberThread = await streamService.createThread({
+        workspaceId: wsId,
+        parentStreamId: memberPrivateChannel.id,
+        parentMessageId: parentMessage.id,
+        createdBy: ownerId,
+      })
+
+      const publicChannel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `inv62-public-${Date.now()}`,
+        displayName: "Public Channel",
+        createdBy: ownerId,
+        visibility: Visibilities.PUBLIC,
+      })
+
+      const otherPrivateChannel = await streamService.createChannel({
+        workspaceId: wsId,
+        slug: `inv62-other-private-${Date.now()}`,
+        displayName: "Other Private Channel",
+        createdBy: ownerId,
+        visibility: Visibilities.PRIVATE,
+      })
+
+      return {
+        wsId,
+        viewerId,
+        memberThread,
+        publicChannel,
+        otherPrivateChannel,
+      }
+    }
+
+    test("listAccessibleStreamIds resolves all three cases through the shared predicate", async () => {
+      const { wsId, viewerId, memberThread, publicChannel, otherPrivateChannel } = await buildFixture()
+
+      const accessible = await listAccessibleStreamIds(pool, wsId, viewerId, [
+        memberThread.id,
+        publicChannel.id,
+        otherPrivateChannel.id,
+      ])
+
+      expect(accessible.has(memberThread.id)).toBe(true)
+      expect(accessible.has(publicChannel.id)).toBe(true)
+      expect(accessible.has(otherPrivateChannel.id)).toBe(false)
+    })
+
+    test("search accessible-stream gating resolves all three cases", async () => {
+      const { wsId, viewerId, memberThread, publicChannel, otherPrivateChannel } = await buildFixture()
+
+      const accessibleIds = await SearchRepository.getAccessibleStreamsWithMembers(pool, {
+        workspaceId: wsId,
+        userId: viewerId,
+      })
+      const accessible = new Set(accessibleIds)
+
+      expect(accessible.has(memberThread.id)).toBe(true)
+      expect(accessible.has(publicChannel.id)).toBe(true)
+      expect(accessible.has(otherPrivateChannel.id)).toBe(false)
+    })
+
+    test("attachment explorer search returns uploads from a thread inside a member channel and from a public channel, never from a private non-member channel", async () => {
+      const { wsId, viewerId, memberThread, publicChannel, otherPrivateChannel } = await buildFixture()
+      const ownerId = userId()
+
+      // One clean, message-linked attachment per stream. They share a common
+      // filename token so a single name-substring search would surface every
+      // accessible one; gating, not text matching, is what's under test.
+      const nameToken = `inv62token${Date.now()}`
+      const seedAttachment = async (streamIdValue: string, tag: string): Promise<string> => {
+        const attId = attachmentId()
+        await withTransaction(pool, async (client) => {
+          // The explorer search requires message_id IS NOT NULL; create a
+          // message in the stream and point the attachment at it.
+          const message = await eventService.createMessageInTransaction(client, {
+            workspaceId: wsId,
+            streamId: streamIdValue,
+            authorId: ownerId,
+            authorType: "user",
+            ...testMessageContent(`attachment carrier ${tag}`),
+          })
+          await AttachmentRepository.insert(client, {
+            id: attId,
+            workspaceId: wsId,
+            streamId: streamIdValue,
+            uploadedBy: ownerId,
+            filename: `${nameToken}-${tag}.pdf`,
+            mimeType: "application/pdf",
+            sizeBytes: 1024,
+            storagePath: `/test/${nameToken}-${tag}`,
+            safetyStatus: AttachmentSafetyStatuses.CLEAN,
+          })
+          await client.query(`UPDATE attachments SET message_id = $1 WHERE id = $2`, [message.id, attId])
+        })
+        return attId
+      }
+
+      const threadAttachmentId = await seedAttachment(memberThread.id, "thread")
+      const publicAttachmentId = await seedAttachment(publicChannel.id, "public")
+      const privateAttachmentId = await seedAttachment(otherPrivateChannel.id, "private")
+
+      const results = await withTransaction(pool, (client) =>
+        AttachmentRepository.search(client, {
+          workspaceId: wsId,
+          userId: viewerId,
+          nameSubstring: nameToken,
+          limit: 50,
+        })
+      )
+      const foundIds = new Set(results.map((r) => r.id))
+
+      expect(foundIds.has(threadAttachmentId)).toBe(true)
+      expect(foundIds.has(publicAttachmentId)).toBe(true)
+      expect(foundIds.has(privateAttachmentId)).toBe(false)
     })
   })
 })

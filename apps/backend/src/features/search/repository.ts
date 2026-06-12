@@ -1,7 +1,8 @@
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { sql, composeSql } from "../../db"
 import { DM_PARTICIPANT_COUNT, Visibilities, type AuthorType, type StreamType } from "@threa/types"
 import { parseArchiveStatusFilter, type ArchiveStatus } from "../../lib/sql-filters"
+import { streamAccessPredicateSql } from "../streams"
 import type { AgentAccessSpec } from "../agents"
 
 export interface GetAccessibleStreamsParams {
@@ -124,18 +125,11 @@ export const SearchRepository = {
 
     // If no participant filter, simpler query
     if (!hasParticipantFilter) {
-      const result = await db.query<{ id: string }>(sql`
-        SELECT DISTINCT s.id
+      const result = await db.query<{ id: string }>(composeSql`
+        SELECT s.id
         FROM streams s
-        LEFT JOIN stream_members sm ON s.id = sm.stream_id AND sm.member_id = ${userId}
-        LEFT JOIN streams root ON s.root_stream_id = root.id
-        LEFT JOIN stream_members root_sm ON root.id = root_sm.stream_id AND root_sm.member_id = ${userId}
         WHERE s.workspace_id = ${workspaceId}
-          AND (
-            sm.member_id IS NOT NULL
-            OR s.visibility = ${Visibilities.PUBLIC}
-            OR (s.root_stream_id IS NOT NULL AND (root_sm.member_id IS NOT NULL OR root.visibility = ${Visibilities.PUBLIC}))
-          )
+          AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
           AND (${!hasTypeFilter} OR s.type = ANY(${streamTypes ?? []}))
           AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
       `)
@@ -143,19 +137,12 @@ export const SearchRepository = {
     }
 
     // With participant filter: combined query using UNION for users + personas
-    const result = await db.query<{ id: string }>(sql`
+    const result = await db.query<{ id: string }>(composeSql`
       WITH accessible AS (
-        SELECT DISTINCT s.id
+        SELECT s.id
         FROM streams s
-        LEFT JOIN stream_members sm ON s.id = sm.stream_id AND sm.member_id = ${userId}
-        LEFT JOIN streams root ON s.root_stream_id = root.id
-        LEFT JOIN stream_members root_sm ON root.id = root_sm.stream_id AND root_sm.member_id = ${userId}
         WHERE s.workspace_id = ${workspaceId}
-          AND (
-            sm.member_id IS NOT NULL
-            OR s.visibility = ${Visibilities.PUBLIC}
-            OR (s.root_stream_id IS NOT NULL AND (root_sm.member_id IS NOT NULL OR root.visibility = ${Visibilities.PUBLIC}))
-          )
+          AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
           AND (${!hasTypeFilter} OR s.type = ANY(${streamTypes ?? []}))
           AND (${filterAll} OR (${includeArchived} AND s.archived_at IS NOT NULL) OR (${!includeArchived} AND s.archived_at IS NULL))
       ),
