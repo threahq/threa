@@ -9,12 +9,15 @@ interface Props {
   description?: string
   current?: string
   sections?: { id: string; label: string; group?: string }[]
+  /** Full-width article (the API reference's two-column endpoint layout). */
+  wide?: boolean
 }
 const {
   title = "Threa Developers",
   description = "Build on Threa: a public REST API over your workspace covering messages, streams, memos, search, and a bot runtime for connecting your own agent.",
   current = "",
   sections = [],
+  wide = false,
 } = Astro.props
 
 const nav = [
@@ -95,6 +98,7 @@ for (const s of sections) {
           <a href="/developers/reference">Reference</a>
           <a href="/developers/recipes">Recipes</a>
           <a href="/openapi.json">OpenAPI</a>
+          <a href="/llms.txt">llms.txt</a>
           <a class="home" href="/">↩ threa.io</a>
         </nav>
         <button type="button" class="pg-toggle" id="pg-toggle" aria-expanded="false" aria-controls="pg-panel">
@@ -196,7 +200,7 @@ for (const s of sections) {
       </aside>
 
       <main class="docs-main">
-        <article class="docs-article">
+        <article class={`docs-article${wide ? " is-wide" : ""}`}>
           <slot />
         </article>
 
@@ -209,6 +213,8 @@ for (const s of sections) {
                 &nbsp;·&nbsp;
               </>
             )}
+            <a href="/llms.txt">llms.txt</a>
+            &nbsp;·&nbsp;
             <a href="/developers/feature-requests">Request a feature</a>
             &nbsp;·&nbsp;
             <a href="/">threa.io</a>

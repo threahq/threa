@@ -259,11 +259,12 @@ function rewriteLinks(markdown: string): string {
 
 function pageToMarkdown(page: Page): string {
   const html = readFileSync(dist(page.html), "utf8")
-  // The wrapper comes from DocsLayout.astro's <article class="docs-article">;
-  // this extraction is what breaks if that layout renames or re-nests it.
-  const article = html.match(/<article class="docs-article">([\s\S]*?)<\/article>/)?.[1]
+  // The wrapper comes from DocsLayout.astro's <article class="docs-article">
+  // (plus variant classes like is-wide); this extraction is what breaks if
+  // that layout renames or re-nests it.
+  const article = html.match(/<article class="docs-article[^"]*">([\s\S]*?)<\/article>/)?.[1]
   if (!article) {
-    throw new Error(`No <article class="docs-article"> in ${page.html} — did DocsLayout.astro change its wrapper?`)
+    throw new Error(`No <article class="docs-article…"> in ${page.html} — did DocsLayout.astro change its wrapper?`)
   }
 
   let md = createConverter().turndown(article)

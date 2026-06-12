@@ -138,3 +138,115 @@ export function exampleBody(schema: JsonSchema | undefined): Record<string, unkn
   }
   return out
 }
+
+/* ---------- Example responses ----------
+   The spec carries no example values, so the reference synthesizes realistic
+   ones from field names: prefixed-ULID ids, ISO timestamps, and content drawn
+   from the same auth-refactor story the marketing pages tell. Illustrative,
+   not contractual — the schema tables beside them stay the contract. */
+
+const ULID = "01jd2q4z8kxw9v7r3m5t8n"
+
+function prefixedId(noun: string): string {
+  const n = noun.toLowerCase()
+  if (n.includes("stream") || n.includes("channel")) return `stream_${ULID}`
+  if (n.includes("message")) return `msg_${ULID}`
+  if (n.includes("memo")) return `memo_${ULID}`
+  if (n.includes("user") || n.includes("author") || n.includes("member") || n.includes("owner")) return `usr_${ULID}`
+  if (n.includes("workspace")) return `ws_${ULID}`
+  if (n.includes("attachment") || n.includes("file")) return `attach_${ULID}`
+  if (n.includes("invocation")) return `inv_${ULID}`
+  if (n.includes("bot")) return `bot_${ULID}`
+  return `${n || "id"}_${ULID}`
+}
+
+function exampleString(name: string, schema: JsonSchema, hint: string): string {
+  if (schema.enum && schema.enum.length) return String(schema.enum[0])
+  if (schema.format === "date-time") return "2026-03-12T11:42:00.000Z"
+  const n = name.toLowerCase()
+  if (n === "id") return prefixedId(hint)
+  if (n.endsWith("id")) {
+    if (n.startsWith("client")) return "ci-deploy-2.4.1"
+    if (n.startsWith("instance")) return "my-laptop-1"
+    // sourceMessageId / parentStreamId / rootStreamId → the bare entity noun.
+    return prefixedId(n.slice(0, -2).replace(/^(source|parent|root)/, ""))
+  }
+  if (n.includes("email")) return "maya@acme.dev"
+  if (n.includes("slug")) return "api-v3"
+  if (n.includes("displayname") || n === "name") {
+    if (n.includes("author") || n.includes("user") || hint.includes("user") || hint.includes("bot")) {
+      return "Maya Reyes"
+    }
+    return "api-v3"
+  }
+  if (n.includes("sequence")) return "412"
+  if (n.includes("title")) return "Auth refactor held pending token-rotation review"
+  if (n.includes("abstract") || n.includes("summary") || n.includes("description")) {
+    return "Jordan asked to pause the v3 auth boundary until the rotation flow is reviewed."
+  }
+  if (n.includes("content") || n.includes("markdown") || n.includes("prompt") || n.includes("text")) {
+    return "Picking the auth refactor back up next sprint."
+  }
+  if (n.includes("query")) return "auth refactor"
+  if (n.includes("url")) return "https://files.threa.io/attachments/rotation-flow.png"
+  if (n.includes("token")) return "clm_7f3kq9w2…"
+  if (n.includes("filename")) return "rotation-flow.png"
+  if (n.includes("mime")) return "image/png"
+  if (n.includes("tag")) return "api-v3"
+  if (n.includes("knowledgetype")) return "decision"
+  if (n.includes("role")) return "member"
+  if (n.includes("kind")) return "user"
+  if (n.includes("visibility")) return "open"
+  if (n.includes("status") || n.includes("state")) return "available"
+  return "…"
+}
+
+function exampleNumber(name: string): number {
+  const n = name.toLowerCase()
+  if (n.includes("limit")) return 20
+  if (n.includes("count") || n.includes("total")) return 2
+  if (n.includes("sequence")) return 412
+  if (n.includes("size") || n.includes("bytes")) return 48213
+  if (n.includes("score") || n.includes("similarity")) return 0.87
+  if (n.includes("ttl") || n.includes("seconds")) return 120
+  if (n.includes("ms") || n.includes("duration")) return 1240
+  return 1
+}
+
+function exampleResponseValue(name: string, schema: JsonSchema, hint: string, depth: number): unknown {
+  const variants = schema.anyOf ?? schema.oneOf
+  if (variants && variants.length) {
+    // Nullable cursors read most naturally as their resting state.
+    if (name.toLowerCase().includes("cursor")) return null
+    const nonNull = variants.find((v) => v.type !== "null") ?? variants[0]
+    return exampleResponseValue(name, nonNull, hint, depth)
+  }
+  switch (schema.type) {
+    case "string":
+      return exampleString(name, schema, hint)
+    case "integer":
+    case "number":
+      return exampleNumber(name)
+    case "boolean":
+      if (schema.default !== undefined) return schema.default
+      return name.toLowerCase() !== "hasmore"
+    case "array":
+      return schema.items ? [exampleResponseValue(name, schema.items, hint, depth)] : []
+    case "object":
+      return exampleResponse(schema, hint, depth + 1)
+    default:
+      return null
+  }
+}
+
+/* A full example object for a response schema: every property, arrays as one
+   item, nested objects to a sane depth. `hint` names the entity (from the
+   endpoint path) so bare `id` fields get the right prefix. */
+export function exampleResponse(schema: JsonSchema | undefined, hint = "", depth = 0): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (!schema?.properties || depth > 4) return out
+  for (const [name, prop] of Object.entries(schema.properties)) {
+    out[name] = exampleResponseValue(name, prop, hint, depth)
+  }
+  return out
+}

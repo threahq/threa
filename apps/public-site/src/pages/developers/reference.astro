@@ -14,6 +14,10 @@ const specPath = fileURLToPath(new URL("../../../../../docs/public-api/openapi.j
 const spec = JSON.parse(readFileSync(specPath, "utf8"))
 
 const WORKSPACE_PREFIX = "/api/v1/workspaces/{workspaceId}"
+// Run configs use the playground's {{token}} form, NOT the spec's single-brace
+// {workspaceId}: the playground only substitutes {{…}}, so a single-brace path
+// would fire a literal "/workspaces/{workspaceId}/…" request.
+const RUN_PREFIX = "/api/v1/workspaces/{{workspaceId}}"
 
 // Tag order and descriptions. The spec declares only the first five; the bot and
 // identity tags are described here so the reference reads in a sensible order.
@@ -45,23 +49,23 @@ const TAG_DESC: Record<string, string> = {
 // id). Everything else shows a copyable curl without a Run button, so the docs
 // never fire a state-changing call.
 const RUNS: Record<string, { method: string; path: string; body?: string }> = {
-  getMe: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/me` },
-  listMyBots: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/me/bots` },
-  listStreams: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/streams?type=channel&limit=20` },
-  listUsers: { method: "GET", path: `{{baseUrl}}${WORKSPACE_PREFIX}/users?limit=20` },
+  getMe: { method: "GET", path: `{{baseUrl}}${RUN_PREFIX}/me` },
+  listMyBots: { method: "GET", path: `{{baseUrl}}${RUN_PREFIX}/me/bots` },
+  listStreams: { method: "GET", path: `{{baseUrl}}${RUN_PREFIX}/streams?type=channel&limit=20` },
+  listUsers: { method: "GET", path: `{{baseUrl}}${RUN_PREFIX}/users?limit=20` },
   searchMessages: {
     method: "POST",
-    path: `{{baseUrl}}${WORKSPACE_PREFIX}/messages/search`,
+    path: `{{baseUrl}}${RUN_PREFIX}/messages/search`,
     body: JSON.stringify({ query: "auth", semantic: true, exact: false, limit: 5 }),
   },
   searchMemos: {
     method: "POST",
-    path: `{{baseUrl}}${WORKSPACE_PREFIX}/memos/search`,
+    path: `{{baseUrl}}${RUN_PREFIX}/memos/search`,
     body: JSON.stringify({ query: "auth", limit: 5 }),
   },
   searchAttachments: {
     method: "POST",
-    path: `{{baseUrl}}${WORKSPACE_PREFIX}/attachments/search`,
+    path: `{{baseUrl}}${RUN_PREFIX}/attachments/search`,
     body: JSON.stringify({ query: "auth", limit: 5 }),
   },
 }
@@ -92,6 +96,33 @@ const groups = TAG_ORDER.map((tag) => ({
   ops: ops.filter((o) => o.tag === tag),
 })).filter((g) => g.ops.length > 0)
 
+// Worked examples that use each group's endpoints. The reference describes
+// the wire; the recipe shows the task — link them so a reader who lands on
+// an endpoint finds the "how would I actually use this" path immediately.
+const TAG_RECIPES: Record<string, { href: string; label: string }[]> = {
+  Streams: [{ href: "/developers/recipes#ci-notify", label: "Notify a stream from CI" }],
+  Messages: [
+    { href: "/developers/recipes#ci-notify", label: "Notify a stream from CI" },
+    { href: "/developers/recipes#mirror-search", label: "Mirror a search into your own tool" },
+  ],
+  Memos: [{ href: "/developers/recipes#decisions", label: "Find out what was decided, and why" }],
+  "Bot runtimes": [{ href: "/developers/recipes#local-agent", label: "Connect your local agent" }],
+  "Bot invocations": [{ href: "/developers/recipes#local-agent", label: "Connect your local agent" }],
+}
+
+// Entity noun per tag, used to synthesize correctly-prefixed ids in example
+// responses (a bare `id` under Streams renders as stream_…).
+const TAG_HINT: Record<string, string> = {
+  Identity: "user",
+  Streams: "stream",
+  Messages: "message",
+  Memos: "memo",
+  Attachments: "attachment",
+  Users: "user",
+  "Bot runtimes": "bot",
+  "Bot invocations": "invocation",
+}
+
 const shortPath = (p: string) => p.replace(WORKSPACE_PREFIX, "") || "/"
 const sections = groups.flatMap((g) =>
   g.ops.map((o) => ({
@@ -102,7 +133,7 @@ const sections = groups.flatMap((g) =>
 )
 ---
 
-<DocsLayout title="API reference · Threa Developers" current="reference" sections={sections}>
+<DocsLayout title="API reference · Threa Developers" current="reference" sections={sections} wide>
   <p class="eyebrow">Reference</p>
   <h1>API <span class="accent">reference</span>.</h1>
   <p class="lead">
@@ -122,6 +153,14 @@ const sections = groups.flatMap((g) =>
     <section class="api-group">
       <h2 id={g.slug}>{g.tag}</h2>
       {g.desc && <p class="api-group-desc">{g.desc}</p>}
+      {TAG_RECIPES[g.tag] && (
+        <p class="api-recipes">
+          <span class="api-recipes-label">Recipes</span>
+          {TAG_RECIPES[g.tag].map((r) => (
+            <a href={r.href}>{r.label} →</a>
+          ))}
+        </p>
+      )}
       {g.ops.map((o) => (
         <ApiEndpoint
           method={o.method}
@@ -129,6 +168,7 @@ const sections = groups.flatMap((g) =>
           anchor={o.anchor}
           op={o.op}
           run={o.op.operationId ? RUNS[o.op.operationId] : undefined}
+          hint={TAG_HINT[g.tag]}
         />
       ))}
     </section>

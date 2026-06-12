@@ -18,8 +18,11 @@
   --paper-sunk: 40 14% 93%; /* page canvas, just below cards */
   --ink: 30 10% 12%; /* === app --foreground */
   --ink-soft: 30 9% 26%;
-  --night: 222 25% 8%;
-  --night-soft: 222 18% 14%;
+  /* Warm dark — the night surfaces share the page's hue family (espresso
+     ink, not blue-black) so terminals and the closing band sit IN the warm
+     paper world instead of beside it. */
+  --night: 26 16% 10%;
+  --night-soft: 26 12% 16%;
   --line: 35 15% 88%; /* === app --border */
   --muted: 30 8% 45%; /* === app --muted-foreground */
   --emerald: 142 64% 38%;
@@ -1694,7 +1697,7 @@ body::after {
    instead of another gray box. Prompt stays gold: the thread in the dark. */
 .os-terminal {
   background: hsl(var(--night));
-  border: 1px solid hsl(222 16% 18%);
+  border: 1px solid hsl(26 12% 20%);
   border-radius: 6px;
   padding: 18px 22px;
   font-family: var(--font-mono);
@@ -1703,7 +1706,7 @@ body::after {
   color: hsl(35 12% 72%);
   margin-top: 4px;
   overflow-x: auto;
-  box-shadow: 0 16px 44px -24px hsl(222 30% 8% / 0.6);
+  box-shadow: 0 16px 44px -24px hsl(26 30% 6% / 0.55);
 }
 .os-terminal .row {
   display: block;
@@ -1973,17 +1976,17 @@ body::after {
 }
 .frame.night .cta-shell input {
   background: hsl(var(--night-soft));
-  border-color: hsl(222 14% 24%);
+  border-color: hsl(26 10% 24%);
   color: hsl(38 16% 92%);
 }
 .frame.night .cta-shell input::placeholder {
-  color: hsl(222 10% 46%);
+  color: hsl(28 8% 48%);
 }
 .frame.night .cta-shell input:focus {
   border-color: hsl(var(--gold) / 0.6);
 }
 .frame.night .quiet {
-  color: hsl(222 10% 52%);
+  color: hsl(28 7% 52%);
 }
 .frame.night #wl-status.is-ok {
   color: hsl(142 50% 56%);

@@ -6,6 +6,8 @@
  * provided, a Run button fires the call against the reader's base URL and
  * prints the response under the block.
  */
+import { highlightCode, type CodeLang } from "../lib/highlight"
+
 interface RunConfig {
   method: string
   path: string
@@ -14,32 +16,15 @@ interface RunConfig {
 }
 interface Props {
   code: string
-  lang?: string
+  lang?: CodeLang
   label?: string
   run?: RunConfig
 }
 const { code, lang = "bash", label, run } = Astro.props
 
-const TOKEN_RE = /\{\{(baseUrl|workspaceId|apiKey)\}\}/g
-
-function escapeHtml(s: string): string {
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-}
-
-// Turn the raw template into HTML: escaped literal segments with token chips
-// spliced in. The chips are filled by the playground runtime at load.
-let html = ""
-let last = 0
-let m: RegExpExecArray | null
-while ((m = TOKEN_RE.exec(code)) !== null) {
-  html += escapeHtml(code.slice(last, m.index))
-  html += `<span class="pg-var is-unset" data-var="${m[1]}"></span>`
-  last = m.index + m[0].length
-}
-html += escapeHtml(code.slice(last))
+// Build-time Shiki pass: colored token spans with the {{var}} chips spliced
+// in. The chips are filled by the playground runtime at load, same as before.
+const html = await highlightCode(code, lang)
 ---
 
 <div class="pg-block">
