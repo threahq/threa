@@ -81,8 +81,11 @@ function arrangeCompletion(params: { existingSteps: unknown[] }) {
     editedAt: null,
     createdAt: new Date("2026-06-11T09:00:04.000Z"),
   }
+  const createMessageInTransaction = mock((_client: unknown, _params: Record<string, unknown>) =>
+    Promise.resolve(message)
+  )
   const eventService = {
-    createMessageInTransaction: mock(() => Promise.resolve(message)),
+    createMessageInTransaction,
     getLatestSequence: mock(() => Promise.resolve(7n)),
   } as unknown as EventService
   const botRuntimeService = {
@@ -122,7 +125,7 @@ function arrangeCompletion(params: { existingSteps: unknown[] }) {
     body: { instanceId: "inst_1", claimToken: "tok_1", finalMessageMarkdown: "High tide is at 14:32." },
   } as unknown as Request
 
-  return { handlers, req, emitted, appendStep, insertEvent }
+  return { handlers, req, emitted, appendStep, insertEvent, createMessageInTransaction }
 }
 
 describe("completeBotInvocation synthesized-trace floor", () => {
@@ -180,5 +183,32 @@ describe("completeBotInvocation synthesized-trace floor", () => {
     const completedEvent = insertEvent.mock.calls[0]?.[1] as unknown as { payload: Record<string, unknown> }
     expect(completedEvent.payload).toMatchObject({ stepCount: 1 })
     expect(emitted.filter((e) => e.event === "agent_session:step:completed")).toHaveLength(0)
+  })
+})
+
+describe("completeBotInvocation sources", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  it("threads completion sources onto the committed bot reply so citations aren't dropped", async () => {
+    const { handlers, req, createMessageInTransaction } = arrangeCompletion({ existingSteps: [] })
+    const sources = [
+      { type: "web", title: "Tide tables", url: "https://tides.example/today", snippet: "High tide 14:32" },
+    ]
+    req.body = { ...(req.body as Record<string, unknown>), sources }
+
+    await handlers.completeBotInvocation(req, createResponse())
+
+    expect(createMessageInTransaction).toHaveBeenCalledTimes(1)
+    expect(createMessageInTransaction.mock.calls[0]?.[1]).toMatchObject({ sources })
+  })
+
+  it("commits no sources field when the completion declares none", async () => {
+    const { handlers, req, createMessageInTransaction } = arrangeCompletion({ existingSteps: [] })
+
+    await handlers.completeBotInvocation(req, createResponse())
+
+    expect(createMessageInTransaction.mock.calls[0]?.[1].sources).toBeUndefined()
   })
 })
