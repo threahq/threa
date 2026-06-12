@@ -63,7 +63,7 @@ describe("Unread Counts", () => {
       // Count unreads with lastReadEventId = latest event
       const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: lastEventId }])
 
-      expect(counts.get(testStreamId)).toBe(0)
+      expect(counts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
     })
 
     test("should return correct unread count when messages exist after lastReadEventId", async () => {
@@ -111,7 +111,7 @@ describe("Unread Counts", () => {
       // Should have 2 unread (messages 2 and 3)
       const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: firstEventId }])
 
-      expect(counts.get(testStreamId)).toBe(2)
+      expect(counts.get(testStreamId)).toEqual({ unreadCount: 2, totalCount: 3 })
     })
 
     test("should return all messages as unread when lastReadEventId is null", async () => {
@@ -141,7 +141,7 @@ describe("Unread Counts", () => {
       // Count with null lastReadEventId (never read)
       const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: null }])
 
-      expect(counts.get(testStreamId)).toBe(3)
+      expect(counts.get(testStreamId)).toEqual({ unreadCount: 3, totalCount: 3 })
     })
 
     test("should not count user's own message as unread", async () => {
@@ -177,7 +177,7 @@ describe("Unread Counts", () => {
       const authorCounts = await streamService.getUnreadCounts([
         { streamId: testStreamId, lastReadEventId: authorMembership!.lastReadEventId },
       ])
-      expect(authorCounts.get(testStreamId)).toBe(0)
+      expect(authorCounts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
 
       // Other user should have 1 unread (their lastReadEventId is still null)
       const otherMembership = await streamService.getMembership(testStreamId, otherUserId)
@@ -186,7 +186,7 @@ describe("Unread Counts", () => {
       const otherCounts = await streamService.getUnreadCounts([
         { streamId: testStreamId, lastReadEventId: otherMembership!.lastReadEventId },
       ])
-      expect(otherCounts.get(testStreamId)).toBe(1)
+      expect(otherCounts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 1 })
     })
 
     test("should handle multiple streams in batch", async () => {
@@ -244,8 +244,8 @@ describe("Unread Counts", () => {
         { streamId: stream2, lastReadEventId: events2[2].id }, // Read all 3, unread 0
       ])
 
-      expect(counts.get(stream1)).toBe(1)
-      expect(counts.get(stream2)).toBe(0)
+      expect(counts.get(stream1)).toEqual({ unreadCount: 1, totalCount: 2 })
+      expect(counts.get(stream2)).toEqual({ unreadCount: 0, totalCount: 3 })
     })
   })
 
@@ -308,8 +308,8 @@ describe("Unread Counts", () => {
         { streamId: stream2, lastReadEventId: membership2!.lastReadEventId },
       ])
 
-      expect(counts.get(stream1)).toBe(0)
-      expect(counts.get(stream2)).toBe(0)
+      expect(counts.get(stream1)).toEqual({ unreadCount: 0, totalCount: 1 })
+      expect(counts.get(stream2)).toEqual({ unreadCount: 0, totalCount: 1 })
     })
 
     test("should only update streams that have unread messages", async () => {
@@ -453,6 +453,145 @@ describe("Unread Counts", () => {
       expect(m1?.lastReadEventId).toBe(eventIds[0])
       expect(m2?.lastReadEventId).toBe(eventIds[1])
       expect(m3?.lastReadEventId).toBe(eventIds[2])
+    })
+  })
+
+  // Sync-v2 phase 2c: the unread counter events carry absolute values so
+  // replayed/duplicated sync-log entries converge instead of compounding.
+  // Clients derive unread = latestOrdinal - lastReadOrdinal; these tests pin
+  // the ordinal payloads end-to-end through the real write paths.
+  describe("absolute counter payloads", () => {
+    async function setupStreamWithMembers(): Promise<{
+      testStreamId: string
+      testWorkspaceId: string
+      authorId: string
+      readerId: string
+    }> {
+      const testStreamId = streamId()
+      const testWorkspaceId = workspaceId()
+      const authorId = userId()
+      const readerId = userId()
+
+      await withTransaction(pool, async (client) => {
+        await client.query(
+          `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
+          [testStreamId, testWorkspaceId, authorId]
+        )
+        await StreamMemberRepository.insert(client, testStreamId, authorId)
+        await StreamMemberRepository.insert(client, testStreamId, readerId)
+      })
+
+      return { testStreamId, testWorkspaceId, authorId, readerId }
+    }
+
+    async function listOutboxPayloads(eventType: string, streamIdValue: string): Promise<Array<Record<string, any>>> {
+      const result = await pool.query(
+        `SELECT payload FROM outbox WHERE event_type = $1 AND payload->>'streamId' = $2 ORDER BY id`,
+        [eventType, streamIdValue]
+      )
+      return result.rows.map((row) => row.payload)
+    }
+
+    test("stream:activity carries the message's sequence and ordinal", async () => {
+      const { testStreamId, testWorkspaceId, authorId } = await setupStreamWithMembers()
+
+      for (let i = 1; i <= 3; i++) {
+        await eventService.createMessage({
+          workspaceId: testWorkspaceId,
+          streamId: testStreamId,
+          authorId,
+          authorType: "user",
+          ...testMessageContent(`Message ${i}`),
+        })
+      }
+
+      const payloads = await listOutboxPayloads("stream:activity", testStreamId)
+      expect(payloads).toHaveLength(3)
+      expect(payloads.map((p) => p.messageOrdinal)).toEqual([1, 2, 3])
+
+      // Sequences are the events' per-stream sequences, in order.
+      const events = await StreamEventRepository.list(pool, testStreamId)
+      expect(payloads.map((p) => p.sequence)).toEqual(events.map((e) => e.sequence.toString()))
+    })
+
+    test("stream:read carries the read position in message-ordinal space", async () => {
+      const { testStreamId, testWorkspaceId, authorId, readerId } = await setupStreamWithMembers()
+
+      for (let i = 1; i <= 3; i++) {
+        await eventService.createMessage({
+          workspaceId: testWorkspaceId,
+          streamId: testStreamId,
+          authorId,
+          authorType: "user",
+          ...testMessageContent(`Message ${i}`),
+        })
+      }
+
+      // Read up to the second message: ordinal 2 of 3.
+      const events = await StreamEventRepository.list(pool, testStreamId)
+      await streamService.markAsRead(testWorkspaceId, testStreamId, readerId, events[1].id)
+
+      const payloads = await listOutboxPayloads("stream:read", testStreamId)
+      expect(payloads).toHaveLength(1)
+      expect(payloads[0]).toEqual({
+        workspaceId: testWorkspaceId,
+        authorId: readerId,
+        streamId: testStreamId,
+        lastReadEventId: events[1].id,
+        lastReadSequence: events[1].sequence.toString(),
+        lastReadOrdinal: 2,
+      })
+
+      // The derived unread matches the authoritative count: 3 - 2 = 1.
+      const counts = await streamService.getUnreadCounts([{ streamId: testStreamId, lastReadEventId: events[1].id }])
+      expect(counts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 3 })
+    })
+
+    test("stream:read_all carries per-stream absolute read positions", async () => {
+      const { testStreamId, testWorkspaceId, authorId, readerId } = await setupStreamWithMembers()
+
+      await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId,
+        authorType: "user",
+        ...testMessageContent("Only message"),
+      })
+
+      await streamService.markAllAsRead(testWorkspaceId, readerId)
+
+      const result = await pool.query(
+        `SELECT payload FROM outbox WHERE event_type = 'stream:read_all' AND payload->>'authorId' = $1 ORDER BY id`,
+        [readerId]
+      )
+      expect(result.rows).toHaveLength(1)
+      expect(result.rows[0].payload).toEqual({
+        workspaceId: testWorkspaceId,
+        authorId: readerId,
+        streamIds: [testStreamId],
+        reads: [{ streamId: testStreamId, lastReadOrdinal: 1 }],
+      })
+    })
+
+    test("getMessageOrdinalForEvent counts only messages at or below the event's sequence", async () => {
+      const { testStreamId, testWorkspaceId, authorId } = await setupStreamWithMembers()
+
+      for (let i = 1; i <= 2; i++) {
+        await eventService.createMessage({
+          workspaceId: testWorkspaceId,
+          streamId: testStreamId,
+          authorId,
+          authorType: "user",
+          ...testMessageContent(`Message ${i}`),
+        })
+      }
+
+      const events = await StreamEventRepository.list(pool, testStreamId)
+      const first = await StreamEventRepository.getMessageOrdinalForEvent(pool, testStreamId, events[0].id)
+      expect(first).toEqual({ sequence: events[0].sequence, messageOrdinal: 1 })
+
+      expect(await StreamEventRepository.getMessageOrdinalForEvent(pool, testStreamId, "evt_missing")).toBeNull()
+      expect(await StreamEventRepository.countMessagesThrough(pool, testStreamId, events[1].sequence)).toBe(2)
     })
   })
 })

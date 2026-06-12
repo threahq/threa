@@ -1550,11 +1550,18 @@ export class StreamService {
     return withTransaction(this.pool, async (client) => {
       const membership = await StreamMemberRepository.update(client, streamId, memberId, { lastReadEventId: eventId })
       if (membership) {
+        // Absolute read position (sync-v2 phase 2c): clients derive unread as
+        // latestOrdinal - lastReadOrdinal, so the event carries where this
+        // read lands in message-ordinal space. A missing event mirrors the
+        // unread query's COALESCE(sequence, 0) convention.
+        const position = await StreamEventRepository.getMessageOrdinalForEvent(client, streamId, eventId)
         await OutboxRepository.insert(client, "stream:read", {
           workspaceId,
           authorId: memberId,
           streamId,
           lastReadEventId: eventId,
+          lastReadSequence: (position?.sequence ?? 0n).toString(),
+          lastReadOrdinal: position?.messageOrdinal ?? 0,
         })
       }
       return membership
@@ -1596,10 +1603,18 @@ export class StreamService {
       const updatedStreamIds = Array.from(updatesToApply.keys())
 
       if (updatedStreamIds.length > 0) {
+        // Read-all sets each membership to its stream's latest event, so the
+        // absolute read position per stream is the stream's total message
+        // count (sync-v2 phase 2c).
+        const messageCounts = await StreamEventRepository.countMessagesByStreamBatch(client, updatedStreamIds)
         await OutboxRepository.insert(client, "stream:read_all", {
           workspaceId,
           authorId: memberId,
           streamIds: updatedStreamIds,
+          reads: updatedStreamIds.map((streamId) => ({
+            streamId,
+            lastReadOrdinal: messageCounts.get(streamId) ?? 0,
+          })),
         })
       }
 
@@ -1609,13 +1624,13 @@ export class StreamService {
 
   async getUnreadCounts(
     memberships: Array<{ streamId: string; lastReadEventId: string | null }>
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, { unreadCount: number; totalCount: number }>> {
     return StreamEventRepository.countUnreadByStreamBatch(this.pool, memberships)
   }
 
   async getUnreadCount(streamId: string, lastReadEventId: string | null): Promise<number> {
     const unreadCounts = await this.getUnreadCounts([{ streamId, lastReadEventId }])
-    return unreadCounts.get(streamId) ?? 0
+    return unreadCounts.get(streamId)?.unreadCount ?? 0
   }
 
   /**

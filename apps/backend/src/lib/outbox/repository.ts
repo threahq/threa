@@ -343,6 +343,14 @@ export interface WorkspaceUserUpdatedOutboxPayload extends WorkspaceScopedPayloa
  *  Only members of the stream receive preview content. */
 export interface StreamActivityOutboxPayload extends StreamScopedPayload {
   authorId: string
+  /** The message event's per-stream sequence (bigint as string). */
+  sequence: string
+  /**
+   * Count of message_created events with sequence ≤ this one — an absolute,
+   * recipient-independent stream fact (sync-v2 phase 2c). Clients derive
+   * unread as latestOrdinal - lastReadOrdinal instead of incrementing.
+   */
+  messageOrdinal: number
   lastMessagePreview: LastMessagePreview
 }
 
@@ -432,11 +440,25 @@ export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
   authorId: string
   streamId: string
   lastReadEventId: string
+  /** The read event's per-stream sequence (bigint as string; "0" when the event is missing). */
+  lastReadSequence: string
+  /**
+   * Message ordinal of the read position (sync-v2 phase 2c): count of
+   * message_created events with sequence ≤ the read event's. Clients derive
+   * unread as latestOrdinal - lastReadOrdinal.
+   */
+  lastReadOrdinal: number
 }
 
 export interface StreamsReadAllOutboxPayload extends WorkspaceScopedPayload {
   authorId: string
   streamIds: string[]
+  /**
+   * Absolute read position per updated stream (sync-v2 phase 2c). Read-all
+   * pins each membership to its stream's latest event, so the ordinal is the
+   * stream's total message count at read time.
+   */
+  reads: Array<{ streamId: string; lastReadOrdinal: number }>
 }
 
 // User preferences event payload (author-scoped - only visible to the user who updated)
@@ -493,6 +515,15 @@ export interface InvitationRevokedOutboxPayload extends WorkspaceScopedPayload {
 // User-scoped event payloads (delivered to a specific target user)
 export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
+  /**
+   * The target user's absolute unread counts for the activity's stream,
+   * computed after the row was inserted (sync-v2 phase 2c). Clients set
+   * counters from these — never increment — so replays converge.
+   */
+  counts: {
+    mentionCount: number
+    activityCount: number
+  }
   activity: {
     id: string
     activityType: string

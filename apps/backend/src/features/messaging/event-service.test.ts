@@ -19,6 +19,7 @@ describe("EventService attachment safety checks", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", type: "scratchpad" } as any)
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
   })
 
@@ -692,6 +693,7 @@ describe("EventService.createMessage metadata propagation", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", type: "scratchpad" } as any)
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(AttachmentRepository, "attachToMessage").mockResolvedValue(0)
+    spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     spyOn(StreamMemberRepository, "update").mockResolvedValue(undefined as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({

@@ -643,20 +643,23 @@ export const StreamEventRepository = {
   },
 
   /**
-   * Count unread message_created events per stream for a user.
+   * Count unread and total message_created events per stream for a user.
    * Unread = events with sequence > lastReadEventId's sequence.
    * If lastReadEventId is null, all messages in that stream are unread.
+   * Total is the stream's message ordinal at read time — clients derive
+   * unread as latestOrdinal - lastReadOrdinal from absolute counter payloads,
+   * and this total seeds that baseline at bootstrap.
    */
   async countUnreadByStreamBatch(
     db: Querier,
     memberships: Array<{ streamId: string; lastReadEventId: string | null }>
-  ): Promise<Map<string, number>> {
+  ): Promise<Map<string, { unreadCount: number; totalCount: number }>> {
     if (memberships.length === 0) return new Map()
 
     const streamIds = memberships.map((m) => m.streamId)
     const lastReadEventIds = memberships.map((m) => m.lastReadEventId)
 
-    const result = await db.query<{ stream_id: string; unread_count: string }>(
+    const result = await db.query<{ stream_id: string; unread_count: string; total_count: string }>(
       `
       WITH memberships AS (
         SELECT
@@ -669,7 +672,8 @@ export const StreamEventRepository = {
       )
       SELECT
         m.stream_id,
-        COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq)::text as unread_count
+        COUNT(*) FILTER (WHERE e.sequence > m.last_read_seq)::text as unread_count,
+        COUNT(e.id)::text as total_count
       FROM memberships m
       LEFT JOIN stream_events e ON e.stream_id = m.stream_id AND e.event_type = 'message_created'
       GROUP BY m.stream_id
@@ -677,11 +681,61 @@ export const StreamEventRepository = {
       [streamIds, lastReadEventIds]
     )
 
-    const map = new Map<string, number>()
+    const map = new Map<string, { unreadCount: number; totalCount: number }>()
     for (const row of result.rows) {
-      map.set(row.stream_id, parseInt(row.unread_count, 10))
+      map.set(row.stream_id, {
+        unreadCount: parseInt(row.unread_count, 10),
+        totalCount: parseInt(row.total_count, 10),
+      })
     }
     return map
+  },
+
+  /**
+   * Count message_created events at or below a sequence — the message's
+   * ordinal position in its stream. Exact under concurrency: the stream's
+   * sequence allocator row lock serializes message inserts per stream until
+   * commit, so every lower-sequence message is committed and visible.
+   */
+  async countMessagesThrough(db: Querier, streamId: string, sequence: bigint): Promise<number> {
+    const result = await db.query<{ count: string }>(sql`
+      SELECT COUNT(*)::text AS count
+      FROM stream_events
+      WHERE stream_id = ${streamId}
+        AND event_type = 'message_created'
+        AND sequence <= ${sequence.toString()}
+    `)
+    return parseInt(result.rows[0].count, 10)
+  },
+
+  /**
+   * An event's sequence plus the stream's message ordinal at that position
+   * (count of message_created events with sequence ≤ the event's). Returns
+   * null when the event doesn't exist in the stream — callers mirror the
+   * unread query's COALESCE(sequence, 0) convention for missing events.
+   */
+  async getMessageOrdinalForEvent(
+    db: Querier,
+    streamId: string,
+    eventId: string
+  ): Promise<{ sequence: bigint; messageOrdinal: number } | null> {
+    const result = await db.query<{ sequence: string; message_ordinal: string }>(sql`
+      SELECT
+        se.sequence,
+        (
+          SELECT COUNT(*)
+          FROM stream_events e
+          WHERE e.stream_id = se.stream_id
+            AND e.event_type = 'message_created'
+            AND e.sequence <= se.sequence
+        )::text AS message_ordinal
+      FROM stream_events se
+      WHERE se.id = ${eventId}
+        AND se.stream_id = ${streamId}
+    `)
+    const row = result.rows[0]
+    if (!row) return null
+    return { sequence: BigInt(row.sequence), messageOrdinal: parseInt(row.message_ordinal, 10) }
   },
 
   /**

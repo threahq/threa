@@ -667,13 +667,20 @@ export class EventService {
       event: serializeBigInt(event),
     })
 
-    // 9. Publish unread increment for sidebar updates
+    // 9. Publish stream activity for sidebar updates
     // Stream-scoped: only members of this stream receive the preview content.
-    // Frontend excludes the author's own messages from unread count.
+    // sequence/messageOrdinal are absolute stream facts (sync-v2 phase 2c):
+    // clients derive unread as latestOrdinal - lastReadOrdinal instead of
+    // incrementing, so replayed/duplicated events converge. Exact under
+    // concurrency: the sequence allocator's row lock serializes message
+    // inserts per stream until commit.
+    const messageOrdinal = await StreamEventRepository.countMessagesThrough(client, params.streamId, event.sequence)
     await OutboxRepository.insert(client, "stream:activity", {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       authorId: params.authorId,
+      sequence: event.sequence.toString(),
+      messageOrdinal,
       lastMessagePreview: {
         authorId: params.authorId,
         authorType: params.authorType,

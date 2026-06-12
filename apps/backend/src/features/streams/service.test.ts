@@ -1011,3 +1011,115 @@ describe("StreamService.createScratchpad (E2E)", () => {
     )
   })
 })
+
+// The stream:read / stream:read_all payloads carry absolute read positions
+// (sync-v2 phase 2c): clients derive unread as latestOrdinal - lastReadOrdinal,
+// so these events must say where the read lands in message-ordinal space.
+describe("StreamService.markAsRead", () => {
+  let service: StreamService
+  const mockMemberUpdate = spyOn(StreamMemberRepository, "update")
+  const mockGetMessageOrdinalForEvent = spyOn(StreamEventRepository, "getMessageOrdinalForEvent")
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockMemberUpdate.mockReset()
+    mockGetMessageOrdinalForEvent.mockReset()
+    mockInsertOutbox.mockReset()
+    mockInsertOutbox.mockResolvedValue({} as never)
+  })
+
+  test("emits stream:read with the absolute read position", async () => {
+    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockGetMessageOrdinalForEvent.mockResolvedValue({ sequence: 42n, messageOrdinal: 7 })
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
+
+    expect(mockGetMessageOrdinalForEvent).toHaveBeenCalledWith({}, "stream_1", "evt_9")
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamId: "stream_1",
+      lastReadEventId: "evt_9",
+      lastReadSequence: "42",
+      lastReadOrdinal: 7,
+    })
+  })
+
+  test("mirrors the unread query's zero convention when the read event is missing", async () => {
+    mockMemberUpdate.mockResolvedValue({ streamId: "stream_1", memberId: "usr_1" } as never)
+    mockGetMessageOrdinalForEvent.mockResolvedValue(null)
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_gone")
+
+    expect(mockInsertOutbox).toHaveBeenCalledWith(
+      {},
+      "stream:read",
+      expect.objectContaining({ lastReadSequence: "0", lastReadOrdinal: 0 })
+    )
+  })
+
+  test("emits nothing for a non-member", async () => {
+    mockMemberUpdate.mockResolvedValue(null)
+
+    await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
+
+    expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+})
+
+describe("StreamService.markAllAsRead", () => {
+  let service: StreamService
+  const mockMemberList = spyOn(StreamMemberRepository, "list")
+  const mockStreamList = spyOn(StreamRepository, "list")
+  const mockLatestEventIds = spyOn(StreamEventRepository, "getLatestEventIdByStreamBatch")
+  const mockBatchUpdate = spyOn(StreamMemberRepository, "batchUpdateLastReadEventId")
+  const mockCountMessages = spyOn(StreamEventRepository, "countMessagesByStreamBatch")
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    mockMemberList.mockReset()
+    mockStreamList.mockReset()
+    mockLatestEventIds.mockReset()
+    mockBatchUpdate.mockReset()
+    mockCountMessages.mockReset()
+    mockInsertOutbox.mockReset()
+    mockInsertOutbox.mockResolvedValue({} as never)
+  })
+
+  test("emits stream:read_all with per-stream absolute read positions", async () => {
+    mockMemberList.mockResolvedValue([
+      { streamId: "stream_1", memberId: "usr_1", lastReadEventId: null },
+      { streamId: "stream_2", memberId: "usr_1", lastReadEventId: "evt_old" },
+    ] as never)
+    mockStreamList.mockResolvedValue([{ id: "stream_1" }, { id: "stream_2" }] as never)
+    mockLatestEventIds.mockResolvedValue(
+      new Map([
+        ["stream_1", "evt_a"],
+        ["stream_2", "evt_b"],
+      ])
+    )
+    mockBatchUpdate.mockResolvedValue(undefined as never)
+    // Read-all pins each membership to the stream's latest event, so the
+    // absolute position per stream is its total message count.
+    mockCountMessages.mockResolvedValue(
+      new Map([
+        ["stream_1", 12],
+        ["stream_2", 3],
+      ])
+    )
+
+    const updated = await service.markAllAsRead("ws_1", "usr_1")
+
+    expect(updated).toEqual(["stream_1", "stream_2"])
+    expect(mockCountMessages).toHaveBeenCalledWith({}, ["stream_1", "stream_2"])
+    expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read_all", {
+      workspaceId: "ws_1",
+      authorId: "usr_1",
+      streamIds: ["stream_1", "stream_2"],
+      reads: [
+        { streamId: "stream_1", lastReadOrdinal: 12 },
+        { streamId: "stream_2", lastReadOrdinal: 3 },
+      ],
+    })
+  })
+})

@@ -12,6 +12,7 @@ function makeActivityPayload(): ActivityCreatedOutboxPayload {
   return {
     workspaceId: "ws_1",
     targetUserId: "usr_1",
+    counts: { mentionCount: 1, activityCount: 1 },
     activity: {
       id: "act_1",
       activityType: ActivityTypes.MESSAGE,

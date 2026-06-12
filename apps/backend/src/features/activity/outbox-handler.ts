@@ -11,7 +11,7 @@ import { logger } from "../../lib/logger"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import type { OutboxHandler } from "../../lib/outbox"
 import type { ActivityService } from "./service"
-import type { Activity } from "./repository"
+import { ActivityRepository, type Activity } from "./repository"
 import { withTransaction } from "../../db"
 import { E2eStreamsRepository } from "../e2e-streams"
 
@@ -302,27 +302,56 @@ export class ActivityFeedHandler implements OutboxHandler {
   /**
    * Publish an activity:created outbox event for each activity row. Grouped in
    * one transaction per call to keep outbox writes batched.
+   *
+   * Each payload carries the target user's absolute unread counts for the
+   * stream (sync-v2 phase 2c): clients set counters from these instead of
+   * incrementing, so replayed/duplicated events converge. The activity rows
+   * are committed before this runs, so the counts include them; rows sharing
+   * a (user, stream) pair carry identical final counts, which is correct
+   * under absolute semantics.
    */
   private async publishActivityCreated(activities: Activity[]): Promise<void> {
     if (activities.length === 0) return
 
     await withTransaction(this.db, async (client) => {
+      // Activities from one source event share a workspace, but group
+      // defensively rather than assume it.
+      const byWorkspace = new Map<string, Activity[]>()
       for (const activity of activities) {
-        await OutboxRepository.insert(client, "activity:created", {
-          workspaceId: activity.workspaceId,
-          targetUserId: activity.userId,
-          activity: {
-            id: activity.id,
-            activityType: activity.activityType,
-            streamId: activity.streamId,
-            messageId: activity.messageId,
-            actorId: activity.actorId,
-            actorType: activity.actorType,
-            context: activity.context,
-            createdAt: activity.createdAt.toISOString(),
-            isSelf: activity.isSelf,
-          },
-        })
+        const group = byWorkspace.get(activity.workspaceId) ?? []
+        group.push(activity)
+        byWorkspace.set(activity.workspaceId, group)
+      }
+
+      for (const [workspaceId, group] of byWorkspace) {
+        const counts = await ActivityRepository.countUnreadForPairs(
+          client,
+          workspaceId,
+          group.map((a) => ({ userId: a.userId, streamId: a.streamId }))
+        )
+
+        for (const activity of group) {
+          const pairCounts = counts.get(`${activity.userId}:${activity.streamId}`)
+          await OutboxRepository.insert(client, "activity:created", {
+            workspaceId: activity.workspaceId,
+            targetUserId: activity.userId,
+            counts: {
+              mentionCount: pairCounts?.mentionCount ?? 0,
+              activityCount: pairCounts?.totalCount ?? 0,
+            },
+            activity: {
+              id: activity.id,
+              activityType: activity.activityType,
+              streamId: activity.streamId,
+              messageId: activity.messageId,
+              actorId: activity.actorId,
+              actorType: activity.actorType,
+              context: activity.context,
+              createdAt: activity.createdAt.toISOString(),
+              isSelf: activity.isSelf,
+            },
+          })
+        }
       }
     })
   }

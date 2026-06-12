@@ -4,6 +4,7 @@ import * as cursorLockModule from "@threa/backend-common"
 import * as dbModule from "../../db"
 import { ActivityFeedHandler } from "./outbox-handler"
 import type { ActivityService } from "./service"
+import { ActivityRepository } from "./repository"
 import type { ProcessResult } from "@threa/backend-common"
 import { AuthorTypes } from "@threa/types"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -247,6 +248,9 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const countsSpy = spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
+      new Map([["usr_alice:stream_test", { mentionCount: 3, totalCount: 5 }]])
+    )
 
     // Mock withTransaction to just call the callback directly
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
@@ -260,9 +264,11 @@ describe("ActivityFeedHandler", () => {
 
     await new Promise((r) => setTimeout(r, 300))
 
+    expect(countsSpy).toHaveBeenCalledWith({}, "ws_test", [{ userId: "usr_alice", streamId: "stream_test" }])
     expect(insertSpy).toHaveBeenCalledWith({}, "activity:created", {
       workspaceId: "ws_test",
       targetUserId: "usr_alice",
+      counts: { mentionCount: 3, activityCount: 5 },
       activity: {
         id: "activity_test123",
         activityType: "mention",
@@ -324,6 +330,9 @@ describe("ActivityFeedHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
     const insertSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    spyOn(ActivityRepository, "countUnreadForPairs").mockResolvedValue(
+      new Map([["usr_bob:stream_test", { mentionCount: 1, totalCount: 1 }]])
+    )
 
     spyOn(dbModule, "withTransaction").mockImplementation(async (_pool, callback) => {
       return callback({} as any)
@@ -339,6 +348,7 @@ describe("ActivityFeedHandler", () => {
     const want = {
       workspaceId: "ws_test",
       targetUserId: "usr_bob",
+      counts: { mentionCount: 1, activityCount: 1 },
       activity: {
         id: "activity_existing",
         activityType: "mention",
