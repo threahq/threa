@@ -31,6 +31,20 @@ const helloSchema = z
     displayName: z.string().max(256).optional().nullable(),
     capabilities: z.record(z.string(), z.unknown()).optional(),
     supportedCapabilities: z.array(z.enum(BOT_INVOCATION_CAPABILITIES)).min(1),
+    // Declared-output manifest (Phase 2.3b). Optional and additive — a runtime
+    // that sends none keeps the legacy default profile and stays unenforced.
+    // Once present, the verb boundary rejects any output it didn't declare. The
+    // `output` object's fields default (reply+trace on, sources off), so sending
+    // `manifest: { output: {} }` opts into enforcement at the default profile.
+    manifest: z
+      .object({
+        output: z.object({
+          reply: z.boolean().optional().default(true),
+          trace: z.boolean().optional().default(true),
+          sources: z.boolean().optional().default(false),
+        }),
+      })
+      .optional(),
     // ISO timestamp — server echoes the next cursor in the ack and the runtime
     // sends it back on the following hello so we only replay events the
     // runtime hasn't already seen.
@@ -179,6 +193,7 @@ export function attachBotNamespace(deps: BotSocketHandlerDeps): void {
             ...(data.capabilities ?? {}),
             ...(runtimeSessionId ? { runtimeSessionId } : {}),
           },
+          manifest: data.manifest ?? null,
           publicKey: data.publicKey,
           publicKeyId: data.publicKeyId,
         })

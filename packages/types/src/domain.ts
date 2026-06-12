@@ -317,6 +317,26 @@ export interface StreamMember {
 }
 
 /**
+ * What a bot runtime declares it can emit, sent in the optional `manifest` block
+ * on `bot:hello` and persisted per instance. A null/absent manifest is the
+ * legacy default output profile (reply + trace, no sources) and is NOT enforced;
+ * once a runtime declares a manifest, the verb boundary loudly rejects anything
+ * it didn't declare (Phase 2.3b reject-undeclared).
+ */
+export interface BotOutputManifest {
+  /** Emits a final reply message via `/complete`. */
+  reply: boolean
+  /** POSTs `/steps` trace frames. */
+  trace: boolean
+  /** Attaches citation sources on `/complete`. */
+  sources: boolean
+}
+
+export interface BotRuntimeManifest {
+  output: BotOutputManifest
+}
+
+/**
  * User-defined organizational label. Private labels (`visibility: "private"`)
  * are only visible to the creator. Public labels (`visibility: "public"`) are
  * discoverable workspace-wide; workspace users join via `LabelMember` rows to
