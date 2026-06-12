@@ -171,6 +171,13 @@ function installSpies() {
     mutate: vi.fn(),
     isPending: false,
   } as unknown as ReturnType<typeof hooksModule.useArchiveStream>)
+  // `useSaveMessage` (backs the Add To-do command) resolves the saved service
+  // from ServicesProvider, which this harness doesn't mount — stub the hook.
+  vi.spyOn(hooksModule, "useSaveMessage").mockReturnValue({
+    mutateAsync: vi.fn(async () => ({})),
+    mutate: vi.fn(),
+    isPending: false,
+  } as unknown as ReturnType<typeof hooksModule.useSaveMessage>)
   vi.spyOn(streamSettingsModule, "useStreamSettings").mockReturnValue({
     openStreamSettings: mockOpenStreamSettings,
   } as unknown as ReturnType<typeof streamSettingsModule.useStreamSettings>)

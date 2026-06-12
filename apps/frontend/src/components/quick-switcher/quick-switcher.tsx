@@ -14,7 +14,7 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
-import { useDraftScratchpads, useArchiveStream, useStreamName, isDraftId } from "@/hooks"
+import { useDraftScratchpads, useArchiveStream, useSaveMessage, useStreamName, isDraftId } from "@/hooks"
 import {
   useWorkspaceUsers,
   useWorkspaceStreams,
@@ -191,6 +191,17 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     setInputValue("")
   }, [])
 
+  // "Add To-do" creates a standalone saved item via the same mutation as the
+  // Saved page's quick-add, so IDB and the list caches update identically.
+  const saveMutation = useSaveMessage(workspaceId)
+  const { mutateAsync: saveTodoAsync } = saveMutation
+  const createSavedTodo = useCallback(
+    async (title: string): Promise<void> => {
+      await saveTodoAsync({ title })
+    },
+    [saveTodoAsync]
+  )
+
   // Contextual stream actions close the palette first, then open their own
   // surface (settings dialog, confirm modal, label picker), which render as
   // siblings so they survive the palette unmounting its content.
@@ -266,6 +277,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       openStreamSettings: handleOpenStreamSettings,
       requestArchiveStream,
       openLabelPicker,
+      createSavedTodo,
     }),
     [
       workspaceId,
@@ -285,6 +297,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       handleOpenStreamSettings,
       requestArchiveStream,
       openLabelPicker,
+      createSavedTodo,
     ]
   )
 
