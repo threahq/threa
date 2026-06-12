@@ -478,7 +478,9 @@ export function StreamPage() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-5 rounded-l-none border-l border-border/50 px-0"
+                    // Wider on touch viewports — a 20px chevron is fiddly with
+                    // a finger; desktop keeps the compact split-button look.
+                    className="h-8 w-7 rounded-l-none border-l border-border/50 px-0 sm:w-5"
                     aria-label="Other conversation views"
                   >
                     <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />

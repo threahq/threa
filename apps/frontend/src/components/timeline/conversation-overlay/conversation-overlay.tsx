@@ -228,15 +228,18 @@ export function ConversationOverlayRow({
           // it adds no height (INV-21) — toggling the overlay must not move
           // a single message. Purely informational (focus/corrections live
           // in the panel and the rail swatch); fades on row hover to hand
-          // the corner to the message hover toolbar. Desktop-only: on
-          // mobile's dense header line the chip covers the timestamp, and
-          // the rails + panel already carry the grouping there.
+          // the corner to the message hover toolbar. Wide-desktop-only
+          // (≥1120px: the 800px timeline column + the w-64 panel + margins
+          // genuinely fit side by side): below that the top-right panel
+          // overlaps the top rows' chip corner, and on mobile's dense header
+          // line the chip covers the timestamp — in both cases the rails +
+          // panel already carry the grouping.
           <span
             data-testid="conversation-block-chip"
             title={conversation.topicSummary ?? undefined}
             className={cn(
-              "pointer-events-none absolute right-3 top-1.5 z-[5] sm:right-4",
-              "hidden max-w-[40%] items-center gap-1.5 rounded-full border px-2 py-0.5 sm:inline-flex",
+              "pointer-events-none absolute right-4 top-1.5 z-[5]",
+              "hidden max-w-[40%] items-center gap-1.5 rounded-full border px-2 py-0.5 min-[1120px]:inline-flex",
               "bg-background/85 text-[10px] font-medium leading-4 shadow-sm backdrop-blur-sm",
               "transition-opacity group-hover/convrow:opacity-0"
             )}
