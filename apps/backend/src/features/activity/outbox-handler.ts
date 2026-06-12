@@ -210,13 +210,15 @@ export class ActivityFeedHandler implements OutboxHandler {
 
   private async processSavedReminderFired(event: { id: bigint; payload: unknown }): Promise<Activity[]> {
     const payload = event.payload as SavedReminderFiredOutboxPayload
+    // Standalone (message-less) saved items legitimately carry null
+    // messageId/streamId — only reject when the fields are absent entirely.
     if (
       !payload ||
       typeof payload.workspaceId !== "string" ||
       typeof payload.targetUserId !== "string" ||
       typeof payload.savedId !== "string" ||
-      typeof payload.messageId !== "string" ||
-      typeof payload.streamId !== "string"
+      payload.messageId === undefined ||
+      payload.streamId === undefined
     ) {
       logger.debug(
         { eventId: event.id.toString() },
@@ -225,11 +227,13 @@ export class ActivityFeedHandler implements OutboxHandler {
       return []
     }
     // E2E streams: never surface ciphertext previews in the activity feed.
-    if (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId)) {
+    if (payload.streamId && (await E2eStreamsRepository.isE2eStream(this.db, payload.workspaceId, payload.streamId))) {
       return []
     }
 
-    const contentPreview = payload.saved?.message?.contentMarkdown?.slice(0, 200) ?? null
+    // Standalone items preview their own title; message saves preview the
+    // live message content.
+    const contentPreview = payload.saved?.message?.contentMarkdown?.slice(0, 200) ?? payload.saved?.title ?? null
     const streamName = payload.saved?.message?.streamName ?? null
     return this.activityService.processSavedReminderFired({
       workspaceId: payload.workspaceId,
@@ -324,10 +328,13 @@ export class ActivityFeedHandler implements OutboxHandler {
       }
 
       for (const [workspaceId, group] of byWorkspace) {
+        // Stream-less rows (standalone saved-item reminders) have no
+        // per-stream unread counts; their lookup below misses and falls back
+        // to zeros, which is correct — there's no stream badge to update.
         const counts = await ActivityRepository.countUnreadForPairs(
           client,
           workspaceId,
-          group.map((a) => ({ userId: a.userId, streamId: a.streamId }))
+          group.flatMap((a) => (a.streamId ? [{ userId: a.userId, streamId: a.streamId }] : []))
         )
 
         for (const activity of group) {

@@ -7,9 +7,11 @@ interface SavedMessageRow {
   id: string
   workspace_id: string
   user_id: string
-  message_id: string
-  stream_id: string
+  message_id: string | null
+  stream_id: string | null
   status: string
+  title: string | null
+  note: string | null
   remind_at: Date | null
   reminder_sent_at: Date | null
   reminder_queue_message_id: string | null
@@ -19,13 +21,19 @@ interface SavedMessageRow {
   updated_at: Date
 }
 
+/**
+ * A saved item: either anchored to a message (`messageId`/`streamId` set) or
+ * a standalone to-do (`messageId`/`streamId` null, `title` set).
+ */
 export interface SavedMessage {
   id: string
   workspaceId: string
   userId: string
-  messageId: string
-  streamId: string
+  messageId: string | null
+  streamId: string | null
   status: SavedStatus
+  title: string | null
+  note: string | null
   remindAt: Date | null
   reminderSentAt: Date | null
   reminderQueueMessageId: string | null
@@ -40,6 +48,14 @@ export interface UpsertSavedParams {
   userId: string
   messageId: string
   streamId: string
+  remindAt: Date | null
+}
+
+export interface InsertStandaloneParams {
+  workspaceId: string
+  userId: string
+  title: string
+  note: string | null
   remindAt: Date | null
 }
 
@@ -62,7 +78,7 @@ export interface ListSavedOpts {
 }
 
 const SAVED_MESSAGE_COLUMNS =
-  "id, workspace_id, user_id, message_id, stream_id, status, remind_at, reminder_sent_at, reminder_queue_message_id, saved_at, status_changed_at, created_at, updated_at"
+  "id, workspace_id, user_id, message_id, stream_id, status, title, note, remind_at, reminder_sent_at, reminder_queue_message_id, saved_at, status_changed_at, created_at, updated_at"
 
 function mapRow(row: SavedMessageRow): SavedMessage {
   return {
@@ -72,6 +88,8 @@ function mapRow(row: SavedMessageRow): SavedMessage {
     messageId: row.message_id,
     streamId: row.stream_id,
     status: row.status as SavedStatus,
+    title: row.title,
+    note: row.note,
     remindAt: row.remind_at,
     reminderSentAt: row.reminder_sent_at,
     reminderQueueMessageId: row.reminder_queue_message_id,
@@ -121,7 +139,7 @@ export const SavedMessagesRepository = {
         ${SavedStatuses.SAVED},
         ${params.remindAt}
       )
-      ON CONFLICT (workspace_id, user_id, message_id) DO UPDATE SET
+      ON CONFLICT (workspace_id, user_id, message_id) WHERE message_id IS NOT NULL DO UPDATE SET
         status = ${SavedStatuses.SAVED},
         remind_at = EXCLUDED.remind_at,
         reminder_sent_at = NULL,
@@ -146,6 +164,58 @@ export const SavedMessagesRepository = {
       inserted: row.inserted,
       previousReminderQueueMessageId: row.previous_reminder_queue_message_id,
     }
+  },
+
+  /**
+   * Insert a standalone (message-less) saved item. No conflict target — the
+   * partial unique index only covers message-anchored rows, so a user can
+   * hold any number of standalone to-dos.
+   */
+  async insertStandalone(db: Querier, params: InsertStandaloneParams): Promise<SavedMessage> {
+    const id = savedMessageId()
+    const result = await db.query<SavedMessageRow>(sql`
+      INSERT INTO saved_messages (
+        id, workspace_id, user_id, status, title, note, remind_at
+      )
+      VALUES (
+        ${id},
+        ${params.workspaceId},
+        ${params.userId},
+        ${SavedStatuses.SAVED},
+        ${params.title},
+        ${params.note},
+        ${params.remindAt}
+      )
+      RETURNING ${sql.raw(SAVED_MESSAGE_COLUMNS)}
+    `)
+    return mapRow(result.rows[0]!)
+  },
+
+  /**
+   * Update title and/or note. Undefined fields are left untouched; `note`
+   * accepts null to clear. A single guarded UPDATE (INV-20) — no
+   * select-then-update.
+   */
+  async updateContent(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    savedId: string,
+    params: { title?: string; note?: string | null }
+  ): Promise<SavedMessage | null> {
+    const setTitle = params.title !== undefined
+    const setNote = params.note !== undefined
+    const result = await db.query<SavedMessageRow>(sql`
+      UPDATE saved_messages SET
+        title = CASE WHEN ${setTitle} THEN ${params.title ?? null} ELSE title END,
+        note = CASE WHEN ${setNote} THEN ${params.note ?? null} ELSE note END,
+        updated_at = NOW()
+      WHERE id = ${savedId}
+        AND workspace_id = ${workspaceId}
+        AND user_id = ${userId}
+      RETURNING ${sql.raw(SAVED_MESSAGE_COLUMNS)}
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
   async findById(db: Querier, workspaceId: string, userId: string, savedId: string): Promise<SavedMessage | null> {

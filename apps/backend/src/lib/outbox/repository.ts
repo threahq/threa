@@ -536,8 +536,9 @@ export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
   activity: {
     id: string
     activityType: string
-    streamId: string
-    messageId: string
+    /** Null only for saved_reminder rows fired by standalone (message-less) saved items. */
+    streamId: string | null
+    messageId: string | null
     actorId: string
     actorType: string
     context: Record<string, unknown>
@@ -559,14 +560,16 @@ export interface SavedUpsertedOutboxPayload extends WorkspaceScopedPayload {
 export interface SavedDeletedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   savedId: string
-  messageId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
 }
 
 export interface SavedReminderFiredOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   savedId: string
-  messageId: string
-  streamId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
+  streamId: string | null
   saved: SavedMessageView
 }
 

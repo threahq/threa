@@ -385,8 +385,9 @@ export class ActivityService {
     workspaceId: string
     userId: string
     savedId: string
-    streamId: string
-    messageId: string
+    /** Null for standalone (message-less) saved items. */
+    streamId: string | null
+    messageId: string | null
     contentPreview: string | null
     streamName: string | null
   }): Promise<Activity[]> {

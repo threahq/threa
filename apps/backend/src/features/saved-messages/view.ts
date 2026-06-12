@@ -23,8 +23,10 @@ import type { SavedMessage } from "./repository"
 export async function resolveSavedView(db: Querier, userId: string, rows: SavedMessage[]): Promise<SavedMessageView[]> {
   if (rows.length === 0) return []
 
-  const messageIds = Array.from(new Set(rows.map((r) => r.messageId)))
-  const streamIds = Array.from(new Set(rows.map((r) => r.streamId)))
+  // Standalone (message-less) rows need no message fetch or access check —
+  // they're owned by the user outright.
+  const messageIds = Array.from(new Set(rows.flatMap((r) => (r.messageId ? [r.messageId] : []))))
+  const streamIds = Array.from(new Set(rows.flatMap((r) => (r.streamId ? [r.streamId] : []))))
 
   // Batch fetch messages and streams (INV-56). Access resolution uses root
   // streams for threads; fetch those in a second pass.
@@ -50,9 +52,9 @@ export async function resolveSavedView(db: Querier, userId: string, rows: SavedM
   return rows.map((row) =>
     toView(
       row,
-      messages.get(row.messageId) ?? null,
-      streamById.get(row.streamId) ?? null,
-      accessibleStreamIds.has(row.streamId)
+      row.messageId ? (messages.get(row.messageId) ?? null) : null,
+      row.streamId ? (streamById.get(row.streamId) ?? null) : null,
+      row.streamId !== null && accessibleStreamIds.has(row.streamId)
     )
   )
 }
@@ -110,7 +112,9 @@ function toView(
   let snapshot: SavedMessageSnapshot | null = null
   let unavailableReason: SavedMessageView["unavailableReason"] = null
 
-  if (!message || message.deletedAt !== null) {
+  if (row.messageId === null) {
+    // Standalone to-do: no snapshot and nothing unavailable.
+  } else if (!message || message.deletedAt !== null) {
     unavailableReason = "deleted"
   } else if (!hasAccess) {
     unavailableReason = "access_lost"
@@ -133,6 +137,8 @@ function toView(
     messageId: row.messageId,
     streamId: row.streamId,
     status: row.status,
+    title: row.title,
+    note: row.note,
     remindAt: row.remindAt?.toISOString() ?? null,
     reminderSentAt: row.reminderSentAt?.toISOString() ?? null,
     savedAt: row.savedAt.toISOString(),

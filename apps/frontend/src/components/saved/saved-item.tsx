@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router-dom"
-import { Archive, Bell, Check, CircleAlert, Trash2, Undo2 } from "lucide-react"
+import { Archive, Bell, Check, CircleAlert, Pencil, Trash2, Undo2 } from "lucide-react"
 import {
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   ENCRYPTED_MESSAGE_PREVIEW_LABEL,
@@ -17,6 +17,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { ReminderPopoverContent } from "@/components/timeline/reminder-popover-content"
 import { ReminderPickerSheet } from "@/components/timeline/reminder-picker-sheet"
 import { ReminderBadge } from "./reminder-badge"
+import { SavedEditDialog } from "./saved-edit-dialog"
 
 interface SavedItemProps {
   saved: SavedMessageView
@@ -28,6 +29,7 @@ interface SavedItemProps {
 }
 
 export function SavedItem({ saved, workspaceId, onMarkDone, onArchive, onRestore, onDelete }: SavedItemProps) {
+  const isStandalone = saved.messageId === null
   const isUnavailable = saved.unavailableReason !== null
   const linkable = !isUnavailable && saved.message !== null
   const href = `/w/${workspaceId}/s/${saved.streamId}?m=${saved.messageId}`
@@ -35,29 +37,44 @@ export function SavedItem({ saved, workspaceId, onMarkDone, onArchive, onRestore
   // The backend snapshot's `streamName` is null for DMs (viewer-specific names
   // aren't persisted on the stream row), so resolve from the workspace caches.
   // The persisted snapshot is the last-resort fallback for rows whose stream
-  // is no longer cached (lost access).
-  const streamLabel = useStreamName(workspaceId, saved.streamId) ?? saved.message?.streamName ?? "Unknown"
+  // is no longer cached (lost access). Standalone rows have no stream — the
+  // hook still runs (unconditional per rules-of-hooks) but the label is unused.
+  const streamLabel = useStreamName(workspaceId, saved.streamId ?? "") ?? saved.message?.streamName ?? "Unknown"
 
   // Row-as-link: the content area navigates to the message when clicked.
   // Action buttons are siblings (not nested inside the Link) so their clicks
-  // don't bubble into navigation.
+  // don't bubble into navigation. Standalone to-dos have nowhere to navigate;
+  // their own title is the main line where message rows show the stream
+  // eyebrow + live message preview.
   const Content = (
     <>
-      <div className="flex items-baseline gap-1.5 text-sm">
-        <span className="text-muted-foreground">Saved from</span>
-        <span className="font-medium truncate">{streamLabel}</span>
-        {isUnavailable && (
-          <span
-            className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-px text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground"
-            title={saved.unavailableReason === "deleted" ? "Original message was deleted" : "Access lost"}
-          >
-            <CircleAlert className="h-3 w-3" />
-            {saved.unavailableReason === "deleted" ? "deleted" : "no access"}
-          </span>
-        )}
-      </div>
+      {isStandalone ? (
+        <div className="flex items-baseline gap-1.5 text-sm">
+          <span className="font-medium truncate">{saved.title}</span>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-baseline gap-1.5 text-sm">
+            <span className="text-muted-foreground">Saved from</span>
+            <span className="font-medium truncate">{streamLabel}</span>
+            {isUnavailable && (
+              <span
+                className="ml-1 inline-flex items-center gap-1 rounded px-1.5 py-px text-[10px] font-medium uppercase tracking-wide bg-muted text-muted-foreground"
+                title={saved.unavailableReason === "deleted" ? "Original message was deleted" : "Access lost"}
+              >
+                <CircleAlert className="h-3 w-3" />
+                {saved.unavailableReason === "deleted" ? "deleted" : "no access"}
+              </span>
+            )}
+          </div>
 
-      <p className={cn("mt-0.5 text-xs text-muted-foreground truncate", isUnavailable && "italic")}>{previewText}</p>
+          <p className={cn("mt-0.5 text-xs text-muted-foreground truncate", isUnavailable && "italic")}>
+            {previewText}
+          </p>
+        </>
+      )}
+
+      {saved.note && <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">{saved.note}</p>}
 
       <div className="mt-1 flex items-center gap-3">
         <RelativeTime
@@ -117,6 +134,7 @@ function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore,
   const status = saved.status as SavedStatus
   const isMobile = useIsMobile()
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
   return (
     <div
@@ -164,6 +182,24 @@ function SavedRowActions({ workspaceId, saved, onMarkDone, onArchive, onRestore,
             </PopoverContent>
           </Popover>
         ))}
+      {status === "saved" && (
+        <>
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            title={saved.messageId === null ? "Edit to-do" : "Edit note"}
+            onClick={() => setEditOpen(true)}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          {/* Mounted lazily — rows render in lists of 50 and the dialog's
+              mutation hooks need the services context only once opened. */}
+          {editOpen && (
+            <SavedEditDialog open={editOpen} onOpenChange={setEditOpen} workspaceId={workspaceId} saved={saved} />
+          )}
+        </>
+      )}
       {status === "saved" && onMarkDone && (
         <Button size="icon" variant="ghost" className="h-7 w-7" onClick={onMarkDone} title="Mark done">
           <Check className="h-3.5 w-3.5" />

@@ -394,7 +394,8 @@ export class PushService {
         streamId,
         messageId,
         streamName: saved.message?.streamName ?? null,
-        contentPreview: resolveSavedReminderPreview(saved.message?.contentMarkdown),
+        // Standalone (message-less) items preview their own title.
+        contentPreview: resolveSavedReminderPreview(saved.message?.contentMarkdown) ?? saved.title,
         unavailableReason: saved.unavailableReason ?? null,
       },
     })
@@ -412,13 +413,14 @@ export class PushService {
   private async shouldPushForMentionsMode(
     workspaceId: string,
     activityType: string,
-    streamId: string
+    /** Null only for stream-less saved_reminder rows, which never reach the DM/scratchpad check below. */
+    streamId: string | null
   ): Promise<boolean> {
     if (activityType === ActivityTypes.MENTION) {
       return true
     }
 
-    if (activityType === ActivityTypes.MESSAGE || activityType === ActivityTypes.REACTION) {
+    if ((activityType === ActivityTypes.MESSAGE || activityType === ActivityTypes.REACTION) && streamId !== null) {
       const streamType = await this.lookups.getStreamType(workspaceId, streamId)
       if (streamType === StreamTypes.DM || streamType === StreamTypes.SCRATCHPAD) {
         return true

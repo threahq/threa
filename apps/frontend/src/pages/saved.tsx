@@ -10,6 +10,7 @@ import { useSavedList, useUpdateSaved, useDeleteSaved } from "@/hooks"
 import { SavedItem } from "@/components/saved/saved-item"
 import { SavedEmpty } from "@/components/saved/saved-empty"
 import { SavedSkeleton } from "@/components/saved/saved-skeleton"
+import { SavedQuickAdd } from "@/components/saved/saved-quick-add"
 import { SidebarToggle } from "@/components/layout"
 import type { SavedStatus } from "@threa/types"
 
@@ -134,7 +135,10 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
       </header>
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
-        <main className="py-1">{content}</main>
+        <main className="py-1">
+          {tab === "saved" && <SavedQuickAdd workspaceId={workspaceId} />}
+          {content}
+        </main>
       </ScrollArea>
     </div>
   )

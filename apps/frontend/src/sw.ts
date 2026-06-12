@@ -567,8 +567,12 @@ interface PushData {
   messages?: Array<{ authorName?: string; contentPreview?: string; emoji?: string }>
   /** Backend-driven action: "clear" dismisses notifications for the stream; "session_expired" prompts re-login. */
   action?: "clear" | "session_expired"
-  /** Payload kind: "test" is sent by the in-app diagnostic to verify end-to-end delivery. */
-  kind?: "test"
+  /**
+   * Payload kind: "test" is sent by the in-app diagnostic to verify
+   * end-to-end delivery; "saved_reminder" marks reminder pushes so clicks on
+   * standalone (message-less) items can land on the Saved page.
+   */
+  kind?: "test" | "saved_reminder"
 }
 
 self.addEventListener("push", (event) => {
@@ -726,6 +730,10 @@ self.addEventListener("notificationclick", (event) => {
     targetUrl = data.messageId
       ? `/w/${data.workspaceId}/s/${data.streamId}?m=${data.messageId}`
       : `/w/${data.workspaceId}/s/${data.streamId}`
+  } else if (data?.workspaceId && data.kind === "saved_reminder") {
+    // Standalone saved-item reminder — no source message to open, so land on
+    // the Saved page where the item lives.
+    targetUrl = `/w/${data.workspaceId}/saved`
   } else if (data?.workspaceId) {
     targetUrl = `/w/${data.workspaceId}`
   }
