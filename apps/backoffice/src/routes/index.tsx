@@ -7,6 +7,7 @@ import { WaitlistPage } from "@/pages/waitlist"
 import { WorkspaceDetailLayout } from "@/pages/workspace-detail-layout"
 import { WorkspaceDetailOverviewPage } from "@/pages/workspace-detail-overview"
 import { WorkspaceDetailMembersPage } from "@/pages/workspace-detail-members"
+import { WorkspaceDetailFlagsPage } from "@/pages/workspace-detail-flags"
 import { NotAuthorizedPage } from "@/pages/not-authorized"
 
 export const router = createBrowserRouter([
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <WorkspaceDetailOverviewPage /> },
           { path: "members", element: <WorkspaceDetailMembersPage /> },
+          { path: "flags", element: <WorkspaceDetailFlagsPage /> },
         ],
       },
       { path: "invites/workspace-owners", element: <InviteWorkspaceOwnerPage /> },

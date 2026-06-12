@@ -89,6 +89,14 @@ export const api = {
     })
   },
 
+  put<T>(path: string, body?: unknown, options?: RequestInit): Promise<T> {
+    return apiFetch<T>(path, {
+      ...options,
+      method: "PUT",
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  },
+
   delete<T>(path: string, options?: RequestInit): Promise<T> {
     return apiFetch<T>(path, { ...options, method: "DELETE" })
   },

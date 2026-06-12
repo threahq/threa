@@ -15,6 +15,7 @@ import { createWorkspaceHandlers, type ControlPlaneWorkspaceService } from "./fe
 import { createInvitationShadowHandlers, type InvitationShadowService } from "./features/invitation-shadows"
 import { createWaitlistHandlers, type WaitlistService } from "./features/waitlist"
 import { createBackofficeHandlers, createPlatformAdminMiddleware, type BackofficeService } from "./features/backoffice"
+import { createFeatureFlagHandlers, type ControlPlaneFeatureFlagService } from "./features/feature-flags"
 import {
   createBackofficeAuthzAdminHandlers,
   createInternalAuthzAdminHandlers,
@@ -37,6 +38,7 @@ interface Dependencies {
   waitlistService: WaitlistService
   backofficeService: BackofficeService
   workosAuthzAdminService: WorkosAuthzAdminService
+  featureFlagService: ControlPlaneFeatureFlagService
   internalApiKey: string
   allowDevAuthRoutes: boolean
   frontendUrl: string
@@ -55,6 +57,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     waitlistService,
     backofficeService,
     workosAuthzAdminService,
+    featureFlagService,
     internalApiKey,
     allowDevAuthRoutes,
   } = deps
@@ -91,6 +94,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const waitlist = createWaitlistHandlers({ waitlistService })
   const integrations = createIntegrationHandlers({ workspaceService, regions: deps.regions })
   const backoffice = createBackofficeHandlers({ backofficeService })
+  const featureFlags = createFeatureFlagHandlers({ featureFlagService })
   const backofficeAuthz = createBackofficeAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const internalAuthz = createInternalAuthzAdminHandlers({ pool, adminService: workosAuthzAdminService })
   const accounts = createAccountsHandlers({ accountsService })
@@ -171,6 +175,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     backoffice.resyncWorkspaceMembers
   )
   app.get("/api/backoffice/outbox-events/status", auth, requirePlatformAdmin, backoffice.getOutboxEventsStatus)
+  app.get("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.listWorkspaceFlags)
+  app.put("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.setWorkspaceFlag)
   app.get("/api/backoffice/waitlist", auth, requirePlatformAdmin, backoffice.listWaitlist)
   app.get("/api/backoffice/workspaces/:id/invitations", auth, requirePlatformAdmin, backoffice.listWorkspaceInvitations)
   app.get(

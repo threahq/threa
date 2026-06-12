@@ -16,6 +16,7 @@ import type {
   UserPreferences,
   SidebarConfig,
   WorkspaceSettings,
+  FeatureFlags,
   LastMessagePreview,
   ActivityCreatedPayload,
   SavedUpsertedPayload,
@@ -136,6 +137,12 @@ interface SidebarConfigUpdatedPayload {
 interface WorkspaceSettingsUpdatedPayload {
   workspaceId: string
   settings: WorkspaceSettings
+}
+
+interface FeatureFlagsUpdatedPayload {
+  workspaceId: string
+  targetUserId: string
+  featureFlags: FeatureFlags
 }
 
 // ============================================================================
@@ -1202,6 +1209,15 @@ export function registerWorkspaceSocketHandlers(
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, workspaceSettings: payload.settings }))
   }
 
+  // Handle feature flags updated (a platform admin toggled a flag for this
+  // user from the backoffice). User-scoped event carrying the full resolved
+  // map; lives only in the bootstrap query cache, like workspace settings.
+  const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, featureFlags: payload.featureFlags }))
+  }
+
   // Handle bot created
   const handleBotCreated = (payload: { workspaceId: string; bot: Bot }) => {
     if (payload.workspaceId !== workspaceId) return
@@ -1604,6 +1620,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
   socket.on("workspace_settings:updated", handleWorkspaceSettingsUpdated)
+  socket.on("feature_flags:updated", handleFeatureFlagsUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
@@ -1643,6 +1660,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)
     socket.off("workspace_settings:updated", handleWorkspaceSettingsUpdated)
+    socket.off("feature_flags:updated", handleFeatureFlagsUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)

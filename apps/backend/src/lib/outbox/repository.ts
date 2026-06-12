@@ -9,6 +9,7 @@ import type {
   UserPreferences,
   SidebarConfig,
   WorkspaceSettings,
+  FeatureFlags,
   LastMessagePreview,
   Bot as WireBot,
   BotInvocationCapability,
@@ -62,6 +63,7 @@ export type OutboxEventType =
   | "user_preferences:updated"
   | "sidebar_config:updated"
   | "workspace_settings:updated"
+  | "feature_flags:updated"
   | "budget:alert"
   | "stream:member_joined"
   | "stream:member_added"
@@ -479,6 +481,13 @@ export interface WorkspaceSettingsUpdatedOutboxPayload extends WorkspaceScopedPa
   settings: WorkspaceSettings
 }
 
+// Feature flags event payload (user-scoped — flags are per user). Carries the
+// full resolved map so the frontend replaces its bootstrap field wholesale.
+export interface FeatureFlagsUpdatedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  featureFlags: FeatureFlags
+}
+
 // Invitation event payloads
 export interface InvitationSentOutboxPayload extends WorkspaceScopedPayload {
   invitationId: string
@@ -743,6 +752,7 @@ export interface OutboxEventPayloadMap {
   "user_preferences:updated": UserPreferencesUpdatedOutboxPayload
   "sidebar_config:updated": SidebarConfigUpdatedOutboxPayload
   "workspace_settings:updated": WorkspaceSettingsUpdatedOutboxPayload
+  "feature_flags:updated": FeatureFlagsUpdatedOutboxPayload
   "budget:alert": BudgetAlertOutboxPayload
   "invitation:sent": InvitationSentOutboxPayload
   "invitation:link-created": InvitationLinkCreatedOutboxPayload
@@ -873,6 +883,7 @@ export type UserScopedEventType =
   | "scheduled_message:upserted"
   | "scheduled_message:sent"
   | "scheduled_message:cancelled"
+  | "feature_flags:updated"
 
 const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "activity:created",
@@ -882,6 +893,7 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "scheduled_message:upserted",
   "scheduled_message:sent",
   "scheduled_message:cancelled",
+  "feature_flags:updated",
 ]
 
 /**
