@@ -421,6 +421,23 @@ new abstractions and is worth doing regardless of appetite for the rest.
 | 0.6 | Mention extraction from `contentJson` mention entities                                                                                                                                 | INV-54 Pi-ism      |
 | 0.7 | Turn digests: persist an end-of-session "tools called / findings / sources" digest step; inject recent digests into the next context build (sealed via the auto-title pattern for E2E) | C-1                |
 
+**Phase 0 status (verified on `main`, 2026-06-12):** every row except 0.6 has
+shipped. 0.1/0.2 — `TurnCommit.sources` is required, the enclave seals reply
+and step sources inside the SSK payload (`run-turn.ts`'s commit,
+`trace-observer.ts` via the shared `TraceProjector`), and the browser renders
+them (`MessageSourceList` on the bubble, `SourceList` in the trace dialog) —
+this also makes the UX-27 "Show trace and sources" label honest, and
+supersedes §1.3's "still true" rows for E2EE-9/14. 0.3 — the enclave `/fail`
+callback is wired to `failSessionWithLifecycle`. 0.4 — `/complete` records
+usage through `costService.recordUsage`, gated on winning the
+RUNNING→COMPLETED transition. 0.5 — bot claims carry bounded `attempts` +
+park. 0.7 — turn digests are sealed as trailing `turn_digest` steps and ship
+back as `recentDigests`. **0.6 is the only open Phase 0 item:** mention
+extraction is still the `MENTION_PATTERN` regex over markdown
+(`features/agents/mention-extractor.ts`, consumed by the mention-invoke and
+bot-invocation outbox handlers and the activity service), not `contentJson`
+mention entities.
+
 **Phase 1 — One projector, one gate**
 
 | #   | Change                                                                                                                                                                     | Closes               |
