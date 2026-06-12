@@ -7,6 +7,9 @@ import {
   TurnDeliveries,
   declaredUnsupported,
   isDeclaredUnsupported,
+  type AnyTurnDriver,
+  type DispatchedTurnDriver,
+  type SynchronousTurnDriver,
   type TurnCommit,
   type TurnRequest,
 } from "./turn-driver"
@@ -138,6 +141,19 @@ describe("EnclaveTurnDriver", () => {
     ).rejects.toThrow('serves "sealed" turns')
     expect(generateTextWithTools).not.toHaveBeenCalled()
     expect(commitMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe("turn driver families", () => {
+  it("keeps the synchronous and dispatched families structurally distinct", () => {
+    const driver = new InProcessTurnDriver({ ai: commitOnceAI("unused") })
+    // `TurnDriver` aliases the synchronous contract, so today's call sites and
+    // the union the dispatch layer routes over both accept the driver as-is.
+    const synchronous: SynchronousTurnDriver = driver
+    const anyDriver: AnyTurnDriver = driver
+    // @ts-expect-error — a synchronous driver is not a dispatcher: it resolves the turn in one call instead of durably enqueueing it.
+    const dispatched: DispatchedTurnDriver = driver
+    expect([synchronous, anyDriver, dispatched]).toEqual([driver, driver, driver])
   })
 })
 

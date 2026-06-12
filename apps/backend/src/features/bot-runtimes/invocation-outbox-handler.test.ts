@@ -74,9 +74,10 @@ describe("BotInvocationOutboxHandler E2E short-circuit", () => {
       rootStreamId: null,
       e2eEnabled: true,
     } as never)
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue(
-      undefined as never
-    )
+    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
+      invocation: { id: "inv_1" },
+      wasNewlyInserted: true,
+    } as never)
 
     await runProcessMessageCreated({})
 
@@ -102,9 +103,10 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
       { id: "bot_1", slug: "аріадна", name: "Аріадна", archivedAt: null, traits: ["mentionable"] },
     ] as never)
     spyOn(PersonaRepository, "findBySlug").mockResolvedValue(null as never)
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue(
-      undefined as never
-    )
+    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
+      invocation: { id: "inv_1" },
+      wasNewlyInserted: true,
+    } as never)
 
     // The retired ASCII regex could never match this mention; the node can.
     await runProcessMessageCreated(
@@ -124,9 +126,10 @@ describe("BotInvocationOutboxHandler mention extraction (INV-54/INV-58)", () => 
   it("ignores @-shaped plain text that has no mention node", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(channelStream as never)
     const findVisibleBySlugs = spyOn(BotRepository, "findVisibleBySlugs").mockResolvedValue([] as never)
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue(
-      undefined as never
-    )
+    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
+      invocation: { id: "inv_1" },
+      wasNewlyInserted: true,
+    } as never)
 
     await runProcessMessageCreated(
       userMessagePayload({ contentMarkdown: "ping @scout", contentJson: docWithText("ping @scout") })
@@ -171,9 +174,10 @@ describe("BotInvocationOutboxHandler active-scratchpad session-link policy", () 
     spyOn(BotRuntimeInstanceRepository, "findLatestForBots").mockResolvedValue(
       (params.instance ? new Map([["bot_1", params.instance]]) : new Map()) as never
     )
-    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue(
-      undefined as never
-    )
+    const createInvocation = spyOn(BotRuntimeService.prototype, "createInvocation").mockResolvedValue({
+      invocation: { id: "inv_1" },
+      wasNewlyInserted: true,
+    } as never)
     const createMessage = spyOn(EventService.prototype, "createMessage").mockResolvedValue(undefined as never)
     return { createInvocation, createMessage }
   }

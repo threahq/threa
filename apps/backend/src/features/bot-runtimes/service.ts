@@ -301,15 +301,16 @@ export class BotRuntimeService {
     targetInstanceId?: string | null
     targetRuntimeSessionId?: string | null
     metadata?: Record<string, unknown>
-  }): Promise<BotInvocation> {
+  }): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
     return withTransaction(this.pool, (db) => this.createInvocationInTransaction(db, params))
   }
 
   /**
    * Inserts a `bot_invocations` row and emits `bot_invocation:available` in the
    * same tx — but only when the insert actually created a new row. The idempotent
-   * conflict path returns the existing invocation untouched so we do not re-push
-   * duplicates to listeners after a retried HTTP call.
+   * conflict path returns the existing invocation untouched (`wasNewlyInserted:
+   * false`) so we do not re-push duplicates to listeners after a retried HTTP
+   * call, and so dispatch can report the turn as deduplicated.
    */
   async createInvocationInTransaction(
     db: Querier,
@@ -329,7 +330,7 @@ export class BotRuntimeService {
       targetRuntimeSessionId?: string | null
       metadata?: Record<string, unknown>
     }
-  ): Promise<BotInvocation> {
+  ): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
     const { invocation, wasNewlyInserted } = await BotInvocationRepository.insertIdempotent(db, {
       id: botInvocationId(),
       workspaceId: params.workspaceId,
@@ -359,7 +360,7 @@ export class BotRuntimeService {
         createdAt: invocation.createdAt.toISOString(),
       })
     }
-    return invocation
+    return { invocation, wasNewlyInserted }
   }
 
   /**
