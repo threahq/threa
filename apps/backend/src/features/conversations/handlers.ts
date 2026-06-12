@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import type { ConversationService } from "./service"
 import type { StreamService } from "../streams"
 import { CONVERSATION_STATUSES } from "@threa/types"
+import { validateRequest } from "../../lib/validation"
 
 const listConversationsSchema = z.object({
   status: z.enum(CONVERSATION_STATUSES).optional(),
@@ -26,18 +27,12 @@ export function createConversationHandlers({ conversationService, streamService 
       const workspaceId = req.workspaceId!
       const { streamId } = req.params
 
-      const result = listConversationsSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const query = validateRequest(listConversationsSchema, req.query)
 
       // validateStreamAccess handles public visibility + thread root membership
       await streamService.validateStreamAccess(streamId, workspaceId, userId)
 
-      const conversations = await conversationService.listByStream(streamId, result.data)
+      const conversations = await conversationService.listByStream(streamId, query)
       res.json({ conversations })
     },
 
@@ -83,14 +78,7 @@ export function createConversationHandlers({ conversationService, streamService 
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const paramsResult = reassignMessageParamsSchema.safeParse(req.params)
-      if (!paramsResult.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(paramsResult.error).fieldErrors,
-        })
-      }
-      const { conversationId, messageId } = paramsResult.data
+      const { conversationId, messageId } = validateRequest(reassignMessageParamsSchema, req.params)
 
       const conversation = await conversationService.getById(conversationId)
       if (!conversation || conversation.workspaceId !== workspaceId) {

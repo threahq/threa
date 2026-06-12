@@ -5,6 +5,7 @@ import { withClient } from "../../db"
 import { AIUsageRepository } from "./usage-repository"
 import { AIBudgetRepository } from "./budget-repository"
 import { aiBudgetId } from "../../lib/id"
+import { validateRequest } from "../../lib/validation"
 
 const updateBudgetSchema = z.object({
   monthlyBudgetUsd: z.number().min(0).optional(),
@@ -166,15 +167,7 @@ export function createAIUsageHandlers({ pool }: Dependencies) {
     async updateBudget(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = updateBudgetSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const updates = result.data
+      const updates = validateRequest(updateBudgetSchema, req.body)
       const { start, end } = getCurrentMonthRange()
 
       const [budget, usage] = await withClient(pool, async (client) => {

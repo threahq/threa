@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { WorkspaceSettingsService } from "./service"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
+import { validateRequest } from "../../lib/validation"
 
 const updateWorkspaceSettingsSchema = z.object({
   defaultWorkSchedule: workScheduleSchema.optional(),
@@ -26,15 +27,9 @@ export function createWorkspaceSettingsHandlers({ workspaceSettingsService }: De
     async update(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = updateWorkspaceSettingsSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updateWorkspaceSettingsSchema, req.body)
 
-      const settings = await workspaceSettingsService.updateSettings(workspaceId, result.data)
+      const settings = await workspaceSettingsService.updateSettings(workspaceId, data)
       res.json({ settings })
     },
   }

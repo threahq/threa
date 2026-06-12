@@ -1,6 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
 import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import type { PushService } from "./service"
 
 /**
@@ -62,16 +63,12 @@ export function createPushHandlers({ pushService }: Dependencies) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const parsed = subscribeSchema.safeParse(req.body)
-      if (!parsed.success) {
-        res.status(400).json({ error: "Validation failed", details: z.flattenError(parsed.error).fieldErrors })
-        return
-      }
+      const data = validateRequest(subscribeSchema, req.body)
 
       const subscription = await pushService.subscribe({
         workspaceId,
         userId,
-        ...parsed.data,
+        ...data,
       })
 
       res.json({ subscription: { id: subscription.id } })
@@ -84,13 +81,9 @@ export function createPushHandlers({ pushService }: Dependencies) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const parsed = unsubscribeSchema.safeParse(req.body)
-      if (!parsed.success) {
-        res.status(400).json({ error: "Validation failed", details: z.flattenError(parsed.error).fieldErrors })
-        return
-      }
+      const { endpoint } = validateRequest(unsubscribeSchema, req.body)
 
-      await pushService.unsubscribe(workspaceId, userId, parsed.data.endpoint)
+      await pushService.unsubscribe(workspaceId, userId, endpoint)
       res.json({ ok: true })
     },
 
@@ -100,13 +93,9 @@ export function createPushHandlers({ pushService }: Dependencies) {
      * Not workspace-scoped — uses auth-only middleware.
      */
     async cleanupEndpoint(req: Request, res: Response) {
-      const parsed = unsubscribeSchema.safeParse(req.body)
-      if (!parsed.success) {
-        res.status(400).json({ error: "Validation failed", details: z.flattenError(parsed.error).fieldErrors })
-        return
-      }
+      const { endpoint } = validateRequest(unsubscribeSchema, req.body)
 
-      await pushService.unsubscribeAllWorkspaces(parsed.data.endpoint, req.workosUserId!)
+      await pushService.unsubscribeAllWorkspaces(endpoint, req.workosUserId!)
       res.json({ ok: true })
     },
 

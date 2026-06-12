@@ -53,6 +53,7 @@ import {
 } from "../commands"
 import type { BotRuntimeKind, BotRuntimeStatus } from "@threa/types"
 import { HttpError } from "@threa/backend-common"
+import { validateRequest } from "../../lib/validation"
 import { normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
 import { randomUUID } from "crypto"
@@ -790,25 +791,22 @@ export function createPublicApiHandlers({
 
     async upsertBotRuntimePresence(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = upsertPresenceSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(upsertPresenceSchema, req.body)
       const presence = await botRuntimeService.upsertPresenceFromBotKey({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        runtimeKind: result.data.runtimeKind,
-        instanceId: result.data.instanceId,
-        displayName: result.data.displayName,
-        status: result.data.status,
-        acceptingInvocations: result.data.acceptingInvocations,
+        runtimeKind: data.runtimeKind,
+        instanceId: data.instanceId,
+        displayName: data.displayName,
+        status: data.status,
+        acceptingInvocations: data.acceptingInvocations,
         capabilities: {
-          ...result.data.capabilities,
-          ...(result.data.runtimeSessionId && { runtimeSessionId: result.data.runtimeSessionId }),
+          ...data.capabilities,
+          ...(data.runtimeSessionId && { runtimeSessionId: data.runtimeSessionId }),
         },
-        statusText: sanitizeStatusText(result.data.statusText),
-        publicKey: result.data.publicKey,
-        publicKeyId: result.data.publicKeyId,
+        statusText: sanitizeStatusText(data.statusText),
+        publicKey: data.publicKey,
+        publicKeyId: data.publicKeyId,
       })
       await broadcastBotPresence(req.workspaceId!, req.botApiKey.botId, presence)
       res.json({
@@ -823,10 +821,7 @@ export function createPublicApiHandlers({
 
     async createBotRuntimeSession(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = createRuntimeSessionSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(createRuntimeSessionSchema, req.body)
       const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
       if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
       if (bot.type !== "personal") {
@@ -841,8 +836,8 @@ export function createPublicApiHandlers({
       const existingLink = await botRuntimeService.findActivePiRemoteSession({
         workspaceId: req.workspaceId!,
         botId: bot.id,
-        instanceId: result.data.instanceId,
-        runtimeSessionId: result.data.runtimeSessionId,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
       })
       if (existingLink) {
         await withTransaction(pool, (client) =>
@@ -865,7 +860,7 @@ export function createPublicApiHandlers({
 
       const stream = await streamService.createScratchpad({
         workspaceId: req.workspaceId!,
-        displayName: result.data.displayName,
+        displayName: data.displayName,
         createdBy: bot.ownerUserId,
       })
       await streamService.addBotToStream(stream.id, bot.id, req.workspaceId!, bot.ownerUserId)
@@ -878,12 +873,12 @@ export function createPublicApiHandlers({
         return botRuntimeService.createOrLinkPiRemoteSessionInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: bot.id,
-          instanceId: result.data.instanceId,
-          runtimeSessionId: result.data.runtimeSessionId,
+          instanceId: data.instanceId,
+          runtimeSessionId: data.runtimeSessionId,
           rootStreamId: stream.id,
           activeStreamId: stream.id,
           linkedBy: bot.ownerUserId,
-          metadata: { displayName: result.data.displayName, localCwd: result.data.localCwd ?? null },
+          metadata: { displayName: data.displayName, localCwd: data.localCwd ?? null },
         })
       })
 
@@ -900,20 +895,17 @@ export function createPublicApiHandlers({
 
     async renameBotRuntimeSession(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = renameRuntimeSessionSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(renameRuntimeSessionSchema, req.body)
       const link = await botRuntimeService.findActivePiRemoteSession({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        instanceId: result.data.instanceId,
-        runtimeSessionId: result.data.runtimeSessionId,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
       })
       if (!link) {
         throw new HttpError("No active runtime session link found", { status: 404, code: "NOT_FOUND" })
       }
-      const updated = await streamService.updateStream(link.activeStreamId, { displayName: result.data.displayName })
+      const updated = await streamService.updateStream(link.activeStreamId, { displayName: data.displayName })
       if (!updated) {
         throw new HttpError("Linked stream not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -924,46 +916,43 @@ export function createPublicApiHandlers({
           activeStreamId: link.activeStreamId,
           runtimeSessionId: link.runtimeSessionId,
           streamUrlPath: `/w/${req.workspaceId!}/s/${link.activeStreamId}`,
-          displayName: updated.displayName ?? result.data.displayName,
+          displayName: updated.displayName ?? data.displayName,
         },
       })
     },
 
     async claimBotInvocation(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = claimInvocationSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(claimInvocationSchema, req.body)
       // Claim doubles as a heartbeat: refresh presence as "available" on every
       // poll so Pi does not need a separate /presence call per tick. If a claim
       // lands we'll overwrite to "busy" right after.
       await touchAndBroadcastPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        runtimeKind: result.data.runtimeKind,
-        instanceId: result.data.instanceId,
-        runtimeSessionId: result.data.runtimeSessionId,
+        runtimeKind: data.runtimeKind,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
         status: "available",
         acceptingInvocations: true,
       })
       const invocation = await botRuntimeService.claimNextInvocation({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        runtimeKind: result.data.runtimeKind,
-        instanceId: result.data.instanceId,
-        runtimeSessionId: result.data.runtimeSessionId,
-        supportedCapabilities: result.data.supportedCapabilities,
-        claimTtlSeconds: result.data.claimTtlSeconds,
+        runtimeKind: data.runtimeKind,
+        instanceId: data.instanceId,
+        runtimeSessionId: data.runtimeSessionId,
+        supportedCapabilities: data.supportedCapabilities,
+        claimTtlSeconds: data.claimTtlSeconds,
         claimToken: randomUUID(),
       })
       if (!invocation) return res.json({ data: null })
       await touchAndBroadcastPresence({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
-        runtimeKind: result.data.runtimeKind,
-        instanceId: result.data.instanceId,
-        runtimeSessionId: invocation.targetRuntimeSessionId ?? result.data.runtimeSessionId,
+        runtimeKind: data.runtimeKind,
+        instanceId: data.instanceId,
+        runtimeSessionId: invocation.targetRuntimeSessionId ?? data.runtimeSessionId,
         status: "busy",
         acceptingInvocations: false,
       })
@@ -1028,17 +1017,14 @@ export function createPublicApiHandlers({
 
     async renewBotInvocationClaim(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = renewInvocationClaimSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(renewInvocationClaimSchema, req.body)
       const renewed = await botRuntimeService.renewInvocationClaim({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         invocationId: req.params.invocationId,
-        instanceId: result.data.instanceId,
-        claimToken: result.data.claimToken,
-        claimTtlSeconds: result.data.claimTtlSeconds,
+        instanceId: data.instanceId,
+        claimToken: data.claimToken,
+        claimTtlSeconds: data.claimTtlSeconds,
       })
       if (!renewed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       res.json({
@@ -1052,16 +1038,13 @@ export function createPublicApiHandlers({
 
     async recordBotInvocationStep(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = recordInvocationStepSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(recordInvocationStepSchema, req.body)
       const claim = await botRuntimeService.findActiveClaim({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         invocationId: req.params.invocationId,
-        instanceId: result.data.instanceId,
-        claimToken: result.data.claimToken,
+        instanceId: data.instanceId,
+        claimToken: data.claimToken,
       })
       if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
       await assertStreamAccessible(req, claim.responseStreamId)
@@ -1070,7 +1053,7 @@ export function createPublicApiHandlers({
         botRuntimeService.findPresenceByInstance({
           workspaceId: req.workspaceId!,
           botId: req.botApiKey.botId,
-          instanceId: result.data.instanceId,
+          instanceId: data.instanceId,
         }),
       ])
       // Reject-undeclared (INV-11): a runtime that declared a manifest without
@@ -1090,8 +1073,8 @@ export function createPublicApiHandlers({
         personaName: bot?.name ?? "",
       })
       for (const event of botInvocationStepEvents({
-        stepType: result.data.stepType,
-        content: sanitizeInvocationStepContent(result.data.content),
+        stepType: data.stepType,
+        content: sanitizeInvocationStepContent(data.content),
       })) {
         await projector.handle(event)
       }
@@ -1112,39 +1095,34 @@ export function createPublicApiHandlers({
         workspaceId: req.workspaceId!,
         botId: req.botApiKey.botId,
         runtimeKind: runtimePresence?.runtimeKind ?? BotRuntimeKinds.PI_LOCAL,
-        instanceId: result.data.instanceId,
+        instanceId: data.instanceId,
         runtimeSessionId: claim.targetRuntimeSessionId ?? persistedRuntimeSessionId,
         status: "busy",
         acceptingInvocations: false,
-        statusText: sanitizeStatusText(result.data.statusText),
+        statusText: sanitizeStatusText(data.statusText),
       })
       res.json({ data: { invocationId: claim.id, sessionId: claim.id, stepId: step.id } })
     },
 
     async completeBotInvocation(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = completeInvocationSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(completeInvocationSchema, req.body)
       const [bot, runtimePresence] = await Promise.all([
         BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
         botRuntimeService.findPresenceByInstance({
           workspaceId: req.workspaceId!,
           botId: req.botApiKey.botId,
-          instanceId: result.data.instanceId,
+          instanceId: data.instanceId,
         }),
       ])
       if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
       const contentMarkdown =
-        result.data.noResponse === true || !result.data.finalMessageMarkdown
-          ? null
-          : normalizeMessage(result.data.finalMessageMarkdown)
+        data.noResponse === true || !data.finalMessageMarkdown ? null : normalizeMessage(data.finalMessageMarkdown)
       // Reject-undeclared (INV-11): a runtime that declared a manifest may only
       // emit what it declared. Unenforced for legacy (null-manifest) runtimes.
       const manifest = runtimePresence?.manifest ?? null
       if (contentMarkdown) assertManifestAllows(manifest, "reply")
-      if (result.data.sources && result.data.sources.length > 0) assertManifestAllows(manifest, "sources")
+      if (data.sources && data.sources.length > 0) assertManifestAllows(manifest, "sources")
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
       const { completed, message, sessionFinalized, synthesizedSteps } = await withTransaction(pool, async (client) => {
@@ -1152,8 +1130,8 @@ export function createPublicApiHandlers({
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
           invocationId: req.params.invocationId,
-          instanceId: result.data.instanceId,
-          claimToken: result.data.claimToken,
+          instanceId: data.instanceId,
+          claimToken: data.claimToken,
         })
         if (!claim) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
         await assertStreamAccessible(req, claim.responseStreamId)
@@ -1174,16 +1152,16 @@ export function createPublicApiHandlers({
               contentMarkdown,
               attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
               clientMessageId: `bot-invocation:${claim.id}`,
-              sources: result.data.sources,
-              metadata: result.data.metadata,
+              sources: data.sources,
+              metadata: data.metadata,
             })
           : null
         const completed = await botRuntimeService.completeInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
           invocationId: req.params.invocationId,
-          instanceId: result.data.instanceId,
-          claimToken: result.data.claimToken,
+          instanceId: data.instanceId,
+          claimToken: data.claimToken,
         })
         if (!completed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
         const runtimeCommand = parseRuntimeCommandInvocationMetadata(completed.metadata)
@@ -1283,18 +1261,15 @@ export function createPublicApiHandlers({
 
     async failBotInvocation(req: Request, res: Response) {
       if (!req.botApiKey) throw new HttpError("Bot API key required", { status: 403, code: "FORBIDDEN" })
-      const result = failInvocationSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
-      }
+      const data = validateRequest(failInvocationSchema, req.body)
       const failed = await withTransaction(pool, async (client) => {
         const failed = await botRuntimeService.failInvocationInTransaction(client, {
           workspaceId: req.workspaceId!,
           botId: req.botApiKey!.botId,
           invocationId: req.params.invocationId,
-          instanceId: result.data.instanceId,
-          claimToken: result.data.claimToken,
-          errorMessage: result.data.errorMessage,
+          instanceId: data.instanceId,
+          claimToken: data.claimToken,
+          errorMessage: data.errorMessage,
         })
         if (!failed) throw new HttpError("Invocation claim not found", { status: 404, code: "NOT_FOUND" })
 
@@ -1305,7 +1280,7 @@ export function createPublicApiHandlers({
             streamId: failed.responseStreamId,
             userId: failed.authorUserId,
             commandId: runtimeCommand.id,
-            error: result.data.errorMessage,
+            error: data.errorMessage,
           })
         }
 
@@ -1322,15 +1297,10 @@ export function createPublicApiHandlers({
     async searchMessages(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = publicSearchSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { query, semantic, exact, streams, from, type, before, after, limit } = result.data
+      const { query, semantic, exact, streams, from, type, before, after, limit } = validateRequest(
+        publicSearchSchema,
+        req.body
+      )
 
       const accessibleStreamIds = await getAccessibleStreamIds(req)
 
@@ -1375,15 +1345,10 @@ export function createPublicApiHandlers({
     async searchMemos(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = searchMemosSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { query, exact, streams, memoType, knowledgeType, tags, before, after, limit } = result.data
+      const { query, exact, streams, memoType, knowledgeType, tags, before, after, limit } = validateRequest(
+        searchMemosSchema,
+        req.body
+      )
       const normalized = normalizeMemoSearchMode(query, exact)
       const accessibleStreamIds = await getAccessibleStreamIds(req, {
         archiveStatus: ["active", "archived"],
@@ -1440,15 +1405,7 @@ export function createPublicApiHandlers({
     async searchAttachments(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = searchAttachmentsSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { query, streams, contentTypes, limit } = result.data
+      const { query, streams, contentTypes, limit } = validateRequest(searchAttachmentsSchema, req.body)
       const accessibleStreamIds = await getAccessibleStreamIds(req)
       if (accessibleStreamIds.length === 0) {
         return res.json({ data: [] })
@@ -1507,15 +1464,7 @@ export function createPublicApiHandlers({
      * GET /api/v1/workspaces/:workspaceId/streams
      */
     async listStreams(req: Request, res: Response) {
-      const result = listStreamsSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { type, query, after: afterCursor, limit } = result.data
+      const { type, query, after: afterCursor, limit } = validateRequest(listStreamsSchema, req.query)
       const accessibleStreamIds = await getAccessibleStreamIds(req)
 
       if (accessibleStreamIds.length === 0) {
@@ -1584,15 +1533,7 @@ export function createPublicApiHandlers({
       const streamId = req.params.streamId
       const workspaceId = req.workspaceId!
 
-      const result = listMembersSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { after: afterCursor, limit } = result.data
+      const { after: afterCursor, limit } = validateRequest(listMembersSchema, req.query)
 
       await assertStreamAccessible(req, streamId)
 
@@ -1699,15 +1640,7 @@ export function createPublicApiHandlers({
     async findMessagesByMetadata(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = findMessagesByMetadataSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { metadata, streamId, limit } = result.data
+      const { metadata, streamId, limit } = validateRequest(findMessagesByMetadataSchema, req.body)
 
       const accessibleStreamIds = await getAccessibleStreamIds(req)
       if (accessibleStreamIds.length === 0) {
@@ -1742,15 +1675,7 @@ export function createPublicApiHandlers({
       const workspaceId = req.workspaceId!
       const streamId = req.params.streamId
 
-      const result = sendMessageSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { content, clientMessageId, metadata } = result.data
+      const { content, clientMessageId, metadata } = validateRequest(sendMessageSchema, req.body)
 
       // Verify stream access
       await assertStreamAccessible(req, streamId)
@@ -1902,15 +1827,7 @@ export function createPublicApiHandlers({
     async listUsers(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
 
-      const result = listUsersSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { query, after: afterCursor, limit } = result.data
+      const { query, after: afterCursor, limit } = validateRequest(listUsersSchema, req.query)
 
       // Cursor pagination disabled when query is provided (relevance ordering)
       const cursor = !query && afterCursor ? decodeCursor(afterCursor) : undefined
@@ -1996,14 +1913,8 @@ export function createPublicApiHandlers({
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
 
-      const result = listMyBotsSchema.safeParse(req.query)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-      const traits = result.data.traits ? [result.data.traits] : []
+      const query = validateRequest(listMyBotsSchema, req.query)
+      const traits = query.traits ? [query.traits] : []
 
       const bots = await BotRepository.listByOwner(pool, workspaceId, userId, { traits })
       res.json({ data: bots.map(serializeBot) })

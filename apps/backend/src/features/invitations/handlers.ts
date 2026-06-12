@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import { WORKSPACE_INVITABLE_ROLES, WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import type { Invitation } from "./repository"
 import type { InvitationService, InvitationLinkErrorCode } from "./service"
 import { InvitationLinkError } from "./service"
@@ -53,15 +54,7 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
 
-      const result = sendInvitationsSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const { emails, role } = result.data
+      const { emails, role } = validateRequest(sendInvitationsSchema, req.body)
 
       const sendResult = await invitationService.sendInvitations({
         workspaceId,
@@ -118,19 +111,13 @@ export function createInvitationHandlers({ invitationService }: Dependencies) {
       const workspaceId = req.workspaceId!
       const userId = req.user!.id
 
-      const result = createLinkSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(createLinkSchema, req.body)
 
       const { invitation, token } = await invitationService.createLink({
         workspaceId,
         invitedBy: userId,
-        role: result.data.role,
-        note: result.data.note?.trim() || null,
+        role: data.role,
+        note: data.note?.trim() || null,
       })
 
       // Token returned exactly once. Frontend constructs the join URL from
