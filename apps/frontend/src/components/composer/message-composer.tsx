@@ -11,7 +11,7 @@ import {
   useId,
 } from "react"
 import { flushSync } from "react-dom"
-import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2, ChevronDown } from "lucide-react"
+import { ArrowUp, X, Plus, AtSign, Slash, Paperclip, Maximize2 } from "lucide-react"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -1142,14 +1142,16 @@ export function MessageComposer({
                               variant="ghost"
                               size="icon"
                               aria-label="More composer actions"
+                              // Same affordance as the expanded editor's FAB:
+                              // a bordered circle whose + rotates to × while
+                              // the menu is open.
                               className={cn(
-                                "h-7 w-10 shrink-0 gap-0 rounded-full border border-input bg-muted/40",
+                                "group/more h-7 w-7 shrink-0 rounded-full border border-input",
                                 "data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
                               )}
                               disabled={controlsDisabled}
                             >
-                              <Plus className="h-3.5 w-3.5" />
-                              <ChevronDown className="h-2.5 w-2.5 opacity-60" />
+                              <Plus className="h-4 w-4 transition-transform duration-150 group-data-[state=open]/more:rotate-45" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent side="top" align="start" className="min-w-[160px]">
@@ -1179,7 +1181,9 @@ export function MessageComposer({
                         <div className="flex-1" />
                       </>
                     ) : (
-                      <span className="text-[11px] text-muted-foreground flex-1 select-none pointer-events-none">
+                      // truncate, never wrap: a second line grows the action
+                      // bar and shifts the composer (INV-21)
+                      <span className="text-[11px] text-muted-foreground flex-1 truncate select-none pointer-events-none">
                         Select text to format
                       </span>
                     )}
