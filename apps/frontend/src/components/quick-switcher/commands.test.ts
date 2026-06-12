@@ -91,6 +91,7 @@ describe("commands", () => {
         createEncryptedScratchpad: vi.fn(async () => "stream_x"),
         openCreateChannel: vi.fn(),
         setMode: vi.fn(),
+        openSearch: vi.fn(),
         requestInput: vi.fn(),
         openSettings: vi.fn(),
         openWorkspaceSettings: vi.fn(),

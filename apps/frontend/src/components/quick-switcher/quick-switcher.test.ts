@@ -18,10 +18,10 @@ describe("QuickSwitcher mode detection", () => {
       expect(deriveMode("> create channel")).toBe("command")
     })
 
-    it("should return 'search' for queries starting with ?", () => {
-      expect(deriveMode("?")).toBe("search")
-      expect(deriveMode("?error")).toBe("search")
-      expect(deriveMode("? find logs")).toBe("search")
+    it("should treat ? as plain stream-search text (message search left the palette)", () => {
+      expect(deriveMode("?")).toBe("stream")
+      expect(deriveMode("?error")).toBe("stream")
+      expect(deriveMode("? find logs")).toBe("stream")
     })
 
     it("should only check first character for mode", () => {
@@ -52,23 +52,6 @@ describe("QuickSwitcher mode detection", () => {
 
       it("should not strip if no > prefix", () => {
         expect(getDisplayQuery("new", "command")).toBe("new")
-      })
-    })
-
-    describe("search mode", () => {
-      it("should strip leading ? and whitespace", () => {
-        expect(getDisplayQuery("?error", "search")).toBe("error")
-        expect(getDisplayQuery("? error", "search")).toBe("error")
-        expect(getDisplayQuery("?  find logs", "search")).toBe("find logs")
-      })
-
-      it("should return empty string for just ?", () => {
-        expect(getDisplayQuery("?", "search")).toBe("")
-        expect(getDisplayQuery("? ", "search")).toBe("")
-      })
-
-      it("should not strip if no ? prefix", () => {
-        expect(getDisplayQuery("error", "search")).toBe("error")
       })
     })
   })

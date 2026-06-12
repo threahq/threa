@@ -2,6 +2,7 @@ import { Search as SearchIcon, Terminal, FileText, SlidersHorizontal } from "luc
 import { Link } from "react-router-dom"
 import { useQuickSwitcher, usePreferences } from "@/contexts"
 import { useSidebar } from "@/contexts"
+import { useSearchPanel } from "@/components/search/search-panel-context"
 import { cn } from "@/lib/utils"
 import { ThemeDropdown } from "@/components/theme-dropdown"
 import { ThreaLogo } from "@/components/threa-logo"
@@ -19,6 +20,7 @@ interface SidebarHeaderProps {
 
 export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
+  const { openSearch } = useSearchPanel()
   const { collapseOnMobile } = useSidebar()
   const { preferences } = usePreferences()
   const customBindings = preferences?.keyboardShortcuts ?? {}
@@ -26,7 +28,7 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
   const commandBinding = getEffectiveKeyBinding("openCommands", customBindings)
   const searchBinding = getEffectiveKeyBinding("openSearch", customBindings)
 
-  const handleOpenSwitcher = (mode: "stream" | "command" | "search") => () => {
+  const handleOpenSwitcher = (mode: "stream" | "command") => () => {
     collapseOnMobile()
     openSwitcher(mode)
   }
@@ -67,7 +69,7 @@ export function SidebarHeader({ workspaceName, onEditLayout, hideViewToggle }: S
           binding={commandBinding}
         />
         <QuickActionPill
-          onClick={handleOpenSwitcher("search")}
+          onClick={() => openSearch()}
           icon={SearchIcon}
           label="Search messages"
           binding={searchBinding}

@@ -6,6 +6,8 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
+import { SidebarProvider } from "@/contexts/sidebar-context"
+import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
 import { mockStreamsList } from "@/test/fixtures"
 import { mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
@@ -115,11 +117,34 @@ function RouterWrapper({ children }: { children: React.ReactNode }) {
   )
 }
 
+/**
+ * Exposes the search panel provider state so tests can assert that the
+ * "Search messages" command opens the dedicated search surface (and that
+ * nothing else in the palette does).
+ */
+function SearchPanelProbe() {
+  const { isOpen, query } = useSearchPanel()
+  return <div data-testid="search-panel-probe" data-open={String(isOpen)} data-query={query} />
+}
+
+function ProvidersWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <RouterWrapper>
+      <SidebarProvider>
+        <SearchPanelProvider workspaceId="workspace_1">
+          {children}
+          <SearchPanelProbe />
+        </SearchPanelProvider>
+      </SidebarProvider>
+    </RouterWrapper>
+  )
+}
+
 function renderWithProviders(ui: React.ReactElement) {
   const queryClient = createTestQueryClient()
   return render(
     <QueryClientProvider client={queryClient}>
-      <RouterWrapper>{ui}</RouterWrapper>
+      <ProvidersWrapper>{ui}</ProvidersWrapper>
     </QueryClientProvider>
   )
 }
@@ -293,9 +318,9 @@ describe("QuickSwitcher Integration Tests", () => {
       const queryClient = createTestQueryClient()
       const { rerender } = render(
         <QueryClientProvider client={queryClient}>
-          <RouterWrapper>
+          <ProvidersWrapper>
             <QuickSwitcher {...defaultProps} open={true} />
-          </RouterWrapper>
+          </ProvidersWrapper>
         </QueryClientProvider>
       )
 
@@ -306,18 +331,18 @@ describe("QuickSwitcher Integration Tests", () => {
       // Close dialog
       rerender(
         <QueryClientProvider client={queryClient}>
-          <RouterWrapper>
+          <ProvidersWrapper>
             <QuickSwitcher {...defaultProps} open={false} />
-          </RouterWrapper>
+          </ProvidersWrapper>
         </QueryClientProvider>
       )
 
       // Reopen dialog
       rerender(
         <QueryClientProvider client={queryClient}>
-          <RouterWrapper>
+          <ProvidersWrapper>
             <QuickSwitcher {...defaultProps} open={true} />
-          </RouterWrapper>
+          </ProvidersWrapper>
         </QueryClientProvider>
       )
 
@@ -464,177 +489,6 @@ describe("QuickSwitcher Integration Tests", () => {
         expect(onOpenChange).toHaveBeenCalledWith(false)
       })
     })
-
-    // Tests for popover behavior when suggestion list is shown
-    // These tests verify keyboard handling is delegated to the popover when active
-    describe("when popover is open", () => {
-      it("should navigate popover items with ArrowDown", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-        // Switch to search mode first
-        const input = screen.getByLabelText("Quick switcher input")
-        await user.type(input, "?")
-
-        await waitFor(() => {
-          expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-        })
-
-        const editor = screen.getByLabelText("Search query input")
-        // Type @ to trigger mention popover (cursor is at end, after "?")
-        await user.type(editor, " @")
-
-        // Wait for popover to appear with mentionables
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // ArrowDown should navigate within the popover, not close dialog
-        await user.keyboard("{ArrowDown}")
-
-        // Dialog should still be open
-        expect(screen.getByRole("dialog")).toBeInTheDocument()
-        expect(screen.getByText("Kate")).toBeInTheDocument()
-      })
-
-      it("should navigate popover items with ArrowUp", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-        const input = screen.getByLabelText("Quick switcher input")
-        await user.type(input, "?")
-
-        await waitFor(() => {
-          expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-        })
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.type(editor, " @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Navigate down first
-        await user.keyboard("{ArrowDown}")
-        // Then back up
-        await user.keyboard("{ArrowUp}")
-
-        // Dialog should still be open (popover captured the events)
-        expect(screen.getByRole("dialog")).toBeInTheDocument()
-      })
-
-      it("should select popover item with Enter", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-        const input = screen.getByLabelText("Quick switcher input")
-        await user.type(input, "?")
-
-        await waitFor(() => {
-          expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-        })
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.type(editor, " @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Press Enter to select first item
-        await user.keyboard("{Enter}")
-
-        // Popover should close and selection should be inserted
-        await waitFor(() => {
-          const editorContent = editor.textContent
-          expect(editorContent).toContain("@martin")
-        })
-      })
-
-      it("should select popover item with Tab", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-        const input = screen.getByLabelText("Quick switcher input")
-        await user.type(input, "?")
-
-        await waitFor(() => {
-          expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-        })
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.type(editor, " @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Press Tab to select first item
-        await user.keyboard("{Tab}")
-
-        // Selection should be inserted (Tab works like Enter in suggestion lists)
-        await waitFor(() => {
-          const editorContent = editor.textContent
-          expect(editorContent).toContain("@martin")
-        })
-      })
-
-      it("should close popover (not dialog) with Escape", async () => {
-        const user = userEvent.setup()
-        const onOpenChange = vi.fn()
-        renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} />)
-
-        const input = screen.getByLabelText("Quick switcher input")
-        await user.type(input, "?")
-
-        await waitFor(() => {
-          expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-        })
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.type(editor, " @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Press Escape - should close popover, not dialog
-        await user.keyboard("{Escape}")
-
-        // Dialog should still be open because our handler prevented the default
-        expect(screen.getByRole("dialog")).toBeInTheDocument()
-        expect(onOpenChange).not.toHaveBeenCalledWith(false)
-      })
-
-      it("should return focus to input after popover closes", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-        const input = screen.getByLabelText("Quick switcher input")
-        await user.type(input, "?")
-
-        await waitFor(() => {
-          expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-        })
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.type(editor, " @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Select an item to close popover
-        await user.keyboard("{Enter}")
-
-        // Focus should return to editor
-        await waitFor(() => {
-          const proseMirrorEl = editor.closest(".ProseMirror")
-          expect(document.activeElement).toBe(proseMirrorEl)
-        })
-      })
-    })
   })
 
   describe("mode switching", () => {
@@ -659,19 +513,19 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(screen.getByRole("tab", { name: /command palette/i })).toHaveAttribute("aria-selected", "true")
     })
 
-    it("should switch to search mode when typing ?", async () => {
+    it("should treat ? as plain stream-search text (no search mode)", async () => {
       const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
+      const onOpenChange = vi.fn()
+      renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} />)
 
       const input = screen.getByLabelText("Quick switcher input")
       await user.type(input, "?")
 
-      // When mode switches to search, the tab should be selected and RichInput renders
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-      // RichInput uses TipTap which has aria-label instead of placeholder
-      expect(screen.getByLabelText("Search query input")).toBeInTheDocument()
+      // Message search left the palette entirely — "?" is just text in
+      // stream mode, and nothing closes or opens the search surface
+      expect(screen.getByRole("tab", { name: /stream search/i })).toHaveAttribute("aria-selected", "true")
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "false")
     })
 
     it("should switch mode when clicking mode tabs", async () => {
@@ -717,33 +571,6 @@ describe("QuickSwitcher Integration Tests", () => {
   })
 
   describe("mode prefix behavior", () => {
-    it("should switch to search mode when typing ? and allow continued typing", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      // Start in stream mode
-      const input = screen.getByLabelText("Quick switcher input")
-
-      // Type "?" - should switch to search mode
-      await user.type(input, "?")
-
-      // Should be in search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // RichInput should show "?" (the full query including prefix)
-      const searchEditor = screen.getByLabelText("Search query input")
-      expect(searchEditor.textContent).toBe("?")
-
-      // Now continue typing into the RichInput
-      await user.click(searchEditor)
-      await user.type(searchEditor, " test")
-
-      // Should show "? test" in the editor (full query with prefix)
-      expect(searchEditor.textContent).toBe("? test")
-    })
-
     it("should preserve > prefix when typing in stream mode", async () => {
       const user = userEvent.setup()
       renderWithProviders(<QuickSwitcher {...defaultProps} />)
@@ -761,69 +588,6 @@ describe("QuickSwitcher Integration Tests", () => {
       // Input should show "> new"
       const commandInput = screen.getByLabelText("Quick switcher input")
       expect(commandInput).toHaveTextContent("> new")
-    })
-
-    it("should not clear query when switching to search mode by typing ?", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      const input = screen.getByLabelText("Quick switcher input")
-
-      // Type just "?" first
-      await user.type(input, "?")
-
-      // Should switch to search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Now type more text (including space after ?)
-      const searchEditor = screen.getByLabelText("Search query input")
-      await user.click(searchEditor)
-      await user.type(searchEditor, " hello")
-
-      // Should show "? hello" in the editor (full query with prefix)
-      expect(searchEditor.textContent).toBe("? hello")
-    })
-
-    it("should handle paste with ? prefix correctly", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      const input = screen.getByLabelText("Quick switcher input")
-
-      // Paste "? test" into the input
-      await user.click(input)
-      await user.paste("? test")
-
-      // Should switch to search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // RichInput should show "? test" (full query with prefix)
-      const searchEditor = screen.getByLabelText("Search query input")
-      expect(searchEditor.textContent).toBe("? test")
-    })
-
-    it("should normalize redundant ? prefixes on paste", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      const input = screen.getByLabelText("Quick switcher input")
-
-      // Paste "? ? test" - should normalize to "? test"
-      await user.click(input)
-      await user.paste("? ? test")
-
-      // Should be in search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // RichInput should show "? test" (normalized, full query with prefix)
-      const searchEditor = screen.getByLabelText("Search query input")
-      expect(searchEditor.textContent).toBe("? test")
     })
 
     it("should normalize redundant > prefixes on paste", async () => {
@@ -846,80 +610,6 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(commandInput).toHaveTextContent("> new")
     })
 
-    it("should allow switching from search mode to stream mode by clearing prefix", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      // Start in stream mode, switch to search mode
-      const input = screen.getByLabelText("Quick switcher input")
-      await user.type(input, "?")
-
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Clear the RichInput and type something without prefix
-      const editor = screen.getByLabelText("Search query input")
-      await user.clear(editor)
-      await user.type(editor, "general")
-
-      // Should switch back to stream mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /stream search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Should show "general" in stream mode input
-      const streamInput = screen.getByLabelText("Quick switcher input")
-      expect(streamInput).toHaveTextContent("general")
-    })
-
-    it("should allow switching from search mode to command mode by changing prefix", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      // Start in stream mode, switch to search mode
-      const input = screen.getByLabelText("Quick switcher input")
-      await user.type(input, "?")
-
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Clear and type command prefix
-      const editor = screen.getByLabelText("Search query input")
-      await user.clear(editor)
-      await user.type(editor, "> new")
-
-      // Should switch to command mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /command palette/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Should show "> new" in command mode input
-      const commandInput = screen.getByLabelText("Quick switcher input")
-      expect(commandInput).toHaveTextContent("> new")
-    })
-
-    it("should stay in search mode when pasting text without prefix", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      // Start in search mode - query is "? "
-      const searchEditor = screen.getByLabelText("Search query input")
-
-      // Paste plain text without prefix - should stay in search mode
-      await user.click(searchEditor)
-      await user.paste("Hello world")
-
-      // Should stay in search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Input should show "? Hello world" (prefix preserved)
-      expect(searchEditor.textContent).toBe("? Hello world")
-    })
-
     it("should stay in command mode when pasting text without prefix", async () => {
       const user = userEvent.setup()
       renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
@@ -938,27 +628,6 @@ describe("QuickSwitcher Integration Tests", () => {
 
       // Input should show "> new scratchpad" (prefix preserved)
       expect(input).toHaveTextContent("> new scratchpad")
-    })
-
-    it("should switch to search mode when pasting text with ? prefix from empty state", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} />)
-
-      // Start in stream mode (empty query)
-      const input = screen.getByLabelText("Quick switcher input")
-
-      // Paste text with ? prefix - should switch to search mode
-      await user.click(input)
-      await user.paste("? hello")
-
-      // Should switch to search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Input should show "? hello"
-      const searchEditor = screen.getByLabelText("Search query input")
-      expect(searchEditor.textContent).toBe("? hello")
     })
 
     it("should keep pasted prefix as content when in different mode (command -> search prefix)", async () => {
@@ -980,26 +649,6 @@ describe("QuickSwitcher Integration Tests", () => {
       // Input should show "> ? hello" (pasted ? is content, not mode switch)
       expect(input).toHaveTextContent("> ? hello")
     })
-
-    it("should keep pasted prefix as content when in different mode (search -> command prefix)", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      // Start in search mode - query is "? "
-      const searchEditor = screen.getByLabelText("Search query input")
-
-      // Paste text with > prefix - should stay in search mode, > becomes content
-      await user.click(searchEditor)
-      await user.paste("> hello")
-
-      // Should stay in search mode
-      await waitFor(() => {
-        expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
-      })
-
-      // Input should show "? > hello" (pasted > is content, not mode switch)
-      expect(searchEditor.textContent).toBe("? > hello")
-    })
   })
 
   describe("mode tab keyboard navigation", () => {
@@ -1018,14 +667,6 @@ describe("QuickSwitcher Integration Tests", () => {
         expect(screen.getByLabelText("Quick switcher input")).toBeInTheDocument()
       })
 
-      // Click search tab
-      const searchTab = screen.getByRole("tab", { name: /message search/i })
-      await user.click(searchTab)
-
-      await waitFor(() => {
-        expect(screen.getByLabelText("Search query input")).toBeInTheDocument()
-      })
-
       // Click streams tab to go back
       const streamsTab = screen.getByRole("tab", { name: /stream search/i })
       await user.click(streamsTab)
@@ -1038,19 +679,17 @@ describe("QuickSwitcher Integration Tests", () => {
     it("should have accessible tabs with proper ARIA attributes", () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} />)
 
-      // All tabs should be present with proper roles
+      // Two modes: stream search and command palette (message search lives
+      // in its own surface, reached via the "Search messages" command)
       const tabs = screen.getAllByRole("tab")
-      expect(tabs).toHaveLength(3)
+      expect(tabs).toHaveLength(2)
 
       // Stream tab should be selected by default
       const streamsTab = screen.getByRole("tab", { name: /stream search/i })
       expect(streamsTab).toHaveAttribute("aria-selected", "true")
 
-      // Other tabs should not be selected
       const commandsTab = screen.getByRole("tab", { name: /command palette/i })
-      const searchTab = screen.getByRole("tab", { name: /message search/i })
       expect(commandsTab).toHaveAttribute("aria-selected", "false")
-      expect(searchTab).toHaveAttribute("aria-selected", "false")
     })
 
     it("should refocus input when pressing ArrowDown while on tabs", async () => {
@@ -1088,180 +727,29 @@ describe("QuickSwitcher Integration Tests", () => {
     })
   })
 
-  describe("search mode", () => {
-    it("should show filter badges when typing filter syntax", async () => {
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      // Get the TipTap editor (it has aria-label, not placeholder)
-      const editor = screen.getByLabelText("Search query input")
-
-      // Type a filter - TipTap requires clicking first to focus
-      await user.click(editor)
-      await user.type(editor, "from:@martin ")
-
-      // The filter should be parsed and displayed as a badge
-      await waitFor(() => {
-        expect(screen.getByText("@martin")).toBeInTheDocument()
-      })
-    })
-
-    it("should remove filter when clicking badge X", async () => {
+  // Message search no longer lives inside the palette — the "Search messages"
+  // command is the palette's entry point to the dedicated surface. The search
+  // behaviors themselves (results, filters, popovers) are covered in
+  // sidebar-search-panel.integration.test.tsx.
+  describe("search messages command", () => {
+    it("should close the palette and open the search panel", async () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
+      const onOpenChange = vi.fn()
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" onOpenChange={onOpenChange} />)
 
-      const editor = screen.getByLabelText("Search query input")
-      await user.click(editor)
-      await user.type(editor, "from:@martin hello")
+      const input = screen.getByLabelText("Quick switcher input")
+      await user.click(input)
+      await user.type(input, "search messages")
 
-      // Wait for badge to appear
       await waitFor(() => {
-        expect(screen.getByText("@martin")).toBeInTheDocument()
+        expect(screen.getByText("Search messages")).toBeInTheDocument()
       })
+      await user.click(screen.getByText("Search messages"))
 
-      // Click the X button on the badge
-      const removeButton = screen.getByRole("button", { name: "" }) // X button has no accessible name
-      await user.click(removeButton)
-
-      // Badge should be removed
-      await waitFor(() => {
-        expect(screen.queryByText("@martin")).not.toBeInTheDocument()
-      })
-    })
-
-    it("should add filter via dropdown menu", async () => {
-      const user = userEvent.setup({ pointerEventsCheck: 0 })
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      // Wait for search mode to render
-      await waitFor(() => {
-        expect(screen.getByText("Add filter")).toBeInTheDocument()
-      })
-
-      // Click "Add filter" button
-      await user.click(screen.getByText("Add filter"))
-
-      // Click "Stream type" option
-      await waitFor(() => {
-        expect(screen.getByText("Stream type")).toBeInTheDocument()
-      })
-      await user.click(screen.getByText("Stream type"))
-
-      // Select a stream type (e.g., "Channel")
-      await waitFor(() => {
-        expect(screen.getByText("Channel")).toBeInTheDocument()
-      })
-      await user.click(screen.getByText("Channel"))
-
-      // Badge should appear
-      await waitFor(() => {
-        expect(screen.getByText("channel")).toBeInTheDocument()
-      })
-    })
-
-    it("should call search API when query changes", async () => {
-      // This test verifies that search is called when the component renders
-      // with search content. Full debounce behavior testing with TipTap
-      // requires browser-level DOM support not available in jsdom.
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      // Search should not be called immediately with empty query
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+      expect(screen.getByTestId("search-panel-probe")).toHaveAttribute("data-open", "true")
+      // The palette itself never searches — the panel owns that
       expect(mockSearchState.search).not.toHaveBeenCalled()
-
-      // Verify clear is not called either until there's content
-      expect(mockSearchState.clear).not.toHaveBeenCalled()
-    })
-
-    it("should display search results", async () => {
-      // Configure mock to return results
-      mockSearchState.results = mockSearchResultsList
-
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      const editor = screen.getByLabelText("Search query input")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      // Results should be displayed
-      await waitFor(() => {
-        expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
-        expect(screen.getByText("Another search result message")).toBeInTheDocument()
-      })
-    })
-
-    it("should navigate to message when selecting result", async () => {
-      mockSearchState.results = mockSearchResultsList
-      const onOpenChange = vi.fn()
-
-      const user = userEvent.setup({ pointerEventsCheck: 0 })
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" onOpenChange={onOpenChange} />)
-
-      const editor = screen.getByLabelText("Search query input")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      // Wait for results
-      await waitFor(() => {
-        expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
-      })
-
-      // Click on result
-      await user.click(screen.getByText("Hello from the search results"))
-
-      // Should navigate to message
-      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
-      expect(onOpenChange).toHaveBeenCalledWith(false)
-    })
-
-    it("should navigate to message when pressing Enter in search mode (no popover)", async () => {
-      mockSearchState.results = mockSearchResultsList
-      const onOpenChange = vi.fn()
-
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" onOpenChange={onOpenChange} />)
-
-      const editor = screen.getByLabelText("Search query input")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      // Wait for results
-      await waitFor(() => {
-        expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
-      })
-
-      // Press Enter to select the first result (no popover is open)
-      await user.keyboard("{Enter}")
-
-      // Should navigate to message
-      expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1")
-      expect(onOpenChange).toHaveBeenCalledWith(false)
-    })
-
-    it("should open in new tab with Cmd+Enter in search mode", async () => {
-      mockSearchState.results = mockSearchResultsList
-      const onOpenChange = vi.fn()
-      const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null)
-
-      const user = userEvent.setup()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" onOpenChange={onOpenChange} />)
-
-      const editor = screen.getByLabelText("Search query input")
-      await user.click(editor)
-      await user.type(editor, "hello")
-
-      // Wait for results
-      await waitFor(() => {
-        expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
-      })
-
-      // Press Cmd+Enter to open in new tab
-      await user.keyboard("{Meta>}{Enter}{/Meta}")
-
-      // Should open in new tab
-      expect(windowOpenSpy).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1", "_blank")
-
-      windowOpenSpy.mockRestore()
     })
   })
 
@@ -1473,14 +961,7 @@ describe("QuickSwitcher Integration Tests", () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
 
       expect(screen.getByLabelText("Quick switcher input")).toBeInTheDocument()
-    })
-
-    it("should start in search mode when initialMode is search", () => {
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-      // RichInput uses TipTap which has aria-label instead of placeholder
-      expect(screen.getByLabelText("Search query input")).toBeInTheDocument()
-      expect(screen.getByRole("tab", { name: /message search/i })).toHaveAttribute("aria-selected", "true")
+      expect(screen.getByRole("tab", { name: /command palette/i })).toHaveAttribute("aria-selected", "true")
     })
   })
 
@@ -1496,23 +977,6 @@ describe("QuickSwitcher Integration Tests", () => {
         // Check what styles Radix Dialog applies to body
         // In real browser: pointer-events: none would be set
         // In jsdom: getComputedStyle doesn't reflect Radix Dialog's body styles
-      })
-
-      it("should verify where suggestion list renders in DOM", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-        // Need to type text first, then @ - just @ after "? " doesn't trigger popover
-        await user.type(editor, "test @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Verify suggestion list rendered (use aria-label to distinguish from ItemList)
-        expect(screen.getByRole("listbox", { name: /suggestions/i })).toBeInTheDocument()
       })
 
       it("should verify that userEvent respects pointer-events:none", async () => {
@@ -1533,84 +997,6 @@ describe("QuickSwitcher Integration Tests", () => {
         document.body.removeChild(container)
       })
     })
-
-    describe("keyboard event propagation", () => {
-      it("should trace Escape key event flow", async () => {
-        const user = userEvent.setup()
-        const onOpenChange = vi.fn()
-        renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-        // Need to type text first, then @ - just @ after "? " doesn't work
-        await user.type(editor, "test @")
-
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // At this point, popover should be active
-        expect(screen.getByRole("listbox", { name: /suggestions/i })).toBeInTheDocument()
-
-        // Press Escape
-        await user.keyboard("{Escape}")
-
-        // Expected in real browser with bug:
-        // - Dialog closes (onOpenChange called with false)
-        // - Popover disappears because dialog closed
-        //
-        // Expected correct behavior:
-        // - Popover closes first
-        // - Dialog stays open
-        // - Second Escape closes dialog
-      })
-
-      it("should trace Enter key event flow", async () => {
-        mockSearchState.results = mockSearchResultsList
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-        await user.type(editor, "hello @")
-
-        // Wait for both results and popover
-        await waitFor(() => {
-          expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
-        })
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Press Enter
-        await user.keyboard("{Enter}")
-
-        // If Enter was captured by popover: editor should contain @martin, navigate not called
-        // If Enter was captured by list: navigate called, editor unchanged
-      })
-
-      it("should verify isSuggestionPopoverActive state timing", async () => {
-        // This test checks if the popover active state is properly communicated
-        // We'll spy on console to see the state changes
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-
-        // Need to type text first, then @ - just @ after "? " doesn't trigger popover
-        await user.type(editor, "test @")
-
-        // After typing @, wait for popover
-        await waitFor(() => {
-          expect(screen.getByRole("listbox", { name: /suggestions/i })).toBeInTheDocument()
-        })
-
-        // The question is: does the parent QuickSwitcher know the popover is active?
-        // We can't directly check isSuggestionPopoverActive state, but we can
-        // check behavior that depends on it
-      })
-    })
   })
 
   // =============================================================================
@@ -1618,109 +1004,6 @@ describe("QuickSwitcher Integration Tests", () => {
   // Each test documents a specific bug and verifies the correct behavior
   // =============================================================================
   describe("bug regressions", () => {
-    describe("BUG: Enter with popover open should select popover item, not list item", () => {
-      // Bug: When the suggestion popover is open in search mode and user presses Enter,
-      // the highlighted message in the list behind the popover gets opened instead of
-      // selecting the popover item.
-      it("should NOT navigate to a message when pressing Enter with popover open", async () => {
-        // Configure mock to return search results (which appear as list items behind popover)
-        mockSearchState.results = mockSearchResultsList
-
-        const user = userEvent.setup()
-        const onOpenChange = vi.fn()
-        renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-
-        // Type something to trigger search results in the background
-        await user.click(editor)
-        await user.type(editor, "hello @")
-
-        // Wait for BOTH: search results in background AND popover to appear
-        await waitFor(() => {
-          expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
-        })
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Now press Enter - should select popover item, NOT the list item
-        await user.keyboard("{Enter}")
-
-        // The popover item should be selected (text inserted into editor)
-        await waitFor(() => {
-          expect(editor.textContent).toContain("@martin")
-        })
-
-        // CRITICAL: Should NOT have navigated to the message
-        expect(mockNavigate).not.toHaveBeenCalled()
-        // Dialog should still be open (we selected popover item, not closed dialog)
-        expect(onOpenChange).not.toHaveBeenCalledWith(false)
-      })
-    })
-
-    describe("BUG: in: filter should show #slug or display name, not @stream_id", () => {
-      // Bug: When selecting a channel from the in: filter autocomplete, it shows
-      // "in:@stream_channel1" instead of "in:#general" or "in:General"
-      it("should display in:#slug when selecting a channel from in: filter", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-
-        // Type "in:#" to trigger channel filter autocomplete
-        await user.type(editor, "in:#")
-
-        // Wait for channel suggestion popover to appear with "general" channel
-        await waitFor(() => {
-          // Suggestion popover should appear with listbox role
-          const listbox = screen.getByRole("listbox", { name: /suggestions/i })
-          expect(listbox).toBeInTheDocument()
-          // Should contain a channel option with "general" (case-insensitive)
-          expect(screen.getByRole("option", { name: /general/i })).toBeInTheDocument()
-        })
-
-        // Select the first channel
-        await user.keyboard("{Enter}")
-
-        // The filter should show the slug format, not the stream ID
-        await waitFor(() => {
-          const content = editor.textContent ?? ""
-          // Should be "in:#general" NOT "in:@stream_channel1"
-          expect(content).toMatch(/in:#general/i)
-          expect(content).not.toContain("stream_")
-          expect(content).not.toContain("@stream")
-        })
-      })
-
-      it("should display in:@slug when selecting a user from in: filter (DM)", async () => {
-        const user = userEvent.setup()
-        renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-
-        // Type "in:@" to trigger user filter autocomplete (for DMs)
-        await user.type(editor, "in:@")
-
-        // Wait for user suggestions to appear
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Select Martin
-        await user.keyboard("{Enter}")
-
-        // The filter should show @martin (user slug), not the stream ID
-        await waitFor(() => {
-          const content = editor.textContent ?? ""
-          expect(content).toMatch(/in:@martin/i)
-          expect(content).not.toContain("stream_")
-        })
-      })
-    })
-
     describe("BUG: Escape should close dialog when popover is closed", () => {
       // Bug: Pressing Escape doesn't close the quick switcher dialog
       it("should close dialog when pressing Escape in stream mode", async () => {
@@ -1740,59 +1023,6 @@ describe("QuickSwitcher Integration Tests", () => {
 
         // Dialog should close
         expect(onOpenChange).toHaveBeenCalledWith(false)
-      })
-
-      it("should close dialog when pressing Escape in search mode with no popover", async () => {
-        const user = userEvent.setup()
-        const onOpenChange = vi.fn()
-        renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-
-        // Type something that doesn't trigger a popover
-        await user.type(editor, "hello world")
-
-        // Press Escape - should close dialog since no popover is open
-        await user.keyboard("{Escape}")
-
-        // Dialog should close
-        expect(onOpenChange).toHaveBeenCalledWith(false)
-      })
-    })
-
-    describe("clicking popover items", () => {
-      it("should select popover item when clicking it", async () => {
-        mockSearchState.results = mockSearchResultsList
-
-        // pointerEventsCheck: 0 because jsdom can't compute CSS cascade properly.
-        // The real fix is pointer-events-auto on suggestion-list.tsx:105
-        const user = userEvent.setup({ pointerEventsCheck: 0 })
-        const onOpenChange = vi.fn()
-        renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} initialMode="search" />)
-
-        const editor = screen.getByLabelText("Search query input")
-        await user.click(editor)
-        await user.type(editor, "hello @")
-
-        // Wait for popover to appear
-        await waitFor(() => {
-          expect(screen.getByText("Martin")).toBeInTheDocument()
-        })
-
-        // Click on the popover item "Martin"
-        const martinOption = screen.getByText("Martin")
-        await user.click(martinOption)
-
-        // Should insert @martin into the editor
-        await waitFor(() => {
-          expect(editor.textContent).toContain("@martin")
-        })
-
-        // Should NOT have navigated (click should not pass through to list items)
-        expect(mockNavigate).not.toHaveBeenCalled()
-        // Dialog should still be open
-        expect(onOpenChange).not.toHaveBeenCalledWith(false)
       })
     })
 

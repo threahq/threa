@@ -90,6 +90,11 @@ export const router = createBrowserRouter([
         lazy: async () => ({ Component: (await import("@/pages/activity")).ActivityPage }),
       },
       {
+        path: "search",
+        HydrateFallback: FallbackLoader,
+        lazy: async () => ({ Component: (await import("@/pages/search")).SearchPage }),
+      },
+      {
         path: "memory",
         HydrateFallback: FallbackLoader,
         lazy: async () => ({ Component: (await import("@/pages/memory")).MemoryPage }),

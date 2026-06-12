@@ -68,6 +68,7 @@ import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-s
 import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
+import { SearchPanelProvider, useSearchPanel } from "@/components/search"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { TraceDialog } from "@/components/trace"
 import { useQueryClient } from "@tanstack/react-query"
@@ -88,7 +89,6 @@ function WorkspaceKeyboardHandler({ onOpenSwitcher, currentStreamId, children }:
 
   useKeyboardShortcuts({
     openQuickSwitcher: () => onOpenSwitcher("stream"),
-    openSearch: () => onOpenSwitcher("search"),
     openCommands: () => onOpenSwitcher("command"),
     openSettings: () => openSettings(),
     openAttachmentExplorer: () =>
@@ -150,6 +150,21 @@ function SidebarKeyboardHandler() {
 
   useKeyboardShortcuts({
     toggleSidebar: togglePinned,
+  })
+
+  return null
+}
+
+/**
+ * Registers the workspace search shortcut. Must be rendered inside
+ * SearchPanelProvider (and thus SidebarProvider) — search opens as a sidebar
+ * mode on desktop and as a full page on mobile.
+ */
+function SearchKeyboardHandler() {
+  const { openSearch } = useSearchPanel()
+
+  useKeyboardShortcuts({
+    openSearch: () => openSearch(),
   })
 
   return null
@@ -412,22 +427,25 @@ export function WorkspaceLayout() {
                                   <MediaGalleryProvider>
                                     <TraceProvider>
                                       <SidebarProvider>
-                                        <SidebarKeyboardHandler />
-                                        <CoordinatedLoadingGate>
-                                          <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
-                                            <MainContentGate>
-                                              <Outlet />
-                                            </MainContentGate>
-                                          </AppShell>
-                                        </CoordinatedLoadingGate>
+                                        <SearchPanelProvider workspaceId={workspaceId}>
+                                          <SidebarKeyboardHandler />
+                                          <SearchKeyboardHandler />
+                                          <CoordinatedLoadingGate>
+                                            <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
+                                              <MainContentGate>
+                                                <Outlet />
+                                              </MainContentGate>
+                                            </AppShell>
+                                          </CoordinatedLoadingGate>
+                                          <QuickSwitcher
+                                            workspaceId={workspaceId}
+                                            open={switcherOpen}
+                                            onOpenChange={setSwitcherOpen}
+                                            initialMode={switcherMode}
+                                            currentStreamId={streamId}
+                                          />
+                                        </SearchPanelProvider>
                                       </SidebarProvider>
-                                      <QuickSwitcher
-                                        workspaceId={workspaceId}
-                                        open={switcherOpen}
-                                        onOpenChange={setSwitcherOpen}
-                                        initialMode={switcherMode}
-                                        currentStreamId={streamId}
-                                      />
                                       <SettingsDialog />
                                       <WorkspaceSettingsDialog workspaceId={workspaceId} />
                                       <AccountSwitcherDialog />
