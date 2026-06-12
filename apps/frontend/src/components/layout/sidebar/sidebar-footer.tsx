@@ -495,32 +495,28 @@ export function SidebarFooter({
   )
 }
 
-// Shared face for the create control. This is the sidebar's one deliberate
-// golden-thread moment: a centered, bordered gold pill (the accent token pair
-// keeps the label legible on the tint in both modes) so it reads as the app's
-// primary creation action rather than another list row. The plus rotates into
-// an × while the menu is open — the face reacts to the trigger's `data-state`,
+// Shared face for the create control. Quiet and structural: it borrows the
+// bordered-neutral language of the header's quick-action pills so top and
+// bottom of the sidebar bookend each other, and the gold is confined to the
+// plus glyph — the golden thread used sparingly. The plus rotates into an ×
+// while the menu is open — the face reacts to the trigger's `data-state`,
 // which both the Radix desktop trigger and the manual mobile button expose.
 function SidebarCreateButtonFace() {
   return (
     <>
-      <Plus className="h-4 w-4 shrink-0 transition-transform duration-200 group-data-[state=open]/new:rotate-45" />
+      <Plus className="h-4 w-4 shrink-0 text-primary transition-transform duration-200 group-data-[state=open]/new:rotate-45" />
       <span className="font-medium">New</span>
     </>
   )
 }
 
-// Hover and open share one warm treatment: deeper border, warmer gradient, and
-// a soft golden glow (the design system's "key moment" cue). Border and sizing
-// are constant across states, so nothing shifts (INV-21).
+// Hover and open share the same quiet treatment as the quick-action pills:
+// the surface deepens to muted, nothing else changes. Border and sizing are
+// constant across states, so nothing shifts (INV-21).
 const CREATE_BUTTON_CLASS = cn(
-  "group/new w-full justify-center gap-1.5 rounded-lg border border-primary/25",
-  "bg-gradient-to-b from-primary/15 to-primary/5 text-accent-foreground shadow-sm",
-  "transition-all duration-200",
-  "hover:border-primary/50 hover:from-primary/20 hover:to-primary/10 hover:text-accent-foreground",
-  "hover:shadow-[0_0_14px_hsl(var(--primary)/0.25)]",
-  "data-[state=open]:border-primary/50 data-[state=open]:from-primary/20 data-[state=open]:to-primary/10",
-  "data-[state=open]:text-accent-foreground data-[state=open]:shadow-[0_0_14px_hsl(var(--primary)/0.25)]"
+  "group/new w-full justify-center gap-1.5 rounded-lg border border-border bg-background text-foreground",
+  "transition-colors hover:bg-muted/60 hover:text-foreground",
+  "data-[state=open]:bg-muted/60 data-[state=open]:text-foreground"
 )
 
 /**
