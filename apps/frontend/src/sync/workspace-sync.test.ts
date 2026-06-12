@@ -8,6 +8,8 @@ import {
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
 import { readMirroredSyncV2Mode } from "./sync-v2-mode"
+import { savedKeys } from "@/hooks/use-saved"
+import { scheduledKeys } from "@/hooks/use-scheduled"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
@@ -668,6 +670,39 @@ describe("registerWorkspaceSocketHandlers", () => {
     await Promise.all([db.streams.clear(), db.streamMemberships.clear(), db.dmPeers.clear(), db.unreadState.clear()])
   })
 
+  const handlerRefs = {
+    getCurrentStreamId: () => undefined,
+    getCurrentUser: () => ({ id: "workos_1" }),
+    subscribeStream: vi.fn(),
+  }
+
+  it("skips the INV-53 saved/scheduled reconnect invalidations in active sync-v2 mode", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket } = createTestSocket()
+
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: savedKeys.all })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
+    cleanup()
+  })
+
+  it.each(["off", "shadow"] as const)(
+    "runs the INV-53 saved/scheduled reconnect invalidations in %s mode (kill switch restores healing)",
+    (mode) => {
+      const queryClient = new QueryClient()
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+      const { socket } = createTestSocket()
+
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, mode)
+
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: savedKeys.all })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
+      cleanup()
+    }
+  )
+
   it("subscribes the creator when a new stream is created at runtime", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
@@ -681,11 +716,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:created", {
       workspaceId: "ws_1",
@@ -724,11 +765,17 @@ describe("registerWorkspaceSocketHandlers", () => {
     queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
 
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream: vi.fn(),
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream: vi.fn(),
+      },
+      "off"
+    )
 
     emit("feature_flags:updated", {
       workspaceId: "ws_1",
@@ -783,11 +830,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:created", {
       workspaceId: "ws_1",
@@ -851,11 +904,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:member_added", {
       workspaceId: "ws_1",
@@ -976,11 +1035,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => "stream_1",
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => "stream_1",
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:read", {
       workspaceId: "ws_1",
@@ -1064,11 +1129,17 @@ describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
 
   function register(queryClient: QueryClient, currentStreamId?: string) {
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => currentStreamId,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream: vi.fn(),
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => currentStreamId,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream: vi.fn(),
+      },
+      "off"
+    )
     return { emit, cleanup }
   }
 

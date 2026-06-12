@@ -193,9 +193,10 @@ export function useScheduledList(workspaceId: string, status: ScheduledMessageSt
       return res
     },
     // INV-53: workspace-sync invalidates `scheduledKeys.all` on reconnect at
-    // the top of `registerWorkspaceSocketHandlers`; refetchOnReconnect catches
-    // the pure online/offline case; refetchOnMount + staleTime: Infinity makes
-    // the invalidation actually fire on next render.
+    // the top of `registerWorkspaceSocketHandlers` (in active sync-v2 mode
+    // the catch-up cursor replays the missed events instead);
+    // refetchOnReconnect catches the pure online/offline case; refetchOnMount
+    // + staleTime: Infinity makes the invalidation actually fire on next render.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
