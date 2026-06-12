@@ -57,7 +57,9 @@ import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useAuth } from "@/auth"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
+import { SyncEngine, SyncEngineContext, isSyncEngineCurrent } from "@/sync/sync-engine"
+import { resolveSyncV2Mode } from "@/sync/sync-v2-mode"
+import { useFeatureFlagWhenKnown } from "@/hooks/use-feature-flags"
 import { messagesApi, syncApi } from "@/api"
 import { QuickSwitcher, type QuickSwitcherMode } from "@/components/quick-switcher"
 import { SettingsDialog } from "@/components/settings"
@@ -65,7 +67,6 @@ import { WorkspaceSettingsDialog } from "@/components/workspace-settings/workspa
 import { AccountSwitcherDialog, LogoutScopeDialog } from "@/components/account-switcher"
 import { StreamSettingsDialog } from "@/components/stream-settings/stream-settings-dialog"
 import { CreateChannelDialog } from "@/components/create-channel"
-import { FeatureFlagDemoBadge } from "@/components/feature-flag-demo-badge"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { TraceDialog } from "@/components/trace"
@@ -181,17 +182,22 @@ function WorkspaceSyncHandler({
   const isOnline = useOnlineStatus()
   const { streamId: currentStreamId } = useParams<{ streamId: string }>()
   const wasOfflineRef = useRef(!navigator.onLine)
-  // Construct SyncEngine once per workspace. Use ref to survive StrictMode
-  // double-render — useMemo + destroy effect breaks because the cleanup
-  // destroys the engine before the socket connect effect fires.
+  // Sync-v2 cursor mode for this engine's lifetime. The flag value rides the
+  // bootstrap, which doesn't exist yet at construction time, so resolution
+  // falls back to the localStorage mirror (last delivered value), then the
+  // registry default — see sync-v2-mode.ts. Once the bootstrap (or a
+  // `feature_flags:updated` event) delivers a different value, the engine is
+  // recreated below with the new mode: a runtime kill switch ("off") and
+  // activation path ("active") with no redeploy or reload.
+  const syncV2Mode = resolveSyncV2Mode(workspaceId, useFeatureFlagWhenKnown(workspaceId, "sync-v2-cursor"))
+  // Construct SyncEngine once per workspace + sync-v2 mode. Use ref to survive
+  // StrictMode double-render — useMemo + destroy effect breaks because the
+  // cleanup destroys the engine before the socket connect effect fires.
   const syncEngineRef = useRef<SyncEngine | null>(null)
-  if (
-    !syncEngineRef.current ||
-    syncEngineRef.current.workspaceId !== workspaceId ||
-    syncEngineRef.current.isDestroyed
-  ) {
-    syncEngineRef.current?.destroy()
-    syncEngineRef.current = new SyncEngine({
+  let syncEngine = syncEngineRef.current
+  if (!syncEngine || !isSyncEngineCurrent(syncEngine, workspaceId, syncV2Mode)) {
+    syncEngine?.destroy()
+    syncEngine = new SyncEngine({
       workspaceId,
       syncStatus: syncStatusStore!,
       queryClient,
@@ -208,9 +214,10 @@ function WorkspaceSyncHandler({
         sendNow: scheduledService.sendNow,
       },
       syncService: syncApi,
+      syncCursorMode: syncV2Mode,
     })
+    syncEngineRef.current = syncEngine
   }
-  const syncEngine = syncEngineRef.current
 
   // Keep syncEngine refs in sync with React state
   useEffect(() => {
@@ -429,7 +436,6 @@ export function WorkspaceLayout() {
                                       <CreateChannelDialog workspaceId={workspaceId} />
                                       <AttachmentExplorer workspaceId={workspaceId} />
                                       <TraceDialogContainer />
-                                      <FeatureFlagDemoBadge workspaceId={workspaceId} />
                                       <Toaster />
                                     </TraceProvider>
                                   </MediaGalleryProvider>

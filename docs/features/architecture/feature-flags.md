@@ -22,8 +22,8 @@ related: [architecture/outbox-pattern.md]
 A feature flag is an enum value looked up by string key, scoped to one user in one
 workspace. Each flag declares its allowed values in code and the **first value is the
 default** — a plain on/off flag is just the two-value case (`["off", "on"]`), while a
-staged rollout can declare richer variants (`["off", "shadow", "active"]`, the shape
-`VITE_SYNC_V2_CURSOR` uses) without resorting to flag combinations. A platform admin
+staged rollout can declare richer variants (`["shadow", "off", "active"]`, the shape
+`sync-v2-cursor` uses) without resorting to flag combinations. A platform admin
 sets a member's value from the backoffice and the change reaches that member's running
 frontend sessions within a second or two — no env vars, no redeploy. The backend
 resolves the same key through the same data, so a flag means the same thing on both
@@ -72,6 +72,8 @@ receives `featureFlags` on `WorkspaceBootstrap`, kept live by the socket handler
 bootstrap-cache-only, no IDB table), and components read it through
 `useFeatureFlag(workspaceId, "key")` — a cache-only observer returning the flag's typed
 value union; until the bootstrap lands it returns the default, which renders the same.
+Callers that must distinguish "not yet delivered" from "set to the default" use
+`useFeatureFlagWhenKnown`, which returns `null` during that window.
 
 That's the whole loop: backoffice toggle → CP outbox → regional snapshot → user-scoped
 broadcast → bootstrap cache → hook re-render. If you only wanted the model, you can
@@ -94,10 +96,15 @@ stop here.
   `WorkspaceBootstrap`, and reconnect invalidation (INV-53) refetches it; the
   `feature_flags:updated` handler is also idempotent under sync-log catch-up replay
   (full-map replacement, no increments).
-- **Verification surface.** The registry ships with one deliberately-temporary flag,
-  `demo-banner: ["off", "on"]`, rendered by `FeatureFlagDemoBadge` (a fixed pill in
-  the workspace shell, shown while the value is `"on"`) purely to prove the pipeline
-  end to end. Delete both together once a real flag exists.
+- **Flags needed before the bootstrap exists.** `sync-v2-cursor` configures the
+  `SyncEngine`, which is constructed before any bootstrap is cached — yet the flag
+  value arrives in the bootstrap. The sync layer mirrors the last delivered value
+  into localStorage (`apps/frontend/src/sync/sync-v2-mode.ts`), construction resolves
+  delivered value → mirror → registry default, and the workspace layout recreates the
+  engine when the delivered value differs from the one it was constructed with — so a
+  backoffice toggle still applies at runtime, at the cost of one engine recreation
+  per flag change. (The original `demo-banner`/`FeatureFlagDemoBadge` verification
+  pair was deleted when this first real flag landed.)
 
 ## Invariants
 

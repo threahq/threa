@@ -43,6 +43,7 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import { mirrorSyncV2Mode } from "./sync-v2-mode"
 import {
   applyActivityCounts,
   applyStreamActivityOrdinal,
@@ -1325,6 +1326,10 @@ export function registerWorkspaceSocketHandlers(
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
+    // Keep the sync-v2 mode mirror current so the next SyncEngine
+    // construction (which runs before any bootstrap is cached) starts from
+    // this delivered value. See sync-v2-mode.ts.
+    mirrorSyncV2Mode(workspaceId, payload.featureFlags)
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, featureFlags: payload.featureFlags }))
   }
 
@@ -1833,6 +1838,10 @@ export async function applyWorkspaceBootstrap(
 ): Promise<void> {
   const now = Date.now()
 
+  // Mirror the sync-v2 mode so the next SyncEngine construction (which runs
+  // before any bootstrap exists) starts from this delivered flag value.
+  mirrorSyncV2Mode(workspaceId, bootstrap.featureFlags)
+
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
 
@@ -2048,6 +2057,10 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>
 }> {
   const now = Date.now()
+
+  // Same as applyWorkspaceBootstrap: the flag map comes straight from the
+  // fresh server snapshot (the reconnect merge only adjusts streams/counters).
+  mirrorSyncV2Mode(workspaceId, workspaceBootstrap.featureFlags)
 
   const [localStreams, localMemberships, localUnreadState] = await Promise.all([
     db.streams.where("workspaceId").equals(workspaceId).toArray(),
