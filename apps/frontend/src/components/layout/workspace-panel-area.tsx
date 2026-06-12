@@ -457,7 +457,7 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
         tabIndex={-1}
         // flex-1 has basis 0 — without a min-width, enough panels would
         // squeeze the main view to nothing before the panels start shrinking.
-        className="min-w-[360px] flex-1 outline-none"
+        className="relative min-w-[360px] flex-1 outline-none"
         onPointerDownCapture={(e) => {
           setFocusedPane("main")
           // Pane 0 is a pane like any other — its page header doubles as the
@@ -476,6 +476,7 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
         onFocusCapture={() => setFocusedPane("main")}
       >
         {children}
+        <PaneFocusIndicator active={panels.length > 0} pane="main" />
       </div>
 
       {slots.map((slot) => (
@@ -554,7 +555,6 @@ function PanelSlot({
   onExited,
 }: PanelSlotProps) {
   const { closePanel, setFocusedPane } = usePanel()
-  const focusedPane = useFocusedPane()
   const [entered, setEntered] = useState(!animateEntry)
   const [slideDone, setSlideDone] = useState(!animateEntry)
 
@@ -617,7 +617,6 @@ function PanelSlot({
   )
 
   const maxWidth = Math.round((containerRef.current?.offsetWidth ?? 0) * MAX_PANEL_RATIO)
-  const isFocused = !closing && focusedPane === panelId
   const isSliding = closing || !slideDone
   const displayWidth = closing || !entered ? 0 : width
 
@@ -664,13 +663,24 @@ function PanelSlot({
           </PanelInstanceProvider>
         </div>
       </div>
-      {/* Focus indicator: a hairline under the header of the focused panel. */}
-      <div
-        className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 z-10 h-12 border-b-2 border-primary/50 opacity-0 transition-opacity",
-          isFocused && "opacity-100"
-        )}
-      />
+      <PaneFocusIndicator active={!closing} pane={panelId} />
     </div>
+  )
+}
+
+/**
+ * The hairline under a pane's header marking it as the focused pane. Every
+ * pane renders one — pane 0 included — so focus reads uniformly; it only
+ * lights up when there is more than one pane to choose between.
+ */
+function PaneFocusIndicator({ active, pane }: { active: boolean; pane: string }) {
+  const focusedPane = useFocusedPane()
+  return (
+    <div
+      className={cn(
+        "pointer-events-none absolute inset-x-0 top-0 z-10 h-12 border-b-2 border-primary/50 opacity-0 transition-opacity",
+        active && focusedPane === pane && "opacity-100"
+      )}
+    />
   )
 }

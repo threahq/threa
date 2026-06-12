@@ -1143,7 +1143,7 @@ export function MessageComposer({
                               size="icon"
                               aria-label="More composer actions"
                               className={cn(
-                                "h-7 w-7 shrink-0 rounded-full border border-input",
+                                "h-7 w-7 shrink-0 border border-input",
                                 "data-[state=open]:bg-accent data-[state=open]:text-accent-foreground"
                               )}
                               disabled={controlsDisabled}
