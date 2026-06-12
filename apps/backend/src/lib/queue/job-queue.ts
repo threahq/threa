@@ -56,7 +56,6 @@ export interface PersonaAgentJobData {
   rerunContext?: AgentSessionRerunContext
 }
 
-/** A user turn in an E2E scratchpad to forward to the enclave (Ariadne). */
 export interface NamingJobData {
   workspaceId: string
   streamId: string
