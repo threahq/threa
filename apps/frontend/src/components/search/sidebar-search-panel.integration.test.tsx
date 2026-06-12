@@ -348,6 +348,23 @@ describe("SidebarSearchPanel Integration Tests", () => {
       })
     })
 
+    it("widens date-only before:/after: filters to local-midnight ISO datetimes in the API call", async () => {
+      const user = userEvent.setup()
+      renderPanel()
+
+      const editor = screen.getByLabelText("Search messages")
+      await user.click(editor)
+      await user.type(editor, "before:2026-06-19 hello")
+
+      // The API validates z.string().datetime(); the bare YYYY-MM-DD from the
+      // query syntax must arrive as the start of that date in local time
+      await waitFor(() => {
+        expect(mockSearchState.search).toHaveBeenCalledWith("hello", {
+          before: new Date(2026, 5, 19).toISOString(),
+        })
+      })
+    })
+
     it("resolves from:@slug filters to user ids in the API call", async () => {
       const user = userEvent.setup()
       renderPanel()

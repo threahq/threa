@@ -420,6 +420,18 @@ export function parseLocalDateTime(dateStr: string, timeStr: string): Date | nul
   return Number.isNaN(parsed.getTime()) ? null : parsed
 }
 
+/**
+ * Convert a date-only string (YYYY-MM-DD) to the ISO instant where that
+ * calendar date starts in the device's local timezone. Used to widen the
+ * date-only search filter syntax (`before:2026-06-19`) into the full ISO
+ * datetimes the search API validates, anchored to the searcher's own day
+ * boundaries. Returns null for anything that isn't a date-only string.
+ */
+export function localStartOfDayISO(dateStr: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null
+  return parseLocalDateTime(dateStr, "00:00")?.toISOString() ?? null
+}
+
 // ============================================================================
 // Send countdown (≤1m falls back to "Sending soon")
 // ============================================================================
