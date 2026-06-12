@@ -851,10 +851,19 @@ export function StreamContent({
   const [olderSkeletonTrackedId, setOlderSkeletonTrackedId] = useState<string | null>(null)
   const [olderSkeletonReady, setOlderSkeletonReady] = useState(false)
 
+  // Arm the tracker whenever a fetch is in flight and nothing is tracked.
+  // Gated on the tracker being empty (not just the isFetchingOlder rising
+  // edge) so it self-re-arms when a prepend lands mid-fetch: with
+  // back-to-back pages, fetch N+1 can start before fetch N's rows have
+  // propagated out of IDB, so a rising-edge capture would record the stale
+  // pre-page-N head — page N landing would then retire the tracker and leave
+  // fetch N+1 with no skeleton coverage. Instead the landed cleanup below
+  // clears the tracker and this effect immediately re-arms it against the
+  // new head while the fetch is still in flight.
   useEffect(() => {
-    if (!isFetchingOlder || !useVirtualized) return
+    if (!isFetchingOlder || !useVirtualized || olderSkeletonTrackedId !== null) return
     setOlderSkeletonTrackedId(oldestEventIdRef.current)
-  }, [isFetchingOlder, useVirtualized])
+  }, [isFetchingOlder, useVirtualized, olderSkeletonTrackedId])
 
   // Appear delay: commit to skeletons only once the fetch has been in flight
   // long enough that they won't flash for a fast response.
