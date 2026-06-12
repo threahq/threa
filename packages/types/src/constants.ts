@@ -172,6 +172,19 @@ export const SavedStatuses = {
   ARCHIVED: "archived",
 } as const satisfies Record<string, SavedStatus>
 
+// Saved suggestion statuses — passively collected to-do candidates. A
+// suggestion is never a saved item; accepting one creates the saved item and
+// records the link. Dismissed rows are kept as negative examples for the
+// extractor prompt.
+export const SAVED_SUGGESTION_STATUSES = ["suggested", "accepted", "dismissed"] as const
+export type SavedSuggestionStatus = (typeof SAVED_SUGGESTION_STATUSES)[number]
+
+export const SavedSuggestionStatuses = {
+  SUGGESTED: "suggested",
+  ACCEPTED: "accepted",
+  DISMISSED: "dismissed",
+} as const satisfies Record<string, SavedSuggestionStatus>
+
 // Scheduled message statuses
 export const SCHEDULED_MESSAGE_STATUSES = ["pending", "sending", "sent", "cancelled", "failed"] as const
 export type ScheduledMessageStatus = (typeof SCHEDULED_MESSAGE_STATUSES)[number]

@@ -10,6 +10,7 @@ import type {
   LabelableResourceType,
   CompanionMode,
   SavedStatus,
+  SavedSuggestionStatus,
   AuthorType,
   ScheduledMessageStatus,
   E2eKeyWrapRecipientKind,
@@ -1438,6 +1439,53 @@ export interface SavedReminderFiredPayload {
   messageId: string | null
   streamId: string | null
   saved: SavedMessageView
+}
+
+// ============================================================================
+// Saved Suggestions API
+// ============================================================================
+
+/**
+ * Wire shape for a passively-collected to-do suggestion. Suggestions are
+ * per-user (the resolved assignee) and never enter the saved list on their
+ * own — accepting one creates a saved item anchored at the suggestion's
+ * primary source message with the extracted context as its note.
+ */
+export interface SavedSuggestionView {
+  id: string
+  workspaceId: string
+  /** The resolved assignee — the only user who sees this suggestion. */
+  userId: string
+  streamId: string
+  conversationId: string
+  title: string
+  /** Extracted context (the why/what); becomes the saved item's note on accept. */
+  context: string | null
+  sourceMessageIds: string[]
+  dueAt: string | null
+  status: SavedSuggestionStatus
+  /** Saved item created by accepting this suggestion; null until accepted. */
+  savedMessageId: string | null
+  createdAt: string
+  statusChangedAt: string
+}
+
+export interface SavedSuggestionListResponse {
+  suggestions: SavedSuggestionView[]
+  nextCursor: string | null
+}
+
+/** Response for POST /saved/suggestions/:id/accept. */
+export interface AcceptSavedSuggestionResponse {
+  suggestion: SavedSuggestionView
+  saved: SavedMessageView
+}
+
+/** Wire payload broadcast on `saved_suggestion:upserted` socket events. */
+export interface SavedSuggestionUpsertedPayload {
+  workspaceId: string
+  targetUserId: string
+  suggestion: SavedSuggestionView
 }
 
 // ============================================================================

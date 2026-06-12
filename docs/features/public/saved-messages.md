@@ -58,8 +58,17 @@ archived cancels any pending reminder.
   and "Next week" computed from your work schedule; and a custom date/time picker in
   your device's timezone. A time in the past fires immediately. A fired reminder
   shows a "reminded" badge on the saved row.
-- **Sync.** Saves, status changes, and fired reminders propagate live to your other
-  devices, and the saved list works offline from the local cache.
+- **Suggested.** A fourth tab holds to-dos Threa quietly noticed in your
+  conversations — things you committed to or were directly asked to do. Nothing
+  here is ever added to your list automatically: you **Add** the ones that
+  matter (which become a saved item, with the surrounding context pre-filled as
+  its note) or **Dismiss** the rest. Dismissing also teaches the collector to
+  stop suggesting that kind of thing. The collector only surfaces a to-do to the
+  person it's actually for, and stays silent — no notification, no badge beyond
+  a quiet count on the tab — so the pile is something you check when you want to,
+  never something that interrupts you.
+- **Sync.** Saves, status changes, fired reminders, and new suggestions propagate
+  live to your other devices, and the saved list works offline from the local cache.
 - **When the message goes away.** A saved message from a private stream or thread
   you can no longer access shows "You no longer have access to this message"; one
   from an end-to-end encrypted scratchpad shows an encrypted-message placeholder.

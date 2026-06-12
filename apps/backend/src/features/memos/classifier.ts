@@ -29,6 +29,8 @@ export interface ConversationClassification {
   shouldReviseExisting: boolean
   revisionReason: string | null
   confidence: number
+  /** Whether the conversation contains to-dos worth surfacing as suggestions. */
+  containsActionItems: boolean
 }
 
 export class MemoClassifier {
@@ -93,6 +95,7 @@ export class MemoClassifier {
       shouldReviseExisting: existingMemos.length > 0 ? (value.shouldReviseExisting ?? false) : false,
       revisionReason: value.revisionReason ?? null,
       confidence: value.confidence ?? 0.5,
+      containsActionItems: value.containsActionItems ?? false,
     }
   }
 }

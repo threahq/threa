@@ -92,6 +92,7 @@ export {
   botChannelAccessId,
   videoTranscodeJobId,
   savedMessageId,
+  savedSuggestionId,
   reminderQueueId,
   scheduledMessageId,
   scheduledMessageQueueId,

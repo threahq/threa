@@ -119,6 +119,7 @@ import {
   attachBotNamespace,
 } from "./features/bot-runtimes"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
+import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-suggestions"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { LabelService, LabelAssignmentService } from "./features/labels"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
@@ -486,6 +487,14 @@ export async function startServer(): Promise<ServerInstance> {
   const activityService = new ActivityService({ pool })
   const syncService = new SyncService({ pool })
   const savedMessagesService = new SavedMessagesService({ pool })
+  // Quiet to-do collector. Always constructed (its accept/dismiss/list
+  // endpoints are AI-free); the extractor only fires via the collector hook
+  // the memo pipeline calls, which the stub memo service never invokes.
+  const savedSuggestionsService = new SavedSuggestionsService({
+    pool,
+    extractor: new SuggestionExtractor(ai, configResolver),
+    savedItemCreator: savedMessagesService,
+  })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const labelService = new LabelService({ pool })
   const labelAssignmentService = new LabelAssignmentService({ pool })
@@ -625,6 +634,7 @@ export async function startServer(): Promise<ServerInstance> {
     activityService,
     syncService,
     savedMessagesService,
+    savedSuggestionsService,
     scheduledMessagesService,
     labelService,
     labelAssignmentService,
@@ -833,6 +843,9 @@ export async function startServer(): Promise<ServerInstance> {
         memorizer: new Memorizer(ai, configResolver, messageFormatter),
         embeddingService,
         messageFormatter,
+        // Passive to-do collection rides the classifier flag on each settled
+        // conversation (INV-52 — the capability, not the concrete service).
+        suggestionCollector: savedSuggestionsService,
       })
   const memoBatchCheckWorker = createMemoBatchCheckWorker({ pool, memoService, jobQueue })
   const memoBatchProcessWorker = createMemoBatchProcessWorker({ pool, memoService, jobQueue })

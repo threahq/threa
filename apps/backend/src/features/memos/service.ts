@@ -57,12 +57,32 @@ export interface MemoServiceLike {
   processBatch(workspaceId: string, streamId: string): Promise<ProcessResult>
 }
 
+/**
+ * Optional to-do collector. The memo classifier already reads every settled
+ * conversation; when it flags action items we hand the same pre-formatted
+ * messages to the collector, so passive to-do capture rides the classifier
+ * call at near-zero marginal cost (INV-52 — depend on the capability, not the
+ * concrete service).
+ */
+export interface SuggestionCollectorLike {
+  collectForConversation(params: {
+    workspaceId: string
+    streamId: string
+    conversationId: string
+    participantIds: string[]
+    formattedMessages: string
+    authorTimezone?: string
+  }): Promise<number>
+}
+
 export interface MemoServiceConfig {
   pool: Pool
   classifier: MemoClassifier
   memorizer: Memorizer
   embeddingService: EmbeddingServiceLike
   messageFormatter: MessageFormatter
+  /** Optional — when absent, the memo pipeline runs exactly as before. */
+  suggestionCollector?: SuggestionCollectorLike
 }
 
 export class MemoService implements MemoServiceLike {
@@ -71,6 +91,7 @@ export class MemoService implements MemoServiceLike {
   private memorizer: Memorizer
   private embeddingService: EmbeddingServiceLike
   private messageFormatter: MessageFormatter
+  private suggestionCollector?: SuggestionCollectorLike
 
   constructor(config: MemoServiceConfig) {
     this.pool = config.pool
@@ -78,6 +99,7 @@ export class MemoService implements MemoServiceLike {
     this.memorizer = config.memorizer
     this.embeddingService = config.embeddingService
     this.messageFormatter = config.messageFormatter
+    this.suggestionCollector = config.suggestionCollector
   }
 
   /**
@@ -244,6 +266,29 @@ export class MemoService implements MemoServiceLike {
           existingMemos,
           { workspaceId, authorTimezone }
         )
+
+        // To-do collection is independent of knowledge-worthiness (a
+        // "send me the deck by Friday" chat has action items but no durable
+        // knowledge), so it runs before the memo-only early-returns below.
+        // Isolated: a collector failure is logged and never breaks memo
+        // extraction. The collector owns its own AI call + transaction.
+        if (classification.containsActionItems && this.suggestionCollector) {
+          try {
+            await this.suggestionCollector.collectForConversation({
+              workspaceId,
+              streamId,
+              conversationId: conversation.id,
+              participantIds: conversation.participantIds,
+              formattedMessages,
+              authorTimezone,
+            })
+          } catch (error) {
+            logger.error(
+              { error, conversationId: conversation.id, workspaceId, streamId },
+              "Saved-suggestion collection failed"
+            )
+          }
+        }
 
         if (!classification.isKnowledgeWorthy) {
           continue

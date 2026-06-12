@@ -50,6 +50,7 @@ export {
 } from "./context-bag"
 export { activityApi, type ListActivityParams } from "./activity"
 export { savedApi, type ListSavedParams } from "./saved"
+export { savedSuggestionsApi, type ListSuggestionsParams } from "./saved-suggestions"
 export { scheduledApi, type ListScheduledParams } from "./scheduled"
 export { linkPreviewsApi, type LinkPreviewWithDismissed } from "./link-previews"
 export { giphyApi } from "./giphy"
