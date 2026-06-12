@@ -340,8 +340,6 @@ export {
   BROADCAST_SLUGS,
   isValidSlug,
   isBroadcastSlug,
-  extractMentionSlugs,
-  hasMention,
 } from "./slug"
 export type { BroadcastSlug } from "./slug"
 
