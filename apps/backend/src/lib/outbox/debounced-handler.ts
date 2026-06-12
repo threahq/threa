@@ -19,9 +19,9 @@ export interface DebouncedOutboxHandlerConfig {
 }
 
 /**
- * Canonical defaults copied across every feature outbox handler before this
- * base class existed. Handlers that need different values pass overrides in
- * super() rather than redefining the whole block.
+ * Canonical tunables shared by every feature outbox handler. Handlers that
+ * need different values pass overrides in super() rather than redefining the
+ * whole block.
  */
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -37,7 +37,7 @@ const DEFAULT_CONFIG = {
  * Base class for outbox handlers that debounce notifications and process
  * events one batch at a time under a {@link CursorLock}.
  *
- * It owns the scaffolding every feature handler used to copy verbatim:
+ * It owns the scaffolding every feature handler shares:
  * - canonical {@link DEFAULT_CONFIG} merged with per-handler overrides,
  * - {@link CursorLock} + {@link DebounceWithMaxWait} construction,
  * - `ensureListener()` / `handle()` wiring,
