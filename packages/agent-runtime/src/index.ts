@@ -20,6 +20,8 @@ export type {
   BaseTurnDriver,
   DispatchedTurnDriver,
   DispatchedTurnRequest,
+  ExternalContextHandle,
+  ExternalHistoryMessage,
   SynchronousTurnDriver,
   TurnCommit,
   TurnCommitReceipt,

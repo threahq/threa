@@ -1290,6 +1290,38 @@
                               "type": "object",
                               "propertyNames": { "type": "string" },
                               "additionalProperties": {}
+                            },
+                            "context": {
+                              "type": "object",
+                              "properties": {
+                                "kind": { "type": "string", "const": "inline" },
+                                "messages": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "messageId": { "type": "string" },
+                                      "role": { "type": "string", "enum": ["user", "assistant"] },
+                                      "authorId": { "type": "string" },
+                                      "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                                      "authorDisplayName": { "type": "string" },
+                                      "contentMarkdown": { "type": "string" },
+                                      "createdAt": { "type": "string", "format": "date-time" }
+                                    },
+                                    "required": [
+                                      "messageId",
+                                      "role",
+                                      "authorId",
+                                      "authorType",
+                                      "contentMarkdown",
+                                      "createdAt"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                }
+                              },
+                              "required": ["kind", "messages"],
+                              "additionalProperties": false
                             }
                           },
                           "required": [

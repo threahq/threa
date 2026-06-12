@@ -298,6 +298,26 @@ const botRuntimePresenceSchema = z.object({
   updatedAt: z.string().datetime(),
 })
 
+const externalHistoryMessageSchema = z.object({
+  messageId: z.string(),
+  role: z.enum(["user", "assistant"]),
+  authorId: z.string(),
+  authorType: z.enum(AUTHOR_TYPES),
+  authorDisplayName: z.string().optional(),
+  contentMarkdown: z.string(),
+  createdAt: z.string().datetime(),
+})
+
+// Wire shape of `ExternalContextHandle` (@threa/agent-runtime): recent
+// conversation from the invocation's own stream, oldest → newest, trigger
+// excluded (it travels as `promptMarkdown`). Discriminated on `kind` so a
+// fetch-back `ref` variant can be added later without a wire break; only the
+// inline variant exists today.
+const externalContextHandleSchema = z.object({
+  kind: z.literal("inline"),
+  messages: z.array(externalHistoryMessageSchema),
+})
+
 const claimedInvocationSchema = z.object({
   id: z.string(),
   workspaceId: z.string(),
@@ -315,6 +335,9 @@ const claimedInvocationSchema = z.object({
   claimExpiresAt: z.string().datetime(),
   runtimeSessionId: z.string().nullable(),
   metadata: z.record(z.string(), z.unknown()),
+  // Omitted when context is withheld (E2E or unresolvable stream); an empty
+  // conversation is an explicit `{ kind: "inline", messages: [] }` instead.
+  context: externalContextHandleSchema.optional(),
 })
 
 const runtimeSessionLinkSchema = z.object({
