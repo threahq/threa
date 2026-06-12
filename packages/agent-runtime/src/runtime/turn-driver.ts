@@ -1,5 +1,5 @@
 import type { LanguageModel, ModelMessage } from "ai"
-import type { SourceItem } from "@threa/types"
+import type { BotInvocationCapability, BotInvocationTrigger, SourceItem } from "@threa/types"
 import type { CostContext } from "../ai/ai"
 import {
   AgentRuntime,
@@ -118,11 +118,95 @@ export interface TurnRequest {
 
 export type TurnResult = AgentRuntimeResult
 
-export interface TurnDriver {
-  /** The single delivery this driver serves; dispatch routes requests by it. */
+/** Shared by every driver: the single delivery it serves. Dispatch routes by `delivery` only — never `instanceof`. */
+export interface BaseTurnDriver {
   readonly delivery: TurnDelivery
+}
+
+/**
+ * A driver that runs the loop in-process (or behind a sealed HTTP callback the
+ * backend awaits) and resolves the whole turn within one call — it holds the
+ * `TurnResult` in the same stack frame. The companion and the enclave.
+ */
+export interface SynchronousTurnDriver extends BaseTurnDriver {
   runTurn(request: TurnRequest, sink: TurnSink): Promise<TurnResult>
 }
+
+/** Today's name for the synchronous contract, kept so existing call sites compile unchanged. */
+export type TurnDriver = SynchronousTurnDriver
+
+/**
+ * The trigger identity a dispatched turn carries instead of the loop inputs —
+ * the seam-level name for the bot wire's invocation-trigger vocabulary.
+ */
+export type TurnTrigger = BotInvocationTrigger
+
+/**
+ * The slice of a `TurnRequest` that survives dispatch to a runner the backend
+ * does not control. The mapping is deliberately lossy AND declared: the harness
+ * brings its own model, system prompt, and tools, so a full `TurnRequest` is
+ * assignable here and everything outside this slice is structurally dropped.
+ * `messages` carries exactly the trigger prompt — history reaches the runner
+ * through the claim payload, never through the loop's message array.
+ */
+export type DispatchedTurnRequest = Pick<TurnRequest, "delivery" | "messages">
+
+/**
+ * What dispatch knows at hand-off that the LATER verb handlers need to resolve
+ * the turn's sink edges. The durable analogue of `TurnSink`: instead of
+ * closures invoked in one stack frame, it names the rows the verb handlers
+ * read when the runner reports back.
+ */
+export interface TurnDispatchBinding {
+  workspaceId: string
+  /** The bot actor the turn is dispatched to. */
+  actorId: string
+  rootStreamId: string
+  activeStreamId: string
+  responseStreamId: string
+  sourceMessageId: string
+  authorUserId: string
+  trigger: TurnTrigger
+  requiredCapability: BotInvocationCapability
+  mentionedActorSlugs?: string[]
+  targetInstanceId?: string | null
+  targetRuntimeSessionId?: string | null
+  metadata?: Record<string, unknown>
+}
+
+/** Returned once the turn's work item is durably enqueued. */
+export interface TurnDispatchReceipt {
+  invocationId: string
+  /** `deduplicated`: the durable queue already held this work item (idempotent re-dispatch), nothing new was enqueued. */
+  status: "dispatched" | "deduplicated"
+}
+
+/**
+ * How a dispatched turn realizes each `TurnSink` edge. The synchronous drivers
+ * get live closures resolved in one stack frame; a dispatched turn's edges are
+ * realized later, by durable verb handlers, against the same projection layer.
+ * Each edge names its realizing verb or declares itself unsupported with a
+ * renderable reason — keyed off `TurnSink` so a new sink edge forces every
+ * dispatched driver to take a position on it.
+ */
+export type TurnSinkResolution = {
+  readonly [Edge in keyof Required<TurnSink>]: { readonly realizedBy: string } | DeclaredUnsupported
+}
+
+/**
+ * A driver that hands the turn to a runner it does not control and returns
+ * once the work item is durably enqueued. The turn's sink edges are realized
+ * LATER by the verb handlers — never within this call, so there is no
+ * `TurnResult` to return: at dispatch time the model has not run and no
+ * message exists. The external bot path; later, the pulled enclave.
+ */
+export interface DispatchedTurnDriver extends BaseTurnDriver {
+  readonly sinkResolution: TurnSinkResolution
+  dispatchTurn(request: DispatchedTurnRequest, binding: TurnDispatchBinding): Promise<TurnDispatchReceipt>
+}
+
+/** Any driver. Dispatch narrows by `delivery`. */
+export type AnyTurnDriver = SynchronousTurnDriver | DispatchedTurnDriver
 
 /**
  * Map a request + sink onto the loop's own constructor shape and run it. Shared

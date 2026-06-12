@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import { AuthorTypes, StreamTypes, botHasCapability } from "@threa/types"
+import { TurnDeliveries } from "@threa/agent-runtime"
 import { collectMentionSlugs, parseMarkdown } from "@threa/prosemirror"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../lib/outbox"
@@ -7,6 +8,7 @@ import { logger } from "../../lib/logger"
 import { StreamRepository } from "../streams"
 import { BotRepository } from "../public-api/bot-repository"
 import { BotRuntimeService } from "./service"
+import { ExternalTurnDriver } from "./external-turn-driver"
 import {
   BotRuntimeInstanceRepository,
   BotRuntimeSessionLinkRepository,
@@ -33,11 +35,13 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private readonly cursorLock: CursorLock
   private readonly debouncer: DebounceWithMaxWait
   private readonly service: BotRuntimeService
+  private readonly turnDriver: ExternalTurnDriver
   private readonly eventService: EventService
 
   constructor(pool: Pool, eventService = new EventService(pool)) {
     this.pool = pool
     this.service = new BotRuntimeService({ pool })
+    this.turnDriver = new ExternalTurnDriver({ service: this.service })
     this.eventService = eventService
     this.cursorLock = new CursorLock({
       pool,
@@ -126,20 +130,25 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const hasMentionedPersona = mentionedPersonas.some(Boolean)
 
     for (const mentionedBot of mentionableBots) {
-      await this.service.createInvocation({
-        workspaceId: message.workspaceId,
-        rootStreamId: invocationRootStreamId,
-        activeStreamId: stream.id,
-        sourceMessageId: message.event.payload.messageId,
-        responseStreamId: stream.id,
-        actorId: mentionedBot.id,
-        trigger: "mention",
-        requiredCapability: "mentionable",
-        promptMarkdown: message.event.payload.contentMarkdown,
-        authorUserId: message.event.actorId,
-        mentionedActorSlugs: mentionedSlugs,
-        metadata: {},
-      })
+      await this.turnDriver.dispatchTurn(
+        {
+          delivery: TurnDeliveries.EXTERNAL,
+          messages: [{ role: "user", content: message.event.payload.contentMarkdown }],
+        },
+        {
+          workspaceId: message.workspaceId,
+          actorId: mentionedBot.id,
+          rootStreamId: invocationRootStreamId,
+          activeStreamId: stream.id,
+          responseStreamId: stream.id,
+          sourceMessageId: message.event.payload.messageId,
+          authorUserId: message.event.actorId,
+          trigger: "mention",
+          requiredCapability: "mentionable",
+          mentionedActorSlugs: mentionedSlugs,
+          metadata: {},
+        }
+      )
     }
 
     if (!rootStream || rootStream.type !== StreamTypes.SCRATCHPAD || rootStream.archivedAt) return
@@ -186,29 +195,35 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
       }
     }
 
-    await this.service.createInvocation({
-      workspaceId: message.workspaceId,
-      rootStreamId: rootStream.id,
-      activeStreamId: stream.id,
-      sourceMessageId: message.event.payload.messageId,
-      responseStreamId: stream.id,
-      actorId: bot.id,
-      trigger: "active-scratchpad",
-      requiredCapability: "active-scratchpad",
-      promptMarkdown: isUserAuthored
-        ? message.event.payload.contentMarkdown
-        : [
-            "A non-user message was posted in your active Threa scratchpad.",
-            "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE",
-            "",
-            message.event.payload.contentMarkdown,
-          ].join("\n"),
-      authorUserId: message.event.actorId,
-      mentionedActorSlugs: mentionedSlugs,
-      targetInstanceId: link?.instanceId ?? null,
-      targetRuntimeSessionId: link?.runtimeSessionId ?? null,
-      metadata: {},
-    })
+    const promptMarkdown = isUserAuthored
+      ? message.event.payload.contentMarkdown
+      : [
+          "A non-user message was posted in your active Threa scratchpad.",
+          "Use the stream context to decide whether a reply is useful. If no reply is needed, respond exactly: THREA_NO_RESPONSE",
+          "",
+          message.event.payload.contentMarkdown,
+        ].join("\n")
+    await this.turnDriver.dispatchTurn(
+      {
+        delivery: TurnDeliveries.EXTERNAL,
+        messages: [{ role: "user", content: promptMarkdown }],
+      },
+      {
+        workspaceId: message.workspaceId,
+        actorId: bot.id,
+        rootStreamId: rootStream.id,
+        activeStreamId: stream.id,
+        responseStreamId: stream.id,
+        sourceMessageId: message.event.payload.messageId,
+        authorUserId: message.event.actorId,
+        trigger: "active-scratchpad",
+        requiredCapability: "active-scratchpad",
+        mentionedActorSlugs: mentionedSlugs,
+        targetInstanceId: link?.instanceId ?? null,
+        targetRuntimeSessionId: link?.runtimeSessionId ?? null,
+        metadata: {},
+      }
+    )
   }
 
   private async createMissingLinkNotice(params: {

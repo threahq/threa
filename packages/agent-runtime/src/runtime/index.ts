@@ -17,13 +17,22 @@ export {
   isDeclaredUnsupported,
 } from "./turn-driver"
 export type {
+  AnyTurnDriver,
+  BaseTurnDriver,
+  DispatchedTurnDriver,
+  DispatchedTurnRequest,
+  SynchronousTurnDriver,
   TurnCommit,
   TurnCommitReceipt,
   TurnDelivery,
+  TurnDispatchBinding,
+  TurnDispatchReceipt,
   TurnDriver,
   TurnRequest,
   TurnResult,
   TurnSink,
+  TurnSinkResolution,
+  TurnTrigger,
   DeclaredUnsupported,
 } from "./turn-driver"
 export {
