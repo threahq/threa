@@ -80,3 +80,43 @@ export function mainPathToPanelId(pathname: string): string | null {
   }
   return null
 }
+
+/**
+ * Whether PanelContentRenderer can actually render this id: real streams,
+ * draft threads, and named views. Local-only draft ids (`draft_…` scratchpads,
+ * DM drafts) have routed pages but no panel surface.
+ */
+export function isPanelableId(id: string): boolean {
+  return id.startsWith("stream_") || isDraftPanel(id) || isViewPanel(id)
+}
+
+/**
+ * The panel target an internal href points at, for the global cmd-click rule:
+ * a `?panel=` param the current URL doesn't already have wins (links built by
+ * getPanelUrl name their target that way), otherwise the path's own surface.
+ * Null when the destination can't live in a panel — wrong workspace, external,
+ * a non-panelable id, or a link that goes nowhere new.
+ */
+export function panelIdFromHref(
+  href: string,
+  workspaceId: string,
+  currentPanels: string[],
+  currentPathname: string
+): string | null {
+  let url: URL
+  try {
+    url = new URL(href, window.location.origin)
+  } catch {
+    return null
+  }
+  if (url.origin !== window.location.origin) return null
+  if (url.pathname !== `/w/${workspaceId}` && !url.pathname.startsWith(`/w/${workspaceId}/`)) return null
+
+  const current = new Set(currentPanels)
+  const added = url.searchParams.getAll("panel").find((id) => !current.has(id))
+  // No new panel named and the path doesn't change: the link goes nowhere a
+  // panel could represent (e.g. a thread card whose thread is already open).
+  if (!added && url.pathname === currentPathname) return null
+  const id = added ?? mainPathToPanelId(url.pathname)
+  return id && isPanelableId(id) ? id : null
+}

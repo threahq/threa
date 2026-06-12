@@ -1,5 +1,17 @@
 import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react"
-import { Bell, FileEdit, FolderPlus, Hash, Link2, Lock, MessageSquareText, Settings, Tag, User } from "lucide-react"
+import {
+  Bell,
+  FileEdit,
+  FolderPlus,
+  Hash,
+  Link2,
+  Lock,
+  MessageSquareText,
+  PanelRight,
+  Settings,
+  Tag,
+  User,
+} from "lucide-react"
 import { Link } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
@@ -9,7 +21,7 @@ import { RelativeTime } from "@/components/relative-time"
 import { getThreadRootContext } from "@/components/thread/breadcrumb-helpers"
 import { isDraftId, useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { useSidebar } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
@@ -206,7 +218,8 @@ export function StreamItem({
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { openStreamSettings } = useStreamSettings()
-  const { collapseOnMobile } = useSidebar()
+  const { collapseOnMobile, isMobile: isMobileViewport } = useSidebar()
+  const { openPanel } = usePanel()
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const [sectionPickerOpen, setSectionPickerOpen] = useState(false)
   const itemRef = useRef<HTMLAnchorElement>(null)
@@ -271,6 +284,17 @@ export function StreamItem({
       isVirtualDraft
         ? []
         : [
+            // Panels only exist on desktop — mobile opens are full-page.
+            ...(isMobileViewport
+              ? []
+              : [
+                  {
+                    id: "open-in-panel",
+                    label: "Open in side panel",
+                    icon: PanelRight,
+                    onSelect: () => openPanel(stream.id, { mode: "new" }),
+                  } satisfies SidebarActionItem,
+                ]),
             {
               id: "settings",
               label: "Settings",
@@ -296,7 +320,7 @@ export function StreamItem({
               onSelect: () => setSectionPickerOpen(true),
             },
           ],
-    [isVirtualDraft, openStreamSettings, stream.id, workspaceId]
+    [isVirtualDraft, isMobileViewport, openPanel, openStreamSettings, stream.id, workspaceId]
   )
 
   let drawerPreview: SidebarActionPreview | null = null

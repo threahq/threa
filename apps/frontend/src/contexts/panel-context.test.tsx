@@ -201,11 +201,63 @@ describe("PanelProvider", () => {
     expect(result.current.location.pathname).toBe("/w/ws_1")
   })
 
-  it("caps side panels by viewport width", () => {
+  it("caps side panels by what fits: sidebar + 360px main + 300px per panel", () => {
     expect(maxSidePanels(390)).toBe(1)
-    expect(maxSidePanels(1280)).toBe(1)
+    expect(maxSidePanels(1280)).toBe(2)
     expect(maxSidePanels(1680)).toBe(3)
-    expect(maxSidePanels(3440)).toBe(7)
+    expect(maxSidePanels(3440)).toBe(8)
+  })
+
+  it("openPanel replaces the focused panel by default", () => {
+    window.innerWidth = 2200
+    const { result } = renderHook(() => usePanel(), {
+      wrapper: wrapperWithUrl("/?panel=a&panel=b"),
+    })
+    act(() => result.current.setFocusedPane("a"))
+    act(() => result.current.openPanel("x"))
+    expect(result.current.panels).toEqual(["x", "b"])
+    // Opening focuses what opened.
+    expect(result.current.getFocusedPane()).toBe("x")
+  })
+
+  it("openPanel falls back to the last panel when the main pane is focused", () => {
+    window.innerWidth = 2200
+    const { result } = renderHook(() => usePanel(), {
+      wrapper: wrapperWithUrl("/?panel=a&panel=b"),
+    })
+    act(() => result.current.setFocusedPane("main"))
+    act(() => result.current.openPanel("x"))
+    expect(result.current.panels).toEqual(["a", "x"])
+  })
+
+  it("openPanel lets an explicit target win over the focused panel", () => {
+    window.innerWidth = 2200
+    const { result } = renderHook(() => usePanel(), {
+      wrapper: wrapperWithUrl("/?panel=a&panel=b"),
+    })
+    act(() => result.current.setFocusedPane("a"))
+    act(() => result.current.openPanel("x", { target: "b" }))
+    expect(result.current.panels).toEqual(["a", "x"])
+  })
+
+  it("openPanel in new mode appends regardless of focus", () => {
+    window.innerWidth = 2200
+    const { result } = renderHook(() => usePanel(), {
+      wrapper: wrapperWithUrl("/?panel=a&panel=b"),
+    })
+    act(() => result.current.setFocusedPane("a"))
+    act(() => result.current.openPanel("x", { mode: "new" }))
+    expect(result.current.panels).toEqual(["a", "b", "x"])
+  })
+
+  it("openPanel at the viewport cap degrades new mode to replacing the focused panel", () => {
+    window.innerWidth = 1300 // cap = 2
+    const { result } = renderHook(() => usePanel(), {
+      wrapper: wrapperWithUrl("/?panel=a&panel=b"),
+    })
+    act(() => result.current.setFocusedPane("a"))
+    act(() => result.current.openPanel("x", { mode: "new" }))
+    expect(result.current.panels).toEqual(["x", "b"])
   })
 
   it("getPanelUrl preserves sibling panels and other params", () => {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { useSearchParams } from "react-router-dom"
+import { useLocation, useSearchParams } from "react-router-dom"
 import { Search, Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { LabelableResourceTypes } from "@threa/types"
@@ -23,7 +23,8 @@ import {
   useWorkspaceDmPeers,
 } from "@/stores/workspace-store"
 import { useIsMobile } from "@/hooks/use-mobile"
-import { useSettings } from "@/contexts"
+import { usePanel, useSettings } from "@/contexts"
+import { panelIdFromHref } from "@/lib/panel-locations"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
@@ -92,6 +93,8 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   // Panel-preserving: switching streams via the switcher keeps side panels open.
   const navigate = usePanelPreservingNavigate()
   const [, setSearchParams] = useSearchParams()
+  const location = useLocation()
+  const { panels, openPanel } = usePanel()
   const user = useUser()
   const { createDraft, deleteDraft } = useDraftScratchpads(workspaceId)
   const { openSettings } = useSettings()
@@ -331,13 +334,24 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
   const items = currentResult.items
 
   // Single source of truth for item selection (used by both Enter key and click)
-  const handleSelectItem = useCallback((item: QuickSwitcherItem, withModifier: boolean) => {
-    if (withModifier && item.href) {
-      window.open(item.href, "_blank")
-    } else {
+  const handleSelectItem = useCallback(
+    (item: QuickSwitcherItem, withModifier: boolean) => {
+      if (withModifier && item.href) {
+        // The global cmd-click rule: panel-able destinations open in a new
+        // side panel; everything else keeps the new-browser-tab behavior.
+        const targetPanelId = panelIdFromHref(item.href, workspaceId, panels, location.pathname)
+        if (targetPanelId) {
+          openPanel(targetPanelId, { mode: "new" })
+          handleClose()
+        } else {
+          window.open(item.href, "_blank")
+        }
+        return
+      }
       item.onSelect()
-    }
-  }, [])
+    },
+    [workspaceId, panels, openPanel, handleClose, location.pathname]
+  )
 
   // Reset selection when items change
   useEffect(() => {

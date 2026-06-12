@@ -1,12 +1,12 @@
 import { useCallback, useMemo, useRef, useState, type RefObject } from "react"
-import { Archive, FileEdit, FolderPlus, Lock, Settings, Sparkles, Tag } from "lucide-react"
+import { Archive, FileEdit, FolderPlus, Lock, PanelRight, Settings, Sparkles, Tag } from "lucide-react"
 import { Link, useNavigate } from "react-router-dom"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { SectionPicker } from "./section-picker"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { isDraftId, useActors, useArchiveStream, useDraftScratchpads } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
-import { useSidebar } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -53,7 +53,8 @@ export function ScratchpadItem({
   const { deleteDraft } = useDraftScratchpads(workspaceId)
   const { getActorName } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
-  const { collapseOnMobile } = useSidebar()
+  const { collapseOnMobile, isMobile: isMobileViewport } = useSidebar()
+  const { openPanel } = usePanel()
   const { openStreamSettings } = useStreamSettings()
   const itemRef = useRef<HTMLAnchorElement>(null)
   const [labelPickerOpen, setLabelPickerOpen] = useState(false)
@@ -82,6 +83,17 @@ export function ScratchpadItem({
 
   const actions = useMemo<SidebarActionItem[]>(
     () => [
+      // Panels only exist on desktop, and drafts have no real stream yet.
+      ...(!isDraft && !isMobileViewport
+        ? [
+            {
+              id: "open-in-panel",
+              label: "Open in side panel",
+              icon: PanelRight,
+              onSelect: () => openPanel(streamWithPreview.id, { mode: "new" }),
+            } satisfies SidebarActionItem,
+          ]
+        : []),
       ...(!isDraft
         ? [
             {
@@ -113,7 +125,7 @@ export function ScratchpadItem({
         separatorBefore: !isDraft,
       },
     ],
-    [handleArchive, isDraft, openStreamSettings, streamWithPreview.id]
+    [handleArchive, isDraft, isMobileViewport, openPanel, openStreamSettings, streamWithPreview.id]
   )
 
   const drawerPreview: SidebarActionPreview | null =

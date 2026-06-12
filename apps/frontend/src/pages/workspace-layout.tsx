@@ -12,6 +12,7 @@ import { Outlet, useParams, useSearchParams, useMatch, Navigate } from "react-ro
 import { AppShell } from "@/components/layout/app-shell"
 import { Sidebar } from "@/components/layout/sidebar"
 import { WorkspacePanelArea } from "@/components/layout/workspace-panel-area"
+import { PanelCmdClickHandler } from "@/components/panels/panel-cmd-click-handler"
 import { Toaster } from "@/components/ui/sonner"
 import { MentionableMarkdownWrapper, type MentionableMarkdownWrapperProps } from "@/components/ui/markdown-content"
 import type { MentionType } from "@/lib/markdown/mention-context"
@@ -412,6 +413,7 @@ export function WorkspaceLayout() {
                                     <TraceProvider>
                                       <SidebarProvider>
                                         <SidebarKeyboardHandler />
+                                        <PanelCmdClickHandler workspaceId={workspaceId} />
                                         <CoordinatedLoadingGate>
                                           <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
                                             <MainContentGate>

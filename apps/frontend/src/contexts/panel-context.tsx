@@ -122,13 +122,14 @@ interface PanelProviderProps {
 
 /**
  * How many side panels fit comfortably. Mobile gets exactly one; desktop
- * scales with viewport width (a wide monitor fits many, a laptop two or
- * three). Interactive opens beyond the cap replace the last panel instead of
- * appending — deep links with more panels still render them all.
+ * scales with what actually fits: the sidebar (~260px) plus the main view at
+ * its 360px floor leaves the rest for panels at their 300px minimum.
+ * Interactive opens beyond the cap replace a panel instead of appending —
+ * deep links with more panels still render them all.
  */
 export function maxSidePanels(viewportWidth: number): number {
   if (viewportWidth < 640) return 1
-  return Math.max(1, Math.min(8, Math.floor((viewportWidth - 600) / 360)))
+  return Math.max(1, Math.min(8, Math.floor((viewportWidth - 620) / 300)))
 }
 
 export function PanelProvider({ children }: PanelProviderProps) {
@@ -255,10 +256,18 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const openPanel = useCallback(
     (streamId: string, options?: OpenPanelOptions) => {
       writePanels((prev) => {
-        // Appending beyond what the viewport fits degrades to replacing the
-        // last panel — mobile gets exactly one, wide screens get many.
+        // Appending beyond what the viewport fits degrades to replacing —
+        // mobile gets exactly one panel, wide screens get many.
         const cap = maxSidePanels(typeof window === "undefined" ? Infinity : window.innerWidth)
-        const effective = options?.mode === "new" && prev.length >= cap ? { ...options, mode: undefined } : options
+        let effective = options?.mode === "new" && prev.length >= cap ? { ...options, mode: undefined } : options
+        // Opens that don't say where they land go to the focused panel (the
+        // VS Code model: sidebar and switcher clicks target the pane the user
+        // last interacted with). Clicks inside a pane focus it on pointer
+        // down, so for in-pane opens this resolves to the pane clicked in.
+        const focused = focusedPaneStore.get()
+        if (effective?.mode !== "new" && effective?.target == null && focused !== "main" && prev.includes(focused)) {
+          effective = { ...effective, target: focused }
+        }
         return applyOpenPanel(prev, streamId, effective)
       })
       focusedPaneStore.set(streamId)

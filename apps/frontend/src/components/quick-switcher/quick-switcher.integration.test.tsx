@@ -1247,7 +1247,7 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
 
-    it("should open in new tab with Cmd+Enter in search mode", async () => {
+    it("should open in a new side panel with Cmd+Enter in search mode", async () => {
       mockSearchState.results = mockSearchResultsList
       const onOpenChange = vi.fn()
       const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null)
@@ -1264,11 +1264,13 @@ describe("QuickSwitcher Integration Tests", () => {
         expect(screen.getByText("Hello from the search results")).toBeInTheDocument()
       })
 
-      // Press Cmd+Enter to open in new tab
+      // Cmd+Enter follows the global cmd-click rule: a panel-able destination
+      // opens in a new side panel, not a browser tab, and the dialog closes.
       await user.keyboard("{Meta>}{Enter}{/Meta}")
 
-      // Should open in new tab
-      expect(windowOpenSpy).toHaveBeenCalledWith("/w/workspace_1/s/stream_channel1?m=msg_1", "_blank")
+      expect(windowOpenSpy).not.toHaveBeenCalled()
+      expect(mockNavigate).toHaveBeenCalledWith(expect.stringContaining("panel=stream_channel1"), { replace: true })
+      expect(onOpenChange).toHaveBeenCalledWith(false)
 
       windowOpenSpy.mockRestore()
     })

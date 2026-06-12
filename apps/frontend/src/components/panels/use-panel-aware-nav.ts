@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { useNavigate, type To, type NavigateOptions } from "react-router-dom"
-import { usePanel } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 
 /**
  * Panels are part of the user's workspace layout: navigating the main view
@@ -47,23 +47,47 @@ export function usePanelPreservingNavigate() {
 
 /**
  * Link behavior for things that exist both as a main-view route and as a
- * panel: plain click navigates the main view (keeping open panels), while
- * cmd/ctrl-click opens the target in a new side panel instead.
+ * panel. Plain click follows the focused pane (the VS Code model): with a
+ * side panel focused it opens there; with the main pane focused it navigates
+ * the main view. A target already on screen is just focused, never
+ * duplicated. Mobile keeps the plain navigate behavior — there is no pane
+ * strip to target. Cmd/ctrl-click is NOT handled here: the global
+ * PanelCmdClickHandler intercepts modifier clicks on every internal anchor,
+ * this one included, so the gesture stays consistent across all surfaces.
  */
 export function usePanelAwareLink(targetPath: string, panelId: string | null) {
-  const { panels, openPanel } = usePanel()
+  const { panels, paneZeroId, openPanel, setFocusedPane, getFocusedPane } = usePanel()
+  const { isMobile } = useSidebar()
 
   const to = useMemo(() => `${targetPath}${mergePanelsIntoSearch("", panels)}`, [targetPath, panels])
 
   const onClick = useCallback(
     (e: React.MouseEvent) => {
       if (!panelId) return
-      if (!e.metaKey && !e.ctrlKey) return
-      e.preventDefault()
-      e.stopPropagation()
-      openPanel(panelId, { mode: "new" })
+      if (e.metaKey || e.ctrlKey) return
+      if (isMobile || panels.length === 0) return
+      if (panelId === paneZeroId) {
+        e.preventDefault()
+        e.stopPropagation()
+        setFocusedPane("main")
+        return
+      }
+      if (panels.includes(panelId)) {
+        e.preventDefault()
+        e.stopPropagation()
+        setFocusedPane(panelId)
+        return
+      }
+      const focused = getFocusedPane()
+      if (focused !== "main" && panels.includes(focused)) {
+        e.preventDefault()
+        e.stopPropagation()
+        // openPanel defaults to the focused panel as its target.
+        openPanel(panelId)
+      }
+      // Focused pane is main: fall through to the link and navigate pane 0.
     },
-    [panelId, openPanel]
+    [panelId, panels, paneZeroId, isMobile, openPanel, setFocusedPane, getFocusedPane]
   )
 
   return { to, onClick }

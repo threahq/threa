@@ -60,13 +60,11 @@ export function ItemList({
   )
 
   const handleClick = (e: React.MouseEvent, item: QuickSwitcherItem) => {
-    const isModifier = e.metaKey || e.ctrlKey
-    if (isModifier && item.href) {
-      // Let the browser handle Cmd+click on links natively (opens in new tab)
-      return
-    }
+    // Modifier clicks route through onSelectItem too, so mouse and Enter
+    // share one path: panel-able destinations open in a new side panel,
+    // anything else in a new browser tab.
     e.preventDefault()
-    onSelectItem(item, isModifier)
+    onSelectItem(item, e.metaKey || e.ctrlKey)
   }
 
   return (
