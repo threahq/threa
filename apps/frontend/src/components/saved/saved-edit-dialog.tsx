@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react"
+import { Loader2, ListTodo, StickyNote } from "lucide-react"
 import { toast } from "sonner"
 import type { SavedMessageView } from "@threa/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
   ResponsiveDialog,
-  ResponsiveDialogBody,
   ResponsiveDialogContent,
-  ResponsiveDialogFooter,
+  ResponsiveDialogDescription,
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { useUpdateSaved } from "@/hooks/use-saved"
+
+const TITLE_MAX = 300
+const NOTE_MAX = 4000
 
 interface SavedEditDialogProps {
   open: boolean
@@ -26,6 +30,10 @@ interface SavedEditDialogProps {
  * anchored rows display the live message instead) and note (both variants).
  * Title and note save together as one content PATCH, so the row updates in a
  * single socket event.
+ *
+ * Follows the app's dialog anatomy (see CreateChannelDialog): icon-chip
+ * header, bordered body with labeled fields and character counters, and a
+ * muted footer bar with outline-Cancel + pending-state primary.
  */
 export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: SavedEditDialogProps) {
   const isStandalone = saved.messageId === null
@@ -44,9 +52,10 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
 
   const trimmedTitle = title.trim()
   const canSave = !isStandalone || trimmedTitle.length > 0
+  const HeaderIcon = isStandalone ? ListTodo : StickyNote
 
   const handleSave = () => {
-    if (!canSave) return
+    if (!canSave || updateMutation.isPending) return
     updateMutation.mutate(
       {
         savedId: saved.id,
@@ -67,39 +76,89 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
 
   return (
     <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveDialogContent desktopClassName="max-w-md" aria-describedby={undefined}>
-        <ResponsiveDialogHeader>
-          <ResponsiveDialogTitle>{isStandalone ? "Edit to-do" : "Edit note"}</ResponsiveDialogTitle>
-        </ResponsiveDialogHeader>
+      <ResponsiveDialogContent
+        desktopClassName="max-w-[480px] gap-0 p-0 overflow-hidden"
+        drawerClassName="gap-0 p-0 overflow-hidden"
+        aria-describedby={undefined}
+      >
+        <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
+          <ResponsiveDialogHeader>
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center justify-center h-9 w-9 rounded-lg bg-primary/10">
+                <HeaderIcon className="h-4.5 w-4.5 text-primary" />
+              </div>
+              <div>
+                <ResponsiveDialogTitle className="text-base">
+                  {isStandalone ? "Edit to-do" : "Edit note"}
+                </ResponsiveDialogTitle>
+                <ResponsiveDialogDescription className="text-xs mt-0.5">
+                  {isStandalone
+                    ? "Rename the to-do or add the context you'll need later"
+                    : "Capture why you saved this — future-you will thank you"}
+                </ResponsiveDialogDescription>
+              </div>
+            </div>
+          </ResponsiveDialogHeader>
+        </div>
 
-        <ResponsiveDialogBody className="flex flex-col gap-3">
+        <div className="border-t border-border" />
+
+        <div className="px-4 sm:px-6 py-5 space-y-5">
           {isStandalone && (
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="What needs doing?"
-              maxLength={300}
-              aria-label="Title"
-            />
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <Label htmlFor="saved-edit-title" className="text-sm font-medium">
+                  Title
+                </Label>
+                <span className="text-[11px] text-muted-foreground tabular-nums">
+                  {title.length}/{TITLE_MAX}
+                </span>
+              </div>
+              <Input
+                id="saved-edit-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value.slice(0, TITLE_MAX))}
+                placeholder="What needs doing?"
+                className="text-sm"
+              />
+            </div>
           )}
-          <Textarea
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Add context — why this matters, links, details…"
-            maxLength={4000}
-            rows={4}
-            aria-label="Note"
-          />
-        </ResponsiveDialogBody>
 
-        <ResponsiveDialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <div className="space-y-2">
+            <div className="flex items-baseline justify-between">
+              <Label htmlFor="saved-edit-note" className="text-sm font-medium">
+                Note
+              </Label>
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                {note.length}/{NOTE_MAX}
+              </span>
+            </div>
+            <Textarea
+              id="saved-edit-note"
+              value={note}
+              onChange={(e) => setNote(e.target.value.slice(0, NOTE_MAX))}
+              placeholder="Why this matters, links, details…"
+              rows={4}
+              className="resize-none text-sm"
+            />
+          </div>
+        </div>
+
+        <div className="border-t border-border px-4 sm:px-6 py-4 flex items-center justify-end gap-2 bg-muted/30">
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!canSave || updateMutation.isPending}>
-            Save
+          <Button size="sm" onClick={handleSave} disabled={!canSave || updateMutation.isPending} className="min-w-20">
+            {updateMutation.isPending ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save"
+            )}
           </Button>
-        </ResponsiveDialogFooter>
+        </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
