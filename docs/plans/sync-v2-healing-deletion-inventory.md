@@ -57,27 +57,27 @@ and the resume path no longer needs the blanket bootstrap fetch, resume becomes
 
 ## Deletion candidates (in agreed order, after the additive PR)
 
-### `use-conversations` reconnect invalidation
+### `use-conversations` reconnect invalidation — DONE
 
-`apps/frontend/src/hooks/use-conversations.ts:82-87`: invalidates the
-conversation list on every socket reconnect.
+`apps/frontend/src/hooks/use-conversations.ts`: invalidated the conversation
+list on every socket reconnect. **Gated on active mode** (the deletion PR
+following #891): the invalidation now skips when
+`syncEngine?.syncCursorMode === "active"`.
 
 - All four conversation events are stream-scoped in the log
   (`conversation:created`/`updated`/`message_assigned` also fan out to the
   parent stream group), and `listEntriesForUser` returns them for member
   streams including threads (INV-62 rule mirrored in the SQL).
-- ~~Blocker:~~ **done in the additive PR** — the hook now registers through
+- ~~Blocker:~~ **done in the additive PR (#891)** — the hook registers through
   `syncEngine?.getLiveEventSource() ?? socket` (the `useStreamSocket` pattern),
-  so replay reaches it. The remaining change is gating the invalidation on
-  `mode !== "active"`.
+  so replay reaches it.
 - Unmounted-during-catch-up is safe: the query uses default staleness, so the
   next mount refetches anyway. The invalidation only ever fired on reconnect,
   so dropped-emit coverage is unchanged.
-- Test: replay `conversation:created` through the gate and assert the list
-  cache updates; pin that `off` and `shadow` keep the invalidation.
+- Tests pin: gate-dispatched replay updates the list cache in active mode with
+  no invalidation; `off`/`shadow`/no-engine keep the invalidation.
 
-**Verdict: covered once the hook is gate-registered. Smallest, cleanest next
-deletion.**
+**Verdict: covered; deleted.**
 
 ### `refetchOnReconnect: true` on saved + scheduled lists
 
