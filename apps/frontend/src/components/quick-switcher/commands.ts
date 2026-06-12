@@ -4,6 +4,7 @@ import {
   Bookmark,
   Brain,
   CalendarClock,
+  Columns3,
   FileText,
   Hash,
   Paperclip,
@@ -246,6 +247,18 @@ export const commands: Command[] = [
     action: ({ workspaceId, navigate, closeDialog }) => {
       closeDialog()
       navigate(`/w/${workspaceId}/activity`)
+    },
+  },
+  {
+    id: "equalize-panes",
+    label: "Equalize Panes",
+    icon: Columns3,
+    keywords: ["split", "panels", "panes", "resize", "layout", "equal", "distribute"],
+    action: ({ closeDialog }) => {
+      closeDialog()
+      // Handled by WorkspacePanelArea — same DOM-event pattern as
+      // "threa:open-stream-search".
+      document.dispatchEvent(new CustomEvent("threa:equalize-panes"))
     },
   },
   {

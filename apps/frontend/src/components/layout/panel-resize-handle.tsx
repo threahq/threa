@@ -8,6 +8,8 @@ interface PanelResizeHandleProps {
   maxWidth: number
   onMouseDown: (e: React.MouseEvent) => void
   onKeyDown: (e: React.KeyboardEvent) => void
+  /** Double-click equalizes the two panes this divider borders on. */
+  onDoubleClick?: () => void
   ariaLabel?: string
 }
 
@@ -18,6 +20,7 @@ export function PanelResizeHandle({
   maxWidth,
   onMouseDown,
   onKeyDown,
+  onDoubleClick,
   ariaLabel = "Resize thread panel",
 }: PanelResizeHandleProps) {
   return (
@@ -31,6 +34,7 @@ export function PanelResizeHandle({
       )}
       onMouseDown={onMouseDown}
       onKeyDown={onKeyDown}
+      onDoubleClick={onDoubleClick}
       tabIndex={0}
       role="separator"
       aria-orientation="vertical"

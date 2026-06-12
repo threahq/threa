@@ -135,12 +135,73 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
 
   const handleSlotExited = useCallback((slotKey: string) => {
     setSlots((prev) => prev.filter((it) => it.key !== slotKey || !it.closing))
+    setSlotWidths((prev) => {
+      if (!(slotKey in prev)) return prev
+      const next = { ...prev }
+      delete next[slotKey]
+      return next
+    })
   }, [])
 
   const registerSlotEl = useCallback((panelId: string, el: HTMLDivElement | null) => {
     if (el) slotElsRef.current.set(panelId, el)
     else slotElsRef.current.delete(panelId)
   }, [])
+
+  // ---- Pane widths ---------------------------------------------------------
+
+  // Widths are keyed by slot identity (not pane id) so they survive in-place
+  // content replacement, and live up here so equalize can set several at once.
+  const [slotWidths, setSlotWidths] = useState<Record<string, number>>({})
+  const slotsRef = useRef(slots)
+  slotsRef.current = slots
+
+  const setSlotWidth = useCallback((slotKey: string, width: number) => {
+    setSlotWidths((prev) => ({ ...prev, [slotKey]: width }))
+  }, [])
+
+  /** Distribute the container evenly across all panes (pane 0 included). */
+  const equalizeAllPanes = useCallback(() => {
+    const container = containerRef.current
+    if (!container) return
+    const openSlots = slotsRef.current.filter((it) => !it.closing)
+    if (openSlots.length === 0) return
+    const per = Math.max(MIN_PANEL_WIDTH, Math.floor(container.offsetWidth / (openSlots.length + 1)))
+    setSlotWidths((prev) => {
+      const next = { ...prev }
+      for (const it of openSlots) next[it.key] = per
+      return next
+    })
+  }, [])
+
+  /**
+   * Equalize the two panes a divider borders on: the slot owning the handle
+   * and its left neighbor (another slot, or pane 0 — which sizes itself, so
+   * halving the slot's share is enough there).
+   */
+  const equalizePairAt = useCallback((slotKey: string) => {
+    const openSlots = slotsRef.current.filter((it) => !it.closing)
+    const idx = openSlots.findIndex((it) => it.key === slotKey)
+    if (idx === -1) return
+    const ownEl = slotElsRef.current.get(openSlots[idx].id)
+    const ownWidth = ownEl?.getBoundingClientRect().width ?? DEFAULT_PANEL_WIDTH
+    const leftEl = idx === 0 ? mainRef.current : slotElsRef.current.get(openSlots[idx - 1].id)
+    const leftWidth = leftEl?.getBoundingClientRect().width ?? DEFAULT_PANEL_WIDTH
+    const per = Math.max(MIN_PANEL_WIDTH, Math.round((ownWidth + leftWidth) / 2))
+    setSlotWidths((prev) => {
+      const next = { ...prev, [slotKey]: per }
+      if (idx > 0) next[openSlots[idx - 1].key] = per
+      return next
+    })
+  }, [])
+
+  // The quick switcher's "Equalize panes" command reaches the area via a DOM
+  // event — same pattern as "threa:open-stream-search".
+  useEffect(() => {
+    const handler = () => equalizeAllPanes()
+    document.addEventListener("threa:equalize-panes", handler)
+    return () => document.removeEventListener("threa:equalize-panes", handler)
+  }, [equalizeAllPanes])
 
   // ---- Drag to reorder ----------------------------------------------------
 
@@ -428,6 +489,9 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
           animateEntry={areaMountedRef.current}
           isDragSource={drag?.panelId === slot.id}
           dragHandleProps={getDragHandleProps(slot.id)}
+          width={slotWidths[slot.key] ?? DEFAULT_PANEL_WIDTH}
+          onWidthChange={setSlotWidth}
+          onEqualizePair={equalizePairAt}
           onRegisterEl={registerSlotEl}
           onExited={handleSlotExited}
         />
@@ -466,6 +530,10 @@ interface PanelSlotProps {
   animateEntry: boolean
   isDragSource: boolean
   dragHandleProps: { onPointerDown: (e: React.PointerEvent) => void }
+  width: number
+  onWidthChange: (slotKey: string, width: number) => void
+  /** Double-click on the divider: equalize this pane with its left neighbor. */
+  onEqualizePair: (slotKey: string) => void
   onRegisterEl: (panelId: string, el: HTMLDivElement | null) => void
   onExited: (slotKey: string) => void
 }
@@ -479,12 +547,14 @@ function PanelSlot({
   animateEntry,
   isDragSource,
   dragHandleProps,
+  width,
+  onWidthChange,
+  onEqualizePair,
   onRegisterEl,
   onExited,
 }: PanelSlotProps) {
   const { closePanel, setFocusedPane } = usePanel()
   const focusedPane = useFocusedPane()
-  const [width, setWidth] = useState(DEFAULT_PANEL_WIDTH)
   const [entered, setEntered] = useState(!animateEntry)
   const [slideDone, setSlideDone] = useState(!animateEntry)
 
@@ -521,9 +591,9 @@ function PanelSlot({
     (newWidth: number) => {
       const containerWidth = containerRef.current?.offsetWidth ?? 0
       const maxWidth = Math.max(MIN_PANEL_WIDTH, Math.round(containerWidth * MAX_PANEL_RATIO))
-      setWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, newWidth)))
+      onWidthChange(slotKey, Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, newWidth)))
     },
-    [containerRef]
+    [containerRef, onWidthChange, slotKey]
   )
 
   const { isResizing, handleResizeStart } = useResizeDrag({
@@ -586,6 +656,7 @@ function PanelSlot({
           maxWidth={maxWidth}
           onMouseDown={handleResizeStart}
           onKeyDown={handleResizeKeyDown}
+          onDoubleClick={() => onEqualizePair(slotKey)}
         />
         <div className="min-w-0 flex-1 overflow-hidden">
           <PanelInstanceProvider key={panelId} panelId={panelId} dragHandleProps={dragHandleProps}>
