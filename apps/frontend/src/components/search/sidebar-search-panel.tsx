@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react"
+import { useCallback, useEffect, useMemo, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowLeft, Search as SearchIcon } from "lucide-react"
 import { SidebarShell } from "@/components/layout/sidebar/sidebar-shell"
@@ -23,13 +23,19 @@ import { SearchResults } from "./search-results"
  */
 export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
   const navigate = useNavigate()
-  const { query, setQuery, activeResultId, setActiveResultId, closeSearch } = useSearchPanel()
+  const { query, setQuery, activeResultId, setActiveResultId, closeSearch, registerFocusHandler } = useSearchPanel()
   const { results, isLoading, error, parsedFilters, searchText, hasQuery } = useMessageSearch(workspaceId, query)
   const { preferences } = usePreferences()
 
   const inputRef = useRef<RichInputRef>(null)
   const resultsRef = useRef<HTMLDivElement>(null)
   const isPopoverActiveRef = useRef(false)
+
+  // Lets mod+shift+f refocus the input while the panel is already open.
+  useEffect(() => {
+    registerFocusHandler(() => inputRef.current?.focus())
+    return () => registerFocusHandler(null)
+  }, [registerFocusHandler])
 
   const terms = useMemo(() => extractSearchTerms(searchText), [searchText])
   const streamCount = useMemo(() => new Set(results.map((r) => r.streamId)).size, [results])
