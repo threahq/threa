@@ -10,6 +10,7 @@ import { createRequireBotManagement } from "./middleware/bot-management"
 import { createRequireWorkspacePermission } from "./middleware/workspace-permission"
 import { createWorkspaceAuthzHandlers, WorkspaceAuthzService } from "./features/workspace-authz"
 import { createFeatureFlagHandlers, type FeatureFlagService } from "./features/feature-flags"
+import { createPlatformAdminHandlers, type PlatformAdminService } from "./features/platform-admin"
 import { createAuthHandlers } from "./auth/handlers"
 import { createWorkspaceHandlers, WorkspaceRepository } from "./features/workspaces"
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
@@ -108,6 +109,7 @@ interface Dependencies {
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   featureFlagService: FeatureFlagService
+  platformAdminService: PlatformAdminService
   sidebarConfigService: SidebarConfigService
   userE2eKeysService: UserE2eKeysService
   invitationService: InvitationService
@@ -160,6 +162,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
+    platformAdminService,
     sidebarConfigService,
     userE2eKeysService,
     invitationService,
@@ -204,6 +207,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const requireWorkspacePermission = createRequireWorkspacePermission()
   const workspaceAuthz = createWorkspaceAuthzHandlers({ workspaceAuthzService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
+  const platformAdmin = createPlatformAdminHandlers({ platformAdminService })
 
   const rateLimits = createRateLimiters(rateLimiterConfig)
   const opsAccess = createOpsAccessMiddleware()
@@ -217,6 +221,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
+    platformAdminService,
     sidebarConfigService,
     invitationService,
     activityService,
@@ -289,6 +294,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
+    app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
 
     // Enclave runtime registry — each enclave instance authenticates with the
     // same shared internal secret to register/refresh/retire its EIK.

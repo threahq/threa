@@ -246,6 +246,9 @@ WebSocket connections bypass the router entirely. The frontend fetches `/api/wor
 
 - `POST /internal/workspaces` — provision a new workspace in this region
 - `POST /internal/invitations/:id/accept` — accept an invitation
+- `POST /internal/authz/memberships` — sync the `workspace_user_permissions` mirror (WorkOS membership fan-out)
+- `POST /internal/feature-flags` — replace one user's feature-flag snapshot
+- `POST /internal/platform-admin` — replace one user's platform-admin mirror row (gates backoffice links in the app)
 
 **Key subsystems:**
 

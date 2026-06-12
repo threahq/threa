@@ -3,6 +3,7 @@ import type { Pool } from "pg"
 import { StubWorkosOrgService } from "@threa/backend-common"
 import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import { InvitationShadowRepository, InvitationShadowService } from "../../src/features/invitation-shadows"
+import { PlatformAdminSyncService } from "../../src/features/platform-admin"
 import type { RegionalClient } from "../../src/lib/regional-client"
 import { setupTestDatabase } from "./setup"
 
@@ -40,7 +41,15 @@ describe("InvitationShadowService role_slug propagation", () => {
     // suite doesn't exercise. A bare object satisfies the type without binding
     // to a live region map.
     regional = {} as RegionalClient
-    service = new InvitationShadowService({ pool, regionalClient: regional, workosOrgService: workos })
+    service = new InvitationShadowService({
+      pool,
+      regionalClient: regional,
+      workosOrgService: workos,
+      // Real service: acceptShadow calls enqueueIfAdmin, which only reads
+      // platform_roles and writes the outbox — the invitee holds no grant in
+      // this suite, so it never reaches the regional client.
+      platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
+    })
 
     await pool.query(
       `INSERT INTO workspace_registry (id, name, slug, region, created_by_workos_user_id, workos_organization_id)

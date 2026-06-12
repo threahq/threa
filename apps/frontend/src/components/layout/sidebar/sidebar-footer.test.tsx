@@ -3,7 +3,9 @@ import { User as UserIcon } from "lucide-react"
 import { describe, expect, it, beforeEach, vi } from "vitest"
 import { MemoryRouter } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import type { WorkspaceBootstrap } from "@threa/types"
 import { render, screen, userEvent, spyOnExport } from "@/test"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import { SidebarFooter } from "./sidebar-footer"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
@@ -16,10 +18,10 @@ const openSettings = vi.fn()
 const collapseOnMobile = vi.fn()
 const isMobile = { value: true }
 
-function renderWithRouter(ui: React.ReactElement) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+function renderWithRouter(ui: React.ReactElement, queryClient?: QueryClient) {
+  const client = queryClient ?? new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <QueryClientProvider client={queryClient}>
+    <QueryClientProvider client={client}>
       <MemoryRouter>{ui}</MemoryRouter>
     </QueryClientProvider>
   )
@@ -319,6 +321,95 @@ describe("SidebarFooter", () => {
     expect(screen.getAllByText(/Notifications paused/i).length).toBeGreaterThan(0)
     // While paused, the menu offers a one-tap resume rather than a pause entry.
     expect(screen.getByText("Resume notifications")).toBeInTheDocument()
+  })
+
+  it("links platform admins to the admin portal in a new tab", async () => {
+    const user = userEvent.setup()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), {
+      viewerIsPlatformAdmin: true,
+    } as WorkspaceBootstrap)
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        currentUser={{
+          id: "user_1",
+          workspaceId: "workspace_1",
+          workosUserId: "workos_user_1",
+          email: "kris@example.com",
+          role: "member",
+          slug: "kris",
+          name: "Kris",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en-SE",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
+          setupCompleted: true,
+          joinedAt: "2026-03-03T10:00:00Z",
+        }}
+      />,
+      queryClient
+    )
+
+    await user.click(screen.getByRole("button", { name: /kris/i }))
+
+    const link = screen.getByRole("link", { name: "Admin Portal" })
+    // The dev/test fallback of getAdminPortalUrl (vitest runs with DEV=true).
+    expect(link).toHaveAttribute("href", "http://localhost:3004")
+    expect(link).toHaveAttribute("target", "_blank")
+  })
+
+  it("hides the admin portal entry from non-admins", async () => {
+    const user = userEvent.setup()
+
+    // No viewerIsPlatformAdmin in the bootstrap cache (the common case).
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        onCreateChannel={vi.fn()}
+        currentUser={{
+          id: "user_1",
+          workspaceId: "workspace_1",
+          workosUserId: "workos_user_1",
+          email: "pierre@example.com",
+          role: "member",
+          slug: "pierre",
+          name: "Pierre",
+          description: null,
+          avatarUrl: null,
+          timezone: "Europe/Stockholm",
+          locale: "en-SE",
+          pronouns: null,
+          phone: null,
+          githubUsername: null,
+          statusEmoji: null,
+          statusText: null,
+          statusExpiresAt: null,
+          statusPausesNotifications: false,
+          notificationsPausedUntil: null,
+          notificationsPausedIndefinitely: false,
+          setupCompleted: true,
+          joinedAt: "2026-03-03T10:00:00Z",
+        }}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: /pierre/i }))
+
+    expect(screen.queryByText("Admin Portal")).not.toBeInTheDocument()
   })
 
   it("offers a pause-notifications entry in the account menu when not paused", async () => {

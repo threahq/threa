@@ -77,6 +77,7 @@ import {
 import { UserPreferencesService } from "./features/user-preferences"
 import { WorkspaceSettingsService } from "./features/workspace-settings"
 import { FeatureFlagService } from "./features/feature-flags"
+import { PlatformAdminService } from "./features/platform-admin"
 import { SidebarConfigService } from "./features/sidebar-config"
 import { UserE2eKeysService } from "./features/user-e2e-keys"
 import { createS3Storage } from "./lib/storage/s3-client"
@@ -270,6 +271,7 @@ export async function startServer(): Promise<ServerInstance> {
   const userPreferencesService = new UserPreferencesService(pool)
   const workspaceSettingsService = new WorkspaceSettingsService(pool)
   const featureFlagService = new FeatureFlagService(pool)
+  const platformAdminService = new PlatformAdminService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
 
@@ -616,6 +618,7 @@ export async function startServer(): Promise<ServerInstance> {
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
+    platformAdminService,
     sidebarConfigService,
     userE2eKeysService,
     invitationService,

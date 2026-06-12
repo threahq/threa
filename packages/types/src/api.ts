@@ -1051,6 +1051,14 @@ export interface WorkspaceBootstrap {
    * per-user overrides). Kept live by the `feature_flags:updated` socket event.
    */
   featureFlags: FeatureFlags
+  /**
+   * True when the viewer holds a control-plane platform-admin grant (synced
+   * to the regional `platform_admin_access` mirror). Gates UI links into the
+   * backoffice. Optional because bootstraps cached before this field shipped
+   * lack it — absent reads as false. No live broadcast: grants are rare
+   * operator actions and take effect on the next bootstrap.
+   */
+  viewerIsPlatformAdmin?: boolean
 }
 
 // ============================================================================

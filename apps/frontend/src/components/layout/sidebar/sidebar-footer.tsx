@@ -12,6 +12,7 @@ import {
   Moon,
   Plus,
   Settings,
+  ShieldCheck,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -21,6 +22,8 @@ import { useAuth } from "@/auth"
 import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
 import { useSettings, useSidebar } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { getAdminPortalUrl } from "@/lib/admin-url"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
@@ -229,6 +232,12 @@ export function SidebarFooter({
   const resumeNotifications = useResumeNotifications(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
 
+  // Synced from the control plane's platform_roles via the regional mirror;
+  // only platform admins get a link into the backoffice. The URL is
+  // hostname-derived and null on unknown hosts, which also hides the entry.
+  const isPlatformAdmin = useCachedWorkspaceBootstrap(workspaceId)?.viewerIsPlatformAdmin ?? false
+  const adminPortalUrl = getAdminPortalUrl()
+
   const status = useMemo<FooterStatus | null>(() => {
     if (!currentUser) return null
     const active = resolveActiveStatus({
@@ -405,6 +414,20 @@ export function SidebarFooter({
         onSelect: collapseOnMobile,
         separatorBefore: true,
       },
+      // Backoffice entry — platform admins only. Cosmetic gating: the
+      // backoffice re-checks the platform-admin grant server-side.
+      ...(isPlatformAdmin && adminPortalUrl
+        ? [
+            {
+              id: "admin-portal",
+              label: "Admin Portal",
+              icon: ShieldCheck,
+              href: adminPortalUrl,
+              external: true,
+              onSelect: collapseOnMobile,
+            } satisfies SidebarActionItem,
+          ]
+        : []),
       {
         id: "switch-account",
         label: "Switch account",
@@ -431,6 +454,8 @@ export function SidebarFooter({
       collapseOnMobile,
       handleLogout,
       workspaceId,
+      isPlatformAdmin,
+      adminPortalUrl,
     ]
   )
 
