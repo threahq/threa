@@ -87,7 +87,7 @@ export function SearchPage() {
                 triggers={SEARCH_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
-                editorClassName="h-8 py-1.5"
+                editorClassName="h-auto min-h-8 py-1.5"
                 autoFocus={!isMobile}
               />
             </div>

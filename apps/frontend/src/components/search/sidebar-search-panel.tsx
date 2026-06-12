@@ -139,7 +139,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 triggers={SEARCH_TRIGGERS}
                 placeholder="Search messages..."
                 ariaLabel="Search messages"
-                editorClassName="h-8 py-1.5 text-[13px]"
+                editorClassName="h-auto min-h-8 py-1.5 text-[13px]"
                 autoFocus
               />
             </div>
