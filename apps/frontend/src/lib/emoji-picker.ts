@@ -119,9 +119,15 @@ export function buildQuickEmojis(
  * primary match target; other aliases score a tier below, so `:smile:` ranks
  * above an emoji that merely lists "smile" as a hidden alias. Ties keep input
  * order (default order for the grid, weight order for recents).
+ *
+ * `aliases` includes the primary shortcode (see EmojiEntry), so it is
+ * excluded from the keyword band to keep the tier intent explicit.
  */
 export function filterBySearch(emojis: EmojiEntry[], query: string): EmojiEntry[] {
-  return rankMatches(emojis, query, (e) => ({ labels: [e.shortcode], keywords: e.aliases }))
+  return rankMatches(emojis, query, (e) => ({
+    labels: [e.shortcode],
+    keywords: e.aliases.filter((alias) => alias !== e.shortcode),
+  }))
 }
 
 export type Section = "recent" | "all"
