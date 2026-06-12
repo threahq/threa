@@ -20,6 +20,7 @@ import {
 import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor, SYNC_V2_CURSOR_MODE, type SyncV2CursorMode } from "./sync-log-cursor"
+import { isLegacyUnreadCounterEntry } from "./unread-counters"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
@@ -69,27 +70,13 @@ interface SyncEngineDeps {
 const MAX_CATCHUP_PAGES = 20
 const CATCHUP_PAGE_LIMIT = 500
 
-/**
- * Unread/read-state event types that active catch-up SKIPS (the cursor still
- * advances past them). Their handlers are the only duplicate-unsafe ones in
- * the apply surface: `stream:activity` and `activity:created` increment
- * counters, so replaying a log entry already reflected in the bootstrap's
- * absolute counts double-counts; and replaying `stream:read`/`stream:read_all`
- * would zero counts whose causing increments were skipped. In phase 2b the
- * workspace bootstrap stays the sole authority for unread state (INV-53
- * healing is untouched), and live delivery of these types — including events
- * buffered while catch-up pages — keeps applying exactly as today. A dropped
- * live emit of these types heals on the next bootstrap, the same loss mode
- * as before the log existed. Phase 2c can lift them into the log properly by
- * converting their payloads to absolute values (LWW), at which point they
- * leave this set.
- */
-const CATCHUP_SKIPPED_UNREAD_EVENT_TYPES = new Set([
-  "stream:activity",
-  "activity:created",
-  "stream:read",
-  "stream:read_all",
-])
+// Unread counter events replay from the log like any other event since their
+// payloads went absolute (phase 2c) — EXCEPT legacy entries persisted before
+// the backend shipped the absolute fields, which still carry increments and
+// must be skipped (the cursor advances past them; the bootstrap remains their
+// authority, INV-53). `isLegacyUnreadCounterEntry` is that per-entry check;
+// it replaces the phase-2b CATCHUP_SKIPPED_UNREAD_EVENT_TYPES set and dies
+// when sync-log retention ships and pre-field entries age out.
 
 /**
  * Owns the full sync lifecycle for a workspace:
@@ -923,14 +910,19 @@ export class SyncEngine {
    * order, awaiting each entry so applies cannot interleave. Duplicates are
    * by design (sweep + dispatcher can both emit; snapshot/log overlap is the
    * safe side of read-before-stamp) and are absorbed by the handlers'
-   * idempotency — except the unread counter family, which is skipped (see
-   * CATCHUP_SKIPPED_UNREAD_EVENT_TYPES).
+   * idempotency — including the unread counter family, whose absolute
+   * payloads max-merge/LWW-set (phase 2c). Only LEGACY counter entries
+   * (pre-field payloads, still increments) are skipped; see
+   * isLegacyUnreadCounterEntry.
    *
    * While catch-up pages, the gate buffers live syncId-bearing events; the
    * finally-splice applies buffered events above the catch-up position (plus
-   * skipped-type events at any position, since catch-up never applies those)
-   * and reopens live flow. The cursor advances only past entries that were
-   * handed to handlers (or policy-skipped), never by jumping to head.
+   * legacy counter events at any position, since catch-up never applies
+   * those) and reopens live flow. A buffered ABSOLUTE counter event at or
+   * below the position must NOT re-apply: its log copy already applied, and
+   * activity counts are LWW — re-applying it after a newer log entry would
+   * regress them. The cursor advances only past entries that were handed to
+   * handlers (or policy-skipped), never by jumping to head.
    */
   private async performActiveCatchUp(trigger: string, signal: AbortSignal, cycle: number): Promise<void> {
     const syncService = this.deps.syncService!
@@ -981,7 +973,7 @@ export class SyncEngine {
         for (const entry of response.entries) {
           if (this.isDestroyed) return
           byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
-          if (CATCHUP_SKIPPED_UNREAD_EVENT_TYPES.has(entry.eventType)) {
+          if (isLegacyUnreadCounterEntry(entry.eventType, entry.payload)) {
             skipped += 1
           } else {
             // Mirror the live wire shape exactly: emits carry the syncId
@@ -1019,14 +1011,14 @@ export class SyncEngine {
       // this run was in flight, its bootstrap window is still open; leave the
       // gate paused and let that cycle's own run (chained by runCatchUp) do
       // the splice. Buffered events at or below the applied position were
-      // already applied from the log — except skipped-type events, which
+      // already applied from the log — except legacy counter events, which
       // only ever apply via live delivery and so splice regardless of
       // position.
       if (!this.isDestroyed && this.catchUpCycle === cycle) {
         const through = appliedThrough
         await gate.resume(
-          (eventType, syncId) =>
-            through === null || syncId > through || CATCHUP_SKIPPED_UNREAD_EVENT_TYPES.has(eventType)
+          (eventType, syncId, payload) =>
+            through === null || syncId > through || isLegacyUnreadCounterEntry(eventType, payload)
         )
       }
     }

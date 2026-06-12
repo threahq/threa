@@ -163,44 +163,12 @@ export function useUnreadCounts(workspaceId: string) {
     markAllAsReadMutation.mutate()
   }, [markAllAsReadMutation])
 
-  const incrementUnread = useCallback(
-    (streamId: string) => {
-      // Update TanStack cache (bridge)
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
-        if (!old) return old
-        return {
-          ...old,
-          unreadCounts: {
-            ...old.unreadCounts,
-            [streamId]: (old.unreadCounts[streamId] ?? 0) + 1,
-          },
-        }
-      })
-
-      // Update IDB
-      db.transaction("rw", [db.unreadState], async () => {
-        const state = await db.unreadState.get(workspaceId)
-        if (!state) return
-        await db.unreadState.put({
-          ...state,
-          unreadCounts: {
-            ...state.unreadCounts,
-            [streamId]: (state.unreadCounts[streamId] ?? 0) + 1,
-          },
-          _cachedAt: Date.now(),
-        })
-      })
-    },
-    [queryClient, workspaceId]
-  )
-
   return {
     unreadCounts,
     getUnreadCount,
     getTotalUnreadCount,
     markAsRead,
     markAllAsRead,
-    incrementUnread,
     isMarkingAsRead: markAsReadMutation.isPending,
     isMarkingAllAsRead: markAllAsReadMutation.isPending,
   }

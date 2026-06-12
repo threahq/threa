@@ -42,6 +42,14 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import {
+  applyActivityCounts,
+  applyStreamActivityOrdinal,
+  applyStreamReadOrdinal,
+  applyStreamsReadAllOrdinals,
+  toCounterState,
+  withCounterState,
+} from "./unread-counters"
 
 // ============================================================================
 // Workspace socket handler payload types
@@ -95,23 +103,37 @@ interface WorkspaceUserUpdatedPayload {
   user: WorkspaceUserPayload
 }
 
+// The unread counter payloads carry absolute fields (sync-v2 phase 2c).
+// They are optional on the wire: sync-log entries persisted before the
+// backend shipped them replay without them forever, and handlers fall back
+// to the legacy increment/zero behavior (see sync/unread-counters.ts).
 interface StreamReadPayload {
   workspaceId: string
   authorId: string
   streamId: string
   lastReadEventId: string
+  /** The read event's per-stream sequence (bigint as string). */
+  lastReadSequence?: string
+  /** Message ordinal of the read position. */
+  lastReadOrdinal?: number
 }
 
 interface StreamsReadAllPayload {
   workspaceId: string
   authorId: string
   streamIds: string[]
+  /** Absolute read position per updated stream. */
+  reads?: Array<{ streamId: string; lastReadOrdinal: number }>
 }
 
 interface StreamActivityPayload {
   workspaceId: string
   streamId: string
   authorId: string
+  /** The message event's per-stream sequence (bigint as string). */
+  sequence?: string
+  /** Count of message_created events with sequence ≤ this one. */
+  messageOrdinal?: number
   lastMessagePreview: LastMessagePreview
 }
 
@@ -280,6 +302,13 @@ export function mergeReconnectWorkspaceBootstrap({
   const unreadCounts = { ...workspaceBootstrap.unreadCounts }
   const mentionCounts = { ...workspaceBootstrap.mentionCounts }
   const activityCounts = { ...workspaceBootstrap.activityCounts }
+  // The latest message ordinals (sync-v2 phase 2c). A stream's ordinal must
+  // stay paired with whichever unreadCounts source wins for it — the implied
+  // read position is latestOrdinal − unreadCount, so mixing a local unread
+  // with the server ordinal (or vice versa) would shift it. Streams whose
+  // local unread state wins but that have no local ordinal lose their
+  // baseline (handlers re-seed from the next absolute event).
+  const messageCounts = { ...workspaceBootstrap.messageCounts }
   const mutedStreamIds = new Set(workspaceBootstrap.mutedStreamIds)
   const localStreamById = new Map(localStreams.map((stream) => [stream.id, stream]))
   const localMembershipByStreamId = new Map(localMemberships.map((membership) => [membership.streamId, membership]))
@@ -301,6 +330,12 @@ export function mergeReconnectWorkspaceBootstrap({
       for (const [streamId, count] of Object.entries(localUnreadState.unreadCounts)) {
         if (successfulStreamIds.has(streamId)) continue
         unreadCounts[streamId] = count
+        const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
+        if (localOrdinal !== undefined) {
+          messageCounts[streamId] = localOrdinal
+        } else {
+          delete messageCounts[streamId]
+        }
       }
       for (const [streamId, count] of Object.entries(localUnreadState.mentionCounts)) {
         if (successfulStreamIds.has(streamId)) continue
@@ -332,6 +367,12 @@ export function mergeReconnectWorkspaceBootstrap({
       unreadCounts[streamId] = localUnreadState.unreadCounts[streamId] ?? 0
       mentionCounts[streamId] = localUnreadState.mentionCounts[streamId] ?? 0
       activityCounts[streamId] = localUnreadState.activityCounts[streamId] ?? 0
+      const localOrdinal = localUnreadState.latestOrdinals?.[streamId]
+      if (localOrdinal !== undefined) {
+        messageCounts[streamId] = localOrdinal
+      } else {
+        delete messageCounts[streamId]
+      }
       if (localUnreadState.mutedStreamIds.includes(streamId)) {
         mutedStreamIds.add(streamId)
       } else {
@@ -369,6 +410,7 @@ export function mergeReconnectWorkspaceBootstrap({
     delete unreadCounts[streamId]
     delete mentionCounts[streamId]
     delete activityCounts[streamId]
+    delete messageCounts[streamId]
     mutedStreamIds.delete(streamId)
   }
 
@@ -380,6 +422,7 @@ export function mergeReconnectWorkspaceBootstrap({
     mentionCounts,
     activityCounts,
     unreadActivityCount: sumActivityCounts(activityCounts),
+    messageCounts,
     mutedStreamIds: Array.from(mutedStreamIds),
   }
 }
@@ -734,12 +777,28 @@ export function registerWorkspaceSocketHandlers(
 
     const current = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
     const hadActivity = (current?.activityCounts[payload.streamId] ?? 0) > 0
+    // Absolute read position (sync-v2 phase 2c); null on legacy payloads.
+    const readOrdinal = typeof payload.lastReadOrdinal === "number" ? payload.lastReadOrdinal : null
 
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
+      const withMembership = {
+        ...old,
+        streamMemberships: old.streamMemberships.map((membership) =>
+          membership.streamId === payload.streamId
+            ? { ...membership, lastReadEventId: payload.lastReadEventId }
+            : membership
+        ),
+      }
+      if (readOrdinal !== null) {
+        return withCounterState(
+          withMembership,
+          applyStreamReadOrdinal(toCounterState(old), payload.streamId, readOrdinal)
+        )
+      }
       const clearedActivity = old.activityCounts[payload.streamId] ?? 0
       return {
-        ...old,
+        ...withMembership,
         unreadCounts: {
           ...old.unreadCounts,
           [payload.streamId]: 0,
@@ -753,11 +812,6 @@ export function registerWorkspaceSocketHandlers(
           [payload.streamId]: 0,
         },
         unreadActivityCount: Math.max(0, (old.unreadActivityCount ?? 0) - clearedActivity),
-        streamMemberships: old.streamMemberships.map((membership) =>
-          membership.streamId === payload.streamId
-            ? { ...membership, lastReadEventId: payload.lastReadEventId }
-            : membership
-        ),
       }
     })
 
@@ -778,15 +832,25 @@ export function registerWorkspaceSocketHandlers(
       const now = Date.now()
       const state = await db.unreadState.get(workspaceId)
       if (state) {
-        const clearedActivity = state.activityCounts[payload.streamId] ?? 0
-        await db.unreadState.put({
-          ...state,
-          unreadCounts: { ...state.unreadCounts, [payload.streamId]: 0 },
-          mentionCounts: { ...state.mentionCounts, [payload.streamId]: 0 },
-          activityCounts: { ...state.activityCounts, [payload.streamId]: 0 },
-          unreadActivityCount: Math.max(0, state.unreadActivityCount - clearedActivity),
-          _cachedAt: now,
-        })
+        if (readOrdinal !== null) {
+          // Read-merge-write inside one transaction so concurrent tabs
+          // max-merge instead of clobbering each other (INV-20 analogue).
+          await db.unreadState.put({
+            ...state,
+            ...applyStreamReadOrdinal(state, payload.streamId, readOrdinal),
+            _cachedAt: now,
+          })
+        } else {
+          const clearedActivity = state.activityCounts[payload.streamId] ?? 0
+          await db.unreadState.put({
+            ...state,
+            unreadCounts: { ...state.unreadCounts, [payload.streamId]: 0 },
+            mentionCounts: { ...state.mentionCounts, [payload.streamId]: 0 },
+            activityCounts: { ...state.activityCounts, [payload.streamId]: 0 },
+            unreadActivityCount: Math.max(0, state.unreadActivityCount - clearedActivity),
+            _cachedAt: now,
+          })
+        }
       }
 
       await db.streams.update(payload.streamId, { lastReadEventId: payload.lastReadEventId, _cachedAt: now })
@@ -819,8 +883,15 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamReadAll = (payload: StreamsReadAllPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
+    // Absolute read positions (sync-v2 phase 2c); null on legacy payloads.
+    const reads = Array.isArray(payload.reads) ? payload.reads : null
+
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
+
+      if (reads !== null) {
+        return withCounterState(old, applyStreamsReadAllOrdinals(toCounterState(old), reads))
+      }
 
       const newUnreadCounts = { ...old.unreadCounts }
       const newMentionCounts = { ...old.mentionCounts }
@@ -845,6 +916,14 @@ export function registerWorkspaceSocketHandlers(
     db.transaction("rw", [db.unreadState], async () => {
       const state = await db.unreadState.get(workspaceId)
       if (!state) return
+      if (reads !== null) {
+        await db.unreadState.put({
+          ...state,
+          ...applyStreamsReadAllOrdinals(state, reads),
+          _cachedAt: Date.now(),
+        })
+        return
+      }
       const updated = { ...state, _cachedAt: Date.now() }
       const newUnread = { ...state.unreadCounts }
       const newMention = { ...state.mentionCounts }
@@ -893,6 +972,9 @@ export function registerWorkspaceSocketHandlers(
       })
     }
 
+    // Absolute message ordinal (sync-v2 phase 2c); null on legacy payloads.
+    const messageOrdinal = typeof payload.messageOrdinal === "number" ? payload.messageOrdinal : null
+
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
       if (!old) return old
 
@@ -900,28 +982,42 @@ export function registerWorkspaceSocketHandlers(
       const isMember = old.streamMemberships.some((m: StreamMember) => m.streamId === payload.streamId)
       if (!isMember) return old
 
-      // Determine if we should increment unread count:
-      // - Not for own messages (authorId is a userId — match via user.workosUserId)
-      // - Not when currently viewing the stream
+      // Own messages never raise unread (authorId is a userId — match via
+      // user.workosUserId): the server auto-advances the author's read
+      // pointer in the send transaction without emitting stream:read.
       const currentUser = refs.getCurrentUser()
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
-      const isOwnMessage = currentMember && payload.authorId === currentMember.id
-      const shouldIncrementUnread = !isOwnMessage && !isViewingStream
+      const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
 
-      return {
+      // Always update stream's lastMessagePreview for sidebar display
+      const withPreview = {
         ...old,
-        // Only increment unread count for others' messages when not viewing
-        unreadCounts: shouldIncrementUnread
-          ? {
-              ...old.unreadCounts,
-              [payload.streamId]: (old.unreadCounts[payload.streamId] ?? 0) + 1,
-            }
-          : old.unreadCounts,
-        // Always update stream's lastMessagePreview for sidebar display
         streams: old.streams.map((stream) =>
           stream.id === payload.streamId ? { ...stream, lastMessagePreview: payload.lastMessagePreview } : stream
         ),
       }
+
+      if (messageOrdinal !== null) {
+        return withCounterState(
+          withPreview,
+          applyStreamActivityOrdinal(toCounterState(old), payload.streamId, messageOrdinal, {
+            isOwnMessage,
+            isViewing: isViewingStream,
+          })
+        )
+      }
+
+      // Legacy payload: increment unread for others' messages when not viewing.
+      const shouldIncrementUnread = !isOwnMessage && !isViewingStream
+      return shouldIncrementUnread
+        ? {
+            ...withPreview,
+            unreadCounts: {
+              ...withPreview.unreadCounts,
+              [payload.streamId]: (withPreview.unreadCounts[payload.streamId] ?? 0) + 1,
+            },
+          }
+        : withPreview
     })
 
     // Always persist lastMessagePreview to IDB so the cached sort order
@@ -931,36 +1027,50 @@ export function registerWorkspaceSocketHandlers(
       _cachedAt: Date.now(),
     })
 
-    // Update IDB: increment unread count for others' messages when not viewing.
-    // We check membership via IDB to avoid dependency on the TanStack closure.
-    if (!isViewingStream) {
-      void (async () => {
-        const membership = await db.streamMemberships.get(`${workspaceId}:${payload.streamId}`)
-        if (!membership) return
-        const currentUser = refs.getCurrentUser()
-        const currentMember = currentUser
-          ? await db.workspaceUsers
-              .where("workspaceId")
-              .equals(workspaceId)
-              .filter((u) => u.workosUserId === currentUser.id)
-              .first()
-          : null
-        if (currentMember && payload.authorId === currentMember.id) return
+    // Update IDB unread state. We check membership via IDB to avoid dependency
+    // on the TanStack closure. Unlike the legacy increment (skipped for own
+    // messages and while viewing), the absolute path always writes: own sends
+    // advance the implied read position and viewing pins it to latest.
+    void (async () => {
+      const membership = await db.streamMemberships.get(`${workspaceId}:${payload.streamId}`)
+      if (!membership) return
+      const currentUser = refs.getCurrentUser()
+      const currentMember = currentUser
+        ? await db.workspaceUsers
+            .where("workspaceId")
+            .equals(workspaceId)
+            .filter((u) => u.workosUserId === currentUser.id)
+            .first()
+        : null
+      const isOwnMessage = Boolean(currentMember && payload.authorId === currentMember.id)
+      if (messageOrdinal === null && (isOwnMessage || isViewingStream)) return
 
-        await db.transaction("rw", [db.unreadState], async () => {
-          const state = await db.unreadState.get(workspaceId)
-          if (!state) return
+      await db.transaction("rw", [db.unreadState], async () => {
+        const state = await db.unreadState.get(workspaceId)
+        if (!state) return
+        if (messageOrdinal !== null) {
+          // Read-merge-write inside one transaction so concurrent tabs
+          // max-merge instead of clobbering each other (INV-20 analogue).
           await db.unreadState.put({
             ...state,
-            unreadCounts: {
-              ...state.unreadCounts,
-              [payload.streamId]: (state.unreadCounts[payload.streamId] ?? 0) + 1,
-            },
+            ...applyStreamActivityOrdinal(state, payload.streamId, messageOrdinal, {
+              isOwnMessage,
+              isViewing: isViewingStream,
+            }),
             _cachedAt: Date.now(),
           })
+          return
+        }
+        await db.unreadState.put({
+          ...state,
+          unreadCounts: {
+            ...state.unreadCounts,
+            [payload.streamId]: (state.unreadCounts[payload.streamId] ?? 0) + 1,
+          },
+          _cachedAt: Date.now(),
         })
-      })()
-    }
+      })
+    })()
   }
 
   // Handle stream display name updated (from auto-naming service)
@@ -1235,10 +1345,30 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
 
     const { streamId, activityType, isSelf } = payload.activity
+    // Absolute per-stream counts for the target user (sync-v2 phase 2c);
+    // undefined on legacy payloads.
+    const counts = payload.counts
 
-    // Self rows (the user's own message or reaction) show in the feed but must
-    // not inflate unread counts. The backend inserts them already read.
-    if (!isSelf) {
+    if (counts) {
+      // Absolute counts apply for self rows too — the backend inserts those
+      // already read, so the counts simply restate the unchanged truth (LWW).
+      updateBootstrapOrInvalidate(queryClient, workspaceId, (old) =>
+        withCounterState(old, applyActivityCounts(toCounterState(old), streamId, counts))
+      )
+
+      db.transaction("rw", [db.unreadState], async () => {
+        const state = await db.unreadState.get(workspaceId)
+        if (!state) return
+        await db.unreadState.put({
+          ...state,
+          ...applyActivityCounts(state, streamId, counts),
+          _cachedAt: Date.now(),
+        })
+      })
+    } else if (!isSelf) {
+      // Legacy payload. Self rows (the user's own message or reaction) show in
+      // the feed but must not inflate unread counts — the backend inserts them
+      // already read.
       updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({
         ...old,
         mentionCounts:
@@ -1765,6 +1895,7 @@ export async function applyWorkspaceBootstrap(
           mentionCounts: bootstrap.mentionCounts,
           activityCounts: bootstrap.activityCounts,
           unreadActivityCount: bootstrap.unreadActivityCount,
+          latestOrdinals: bootstrap.messageCounts,
           mutedStreamIds: bootstrap.mutedStreamIds,
           _cachedAt: now,
         })
@@ -1859,6 +1990,7 @@ export async function applyWorkspaceBootstrap(
       mentionCounts: bootstrap.mentionCounts,
       activityCounts: bootstrap.activityCounts,
       unreadActivityCount: bootstrap.unreadActivityCount,
+      latestOrdinals: bootstrap.messageCounts,
       mutedStreamIds: bootstrap.mutedStreamIds,
       _cachedAt: now,
     },
@@ -2000,6 +2132,7 @@ export async function applyReconnectBootstrapBatch(
           mentionCounts: finalBootstrap.mentionCounts,
           activityCounts: finalBootstrap.activityCounts,
           unreadActivityCount: finalBootstrap.unreadActivityCount,
+          latestOrdinals: finalBootstrap.messageCounts,
           mutedStreamIds: finalBootstrap.mutedStreamIds,
           _cachedAt: now,
         }),
@@ -2092,6 +2225,7 @@ export async function applyReconnectBootstrapBatch(
       mentionCounts: finalBootstrap.mentionCounts,
       activityCounts: finalBootstrap.activityCounts,
       unreadActivityCount: finalBootstrap.unreadActivityCount,
+      latestOrdinals: finalBootstrap.messageCounts,
       mutedStreamIds: finalBootstrap.mutedStreamIds,
       _cachedAt: now,
     },

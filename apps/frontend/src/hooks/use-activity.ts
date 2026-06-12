@@ -44,17 +44,43 @@ export function useMarkActivityRead(workspaceId: string) {
       // Optimistic update: mark as read in cache
       await queryClient.cancelQueries({ queryKey: activityKeys.list(workspaceId) })
 
+      let target: Activity | undefined
       queryClient.setQueriesData<Activity[]>({ queryKey: activityKeys.list(workspaceId) }, (old) => {
         if (!old) return old
-        return old.map((a) => (a.id === activityId ? { ...a, readAt: new Date().toISOString() } : a))
+        return old.map((a) => {
+          if (a.id !== activityId) return a
+          target ??= a
+          return { ...a, readAt: new Date().toISOString() }
+        })
       })
 
-      // Decrement unreadActivityCount
+      // Decrement the per-stream counts together with the workspace total:
+      // absolute counter events rederive the total as Σ activityCounts
+      // (sync-v2 phase 2c), so a total-only decrement would resurrect on the
+      // next apply. Rows already read (or self rows) never counted. When the
+      // row isn't in any cached list we can't resolve its stream — decrement
+      // the total alone and let the next absolute apply settle it.
+      const wasUnread = target ? !target.readAt && !target.isSelf : true
+      const streamId = target?.streamId
+      const isMention = target?.activityType === "mention"
+      if (!wasUnread) return { previousUnreadState: undefined }
+
       queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
         if (!old) return old
         return {
           ...old,
           unreadActivityCount: Math.max(0, (old.unreadActivityCount ?? 0) - 1),
+          ...(streamId
+            ? {
+                activityCounts: {
+                  ...old.activityCounts,
+                  [streamId]: Math.max(0, (old.activityCounts[streamId] ?? 0) - 1),
+                },
+                mentionCounts: isMention
+                  ? { ...old.mentionCounts, [streamId]: Math.max(0, (old.mentionCounts[streamId] ?? 0) - 1) }
+                  : old.mentionCounts,
+              }
+            : {}),
         }
       })
 
@@ -63,6 +89,20 @@ export function useMarkActivityRead(workspaceId: string) {
         await db.unreadState.put({
           ...previousUnreadState,
           unreadActivityCount: Math.max(0, previousUnreadState.unreadActivityCount - 1),
+          ...(streamId
+            ? {
+                activityCounts: {
+                  ...previousUnreadState.activityCounts,
+                  [streamId]: Math.max(0, (previousUnreadState.activityCounts[streamId] ?? 0) - 1),
+                },
+                mentionCounts: isMention
+                  ? {
+                      ...previousUnreadState.mentionCounts,
+                      [streamId]: Math.max(0, (previousUnreadState.mentionCounts[streamId] ?? 0) - 1),
+                    }
+                  : previousUnreadState.mentionCounts,
+              }
+            : {}),
           _cachedAt: Date.now(),
         })
       }
