@@ -4,6 +4,7 @@ import type {
   BotInvocationCapability,
   BotInvocationTrigger,
   BotRuntimeKind,
+  BotRuntimeManifest,
   BotRuntimeStatus,
   BotTrait,
 } from "@threa/types"
@@ -81,6 +82,7 @@ export class BotRuntimeService {
     status: BotRuntimeStatus
     acceptingInvocations: boolean
     capabilities?: Record<string, unknown>
+    manifest?: BotRuntimeManifest | null
     statusText?: string | null
     publicKey?: string | null
     publicKeyId?: string | null
@@ -97,6 +99,7 @@ export class BotRuntimeService {
       status: params.status,
       acceptingInvocations: params.acceptingInvocations,
       capabilities: params.capabilities ?? {},
+      manifest: params.manifest,
       statusText: params.statusText,
       publicKey: params.publicKey,
       publicKeyId: params.publicKeyId,

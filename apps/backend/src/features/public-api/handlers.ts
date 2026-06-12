@@ -44,7 +44,7 @@ import {
   type AuthorType,
   type PiToolTraceSectionLabel,
 } from "@threa/types"
-import { BotRuntimeService, type BotRuntimeInstance } from "../bot-runtimes"
+import { BotRuntimeService, assertManifestAllows, type BotRuntimeInstance } from "../bot-runtimes"
 import {
   insertCommandCompletedEvent,
   insertCommandFailedEvent,
@@ -1004,6 +1004,9 @@ export function createPublicApiHandlers({
           instanceId: result.data.instanceId,
         }),
       ])
+      // Reject-undeclared (INV-11): a runtime that declared a manifest without
+      // trace can't post /steps. Unenforced for legacy (null-manifest) runtimes.
+      assertManifestAllows(runtimePresence?.manifest ?? null, "trace")
       // Normalize the wire frame into AgentEvents and run them through the
       // shared TraceProjector — the same event → step state machine the
       // in-process companion and the enclave project through; only the sink
@@ -1055,12 +1058,24 @@ export function createPublicApiHandlers({
       if (!result.success) {
         return res.status(400).json({ error: "Validation failed", details: z.flattenError(result.error).fieldErrors })
       }
-      const bot = await BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId)
+      const [bot, runtimePresence] = await Promise.all([
+        BotRepository.findById(pool, req.workspaceId!, req.botApiKey.botId),
+        botRuntimeService.findPresenceByInstance({
+          workspaceId: req.workspaceId!,
+          botId: req.botApiKey.botId,
+          instanceId: result.data.instanceId,
+        }),
+      ])
       if (!bot || bot.archivedAt) throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
       const contentMarkdown =
         result.data.noResponse === true || !result.data.finalMessageMarkdown
           ? null
           : normalizeMessage(result.data.finalMessageMarkdown)
+      // Reject-undeclared (INV-11): a runtime that declared a manifest may only
+      // emit what it declared. Unenforced for legacy (null-manifest) runtimes.
+      const manifest = runtimePresence?.manifest ?? null
+      if (contentMarkdown) assertManifestAllows(manifest, "reply")
+      if (result.data.sources && result.data.sources.length > 0) assertManifestAllows(manifest, "sources")
       const contentJson = contentMarkdown ? parseMarkdown(contentMarkdown, undefined, toEmoji) : null
       const attachmentIds = contentJson ? collectAttachmentReferenceIds(contentJson) : []
       const { completed, message, sessionFinalized, synthesizedSteps } = await withTransaction(pool, async (client) => {

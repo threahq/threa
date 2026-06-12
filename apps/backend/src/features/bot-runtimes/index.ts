@@ -17,3 +17,4 @@ export {
   type SerializedBotInvocation,
 } from "./socket-handler"
 export { createBotSocketAuthMiddleware, type BotSocketData } from "./socket-auth"
+export { assertManifestAllows } from "./assert-manifest-allows"

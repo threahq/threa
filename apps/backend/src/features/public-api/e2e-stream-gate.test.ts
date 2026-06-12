@@ -109,6 +109,7 @@ describe("public API E2E-stream plaintext gate", () => {
       fn({})) as never)
     const botRuntimeService = {
       findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "claim_1", responseStreamId: "stream_1" })),
+      findPresenceByInstance: mock(() => Promise.resolve({ manifest: null })),
       completeInvocationInTransaction: mock(() => Promise.resolve({ id: "inv_1" })),
     } as unknown as PublicApiDeps["botRuntimeService"]
     const botChannelService = {

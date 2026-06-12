@@ -23,7 +23,7 @@ function createResponse(): Response {
   return res
 }
 
-function arrangeCompletion(params: { existingSteps: unknown[] }) {
+function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknown }) {
   spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
   spyOn(BotRepository, "findById").mockResolvedValue({ id: "bot_1", name: "Pi", archivedAt: null } as never)
   spyOn(dbModule, "withTransaction").mockImplementation(((_pool: unknown, fn: (c: unknown) => unknown) =>
@@ -90,6 +90,7 @@ function arrangeCompletion(params: { existingSteps: unknown[] }) {
   } as unknown as EventService
   const botRuntimeService = {
     findActiveClaimForUpdate: mock(() => Promise.resolve({ id: "binv_1", responseStreamId: "stream_1" })),
+    findPresenceByInstance: mock(() => Promise.resolve({ manifest: params.manifest ?? null })),
     completeInvocationInTransaction: mock(() =>
       Promise.resolve({
         id: "binv_1",
@@ -210,5 +211,59 @@ describe("completeBotInvocation sources", () => {
     await handlers.completeBotInvocation(req, createResponse())
 
     expect(createMessageInTransaction.mock.calls[0]?.[1].sources).toBeUndefined()
+  })
+})
+
+describe("completeBotInvocation manifest enforcement", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  const sources = [{ type: "web", title: "Tide tables", url: "https://tides.example/today" }]
+
+  it("rejects sources a declared manifest did not allow (INV-11)", async () => {
+    const { handlers, req } = arrangeCompletion({
+      existingSteps: [],
+      manifest: { output: { reply: true, trace: true, sources: false } },
+    })
+    req.body = { ...(req.body as Record<string, unknown>), sources }
+
+    await expect(handlers.completeBotInvocation(req, createResponse())).rejects.toMatchObject({
+      status: 400,
+      code: "CAPABILITY_NOT_DECLARED",
+    })
+  })
+
+  it("allows sources when the declared manifest permits them", async () => {
+    const { handlers, req, createMessageInTransaction } = arrangeCompletion({
+      existingSteps: [],
+      manifest: { output: { reply: true, trace: true, sources: true } },
+    })
+    req.body = { ...(req.body as Record<string, unknown>), sources }
+
+    await handlers.completeBotInvocation(req, createResponse())
+
+    expect(createMessageInTransaction.mock.calls[0]?.[1]).toMatchObject({ sources })
+  })
+
+  it("rejects a reply a declared manifest did not allow", async () => {
+    const { handlers, req } = arrangeCompletion({
+      existingSteps: [],
+      manifest: { output: { reply: false, trace: true, sources: false } },
+    })
+
+    await expect(handlers.completeBotInvocation(req, createResponse())).rejects.toMatchObject({
+      status: 400,
+      code: "CAPABILITY_NOT_DECLARED",
+    })
+  })
+
+  it("leaves a legacy null-manifest completion unenforced", async () => {
+    const { handlers, req, createMessageInTransaction } = arrangeCompletion({ existingSteps: [], manifest: null })
+    req.body = { ...(req.body as Record<string, unknown>), sources }
+
+    await handlers.completeBotInvocation(req, createResponse())
+
+    expect(createMessageInTransaction.mock.calls[0]?.[1]).toMatchObject({ sources })
   })
 })

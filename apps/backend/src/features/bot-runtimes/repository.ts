@@ -9,6 +9,7 @@ import {
   type BotInvocationStatus,
   type BotInvocationTrigger,
   type BotRuntimeKind,
+  type BotRuntimeManifest,
   type BotRuntimeSessionLinkStatus,
   type BotRuntimeStatus,
 } from "@threa/types"
@@ -54,6 +55,9 @@ export interface BotRuntimeInstance {
   status: BotRuntimeStatus
   acceptingInvocations: boolean
   capabilities: Record<string, unknown>
+  // Declared-output manifest from bot:hello; null = legacy default profile,
+  // which the reject-undeclared boundary leaves unenforced (Phase 2.3b).
+  manifest: BotRuntimeManifest | null
   statusText: string | null
   // BIK — the runtime's per-session X25519 public key (base64) and the short id
   // used as `recipient_key_id` when wrapping a stream's SSK to this bot. Null
@@ -131,6 +135,7 @@ interface BotRuntimeInstanceRow {
   status: string
   accepting_invocations: boolean
   capabilities: Record<string, unknown>
+  manifest: BotRuntimeManifest | null
   status_text: string | null
   public_key: string | null
   public_key_id: string | null
@@ -227,6 +232,7 @@ function mapRuntimeInstance(row: BotRuntimeInstanceRow): BotRuntimeInstance {
     status: row.status as BotRuntimeStatus,
     acceptingInvocations: row.accepting_invocations,
     capabilities: row.capabilities,
+    manifest: row.manifest,
     statusText: row.status_text,
     publicKey: row.public_key,
     publicKeyId: row.public_key_id,
@@ -399,6 +405,7 @@ export const BotRuntimeInstanceRepository = {
       status: BotRuntimeStatus
       acceptingInvocations: boolean
       capabilities: Record<string, unknown>
+      manifest?: BotRuntimeManifest | null
       statusText?: string | null
       publicKey?: string | null
       publicKeyId?: string | null
@@ -421,9 +428,9 @@ export const BotRuntimeInstanceRepository = {
       ? "public_key = COALESCE(EXCLUDED.public_key, bot_runtime_instances.public_key), public_key_id = COALESCE(EXCLUDED.public_key_id, bot_runtime_instances.public_key_id)"
       : "public_key = EXCLUDED.public_key, public_key_id = EXCLUDED.public_key_id"
     const result =
-      await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, status_text, public_key, public_key_id)
-      VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.statusText ?? null}, ${publicKey}, ${publicKeyId})
-      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, ${sql.raw(capabilitiesSet)}, status_text = EXCLUDED.status_text, ${sql.raw(bikSet)}, last_seen_at = NOW(), updated_at = NOW()
+      await db.query<BotRuntimeInstanceRow>(sql`INSERT INTO bot_runtime_instances (id, workspace_id, bot_id, runtime_kind, instance_id, display_name, status, accepting_invocations, capabilities, manifest, status_text, public_key, public_key_id)
+      VALUES (${params.id}, ${params.workspaceId}, ${params.botId}, ${params.runtimeKind}, ${params.instanceId}, ${params.displayName ?? null}, ${params.status}, ${params.acceptingInvocations}, ${params.capabilities}, ${params.manifest ?? null}, ${params.statusText ?? null}, ${publicKey}, ${publicKeyId})
+      ON CONFLICT (workspace_id, bot_id, instance_id) DO UPDATE SET runtime_kind = EXCLUDED.runtime_kind, display_name = EXCLUDED.display_name, status = EXCLUDED.status, accepting_invocations = EXCLUDED.accepting_invocations, ${sql.raw(capabilitiesSet)}, manifest = COALESCE(EXCLUDED.manifest, bot_runtime_instances.manifest), status_text = EXCLUDED.status_text, ${sql.raw(bikSet)}, last_seen_at = NOW(), updated_at = NOW()
       RETURNING *`)
     return mapRuntimeInstance(result.rows[0]!)
   },

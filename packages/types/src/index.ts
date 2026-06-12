@@ -246,6 +246,8 @@ export type {
   BotRuntimeInstance,
   BotRuntimeSessionLink,
   BotInvocation,
+  BotOutputManifest,
+  BotRuntimeManifest,
   StreamMember,
   Label,
   LabelMember,
