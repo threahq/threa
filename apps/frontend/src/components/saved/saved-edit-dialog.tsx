@@ -13,7 +13,12 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
+import { cn } from "@/lib/utils"
 import { useUpdateSaved } from "@/hooks/use-saved"
+import { useActors } from "@/hooks/use-actors"
+import { useStreamName } from "@/hooks/use-stream-name"
+import { RelativeTime } from "@/components/relative-time"
+import { resolveSavedPreview } from "./saved-item"
 
 const TITLE_MAX = 300
 const NOTE_MAX = 4000
@@ -75,10 +80,16 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
   }
 
   return (
-    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+    // disableSnapPoints: this dialog is a keyboard form. The default
+    // snap-point drawer is forced to h-[100dvh]; when the on-screen keyboard
+    // opens on a focused input, the drawer is pushed up and its top — header
+    // and first field — slides off-screen under the status bar. A content-
+    // height, bottom-anchored drawer rides above the keyboard instead
+    // (matches PassphraseSetupModal, the reference for input drawers).
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange} disableSnapPoints>
       <ResponsiveDialogContent
         desktopClassName="max-w-[480px] gap-0 p-0 overflow-hidden"
-        drawerClassName="gap-0 p-0 overflow-hidden"
+        drawerClassName="flex max-h-[92dvh] flex-col gap-0 p-0 overflow-hidden"
         aria-describedby={undefined}
       >
         <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-4">
@@ -103,7 +114,11 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
 
         <div className="border-t border-border" />
 
-        <div className="px-4 sm:px-6 py-5 space-y-5">
+        {/* Scrollable so a shrunken visual viewport (keyboard) can never trap
+            fields off-screen — the body scrolls within whatever height the
+            drawer has left. */}
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-6 py-5 space-y-5">
+          {!isStandalone && <SourceMessagePreview workspaceId={workspaceId} saved={saved} />}
           {isStandalone && (
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
@@ -144,7 +159,9 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
           </div>
         </div>
 
-        <div className="border-t border-border px-4 sm:px-6 py-4 flex items-center justify-end gap-2 bg-muted/30">
+        {/* pb-[max(...)] keeps the buttons above the home indicator on mobile;
+            resolves to the same 16px as py-4 on desktop. */}
+        <div className="border-t border-border px-4 sm:px-6 pt-4 pb-[max(16px,env(safe-area-inset-bottom))] flex items-center justify-end gap-2 bg-muted/30">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
@@ -161,5 +178,39 @@ export function SavedEditDialog({ open, onOpenChange, workspaceId, saved }: Save
         </div>
       </ResponsiveDialogContent>
     </ResponsiveDialog>
+  )
+}
+
+interface SourceMessagePreviewProps {
+  workspaceId: string
+  saved: SavedMessageView
+}
+
+/**
+ * Quoted preview of the message this saved item is anchored to, so the note
+ * is written with its subject in view. Read-only context — the row itself is
+ * the navigation surface. Preview text goes through `resolveSavedPreview`
+ * (markdown stripped per INV-60; deleted/access-lost/encrypted fallbacks
+ * shared with the saved row).
+ */
+function SourceMessagePreview({ workspaceId, saved }: SourceMessagePreviewProps) {
+  const { getActorName } = useActors(workspaceId)
+  const streamLabel = useStreamName(workspaceId, saved.streamId ?? "") ?? saved.message?.streamName ?? "Unknown"
+  const isUnavailable = saved.unavailableReason !== null
+  const authorName = saved.message ? getActorName(saved.message.authorId, saved.message.authorType) : null
+
+  return (
+    <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2.5 border-l-2 border-l-primary/40">
+      <div className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
+        {authorName && <span className="font-medium text-foreground/80">{authorName}</span>}
+        <span className="truncate">in {streamLabel}</span>
+        {saved.message && <RelativeTime date={saved.message.createdAt} className="shrink-0 text-muted-foreground/60" />}
+      </div>
+      <p
+        className={cn("mt-1 text-sm text-foreground/80 line-clamp-3", isUnavailable && "italic text-muted-foreground")}
+      >
+        {resolveSavedPreview(saved)}
+      </p>
+    </div>
   )
 }

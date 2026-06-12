@@ -47,6 +47,14 @@ interface ResponsiveDialogProps {
    * drawer (matches `MessageEditForm`'s pattern). Use this when the dialog
    * is designed to take the whole viewport on mobile and the partial-snap
    * UX would obscure the action bar / trailing buttons.
+   *
+   * ALWAYS set this for dialogs containing text inputs. The snap-point
+   * drawer is forced to h-[100dvh]; when the on-screen keyboard opens, the
+   * drawer is pushed up and its top (header + first fields) slides off-screen
+   * under the status bar. A content-height drawer rides above the keyboard
+   * instead. Pair with a scrollable body (`flex-1 min-h-0 overflow-y-auto`)
+   * so a small visual viewport can never trap fields off-screen. Reference
+   * implementations: `PassphraseSetupModal`, `SavedEditDialog`.
    */
   disableSnapPoints?: boolean
 }

@@ -99,6 +99,7 @@ describe("commands", () => {
         openStreamSettings: vi.fn(),
         requestArchiveStream: vi.fn(),
         openLabelPicker: vi.fn(),
+        createSavedTodo: vi.fn(async () => {}),
       } as unknown as CommandContext
       return { context, navigate, openExplorer }
     }
@@ -122,6 +123,62 @@ describe("commands", () => {
         command.action(harness.context)
       }
       reachability[key](harness)
+    })
+  })
+
+  // "Add To-do" switches the palette into its inline input mode and saves the
+  // typed title as a standalone saved item.
+  describe("add-todo", () => {
+    function runAddTodo() {
+      const cmd = commands.find((c) => c.id === "add-todo")!
+      const requestInput = vi.fn()
+      const closeDialog = vi.fn()
+      const createSavedTodo = vi.fn(async () => {})
+      cmd.action({ requestInput, closeDialog, createSavedTodo } as unknown as CommandContext)
+      const request = requestInput.mock.calls[0]![0] as {
+        placeholder: string
+        hint: string
+        onSubmit: (value: string) => Promise<void>
+      }
+      return { request, closeDialog, createSavedTodo }
+    }
+
+    it("requests inline input rather than acting immediately", () => {
+      const { request, closeDialog, createSavedTodo } = runAddTodo()
+      expect(request.placeholder).toBeTruthy()
+      expect(request.hint).toBeTruthy()
+      expect(createSavedTodo).not.toHaveBeenCalled()
+      expect(closeDialog).not.toHaveBeenCalled()
+    })
+
+    it("creates the saved item with the trimmed title and closes the palette", async () => {
+      const { request, closeDialog, createSavedTodo } = runAddTodo()
+      await request.onSubmit("  Call the landlord  ")
+      expect(createSavedTodo).toHaveBeenCalledWith("Call the landlord")
+      expect(closeDialog).toHaveBeenCalled()
+    })
+
+    it("ignores empty submissions", async () => {
+      const { request, closeDialog, createSavedTodo } = runAddTodo()
+      await request.onSubmit("   ")
+      expect(createSavedTodo).not.toHaveBeenCalled()
+      expect(closeDialog).not.toHaveBeenCalled()
+    })
+
+    it("keeps the palette open when the create fails", async () => {
+      const cmd = commands.find((c) => c.id === "add-todo")!
+      const requestInput = vi.fn()
+      const closeDialog = vi.fn()
+      const createSavedTodo = vi.fn(async () => {
+        throw new Error("offline")
+      })
+      cmd.action({ requestInput, closeDialog, createSavedTodo } as unknown as CommandContext)
+      const request = requestInput.mock.calls[0]![0] as { onSubmit: (value: string) => Promise<void> }
+
+      await request.onSubmit("Buy milk")
+
+      expect(createSavedTodo).toHaveBeenCalled()
+      expect(closeDialog).not.toHaveBeenCalled()
     })
   })
 
