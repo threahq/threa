@@ -36,16 +36,6 @@ export type { SessionAbortContext } from "./session-abort-registry"
 
 export { AgentSessionMetricsCollector } from "./session-metrics"
 
-export {
-  extractMentions,
-  extractMentionSlugs,
-  hasMention,
-  isValidSlug,
-  MENTION_PATTERN,
-  SLUG_PATTERN,
-} from "./mention-extractor"
-export type { ExtractedMention } from "./mention-extractor"
-
 // Outbox handlers
 export { CompanionHandler } from "./companion-outbox-handler"
 export type { CompanionHandlerConfig } from "./companion-outbox-handler"

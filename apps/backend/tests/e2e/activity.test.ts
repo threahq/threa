@@ -375,7 +375,7 @@ describe("Activity Feed E2E", () => {
 
       const activities = await getActivity(dupeClient, workspace.id)
 
-      // extractMentionSlugs returns unique slugs, so only one mention per message
+      // Mention slugs are deduped per message, so only one mention activity
       const mentionsForMessage = activities.filter((a) => a.activityType === "mention")
       expect(mentionsForMessage).toHaveLength(1)
     })
