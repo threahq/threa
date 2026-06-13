@@ -1,86 +1,50 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
-import { renderHook, act } from "@testing-library/react"
-import { useDraftMessage, getDraftMessageKey } from "./use-draft-message"
-import type { JSONContent } from "@threa/types"
-import * as dbModule from "@/db"
-import * as draftStoreModule from "@/stores/draft-store"
+import { renderHook, act, waitFor } from "@testing-library/react"
+import { useDraftMessage, getDraftMessageKey, upsertLoadedDraft } from "./use-draft-message"
+import { ContextRefKinds, type JSONContent } from "@threa/types"
+import type { DraftContextRef } from "@/lib/context-bag/types"
+import { db } from "@/db"
+import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({
   type: "doc",
   content: [{ type: "paragraph", content: text ? [{ type: "text", text }] : undefined }],
 })
-// Mock Dexie database
-const mockGet = vi.fn()
-const mockPut = vi.fn()
-const mockDelete = vi.fn()
-const mockUpsertDraftMessageInCache = vi.fn()
-const mockDeleteDraftMessageFromCache = vi.fn()
 
-let seededDraftCache = false
-let draftMessages: Array<{
-  id: string
-  workspaceId: string
-  contentJson: JSONContent
-  attachments: Array<{ id: string; filename: string; mimeType: string; sizeBytes: number }>
-  updatedAt: number
-}> = []
+const workspaceId = "ws_123"
+const draftKey = "stream:stream_456"
+
+/** Read back the single loaded draft for a scope (or undefined). */
+async function loadedDraft(scope: string) {
+  const id = (await db.composerLoaded.get(scope))?.draftId ?? null
+  return id ? db.drafts.get(id) : undefined
+}
 
 describe("getDraftMessageKey", () => {
   it("should return stream key format for stream type", () => {
-    const key = getDraftMessageKey({ type: "stream", streamId: "stream_123" })
-    expect(key).toBe("stream:stream_123")
+    expect(getDraftMessageKey({ type: "stream", streamId: "stream_123" })).toBe("stream:stream_123")
   })
 
   it("should return thread key format for thread type", () => {
-    const key = getDraftMessageKey({ type: "thread", parentMessageId: "msg_456" })
-    expect(key).toBe("thread:msg_456")
+    expect(getDraftMessageKey({ type: "thread", parentMessageId: "msg_456" })).toBe("thread:msg_456")
   })
 })
 
 describe("useDraftMessage", () => {
-  const workspaceId = "ws_123"
-  const draftKey = "stream:stream_456"
-
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks()
-    mockGet.mockReset()
-    mockPut.mockReset()
-    mockDelete.mockReset()
-    mockUpsertDraftMessageInCache.mockReset()
-    mockDeleteDraftMessageFromCache.mockReset()
-    vi.useFakeTimers()
-    seededDraftCache = false
-    draftMessages = []
-    mockGet.mockResolvedValue(undefined)
-    mockPut.mockResolvedValue(undefined)
-    mockDelete.mockResolvedValue(undefined)
-
-    vi.spyOn(dbModule.db.draftMessages, "get").mockImplementation(((...args: unknown[]) =>
-      mockGet(...args)) as unknown as typeof dbModule.db.draftMessages.get)
-    vi.spyOn(dbModule.db.draftMessages, "put").mockImplementation(((...args: unknown[]) =>
-      mockPut(...args)) as unknown as typeof dbModule.db.draftMessages.put)
-    vi.spyOn(dbModule.db.draftMessages, "delete").mockImplementation(((...args: unknown[]) =>
-      mockDelete(...args)) as unknown as typeof dbModule.db.draftMessages.delete)
-
-    vi.spyOn(draftStoreModule, "hasSeededDraftCache").mockImplementation(() => seededDraftCache)
-    vi.spyOn(draftStoreModule, "useDraftMessagesFromStore").mockImplementation(
-      () => draftMessages as ReturnType<typeof draftStoreModule.useDraftMessagesFromStore>
-    )
-    vi.spyOn(draftStoreModule, "upsertDraftMessageInCache").mockImplementation(((...args: unknown[]) =>
-      mockUpsertDraftMessageInCache(...args)) as unknown as typeof draftStoreModule.upsertDraftMessageInCache)
-    vi.spyOn(draftStoreModule, "deleteDraftMessageFromCache").mockImplementation(((...args: unknown[]) =>
-      mockDeleteDraftMessageFromCache(...args)) as unknown as typeof draftStoreModule.deleteDraftMessageFromCache)
+    resetDraftStoreCache()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   describe("isLoaded state", () => {
-    it("should return isLoaded=false while Dexie is loading", () => {
-      seededDraftCache = false
-
+    it("should return isLoaded=false while the draft cache is unseeded", () => {
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
       expect(result.current.isLoaded).toBe(false)
@@ -88,28 +52,24 @@ describe("useDraftMessage", () => {
       expect(result.current.attachments).toEqual([])
     })
 
-    it("should return isLoaded=true after Dexie finishes loading with no data", () => {
-      seededDraftCache = true
-
+    it("should return isLoaded=true after the cache is seeded with no data", async () => {
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+
+      await act(async () => {
+        await seedDraftCacheFromIdb(workspaceId)
+      })
 
       expect(result.current.isLoaded).toBe(true)
       expect(result.current.contentJson).toEqual(EMPTY_DOC)
       expect(result.current.attachments).toEqual([])
     })
 
-    it("should return isLoaded=true with saved content after Dexie loads", () => {
-      seededDraftCache = true
+    it("should surface the loaded draft's saved content once seeded", async () => {
       const savedContentJson = makeDoc("Hello world")
-      draftMessages = [
-        {
-          id: draftKey,
-          workspaceId,
-          contentJson: savedContentJson,
-          attachments: [{ id: "attach_1", filename: "test.txt", mimeType: "text/plain", sizeBytes: 100 }],
-          updatedAt: Date.now(),
-        },
-      ]
+      await upsertLoadedDraft(workspaceId, draftKey, {
+        contentJson: savedContentJson,
+        attachments: [{ id: "attach_1", filename: "test.txt", mimeType: "text/plain", sizeBytes: 100 }],
+      })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
@@ -119,40 +79,29 @@ describe("useDraftMessage", () => {
       expect(result.current.attachments[0].filename).toBe("test.txt")
     })
 
-    it("should return empty state for a different draft key once the workspace cache is loaded", () => {
-      seededDraftCache = true
+    it("should return empty state for a scope with no loaded draft", async () => {
       const oldDraftKey = "stream:stream_old"
       const newDraftKey = "stream:stream_new"
-
-      draftMessages = [
-        {
-          id: oldDraftKey,
-          workspaceId,
-          contentJson: makeDoc("Old draft"),
-          attachments: [{ id: "attach_old", filename: "old.txt", mimeType: "text/plain", sizeBytes: 100 }],
-          updatedAt: Date.now(),
-        },
-      ]
-
-      const { result, rerender } = renderHook(({ currentDraftKey }) => useDraftMessage(workspaceId, currentDraftKey), {
-        initialProps: { currentDraftKey: oldDraftKey },
+      await upsertLoadedDraft(workspaceId, oldDraftKey, {
+        contentJson: makeDoc("Old draft"),
+        attachments: [{ id: "attach_old", filename: "old.txt", mimeType: "text/plain", sizeBytes: 100 }],
       })
 
-      expect(result.current.isLoaded).toBe(true)
+      const { result, rerender } = renderHook(({ key }) => useDraftMessage(workspaceId, key), {
+        initialProps: { key: oldDraftKey },
+      })
+
       expect(result.current.attachments).toHaveLength(1)
 
-      rerender({ currentDraftKey: newDraftKey })
+      rerender({ key: newDraftKey })
 
-      expect(result.current.isLoaded).toBe(true)
       expect(result.current.contentJson).toEqual(EMPTY_DOC)
       expect(result.current.attachments).toEqual([])
     })
   })
 
   describe("saveDraft", () => {
-    it("should save content to database", async () => {
-      seededDraftCache = true
-
+    it("should persist content as a draft_ row scoped to the key + a loaded pointer", async () => {
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
       const newContent = makeDoc("New content")
 
@@ -160,18 +109,14 @@ describe("useDraftMessage", () => {
         await result.current.saveDraft(newContent)
       })
 
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: draftKey,
-          workspaceId,
-          contentJson: newContent,
-          attachments: [],
-        })
-      )
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted).toMatchObject({ scope: draftKey, workspaceId, contentJson: newContent, attachments: [] })
+      expect(persisted!.id.startsWith("draft_")).toBe(true)
     })
 
     it("never persists a draft for an E2E stream and purges any on disk (E2EE-4)", async () => {
-      seededDraftCache = true
+      // A plaintext draft written before the gate existed...
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("secret"), attachments: [] })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, true))
 
@@ -181,15 +126,12 @@ describe("useDraftMessage", () => {
         await result.current.addAttachment({ id: "att_1", filename: "f", mimeType: "text/plain", sizeBytes: 1 })
       })
 
-      // Nothing written to disk through any persistence entry point...
-      expect(mockPut).not.toHaveBeenCalled()
-      // ...and a pre-existing on-disk draft is cleared on mount.
-      expect(mockDelete).toHaveBeenCalledWith(draftKey)
+      // ...is purged on mount, and nothing new is written to disk.
+      await waitFor(async () => expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0))
+      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
     })
 
     it("cancels a debounced plaintext save when the stream becomes encrypted mid-flight (E2EE-4 race)", async () => {
-      seededDraftCache = true
-
       const { result, rerender } = renderHook(
         ({ e2e }: { e2e: boolean }) => useDraftMessage(workspaceId, draftKey, e2e),
         {
@@ -197,26 +139,18 @@ describe("useDraftMessage", () => {
         }
       )
 
-      // Queue a debounced save while the stream is still plaintext...
       act(() => {
         result.current.saveDraftDebounced(makeDoc("typed before the stream was encrypted"))
       })
-      // ...then the stream becomes encrypted before the debounce window elapses.
       rerender({ e2e: true })
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1000)
-      })
-
-      // The in-flight save must NOT re-persist plaintext after the purge.
-      expect(mockPut).not.toHaveBeenCalled()
-      // The encrypt transition purged any on-disk draft.
-      expect(mockDelete).toHaveBeenCalledWith(draftKey)
+      // Past the debounce window: the in-flight save must NOT persist plaintext.
+      await new Promise((r) => setTimeout(r, 700))
+      expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0)
     })
 
-    it("should delete draft when content is empty and no attachments", async () => {
-      seededDraftCache = true
-      mockGet.mockResolvedValue({ attachments: [] })
+    it("should delete the loaded draft when content is empty and no attachments", async () => {
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("something"), attachments: [] })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
@@ -224,14 +158,13 @@ describe("useDraftMessage", () => {
         await result.current.saveDraft(EMPTY_DOC)
       })
 
-      expect(mockDelete).toHaveBeenCalledWith(draftKey)
-      expect(mockPut).not.toHaveBeenCalled()
+      expect(await loadedDraft(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
     })
 
     it("should preserve existing attachments when saving content", async () => {
-      seededDraftCache = true
       const existingAttachments = [{ id: "attach_1", filename: "file.txt", mimeType: "text/plain", sizeBytes: 50 }]
-      mockGet.mockResolvedValue({ attachments: existingAttachments })
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("x"), attachments: existingAttachments })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
       const updatedContent = makeDoc("Updated content")
@@ -240,28 +173,28 @@ describe("useDraftMessage", () => {
         await result.current.saveDraft(updatedContent)
       })
 
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          contentJson: updatedContent,
-          attachments: existingAttachments,
-        })
-      )
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted).toMatchObject({ contentJson: updatedContent, attachments: existingAttachments })
     })
 
     it("should preserve existing contextRefs sidecar when saving content (regression: typing wiped the chip)", async () => {
-      seededDraftCache = true
-      const existingRefs = [
+      const existingRefs: DraftContextRef[] = [
         {
-          refKind: "thread",
+          refKind: ContextRefKinds.THREAD,
           streamId: "stream_src",
           fromMessageId: null,
           toMessageId: null,
-          status: "ready" as const,
+          originMessageId: null,
+          status: "ready",
           fingerprint: null,
           errorMessage: null,
         },
       ]
-      mockGet.mockResolvedValue({ attachments: [], contextRefs: existingRefs })
+      await upsertLoadedDraft(workspaceId, draftKey, {
+        contentJson: EMPTY_DOC,
+        attachments: [],
+        contextRefs: existingRefs,
+      })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
       const updatedContent = makeDoc("user is typing")
@@ -270,29 +203,28 @@ describe("useDraftMessage", () => {
         await result.current.saveDraft(updatedContent)
       })
 
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          contentJson: updatedContent,
-          attachments: [],
-          contextRefs: existingRefs,
-        })
-      )
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted).toMatchObject({ contentJson: updatedContent, attachments: [], contextRefs: existingRefs })
     })
 
     it("should keep the draft alive when content goes empty but contextRefs is non-empty", async () => {
-      seededDraftCache = true
-      const existingRefs = [
+      const existingRefs: DraftContextRef[] = [
         {
-          refKind: "thread",
+          refKind: ContextRefKinds.THREAD,
           streamId: "stream_src",
           fromMessageId: null,
           toMessageId: null,
-          status: "ready" as const,
+          originMessageId: null,
+          status: "ready",
           fingerprint: null,
           errorMessage: null,
         },
       ]
-      mockGet.mockResolvedValue({ attachments: [], contextRefs: existingRefs })
+      await upsertLoadedDraft(workspaceId, draftKey, {
+        contentJson: makeDoc("x"),
+        attachments: [],
+        contextRefs: existingRefs,
+      })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
@@ -300,20 +232,14 @@ describe("useDraftMessage", () => {
         await result.current.saveDraft(EMPTY_DOC)
       })
 
-      expect(mockDelete).not.toHaveBeenCalled()
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          contentJson: EMPTY_DOC,
-          contextRefs: existingRefs,
-        })
-      )
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted).toMatchObject({ contentJson: EMPTY_DOC, contextRefs: existingRefs })
     })
   })
 
   describe("saveDraftDebounced", () => {
-    it("should debounce saves", async () => {
-      seededDraftCache = true
-
+    it("should debounce saves, persisting only the last value", async () => {
+      const putSpy = vi.spyOn(db.drafts, "put")
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
       const thirdContent = makeDoc("Third")
 
@@ -323,70 +249,49 @@ describe("useDraftMessage", () => {
         result.current.saveDraftDebounced(thirdContent)
       })
 
-      // Nothing saved yet
-      expect(mockPut).not.toHaveBeenCalled()
+      expect(putSpy).not.toHaveBeenCalled()
 
-      // Advance past debounce delay
-      await act(async () => {
-        vi.advanceTimersByTime(600)
-      })
-
-      // Only the last value should be saved
-      expect(mockPut).toHaveBeenCalledTimes(1)
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          contentJson: thirdContent,
-        })
-      )
+      await waitFor(() => expect(putSpy).toHaveBeenCalledTimes(1))
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted?.contentJson).toEqual(thirdContent)
     })
   })
 
   describe("addAttachment", () => {
-    it("should add attachment to empty draft", async () => {
-      seededDraftCache = true
-      mockGet.mockResolvedValue(undefined)
-
+    it("should add attachment to an empty (absent) draft", async () => {
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
-
       const attachment = { id: "attach_1", filename: "new.txt", mimeType: "text/plain", sizeBytes: 100 }
 
       await act(async () => {
         await result.current.addAttachment(attachment)
       })
 
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: draftKey,
-          workspaceId,
-          contentJson: EMPTY_DOC,
-          attachments: [attachment],
-        })
-      )
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted).toMatchObject({ scope: draftKey, contentJson: EMPTY_DOC, attachments: [attachment] })
     })
 
-    it("should not add duplicate attachment", async () => {
-      seededDraftCache = true
+    it("should not add a duplicate attachment", async () => {
       const existingAttachment = { id: "attach_1", filename: "existing.txt", mimeType: "text/plain", sizeBytes: 50 }
-      mockGet.mockResolvedValue({ contentJson: EMPTY_DOC, attachments: [existingAttachment] })
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: EMPTY_DOC, attachments: [existingAttachment] })
 
+      const putSpy = vi.spyOn(db.drafts, "put")
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
       await act(async () => {
         await result.current.addAttachment(existingAttachment)
       })
 
-      expect(mockPut).not.toHaveBeenCalled()
+      expect(putSpy).not.toHaveBeenCalled()
     })
   })
 
   describe("removeAttachment", () => {
-    it("should remove attachment from draft", async () => {
-      seededDraftCache = true
+    it("should remove an attachment from the draft", async () => {
       const attachments = [
         { id: "attach_1", filename: "file1.txt", mimeType: "text/plain", sizeBytes: 50 },
         { id: "attach_2", filename: "file2.txt", mimeType: "text/plain", sizeBytes: 100 },
       ]
-      mockGet.mockResolvedValue({ id: draftKey, contentJson: makeDoc("Some content"), attachments })
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("Some content"), attachments })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
@@ -394,17 +299,15 @@ describe("useDraftMessage", () => {
         await result.current.removeAttachment("attach_1")
       })
 
-      expect(mockPut).toHaveBeenCalledWith(
-        expect.objectContaining({
-          attachments: [{ id: "attach_2", filename: "file2.txt", mimeType: "text/plain", sizeBytes: 100 }],
-        })
-      )
+      const persisted = await loadedDraft(draftKey)
+      expect(persisted?.attachments).toEqual([
+        { id: "attach_2", filename: "file2.txt", mimeType: "text/plain", sizeBytes: 100 },
+      ])
     })
 
-    it("should delete draft when removing last attachment and content is empty", async () => {
-      seededDraftCache = true
+    it("should delete the draft when removing the last attachment and content is empty", async () => {
       const attachment = { id: "attach_1", filename: "file.txt", mimeType: "text/plain", sizeBytes: 50 }
-      mockGet.mockResolvedValue({ id: draftKey, contentJson: EMPTY_DOC, attachments: [attachment] })
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: EMPTY_DOC, attachments: [attachment] })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
@@ -412,14 +315,13 @@ describe("useDraftMessage", () => {
         await result.current.removeAttachment("attach_1")
       })
 
-      expect(mockDelete).toHaveBeenCalledWith(draftKey)
-      expect(mockPut).not.toHaveBeenCalled()
+      expect(await loadedDraft(draftKey)).toBeUndefined()
     })
   })
 
   describe("clearDraft", () => {
-    it("should delete the draft", async () => {
-      seededDraftCache = true
+    it("should delete the loaded draft and its pointer", async () => {
+      await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("x"), attachments: [] })
 
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
@@ -427,12 +329,12 @@ describe("useDraftMessage", () => {
         await result.current.clearDraft()
       })
 
-      expect(mockDelete).toHaveBeenCalledWith(draftKey)
+      expect(await loadedDraft(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
     })
 
-    it("should cancel pending debounced save", async () => {
-      seededDraftCache = true
-
+    it("should cancel a pending debounced save", async () => {
+      const putSpy = vi.spyOn(db.drafts, "put")
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
 
       act(() => {
@@ -443,14 +345,9 @@ describe("useDraftMessage", () => {
         await result.current.clearDraft()
       })
 
-      // Advance past debounce
-      await act(async () => {
-        vi.advanceTimersByTime(600)
-      })
-
-      // Only delete should have been called, not put
-      expect(mockDelete).toHaveBeenCalledWith(draftKey)
-      expect(mockPut).not.toHaveBeenCalled()
+      await new Promise((r) => setTimeout(r, 700))
+      expect(putSpy).not.toHaveBeenCalled()
+      expect(await loadedDraft(draftKey)).toBeUndefined()
     })
   })
 })

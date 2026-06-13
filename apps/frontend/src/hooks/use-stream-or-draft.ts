@@ -14,7 +14,8 @@ import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage } from "./use-queue-draft-message"
 import { useWorkspaceUsers, useWorkspaceStreams, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useSyncEngine } from "@/sync/sync-engine"
-import { deleteDraftMessageFromCache, hasSeededDraftCache, upsertDraftMessageInCache } from "@/stores/draft-store"
+import { hasSeededDraftCache } from "@/stores/draft-store"
+import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { resolveDmDisplayName } from "@/lib/streams"
 import { serializeToMarkdown } from "@threa/prosemirror"
@@ -243,16 +244,23 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
 
     const migrateDraftAndNavigate = async () => {
       if (draftKey !== realStreamKey) {
-        const draft = await db.draftMessages.get(draftKey)
-        if (draft) {
-          const existingDraft = await db.draftMessages.get(realStreamKey)
-          if (!existingDraft || existingDraft.updatedAt < draft.updatedAt) {
-            const migratedDraft = { ...draft, id: realStreamKey }
-            await db.draftMessages.put(migratedDraft)
-            upsertDraftMessageInCache(workspaceId, migratedDraft)
+        // Move the virtual DM scope's loaded draft onto the real DM stream's
+        // scope, keeping whichever side is newer so a draft already started in
+        // the real DM isn't clobbered. The virtual scope's drafts are then
+        // purged. (Stash piles on the virtual scope are rare and dropped here.)
+        const fromLoadedId = (await db.composerLoaded.get(draftKey))?.draftId ?? null
+        const fromDraft = fromLoadedId ? await db.drafts.get(fromLoadedId) : undefined
+        if (fromDraft) {
+          const toLoadedId = (await db.composerLoaded.get(realStreamKey))?.draftId ?? null
+          const toDraft = toLoadedId ? await db.drafts.get(toLoadedId) : undefined
+          if (!toDraft || toDraft.clientUpdatedAt < fromDraft.clientUpdatedAt) {
+            await upsertLoadedDraft(workspaceId, realStreamKey, {
+              contentJson: fromDraft.contentJson,
+              attachments: fromDraft.attachments,
+              contextRefs: fromDraft.contextRefs,
+            })
           }
-          await db.draftMessages.delete(draftKey)
-          deleteDraftMessageFromCache(workspaceId, draftKey)
+          await purgeScopeDrafts(workspaceId, draftKey)
         }
       }
 
@@ -287,8 +295,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
   const rename = useCallback(async () => {}, [])
 
   const archive = useCallback(async () => {
-    await db.draftMessages.delete(`stream:${streamId}`)
-    deleteDraftMessageFromCache(workspaceId, `stream:${streamId}`)
+    await purgeScopeDrafts(workspaceId, getDraftMessageKey({ type: "stream", streamId }))
     navigate(`/w/${workspaceId}`)
   }, [streamId, workspaceId, navigate])
 

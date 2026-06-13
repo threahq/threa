@@ -1,7 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
-import { generateStashId, createStashedDraft, popStashedDraft, deleteStashedDraftById } from "./use-stashed-drafts"
+import { describe, it, expect, beforeEach } from "vitest"
+import { createStashedDraft, popStashedDraft, deleteStashedDraftById } from "./use-stashed-drafts"
+import { upsertLoadedDraft } from "./use-draft-message"
 import type { JSONContent } from "@threa/types"
-import * as dbModule from "@/db"
+import { db } from "@/db"
+import { resetDraftStoreCache } from "@/stores/draft-store"
 
 const makeDoc = (text: string): JSONContent => ({
   type: "doc",
@@ -9,37 +11,17 @@ const makeDoc = (text: string): JSONContent => ({
 })
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
-const mockAdd = vi.fn()
-const mockGet = vi.fn()
-const mockDelete = vi.fn()
+const workspaceId = "ws_123"
+const scope = "stream:stream_456"
 
-describe("generateStashId", () => {
-  it("uses the stash_ prefix (distinct from draft_)", () => {
-    const id = generateStashId()
-    expect(id.startsWith("stash_")).toBe(true)
-    expect(id.startsWith("draft_")).toBe(false)
-  })
-
-  it("produces unique ids across calls", () => {
-    const ids = new Set([generateStashId(), generateStashId(), generateStashId()])
-    expect(ids.size).toBe(3)
-  })
+beforeEach(async () => {
+  resetDraftStoreCache()
+  await db.drafts.clear()
+  await db.composerLoaded.clear()
 })
 
 describe("createStashedDraft", () => {
-  const workspaceId = "ws_123"
-  const scope = "stream:stream_456"
-
-  beforeEach(() => {
-    vi.restoreAllMocks()
-    mockAdd.mockReset()
-    mockAdd.mockResolvedValue(undefined)
-
-    vi.spyOn(dbModule.db.stashedDrafts, "add").mockImplementation(((...args: unknown[]) =>
-      mockAdd(...args)) as unknown as typeof dbModule.db.stashedDrafts.add)
-  })
-
-  it("persists a row with workspaceId, scope, and contentJson", async () => {
+  it("persists a draft_-prefixed row with workspaceId, scope, and contentJson", async () => {
     const content = makeDoc("Hello saved world")
 
     const row = await createStashedDraft(workspaceId, scope, { contentJson: content })
@@ -48,20 +30,17 @@ describe("createStashedDraft", () => {
     expect(row!.workspaceId).toBe(workspaceId)
     expect(row!.scope).toBe(scope)
     expect(row!.contentJson).toEqual(content)
-    expect(row!.id.startsWith("stash_")).toBe(true)
-    expect(mockAdd).toHaveBeenCalledTimes(1)
-    expect(mockAdd.mock.calls[0][0]).toMatchObject({
-      workspaceId,
-      scope,
-      contentJson: content,
-    })
+    expect(row!.id.startsWith("draft_")).toBe(true)
+
+    const persisted = await db.drafts.get(row!.id)
+    expect(persisted).toMatchObject({ workspaceId, scope, contentJson: content })
   })
 
   it("no-ops on empty content with no attachments", async () => {
     const row = await createStashedDraft(workspaceId, scope, { contentJson: EMPTY_DOC })
 
     expect(row).toBeNull()
-    expect(mockAdd).not.toHaveBeenCalled()
+    expect(await db.drafts.count()).toBe(0)
   })
 
   it("stashes attachment-only drafts (empty body + attachments)", async () => {
@@ -71,77 +50,58 @@ describe("createStashedDraft", () => {
 
     expect(row).not.toBeNull()
     expect(row!.attachments).toEqual(attachments)
-    expect(mockAdd).toHaveBeenCalledTimes(1)
+    expect(await db.drafts.count()).toBe(1)
   })
 
   it("no-ops when scope is undefined (host still resolving)", async () => {
     const row = await createStashedDraft(workspaceId, undefined, { contentJson: makeDoc("x") })
 
     expect(row).toBeNull()
-    expect(mockAdd).not.toHaveBeenCalled()
+    expect(await db.drafts.count()).toBe(0)
   })
 
   it("no-ops when workspaceId is empty", async () => {
     const row = await createStashedDraft("", scope, { contentJson: makeDoc("x") })
 
     expect(row).toBeNull()
-    expect(mockAdd).not.toHaveBeenCalled()
+    expect(await db.drafts.count()).toBe(0)
+  })
+
+  it("never resurrects the loaded draft — a stash is a separate row", async () => {
+    const loaded = await upsertLoadedDraft(workspaceId, scope, { contentJson: makeDoc("loaded"), attachments: [] })
+    const stash = await createStashedDraft(workspaceId, scope, { contentJson: makeDoc("stashed") })
+
+    expect(stash!.id).not.toBe(loaded.id)
+    expect(await db.drafts.count()).toBe(2)
+    // The loaded pointer is untouched by stashing.
+    expect((await db.composerLoaded.get(scope))?.draftId).toBe(loaded.id)
   })
 })
 
 describe("popStashedDraft", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks()
-    mockGet.mockReset()
-    mockDelete.mockReset()
-    mockGet.mockResolvedValue(undefined)
-    mockDelete.mockResolvedValue(undefined)
-
-    vi.spyOn(dbModule.db.stashedDrafts, "get").mockImplementation(((...args: unknown[]) =>
-      mockGet(...args)) as unknown as typeof dbModule.db.stashedDrafts.get)
-    vi.spyOn(dbModule.db.stashedDrafts, "delete").mockImplementation(((...args: unknown[]) =>
-      mockDelete(...args)) as unknown as typeof dbModule.db.stashedDrafts.delete)
-  })
-
   it("returns the row and deletes it from the table", async () => {
-    const existing = {
-      id: "stash_abc",
-      workspaceId: "ws_123",
-      scope: "stream:stream_456",
-      contentJson: makeDoc("Saved earlier"),
-      createdAt: 1000,
-    }
-    mockGet.mockResolvedValue(existing)
+    const created = await createStashedDraft(workspaceId, scope, { contentJson: makeDoc("Saved earlier") })
 
-    const restored = await popStashedDraft("stash_abc")
+    const restored = await popStashedDraft(created!.id)
 
-    expect(restored).toEqual(existing)
-    expect(mockDelete).toHaveBeenCalledWith("stash_abc")
+    expect(restored?.id).toBe(created!.id)
+    expect(restored?.contentJson).toEqual(makeDoc("Saved earlier"))
+    expect(await db.drafts.get(created!.id)).toBeUndefined()
   })
 
   it("returns null when the row is missing (no-op delete)", async () => {
-    mockGet.mockResolvedValue(undefined)
-
-    const restored = await popStashedDraft("stash_missing")
+    const restored = await popStashedDraft("draft_missing")
 
     expect(restored).toBeNull()
-    expect(mockDelete).not.toHaveBeenCalled()
   })
 })
 
 describe("deleteStashedDraftById", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks()
-    mockDelete.mockReset()
-    mockDelete.mockResolvedValue(undefined)
-
-    vi.spyOn(dbModule.db.stashedDrafts, "delete").mockImplementation(((...args: unknown[]) =>
-      mockDelete(...args)) as unknown as typeof dbModule.db.stashedDrafts.delete)
-  })
-
   it("deletes the row by id", async () => {
-    await deleteStashedDraftById("stash_xyz")
+    const created = await createStashedDraft(workspaceId, scope, { contentJson: makeDoc("x") })
 
-    expect(mockDelete).toHaveBeenCalledWith("stash_xyz")
+    await deleteStashedDraftById(created!.id)
+
+    expect(await db.drafts.get(created!.id)).toBeUndefined()
   })
 })

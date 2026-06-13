@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from "vitest"
+import { describe, it, expect, beforeEach } from "vitest"
 import { ContextRefKinds } from "@threa/types"
 import { seedDraftWithContextRef } from "./seed-draft"
-import * as dbModule from "@/db"
-import * as draftStoreModule from "@/stores/draft-store"
+import { db } from "@/db"
+import { resetDraftStoreCache } from "@/stores/draft-store"
 import type { DraftContextRef } from "./types"
 
 function makeRef(overrides: Partial<DraftContextRef> = {}): DraftContextRef {
@@ -20,42 +20,32 @@ function makeRef(overrides: Partial<DraftContextRef> = {}): DraftContextRef {
 }
 
 describe("seedDraftWithContextRef", () => {
-  const put = vi.fn()
-  const upsert = vi.fn()
-
-  beforeEach(() => {
-    vi.restoreAllMocks()
-    put.mockReset()
-    upsert.mockReset()
-    put.mockResolvedValue(undefined)
-    vi.spyOn(dbModule.db.draftMessages, "put").mockImplementation(((...args: unknown[]) =>
-      put(...args)) as unknown as typeof dbModule.db.draftMessages.put)
-    vi.spyOn(draftStoreModule, "upsertDraftMessageInCache").mockImplementation(((...args: unknown[]) =>
-      upsert(...args)) as unknown as typeof draftStoreModule.upsertDraftMessageInCache)
+  beforeEach(async () => {
+    resetDraftStoreCache()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
   })
 
-  it("writes a DraftMessage with the ref under contextRefs and an empty body", async () => {
+  it("writes a loaded draft with the ref under contextRefs and an empty body", async () => {
     await seedDraftWithContextRef({ workspaceId: "ws_1", streamId: "stream_new", ref: makeRef() })
 
-    expect(put).toHaveBeenCalledTimes(1)
-    const [draft] = put.mock.calls[0] as [Record<string, unknown>]
-    expect(draft).toMatchObject({
-      id: "stream:stream_new",
-      workspaceId: "ws_1",
-      attachments: [],
-    })
-    const refs = draft.contextRefs as DraftContextRef[]
+    const scope = "stream:stream_new"
+    const loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
+    expect(loadedId).not.toBeNull()
+
+    const draft = await db.drafts.get(loadedId!)
+    expect(draft).toMatchObject({ scope, workspaceId: "ws_1", attachments: [] })
+    const refs = draft!.contextRefs as DraftContextRef[]
     expect(refs).toHaveLength(1)
     expect(refs[0].streamId).toBe("stream_src")
     expect(refs[0].status).toBe("ready")
   })
 
-  it("primes the in-memory draft cache so the composer picks it up without waiting on Dexie", async () => {
+  it("sets the loaded pointer so the composer picks the draft up on first paint", async () => {
     await seedDraftWithContextRef({ workspaceId: "ws_1", streamId: "stream_new", ref: makeRef() })
 
-    expect(upsert).toHaveBeenCalledTimes(1)
-    const [workspaceId, draft] = upsert.mock.calls[0] as [string, { id: string }]
-    expect(workspaceId).toBe("ws_1")
-    expect(draft.id).toBe("stream:stream_new")
+    const pointer = await db.composerLoaded.get("stream:stream_new")
+    expect(pointer?.workspaceId).toBe("ws_1")
+    expect(pointer?.draftId?.startsWith("draft_")).toBe(true)
   })
 })

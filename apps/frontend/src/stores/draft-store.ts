@@ -1,10 +1,11 @@
 import { useSyncExternalStore } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
-import { db, type DraftMessage, type DraftScratchpad } from "@/db"
+import { db, type CachedDraft, type ComposerLoaded, type DraftScratchpad } from "@/db"
 
 const cache = {
   scratchpads: new Map<string, DraftScratchpad[]>(),
-  messages: new Map<string, DraftMessage[]>(),
+  drafts: new Map<string, CachedDraft[]>(),
+  loaded: new Map<string, ComposerLoaded[]>(),
 }
 
 const readyWorkspaces = new Set<string>()
@@ -60,13 +61,19 @@ function useArrayStoreHook<T>(queryFn: () => Promise<T[]> | T[], deps: unknown[]
 }
 
 export function hasSeededDraftCache(workspaceId: string): boolean {
-  return readyWorkspaces.has(workspaceId) && cache.scratchpads.has(workspaceId) && cache.messages.has(workspaceId)
+  return (
+    readyWorkspaces.has(workspaceId) &&
+    cache.scratchpads.has(workspaceId) &&
+    cache.drafts.has(workspaceId) &&
+    cache.loaded.has(workspaceId)
+  )
 }
 
 export function resetDraftStoreCache(): void {
   const workspaceIds = new Set([...cacheVersion.keys(), ...cacheListeners.keys()])
   cache.scratchpads.clear()
-  cache.messages.clear()
+  cache.drafts.clear()
+  cache.loaded.clear()
   readyWorkspaces.clear()
   cacheVersion.clear()
   for (const workspaceId of workspaceIds) {
@@ -76,28 +83,27 @@ export function resetDraftStoreCache(): void {
 
 export function seedDraftCache(
   workspaceId: string,
-  data: { scratchpads: DraftScratchpad[]; messages: DraftMessage[] }
+  data: { scratchpads: DraftScratchpad[]; drafts: CachedDraft[]; loaded: ComposerLoaded[] }
 ): void {
   bumpVersion(workspaceId)
   cache.scratchpads.set(workspaceId, data.scratchpads)
-  cache.messages.set(workspaceId, data.messages)
+  cache.drafts.set(workspaceId, data.drafts)
+  cache.loaded.set(workspaceId, data.loaded)
   readyWorkspaces.add(workspaceId)
   emitDraftCacheChange(workspaceId)
 }
 
 export async function seedDraftCacheFromIdb(workspaceId: string): Promise<void> {
   const versionBefore = cacheVersion.get(workspaceId) ?? 0
-  const [scratchpads, messages] = await Promise.all([
+  const [scratchpads, drafts, loaded] = await Promise.all([
     db.draftScratchpads.where("workspaceId").equals(workspaceId).toArray(),
-    db.draftMessages.where("workspaceId").equals(workspaceId).toArray(),
+    db.drafts.where("workspaceId").equals(workspaceId).toArray(),
+    db.composerLoaded.where("workspaceId").equals(workspaceId).toArray(),
   ])
 
   if ((cacheVersion.get(workspaceId) ?? 0) !== versionBefore) return
 
-  seedDraftCache(workspaceId, {
-    scratchpads,
-    messages,
-  })
+  seedDraftCache(workspaceId, { scratchpads, drafts, loaded })
 }
 
 export function useDraftScratchpadsFromStore(workspaceId: string | undefined): DraftScratchpad[] {
@@ -110,11 +116,21 @@ export function useDraftScratchpadsFromStore(workspaceId: string | undefined): D
   )
 }
 
-export function useDraftMessagesFromStore(workspaceId: string | undefined): DraftMessage[] {
+export function useDraftsFromStore(workspaceId: string | undefined): CachedDraft[] {
   useDraftCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.messages.get(workspaceId) ?? []) : []
+  const cached = workspaceId ? (cache.drafts.get(workspaceId) ?? []) : []
   return useArrayStoreHook(
-    () => (workspaceId ? db.draftMessages.where("workspaceId").equals(workspaceId).toArray() : []),
+    () => (workspaceId ? db.drafts.where("workspaceId").equals(workspaceId).toArray() : []),
+    [workspaceId],
+    cached
+  )
+}
+
+export function useComposerLoadedFromStore(workspaceId: string | undefined): ComposerLoaded[] {
+  useDraftCacheSignal(workspaceId)
+  const cached = workspaceId ? (cache.loaded.get(workspaceId) ?? []) : []
+  return useArrayStoreHook(
+    () => (workspaceId ? db.composerLoaded.where("workspaceId").equals(workspaceId).toArray() : []),
     [workspaceId],
     cached
   )
@@ -131,20 +147,22 @@ export function upsertDraftScratchpadInCache(workspaceId: string, draft: DraftSc
   }
   seedDraftCache(workspaceId, {
     scratchpads: next,
-    messages: cache.messages.get(workspaceId) ?? [],
+    drafts: cache.drafts.get(workspaceId) ?? [],
+    loaded: cache.loaded.get(workspaceId) ?? [],
   })
 }
 
 export function deleteDraftScratchpadFromCache(workspaceId: string, draftId: string): void {
   seedDraftCache(workspaceId, {
     scratchpads: (cache.scratchpads.get(workspaceId) ?? []).filter((draft) => draft.id !== draftId),
-    messages: cache.messages.get(workspaceId) ?? [],
+    drafts: cache.drafts.get(workspaceId) ?? [],
+    loaded: cache.loaded.get(workspaceId) ?? [],
   })
 }
 
-export function upsertDraftMessageInCache(workspaceId: string, draft: DraftMessage): void {
-  const messages = cache.messages.get(workspaceId) ?? []
-  const next = [...messages]
+export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): void {
+  const drafts = cache.drafts.get(workspaceId) ?? []
+  const next = [...drafts]
   const index = next.findIndex((candidate) => candidate.id === draft.id)
   if (index === -1) {
     next.push(draft)
@@ -153,13 +171,31 @@ export function upsertDraftMessageInCache(workspaceId: string, draft: DraftMessa
   }
   seedDraftCache(workspaceId, {
     scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    messages: next,
+    drafts: next,
+    loaded: cache.loaded.get(workspaceId) ?? [],
   })
 }
 
-export function deleteDraftMessageFromCache(workspaceId: string, draftId: string): void {
+export function deleteDraftFromCache(workspaceId: string, draftId: string): void {
   seedDraftCache(workspaceId, {
     scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    messages: (cache.messages.get(workspaceId) ?? []).filter((draft) => draft.id !== draftId),
+    drafts: (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== draftId),
+    loaded: cache.loaded.get(workspaceId) ?? [],
+  })
+}
+
+/**
+ * Set (or clear, with `draftId: null`) the composer-loaded pointer for a scope
+ * in the in-memory cache. Mirrors the `composerLoaded` IDB row so the composer
+ * resolves its checked-out draft synchronously on first paint.
+ */
+export function setComposerLoadedInCache(workspaceId: string, scope: string, draftId: string | null): void {
+  const loaded = cache.loaded.get(workspaceId) ?? []
+  const next = loaded.filter((row) => row.scope !== scope)
+  next.push({ scope, workspaceId, draftId })
+  seedDraftCache(workspaceId, {
+    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    drafts: cache.drafts.get(workspaceId) ?? [],
+    loaded: next,
   })
 }

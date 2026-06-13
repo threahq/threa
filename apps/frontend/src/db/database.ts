@@ -173,6 +173,18 @@ export function sequenceToNum(sequence: string): number {
   return Number(sequence)
 }
 
+/**
+ * Generate a client-side draft id. Mirrors the backend `draft_` ULID prefix so
+ * the same id can stand in until (Stage 3) the server confirms it. Lives here,
+ * at the data layer, so both the Dexie upgrade and the draft hooks mint ids the
+ * same way without the hooks→db layering inverting.
+ */
+export function generateLocalDraftId(): string {
+  const timestamp = Date.now().toString(36)
+  const random = Math.random().toString(36).substring(2, 10)
+  return `draft_${timestamp}${random}`
+}
+
 export interface CachedBot {
   id: string
   workspaceId: string
@@ -319,34 +331,43 @@ export interface DraftAttachment {
   sizeBytes: number
 }
 
-export interface DraftMessage {
-  // Key format: "stream:{streamId}" or "thread:{parentMessageId}" for new threads
+/**
+ * A single composer payload — the unit that (from Stage 3 on) mirrors to the
+ * backend `drafts` table. Folds the former `DraftMessage` (one ambient
+ * auto-save per scope) and `StashedDraft` (many explicit saves per scope) into
+ * one entity: every draft is a first-class row keyed by its own `draft_` id,
+ * and a scope may hold any number of them. Which one (if any) is currently
+ * checked out into the composer is tracked separately, and device-locally, by
+ * `ComposerLoaded` — "loaded" is never a property of the draft itself.
+ */
+export interface CachedDraft {
+  /** "draft_" prefixed id; client-generated until the first server confirm. */
   id: string
   workspaceId: string
+  /** "stream:{streamId}" or "thread:{parentMessageId}". */
+  scope: string
   /** ProseMirror JSON content */
   contentJson: JSONContent
   /** Attachments that have been uploaded and are ready to attach to the message */
-  attachments?: DraftAttachment[]
+  attachments: DraftAttachment[]
   /** Context refs attached to this draft (populated by "Discuss with Ariadne"). */
   contextRefs?: DraftContextRef[]
-  updatedAt: number
+  /** Authoring-device clock (ms); drives recency ordering. */
+  clientUpdatedAt: number
 }
 
 /**
- * An explicitly-stashed draft, created by the user pressing Cmd+S or the save
- * button in the composer. Unlike `DraftMessage` (one per scope, auto-saved as
- * the user types), any number of stashed drafts can coexist for the same scope
- * — they're a sidelined pile the user can restore later. Scope mirrors the
- * `DraftMessage` key format: "stream:{streamId}" or "thread:{parentMessageId}".
+ * Device-local pointer: which draft (if any) is checked out into the composer
+ * for a scope. Persisted so a reload restores it, but never synced — a fresh
+ * device opens the composer empty and the user picks a draft from the stash to
+ * load it. One row per scope; `workspaceId` is carried for workspace-scoped
+ * cache seeding, not because the pointer is shared.
  */
-export interface StashedDraft {
-  /** ULID with "stash_" prefix. Distinct from "draft_" which is claimed by DraftScratchpad. */
-  id: string
-  workspaceId: string
+export interface ComposerLoaded {
+  /** Primary key: "stream:{streamId}" or "thread:{parentMessageId}". */
   scope: string
-  contentJson: JSONContent
-  attachments?: DraftAttachment[]
-  createdAt: number
+  workspaceId: string
+  draftId: string | null
 }
 
 export interface CachedUnreadState {
@@ -697,8 +718,8 @@ export class ThreaDatabase extends Dexie {
   pendingMessages!: EntityTable<PendingMessage, "clientId">
   syncCursors!: EntityTable<SyncCursor, "key">
   draftScratchpads!: EntityTable<DraftScratchpad, "id">
-  draftMessages!: EntityTable<DraftMessage, "id">
-  stashedDrafts!: EntityTable<StashedDraft, "id">
+  drafts!: EntityTable<CachedDraft, "id">
+  composerLoaded!: EntityTable<ComposerLoaded, "scope">
   unreadState!: EntityTable<CachedUnreadState, "id">
   userPreferences!: EntityTable<CachedUserPreferences, "id">
   workspaceMetadata!: EntityTable<CachedWorkspaceMetadata, "id">
@@ -1008,6 +1029,80 @@ export class ThreaDatabase extends Dexie {
       sidebarConfigs: "id, workspaceId",
     })
 
+    // v34: Centralized drafts — fold the two local draft tables into one.
+    // `draftMessages` (one ambient auto-save per scope) and `stashedDrafts`
+    // (many explicit Cmd+S saves per scope) become rows in a single `drafts`
+    // store, each with its own `draft_` id and a `scope`. A device-local
+    // `composerLoaded` pointer records which draft is checked out per scope.
+    // The upgrade migrates every ambient draft to a draft + a loaded pointer,
+    // and every stash to a (not-loaded) draft, then drops the old stores.
+    // [workspaceId+scope] backs the per-scope stash picker; clientUpdatedAt
+    // backs recency ordering.
+    this.version(34)
+      .stores({
+        drafts: "id, workspaceId, scope, [workspaceId+scope], clientUpdatedAt",
+        composerLoaded: "scope, workspaceId",
+        draftMessages: null,
+        stashedDrafts: null,
+      })
+      .upgrade(async (tx) => {
+        const [messages, stashes] = await Promise.all([
+          tx.table("draftMessages").toArray(),
+          tx.table("stashedDrafts").toArray(),
+        ])
+
+        const draftRows: CachedDraft[] = []
+        const loadedRows: ComposerLoaded[] = []
+
+        // Ambient auto-saved drafts: one draft each, set as the loaded pointer
+        // for their scope so the composer restores them exactly as before. The
+        // old row's `id` IS the scope ("stream:…" / "thread:…").
+        for (const message of messages) {
+          const row = message as {
+            id: string
+            workspaceId: string
+            contentJson: JSONContent
+            attachments?: DraftAttachment[]
+            contextRefs?: DraftContextRef[]
+            updatedAt?: number
+          }
+          const id = generateLocalDraftId()
+          draftRows.push({
+            id,
+            workspaceId: row.workspaceId,
+            scope: row.id,
+            contentJson: row.contentJson,
+            attachments: row.attachments ?? [],
+            contextRefs: row.contextRefs,
+            clientUpdatedAt: row.updatedAt ?? Date.now(),
+          })
+          loadedRows.push({ scope: row.id, workspaceId: row.workspaceId, draftId: id })
+        }
+
+        // Stashed drafts: one draft each, left unloaded so they surface in the
+        // stash list rather than the composer.
+        for (const stash of stashes) {
+          const row = stash as {
+            workspaceId: string
+            scope: string
+            contentJson: JSONContent
+            attachments?: DraftAttachment[]
+            createdAt?: number
+          }
+          draftRows.push({
+            id: generateLocalDraftId(),
+            workspaceId: row.workspaceId,
+            scope: row.scope,
+            contentJson: row.contentJson,
+            attachments: row.attachments ?? [],
+            clientUpdatedAt: row.createdAt ?? Date.now(),
+          })
+        }
+
+        if (draftRows.length > 0) await tx.table("drafts").bulkPut(draftRows)
+        if (loadedRows.length > 0) await tx.table("composerLoaded").bulkPut(loadedRows)
+      })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
   }
 }
@@ -1065,7 +1160,11 @@ export async function clearAllCachedData(): Promise<void> {
       db.linkPreviewCollapse.clear(),
       db.savedMessages.clear(),
       db.scheduledMessages.clear(),
-      db.stashedDrafts.clear(),
+      // Drafts (the unified `drafts` store) and the device-local
+      // `composerLoaded` pointer are intentionally NOT cleared on logout —
+      // mirroring the pre-unification behavior where ambient drafts survived a
+      // sign-out so in-progress work isn't lost across a re-login. They are
+      // workspace+user scoped within this account's database.
       // Wrapped private bundles are tied to the logging-out identity — drop
       // them so the next account starts without inherited key material.
       db.e2eKeys.clear(),

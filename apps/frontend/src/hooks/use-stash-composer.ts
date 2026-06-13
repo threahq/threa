@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { useStashedDrafts, type StashedDraft } from "./use-stashed-drafts"
+import { useStashedDrafts, type CachedDraft } from "./use-stashed-drafts"
 import type { DraftComposerState } from "./use-draft-composer"
 import type { DraftAttachment } from "@/db"
 import type { PendingAttachment } from "./use-attachments"
@@ -16,7 +16,7 @@ function snapshotUploadedAttachments(pending: PendingAttachment[]): DraftAttachm
 
 export interface UseStashComposerResult {
   /** Stashed drafts for the current scope, newest first. Empty when `scope` is undefined. */
-  drafts: StashedDraft[]
+  drafts: CachedDraft[]
   /** Snapshot the current composer content + attachments into the stash, clear the editor, toast. Empty composer → silent no-op. */
   handleStashDraft: () => Promise<void>
   /** Swap: stash current content first (if any), then load the chosen stashed row into the composer. */
