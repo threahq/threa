@@ -7,6 +7,13 @@
  * state stays URL-driven inside a panel (INV-59).
  */
 
+/**
+ * Minimum rendered width of a side panel. Shared so the viewport cap
+ * (`maxSidePanels`) and the slot's render-time floor can't drift: the cap
+ * decides how many panels fit at this width, the floor enforces it.
+ */
+export const MIN_PANEL_WIDTH = 300
+
 /** Check if a panel ID represents a draft thread. */
 export function isDraftPanel(panelId: string): boolean {
   return panelId.startsWith("draft:")

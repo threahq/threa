@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { useSearchParams, useLocation, useNavigate, useParams } from "react-router-dom"
-import { panelIdToMainPath, mainPathToPanelId } from "@/lib/panel-locations"
+import { panelIdToMainPath, mainPathToPanelId, MIN_PANEL_WIDTH } from "@/lib/panel-locations"
 
 /**
  * Which pane the user most recently interacted with. "main" is the routed
@@ -120,16 +120,18 @@ interface PanelProviderProps {
   children: ReactNode
 }
 
+/** Sidebar + the main view's 360px floor — the width unavailable to panels. */
+const RESERVED_NON_PANEL_WIDTH = 620
+
 /**
  * How many side panels fit comfortably. Mobile gets exactly one; desktop
- * scales with what actually fits: the sidebar (~260px) plus the main view at
- * its 360px floor leaves the rest for panels at their 300px minimum.
- * Interactive opens beyond the cap replace a panel instead of appending —
- * deep links with more panels still render them all.
+ * scales with what actually fits: RESERVED_NON_PANEL_WIDTH for the sidebar and
+ * main view, the rest divided by MIN_PANEL_WIDTH. Interactive opens beyond the
+ * cap replace a panel instead of appending — deep links still render them all.
  */
 export function maxSidePanels(viewportWidth: number): number {
   if (viewportWidth < 640) return 1
-  return Math.max(1, Math.min(8, Math.floor((viewportWidth - 620) / 300)))
+  return Math.max(1, Math.min(8, Math.floor((viewportWidth - RESERVED_NON_PANEL_WIDTH) / MIN_PANEL_WIDTH)))
 }
 
 export function PanelProvider({ children }: PanelProviderProps) {

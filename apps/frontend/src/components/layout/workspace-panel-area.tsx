@@ -5,11 +5,10 @@ import { PanelInstanceProvider, useFocusedPane } from "@/contexts/panel-instance
 import { useKeyboardShortcuts } from "@/hooks"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelContentRenderer } from "@/components/panels/panel-renderer"
-import { panelIdToMainPath } from "@/lib/panel-locations"
+import { panelIdToMainPath, MIN_PANEL_WIDTH } from "@/lib/panel-locations"
 import { PanelResizeHandle } from "./panel-resize-handle"
 
 const DEFAULT_PANEL_WIDTH = 480
-const MIN_PANEL_WIDTH = 300
 const MAX_PANEL_RATIO = 0.6
 /** Pointer must travel this far before a header-press becomes a drag. */
 const DRAG_THRESHOLD_PX = 6
@@ -109,7 +108,7 @@ interface WorkspacePanelAreaProps {
  * matching the previous full-screen thread behavior.
  */
 export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelAreaProps) {
-  const { panels, panes, paneZeroId, closePanel, closePane, movePane, setFocusedPane, getFocusedPane } = usePanel()
+  const { panels, panes, paneZeroId, closePanel, movePane, setFocusedPane, getFocusedPane } = usePanel()
   const { isMobile } = useSidebar()
 
   const containerRef = useRef<HTMLDivElement>(null)
@@ -144,6 +143,21 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
   const finishClose = useCallback((slotKey: string) => {
     setSlots((prev) => prev.filter((it) => !(it.key === slotKey && it.closing)))
   }, [])
+
+  // When a closing slot unmounts it takes keyboard focus with it (focus falls
+  // to <body>); return focus to the main pane so a keyboard user who closed a
+  // panel — by shortcut, the close button, or "close others" — isn't stranded.
+  // Only acts when the slot list shrinks AND focus was actually lost, so it
+  // never steals focus during normal interaction.
+  const slotCountRef = useRef(slots.length)
+  useLayoutEffect(() => {
+    const shrank = slots.length < slotCountRef.current
+    slotCountRef.current = slots.length
+    if (!shrank) return
+    if (document.activeElement === document.body || document.activeElement == null) {
+      mainRef.current?.focus({ preventScroll: true })
+    }
+  }, [slots.length])
 
   // ---- Pane widths ---------------------------------------------------------
 
@@ -299,6 +313,9 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
     (panelId: string) => ({
       onPointerDown: (e: React.PointerEvent) => {
         if (e.button !== 0) return
+        // Mouse-only: on touch-capable tablets ≥640px (not the mobile branch)
+        // a header tap-and-scroll would otherwise start a spurious reorder.
+        if (e.pointerType !== "mouse") return
         // Buttons/links/menus in the header keep their own interactions.
         const target = e.target as HTMLElement
         if (target.closest("button, a, input, textarea, select, [contenteditable], [role='menuitem']")) return
@@ -415,9 +432,13 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
       focusNextPane: () => cycleFocus(1),
       focusPreviousPane: () => cycleFocus(-1),
       closeFocusedPanel: () => {
-        const id = focusedPaneId()
-        if (id) closePane(id)
-        else if (panesRef.current.length > 0) closePanel()
+        // Never close pane 0 via the panel shortcut — that removes the routed
+        // surface and navigates to workspace home, which reads as "the app
+        // threw me out of my stream". When the main pane is focused, close the
+        // most recent side panel instead (no-op if there are none).
+        const focused = getFocusedPane()
+        if (focused !== "main" && focused !== paneZeroRef.current) closePanel(focused)
+        else if (panesRef.current.length > (paneZeroRef.current ? 1 : 0)) closePanel()
       },
       movePanelLeft: () => {
         const id = focusedPaneId()
