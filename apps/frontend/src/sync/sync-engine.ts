@@ -25,6 +25,7 @@ import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import { reconcileLabels } from "@/hooks/use-labels"
 import { defaultFeatureFlagValue, type WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
@@ -38,6 +39,19 @@ interface SyncEngineDeps {
       streamId: string,
       params?: { after?: string }
     ) => Promise<import("@threa/types").StreamBootstrap>
+  }
+  /** Viewer-scoped label catalog + assignments (`listForViewer`). Used by the
+   *  active-mode slim reconnect bootstrap to reconcile the one label slice
+   *  workspace catch-up can't replay: assignments on public streams the viewer
+   *  can see (INV-62) but has no `stream_members` row for, so the
+   *  stream-group-scoped `label:*` event never reaches their sync-log cursor.
+   *  Absent (off/shadow/test deps) → the reconnect bootstrap stays full. */
+  labelService?: {
+    list: (workspaceId: string) => Promise<{
+      labels: import("@threa/types").Label[]
+      memberships: import("@threa/types").LabelMember[]
+      assignments: import("@threa/types").LabelAssignment[]
+    }>
   }
   messageService?: {
     update: (workspaceId: string, messageId: string, data: any) => Promise<any>
@@ -436,7 +450,21 @@ export class SyncEngine {
   // Internal
   // =========================================================================
 
-  private async bootstrapWorkspace(_isReconnect: boolean): Promise<void> {
+  private async bootstrapWorkspace(_isReconnect: boolean, forceFull = false): Promise<void> {
+    // Active-mode reconnect slimming: catch-up replay (which runs right after
+    // this) re-seeds every workspace-scoped projection through the
+    // gate-registered handlers, so re-fetching the full workspace snapshot on
+    // every reconnect is redundant. Skip it and instead do only what catch-up
+    // can't: the per-stream message deltas (the per-stream cursor mechanism,
+    // unchanged) and a reconcile of the viewer's label assignments (the one
+    // non-member public-stream slice the sync-log can't carry). `forceFull`
+    // (below-floor fallback) and the first connect / off / shadow / no-label-
+    // service cases keep the full snapshot.
+    if (_isReconnect && !forceFull && this.syncCursorMode === "active" && this.deps.labelService) {
+      await this.slimReconnectBootstrap()
+      return
+    }
+
     const { workspaceId, syncStatus, queryClient, workspaceService, streamService } = this.deps
 
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
@@ -628,7 +656,82 @@ export class SyncEngine {
     }
   }
 
-  private runBootstrap(isReconnect: boolean): Promise<void> {
+  /**
+   * The active-mode reconnect bootstrap, minus the full workspace-snapshot
+   * fetch + reconcile. Everything here is what workspace catch-up replay can't
+   * cover on its own:
+   *
+   * - Per-stream message deltas for the visible streams. Timeline events ride a
+   *   per-stream sequence (INV-61), not the workspace sync-log, so they heal
+   *   through `bootstrap?after=` (cursor-before-join), never catch-up. Same
+   *   mechanism the full path and post-navigation refresh use.
+   * - The viewer's label assignments. `listEntriesForUser` scopes the sync-log
+   *   to `stream_members` rows, so a `label:assigned/unassigned` on a public
+   *   stream the viewer can see (INV-62) but isn't a member of never replays.
+   *   `labelService.list` returns `listForViewer` (gated through
+   *   `listAccessibleStreamIds`, which includes those streams) and
+   *   `reconcileLabels` bulkPuts + stale-deletes it into IDB — the render
+   *   source. Member-stream label events still replay through catch-up; this
+   *   only backstops the non-member public slice.
+   * - Re-subscribing member rooms from the cached membership list, so
+   *   `stream:activity` keeps flowing onto the sidebar. Membership added/removed
+   *   while offline is replayed by catch-up (`stream:member_*` → subscribe).
+   *
+   * The workspace gate is paused (begun in `onConnect`) for the whole window,
+   * so the IDB writes here land before catch-up applies its delta and before
+   * buffered live events splice in on top — newest state wins, no regression.
+   */
+  private async slimReconnectBootstrap(): Promise<void> {
+    const { workspaceId, syncStatus } = this.deps
+    syncStatus.set(`workspace:${workspaceId}`, "syncing")
+
+    if (this.socket) {
+      await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
+    }
+    if (this.isDestroyed) return
+
+    // Per-stream deltas (each refresh owns its own status + error handling) and
+    // the label reconcile run together; neither depends on the other.
+    await Promise.all([
+      ...this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)),
+      this.reconcileViewerLabels(),
+    ])
+    if (this.isDestroyed) return
+
+    await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
+    if (this.isDestroyed) return
+
+    this.lastWorkspaceError = null
+    syncStatus.set(`workspace:${workspaceId}`, "synced")
+  }
+
+  /**
+   * Reconcile the viewer's label catalog + assignments into IDB. Non-fatal:
+   * member-stream label events still heal through catch-up, so a failed fetch
+   * only leaves the non-member public-stream slice stale until the next
+   * reconnect — never a hard error on the connect path.
+   */
+  private async reconcileViewerLabels(): Promise<void> {
+    const { workspaceId, labelService } = this.deps
+    if (!labelService) return
+    try {
+      const { labels, memberships, assignments } = await labelService.list(workspaceId)
+      if (this.isDestroyed) return
+      await reconcileLabels(workspaceId, labels, memberships, assignments)
+    } catch {
+      // Swallow — catch-up covers member streams; the next reconnect retries.
+    }
+  }
+
+  /**
+   * @param forceFull Run the full workspace-snapshot bootstrap even on an
+   *   active-mode reconnect (where it would otherwise be slimmed to per-stream
+   *   deltas + a label reconcile). The below-floor catch-up fallback sets this:
+   *   a cursor below the retained sync-log floor has no log to replay, so only
+   *   the full snapshot is authoritative for everything `<= head`.
+   */
+  private runBootstrap(isReconnect: boolean, opts?: { forceFull?: boolean }): Promise<void> {
+    const forceFull = opts?.forceFull ?? false
     if (this.activeBootstrap) {
       // If a reconnect arrives while a non-reconnect bootstrap (e.g.
       // retryWorkspace) is in flight, we can't mutate the in-flight request
@@ -644,14 +747,14 @@ export class SyncEngine {
           })
           .then(() => {
             this.queuedReconnectBootstrap = null
-            return this.runBootstrap(true)
+            return this.runBootstrap(true, { forceFull })
           })
         this.queuedReconnectBootstrap = chained
       }
       return this.queuedReconnectBootstrap ?? this.activeBootstrap
     }
 
-    const bootstrapPromise = this.bootstrapWorkspace(isReconnect).finally(() => {
+    const bootstrapPromise = this.bootstrapWorkspace(isReconnect, forceFull).finally(() => {
       if (this.activeBootstrap === bootstrapPromise) {
         this.activeBootstrap = null
       }
@@ -1078,7 +1181,11 @@ export class SyncEngine {
           cursorStore.advance(response.head)
           this.noteSeenHead(response.head)
           appliedThrough = BigInt(response.head)
-          void this.runBootstrap(true)
+          // forceFull: the cursor is below the retained floor, so catch-up has
+          // no entries to replay — only the full workspace snapshot is
+          // authoritative for everything <= head. The slim reconnect path
+          // (per-stream deltas + label reconcile) would leave the rest stale.
+          void this.runBootstrap(true, { forceFull: true })
           return
         }
         if (response.entries.length === 0) {
