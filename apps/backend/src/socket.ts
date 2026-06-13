@@ -128,8 +128,16 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         // Auto-join permission rooms for permission-scoped delivery (e.g.
         // invitation lifecycle → members:write). Derived from the member's role,
         // mirroring requireWorkspacePermission's role fallback, so a non-admin
-        // never receives invitee identity. Demotion heals on the next join.
+        // never receives invitee identity. A re-join on the same socket
+        // re-derives the set and leaves rooms the member no longer qualifies for,
+        // so an in-connection role change heals on the next join (a fresh
+        // connection always re-derives from scratch). The catch-up path derives
+        // the role per request, so it is always current.
         const permissionRooms = permissionGroupsForRole(workspaceUser.role).map((group) => groupToRoom(wsId, group))
+        const stalePermissionRooms = userRooms.get(wsId)?.permissionRooms ?? []
+        for (const stale of stalePermissionRooms) {
+          if (!permissionRooms.includes(stale)) socket.leave(stale)
+        }
         for (const permissionRoom of permissionRooms) {
           socket.join(permissionRoom)
         }
