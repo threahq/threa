@@ -1103,16 +1103,20 @@ export class StreamService {
 
       // Generations the enclave actor already held, proven by an existing
       // enclave wrap row at that generation (wraps are immutable, so a dead
-      // EIK's rows remain as the record). Fetched only when some wrap asks
-      // for an older generation — the common current-only heal skips it.
+      // EIK's rows remain as the record). The repo scopes the read to enclave
+      // rows in SQL; fetched only when some wrap asks for an older generation —
+      // the common current-only heal skips it.
       const wantsOlderGeneration = input.wraps.some(
         (w) => (w.keyGeneration ?? input.keyGeneration) !== e2e.currentKeyGeneration
       )
       const enclaveHeldGenerations = wantsOlderGeneration
         ? new Set(
-            (await StreamE2eKeyWrapsRepository.listForStream(client, workspaceId, streamId))
-              .filter((w) => w.recipientKind === E2eKeyWrapRecipientKinds.ENCLAVE)
-              .map((w) => w.keyGeneration)
+            await StreamE2eKeyWrapsRepository.listGenerationsForRecipientKind(
+              client,
+              workspaceId,
+              streamId,
+              E2eKeyWrapRecipientKinds.ENCLAVE
+            )
           )
         : new Set<number>()
 
