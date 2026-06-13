@@ -140,7 +140,14 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
                   />
                 </TabsContent>
                 <TabsContent value="companion" className="mt-0">
-                  <CompanionTab workspaceId={workspaceId} stream={resolvedStream} />
+                  <CompanionTab
+                    workspaceId={workspaceId}
+                    stream={resolvedStream}
+                    allowedToolCategories={bootstrap?.allowedToolCategories ?? null}
+                    canManageToolPolicy={
+                      resolvedStream.type === StreamTypes.SCRATCHPAD && resolvedStream.createdBy === currentUserId
+                    }
+                  />
                 </TabsContent>
                 <TabsContent value="members" className="mt-0">
                   <MembersTab workspaceId={workspaceId} streamId={streamId} currentUserId={currentUserId} />

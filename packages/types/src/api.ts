@@ -40,7 +40,7 @@ import type { UserPreferences } from "./preferences"
 import type { WorkspaceSettings } from "./workspace-settings"
 import type { FeatureFlags } from "./feature-flags"
 import type { SidebarConfig } from "./sidebar"
-import type { ToolPrivacyCategory } from "./tool-privacy"
+import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "./tool-privacy"
 import type { WorkspacePermissionSlug } from "./workspace-permissions"
 
 // ============================================================================
@@ -185,6 +185,14 @@ export interface StreamBootstrap {
    * `{bag: null, refs: []}` for streams without a bag.
    */
   contextBag?: StreamContextBagPayload
+  /**
+   * The scratchpad's tool-privacy policy: the tool categories its agent may use
+   * (`null` = no restriction). Only populated for scratchpads — the only
+   * surface that can set one; other stream types omit it. Drives the owner's
+   * tool-policy control in stream settings. Optional so older cached bootstrap
+   * payloads still validate.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 /**

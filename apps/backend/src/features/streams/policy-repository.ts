@@ -27,4 +27,29 @@ export const StreamPoliciesRepository = {
     `)
     return (result.rows[0]?.allowed_tool_categories as ToolPrivacyPolicy) ?? null
   },
+
+  /**
+   * Set or clear a stream's tool-privacy policy. `null` means "no restriction",
+   * which this store expresses by row ABSENCE — so a null policy DELETEs any
+   * existing row rather than writing a NULL (the column is `NOT NULL`). A
+   * non-null policy is upserted race-safely (INV-20); note `[]` ("no tools at
+   * all") is a real, persisted policy, distinct from the deleted/null case.
+   * Keyed by the non-thread root stream, mirroring `getToolPolicy` — callers
+   * resolve thread → `rootStreamId` before writing.
+   */
+  async setToolPolicy(db: Querier, workspaceId: string, streamId: string, policy: ToolPrivacyPolicy): Promise<void> {
+    if (policy === null) {
+      await db.query(sql`
+        DELETE FROM stream_policies
+        WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+      `)
+      return
+    }
+    await db.query(sql`
+      INSERT INTO stream_policies (stream_id, workspace_id, allowed_tool_categories, updated_at)
+      VALUES (${streamId}, ${workspaceId}, ${policy}, NOW())
+      ON CONFLICT (stream_id)
+      DO UPDATE SET allowed_tool_categories = EXCLUDED.allowed_tool_categories, updated_at = NOW()
+    `)
+  },
 }

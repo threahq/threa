@@ -14,6 +14,7 @@ import type {
   WorkspaceBootstrap,
   NotificationLevel,
   CompanionMode,
+  ToolPrivacyPolicy,
 } from "@threa/types"
 import type { CreateStreamInput, UpdateStreamInput } from "@/api"
 import { workspaceKeys } from "./use-workspaces"
@@ -246,6 +247,28 @@ export function useUpdateCompanionMode(workspaceId: string, streamId: string) {
       })
 
       db.streams.put({ ...updatedStream, _cachedAt: Date.now() })
+    },
+  })
+}
+
+/**
+ * Set or clear a scratchpad's tool-privacy policy. The value lives on the
+ * stream bootstrap envelope (`allowedToolCategories`), not on the `Stream` row,
+ * so the success path patches only that cache — there is nothing to update in
+ * the workspace sidebar or IDB stream rows.
+ */
+export function useUpdateToolPolicy(workspaceId: string, streamId: string) {
+  const streamService = useStreamService()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (allowedCategories: ToolPrivacyPolicy) =>
+      streamService.updateToolPolicy(workspaceId, streamId, allowedCategories),
+    onSuccess: (allowedToolCategories) => {
+      queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
+        if (!old || typeof old !== "object") return old
+        return { ...old, allowedToolCategories }
+      })
     },
   })
 }

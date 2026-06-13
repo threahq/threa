@@ -16,6 +16,7 @@ import {
   CompanionModes,
   E2E_ACTOR_KINDS,
   E2E_KEY_WRAP_RECIPIENT_KINDS,
+  TOOL_PRIVACY_CATEGORIES,
 } from "@threa/types"
 import type { Pool } from "pg"
 import { PersonaRepository, getResolver, fetchStreamBag, contextBagSchema } from "../agents"
@@ -23,6 +24,7 @@ import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
 import { streamTypeSchema, visibilitySchema, companionModeSchema, notificationLevelSchema } from "../../lib/schemas"
+import { StreamPoliciesRepository } from "./policy-repository"
 
 const createStreamSchema = z
   .object({
@@ -137,6 +139,13 @@ const updateStreamSchema = z
 const updateCompanionModeSchema = z.object({
   companionMode: companionModeSchema,
   companionPersonaId: z.string().nullable().optional(),
+})
+
+// `null` = no restriction (clears the policy row); an array (including `[]` =
+// no tools) restricts the agent to exactly those categories. `messaging` is
+// always allowed regardless, so the picker never offers it.
+const updateToolPolicySchema = z.object({
+  allowedCategories: z.array(z.enum(TOOL_PRIVACY_CATEGORIES)).nullable(),
 })
 
 const setNotificationLevelSchema = z.object({
@@ -691,6 +700,27 @@ export function createStreamHandlers({
       res.json({ stream: updated })
     },
 
+    async updateToolPolicy(req: Request, res: Response) {
+      const userId = req.user!.id
+      const workspaceId = req.workspaceId!
+      const { streamId } = req.params
+
+      const { allowedCategories } = validateRequest(updateToolPolicySchema, req.body)
+
+      // Scoped to scratchpads, owner-only: the tool policy is a personal
+      // guardrail on a solo surface, not a shared channel admin setting.
+      const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
+      if (stream.type !== StreamTypes.SCRATCHPAD) {
+        return res.status(400).json({ error: "Tool policy can only be set on a scratchpad" })
+      }
+      if (stream.createdBy !== userId) {
+        return res.status(403).json({ error: "Only the scratchpad owner can change its tool policy" })
+      }
+
+      const allowedToolCategories = await streamService.setStreamToolPolicy(workspaceId, streamId, allowedCategories)
+      res.json({ data: { allowedToolCategories } })
+    },
+
     async setNotificationLevel(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
@@ -861,6 +891,14 @@ export function createStreamHandlers({
       // `fetchStreamBag` via the resolver.
       const contextBag = await fetchStreamBag(pool, { workspaceId, streamId, userId }, { skipAccessCheck: true })
 
+      // Only scratchpads can carry a tool policy (the only surface that can set
+      // one); omit it elsewhere so the settings control renders only where it
+      // applies.
+      const allowedToolCategories =
+        stream.type === StreamTypes.SCRATCHPAD
+          ? await StreamPoliciesRepository.getToolPolicy(pool, workspaceId, stream.id)
+          : null
+
       res.json({
         data: {
           stream,
@@ -879,6 +917,7 @@ export function createStreamHandlers({
           mentionCount: activityCounts?.mentionCount ?? 0,
           activityCount: activityCounts?.totalCount ?? 0,
           contextBag,
+          allowedToolCategories,
         },
       })
     },

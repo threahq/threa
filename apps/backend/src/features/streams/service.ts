@@ -36,6 +36,7 @@ import {
   type E2eKeyRollRecipient,
   type E2eKeyRollInput,
   type E2eActorRewrapInput,
+  type ToolPrivacyPolicy,
 } from "@threa/types"
 import { ContextBagRepository } from "../agents"
 import { E2eStreamsRepository, E2eStreamActorsRepository, StreamE2eKeyWrapsRepository } from "../e2e-streams"
@@ -49,6 +50,7 @@ import { BotRuntimeInstanceRepository, BOT_RUNTIME_BIK_STALENESS_MS } from "../b
 import { BotRepository } from "../public-api/bot-repository"
 import { streamTypeSchema, visibilitySchema, companionModeSchema } from "../../lib/schemas"
 import { isAllowedLevel } from "./notification-config"
+import { StreamPoliciesRepository } from "./policy-repository"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
@@ -664,6 +666,23 @@ export class StreamService {
       })
       return stream
     })
+  }
+
+  /**
+   * Set or clear a scratchpad's tool-privacy policy. A single write on the
+   * `stream_policies` tracking table, so `pool` is passed directly (INV-30) and
+   * there is no outbox event: enforcement reads the policy fresh at the next
+   * turn's claim/dispatch (`negotiateCapabilities`), so a change takes effect on
+   * the next agent turn without a broadcast. Returns the policy as stored, for
+   * the caller's optimistic cache.
+   */
+  async setStreamToolPolicy(
+    workspaceId: string,
+    streamId: string,
+    policy: ToolPrivacyPolicy
+  ): Promise<ToolPrivacyPolicy> {
+    await StreamPoliciesRepository.setToolPolicy(this.pool, workspaceId, streamId, policy)
+    return policy
   }
 
   async archiveStream(streamId: string, archivedBy: string): Promise<Stream | null> {

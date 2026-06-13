@@ -11,6 +11,7 @@ import type {
   NotificationLevel,
   SharedMessageHydration,
   CompanionMode,
+  ToolPrivacyPolicy,
 } from "@threa/types"
 
 /**
@@ -76,6 +77,23 @@ export const streamsApi = {
       data
     )
     return res.stream
+  },
+
+  /**
+   * Set (or clear) a scratchpad's tool-privacy policy. `null` clears the
+   * restriction; an array (including `[]` = no tools) restricts the agent to
+   * those categories. Returns the policy as stored.
+   */
+  async updateToolPolicy(
+    workspaceId: string,
+    streamId: string,
+    allowedCategories: ToolPrivacyPolicy
+  ): Promise<ToolPrivacyPolicy> {
+    const res = await api.patch<{ data: { allowedToolCategories: ToolPrivacyPolicy } }>(
+      `/api/workspaces/${workspaceId}/streams/${streamId}/tool-policy`,
+      { allowedCategories }
+    )
+    return res.data.allowedToolCategories
   },
 
   archive(workspaceId: string, streamId: string): Promise<void> {
