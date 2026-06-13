@@ -1,18 +1,15 @@
 import { useState } from "react"
-import { Link, Navigate, useParams } from "react-router-dom"
-import { ArrowLeft, CalendarClock } from "lucide-react"
+import { Navigate, useParams } from "react-router-dom"
+import { CalendarClock } from "lucide-react"
 import { toast } from "sonner"
 import type { ScheduledMessageView } from "@threa/types"
-import { buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { cn } from "@/lib/utils"
 import { useScheduledList, useCancelScheduled, useSendScheduledNow } from "@/hooks"
 import { ScheduledEmpty } from "@/components/scheduled/scheduled-empty"
 import { ScheduledItem } from "@/components/scheduled/scheduled-item"
 import { ScheduledSkeleton } from "@/components/scheduled/scheduled-skeleton"
 import { ScheduledEditDialog } from "@/components/scheduled/scheduled-edit-dialog"
-import { SidebarToggle } from "@/components/layout"
+import { PageHeaderTabs } from "@/components/layout"
 
 type PageTabValue = "pending" | "sent"
 const TABS: { value: PageTabValue; label: string }[] = [
@@ -107,34 +104,13 @@ function ScheduledPageInner({ workspaceId, tab }: InnerProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center justify-between border-b px-4 gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <SidebarToggle location="page" />
-          <Link
-            to={`/w/${workspaceId}`}
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-            aria-label="Back to workspace"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div className="flex items-center gap-2 min-w-0">
-            <CalendarClock className="h-5 w-5 text-muted-foreground shrink-0" />
-            <h1 className="font-semibold truncate">Scheduled</h1>
-          </div>
-        </div>
-
-        <Tabs value={tab}>
-          <TabsList className="h-8">
-            {TABS.map((t) => (
-              <TabsTrigger key={t.value} value={t.value} asChild>
-                <Link to={tabHref(t.value)} className="text-xs px-2.5 py-1">
-                  {t.label}
-                </Link>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </header>
+      <PageHeaderTabs
+        backTo={`/w/${workspaceId}`}
+        icon={CalendarClock}
+        title="Scheduled"
+        value={tab}
+        tabs={TABS.map((t) => ({ value: t.value, label: t.label, href: tabHref(t.value) }))}
+      />
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
         <main className="py-1">{content}</main>
