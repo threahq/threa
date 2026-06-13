@@ -4,7 +4,6 @@ import {
   applyStreamReadOrdinal,
   applyStreamsReadAllOrdinals,
   applyActivityCounts,
-  isLegacyUnreadCounterEntry,
   type UnreadCounterState,
 } from "./unread-counters"
 
@@ -177,25 +176,5 @@ describe("applyActivityCounts", () => {
     const once = applyActivityCounts(state, "s1", { mentionCount: 0, activityCount: 2 })
     expect(applyActivityCounts(once, "s1", { mentionCount: 0, activityCount: 2 })).toEqual(once)
     expect(once.unreadActivityCount).toBe(2)
-  })
-})
-
-describe("isLegacyUnreadCounterEntry", () => {
-  it("detects missing absolute fields per counter event type", () => {
-    expect(isLegacyUnreadCounterEntry("stream:activity", { streamId: "s1" })).toBe(true)
-    expect(isLegacyUnreadCounterEntry("stream:activity", { streamId: "s1", messageOrdinal: 3 })).toBe(false)
-    expect(isLegacyUnreadCounterEntry("stream:read", { streamId: "s1" })).toBe(true)
-    expect(isLegacyUnreadCounterEntry("stream:read", { streamId: "s1", lastReadOrdinal: 0 })).toBe(false)
-    expect(isLegacyUnreadCounterEntry("stream:read_all", { streamIds: [] })).toBe(true)
-    expect(isLegacyUnreadCounterEntry("stream:read_all", { streamIds: [], reads: [] })).toBe(false)
-    expect(isLegacyUnreadCounterEntry("activity:created", { activity: {} })).toBe(true)
-    expect(isLegacyUnreadCounterEntry("activity:created", { counts: { mentionCount: 1, activityCount: 2 } })).toBe(
-      false
-    )
-  })
-
-  it("never marks non-counter events legacy", () => {
-    expect(isLegacyUnreadCounterEntry("message:created", {})).toBe(false)
-    expect(isLegacyUnreadCounterEntry("workspace_user:added", undefined)).toBe(false)
   })
 })

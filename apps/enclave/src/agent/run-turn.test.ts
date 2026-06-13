@@ -15,6 +15,7 @@ import {
   type AttachmentRef,
 } from "@threa/crypto"
 import type {
+  EnclaveMidTurnMessage,
   SealedReply,
   SealedStep,
   SealedStepStart,
@@ -188,6 +189,87 @@ describe("runEnclaveTurn", () => {
       ciphertext: Buffer.from(messageStep!.ciphertext, "base64"),
     })
     expect(stepText).toBe("Paris.")
+  })
+
+  it("pulls a mid-turn message, reconsiders the draft, and reports the advanced boundary (UX-12)", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "Plan a weekend in France.", "msg_user", "usr_owner")
+
+    // A follow-up the owner sends mid-turn, sealed under the same SSK — the
+    // enclave opens it with the wrap it already holds, no new key machinery.
+    const followUp = await sealUnder(ssk, "Actually, also cover Lyon.", "msg_followup", "usr_owner")
+    const midTurn: EnclaveMidTurnMessage = {
+      messageId: "msg_followup",
+      sequence: "42",
+      authorId: "usr_owner",
+      authorType: "user",
+      authorName: "Owner",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      ciphertext: followUp.ciphertext,
+      envelope: followUp.envelope,
+    }
+
+    // First poll hands back the follow-up; subsequent polls are empty. Record the
+    // `after` cursor so we can prove it advances past the injected sequence.
+    const pollAfter: bigint[] = []
+    let polls = 0
+    const pollNewMessages = async (afterSequence: bigint): Promise<EnclaveMidTurnMessage[]> => {
+      pollAfter.push(afterSequence)
+      return polls++ === 0 ? [midTurn] : []
+    }
+
+    // Draft, then revise after the interjection lands.
+    const chat = stubChat([sendMessageReply("A two-day Paris plan."), sendMessageReply("A Paris + Lyon plan.")])
+    const { onMessage, onStepStarted, onStep, onSubstep, sent } = collector()
+
+    const result = await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep, pollNewMessages },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    // The loop saw the decrypted follow-up injected as user context before it
+    // committed — never ciphertext — so the revised reply is what ships.
+    const reconsiderTurn = chat.seen.at(-1)
+    const injected = reconsiderTurn?.messages.some(
+      (m) => m.role === "user" && String(m.content).includes("Actually, also cover Lyon.")
+    )
+    expect(injected).toBe(true)
+
+    expect(sent).toHaveLength(1)
+    const replyText = await openMessageAsString({
+      key: ssk,
+      envelope: sent[0]!.envelope,
+      ciphertext: Buffer.from(sent[0]!.ciphertext, "base64"),
+    })
+    expect(replyText).toBe("A Paris + Lyon plan.")
+
+    // The boundary seeds at 0 (the backend clamps the floor to the trigger), then
+    // advances past the injected message so the second poll asks for newer rows.
+    expect(pollAfter[0]).toBe(0n)
+    expect(pollAfter.at(-1)).toBe(42n)
+    // The advanced boundary is reported so the backend's catch-up skips the
+    // follow-up the reply already addressed.
+    expect(result.lastProcessedSequence).toBe("42")
+  })
+
+  it("reports no boundary when nothing lands mid-turn", async () => {
+    const keyPair = await createEnclaveKeyPair()
+    const ssk = generateStreamKey()
+    const wrap = await wrapSskToEnclave(keyPair, ssk)
+    const prompt = await sealUnder(ssk, "What's the capital of France?", "msg_user", "usr_owner")
+    const chat = stubChat(textReply("Paris."))
+    const { onMessage, onStepStarted, onStep, onSubstep } = collector()
+
+    const result = await runEnclaveTurn(
+      { keyPair, rawChat: chat.fn, onMessage, onStepStarted, onStep, onSubstep, pollNewMessages: async () => [] },
+      baseRequest({ wraps: [wrap], prompt })
+    )
+
+    // A turn that saw nothing past its trigger omits the field entirely — the
+    // wire stays byte-identical to before the poll existed.
+    expect(result.lastProcessedSequence).toBeUndefined()
   })
 
   it("seals an auto-title the owner's SSK can recover when autoTitle is set", async () => {

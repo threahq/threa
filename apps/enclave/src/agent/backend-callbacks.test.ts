@@ -45,3 +45,43 @@ describe("createBackendCallbacks callback-token binding (Phase 2.4b)", () => {
     expect(ENCLAVE_CALLBACK_TOKEN_HEADER in calls[0]!.headers).toBe(false)
   })
 })
+
+describe("createBackendCallbacks.pollMessages (interjection pull)", () => {
+  it("GETs the after-cursor URL and returns the sealed rows", async () => {
+    const row = {
+      messageId: "msg_a",
+      sequence: "42",
+      authorId: "usr_owner",
+      authorType: "user",
+      authorName: "Owner",
+      createdAt: "2026-06-13T10:00:00.000Z",
+      ciphertext: "Y3Q=",
+      envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+    }
+    const calls: { url: string; method?: string }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, method: init.method })
+        return { ok: true, status: 200, json: async () => ({ messages: [row] }) } as Response
+      })
+    )
+    const callbacks = createBackendCallbacks(config, "cbtok_1")
+
+    const messages = await callbacks.pollMessages("session_1", 7n)
+
+    expect(calls[0]!.method).toBe("GET")
+    expect(calls[0]!.url).toBe("http://backend.test/internal/enclave-runtimes/sessions/session_1/messages?after=7")
+    expect(messages).toEqual([row])
+  })
+
+  it("throws on a malformed body so a protocol fault never reads as 'no messages'", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as Response)
+    )
+    const callbacks = createBackendCallbacks(config, "cbtok_1")
+
+    await expect(callbacks.pollMessages("session_1", 0n)).rejects.toThrow(/invalid body/)
+  })
+})

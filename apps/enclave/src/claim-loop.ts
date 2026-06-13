@@ -13,9 +13,16 @@ const logger = baseLogger.child({ name: "enclave-claim-loop" })
  * the only way a turn starts here.
  *
  * Pacing: a winning claim polls again immediately (drain a backlog without
- * waiting out the interval); an empty poll (204) or an error waits
- * `claimPollIntervalMs`. Sessions run detached — the loop keeps claiming
- * while turns are in flight, same concurrency the push transport allowed.
+ * waiting out the interval). Otherwise the loop keeps a minimum spacing of
+ * `claimPollIntervalMs` between poll *starts*: the backend long-polls each claim
+ * (§2.7 wake-up nudge), holding it open until work appears or the budget lapses,
+ * so a held poll already covers that spacing and the next one fires immediately
+ * — the loop stays continuously parked and turn-start latency collapses to the
+ * nudge. A fast answer (a backend without long-poll, or an error) waits out the
+ * remainder so the loop never hot-spins. Sessions run detached — the loop keeps
+ * claiming while turns are in flight, up to `maxConcurrentSessions`; at that
+ * ceiling it stops claiming until a turn settles, bounding per-box memory and
+ * OpenRouter spend.
  */
 
 /** Claim responses carry the full assignment (inline attachment ciphertext can be tens of MB), so allow a slow transfer. */
@@ -41,13 +48,29 @@ export interface ClaimLoopDeps {
  */
 export async function claimOnce(deps: ClaimLoopDeps): Promise<{ claimed: boolean }> {
   const { config, keyPair, inFlight, runSession } = deps
+
+  // Per-instance ceiling. Turns run detached, so at capacity we stop claiming
+  // rather than pile on — each in-flight turn pins its history + inline
+  // attachment ciphertext (tens of MB) and burns OpenRouter spend. Reported as
+  // "no work won" so the loop settles to the idle interval; a settling turn
+  // frees the slot, picked up on the next idle tick. The loop serializes
+  // claimOnce, so this check-then-add never overshoots the cap. The log keeps
+  // "throttling at capacity" distinguishable from "genuinely idle".
+  if (inFlight.size >= config.maxConcurrentSessions) {
+    logger.debug(
+      { inFlight: inFlight.size, max: config.maxConcurrentSessions },
+      "At concurrency ceiling; deferring claim to the next idle poll"
+    )
+    return { claimed: false }
+  }
+
   const res = await fetch(`${config.backendBaseUrl}/internal/enclave-runtimes/claims`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       [INTERNAL_API_KEY_HEADER]: config.internalApiKey,
     },
-    body: JSON.stringify({ keyId: keyPair.keyId }),
+    body: JSON.stringify({ keyId: keyPair.keyId, waitMs: config.claimLongPollMs }),
     signal: AbortSignal.timeout(CLAIM_TIMEOUT_MS),
   })
   if (res.status === 204) return { claimed: false }
@@ -96,6 +119,7 @@ export function startClaimLoop(deps: ClaimLoopDeps): ClaimLoop {
   let timer: ReturnType<typeof setTimeout> | null = null
 
   const tick = async () => {
+    const startedAt = Date.now()
     let claimed = false
     try {
       claimed = (await claimOnce(deps)).claimed
@@ -103,8 +127,13 @@ export function startClaimLoop(deps: ClaimLoopDeps): ClaimLoop {
       logger.warn({ err }, "Claim poll failed")
     }
     if (stopped) return
-    // Drain after a win; otherwise settle back to the idle interval.
-    timer = setTimeout(() => void tick(), claimed ? 0 : deps.config.claimPollIntervalMs)
+    // Drain after a win. Otherwise hold a minimum spacing between poll *starts*:
+    // a long-poll the backend held open already spent the interval, so re-poll
+    // now and stay parked on the nudge; a fast answer (no long-poll, or an
+    // error) waits out the remainder so the loop never hot-spins.
+    const elapsed = Date.now() - startedAt
+    const delay = claimed ? 0 : Math.max(0, deps.config.claimPollIntervalMs - elapsed)
+    timer = setTimeout(() => void tick(), delay)
   }
 
   logger.info({ intervalMs: deps.config.claimPollIntervalMs }, "Enclave claim loop started")

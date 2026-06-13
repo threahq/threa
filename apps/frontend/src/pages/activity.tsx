@@ -1,10 +1,9 @@
 import { useMemo } from "react"
 import { Navigate, useParams, Link } from "react-router-dom"
-import { Bell, ArrowLeft, Check } from "lucide-react"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Bell, Check } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { cn } from "@/lib/utils"
 import { useActivityFeed, useMarkActivityRead, useMarkAllActivityRead, useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
@@ -13,7 +12,7 @@ import { getStreamName, streamFallbackLabel } from "@/lib/streams"
 import { ActivityItem } from "@/components/activity/activity-item"
 import { ActivityEmpty } from "@/components/activity/activity-empty"
 import { ActivitySkeleton } from "@/components/activity/activity-skeleton"
-import { SidebarToggle } from "@/components/layout"
+import { PageHeaderTabs } from "@/components/layout"
 import type { AuthorType, Activity } from "@threa/types"
 
 export type ActivityFilter = "all" | "unread" | "me"
@@ -186,27 +185,18 @@ function ActivityPageInner({ workspaceId, filter }: InnerProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center justify-between border-b px-4 gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <SidebarToggle location="page" />
-          <Link
-            to={`/w/${workspaceId}`}
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-            aria-label="Back to workspace"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div className="flex items-center gap-2 min-w-0">
-            <Bell className="h-5 w-5 text-muted-foreground shrink-0" />
-            <h1 className="font-semibold truncate">Activity</h1>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <ActivityTabs value={filter} filterHref={filterHref} />
-          <MarkAllActivityReadButton workspaceId={workspaceId} />
-        </div>
-      </header>
+      <PageHeaderTabs
+        backTo={`/w/${workspaceId}`}
+        icon={Bell}
+        title="Activity"
+        value={filter}
+        tabs={[
+          { value: "all", label: "All", href: filterHref("all") },
+          { value: "unread", label: "Unread", href: filterHref("unread") },
+          { value: "me", label: "Me", href: filterHref("me") },
+        ]}
+        actions={<MarkAllActivityReadButton workspaceId={workspaceId} />}
+      />
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
         <main className="py-2">

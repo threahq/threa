@@ -50,6 +50,7 @@ function noopCallbacks(overrides: Partial<BackendCallbacks>): BackendCallbacks {
   return {
     heartbeat: async () => ({ abort: false }),
     message: async () => {},
+    pollMessages: async () => [],
     stepStarted: async () => {},
     step: async () => {},
     substep: async () => {},

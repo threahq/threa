@@ -21,11 +21,11 @@ import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import type { SyncV2CursorMode } from "./sync-v2-mode"
-import { isLegacyUnreadCounterEntry } from "./unread-counters"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
+import { reconcileLabels } from "@/hooks/use-labels"
 import { defaultFeatureFlagValue, type WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
@@ -39,6 +39,19 @@ interface SyncEngineDeps {
       streamId: string,
       params?: { after?: string }
     ) => Promise<import("@threa/types").StreamBootstrap>
+  }
+  /** Viewer-scoped label catalog + assignments (`listForViewer`). Used by the
+   *  active-mode slim reconnect bootstrap to reconcile the one label slice
+   *  workspace catch-up can't replay: assignments on public streams the viewer
+   *  can see (INV-62) but has no `stream_members` row for, so the
+   *  stream-group-scoped `label:*` event never reaches their sync-log cursor.
+   *  Absent (off/shadow/test deps) → the reconnect bootstrap stays full. */
+  labelService?: {
+    list: (workspaceId: string) => Promise<{
+      labels: import("@threa/types").Label[]
+      memberships: import("@threa/types").LabelMember[]
+      assignments: import("@threa/types").LabelAssignment[]
+    }>
   }
   messageService?: {
     update: (workspaceId: string, messageId: string, data: any) => Promise<any>
@@ -83,14 +96,6 @@ const CATCHUP_PAGE_LIMIT = 500
  */
 const HEARTBEAT_GRACE_MS = 2_000
 
-// Unread counter events replay from the log like any other event since their
-// payloads went absolute (phase 2c) — EXCEPT legacy entries persisted before
-// the backend shipped the absolute fields, which still carry increments and
-// must be skipped (the cursor advances past them; the bootstrap remains their
-// authority, INV-53). `isLegacyUnreadCounterEntry` is that per-entry check;
-// it replaces the phase-2b CATCHUP_SKIPPED_UNREAD_EVENT_TYPES set and dies
-// when sync-log retention ships and pre-field entries age out.
-
 /**
  * Owns the full sync lifecycle for a workspace:
  * - Workspace bootstrap (subscribe-then-fetch, INV-53)
@@ -109,6 +114,10 @@ export class SyncEngine {
   private workspaceHandlerCleanup: (() => void) | null = null
   private activeBootstrap: Promise<void> | null = null
   private queuedReconnectBootstrap: Promise<void> | null = null
+  /** Whether the queued reconnect bootstrap must run as a full snapshot. A
+   *  below-floor `forceFull` request arriving while a slim reconnect is already
+   *  queued upgrades the queued run rather than being collapsed away. */
+  private queuedReconnectForceFull = false
   private activeStreamRefreshes = new Map<string, Promise<void>>()
   private activeGapBackfills = new Map<string, { cursor: string; promise: Promise<void> }>()
   /** Lowest gap cursor reported per stream while a backfill was in flight —
@@ -257,6 +266,13 @@ export class SyncEngine {
     // Same pause-before-bootstrap rule as onConnect: the catch-up position
     // must not move between this trigger and the catch-up fetch.
     this.beginCatchUpCycle()
+    // Resume is a reconnect-shaped trigger: in active mode the slim path
+    // (per-stream deltas for visible streams + a viewer-label reconcile) plus
+    // the catch-up replay below re-seeds every workspace-scoped projection, so
+    // a full snapshot refetch would only duplicate what catch-up already heals.
+    // off/shadow modes and the first connect fall through to the full snapshot
+    // inside runBootstrap; the below-floor catch-up fallback re-forces full when
+    // the cursor has dropped beneath the retained sync-log floor.
     await this.runBootstrap(true)
     void this.runCatchUp("resume")
   }
@@ -445,7 +461,21 @@ export class SyncEngine {
   // Internal
   // =========================================================================
 
-  private async bootstrapWorkspace(_isReconnect: boolean): Promise<void> {
+  private async bootstrapWorkspace(_isReconnect: boolean, forceFull = false): Promise<void> {
+    // Active-mode reconnect slimming: catch-up replay (which runs right after
+    // this) re-seeds every workspace-scoped projection through the
+    // gate-registered handlers, so re-fetching the full workspace snapshot on
+    // every reconnect is redundant. Skip it and instead do only what catch-up
+    // can't: the per-stream message deltas (the per-stream cursor mechanism,
+    // unchanged) and a reconcile of the viewer's label assignments (the one
+    // non-member public-stream slice the sync-log can't carry). `forceFull`
+    // (below-floor fallback) and the first connect / off / shadow / no-label-
+    // service cases keep the full snapshot.
+    if (_isReconnect && !forceFull && this.syncCursorMode === "active" && this.deps.labelService) {
+      await this.slimReconnectBootstrap()
+      return
+    }
+
     const { workspaceId, syncStatus, queryClient, workspaceService, streamService } = this.deps
 
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
@@ -637,7 +667,94 @@ export class SyncEngine {
     }
   }
 
-  private runBootstrap(isReconnect: boolean): Promise<void> {
+  /**
+   * The active-mode reconnect bootstrap, minus the full workspace-snapshot
+   * fetch + reconcile. Everything here is what workspace catch-up replay can't
+   * cover on its own:
+   *
+   * - Per-stream message deltas for the visible streams. Timeline events ride a
+   *   per-stream sequence (INV-61), not the workspace sync-log, so they heal
+   *   through `bootstrap?after=` (cursor-before-join), never catch-up. Same
+   *   mechanism the full path and post-navigation refresh use.
+   * - The viewer's label assignments. `listEntriesForUser` scopes the sync-log
+   *   to `stream_members` rows, so a `label:assigned/unassigned` on a public
+   *   stream the viewer can see (INV-62) but isn't a member of never replays.
+   *   `labelService.list` returns `listForViewer` (gated through
+   *   `listAccessibleStreamIds`, which includes those streams) and
+   *   `reconcileLabels` bulkPuts + stale-deletes it into IDB — the render
+   *   source. Member-stream label events still replay through catch-up; this
+   *   only backstops the non-member public slice.
+   * - Re-subscribing member rooms from the cached membership list, so
+   *   `stream:activity` keeps flowing onto the sidebar. Membership added/removed
+   *   while offline is replayed by catch-up (`stream:member_*` → subscribe).
+   *
+   * The workspace gate is paused (begun in `onConnect`) for the whole window,
+   * so the IDB writes here land before catch-up applies its delta and before
+   * buffered live events splice in on top — newest state wins, no regression.
+   */
+  private async slimReconnectBootstrap(): Promise<void> {
+    const { workspaceId, syncStatus } = this.deps
+    syncStatus.set(`workspace:${workspaceId}`, "syncing")
+
+    // Mirror the full path's swallow-everything discipline. This runs inside
+    // the awaited `runBootstrap` in onConnect; if it rejected, the await would
+    // throw and `runCatchUp` — the only path that resumes the paused gate —
+    // would never run, stranding every buffered live event. So an unexpected
+    // failure (e.g. an IDB read in cachedMemberStreamIds) sets the workspace
+    // stale (cached data is already on screen on a reconnect) and returns;
+    // catch-up still runs and the next reconnect bootstrap closes the gap.
+    try {
+      if (this.socket) {
+        await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
+      }
+      if (this.isDestroyed) return
+
+      // Per-stream deltas (each refresh owns its own status + error handling)
+      // and the label reconcile run together; neither depends on the other.
+      await Promise.all([
+        ...this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)),
+        this.reconcileViewerLabels(),
+      ])
+      if (this.isDestroyed) return
+
+      await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
+      if (this.isDestroyed) return
+
+      this.lastWorkspaceError = null
+      syncStatus.set(`workspace:${workspaceId}`, "synced")
+    } catch (error) {
+      this.lastWorkspaceError = error
+      syncStatus.set(`workspace:${workspaceId}`, "stale")
+    }
+  }
+
+  /**
+   * Reconcile the viewer's label catalog + assignments into IDB. Non-fatal:
+   * member-stream label events still heal through catch-up, so a failed fetch
+   * only leaves the non-member public-stream slice stale until the next
+   * reconnect — never a hard error on the connect path.
+   */
+  private async reconcileViewerLabels(): Promise<void> {
+    const { workspaceId, labelService } = this.deps
+    if (!labelService) return
+    try {
+      const { labels, memberships, assignments } = await labelService.list(workspaceId)
+      if (this.isDestroyed) return
+      await reconcileLabels(workspaceId, labels, memberships, assignments)
+    } catch {
+      // Swallow — catch-up covers member streams; the next reconnect retries.
+    }
+  }
+
+  /**
+   * @param forceFull Run the full workspace-snapshot bootstrap even on an
+   *   active-mode reconnect (where it would otherwise be slimmed to per-stream
+   *   deltas + a label reconcile). The below-floor catch-up fallback sets this:
+   *   a cursor below the retained sync-log floor has no log to replay, so only
+   *   the full snapshot is authoritative for everything `<= head`.
+   */
+  private runBootstrap(isReconnect: boolean, opts?: { forceFull?: boolean }): Promise<void> {
+    const forceFull = opts?.forceFull ?? false
     if (this.activeBootstrap) {
       // If a reconnect arrives while a non-reconnect bootstrap (e.g.
       // retryWorkspace) is in flight, we can't mutate the in-flight request
@@ -646,21 +763,31 @@ export class SyncEngine {
       // bootstrap so the visible streams get their delta fetch once the
       // current bootstrap finishes. Repeat reconnect triggers collapse onto
       // the same queued promise.
-      if (isReconnect && !this.queuedReconnectBootstrap) {
-        const chained = this.activeBootstrap
-          .catch(() => {
-            // Swallow — the follow-up reconnect will retry whatever failed.
-          })
-          .then(() => {
-            this.queuedReconnectBootstrap = null
-            return this.runBootstrap(true)
-          })
-        this.queuedReconnectBootstrap = chained
+      if (isReconnect) {
+        // forceFull is a strictly stronger request than a slim reconnect, so it
+        // must survive collapsing onto an already-queued reconnect: the chain
+        // reads this flag at execution time rather than capturing `forceFull`,
+        // so a below-floor forceFull arriving after a slim reconnect is queued
+        // upgrades the single queued run to a full snapshot.
+        if (forceFull) this.queuedReconnectForceFull = true
+        if (!this.queuedReconnectBootstrap) {
+          const chained = this.activeBootstrap
+            .catch(() => {
+              // Swallow — the follow-up reconnect will retry whatever failed.
+            })
+            .then(() => {
+              const queuedForceFull = this.queuedReconnectForceFull
+              this.queuedReconnectBootstrap = null
+              this.queuedReconnectForceFull = false
+              return this.runBootstrap(true, { forceFull: queuedForceFull })
+            })
+          this.queuedReconnectBootstrap = chained
+        }
       }
       return this.queuedReconnectBootstrap ?? this.activeBootstrap
     }
 
-    const bootstrapPromise = this.bootstrapWorkspace(isReconnect).finally(() => {
+    const bootstrapPromise = this.bootstrapWorkspace(isReconnect, forceFull).finally(() => {
       if (this.activeBootstrap === bootstrapPromise) {
         this.activeBootstrap = null
       }
@@ -1017,18 +1144,15 @@ export class SyncEngine {
    * by design (sweep + dispatcher can both emit; snapshot/log overlap is the
    * safe side of read-before-stamp) and are absorbed by the handlers'
    * idempotency — including the unread counter family, whose absolute
-   * payloads max-merge/LWW-set (phase 2c). Only LEGACY counter entries
-   * (pre-field payloads, still increments) are skipped; see
-   * isLegacyUnreadCounterEntry.
+   * payloads max-merge/LWW-set (phase 2c).
    *
    * While catch-up pages, the gate buffers live syncId-bearing events; the
-   * finally-splice applies buffered events above the catch-up position (plus
-   * legacy counter events at any position, since catch-up never applies
-   * those) and reopens live flow. A buffered ABSOLUTE counter event at or
-   * below the position must NOT re-apply: its log copy already applied, and
-   * activity counts are LWW — re-applying it after a newer log entry would
-   * regress them. The cursor advances only past entries that were handed to
-   * handlers (or policy-skipped), never by jumping to head.
+   * finally-splice applies buffered events above the catch-up position and
+   * reopens live flow. A buffered ABSOLUTE counter event at or below the
+   * position must NOT re-apply: its log copy already applied, and activity
+   * counts are LWW — re-applying it after a newer log entry would regress
+   * them. The cursor advances only past entries that were handed to handlers,
+   * never by jumping to head.
    */
   private async performActiveCatchUp(trigger: string, signal: AbortSignal, cycle: number): Promise<void> {
     const syncService = this.deps.syncService!
@@ -1061,7 +1185,6 @@ export class SyncEngine {
       let head = cursorBefore
       let pages = 0
       let fetched = 0
-      let skipped = 0
       const byEventType: Record<string, number> = {}
 
       while (pages < MAX_CATCHUP_PAGES) {
@@ -1091,7 +1214,11 @@ export class SyncEngine {
           cursorStore.advance(response.head)
           this.noteSeenHead(response.head)
           appliedThrough = BigInt(response.head)
-          void this.runBootstrap(true)
+          // forceFull: the cursor is below the retained floor, so catch-up has
+          // no entries to replay — only the full workspace snapshot is
+          // authoritative for everything <= head. The slim reconnect path
+          // (per-stream deltas + label reconcile) would leave the rest stale.
+          void this.runBootstrap(true, { forceFull: true })
           return
         }
         if (response.entries.length === 0) {
@@ -1110,17 +1237,13 @@ export class SyncEngine {
         for (const entry of response.entries) {
           if (this.isDestroyed) return
           byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
-          if (isLegacyUnreadCounterEntry(entry.eventType, entry.payload)) {
-            skipped += 1
-          } else {
-            // Mirror the live wire shape exactly: emits carry the syncId
-            // spread onto the outbox payload (see emitToGroups).
-            const payload =
-              typeof entry.payload === "object" && entry.payload !== null
-                ? { ...entry.payload, syncId: entry.syncId }
-                : entry.payload
-            await gate.dispatch(entry.eventType, payload)
-          }
+          // Mirror the live wire shape exactly: emits carry the syncId
+          // spread onto the outbox payload (see emitToGroups).
+          const payload =
+            typeof entry.payload === "object" && entry.payload !== null
+              ? { ...entry.payload, syncId: entry.syncId }
+              : entry.payload
+          await gate.dispatch(entry.eventType, payload)
           cursorStore.advance(entry.syncId)
           appliedThrough = BigInt(entry.syncId)
           cursor = entry.syncId
@@ -1135,7 +1258,6 @@ export class SyncEngine {
           cursorAfter: cursor,
           head,
           fetched,
-          skipped,
           pages,
           byEventType,
           truncated: pages >= MAX_CATCHUP_PAGES,
@@ -1148,15 +1270,10 @@ export class SyncEngine {
       // this run was in flight, its bootstrap window is still open; leave the
       // gate paused and let that cycle's own run (chained by runCatchUp) do
       // the splice. Buffered events at or below the applied position were
-      // already applied from the log — except legacy counter events, which
-      // only ever apply via live delivery and so splice regardless of
-      // position.
+      // already applied from the log.
       if (!this.isDestroyed && this.catchUpCycle === cycle) {
         const through = appliedThrough
-        await gate.resume(
-          (eventType, syncId, payload) =>
-            through === null || syncId > through || isLegacyUnreadCounterEntry(eventType, payload)
-        )
+        await gate.resume((_eventType, syncId) => through === null || syncId > through)
       }
     }
   }

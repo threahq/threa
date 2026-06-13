@@ -12,10 +12,33 @@ export interface EnclaveConfig {
   /** Heartbeat interval. Backend's staleness window is 2min, so 30s keeps us with 3 retries of grace. */
   heartbeatIntervalMs: number
   /**
-   * Idle claim-poll interval (§2.7 pull transport) — the turn-start latency
-   * floor when no work is flowing. A winning claim re-polls immediately.
+   * Minimum spacing between claim-poll *starts* when no work is flowing. With
+   * long-poll on (the common case) the backend holds each poll open longer than
+   * this, so polls run back-to-back and this never gates; it only takes effect
+   * as the idle interval when the backend answers fast (no long-poll support) or
+   * a poll errors, keeping the loop off a hot path.
    */
   claimPollIntervalMs: number
+  /**
+   * Long-poll budget (§2.7 wake-up nudge): how long the backend may hold a claim
+   * poll open waiting for new work before answering 204. Kept under the claim
+   * request timeout so the server always responds first; the backend also clamps
+   * it to its own ceiling. (A backend that predates long-poll treats it as an
+   * unknown field and answers immediately, which the loop's spacing absorbs.)
+   */
+  claimLongPollMs: number
+  /**
+   * Per-instance ceiling on concurrently-running turns. Turns run detached, so
+   * without a cap a backlog would let one box claim unboundedly — each in-flight
+   * turn pins its history plus inline attachment ciphertext (tens of MB) in
+   * memory and burns OpenRouter spend. At capacity the claim loop stops claiming
+   * until a turn settles. Scaling stays "run more replicas".
+   *
+   * Default 8 is a conservative ceiling for a small instance: at tens of MB
+   * pinned per in-flight turn, 8 keeps peak memory in the low hundreds of MB.
+   * Raise it on larger boxes; lower it under memory pressure.
+   */
+  maxConcurrentSessions: number
   /** Source commit the image was built from, surfaced via /attestation. */
   sourceCommitSha: string
   /** Build hash of the running image, surfaced via /attestation. */
@@ -32,6 +55,27 @@ export interface EnclaveConfig {
   tavilyApiKey?: string
 }
 
+/**
+ * Resolve an optional positive-integer env var. Unset (or empty) uses
+ * `fallback`; a value that is set but not a positive integer throws rather than
+ * silently degrading to the default — a malformed override is a deployment
+ * mistake the operator should see at boot, not a quietly-ignored setting
+ * (INV-11), and `loadEnclaveConfig` already throws for missing required vars.
+ *
+ * The motivating bug: `Number(env) || fallback` is truthy for a negative value,
+ * so `ENCLAVE_CLAIM_POLL_INTERVAL_MS=-5` would pass straight to setTimeout
+ * (clamped to 0) and turn the idle claim poll into a hot loop.
+ */
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw === "") return fallback
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`${name} must be a positive integer, got: ${raw}`)
+  }
+  return n
+}
+
 export function loadEnclaveConfig(): EnclaveConfig {
   const required = ["ENCLAVE_INTERNAL_API_KEY", "BACKEND_BASE_URL", "OPENROUTER_API_KEY"]
   const missing = required.filter((k) => !process.env[k])
@@ -40,11 +84,13 @@ export function loadEnclaveConfig(): EnclaveConfig {
   }
 
   return {
-    port: Number(process.env.PORT) || 3011,
+    port: positiveIntEnv("PORT", 3011),
     backendBaseUrl: process.env.BACKEND_BASE_URL!.replace(/\/$/, ""),
     internalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY!,
-    heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
-    claimPollIntervalMs: Number(process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS) || 1_500,
+    heartbeatIntervalMs: positiveIntEnv("ENCLAVE_HEARTBEAT_INTERVAL_MS", 30_000),
+    claimPollIntervalMs: positiveIntEnv("ENCLAVE_CLAIM_POLL_INTERVAL_MS", 1_500),
+    claimLongPollMs: positiveIntEnv("ENCLAVE_CLAIM_LONG_POLL_MS", 25_000),
+    maxConcurrentSessions: positiveIntEnv("ENCLAVE_MAX_CONCURRENT_SESSIONS", 8),
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,

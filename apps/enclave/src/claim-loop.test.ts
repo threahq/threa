@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
-import { claimOnce } from "./claim-loop"
+import { claimOnce, startClaimLoop } from "./claim-loop"
 
 const config: EnclaveConfig = {
   port: 3011,
@@ -10,6 +10,8 @@ const config: EnclaveConfig = {
   internalApiKey: "enclave-secret",
   heartbeatIntervalMs: 30_000,
   claimPollIntervalMs: 1_500,
+  claimLongPollMs: 25_000,
+  maxConcurrentSessions: 8,
   sourceCommitSha: "unknown",
   buildHash: "unknown",
   openRouterApiKey: "sk-test",
@@ -56,6 +58,7 @@ function stubFetch(captured: Captured, status: number, body?: unknown): void {
 afterEach(() => {
   globalThis.fetch = originalFetch
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe("claimOnce", () => {
@@ -68,7 +71,8 @@ describe("claimOnce", () => {
 
     expect(captured.url).toBe("https://backend.internal/internal/enclave-runtimes/claims")
     expect(captured.headers?.[INTERNAL_API_KEY_HEADER]).toBe("enclave-secret")
-    expect(captured.body).toEqual({ keyId: "eik_01" })
+    // Carries the long-poll budget so the backend parks the poll on the nudge.
+    expect(captured.body).toEqual({ keyId: "eik_01", waitMs: 25_000 })
     expect(result.claimed).toBe(false)
     expect(runSession).not.toHaveBeenCalled()
   })
@@ -128,6 +132,23 @@ describe("claimOnce", () => {
     expect(runSession).not.toHaveBeenCalled()
   })
 
+  it("does not claim at the per-instance concurrency ceiling, leaving the turn for a free slot", async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }))
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    const runSession = vi.fn(async () => {})
+
+    const result = await claimOnce({
+      config: { ...config, maxConcurrentSessions: 2 },
+      keyPair,
+      inFlight: new Set(["session_a", "session_b"]),
+      runSession,
+    })
+
+    expect(result.claimed).toBe(false)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(runSession).not.toHaveBeenCalled()
+  })
+
   it("treats a tombstoned registration (404) as no work, leaving re-registration to the heartbeat", async () => {
     stubFetch({ url: null, headers: null, body: null }, 404)
     const runSession = vi.fn(async () => {})
@@ -136,5 +157,59 @@ describe("claimOnce", () => {
 
     expect(result.claimed).toBe(false)
     expect(runSession).not.toHaveBeenCalled()
+  })
+})
+
+describe("startClaimLoop", () => {
+  it("at capacity, idles for the poll interval instead of busy-spinning, then resumes when a slot frees", async () => {
+    vi.useFakeTimers()
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }))
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    const inFlight = new Set(["session_a", "session_b"])
+
+    const loop = startClaimLoop({
+      config: { ...config, maxConcurrentSessions: 2 },
+      keyPair,
+      inFlight,
+      runSession: vi.fn(async () => {}),
+    })
+
+    // The first tick runs on start; at capacity it must not poll, and must not
+    // hot-loop — advancing nearly a full interval still triggers no claim.
+    await vi.advanceTimersByTimeAsync(config.claimPollIntervalMs - 1)
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    // A turn settles; the next idle tick finds a free slot and claims.
+    inFlight.delete("session_a")
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    loop.stop()
+  })
+
+  it("re-polls immediately after a long-poll the backend held open, staying parked on the nudge", async () => {
+    vi.useFakeTimers()
+    let resolveFetch!: (res: Response) => void
+    const fetchSpy = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve
+        })
+    )
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+    const loop = startClaimLoop({ config, keyPair, inFlight: new Set(), runSession: vi.fn(async () => {}) })
+
+    // First poll is in flight; the backend holds it open past the idle interval.
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(config.claimPollIntervalMs + 100)
+    resolveFetch(new Response(null, { status: 204 }))
+
+    // The held poll already covered the spacing, so the next one fires now — no
+    // extra idle wait — rather than sitting out another full interval.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
+
+    loop.stop()
   })
 })

@@ -1,11 +1,9 @@
 import { Navigate, useParams, Link } from "react-router-dom"
-import { ArrowLeft, Bookmark } from "lucide-react"
+import { Bookmark } from "lucide-react"
 import { toast } from "sonner"
 import { SAVED_STATUSES } from "@threa/types"
-import { buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { cn } from "@/lib/utils"
 import { useSavedList, useUpdateSaved, useDeleteSaved } from "@/hooks"
 import { useSuggestedCount } from "@/hooks/use-saved-suggestions"
 import { SavedItem } from "@/components/saved/saved-item"
@@ -13,7 +11,7 @@ import { SavedEmpty } from "@/components/saved/saved-empty"
 import { SavedSkeleton } from "@/components/saved/saved-skeleton"
 import { SavedQuickAdd } from "@/components/saved/saved-quick-add"
 import { SuggestedTab } from "@/components/saved/suggested-tab"
-import { SidebarToggle } from "@/components/layout"
+import { PageHeaderTabs } from "@/components/layout"
 import type { SavedStatus } from "@threa/types"
 
 // "suggested" is a view, not a saved status — it reads from a separate data
@@ -154,28 +152,23 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center justify-between border-b px-4 gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <SidebarToggle location="page" />
-          <Link
-            to={`/w/${workspaceId}`}
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-            aria-label="Back to workspace"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div className="flex items-center gap-2 min-w-0">
-            <Bookmark className="h-5 w-5 text-muted-foreground shrink-0" />
-            <h1 className="font-semibold truncate">Saved</h1>
-          </div>
-        </div>
-
-        <SavedTabs
-          tabs={SAVED_TABS.map((t) => (t.value === "suggested" ? { ...t, badge: suggestedCount } : t))}
-          value={tab}
-          tabHref={tabHref}
-        />
-      </header>
+      <PageHeaderTabs
+        backTo={`/w/${workspaceId}`}
+        icon={Bookmark}
+        title="Saved"
+        value={tab}
+        tabs={SAVED_TABS.map((t) => ({
+          value: t.value,
+          label: t.label,
+          href: tabHref(t.value),
+          badge:
+            t.value === "suggested" && suggestedCount > 0 ? (
+              <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-600 tabular-nums">
+                {suggestedCount}
+              </span>
+            ) : undefined,
+        }))}
+      />
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
         <main className="py-1">

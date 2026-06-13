@@ -1,5 +1,6 @@
 import type { LanguageModel, ModelMessage } from "ai"
 import { ulid } from "ulid"
+import { logger as baseLogger } from "@threa/agent-runtime/logger"
 import {
   base64ToBytes,
   buildMessageAad,
@@ -16,6 +17,7 @@ import {
 } from "@threa/crypto"
 import { AgentToolNames } from "@threa/types"
 import type {
+  EnclaveMidTurnMessage,
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   SealedReply,
@@ -34,6 +36,8 @@ import {
   formatTurnDigestsForPrompt,
   generateTurnDigest,
   parseTurnDigestStepContent,
+  type NewMessageAwareness,
+  type NewMessageInfo,
   type TurnDigestPromptEntry,
   type TurnRequest,
   type TurnSink,
@@ -63,8 +67,14 @@ import { generateTitle } from "./auto-title"
  * `EnclaveTraceObserver` seals every step the loop emits (the LLM's reasoning,
  * each tool call, each reply) under the SSK and streams it back, so the owner
  * sees Ariadne's work in real time without the server ever reading it.
- * Durability and mid-turn reconsideration land in later slices.
+ *
+ * Mid-turn messages reach the loop by pulling (UX-12): when `pollNewMessages` is
+ * wired, the turn's interjection edge opens each sealed message that landed since
+ * its boundary with the SSK it already holds, so a fast follow-up is reconsidered
+ * in flight rather than only caught up after completion.
  */
+
+const logger = baseLogger.child({ name: "enclave-interjection" })
 
 /** Marks a caller/data fault so the Express layer can answer 400 instead of 500. */
 export class InvokeError extends Error {}
@@ -108,6 +118,16 @@ export interface EnclaveTurnDeps {
    */
   abortSignal?: AbortSignal
   /**
+   * Mid-turn interjection pull (UX-12): fetch the sealed messages that landed
+   * since `afterSequence` so the loop can reconsider a draft when new context
+   * arrives mid-turn, instead of only catching up after completion. When wired,
+   * the turn's `newMessages` sink becomes a real provider that opens each row
+   * with the SSK the enclave already holds; when omitted, the enclave declares
+   * interjection unsupported (the pre-poll behavior) and the loop runs straight
+   * through.
+   */
+  pollNewMessages?: (afterSequence: bigint) => Promise<EnclaveMidTurnMessage[]>
+  /**
    * Web-tool configuration. Absent or keyless degrades gracefully: no Tavily key
    * means no `web_search` (URL reads + research still work). Omitting `tools`
    * entirely runs the loop with `read_url` + research only.
@@ -124,6 +144,7 @@ export async function runEnclaveTurn(
   request: EnclaveSessionAssignment
 ): Promise<EnclaveSessionResult> {
   const { keyPair, rawChat, onMessage, onStepStarted, onStep, onSubstep, onSealedName, tools, abortSignal } = deps
+  const { pollNewMessages } = deps
 
   // Recover the SSK for every generation the backend wrapped to us. The wrap AAD
   // binds to our own keyId — a wrap addressed elsewhere simply won't open.
@@ -306,12 +327,21 @@ export async function runEnclaveTurn(
       return { messageId }
     },
     observers: [traceObserver, digestCollector],
-    // Interjection is declared unsupported, not silently omitted (UX-12 / §2.2.4):
-    // the enclave reads sealed history once at assignment time and has no channel
-    // to see messages that land mid-turn, so the loop's reconsider path has no
-    // provider here. The reason rides the seam for rendering; the sealed mid-turn
-    // pull (§2.7) is the future "implement" alternative.
-    newMessages: declaredUnsupported("Ariadne can't see mid-turn messages in encrypted scratchpads"),
+    // Interjection (UX-12 / §2.7): when the host wired the mid-turn pull, give the
+    // loop a real provider that opens each sealed message arriving mid-turn with
+    // the SSK we already hold — the same reconsider seam the in-process companion
+    // uses. Without the pull we declare it unsupported, not silently omit it
+    // (§2.2.4): the reason rides the seam for rendering.
+    newMessages: pollNewMessages
+      ? buildInterjectionAwareness({
+          sskByGeneration,
+          refsById,
+          streamId: request.streamId,
+          sessionId: request.sessionId,
+          replySenderId: request.reply.senderId,
+          pollNewMessages,
+        })
+      : declaredUnsupported("Ariadne can't see mid-turn messages in encrypted scratchpads"),
     // Hand ONLY the long-running research sub-loop the session's cancel signal so
     // a user "Stop research" aborts it gracefully (partial findings, the turn
     // still replies). Gated by tool name exactly like the in-process path, so a
@@ -325,7 +355,7 @@ export async function runEnclaveTurn(
   }
 
   // Per turn because the enclave AI is per turn (it accumulates THIS turn's usage).
-  await new EnclaveTurnDriver({ ai }).runTurn(turnRequest, turnSink)
+  const loopResult = await new EnclaveTurnDriver({ ai }).runTurn(turnRequest, turnSink)
 
   // Turn digest (C-1): condense the turn's tool work with one cheap completion
   // over the same pinned model, seal it as a trailing turn_digest step (the
@@ -376,6 +406,14 @@ export async function runEnclaveTurn(
     messageIds,
     model: request.model,
     usage: { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, cost: usage.cost },
+    // Report the boundary the loop advanced to via the interjection pull so the
+    // backend's post-completion catch-up skips a message this turn already
+    // addressed. The awareness seeds at 0 (the backend clamps the floor to the
+    // trigger), so a turn that saw nothing past its trigger reports nothing —
+    // byte-identical to before the poll existed.
+    ...(loopResult.lastProcessedSequence > 0n
+      ? { lastProcessedSequence: loopResult.lastProcessedSequence.toString() }
+      : {}),
   }
 }
 
@@ -452,6 +490,84 @@ function withAttachmentNote(contentMarkdown: string, refs: AttachmentRef[]): str
   if (refs.length === 0) return contentMarkdown
   const note = refs.map((r) => `[Attached: "${r.filename}" (${r.attachmentId})]`).join("\n")
   return contentMarkdown.length > 0 ? `${contentMarkdown}\n\n${note}` : note
+}
+
+/**
+ * The enclave's mid-turn interjection provider (UX-12), mirroring the in-process
+ * companion's `NewMessageAwareness` but over sealed input: `check` pulls the
+ * messages that landed since the loop's boundary and opens each with the SSK the
+ * enclave already holds (skipping any generation it has no wrap for, exactly as
+ * history opening does), so no new key machinery is involved. `updateSequence`
+ * and `awaitAttachments` are no-ops — the enclave never persists a mid-turn
+ * cursor (the loop holds the boundary and reports it at `/complete`), and it
+ * injects decrypted markdown with attachment notes rather than awaiting
+ * server-side extraction it can't read. The boundary seeds at 0: the backend
+ * clamps the floor to the trigger, so pre-trigger history is never replayed.
+ */
+function buildInterjectionAwareness(params: {
+  sskByGeneration: Map<number, Uint8Array>
+  refsById: Map<string, AttachmentRef>
+  streamId: string
+  sessionId: string
+  replySenderId: string
+  pollNewMessages: (afterSequence: bigint) => Promise<EnclaveMidTurnMessage[]>
+}): NewMessageAwareness {
+  const { sskByGeneration, refsById, streamId, sessionId, replySenderId, pollNewMessages } = params
+  return {
+    streamId,
+    sessionId,
+    // Passed to `check` as `excludeAuthorId`; the backend also drops the persona's
+    // own replies, so excluding it here is belt-and-suspenders.
+    personaId: replySenderId,
+    lastProcessedSequence: 0n,
+    check: async (_streamId, sinceSequence) => {
+      // A transient pull failure (network blip, 5xx) must not kill an otherwise
+      // healthy turn — unlike the in-process companion's `check`, this one crosses
+      // an HTTP boundary mid-turn. Treat the boundary as "nothing new" and let the
+      // next poll retry the same cursor; any message missed this way is still
+      // recovered by the post-completion catch-up, so nothing is permanently
+      // dropped. Scrubbed classification only — the enclave never logs payloads.
+      let rows: EnclaveMidTurnMessage[]
+      try {
+        rows = await pollNewMessages(sinceSequence)
+      } catch (err) {
+        const errorName = err instanceof Error ? err.name : typeof err
+        logger.warn({ errorName }, "Interjection poll failed; continuing without mid-turn messages")
+        return []
+      }
+      const infos: NewMessageInfo[] = []
+      for (const row of rows) {
+        const ssk = sskByGeneration.get(row.envelope.keyGeneration)
+        if (!ssk) continue // no wrap for this generation — can't open, skip
+        try {
+          const raw = await openMessageAsString({
+            key: ssk,
+            envelope: row.envelope,
+            ciphertext: base64ToBytes(row.ciphertext),
+          })
+          const { contentMarkdown, attachmentRefs } = parseSealedPayload(raw)
+          for (const ref of attachmentRefs) refsById.set(ref.attachmentId, ref)
+          infos.push({
+            sequence: BigInt(row.sequence),
+            messageId: row.messageId,
+            changeType: "message_created",
+            content: withAttachmentNote(contentMarkdown, attachmentRefs),
+            authorId: row.authorId,
+            authorName: row.authorName,
+            authorType: row.authorType,
+            createdAt: row.createdAt,
+          })
+        } catch {
+          // An unopenable/malformed row is skipped, never fatal — parity with how
+          // history items are opened above.
+          continue
+        }
+      }
+      return infos
+    },
+    updateSequence: async () => {},
+    awaitAttachments: async () => {},
+  }
 }
 
 async function unwrap(keyPair: EnclaveKeyPair, streamId: string, wrap: EnclaveSskWrap): Promise<Uint8Array> {

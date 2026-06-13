@@ -746,18 +746,53 @@ minted per-claim. The enclave's inbound listener is metadata-only
 validation, the forwarder, and the `ENCLAVE_INVOKE` queue are deleted.
 Cancellation collapsed into the session heartbeat (`abort_requested_at` on
 `agent_sessions`, returned as `{ abort }`), closing the N-3 divergence on
-the abort side. Still open from this section: the **interjection poll**
-(observation 1, UX-12) — mid-turn messages still reach the enclave only via
-the post-completion catch-up, which now reopens the suppressed message's own
-invocation; and the wake-up nudge (the idle poll interval, default 1.5s, is
-the turn-start latency floor).
+the abort side.
+
+**The interjection poll (observation 1, UX-12) has now shipped too.** The
+enclave's sink no longer declares interjection unsupported: it provides a real
+`NewMessageAwareness` that, at each reconsider boundary, calls
+`GET /internal/enclave-runtimes/sessions/:id/messages?after=<seq>` and opens the
+sealed rows with the SSK it already holds — no new key machinery, the same
+reconsider seam the in-process companion uses. The pull's floor is clamped
+server-side to the trigger sequence (pre-trigger history is never replayed), and
+the loop reports the boundary it advanced to on `/complete` (`lastProcessedSequence`)
+so the post-completion catch-up skips a follow-up the reply already addressed
+instead of re-triggering a redundant turn. Scope: newly created messages only (a
+mid-turn edit/delete of an older row isn't an interjection; the next turn re-reads
+settled history); mid-turn attachment _bytes_ aren't shipped (the message's
+markdown + an attachment note are injected, matching how the companion injects
+mid-turn context).
+
+**The wake-up nudge has now shipped too**, collapsing the turn-start latency
+floor from the idle poll interval to ~immediate. The enclave stays outbound-only
+(§2.7 deleted its inbound listener), so the nudge is a **long-poll on the
+existing claim endpoint**, not a push: the instance sends a `waitMs` budget and
+the backend holds `POST /internal/enclave-runtimes/claims` open until work
+appears or the budget lapses. `enqueueEnclaveInvocation` fires a best-effort
+`NOTIFY enclave_invocation_available`; one process-wide LISTEN connection
+(`EnclaveClaimNudge`, mirroring `OutboxDispatcher`'s keepalive + reconnect) fans
+each notification out to the parked long-polls, which re-attempt their keyed
+`FOR UPDATE SKIP LOCKED` claim — any instance may react, first to claim wins, no
+DB connection is held across the wait (INV-41). The durable work item is the
+`enclave_invocations` row and the long-poll's timeout fetches it directly, so a
+missed nudge degrades only to that timeout: the nudge is an optimization, not a
+dependency. The enclave loop holds a minimum spacing between poll _starts_, so a
+held long-poll re-polls immediately (continuous coverage) while a fast answer —
+a backend without long-poll, or an error — still waits out the idle interval,
+which keeps it forward/backward compatible across a rolling deploy. No migration,
+no schema change.
 
 ## 2.8 Open questions
 
 1. **Enclave interjection: implement or declare?** Implementing sealed
    mid-turn message push is real work (new callback direction, wrap handling);
    declaring it unsupported is honest and cheap. Recommend: declare in Phase 0
-   timeframe, decide on implementation after the contract lands.
+   timeframe, decide on implementation after the contract lands. _Resolved as
+   implement (the pull, not a push): the enclave's interjection edge is a real
+   `NewMessageAwareness` over `GET .../sessions/:id/messages?after=<seq>`,
+   opening sealed rows with the SSK it already holds — no new wrap machinery,
+   no new callback direction beyond the one pull. See the §2.7 status note. The
+   `declaredUnsupported` fallback remains for a host that doesn't wire the pull._
 2. **Context handle shape for bots (N-4):** inline last-N history in the
    invocation vs. a fetch-back ref. Inline is simpler and matches the
    enclave's assignment shape (30 messages); a ref scales better and keeps
