@@ -489,7 +489,7 @@ interface MoreDividerProps {
  * flush with stream items via matching horizontal padding so it feels like a
  * peer of the list, not a separate control.
  */
-function MoreDivider({ isOpen, hiddenCount, onToggle }: MoreDividerProps) {
+export function MoreDivider({ isOpen, hiddenCount, onToggle }: MoreDividerProps) {
   const Chevron = isOpen ? ChevronUp : ChevronDown
   const label = isOpen ? "less" : `${hiddenCount} more`
   return (
