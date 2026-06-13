@@ -10,6 +10,7 @@ const config: EnclaveConfig = {
   internalApiKey: "enclave-secret",
   heartbeatIntervalMs: 30_000,
   claimPollIntervalMs: 1_500,
+  maxConcurrentSessions: 8,
   sourceCommitSha: "unknown",
   buildHash: "unknown",
   openRouterApiKey: "sk-test",
@@ -126,6 +127,26 @@ describe("claimOnce", () => {
 
     expect(result.claimed).toBe(false)
     expect(runSession).not.toHaveBeenCalled()
+  })
+
+  it("does not claim at the per-instance concurrency ceiling, leaving the turn for a free slot", async () => {
+    const captured: Captured = { url: null, headers: null, body: null }
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }))
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    const runSession = vi.fn(async () => {})
+    const atCapacity = new Set(["session_a", "session_b"])
+
+    const result = await claimOnce({
+      config: { ...config, maxConcurrentSessions: 2 },
+      keyPair,
+      inFlight: atCapacity,
+      runSession,
+    })
+
+    expect(result.claimed).toBe(false)
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(runSession).not.toHaveBeenCalled()
+    expect(captured.url).toBeNull()
   })
 
   it("treats a tombstoned registration (404) as no work, leaving re-registration to the heartbeat", async () => {

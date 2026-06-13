@@ -65,15 +65,16 @@ What the enclave does not do:
 
 ## Environment
 
-| Variable                         | Required             | Purpose                                                                                                                                                                                  |
-| -------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PORT`                           | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation` (read-only metadata — there are no content routes).                                                                                |
-| `BACKEND_BASE_URL`               | yes                  | Regional backend base URL — target for register/heartbeat/revoke, the claim poll, and the per-session heartbeat/messages/complete/fail callbacks.                                        |
-| `ENCLAVE_INTERNAL_API_KEY`       | yes                  | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY` and must NOT equal the shared `INTERNAL_API_KEY`. |
-| `OPENROUTER_API_KEY`             | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                                                                                                |
-| `OPENROUTER_BASE_URL`            | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                                                   |
-| `ENCLAVE_HEARTBEAT_INTERVAL_MS`  | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                                                          |
-| `ENCLAVE_CLAIM_POLL_INTERVAL_MS` | no (default `1500`)  | Idle claim-poll interval — the turn-start latency floor when no work is flowing (a win re-polls immediately).                                                                            |
+| Variable                          | Required             | Purpose                                                                                                                                                                                  |
+| --------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                            | no (default `3011`)  | Listen port for `/pubkey`, `/healthz`, `/attestation` (read-only metadata — there are no content routes).                                                                                |
+| `BACKEND_BASE_URL`                | yes                  | Regional backend base URL — target for register/heartbeat/revoke, the claim poll, and the per-session heartbeat/messages/complete/fail callbacks.                                        |
+| `ENCLAVE_INTERNAL_API_KEY`        | yes                  | Dedicated secret for the enclave↔backend channel (`/internal/enclave-runtimes/*`). Must match the backend's `ENCLAVE_INTERNAL_API_KEY` and must NOT equal the shared `INTERNAL_API_KEY`. |
+| `OPENROUTER_API_KEY`              | yes                  | The enclave's only outbound LLM credential; calls OpenRouter with zero-retention routing.                                                                                                |
+| `OPENROUTER_BASE_URL`             | no                   | Override OpenRouter base URL (default `https://openrouter.ai/api/v1`).                                                                                                                   |
+| `ENCLAVE_HEARTBEAT_INTERVAL_MS`   | no (default `30000`) | Heartbeat cadence; the backend's staleness window is 2 minutes.                                                                                                                          |
+| `ENCLAVE_CLAIM_POLL_INTERVAL_MS`  | no (default `1500`)  | Idle claim-poll interval — the turn-start latency floor when no work is flowing (a win re-polls immediately).                                                                            |
+| `ENCLAVE_MAX_CONCURRENT_SESSIONS` | no (default `8`)     | Per-instance ceiling on concurrently-running turns. At capacity the claim loop stops claiming until a turn settles, bounding per-box memory and OpenRouter spend. Scale with replicas.   |
 
 ## Egress allow-list (operational)
 

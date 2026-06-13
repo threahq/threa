@@ -30,3 +30,36 @@ describe("loadEnclaveConfig credential resolution (Phase 2.4c, E2EE-22)", () => 
     expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_INTERNAL_API_KEY")
   })
 })
+
+describe("loadEnclaveConfig numeric guards", () => {
+  function withKey() {
+    setBaseEnv()
+    process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+  }
+
+  it("accepts a valid positive override", () => {
+    withKey()
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "3000"
+
+    expect(loadEnclaveConfig().claimPollIntervalMs).toBe(3000)
+  })
+
+  it("falls back rather than passing a negative interval to setTimeout (hot-loop guard)", () => {
+    withKey()
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "-5"
+
+    expect(loadEnclaveConfig().claimPollIntervalMs).toBe(1_500)
+  })
+
+  it("falls back on zero, non-integer, and non-numeric values", () => {
+    withKey()
+    process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS = "0"
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "1.5"
+    process.env.ENCLAVE_MAX_CONCURRENT_SESSIONS = "lots"
+
+    const config = loadEnclaveConfig()
+    expect(config.heartbeatIntervalMs).toBe(30_000)
+    expect(config.claimPollIntervalMs).toBe(1_500)
+    expect(config.maxConcurrentSessions).toBe(8)
+  })
+})

@@ -14,8 +14,9 @@ const logger = baseLogger.child({ name: "enclave-claim-loop" })
  *
  * Pacing: a winning claim polls again immediately (drain a backlog without
  * waiting out the interval); an empty poll (204) or an error waits
- * `claimPollIntervalMs`. Sessions run detached — the loop keeps claiming
- * while turns are in flight, same concurrency the push transport allowed.
+ * `claimPollIntervalMs`. Sessions run detached — the loop keeps claiming while
+ * turns are in flight, up to `maxConcurrentSessions`; at that ceiling it stops
+ * claiming until a turn settles, bounding per-box memory and OpenRouter spend.
  */
 
 /** Claim responses carry the full assignment (inline attachment ciphertext can be tens of MB), so allow a slow transfer. */
@@ -41,6 +42,15 @@ export interface ClaimLoopDeps {
  */
 export async function claimOnce(deps: ClaimLoopDeps): Promise<{ claimed: boolean }> {
   const { config, keyPair, inFlight, runSession } = deps
+
+  // Per-instance ceiling. Turns run detached, so at capacity we stop claiming
+  // rather than pile on — each in-flight turn pins its history + inline
+  // attachment ciphertext (tens of MB) and burns OpenRouter spend. Reported as
+  // "no work won" so the loop settles to the idle interval; a settling turn
+  // frees the slot for the next poll. The loop serializes claimOnce, so this
+  // check-then-add never overshoots the cap.
+  if (inFlight.size >= config.maxConcurrentSessions) return { claimed: false }
+
   const res = await fetch(`${config.backendBaseUrl}/internal/enclave-runtimes/claims`, {
     method: "POST",
     headers: {
