@@ -83,3 +83,31 @@ describe("getGithubClient unauthenticated fallback", () => {
     expect(client).toBeNull()
   })
 })
+
+describe("getAvailableToolCategories", () => {
+  it("returns web + workspace only when no integrations are enabled, without touching the DB", async () => {
+    const service = makeService()
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace"])
+  })
+
+  it("includes github when its integration is enabled and connected (active)", async () => {
+    const service = makeServiceWithRow({
+      id: "wsi_1",
+      workspace_id: "ws_1",
+      provider: "github",
+      status: "active",
+      credentials: {},
+      metadata: {},
+      installed_by: "user_1",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace", "github"])
+  })
+
+  it("omits github when enabled for the deployment but not connected for the workspace", async () => {
+    const pool = { query: async () => ({ rows: [] }) } as unknown as Pool
+    const service = new WorkspaceIntegrationService({ pool, github: githubEnabled, linear: linearDisabled })
+    expect(await service.getAvailableToolCategories("ws_1")).toEqual(["web", "workspace"])
+  })
+})

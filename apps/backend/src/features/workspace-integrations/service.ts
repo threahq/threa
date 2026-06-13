@@ -15,6 +15,7 @@ import {
   type LinearAuthorizedUser,
   type LinearRateLimit,
   type LinearWorkspaceIntegration,
+  type ToolPrivacyCategory,
 } from "@threa/types"
 import {
   decryptJson,
@@ -181,6 +182,27 @@ export class WorkspaceIntegrationService {
 
   isLinearEnabled(): boolean {
     return this.deps.linear.enabled
+  }
+
+  /**
+   * The tool-privacy categories whose backing tools are actually available in
+   * this workspace, for the per-stream tool-policy UI to show only relevant
+   * toggles. `web` and `workspace` primitives are always present; `github` /
+   * `linear` only when their integration is enabled for the deployment AND
+   * connected (active) for the workspace. `messaging` is omitted — it is always
+   * allowed and never offered as a toggle.
+   */
+  async getAvailableToolCategories(workspaceId: string): Promise<ToolPrivacyCategory[]> {
+    const categories: ToolPrivacyCategory[] = ["web", "workspace"]
+    if (this.isGitHubEnabled()) {
+      const github = await this.getGithubIntegration(workspaceId)
+      if (github?.status === WorkspaceIntegrationStatuses.ACTIVE) categories.push("github")
+    }
+    if (this.isLinearEnabled()) {
+      const linear = await this.getLinearIntegration(workspaceId)
+      if (linear?.status === WorkspaceIntegrationStatuses.ACTIVE) categories.push("linear")
+    }
+    return categories
   }
 
   async getGithubIntegration(workspaceId: string): Promise<GitHubWorkspaceIntegration | null> {

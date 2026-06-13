@@ -4,13 +4,17 @@ import userEvent from "@testing-library/user-event"
 import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type StreamService } from "@/contexts"
-import type { ToolPrivacyPolicy } from "@threa/types"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import type { ToolPrivacyCategory, ToolPrivacyPolicy } from "@threa/types"
 import { ToolPolicyPicker } from "./tool-policy-picker"
 
 const updateToolPolicy =
   vi.fn<(workspaceId: string, streamId: string, policy: ToolPrivacyPolicy) => Promise<ToolPrivacyPolicy>>()
 
-function renderPicker(value: ToolPrivacyPolicy) {
+function renderPicker(
+  value: ToolPrivacyPolicy,
+  opts: { configuredCategories?: ToolPrivacyCategory[]; e2e?: boolean } = {}
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   function Wrapper({ children }: { children: ReactNode }) {
     return createElement(
@@ -18,11 +22,20 @@ function renderPicker(value: ToolPrivacyPolicy) {
       { client: queryClient },
       createElement(ServicesProvider, {
         services: { streams: { updateToolPolicy } as unknown as StreamService },
-        children,
+        children: createElement(TooltipProvider, null, children),
       })
     )
   }
-  return render(<ToolPolicyPicker workspaceId="ws_1" streamId="stream_sp" value={value} />, { wrapper: Wrapper })
+  return render(
+    <ToolPolicyPicker
+      workspaceId="ws_1"
+      streamId="stream_sp"
+      value={value}
+      configuredCategories={opts.configuredCategories}
+      e2e={opts.e2e ?? false}
+    />,
+    { wrapper: Wrapper }
+  )
 }
 
 describe("ToolPolicyPicker", () => {
@@ -61,5 +74,21 @@ describe("ToolPolicyPicker", () => {
     await userEvent.click(screen.getByRole("switch", { name: /restrict tool access/i }))
 
     expect(updateToolPolicy).toHaveBeenCalledWith("ws_1", "stream_sp", null)
+  })
+
+  it("hides categories the workspace has not configured (e.g. unconnected GitHub/Linear)", () => {
+    renderPicker([], { configuredCategories: ["web", "workspace"] })
+
+    expect(screen.getByRole("checkbox", { name: /web/i })).toBeInTheDocument()
+    expect(screen.getByRole("checkbox", { name: /workspace/i })).toBeInTheDocument()
+    expect(screen.queryByRole("checkbox", { name: /github/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("checkbox", { name: /linear/i })).not.toBeInTheDocument()
+  })
+
+  it("disables non-web categories on an encrypted scratchpad (enclave is web-only)", () => {
+    renderPicker([], { configuredCategories: ["web", "workspace"], e2e: true })
+
+    expect(screen.getByRole("checkbox", { name: /web/i })).not.toBeDisabled()
+    expect(screen.getByRole("checkbox", { name: /workspace/i })).toBeDisabled()
   })
 })

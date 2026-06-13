@@ -144,6 +144,7 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
                     workspaceId={workspaceId}
                     stream={resolvedStream}
                     allowedToolCategories={bootstrap?.allowedToolCategories ?? null}
+                    configuredToolCategories={bootstrap?.configuredToolCategories}
                     canManageToolPolicy={
                       resolvedStream.type === StreamTypes.SCRATCHPAD && resolvedStream.createdBy === currentUserId
                     }

@@ -7,6 +7,7 @@ import type { ActivityService } from "../activity"
 import type { LinkPreviewService } from "../link-previews"
 import type { BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
+import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import type { StreamEvent } from "./event-repository"
 import type { EventType, JSONContent, LinkPreviewSummary, StreamType, E2eKeyWrapsResponse } from "@threa/types"
 import {
@@ -321,6 +322,7 @@ interface Dependencies {
   linkPreviewService: LinkPreviewService
   botRuntimeService: BotRuntimeService
   commandAvailabilityService: CommandAvailabilityService
+  workspaceIntegrationService: WorkspaceIntegrationService
 }
 
 /**
@@ -454,6 +456,7 @@ export function createStreamHandlers({
   linkPreviewService,
   botRuntimeService,
   commandAvailabilityService,
+  workspaceIntegrationService,
 }: Dependencies) {
   return {
     async list(req: Request, res: Response) {
@@ -892,12 +895,17 @@ export function createStreamHandlers({
       const contextBag = await fetchStreamBag(pool, { workspaceId, streamId, userId }, { skipAccessCheck: true })
 
       // Only scratchpads can carry a tool policy (the only surface that can set
-      // one); omit it elsewhere so the settings control renders only where it
-      // applies.
-      const allowedToolCategories =
-        stream.type === StreamTypes.SCRATCHPAD
-          ? await StreamPoliciesRepository.getToolPolicy(pool, workspaceId, stream.id)
-          : null
+      // one); omit elsewhere so the settings control renders only where it
+      // applies. `configuredToolCategories` tells the owner's picker which
+      // toggles to show — a workspace without GitHub/Linear connected never
+      // offers those categories.
+      const isScratchpad = stream.type === StreamTypes.SCRATCHPAD
+      const [allowedToolCategories, configuredToolCategories] = isScratchpad
+        ? await Promise.all([
+            StreamPoliciesRepository.getToolPolicy(pool, workspaceId, stream.id),
+            workspaceIntegrationService.getAvailableToolCategories(workspaceId),
+          ])
+        : [null, undefined]
 
       res.json({
         data: {
@@ -918,6 +926,7 @@ export function createStreamHandlers({
           activityCount: activityCounts?.totalCount ?? 0,
           contextBag,
           allowedToolCategories,
+          configuredToolCategories,
         },
       })
     },

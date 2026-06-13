@@ -249,6 +249,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     linkPreviewService,
     botRuntimeService,
     commandAvailabilityService,
+    workspaceIntegrationService,
   })
   const message = createMessageHandlers({
     pool,

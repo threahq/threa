@@ -193,6 +193,13 @@ export interface StreamBootstrap {
    * payloads still validate.
    */
   allowedToolCategories?: ToolPrivacyPolicy
+  /**
+   * Which tool categories the owner's policy picker should offer for this
+   * scratchpad: `web` and `workspace` are always present; `github` / `linear`
+   * appear only when that integration is connected for the workspace. Scratchpad
+   * bootstraps only; absent elsewhere (and on older cached payloads).
+   */
+  configuredToolCategories?: ToolPrivacyCategory[]
 }
 
 /**
