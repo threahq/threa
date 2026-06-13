@@ -19,12 +19,14 @@ the rollout sessions:
   `requiresBootstrap` for cursors below the pruned floor, so the big deletions
   (reconnect-bootstrap slimming, `usePageResumeRefresh`) lose their retention
   blocker — they still each ship as their own PR with a coverage proof.
-  `isLegacyUnreadCounterEntry` dies in two steps: a one-time content-based sweep
-  migration (`20260613083239_prune_legacy_counter_entries.sql`) removes the
-  legacy entries the guard skips — by content, not a hardcoded boundary, because
-  pure time+count retention leaves a quiet workspace's legacy rows in place
-  indefinitely (its history never exceeds the `minKeep` floor) — and then a
-  follow-up PR deletes the guard once the sweep has deployed to prod.
+  `isLegacyUnreadCounterEntry` died in two steps (both DONE): a one-time
+  content-based sweep migration (`20260613083239_prune_legacy_counter_entries.sql`)
+  removed the legacy entries the guard skips — by content, not a hardcoded
+  boundary, because pure time+count retention leaves a quiet workspace's legacy
+  rows in place indefinitely (its history never exceeds the `minKeep` floor) —
+  and then, once the sweep deployed to prod (verified by a read-only prod check:
+  zero legacy counter entries remained), a follow-up PR deleted the guard and its
+  sync-engine call sites.
 - Coverage proof method (established in #885): event type → scoping list in
   `apps/backend/src/lib/outbox/repository.ts` → delivery group
   (`delivery-groups.ts`, single source of truth for log + emit) → `sync_log`
@@ -173,10 +175,10 @@ treating such a flag as real healing — it may be dead code (labels was).
   authority, but its blocker has lifted. `sync_log` retention has shipped
   (`docs/plans/sync-v2-log-retention.md`) and the below-floor fallback now
   routes through this very `runBootstrap(true)`, so it is also the explicit
-  recovery for a pruned cursor. It stays authoritative until
-  `isLegacyUnreadCounterEntry` dies (once pre-field entries age out below the
-  floor), and it still heals the accepted #874 drift and seeds active-mode
-  read-before-stamp against this fetch. Slimming it is a follow-up PR.
+  recovery for a pruned cursor. `isLegacyUnreadCounterEntry` is now gone (its
+  sweep deployed), so that gate has lifted too; it still heals the accepted #874
+  drift and seeds active-mode read-before-stamp against this fetch. Slimming it
+  is a now-fully-unblocked follow-up PR.
 - **Per-stream reconnect delta** (`joinStreamForCatchUp` + `bootstrap?after=`):
   this _is_ the per-stream cursor mechanism, already delta-shaped. Keep.
 - **`backfillStreamGap` / `detectSequenceGap` / `computeTimelineHoles`**

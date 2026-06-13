@@ -22,13 +22,6 @@ import type { WorkspaceBootstrap } from "@threa/types"
  *   compensating event), so a plain set is the only safe apply.
  * - `unreadActivityCount` is never on the wire: it is derived as
  *   Σ activityCounts whenever an absolute apply touches activity counts.
- *
- * Events missing the absolute fields are legacy: sync-log entries that predate
- * the absolute fields. `isLegacyUnreadCounterEntry` detects them so catch-up
- * skips them (the bootstrap is their authority) while live handlers fall back
- * to the old increment/zero behavior. Such entries are bounded, not permanent:
- * they fall below the sync_log retention floor
- * (docs/plans/sync-v2-log-retention.md) and age out of catch-up.
  */
 
 export interface UnreadCounterState {
@@ -165,34 +158,5 @@ export function withCounterState(bootstrap: WorkspaceBootstrap, state: UnreadCou
     activityCounts: state.activityCounts,
     unreadActivityCount: state.unreadActivityCount,
     messageCounts: state.latestOrdinals,
-  }
-}
-
-/**
- * True when this is one of the four unread counter events AND its payload
- * lacks the absolute fields — a sync-log entry persisted before the backend
- * shipped them (or a live emit from a not-yet-upgraded backend). Catch-up
- * skips these (the cursor still advances past them; the bootstrap remains
- * their authority, INV-53) and the gate splice applies their buffered live
- * copies regardless of position, exactly as the phase-2b skip set did.
- * Non-counter event types are never legacy. These entries are bounded: they
- * fall below the sync_log retention floor (docs/plans/sync-v2-log-retention.md)
- * and age out of catch-up.
- */
-export function isLegacyUnreadCounterEntry(eventType: string, payload: unknown): boolean {
-  const p = payload as Record<string, unknown> | null | undefined
-  switch (eventType) {
-    case "stream:activity":
-      return typeof p?.messageOrdinal !== "number"
-    case "stream:read":
-      return typeof p?.lastReadOrdinal !== "number"
-    case "stream:read_all":
-      return !Array.isArray(p?.reads)
-    case "activity:created": {
-      const counts = p?.counts as Record<string, unknown> | null | undefined
-      return typeof counts?.mentionCount !== "number" || typeof counts?.activityCount !== "number"
-    }
-    default:
-      return false
   }
 }
