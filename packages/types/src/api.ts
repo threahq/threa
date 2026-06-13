@@ -745,6 +745,17 @@ export interface EnclaveSessionResult {
   messageIds: string[]
   model: string
   usage?: { promptTokens?: number; completionTokens?: number; cost?: number }
+  /**
+   * The highest stream sequence the turn's loop incorporated, as a base-10
+   * bigint string (UX-12 interjection poll). The loop seeds its boundary at the
+   * trigger and advances it each time the mid-turn pull (`GET .../messages`)
+   * hands it a newer message; reporting the final value lets the backend's
+   * post-completion catch-up skip a message the reply already addressed instead
+   * of re-triggering a redundant turn for it. Omitted (or ≤ the trigger's
+   * sequence) means the turn incorporated nothing past its trigger — the catch-up
+   * then falls back to the trigger boundary, exactly as before the poll existed.
+   */
+  lastProcessedSequence?: string
 }
 
 /**
@@ -783,6 +794,41 @@ export interface EnclaveClaimResponse {
  */
 export interface EnclaveSessionHeartbeatResponse {
   abort: boolean
+}
+
+/**
+ * One message that landed mid-turn, handed back over the enclave's interjection
+ * pull (`GET .../sessions/:id/messages?after=<seq>`, UX-12). The body is sealed —
+ * ciphertext + envelope, opened with the SSK the enclave already holds from the
+ * assignment's wraps, so no new key machinery is involved; only the routing
+ * metadata travels in clear. The sequence is a base-10 bigint string (per-stream
+ * sequences are bigints), so the enclave's loop can advance its "seen up to here"
+ * boundary and report the final value at `/complete`. The author's display name
+ * is non-secret (it already rides the assignment's trigger metadata), and lets
+ * the enclave render the same "new context arrived" trace the in-process
+ * companion does. Only newly created messages are reported — a mid-turn edit or
+ * delete of an older row isn't an interjection, and the next turn re-reads the
+ * settled history anyway.
+ */
+export interface EnclaveMidTurnMessage {
+  messageId: string
+  sequence: string
+  authorId: string
+  authorType: AuthorType
+  authorName: string
+  createdAt: string
+  ciphertext: string
+  envelope: EnclaveStreamEnvelope
+}
+
+/**
+ * Response of the enclave's interjection pull (`GET .../sessions/:id/messages`):
+ * the sealed messages that arrived after the requested sequence, oldest→newest,
+ * with the session's own persona replies excluded (the enclave must not re-inject
+ * its own output). An empty array means nothing landed since the last poll.
+ */
+export interface EnclaveMidTurnMessagesResponse {
+  messages: EnclaveMidTurnMessage[]
 }
 
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown

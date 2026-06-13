@@ -329,6 +329,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", enclaveAuth, enclaveSession.heartbeat)
     app.post("/internal/enclave-runtimes/sessions/:id/messages", enclaveAuth, enclaveSession.message)
+    app.get("/internal/enclave-runtimes/sessions/:id/messages", enclaveAuth, enclaveSession.pollMessages)
     app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", enclaveAuth, enclaveSession.sealedName)
     app.post("/internal/enclave-runtimes/sessions/:id/steps/started", enclaveAuth, enclaveSession.stepStarted)
     app.post("/internal/enclave-runtimes/sessions/:id/steps", enclaveAuth, enclaveSession.steps)

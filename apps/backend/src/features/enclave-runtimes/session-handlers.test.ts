@@ -5,7 +5,8 @@ import type { Server } from "socket.io"
 import { AuthorTypes, ENCLAVE_CALLBACK_TOKEN_HEADER } from "@threa/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
-import { AgentSessionRepository, SessionStatuses } from "../agents"
+import { AgentSessionRepository, PersonaRepository, SessionStatuses } from "../agents"
+import { UserRepository } from "../workspaces"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { OutboxRepository } from "../../lib/outbox"
@@ -161,6 +162,107 @@ describe("createEnclaveSessionHandlers.message", () => {
       e2eVersion: 2,
       accessibleStreamIds: ["stream_1"],
       clientMessageId: "enclave-reply:session_1:msg_a",
+    })
+  })
+})
+
+describe("createEnclaveSessionHandlers.pollMessages (interjection pull)", () => {
+  function getReq(id: string | undefined, after?: string): Request {
+    return {
+      params: { id },
+      query: after !== undefined ? { after } : {},
+      header: (name: string) => (name === ENCLAVE_CALLBACK_TOKEN_HEADER ? CB_TOKEN : undefined),
+    } as unknown as Request
+  }
+
+  it("404s when the session is gone", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(null)
+    const { handlers } = makeHandlers()
+    await expect(handlers.pollMessages(getReq("session_1"), fakeRes())).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("409s when the session is no longer running", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({ ...SESSION!, status: SessionStatuses.FAILED })
+    const { handlers } = makeHandlers()
+    await expect(handlers.pollMessages(getReq("session_1"), fakeRes())).rejects.toMatchObject({ status: 409 })
+  })
+
+  it("returns no messages (never replays history) when the trigger sequence can't be resolved", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    // The trigger's message_created event isn't found — no safe floor to clamp to.
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(null)
+    const list = spyOn(StreamEventRepository, "list")
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.pollMessages(getReq("session_1", "0"), res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({ messages: [] })
+    // The window is never widened to all history — we don't even list.
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  it("returns sealed rows after the trigger-clamped boundary, excluding the persona's own replies", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    // Trigger at 5; the enclave asked for messages after 3, so the floor clamps up.
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
+    const list = spyOn(StreamEventRepository, "list").mockResolvedValue([
+      {
+        sequence: 6n,
+        actorId: "usr_owner",
+        actorType: "user",
+        createdAt: new Date("2026-06-13T10:00:00.000Z"),
+        payload: { messageId: "msg_a" },
+      },
+      // The session's own persona reply — must be dropped, never re-injected.
+      {
+        sequence: 7n,
+        actorId: "persona_ariadne",
+        actorType: "persona",
+        createdAt: new Date("2026-06-13T10:00:01.000Z"),
+        payload: { messageId: "msg_self" },
+      },
+    ] as never)
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
+      new Map([
+        [
+          "msg_a",
+          {
+            id: "msg_a",
+            authorId: "usr_owner",
+            authorType: "user",
+            ciphertext: Buffer.from("opaque"),
+            envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+          },
+        ],
+      ]) as never
+    )
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_owner", name: "Owner" }] as never)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([] as never)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.pollMessages(getReq("session_1", "3"), res)
+
+    // Clamped to the trigger sequence (5), not the requested 3.
+    expect(list.mock.calls[0]![2]).toMatchObject({ afterSequence: 5n, types: ["message_created"] })
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({
+      messages: [
+        {
+          messageId: "msg_a",
+          sequence: "6",
+          authorId: "usr_owner",
+          authorType: "user",
+          authorName: "Owner",
+          createdAt: "2026-06-13T10:00:00.000Z",
+          ciphertext: Buffer.from("opaque").toString("base64"),
+          envelope: { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" },
+        },
+      ],
     })
   })
 })
@@ -367,6 +469,31 @@ describe("createEnclaveSessionHandlers.complete", () => {
       messageId: "msg_new",
       triggeredBy: "usr_1",
     })
+  })
+
+  it("advances the catch-up boundary past a message the turn already incorporated (UX-12)", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
+    spyOn(AgentSessionRepository, "completeSession").mockResolvedValue(SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([] as never)
+    const tx = {} as never
+    spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
+      fn(tx)) as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+    // Trigger at 5; the loop reported it reached 9 via the interjection poll.
+    spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
+    const unseen = spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
+    const { handlers, enqueueCatchUp } = makeHandlers()
+    const res = fakeRes()
+
+    await handlers.complete(req("session_1", { ...COMPLETE_BODY, lastProcessedSequence: "9" }), res)
+
+    expect(res.statusCode).toBe(204)
+    // The boundary is the reported sequence (9), not the trigger (5), so the
+    // message the reply already addressed isn't re-triggered.
+    expect(unseen.mock.calls[0]![2]).toBe(9n)
+    expect(enqueueCatchUp).not.toHaveBeenCalled()
   })
 
   it("does not emit the completed event when the session raced to a terminal state", async () => {
