@@ -10,6 +10,7 @@ const config: EnclaveConfig = {
   internalApiKey: "shared-secret",
   heartbeatIntervalMs: 30_000,
   claimPollIntervalMs: 1_500,
+  claimLongPollMs: 25_000,
   maxConcurrentSessions: 8,
   sourceCommitSha: "unknown",
   buildHash: "unknown",

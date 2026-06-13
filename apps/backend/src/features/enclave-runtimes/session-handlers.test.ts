@@ -16,7 +16,9 @@ import { createEnclaveSessionHandlers } from "./session-handlers"
 import { hashCallbackToken } from "./callback-token"
 import { EnclaveInvocationsRepository } from "./invocations-repository"
 
-const pool = {} as Pool
+// A bare stand-in, but with a `query` so the catch-up's wake-up NOTIFY (fired by
+// enqueueEnclaveInvocation when a reopen produces work) has somewhere to land.
+const pool = { query: mock(async () => ({ rowCount: 0 })) } as unknown as Pool
 
 function fakeRes(): Response & { statusCode: number; jsonBody?: unknown } {
   const res = {
@@ -115,7 +117,7 @@ function makeHandlers(createMessage = mock(async (_input: Record<string, unknown
   const renewClaim = spyOn(EnclaveInvocationsRepository, "renewBySession").mockResolvedValue(undefined)
   const completeClaim = spyOn(EnclaveInvocationsRepository, "completeBySession").mockResolvedValue(undefined)
   const failClaim = spyOn(EnclaveInvocationsRepository, "failBySession").mockResolvedValue(undefined)
-  const enqueueCatchUp = spyOn(EnclaveInvocationsRepository, "insertOrReopen").mockResolvedValue(undefined)
+  const enqueueCatchUp = spyOn(EnclaveInvocationsRepository, "insertOrReopen").mockResolvedValue(true)
   return {
     handlers: createEnclaveSessionHandlers({ pool, eventService, io, costService }),
     createMessage,

@@ -4,6 +4,15 @@ import { HttpError } from "../../lib/errors"
 import type { EnclaveRuntime } from "./repository"
 import type { EnclaveRuntimesService } from "./service"
 import type { EnclaveClaimService } from "./claim-service"
+import type { EnclaveClaimWaiter } from "./claim-nudge"
+
+/**
+ * Server-side ceiling on how long a claim request may be held open (§2.7
+ * wake-up nudge). The instance asks for `waitMs`; we clamp to this so a stray
+ * large value can't pin a request for minutes, and it stays comfortably under
+ * the enclave's own claim-request timeout so the server always answers first.
+ */
+const ENCLAVE_CLAIM_LONG_POLL_MAX_MS = 30_000
 
 const registerKeySchema = z.object({
   instanceId: z.string().min(1),
@@ -21,6 +30,12 @@ const revokeSchema = z.object({
 
 const claimSchema = z.object({
   keyId: z.string().min(1),
+  /**
+   * Long-poll budget: hold the request open up to this many ms (clamped
+   * server-side) waiting for a wake-up nudge before answering 204. Omitted or 0
+   * keeps the legacy immediate-204 behavior, so an older caller still works.
+   */
+  waitMs: z.number().int().nonnegative().optional(),
 })
 
 // EIKs are raw X25519 public keys (32 bytes). Validate at registration so a
@@ -47,9 +62,19 @@ function serializeRuntime(runtime: EnclaveRuntime) {
 interface Dependencies {
   enclaveRuntimesService: EnclaveRuntimesService
   enclaveClaimService: EnclaveClaimService
+  /**
+   * Wake-up nudge the claim long-poll parks on (§2.7). Null when the backend
+   * isn't running the LISTEN side, in which case `claim` answers immediately
+   * — the nudge is an optimization, not a dependency.
+   */
+  enclaveClaimNudge: EnclaveClaimWaiter | null
 }
 
-export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, enclaveClaimService }: Dependencies) {
+export function createEnclaveRuntimesHandlers({
+  enclaveRuntimesService,
+  enclaveClaimService,
+  enclaveClaimNudge,
+}: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/register-key
@@ -117,14 +142,50 @@ export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, enclaveC
       if (!result.success) {
         throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
       }
-      const isLive = await enclaveRuntimesService.isRegisteredLive(result.data.keyId)
+      const { keyId } = result.data
+      const isLive = await enclaveRuntimesService.isRegisteredLive(keyId)
       if (!isLive) {
         throw new HttpError("Enclave runtime not found or revoked", {
           status: 404,
           code: "ENCLAVE_RUNTIME_NOT_FOUND",
         })
       }
-      const assignment = await enclaveClaimService.claimTurn(result.data.keyId)
+
+      let assignment = await enclaveClaimService.claimTurn(keyId)
+
+      // Long-poll: when there's nothing to hand back yet, hold the request open
+      // and re-attempt the claim each time the wake-up nudge fires, until the
+      // budget runs out. No DB connection is held across the wait (claimTurn
+      // acquires and releases per call; the wait is an in-memory signal), so a
+      // parked poll costs only the open socket (INV-41). A nudge that lands in
+      // the gap between a claim missing and the next wait subscribing is dropped
+      // (classic lost wakeup), but that's bounded: the budget's timeout re-claims
+      // and the durable invocation row is the backstop — worst case is one turn
+      // waiting out the budget, never a lost message.
+      const waitMs = Math.min(result.data.waitMs ?? 0, ENCLAVE_CLAIM_LONG_POLL_MAX_MS)
+      if (!assignment && waitMs > 0 && enclaveClaimNudge) {
+        const abort = new AbortController()
+        const onClose = () => abort.abort()
+        req.on("close", onClose)
+        try {
+          const deadline = Date.now() + waitMs
+          while (!assignment && !abort.signal.aborted) {
+            const remaining = deadline - Date.now()
+            if (remaining <= 0) break
+            // `false` means the nudge was stopped (shutdown) — give up rather
+            // than re-park on a timer nothing can wake early.
+            const live = await enclaveClaimNudge.waitForInvocation({ timeoutMs: remaining, signal: abort.signal })
+            if (!live || abort.signal.aborted) break
+            assignment = await enclaveClaimService.claimTurn(keyId)
+          }
+        } finally {
+          req.off("close", onClose)
+        }
+        // The instance hung up mid-wait — don't write to a dead socket (and a
+        // claim won in the same tick simply orphans and recycles on its TTL).
+        if (abort.signal.aborted) return
+      }
+
       if (!assignment) {
         res.status(204).end()
         return

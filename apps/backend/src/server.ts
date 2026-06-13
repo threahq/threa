@@ -19,7 +19,12 @@ import {
   createPolishTranscript,
 } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
-import { EnclaveRuntimesService, EnclaveClaimService, EnclaveDispatchHandler } from "./features/enclave-runtimes"
+import {
+  EnclaveRuntimesService,
+  EnclaveClaimService,
+  EnclaveClaimNudge,
+  EnclaveDispatchHandler,
+} from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { GiphyService } from "./features/giphy"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
@@ -581,6 +586,13 @@ export async function startServer(): Promise<ServerInstance> {
   // is configured.
   const enclaveClaimService = new EnclaveClaimService({ pool, storage, userPreferencesService })
 
+  // Wake-up nudge for the claim long-poll (§2.7): holds one LISTEN connection
+  // on `pools.listen` and fans each "invocation available" NOTIFY out to the
+  // parked claim polls, so turn-start latency collapses from the idle poll
+  // interval to ~immediate. Gated on the enclave credential, matching the claim
+  // routes; null when the feature is off (claim then answers immediately).
+  const enclaveClaimNudge = config.enclaveInternalApiKey ? new EnclaveClaimNudge({ listenPool: pools.listen }) : null
+
   // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
   // namespace. One instance shared between HTTP routes (claim/complete/fail)
   // and the WebSocket namespace handler (presence + bootstrap).
@@ -658,6 +670,7 @@ export async function startServer(): Promise<ServerInstance> {
     voiceTranscriptionService,
     enclaveRuntimesService,
     enclaveClaimService,
+    enclaveClaimNudge,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -1126,6 +1139,9 @@ export async function startServer(): Promise<ServerInstance> {
   await outboxDispatcher.start()
   outboxRetentionWorker.start()
 
+  // Wake-up nudge LISTEN for the enclave claim long-poll (§2.7).
+  await enclaveClaimNudge?.start()
+
   // Correctness net for the sync-log spine: rescues client-routed outbox
   // events the dispatcher missed (gap skip, crash) into sync_log + a late emit
   const syncLogReconciliationWorker = new SyncLogReconciliationWorker(
@@ -1201,6 +1217,7 @@ export async function startServer(): Promise<ServerInstance> {
     await syncHeartbeatWorker.stop()
     await syncLogRetentionWorker.stop()
     await outboxDispatcher.stop()
+    await enclaveClaimNudge?.stop()
     await jobQueue.stop()
     logger.info("Closing socket.io...")
 

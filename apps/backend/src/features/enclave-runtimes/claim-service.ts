@@ -7,6 +7,7 @@ import { logger } from "../../lib/logger"
 import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import type { StorageProvider } from "../../lib/storage/s3-client"
+import { notifyEnclaveInvocationAvailable } from "./claim-nudge"
 import { StreamEventRepository, StreamPoliciesRepository, StreamRepository } from "../streams"
 import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
@@ -453,9 +454,14 @@ export async function enqueueEnclaveInvocation(
     messageId: params.messageId,
     triggeredBy: params.triggeredBy,
   }
-  if (params.reopen) {
-    await EnclaveInvocationsRepository.insertOrReopen(db, row)
-  } else {
-    await EnclaveInvocationsRepository.insertPending(db, row)
-  }
+  // Both insert paths report whether they produced fresh claimable work: an
+  // idempotent redelivery (existing pending row) or a reopen that found a live
+  // row already on its way both no-op, and need no nudge — one already fired.
+  const enqueued = params.reopen
+    ? await EnclaveInvocationsRepository.insertOrReopen(db, row)
+    : await EnclaveInvocationsRepository.insertPending(db, row)
+  // Ring the doorbell so a parked claim long-poll reacts now instead of waiting
+  // out its interval (§2.7 wake-up nudge). Best-effort: the row is the durable
+  // work item, and a missed nudge degrades only to the long-poll's timeout.
+  if (enqueued) await notifyEnclaveInvocationAvailable(db)
 }

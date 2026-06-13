@@ -761,8 +761,26 @@ instead of re-triggering a redundant turn. Scope: newly created messages only (a
 mid-turn edit/delete of an older row isn't an interjection; the next turn re-reads
 settled history); mid-turn attachment _bytes_ aren't shipped (the message's
 markdown + an attachment note are injected, matching how the companion injects
-mid-turn context). Still open from this section: the wake-up nudge (the idle poll
-interval, default 1.5s, is the turn-start latency floor).
+mid-turn context).
+
+**The wake-up nudge has now shipped too**, collapsing the turn-start latency
+floor from the idle poll interval to ~immediate. The enclave stays outbound-only
+(§2.7 deleted its inbound listener), so the nudge is a **long-poll on the
+existing claim endpoint**, not a push: the instance sends a `waitMs` budget and
+the backend holds `POST /internal/enclave-runtimes/claims` open until work
+appears or the budget lapses. `enqueueEnclaveInvocation` fires a best-effort
+`NOTIFY enclave_invocation_available`; one process-wide LISTEN connection
+(`EnclaveClaimNudge`, mirroring `OutboxDispatcher`'s keepalive + reconnect) fans
+each notification out to the parked long-polls, which re-attempt their keyed
+`FOR UPDATE SKIP LOCKED` claim — any instance may react, first to claim wins, no
+DB connection is held across the wait (INV-41). The durable work item is the
+`enclave_invocations` row and the long-poll's timeout fetches it directly, so a
+missed nudge degrades only to that timeout: the nudge is an optimization, not a
+dependency. The enclave loop holds a minimum spacing between poll _starts_, so a
+held long-poll re-polls immediately (continuous coverage) while a fast answer —
+a backend without long-poll, or an error — still waits out the idle interval,
+which keeps it forward/backward compatible across a rolling deploy. No migration,
+no schema change.
 
 ## 2.8 Open questions
 

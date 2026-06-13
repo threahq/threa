@@ -10,6 +10,7 @@ const config: EnclaveConfig = {
   internalApiKey: "enclave-secret",
   heartbeatIntervalMs: 30_000,
   claimPollIntervalMs: 1_500,
+  claimLongPollMs: 25_000,
   maxConcurrentSessions: 8,
   sourceCommitSha: "unknown",
   buildHash: "unknown",
@@ -70,7 +71,8 @@ describe("claimOnce", () => {
 
     expect(captured.url).toBe("https://backend.internal/internal/enclave-runtimes/claims")
     expect(captured.headers?.[INTERNAL_API_KEY_HEADER]).toBe("enclave-secret")
-    expect(captured.body).toEqual({ keyId: "eik_01" })
+    // Carries the long-poll budget so the backend parks the poll on the nudge.
+    expect(captured.body).toEqual({ keyId: "eik_01", waitMs: 25_000 })
     expect(result.claimed).toBe(false)
     expect(runSession).not.toHaveBeenCalled()
   })
@@ -181,6 +183,32 @@ describe("startClaimLoop", () => {
     inFlight.delete("session_a")
     await vi.advanceTimersByTimeAsync(1)
     expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    loop.stop()
+  })
+
+  it("re-polls immediately after a long-poll the backend held open, staying parked on the nudge", async () => {
+    vi.useFakeTimers()
+    let resolveFetch!: (res: Response) => void
+    const fetchSpy = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve
+        })
+    )
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+    const loop = startClaimLoop({ config, keyPair, inFlight: new Set(), runSession: vi.fn(async () => {}) })
+
+    // First poll is in flight; the backend holds it open past the idle interval.
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(config.claimPollIntervalMs + 100)
+    resolveFetch(new Response(null, { status: 204 }))
+
+    // The held poll already covered the spacing, so the next one fires now — no
+    // extra idle wait — rather than sitting out another full interval.
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchSpy).toHaveBeenCalledTimes(2)
 
     loop.stop()
   })
