@@ -114,6 +114,10 @@ export class SyncEngine {
   private workspaceHandlerCleanup: (() => void) | null = null
   private activeBootstrap: Promise<void> | null = null
   private queuedReconnectBootstrap: Promise<void> | null = null
+  /** Whether the queued reconnect bootstrap must run as a full snapshot. A
+   *  below-floor `forceFull` request arriving while a slim reconnect is already
+   *  queued upgrades the queued run rather than being collapsed away. */
+  private queuedReconnectForceFull = false
   private activeStreamRefreshes = new Map<string, Promise<void>>()
   private activeGapBackfills = new Map<string, { cursor: string; promise: Promise<void> }>()
   /** Lowest gap cursor reported per stream while a backfill was in flight —
@@ -262,7 +266,11 @@ export class SyncEngine {
     // Same pause-before-bootstrap rule as onConnect: the catch-up position
     // must not move between this trigger and the catch-up fetch.
     this.beginCatchUpCycle()
-    await this.runBootstrap(true)
+    // forceFull: only the socket-reconnect path (onConnect) is slimmed. The
+    // resume / online-flip window is the `usePageResumeRefresh` redesign's
+    // territory (a separate follow-up); until that lands it keeps the full
+    // snapshot, the only blanket cover for the socket-healthy-but-throttled gap.
+    await this.runBootstrap(true, { forceFull: true })
     void this.runCatchUp("resume")
   }
 
@@ -685,24 +693,36 @@ export class SyncEngine {
     const { workspaceId, syncStatus } = this.deps
     syncStatus.set(`workspace:${workspaceId}`, "syncing")
 
-    if (this.socket) {
-      await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
+    // Mirror the full path's swallow-everything discipline. This runs inside
+    // the awaited `runBootstrap` in onConnect; if it rejected, the await would
+    // throw and `runCatchUp` — the only path that resumes the paused gate —
+    // would never run, stranding every buffered live event. So an unexpected
+    // failure (e.g. an IDB read in cachedMemberStreamIds) sets the workspace
+    // stale (cached data is already on screen on a reconnect) and returns;
+    // catch-up still runs and the next reconnect bootstrap closes the gap.
+    try {
+      if (this.socket) {
+        await joinRoomBestEffort(this.socket, `ws:${workspaceId}`, "SyncEngine")
+      }
+      if (this.isDestroyed) return
+
+      // Per-stream deltas (each refresh owns its own status + error handling)
+      // and the label reconcile run together; neither depends on the other.
+      await Promise.all([
+        ...this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)),
+        this.reconcileViewerLabels(),
+      ])
+      if (this.isDestroyed) return
+
+      await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
+      if (this.isDestroyed) return
+
+      this.lastWorkspaceError = null
+      syncStatus.set(`workspace:${workspaceId}`, "synced")
+    } catch (error) {
+      this.lastWorkspaceError = error
+      syncStatus.set(`workspace:${workspaceId}`, "stale")
     }
-    if (this.isDestroyed) return
-
-    // Per-stream deltas (each refresh owns its own status + error handling) and
-    // the label reconcile run together; neither depends on the other.
-    await Promise.all([
-      ...this.getVisibleServerStreamIds().map((streamId) => this.refreshStreamAfterNavigation(streamId)),
-      this.reconcileViewerLabels(),
-    ])
-    if (this.isDestroyed) return
-
-    await this.subscribeMemberStreams(await this.cachedMemberStreamIds())
-    if (this.isDestroyed) return
-
-    this.lastWorkspaceError = null
-    syncStatus.set(`workspace:${workspaceId}`, "synced")
   }
 
   /**
@@ -740,16 +760,26 @@ export class SyncEngine {
       // bootstrap so the visible streams get their delta fetch once the
       // current bootstrap finishes. Repeat reconnect triggers collapse onto
       // the same queued promise.
-      if (isReconnect && !this.queuedReconnectBootstrap) {
-        const chained = this.activeBootstrap
-          .catch(() => {
-            // Swallow — the follow-up reconnect will retry whatever failed.
-          })
-          .then(() => {
-            this.queuedReconnectBootstrap = null
-            return this.runBootstrap(true, { forceFull })
-          })
-        this.queuedReconnectBootstrap = chained
+      if (isReconnect) {
+        // forceFull is a strictly stronger request than a slim reconnect, so it
+        // must survive collapsing onto an already-queued reconnect: the chain
+        // reads this flag at execution time rather than capturing `forceFull`,
+        // so a below-floor forceFull arriving after a slim reconnect is queued
+        // upgrades the single queued run to a full snapshot.
+        if (forceFull) this.queuedReconnectForceFull = true
+        if (!this.queuedReconnectBootstrap) {
+          const chained = this.activeBootstrap
+            .catch(() => {
+              // Swallow — the follow-up reconnect will retry whatever failed.
+            })
+            .then(() => {
+              const queuedForceFull = this.queuedReconnectForceFull
+              this.queuedReconnectBootstrap = null
+              this.queuedReconnectForceFull = false
+              return this.runBootstrap(true, { forceFull: queuedForceFull })
+            })
+          this.queuedReconnectBootstrap = chained
+        }
       }
       return this.queuedReconnectBootstrap ?? this.activeBootstrap
     }

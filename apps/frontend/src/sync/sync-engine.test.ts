@@ -1834,4 +1834,21 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
     engine.destroy()
   })
+
+  it("keeps the full bootstrap on an active-mode resume — only the socket reconnect is slimmed", async () => {
+    const deps = makeReconnectDeps()
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    deps.workspaceService.bootstrap.mockClear()
+
+    // The resume / online-flip path stays full (forceFull): it is the
+    // usePageResumeRefresh follow-up's territory, not this PR's slimming.
+    await engine.refreshAfterConnectivityResume()
+
+    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
+    expect(deps.labelService.list).not.toHaveBeenCalled()
+    engine.destroy()
+  })
 })
