@@ -18,11 +18,10 @@ describe("SyncService.catchUp retention floor", () => {
   })
 
   it("returns entries normally when the cursor is at or above the retained floor", async () => {
-    spyOn(SyncLogRepository, "getRetainedFrom").mockResolvedValue(5n)
     const listEntries = spyOn(SyncLogRepository, "listEntriesForUser").mockResolvedValue([
       { syncId: 6n, eventType: "message:created", payload: { workspaceId: "ws_1" }, createdAt: new Date() },
     ])
-    spyOn(SyncLogRepository, "getHead").mockResolvedValue(9n)
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 9n, retainedFrom: 5n })
 
     // after == retainedFrom is in-window: the floor is the highest PRUNED id,
     // so everything strictly above it still exists.
@@ -34,22 +33,22 @@ describe("SyncService.catchUp retention floor", () => {
     expect(listEntries).toHaveBeenCalledTimes(1)
   })
 
-  it("signals requiresBootstrap with no entries when the cursor is below the floor", async () => {
-    spyOn(SyncLogRepository, "getRetainedFrom").mockResolvedValue(100n)
-    const listEntries = spyOn(SyncLogRepository, "listEntriesForUser")
-    spyOn(SyncLogRepository, "getHead").mockResolvedValue(200n)
+  it("signals requiresBootstrap and discards the page when the cursor is below the floor", async () => {
+    // Entries are read first (race-safety), then the floor read reveals the
+    // cursor is below it — the surviving page is dropped in favor of bootstrap.
+    spyOn(SyncLogRepository, "listEntriesForUser").mockResolvedValue([
+      { syncId: 150n, eventType: "message:created", payload: { workspaceId: "ws_1" }, createdAt: new Date() },
+    ])
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 200n, retainedFrom: 100n })
 
     const result = await setupService().catchUp({ ...baseParams, after: 50n })
 
     expect(result).toEqual({ entries: [], head: 200n, requiresBootstrap: true })
-    // The pruned span is never queried — replaying the survivors would drop it.
-    expect(listEntries).not.toHaveBeenCalled()
   })
 
   it("does not signal requiresBootstrap when nothing has been pruned (floor 0)", async () => {
-    spyOn(SyncLogRepository, "getRetainedFrom").mockResolvedValue(0n)
     spyOn(SyncLogRepository, "listEntriesForUser").mockResolvedValue([])
-    spyOn(SyncLogRepository, "getHead").mockResolvedValue(0n)
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n })
 
     const result = await setupService().catchUp({ ...baseParams, after: 0n })
 

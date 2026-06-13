@@ -66,31 +66,42 @@ A `Ticker`-driven structural twin of the reconciliation/heartbeat workers
 latency-bound), horizon from `SYNC_LOG_RETENTION_MS` (default 30 days), floor
 from `SYNC_LOG_RETENTION_MIN_KEEP` (default 2,000).
 
-Each tick loops bounded batches (`batchSize` 5,000, `maxBatchesPerRun` 50):
+Each tick loops bounded batches (`batchSize` 5,000, `maxBatchesPerRun` 50),
+calling `SyncLogRepository.pruneExpiredEntries({ cutoff, minKeep, limit })` and
+stopping when a batch's `deletedCount < batchSize` (window drained). One
+statement does both the delete and the floor advance:
 
-1. `SyncLogRepository.pruneExpiredEntries({ cutoff, minKeep, limit })` —
-   one DELETE: victims are rows with `created_at < cutoff` AND
-   `sync_id <= head - minKeep`, where `head` comes from
-   `workspace_sync_sequences.next_sequence - 1` (the dense allocator, so no
-   MAX-over-log aggregate). `LIMIT`-bounded via a `ctid` subquery so a first run
-   over months of backlog doesn't hold one long transaction. Returns the
-   highest pruned sync_id per workspace and the total deleted count.
-2. `SyncLogRepository.advanceRetainedFrom(prunedThrough)` — set-based GREATEST
-   upsert of the floor, _before_ deciding whether to continue: catch-up must
-   never replay a span a batch already deleted.
-3. Stop when a batch's `deletedCount < batchSize` (window drained). The prunable
-   set is a contiguous sync_id prefix per workspace, so a partial run is simply
-   retried next tick, and a stale-high floor can only force an unnecessary
-   bootstrap — never hide a gap.
+- victims are rows with `created_at < cutoff` AND `sync_id <= head - minKeep`,
+  where `head` comes from `workspace_sync_sequences.next_sequence - 1` (the
+  dense allocator, so no MAX-over-log aggregate). `LIMIT`-bounded via a `ctid`
+  subquery so a first run over months of backlog doesn't hold one long
+  transaction.
+- a data-modifying `advanced` CTE upserts each touched workspace's
+  `retained_from` with GREATEST (idempotent across runs/instances). Folding it
+  into the same statement as the DELETE is load-bearing for catch-up safety
+  (below): the delete and the floor advance commit atomically, so a reader that
+  observes pruned rows is guaranteed to observe the advanced floor too.
+
+The prunable set is a contiguous sync_id prefix per workspace, so a partial run
+is simply retried next tick, and a stale-high floor can only force an
+unnecessary bootstrap — never hide a gap.
 
 ### Catch-up floor signal (`SyncService.catchUp`)
 
-Before the entries query, read `getRetainedFrom(workspaceId)`. If
-`after < retainedFrom`, return `{ entries: [], head, requiresBootstrap: true }`
+Read the entries page FIRST, then `getHeadAndRetainedFrom(workspaceId)` (head +
+floor in one round trip — the same 2-query cost catch-up had before retention).
+If `after < retainedFrom`, return `{ entries: [], head, requiresBootstrap: true }`
 (head still read so head-probe seed calls work below the floor). `after ==
 retainedFrom` is in-window: the floor is the highest _pruned_ id, so everything
 strictly above it still exists. `requiresBootstrap?: boolean` is added to
 `SyncCatchUpResponse` (omitted when false, so older clients ignore it).
+
+**Read order is load-bearing (INV-20).** A prune that races a catch-up advances
+the floor atomically with deleting the entries. Reading the floor _after_ the
+entries guarantees that whenever the entries read observed the deletion, the
+floor read observes the advance — so the cursor-below-floor check fires and the
+client bootstraps, instead of returning a page that silently omits the pruned
+span. Reading the floor first would reopen that gap.
 
 ## Client design
 

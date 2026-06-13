@@ -30,19 +30,23 @@ export class SyncService {
    */
   async catchUp(params: { workspaceId: string; userId: string; after: bigint; limit: number }): Promise<CatchUpResult> {
     return withClient(this.pool, async (client) => {
-      // A cursor strictly below the retained floor needs entries that
-      // retention has pruned: replaying the partial page that survives would
-      // silently drop the pruned span, so signal a full bootstrap instead.
-      // `head` is still read so head-probe callers (cursor seeding) work even
-      // below the floor. (after == retainedFrom is fine: retainedFrom is the
-      // highest pruned id, so everything strictly above it still exists.)
-      const retainedFrom = await SyncLogRepository.getRetainedFrom(client, params.workspaceId)
+      // Read entries FIRST, then head + retention floor in one query. Order
+      // matters for race-safety: if a prune advanced the floor past `after`,
+      // it did so atomically with deleting the entries (pruneExpiredEntries),
+      // so a floor read that follows the entries read is guaranteed to observe
+      // the advance whenever the entries read saw the deletion — we then
+      // bootstrap instead of returning a page that silently omits the pruned
+      // span. Reading the floor first would reopen that gap (INV-20).
+      const entries = await SyncLogRepository.listEntriesForUser(client, params)
+      const { head, retainedFrom } = await SyncLogRepository.getHeadAndRetainedFrom(client, params.workspaceId)
+      // A cursor strictly below the floor needs pruned entries the log can no
+      // longer replay; the surviving page would drop the gap, so signal a full
+      // bootstrap (head is still returned so head-probe seed calls work below
+      // the floor). after == retainedFrom is in-window: retainedFrom is the
+      // highest PRUNED id, so everything strictly above it still exists.
       if (params.after < retainedFrom) {
-        const head = await SyncLogRepository.getHead(client, params.workspaceId)
         return { entries: [], head, requiresBootstrap: true }
       }
-      const entries = await SyncLogRepository.listEntriesForUser(client, params)
-      const head = await SyncLogRepository.getHead(client, params.workspaceId)
       return { entries, head }
     })
   }

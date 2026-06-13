@@ -205,44 +205,56 @@ export const SyncLogRepository = {
     return new Map(result.rows.map((row) => [row.workspace_id, BigInt(row.head)]))
   },
 
-  /** Max visible sync id for a workspace (0 when the log is empty). */
-  async getHead(db: Querier, workspaceId: string): Promise<bigint> {
-    const result = await db.query<{ head: string }>(sql`
-      SELECT COALESCE(MAX(sync_id), 0) AS head FROM sync_log WHERE workspace_id = ${workspaceId}
-    `)
-    return BigInt(result.rows[0].head)
-  },
-
   /**
-   * The retention floor: the highest sync id pruned for a workspace (0 when
-   * nothing has been pruned). A catch-up cursor at or below this floor cannot
-   * be healed from the log — the entries it would replay are gone — so the
-   * caller signals a full bootstrap. See docs/plans/sync-v2-log-retention.md.
+   * The workspace head (max sync id, 0 when empty) and the retention floor
+   * (highest sync id pruned, 0 when nothing pruned) in one round trip — the
+   * two values catch-up needs alongside the entries page. A cursor strictly
+   * below the floor cannot be healed from the log (its entries were pruned),
+   * so the caller signals a full bootstrap. See docs/plans/sync-v2-log-retention.md.
+   *
+   * Read this AFTER the entries query, never before: the floor is monotonic
+   * and the pruner advances it in the same statement as the delete
+   * (pruneExpiredEntries), so a prune that races a catch-up either is invisible
+   * to both reads or has already advanced the floor past the cursor by the time
+   * this read runs — the caller then bootstraps instead of returning a page
+   * that silently omits the just-pruned span. (INV-20: the floor decision and
+   * the entries it gates share a consistent view of any concurrent prune.)
    */
-  async getRetainedFrom(db: Querier, workspaceId: string): Promise<bigint> {
-    const result = await db.query<{ retained_from: string }>(sql`
-      SELECT retained_from FROM sync_log_retention_state WHERE workspace_id = ${workspaceId}
+  async getHeadAndRetainedFrom(db: Querier, workspaceId: string): Promise<{ head: bigint; retainedFrom: bigint }> {
+    const result = await db.query<{ head: string; retained_from: string }>(sql`
+      SELECT
+        (SELECT COALESCE(MAX(sync_id), 0) FROM sync_log WHERE workspace_id = ${workspaceId}) AS head,
+        (SELECT COALESCE(retained_from, 0) FROM sync_log_retention_state WHERE workspace_id = ${workspaceId})
+          AS retained_from
     `)
-    return BigInt(result.rows[0]?.retained_from ?? 0)
+    return { head: BigInt(result.rows[0].head), retainedFrom: BigInt(result.rows[0].retained_from) }
   },
 
   /**
    * Prunes one bounded batch of expired sync_log entries across every
-   * workspace: rows older than `cutoff` whose sync_id is at or below
-   * `head - minKeep` for their workspace. The count floor keeps the most
-   * recent `minKeep` entries even past the horizon, so a quiet workspace's
-   * returning client still catches up from the log instead of bootstrapping.
+   * workspace AND advances each touched workspace's retention floor — both in
+   * one statement, so the delete and the floor advance commit atomically.
+   * Victims are rows older than `cutoff` whose sync_id is at or below
+   * `head - minKeep` for their workspace; the count floor keeps the most recent
+   * `minKeep` entries even past the horizon, so a quiet workspace's returning
+   * client still catches up from the log instead of bootstrapping.
    *
    * Heads come from `workspace_sync_sequences` (next_sequence - 1), not a
    * MAX over the log: the allocator keeps sync ids dense and gapless
    * (appendForWorkspace's lock-first protocol), so head = next_sequence - 1
    * exactly, and this avoids a full-table aggregate every batch.
    *
+   * The floor is advanced with GREATEST (idempotent across repeated runs and
+   * multiple backend instances). Doing it in the same statement as the delete
+   * is load-bearing for catch-up safety: a reader that observes pruned entries
+   * is guaranteed to observe the advanced floor too, so it never returns a page
+   * missing a pruned span (see getHeadAndRetainedFrom, INV-20).
+   *
    * Bounded by `limit` (INV-56 set-based, but a first run over months of
    * backlog must not hold one long transaction). The prunable set is a
    * contiguous sync_id prefix per workspace, so re-running converges and
-   * advancing `retained_from` to any pruned id is always safe — a stale-high
-   * floor can only force an unnecessary bootstrap, never hide a gap.
+   * advancing the floor to any pruned id is always safe — a stale-high floor
+   * can only force an unnecessary bootstrap, never hide a gap.
    *
    * Returns the highest pruned sync_id per workspace and the total rows
    * deleted this batch — the caller drives exhaustion off `deletedCount`
@@ -271,10 +283,20 @@ export const SyncLogRepository = {
         USING victims v
         WHERE l.ctid = v.ctid
         RETURNING l.workspace_id, l.sync_id
+      ),
+      agg AS (
+        SELECT workspace_id, MAX(sync_id) AS pruned_through, COUNT(*) AS pruned_count
+        FROM deleted
+        GROUP BY workspace_id
+      ),
+      advanced AS (
+        INSERT INTO sync_log_retention_state (workspace_id, retained_from)
+        SELECT workspace_id, pruned_through FROM agg
+        ON CONFLICT (workspace_id) DO UPDATE
+          SET retained_from = GREATEST(sync_log_retention_state.retained_from, EXCLUDED.retained_from),
+              updated_at = NOW()
       )
-      SELECT workspace_id, MAX(sync_id) AS pruned_through, COUNT(*) AS pruned_count
-      FROM deleted
-      GROUP BY workspace_id
+      SELECT workspace_id, pruned_through, pruned_count FROM agg
     `)
     const prunedThrough = new Map<string, bigint>()
     let deletedCount = 0
@@ -283,30 +305,6 @@ export const SyncLogRepository = {
       deletedCount += Number(row.pruned_count)
     }
     return { prunedThrough, deletedCount }
-  },
-
-  /**
-   * Monotonically advances each workspace's retention floor to the highest
-   * sync id pruned for it. GREATEST makes concurrent or repeated runs (and
-   * multiple backend instances) idempotent.
-   */
-  async advanceRetainedFrom(db: Querier, prunedThrough: Map<string, bigint>): Promise<void> {
-    if (prunedThrough.size === 0) {
-      return
-    }
-    const rows = Array.from(prunedThrough, ([workspaceId, retainedFrom]) => ({
-      workspace_id: workspaceId,
-      retained_from: retainedFrom.toString(),
-    }))
-    await db.query(sql`
-      INSERT INTO sync_log_retention_state (workspace_id, retained_from)
-      SELECT r.workspace_id, r.retained_from::bigint
-      FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb)
-        AS r(workspace_id text, retained_from text)
-      ON CONFLICT (workspace_id) DO UPDATE
-        SET retained_from = GREATEST(sync_log_retention_state.retained_from, EXCLUDED.retained_from),
-            updated_at = NOW()
-    `)
   },
 
   /**

@@ -81,16 +81,14 @@ export class SyncLogRetentionWorker {
       const workspacesTouched = new Set<string>()
 
       while (batches < this.config.maxBatchesPerRun) {
+        // pruneExpiredEntries deletes the batch AND advances each touched
+        // workspace's retention floor in one atomic statement (see its doc) —
+        // catch-up must never replay a deleted span.
         const { prunedThrough, deletedCount } = await SyncLogRepository.pruneExpiredEntries(this.pool, {
           cutoff,
           minKeep: this.config.minKeep,
           limit: this.config.batchSize,
         })
-
-        // Advance the floor for whatever this batch pruned, before deciding to
-        // continue: catch-up must never replay a deleted span (a stale-high
-        // floor only over-bootstraps, never hides a gap).
-        await SyncLogRepository.advanceRetainedFrom(this.pool, prunedThrough)
 
         for (const workspaceId of prunedThrough.keys()) {
           workspacesTouched.add(workspaceId)
