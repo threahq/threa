@@ -23,7 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { ActorAvatar } from "@/components/actor-avatar"
-import { invitationsApi } from "@/api/invitations"
+import { invitationsApi, invitationKeys } from "@/api/invitations"
 import { ApiError } from "@/api/client"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useFormattedDate } from "@/hooks"
@@ -113,7 +113,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
   const removeMutation = useRemoveWorkspaceMember(workspaceId)
 
   const invitationsQuery = useQuery({
-    queryKey: ["invitations", workspaceId],
+    queryKey: invitationKeys.list(workspaceId),
     queryFn: () => invitationsApi.list(workspaceId),
   })
 
