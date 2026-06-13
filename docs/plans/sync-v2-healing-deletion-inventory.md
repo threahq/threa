@@ -171,14 +171,33 @@ treating such a flag as real healing — it may be dead code (labels was).
   "socket-healthy but tab-throttled" gaps below the probe threshold. Any
   change here is a redesign (threshold alignment / engine-owned resume
   catch-up), not a one-line deletion. Owner decision; not next.
-- **Engine reconnect workspace bootstrap** (`runBootstrap(true)`): still the
-  authority, but its blocker has lifted. `sync_log` retention has shipped
-  (`docs/plans/sync-v2-log-retention.md`) and the below-floor fallback now
-  routes through this very `runBootstrap(true)`, so it is also the explicit
-  recovery for a pruned cursor. `isLegacyUnreadCounterEntry` is now gone (its
-  sweep deployed), so that gate has lifted too; it still heals the accepted #874
-  drift and seeds active-mode read-before-stamp against this fetch. Slimming it
-  is a now-fully-unblocked follow-up PR.
+- **Engine reconnect workspace bootstrap** (`runBootstrap(true)`): **slimmed for
+  the active-mode socket reconnect (DONE).** The full-snapshot fetch was
+  redundant there — catch-up replay (which runs right after) re-seeds every
+  workspace-scoped projection through the gate-registered handlers, patching
+  both IDB and the TanStack bootstrap cache exactly as live events do. On an
+  active-mode reconnect the engine now runs `slimReconnectBootstrap()` instead:
+  per-stream message deltas (the per-stream cursor mechanism, unchanged), a
+  `reconcileViewerLabels()` reconcile (`labelService.list` → `reconcileLabels` —
+  the one slice catch-up can't carry, assignments on public streams the viewer
+  can see per INV-62 but isn't a `stream_members` row for), and member-room
+  re-subscription from the cached membership list. The full snapshot is kept
+  for: the first connect (cold load), off/shadow modes, a missing `labelService`
+  (defensive fallback), the **resume / online-flip path**
+  (`refreshAfterConnectivityResume` passes `forceFull: true` — that window is
+  the `usePageResumeRefresh` follow-up's territory, see below), and the
+  **below-floor `requiresBootstrap` fallback** (also `forceFull: true` — a
+  cursor below the retained floor has no log to replay, so only the full
+  snapshot is authoritative for everything `<= head`; `forceFull` upgrades an
+  already-queued slim reconnect so it can't be collapsed away). Static
+  bootstrap-only state (personas, emojis, commands, invitations, permissions,
+  muted ids) has no live event, so a reconnect was only ever an incidental
+  refresh of it, not a guarantee — no regression. Read-before-stamp is moot on
+  the slim path (no snapshot for the cursor to race; cursor + unread IDB persist
+  across the reconnect, so absolute LWW catch-up converges the counters). The
+  slim path swallows its own errors (sets the workspace stale) so it can never
+  reject and strand the paused gate. Covered by `sync-engine.test.ts`
+  ("active-mode reconnect bootstrap slimming").
 - **Per-stream reconnect delta** (`joinStreamForCatchUp` + `bootstrap?after=`):
   this _is_ the per-stream cursor mechanism, already delta-shaped. Keep.
 - **`backfillStreamGap` / `detectSequenceGap` / `computeTimelineHoles`**
