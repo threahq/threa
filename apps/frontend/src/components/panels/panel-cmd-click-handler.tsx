@@ -41,7 +41,15 @@ export function PanelCmdClickHandler({ workspaceId }: { workspaceId: string }) {
       if (!panelId) return
       e.preventDefault()
       e.stopPropagation()
-      openPanelRef.current(panelId, { mode: "new" })
+      // Carry a message anchor (e.g. a search result `…/s/{id}?m={msg}`) so the
+      // panel opens AT the message rather than the bottom of the stream.
+      let messageId: string | undefined
+      try {
+        messageId = new URL(anchor.href, window.location.origin).searchParams.get("m") ?? undefined
+      } catch {
+        messageId = undefined
+      }
+      openPanelRef.current(panelId, { mode: "new", messageId })
     }
     document.addEventListener("click", onClickCapture, true)
     return () => document.removeEventListener("click", onClickCapture, true)

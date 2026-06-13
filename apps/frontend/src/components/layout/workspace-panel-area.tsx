@@ -701,7 +701,11 @@ const PanelSlot = memo(function PanelSlot({
           onDoubleClick={() => onEqualizePair(slotKey)}
         />
         <div className="min-w-0 flex-1 overflow-hidden">
-          <PanelInstanceProvider key={panelId} panelId={panelId} dragHandleProps={dragHandleProps}>
+          {/* Keyed by the stable slotKey, NOT panelId: an in-place content swap
+              (view sub-view tab change, draft→thread promotion) must update
+              props without remounting — remounting resets scroll and re-fires
+              init effects. The slot's own identity already changes the key. */}
+          <PanelInstanceProvider key={slotKey} panelId={panelId} dragHandleProps={dragHandleProps}>
             <PanelContentRenderer panelId={panelId} workspaceId={workspaceId} onClose={() => closePanel(panelId)} />
           </PanelInstanceProvider>
         </div>

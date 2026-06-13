@@ -1,7 +1,7 @@
 import { Bookmark, Bell } from "lucide-react"
 import { SAVED_STATUSES, type SavedStatus } from "@threa/types"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { SavedTabs, SavedList, SAVED_STATUS_TABS, type SavedTab } from "@/pages/saved"
+import { SavedTabs, SavedList, SAVED_STATUS_TABS } from "@/pages/saved"
 import { ActivityTabs, ActivityList, MarkAllActivityReadButton, type ActivityFilter } from "@/pages/activity"
 import { usePanelNavigation } from "@/contexts/panel-instance-context"
 import { WorkspacePanel } from "./workspace-panel"
@@ -26,9 +26,9 @@ const VALID_SAVED_TABS = new Set<string>(SAVED_STATUSES)
 export function SavedViewPanel({ panelId, workspaceId, subView, onClose }: ViewPanelProps) {
   const { getPanelUrl } = usePanelNavigation()
   const tab: SavedStatus = subView && VALID_SAVED_TABS.has(subView) ? (subView as SavedStatus) : "saved"
-  // The panel shows only the status tabs (no "suggested"); tabHref is typed on
-  // the wider SavedTab to satisfy SavedTabs, but only status tabs are passed.
-  const tabHref = (next: SavedTab) => getPanelUrl(createViewPanelId("saved", next === "saved" ? null : next))
+  // The panel shows only the status tabs (no "suggested"); SavedTabs is generic
+  // so tabHref is typed on SavedStatus here, never the page-only "suggested".
+  const tabHref = (next: SavedStatus) => getPanelUrl(createViewPanelId("saved", next === "saved" ? null : next))
 
   return (
     <WorkspacePanel panelId={panelId} title="Saved" icon={Bookmark} onClose={onClose}>

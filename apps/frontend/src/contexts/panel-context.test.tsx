@@ -250,6 +250,16 @@ describe("PanelProvider", () => {
     expect(result.current.panels).toEqual(["a", "b", "x"])
   })
 
+  it("openPanel carries a messageId into the m= param (open a search result to the right)", () => {
+    window.innerWidth = 2200
+    const { result } = renderHook(() => usePanelWithLocation(), {
+      wrapper: wrapperWithUrl("/w/ws_1/s/stream_main"),
+    })
+    act(() => result.current.openPanel("stream_x", { mode: "new", messageId: "msg_1" }))
+    expect(result.current.panels).toEqual(["stream_x"])
+    expect(result.current.location.search).toContain("m=msg_1")
+  })
+
   it("openPanel at the viewport cap degrades new mode to replacing the focused panel", () => {
     window.innerWidth = 1300 // cap = 2
     const { result } = renderHook(() => usePanel(), {

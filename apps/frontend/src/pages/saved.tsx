@@ -28,7 +28,9 @@ export const SAVED_TABS: { value: SavedTab; label: string }[] = [
 ]
 
 /** The status tabs only (no "suggested") — the side-panel surface uses these. */
-export const SAVED_STATUS_TABS = SAVED_TABS.filter((t) => t.value !== "suggested")
+export const SAVED_STATUS_TABS: { value: SavedStatus; label: string }[] = SAVED_TABS.filter(
+  (t): t is { value: SavedStatus; label: string } => t.value !== "suggested"
+)
 
 const VALID_TABS = new Set<string>([...SAVED_STATUSES, "suggested"])
 
@@ -67,18 +69,19 @@ interface InnerProps {
  * Tab strip shared by the routed page and the side-panel rendering. Tabs are
  * navigation — rendered as <a> so cmd-click / context menu work (INV-40); the
  * caller supplies the tab set and hrefs (route segments on the page, panel URLs
- * in a panel) so the view stays URL-driven in both surfaces (INV-59).
+ * in a panel) so the view stays URL-driven in both surfaces (INV-59). Generic
+ * over the tab value so each caller's `tabHref` only ever sees the tab values
+ * it actually passes — the page uses the full SavedTab set, the panel the
+ * status-only subset. A tab's optional `badge` count renders as a pill.
  */
-export function SavedTabs({
+export function SavedTabs<T extends SavedTab>({
   tabs,
   value,
   tabHref,
-  suggestedCount = 0,
 }: {
-  tabs: { value: SavedTab; label: string }[]
-  value: SavedTab
-  tabHref: (next: SavedTab) => string
-  suggestedCount?: number
+  tabs: { value: T; label: string; badge?: number }[]
+  value: T
+  tabHref: (next: T) => string
 }) {
   return (
     <Tabs value={value}>
@@ -87,9 +90,9 @@ export function SavedTabs({
           <TabsTrigger key={t.value} value={t.value} asChild>
             <Link to={tabHref(t.value)} className="text-xs px-2.5 py-1">
               {t.label}
-              {t.value === "suggested" && suggestedCount > 0 && (
+              {t.badge != null && t.badge > 0 && (
                 <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-600 tabular-nums">
-                  {suggestedCount}
+                  {t.badge}
                 </span>
               )}
             </Link>
@@ -167,7 +170,11 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
           </div>
         </div>
 
-        <SavedTabs tabs={SAVED_TABS} value={tab} tabHref={tabHref} suggestedCount={suggestedCount} />
+        <SavedTabs
+          tabs={SAVED_TABS.map((t) => (t.value === "suggested" ? { ...t, badge: suggestedCount } : t))}
+          value={tab}
+          tabHref={tabHref}
+        />
       </header>
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
