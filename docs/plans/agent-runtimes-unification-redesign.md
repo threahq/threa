@@ -796,7 +796,34 @@ no schema change.
 2. **Context handle shape for bots (N-4):** inline last-N history in the
    invocation vs. a fetch-back ref. Inline is simpler and matches the
    enclave's assignment shape (30 messages); a ref scales better and keeps
-   invocation payloads small. Leaning inline-first.
+   invocation payloads small. Leaning inline-first. _Resolved as inline-first,
+   and it has already shipped (Phase 2.3, #871). The claim response carries an
+   `ExternalContextHandle` — `{ kind: "inline", messages }` — built by
+   `buildClaimContext` (`public-api/handlers.ts`): the last
+   `CLAIM_CONTEXT_MAX_MESSAGES` (30, mirroring the enclave's
+   `MAX_HISTORY_MESSAGES`) preceding the trigger, oldest → newest, the trigger
+   excluded (it rides as `promptMarkdown`), the runner's own prior replies
+   tagged `role: "assistant"` so a harness can rebuild a turn-taking transcript.
+   Inline wins now because the claim is already a round-trip: attaching 30
+   messages costs no extra call, no new authenticated read endpoint, and no
+   standing read scope — the very surface N-4 set out to avoid ("so a useful
+   third-party agent doesn't need broad standing read scopes"). A `ref` would
+   defer no access decision either: per-location scoping (INV-62) makes the
+   invocation's location the grant, so `buildClaimContext` runs the same
+   `resolveDeliveryVerdict` predicate regardless of handle shape — and withholds
+   the handle entirely for E2E / cross-workspace / missing-stream, where
+   plaintext history never leaves the enclave path. A ref would only move that
+   identical decision behind a second round-trip. Hydration is at claim time,
+   never double-stored on the invocation row (INV-57); `ExternalTurnDriver`
+   rejects a pre-resolved `contextHandle` loudly (INV-11) rather than dropping
+   it. The type is a discriminated union and `TurnDispatchBinding.contextHandle`
+   is a forward-compat slot, so the deferred `{ kind: "ref" }` variant — a
+   short-lived, invocation-scoped cursor the runner exchanges for paginated
+   history — is a non-breaking wire addition. Build it only when a concrete
+   payload-size trigger forces it: a deep-continuity window (§2.5 C-2, and Q7
+   below) or rolling summary too large for one claim response, or attachment
+   bytes that can't ride inline. Until then, inline is the entire contract
+   (INV-36)._
 3. **Where does the generalized stream tool policy live** — widen
    `e2e_streams.allowed_tool_categories`'s pattern to a `stream_policies`
    table vs. a column on `streams`? Tracking-table instinct (INV-57) suggests
