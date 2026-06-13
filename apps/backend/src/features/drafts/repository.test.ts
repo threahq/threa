@@ -213,5 +213,9 @@ describe("DraftsRepository.listByUser", () => {
     expect(captured.text).toContain("user_id =")
     expect(captured.text).toContain("deleted_at IS NULL")
     expect(captured.text).toContain("ORDER BY client_updated_at DESC")
+    // Defensive cap — the bootstrap read is bounded so a pathological account
+    // can't return an unbounded set.
+    expect(captured.text).toContain("LIMIT")
+    expect(captured.values).toContain(500)
   })
 })

@@ -127,6 +127,29 @@ describe("DraftsService.upsert", () => {
     expect(result.originalId).toBe(DRAFT_ID)
     expect(result.draft.id).toBe("draft_split")
   })
+
+  it("does NOT return a tombstoned row as live on a writeId match — splits instead", async () => {
+    // A resolve raced in after the original write landed: the writeId still
+    // matches, but the row is soft-deleted. Branch (b) must not hand it back as
+    // live (that would contradict the draft:deleted already on the wire); it
+    // falls through to the split.
+    const service = setupService()
+    const splitRow = fakeDraft({ id: "draft_split", version: 1 })
+    spyOn(DraftsRepository, "insertIfAbsent").mockResolvedValueOnce(null).mockResolvedValueOnce(splitRow)
+    spyOn(DraftsRepository, "findByIdForUpdate").mockResolvedValue(
+      fakeDraft({ version: 2, lastClientWriteId: "write_dup", deletedAt: NOW })
+    )
+    const casUpdate = spyOn(DraftsRepository, "casUpdate")
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const result = await service.upsert({ ...baseUpsertParams(), writeId: "write_dup", expectedVersion: 2 })
+
+    expect(result.split).toBe(true)
+    expect(result.originalId).toBe(DRAFT_ID)
+    expect(result.draft.id).toBe("draft_split")
+    // A tombstoned row skips the CAS update entirely (branch (c) is live-gated).
+    expect(casUpdate).not.toHaveBeenCalled()
+  })
 })
 
 describe("DraftsService.resolve", () => {

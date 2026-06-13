@@ -112,13 +112,19 @@ export class DraftsService {
       // The id already exists — lock it and decide update vs split.
       const existing = await DraftsRepository.findByIdForUpdate(client, params.workspaceId, params.userId, params.id)
 
-      // (b) Lost-ack retry of a write we already accepted — return as-is.
-      if (existing && existing.lastClientWriteId === params.writeId) {
+      // (b) Lost-ack retry of a write we already accepted — return as-is. Gated
+      // on a LIVE row: if the draft was resolved (tombstoned) after this write
+      // landed, the writeId still matches but the row is gone, so we must not
+      // hand back a deleted draft as live (it would contradict the draft:deleted
+      // already on the wire). A tombstoned match falls through to the split.
+      if (existing && !existing.deletedAt && existing.lastClientWriteId === params.writeId) {
         return { draft: toDraftView(existing), split: false }
       }
 
-      // (c) Happy path — CAS update on the version the edit was based on.
-      if (existing) {
+      // (c) Happy path — CAS update on the version the edit was based on. The
+      // CAS guards `deleted_at IS NULL`, so a tombstoned row returns null here
+      // and drops to the split.
+      if (existing && !existing.deletedAt) {
         const updated = await DraftsRepository.casUpdate(client, {
           workspaceId: params.workspaceId,
           userId: params.userId,
