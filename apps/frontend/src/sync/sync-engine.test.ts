@@ -1835,20 +1835,48 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     engine.destroy()
   })
 
-  it("keeps the full bootstrap on an active-mode resume — only the socket reconnect is slimmed", async () => {
-    const deps = makeReconnectDeps()
+  it("slims an active-mode resume too — no full snapshot, label reconcile instead", async () => {
+    const deps = makeReconnectDeps([publicStreamAssignment()])
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
 
     await engine.onConnect(asSocket(socket))
     deps.workspaceService.bootstrap.mockClear()
+    deps.labelService.list.mockClear()
 
-    // The resume / online-flip path stays full (forceFull): it is the
-    // usePageResumeRefresh follow-up's territory, not this PR's slimming.
+    // Resume is reconnect-shaped: catch-up replay + the slim bootstrap re-seed
+    // everything the full snapshot would, so resume takes the slim path in
+    // active mode and lands the non-member public-stream assignment in IDB.
     await engine.refreshAfterConnectivityResume()
 
-    expect(deps.workspaceService.bootstrap).toHaveBeenCalledTimes(1)
-    expect(deps.labelService.list).not.toHaveBeenCalled()
+    expect(deps.workspaceService.bootstrap).not.toHaveBeenCalled()
+    expect(deps.labelService.list).toHaveBeenCalledWith("ws_1")
+    await vi.waitFor(async () =>
+      expect(
+        await db.labelAssignments.get(
+          assignmentId("ws_1", LabelableResourceTypes.STREAM, "stream_public", "label_1", "user_1")
+        )
+      ).toBeDefined()
+    )
+    engine.destroy()
+  })
+
+  it("forces a full bootstrap on resume when catch-up reports below the retention floor", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
+    const deps = { ...makeReconnectDeps(), syncService: { catchUp } }
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("500"))
+    deps.workspaceService.bootstrap.mockClear()
+
+    // The slim resume path never fetches the snapshot itself, so a call here
+    // proves the below-floor catch-up fallback forced a full bootstrap.
+    await engine.refreshAfterConnectivityResume()
+
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalled())
     engine.destroy()
   })
 })
