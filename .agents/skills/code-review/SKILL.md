@@ -1,16 +1,38 @@
 ---
 name: code-review
-description: Run multi-perspective code review on a PR
-allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*)
+description: Run multi-perspective code review on a PR or the local branch
+allowed-tools: Bash(gh api:*), Bash(gh issue view:*), Bash(gh issue list:*), Bash(gh pr comment:*), Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(gh repo view:*), Bash(git:*)
 ---
 
 # Multi-Perspective Code Review
 
-3 parallel Sonnet reviewers with inline self-scoring (threshold ≥80/100) → filtered comment.
+5 parallel Sonnet reviewers (Spec, Correctness, Design, UX, Mobile) with inline self-scoring (threshold ≥80/100) → filtered report. The report is ALWAYS printed to chat; when reviewing a GitHub PR it is also posted as a PR comment.
 
 > **Remote / web sessions:** `gh` is not installed and the GitHub MCP server cannot reliably update existing issue comments (the supersede step in Step 6 silently no-ops). If `gh` fails with "command not found", use the **`github-api-web` skill** for every GitHub interaction in this skill — list/read/post/**PATCH** comments via `curl $GH_TOKEN`. Do NOT fall back to `mcp__github__*` for the supersede flow; it cannot edit prior comment bodies.
 
-## Step 1: Eligibility
+## Step 0: Resolve Target & Mode
+
+This skill runs in one of two modes. Pick based on what the user gave you:
+
+- **PR mode** — a PR number/URL was provided (e.g. `/code-review 903`). Review that PR; post a comment AND print to chat. Use the `gh pr …` paths below.
+- **Local mode** — no PR was named, or the user said "the current branch", "this diff", "what I have", "chat-first", or is iterating before a PR exists. Review the working branch against its base; print the report to chat only (no GitHub posting). This is the default when there is no open PR for the branch.
+
+If ambiguous (a PR number is absent but an open PR exists for the branch): prefer **local mode** and mention in the chat report that an open PR exists, so the user can re-run with the number to post it.
+
+Resolve the base and diff for **local mode**:
+
+```bash
+base="${BASE:-main}"
+if git rev-parse --verify "origin/$base" >/dev/null 2>&1; then base_ref="origin/$base"; else base_ref="$base"; fi
+git diff --quiet "$base_ref"...HEAD && git diff --quiet "$base_ref" && echo "NO_CHANGES" || echo "HAS_CHANGES"
+{ git diff "$base_ref"...HEAD; git diff "$base_ref"; } > /tmp/code-review.diff   # committed + uncommitted
+git rev-parse HEAD            # HEAD SHA for links (only clickable if a remote exists)
+git branch --show-current
+```
+
+Skip the review if `NO_CHANGES`. Store `base_ref`, the diff path, branch, and HEAD SHA.
+
+## Step 1: Eligibility (PR mode only)
 
 ```bash
 gh pr view <N> --json state,isDraft,author -q '"\(.state)|\(.isDraft)|\(.author.login)"'
@@ -28,32 +50,41 @@ Note ALL active IDs — new review supersedes each one.
 
 ## Step 2: Gather Context
 
+**PR mode:**
 1. `gh pr view N --json number,title,url,headRefOid,body` — store PR metadata + HEAD SHA
 2. `gh repo view --json owner,name` — store OWNER/REPO
-3. Find and read CLAUDE.md files (root + directories touched by diff)
-4. Find plan **inline** (no agent): the plan lives in the PR body — extract the
-   `<details>` block under `<summary>📋 Full implementation plan</summary>` from the body
-   fetched in step 1. Store plan content or "No plan found". (Plans are not committed to the
-   repo; do not glob `.claude/plans/`.)
-5. **Pre-compute historical context** via single Bash call (saves ~20 agent tool calls):
+3. `gh pr diff N > /tmp/code-review.diff` — the diff agents read
+4. Plan: extract the `<details>` block under `<summary>📋 Full implementation plan</summary>` from the PR body. Store it or "No plan found".
+5. Historical context (single Bash call):
+   ```bash
+   files=$(gh pr diff N --name-only | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$')
+   for f in $files; do
+     prs=$(gh pr list --state merged --search "path:$f" --limit 3 --json number,title -q '.[] | "#\(.number) \(.title)"')
+     [ -n "$prs" ] && printf '=== %s ===\n%s\n' "$f" "$prs"
+   done
+   ```
 
-```bash
-files=$(gh pr diff N --name-only | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$')
-for f in $files; do
-  prs=$(gh pr list --state merged --search "path:$f" --limit 3 --json number,title -q '.[] | "#\(.number) \(.title)"')
-  [ -n "$prs" ] && printf '=== %s ===\n%s\n' "$f" "$prs"
-done
-```
+**Local mode:**
+1. Diff is already at `/tmp/code-review.diff` (Step 0). OWNER/REPO from `gh repo view` or `git remote get-url origin` (best-effort, for links only).
+2. Plan: the user's chat is the spec. Treat the user's stated intent in this conversation — what they asked for, the constraints and preferences they voiced — as the plan, and pass a short distillation of it to the agents (especially Agent 1 for adherence and Agent 4 for the UX expectations the user voiced). If a PR exists, also pull its body's plan block.
+3. Historical context from git (no `gh pr list`):
+   ```bash
+   mb=$(git merge-base "$base_ref" HEAD)
+   git diff --name-only "$base_ref"...HEAD | grep -v -E '\.test\.|\.spec\.|evals/|\.env|\.md$|\.json$' | while IFS= read -r f; do
+     hist=$(git log --no-merges --format='%h %s' -3 "$mb" -- "$f" 2>/dev/null)
+     [ -n "$hist" ] && printf '=== %s ===\n%s\n' "$f" "$hist"
+   done
+   ```
 
-Store output as `historicalContext`. Pass to Agent 3.
+In both modes: read CLAUDE.md files (root + directories touched by the diff). Store historical output as `historicalContext` and write it to `/tmp/code-review-history.txt` so Agent 3 can Read it instead of receiving a huge prompt.
 
 ## Step 3: Spawn Review Agents
 
-3 parallel Sonnet agents, all `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "sonnet"`. Each gets CLAUDE.md content, PR body, plan (if any), PR number.
+5 parallel Sonnet agents, all `run_in_background: true`, `subagent_type: "general-purpose"`, `model: "sonnet"`. Each gets: CLAUDE.md content, the plan / distilled chat intent, the diff path (`/tmp/code-review.diff`), and (PR mode) the PR number.
 
 **Shared instructions** (include in every agent prompt):
 
-Do NOT build/typecheck. Run `gh pr diff <N>` to get the diff.
+Do NOT build/typecheck. Read the diff from `/tmp/code-review.diff` (PR mode agents may instead run `gh pr diff <N>`). You may Read source files to confirm before flagging.
 
 Self-score each issue 0-100 before including it. **Only output issues scoring ≥80.**
 
@@ -64,53 +95,70 @@ ISSUES:
 - file.ts:10-20 | CATEGORY | SCORE | Description
 ```
 
-Categories: `claude-md`, `bug`, `plan`, `missing-change`, `abstraction`, `security`, `performance`, `reactivity`, `historical`. No issues → `ISSUES: none`
+Categories: `claude-md`, `bug`, `plan`, `missing-change`, `abstraction`, `security`, `performance`, `reactivity`, `historical`, `ux-consistency`, `ux-discoverability`, `ux-affordance`, `ux-feedback`, `accessibility`, `mobile-layout`, `mobile-touch`, `mobile-responsive`, `mobile-regression`. No issues → `ISSUES: none`
 
-Do NOT flag: pre-existing issues, unchanged lines (except missing corresponding changes), CI-catchable (types/lint/build), general quality without CLAUDE.md mandate, silenced issues, intentional changes matching PR purpose, theoretical risks, pedantic nitpicks.
+Do NOT flag: pre-existing issues, unchanged lines (except missing corresponding changes), CI-catchable (types/lint/build), general quality without a CLAUDE.md/plan mandate, silenced issues, intentional changes matching PR/chat purpose, theoretical risks, pedantic nitpicks. Quality over quantity — returning few or no issues is correct when the change is sound.
 
 ---
 
 **Agent 1: Spec Compliance** — Two jobs:
-1. **CLAUDE.md audit:** Check each change for violations of instructions/invariants. Cite the specific INV-ID, quote the exact rule text, and include the relevant Invariant Playbook section title. Only CLEAR violations introduced by this PR. Skip: pre-existing, linter-catchable, stylistic.
-2. **Plan adherence:** Compare diff against plan/PR description. Missing corresponding changes? (API→frontend, type→usages, schema→migration). Skip: supporting infrastructure, implementation choices.
+1. **CLAUDE.md audit:** Check each change for violations of instructions/invariants. Cite the specific INV-ID, quote the exact rule text, and include the relevant Invariant Playbook section title. Only CLEAR violations introduced by this change. Skip: pre-existing, linter-catchable, stylistic.
+2. **Plan/intent adherence:** Compare the diff against the plan / the user's stated intent. Missing corresponding changes? (API→frontend, type→usages, schema→migration, backend pref key→frontend wiring). Skip: supporting infrastructure, implementation choices.
 
 **Agent 2: Correctness** — Two jobs:
-1. **Bug scan:** Logic errors, unhandled edges, off-by-one, null hazards, race conditions. Changes only, significant bugs only.
+1. **Bug scan:** Logic errors, unhandled edges, off-by-one, null hazards, race conditions, stale-closure/ref bugs, listener leaks, state machines that can wedge. Changes only, significant bugs only.
 2. **Security:** HIGH-CONFIDENCE vulnerabilities only (>80% exploitable). Trace data flow from user inputs. Categories: injection (SQL/cmd/XXE/template/path traversal), auth bypass, hardcoded secrets, deserialization RCE, XSS, data exposure. **Hard exclusions:** DoS, rate limiting, disk secrets, theoretical races, outdated deps, memory safety, test-only, log spoofing, path-only SSRF, AI prompt content, regex, docs/markdown, missing audit logs, missing hardening without concrete vuln. **Calibration:** React safe unless dangerouslySetInnerHTML. UUIDs unguessable. Env vars trusted.
 
 **Agent 3: Design** — Two jobs:
-1. **Design quality:** Leaky abstractions, config sprawl, partial abstractions, parallel implementations, N+1/unbounded queries, missing memoization, outbox/transaction/reactivity issues. Concrete issues only.
-2. **Historical context:** You receive pre-computed `HISTORICAL CONTEXT` showing recent merged PRs per file. Analyze provided PR titles for established patterns. Only flag changes that clearly violate patterns visible from the PR history. Do NOT make additional `gh pr list` or `gh api` calls — all historical data is pre-provided.
+1. **Design quality:** Leaky abstractions, config sprawl, partial abstractions, parallel implementations, N+1/unbounded queries, missing memoization / re-render storms, outbox/transaction/reactivity issues. Concrete issues with a named consequence only.
+2. **Historical context:** Read `/tmp/code-review-history.txt` (recent commits/PRs per touched file). Only flag changes that clearly violate patterns visible from the history. Do NOT make additional history calls — all of it is pre-provided.
+
+**Agent 4: UX / Interaction Design** — user-perceivable behavior, NOT a generic bug hunt:
+- **Consistency:** does an interaction behave identically across every surface it appears on (e.g. a gesture wired per-surface that drifts)? Does a documented preference/toggle fully and consistently change behavior everywhere?
+- **Discoverability & affordances:** can a user tell what state they're in (focus, mode, selection) and what an action will do before doing it? Is a new capability reachable without already knowing it exists?
+- **Affordance gaps & traps:** actions that are hard to reverse, destructive, or land focus/navigation somewhere surprising; empty/loading/error states; flashes, jumps, or content reshape on transition (INV-21 layout shift).
+- **Keyboard & a11y-as-UX:** are new shortcuts discoverable and consistent with existing conventions; conflicts; focus management on open/close; can the feature be operated by keyboard alone; are controls labeled.
+- **State persistence:** does refresh / back-forward / deep link preserve what the user expects (and is anything silently lost)?
+Use the user's voiced preferences (from the plan/chat intent) as ground truth for what "good" feels like here. UX rubric: 0=not a real problem, 25=subjective taste, 50=minor friction, 75=clear friction/inconsistency a real user hits, 100=broken/confusing core interaction or a consistency violation the user explicitly cares about. Favor issues grounded in the actual diff; do not flag pure visual taste or out-of-scope backend work.
+
+**Agent 5: Mobile / Responsive** — user-perceivable on phones/touch/narrow viewports:
+- **Correctness of mobile branches:** do `isMobile`/breakpoint paths actually render the intended mobile layout; do viewport-width and container-width thresholds agree (a mismatch where one says "mobile" and another computes a desktop value is a real bug); can the user always get back/out.
+- **Touch interactions:** pointer/drag/long-press handlers that interfere with scrolling or tapping; gestures that should be mouse-only but aren't guarded (`pointerType`); controls that are invisible or unusable on touch (hover-only, tiny targets, divider/resize affordances).
+- **Layout/viewport:** `vh`/`vw`/`100vh` and fixed widths that break with the mobile keyboard or browser chrome; min-width floors causing horizontal overflow; safe-area handling; regressions to existing mobile keyboard/scroll choreography.
+- **Menus/sheets:** do popovers/sheets fit and position correctly on a phone; are desktop-only items correctly hidden on mobile (and vice versa).
+Mobile rubric: 0=not real, 25=minor/subjective, 50=minor friction, 75=clear breakage/friction a real phone user hits, 100=core mobile interaction broken. Do not flag desktop-only concerns, theoretical device issues, or things correctly gated behind `isMobile`.
 
 ---
 
-## Step 4: Compose Comment
+## Step 4: Compose Report
 
-Collect all issues from agents. Drop any with score <80.
+Collect all issues from the 5 agents. Drop any with score <80. De-duplicate where two agents found the same thing (keep the clearest framing, note both lenses). Verify the highest-impact claims against the source before publishing — a confidently-posted false positive is worse than a missed nitpick; lower the score or drop it if it doesn't hold.
 
 Confidence 1-7: 7=Excellent(none survived), 6=Very Good(minor), 5=Good(few non-blocking), 4=Acceptable(some), 3=Needs Work(multiple), 2=Significant Concerns(blocking), 1=Major Problems.
 
-## Step 5: Re-Check Eligibility
+## Step 5: Re-Check Eligibility (PR mode only)
 
-Re-run Step 1 to ensure PR hasn't been closed/drafted during review.
+Re-run Step 1 to ensure the PR hasn't been closed/drafted during review.
 
-## Step 6: Post Comment
+## Step 6: Publish
 
-Use `gh pr comment N --body "..."`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context).
+**Always print the full report to chat** (both modes) so the user sees it without leaving the conversation.
 
-**Attribution:** Disclose models. Include `**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x3`.
+**PR mode also posts a comment.** Use `gh pr comment N --body-file …`. Link format: `https://github.com/OWNER/REPO/blob/FULL_SHA/path/file.ts#L10-L15` (full SHA, 1-2 lines context). In local mode, use the same link format only if a remote/SHA is known; otherwise cite `path/file.ts:10-15`.
 
-**If issues found:**
+**Attribution:** Disclose models. Include `**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x5 (spec, correctness, design, UX, mobile)`.
+
+Report body (identical for the chat printout and the PR comment; the PR comment also carries the `<!-- unified-review -->` marker as its first line):
 
 ```
 <!-- unified-review -->
 ### Code review
 **Confidence: X/7** — [Label]
-**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x3
+**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x5 (spec, correctness, design, UX, mobile)
 
 Found N issues:
 
-1. `file.ts:10-20` — Description (CLAUDE.md [INV-XX, <section>]: "<quoted>" | bug: <reason> | etc.)
+1. `file.ts:10-20` — Description (CLAUDE.md [INV-XX, <section>]: "<quoted>" | bug: <reason> | ux-consistency: <reason> | mobile-touch: <reason> | etc.)
    https://github.com/OWNER/REPO/blob/SHA/path/file.ts#L9-L21
 
 ---
@@ -119,6 +167,8 @@ Found N issues:
 <details><summary>📋 CLAUDE.md Compliance [CLEAN | N violations]</summary>[details]</details>
 <details><summary>🏗️ Design [CLEAN | N concerns]</summary>[details]</details>
 <details><summary>🔒 Security [CLEAN | N issues]</summary>[details]</details>
+<details><summary>🎛️ UX [CLEAN | N issues]</summary>[details]</details>
+<details><summary>📱 Mobile [CLEAN | N issues]</summary>[details]</details>
 
 🤖 Generated with unified-review automation
 <sub>If this review was useful, react with 👍. Otherwise, react with 👎.</sub>
@@ -130,29 +180,33 @@ Found N issues:
 <!-- unified-review -->
 ### Code review
 **Confidence: 7/7** — Excellent
-**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x3
+**Review models:** Orchestrator: <runtime model> | Reviewers: sonnet x5 (spec, correctness, design, UX, mobile)
 
-No issues found. Checked for bugs, CLAUDE.md compliance, plan adherence, design quality, and security.
+No issues found. Checked for bugs, CLAUDE.md compliance, plan adherence, design quality, security, UX, and mobile.
 
 🤖 Generated with unified-review automation
 <sub>If this review was useful, react with 👍. Otherwise, react with 👎.</sub>
 ```
 
-**Supersede old comments** (for each active ID from Step 1): Fetch old body, replace `<!-- unified-review -->` with `<!-- unified-review:old -->`, update with `<!-- unified-review:superseded -->`, link to new comment, preserve full old content in `<details>`.
+In local mode, drop the `<!-- unified-review -->` / reaction-footer lines from the chat printout (they only matter on GitHub).
+
+**Supersede old comments** (PR mode, for each active ID from Step 1): Fetch old body, replace `<!-- unified-review -->` with `<!-- unified-review:old -->`, update with `<!-- unified-review:superseded -->`, link to new comment, preserve full old content in `<details>`.
 
 Use `gh api -X PATCH repos/OWNER/REPO/issues/comments/ID -f body=...` locally, or `curl -X PATCH` per the **`github-api-web`** skill in remote/web sessions. **Do not attempt this via `mcp__github__*`** — the MCP server does not expose a working issue-comment edit, and skipping supersede leaves stale reviews stacked on the PR (this is the most common remote-session failure mode for this skill).
 
 ## Step 7: Report to User
 
 ```
-Code review posted to PR #N: <URL>
+Code review complete — <PR #N: URL | local branch <name> vs <base_ref>>
 Confidence: X/7
-Models: Orchestrator=<runtime model>, Reviewers=sonnet x3
+Models: Orchestrator=<runtime model>, Reviewers=sonnet x5
 Summary:
 - 📐 Plan: <status>
 - 🔍 Bugs: <status>
 - 📋 CLAUDE.md: <status>
 - 🏗️ Design: <status>
 - 🔒 Security: <status>
+- 🎛️ UX: <status>
+- 📱 Mobile: <status>
 Key issues: [list if any]
 ```
