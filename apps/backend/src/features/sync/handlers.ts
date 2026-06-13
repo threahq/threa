@@ -2,6 +2,7 @@ import type { Request, Response } from "express"
 import { z } from "zod"
 import type { SyncCatchUpResponse } from "@threa/types"
 import { HttpError } from "../../lib/errors"
+import { permissionGroupsForRole } from "../../lib/outbox"
 import type { SyncService } from "./service"
 
 const catchUpQuerySchema = z.object({
@@ -18,6 +19,10 @@ export function createSyncHandlers({ syncService }: Dependencies) {
     async catchUp(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
+      // Permission-scoped log entries (e.g. invitation lifecycle) replay only to
+      // holders. Derived from role to stay congruent with the socket join, which
+      // joins the same permission rooms off the same role.
+      const permissionGroups = permissionGroupsForRole(req.user!.role)
 
       const parsed = catchUpQuerySchema.safeParse(req.query)
       if (!parsed.success) {
@@ -27,6 +32,7 @@ export function createSyncHandlers({ syncService }: Dependencies) {
       const { entries, head, requiresBootstrap } = await syncService.catchUp({
         workspaceId,
         userId,
+        permissionGroups,
         after: BigInt(parsed.data.after),
         limit: parsed.data.limit,
       })

@@ -9,6 +9,7 @@ import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
 import { UserRepository } from "./features/workspaces"
+import { groupToRoom, permissionGroupsForRole } from "./lib/outbox"
 import { HttpError } from "./lib/errors"
 import { logger } from "./lib/logger"
 import { wsConnectionsActive, wsConnectionDuration, wsMessagesTotal } from "./lib/observability"
@@ -91,8 +92,8 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
       joinedRooms: new Map(),
     }
 
-    // Track user rooms per workspace for auto-leave on workspace leave
-    const userRooms = new Map<string, { userId: string; userRoom: string }>()
+    // Track user + permission rooms per workspace for auto-leave on workspace leave
+    const userRooms = new Map<string, { userId: string; userRoom: string; permissionRooms: string[] }>()
 
     // =========================================================================
     // Room management
@@ -123,7 +124,24 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         // Auto-join user room for targeted event delivery (activity, commands, read state)
         const userRoom = `ws:${wsId}:user:${workspaceUser.id}`
         socket.join(userRoom)
-        userRooms.set(wsId, { userId: workspaceUser.id, userRoom })
+
+        // Auto-join permission rooms for permission-scoped delivery (e.g.
+        // invitation lifecycle → members:write). Derived from the member's role,
+        // mirroring requireWorkspacePermission's role fallback, so a non-admin
+        // never receives invitee identity. A re-join on the same socket
+        // re-derives the set and leaves rooms the member no longer qualifies for,
+        // so an in-connection role change heals on the next join (a fresh
+        // connection always re-derives from scratch). The catch-up path derives
+        // the role per request, so it is always current.
+        const permissionRooms = permissionGroupsForRole(workspaceUser.role).map((group) => groupToRoom(wsId, group))
+        const stalePermissionRooms = userRooms.get(wsId)?.permissionRooms ?? []
+        for (const stale of stalePermissionRooms) {
+          if (!permissionRooms.includes(stale)) socket.leave(stale)
+        }
+        for (const permissionRoom of permissionRooms) {
+          socket.join(permissionRoom)
+        }
+        userRooms.set(wsId, { userId: workspaceUser.id, userRoom, permissionRooms })
 
         // Upsert session for push notification suppression (only when push is enabled).
         // Don't set focused — the first heartbeat (emitted immediately on connect)
@@ -258,13 +276,16 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
 
       socket.leave(room)
 
-      // Auto-leave user room when leaving a workspace room
+      // Auto-leave user + permission rooms when leaving a workspace room
       const wsMatch = room.match(/^ws:([^:]+)$/)
       if (wsMatch) {
         const wsId = wsMatch[1]
         const entry = userRooms.get(wsId)
         if (entry) {
           socket.leave(entry.userRoom)
+          for (const permissionRoom of entry.permissionRooms) {
+            socket.leave(permissionRoom)
+          }
           userRooms.delete(wsId)
         }
       }

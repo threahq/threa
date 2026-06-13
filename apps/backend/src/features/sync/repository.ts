@@ -119,8 +119,12 @@ export const SyncLogRepository = {
 
   /**
    * Lists log entries after a cursor, filtered to what the requesting user is
-   * allowed to see: workspace-group entries, their own user-group entries, and
-   * stream-group entries for streams they can read.
+   * allowed to see: workspace-group entries, their own user-group entries,
+   * entries for any permission group they hold (`permissionGroups`, e.g.
+   * invitation lifecycle → members:write), and stream-group entries for streams
+   * they can read. The permission groups are role-derived by the caller, the
+   * same source the socket join uses, so catch-up admits exactly what live
+   * delivery reached.
    *
    * A stream is readable when the user is a member of it OR a member of its
    * root stream (INV-62) — threads never carry their own access;
@@ -142,9 +146,9 @@ export const SyncLogRepository = {
    */
   async listEntriesForUser(
     db: Querier,
-    params: { workspaceId: string; userId: string; after: bigint; limit: number }
+    params: { workspaceId: string; userId: string; permissionGroups: string[]; after: bigint; limit: number }
   ): Promise<SyncLogEntry[]> {
-    const { workspaceId, userId, after, limit } = params
+    const { workspaceId, userId, permissionGroups, after, limit } = params
     const result = await db.query<SyncLogEntryRow>(sql`
       WITH join_bounds AS (
         SELECT DISTINCT ON (payload->>'streamId') payload->>'streamId' AS stream_id, sync_id AS join_sync_id
@@ -173,7 +177,7 @@ export const SyncLogRepository = {
       WHERE l.workspace_id = ${workspaceId}
         AND l.sync_id > ${after.toString()}
         AND (
-          l.groups && ARRAY['workspace', 'user:' || ${userId}]
+          l.groups && (ARRAY['workspace', 'user:' || ${userId}]::text[] || ${permissionGroups}::text[])
           OR EXISTS (
             SELECT 1
             FROM visible_streams vs

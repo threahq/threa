@@ -12,6 +12,8 @@ export {
   WORKSPACE_GROUP,
   streamGroup,
   userGroup,
+  permissionGroup,
+  permissionGroupsForRole,
 } from "./delivery-groups"
 export { parseMessagePayload, type NormalizedMessagePayload } from "./payload-parsers"
 export {

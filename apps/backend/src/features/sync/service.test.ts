@@ -10,7 +10,7 @@ function setupService() {
   return new SyncService({ pool: {} as Pool })
 }
 
-const baseParams = { workspaceId: "ws_1", userId: "usr_alice", limit: 50 }
+const baseParams = { workspaceId: "ws_1", userId: "usr_alice", permissionGroups: [], limit: 50 }
 
 describe("SyncService.catchUp retention floor", () => {
   afterEach(() => {

@@ -1,7 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { setupTestDatabase } from "./setup"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../src/features/sync"
+import { permissionGroup } from "../../src/lib/outbox"
+
+const MEMBERS_WRITE_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
 
 describe("SyncLogRepository catch-up reads", () => {
   let pool: Pool
@@ -49,8 +53,8 @@ describe("SyncLogRepository catch-up reads", () => {
     return assigned.get(outboxEventId)!
   }
 
-  function listFor(workspaceId: string, userId: string, after = 0n, limit = 100) {
-    return SyncLogRepository.listEntriesForUser(pool, { workspaceId, userId, after, limit })
+  function listFor(workspaceId: string, userId: string, after = 0n, limit = 100, permissionGroups: string[] = []) {
+    return SyncLogRepository.listEntriesForUser(pool, { workspaceId, userId, permissionGroups, after, limit })
   }
 
   /**
@@ -97,6 +101,26 @@ describe("SyncLogRepository catch-up reads", () => {
 
     const bobEntries = await listFor(workspaceId, bob)
     expect(bobEntries.map((e) => e.syncId)).toEqual([workspaceWide, bobStreamEntry])
+  })
+
+  test("admits permission-group entries only for holders of the permission", async () => {
+    const workspaceId = uniqueId("ws")
+    const admin = uniqueId("usr")
+    const member = uniqueId("usr")
+
+    const invite = await appendEntry(workspaceId, {
+      eventType: "invitation:sent",
+      groups: [MEMBERS_WRITE_GROUP],
+      payload: { workspaceId, invitationId: uniqueId("inv"), email: "invitee@example.com" },
+    })
+
+    // The admin holds members:write (passes its permission group); the member
+    // does not, so the invitation entry never reaches them.
+    const adminEntries = await listFor(workspaceId, admin, 0n, 100, [MEMBERS_WRITE_GROUP])
+    expect(adminEntries.map((e) => e.syncId)).toEqual([invite])
+
+    const memberEntries = await listFor(workspaceId, member, 0n, 100, [])
+    expect(memberEntries.map((e) => e.syncId)).toEqual([])
   })
 
   test("bounds stream groups by the member_added join position — no pre-join history", async () => {

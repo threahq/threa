@@ -163,14 +163,20 @@ treating such a flag as real healing — it may be dead code (labels was).
 
 ## Not deletable / keep as-is
 
-- **`usePageResumeRefresh`** (workspace + visible-stream bootstrap
-  invalidation on ≥5s resume): overlaps `SyncEngine.handlePageResume` (≥10s
-  away → probe → full reconnect bootstrap + catch-up), and on a ≥10s resume
-  the two run _duplicate_ full bootstrap fetches in every mode — but it is the
-  only healing in the 5–10s window and the only blanket cover for
-  "socket-healthy but tab-throttled" gaps below the probe threshold. Any
-  change here is a redesign (threshold alignment / engine-owned resume
-  catch-up), not a one-line deletion. Owner decision; not next.
+- **`usePageResumeRefresh`** (workspace + visible-stream bootstrap invalidation
+  on ≥5s resume): **deleted; resume is now engine-owned (#917).** It overlapped
+  `SyncEngine.handlePageResume` and on a ≥10s resume the two ran _duplicate_
+  full bootstrap fetches — the only thing it covered alone was the 5–10s window
+  below the old probe threshold. #917 unified the trigger at a single 5s
+  `PAGE_RESUME_THRESHOLD_MS` (one engine-owned entry point covers the whole
+  window, including the former 5–10s gap) and slimmed
+  `refreshAfterConnectivityResume` to `runBootstrap(true)` — so an active-mode
+  resume / online flip now runs `slimReconnectBootstrap()` + `runCatchUp("resume")`
+  instead of a full snapshot, the same slim path the socket reconnect uses. The
+  engine already tracks the identical visible-stream set the hook computed
+  (`currentStreamId` + `visibleStreamIds`), so per-stream deltas cover what the
+  hook's `streamKeys.bootstrap` invalidations did. Full snapshot still kept for
+  off/shadow/cold-connect and the below-floor `requiresBootstrap` fallback.
 - **Engine reconnect workspace bootstrap** (`runBootstrap(true)`): **slimmed for
   the active-mode socket reconnect (DONE).** The full-snapshot fetch was
   redundant there — catch-up replay (which runs right after) re-seeds every
@@ -190,9 +196,13 @@ treating such a flag as real healing — it may be dead code (labels was).
   cursor below the retained floor has no log to replay, so only the full
   snapshot is authoritative for everything `<= head`; `forceFull` upgrades an
   already-queued slim reconnect so it can't be collapsed away). Static
-  bootstrap-only state (personas, emojis, commands, invitations, permissions,
-  muted ids) has no live event, so a reconnect was only ever an incidental
-  refresh of it, not a guarantee — no regression. Read-before-stamp is moot on
+  bootstrap-only state (personas, emojis, commands, permissions, muted ids) has
+  no live event, so a reconnect was only ever an incidental refresh of it, not a
+  guarantee — no regression. (Invitations are bootstrap-only on the client too
+  but for a different reason — their events _are_ logged and broadcast
+  workspace-wide, just unhandled on the client; see the `invitation:*` follow-up
+  below. Earlier inventory text lumping invitations in with the static "no live
+  event" set was imprecise.) Read-before-stamp is moot on
   the slim path (no snapshot for the cursor to race; cursor + unread IDB persist
   across the reconnect, so absolute LWW catch-up converges the counters). The
   slim path swallows its own errors (sets the workspace stale) so it can never
@@ -215,6 +225,32 @@ treating such a flag as real healing — it may be dead code (labels was).
   handler in workspace-sync that invalidates the memory-explorer search
   queries, so live emits and catch-up replays both heal it now. In-situ
   capture rides `stream:memos_captured` through stream-sync.
+- **`invitation:*` (sent / accepted / revoked / link-created / link-claimed)** —
+  bootstrap-only on the client; the next additive candidate the owner flagged.
+  The five events are real outbox events (`features/invitations/service.ts`).
+  They used to fall through `resolveDeliveryGroups` to `WORKSPACE_GROUP` — logged
+  and broadcast to every member's socket even though the payloads carry invitee
+  `email`, link `tokenHash`, and accepted-user identity (inert only because no
+  client read them). **Now permission-scoped (DONE):** `resolveDeliveryGroups`
+  routes them to `permissionGroup(members:write)`, so they are logged and emitted
+  to the `permission:members:write` group only. Sockets join that room on
+  workspace join via `permissionGroupsForRole(role)` (role-derived, mirroring
+  `requireWorkspacePermission`'s fallback), and catch-up admits the group for
+  holders — the catch-up handler passes the same role-derived `permissionGroups`
+  into `listEntriesForUser`, so live and replay delivery stay congruent. This
+  mirrors the bootstrap gate (`workspaces/handlers.ts` includes `invitations`
+  only for `members:write`). Pre-change `sync_log` rows keep their old
+  `['workspace']` groups until they age out of retention, but they are inert (no
+  client handler reads invitation events yet). What remains is purely
+  client-side: there is no `invitation:*` handler in `sync/workspace-sync.ts`,
+  and the only frontend surface — the `["invitations", workspaceId]` query in
+  `components/workspace-settings/users-tab.tsx` (settings → users) — refreshes
+  only on the viewer's own send/revoke/resend mutations and on a full workspace
+  bootstrap, so an invitation another admin sends or revokes in another session
+  never updates a viewer's open list until they remount or re-bootstrap. Once a
+  gate-registered handler invalidates `["invitations", workspaceId]`, live emits
+  and catch-up replays both heal the list and the standard coverage-proof chain
+  applies.
 - **`refetchOnMount: true`** on saved/scheduled/labels/activity: mount-time
   freshness, not reconnect healing. Out of scope.
 - **`useBackgroundBootstrapSync`** (SW prefetch) and **`useAppUpdate`**
