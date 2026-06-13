@@ -22,6 +22,10 @@ export interface EnclaveConfig {
    * turn pins its history plus inline attachment ciphertext (tens of MB) in
    * memory and burns OpenRouter spend. At capacity the claim loop stops claiming
    * until a turn settles. Scaling stays "run more replicas".
+   *
+   * Default 8 is a conservative ceiling for a small instance: at tens of MB
+   * pinned per in-flight turn, 8 keeps peak memory in the low hundreds of MB.
+   * Raise it on larger boxes; lower it under memory pressure.
    */
   maxConcurrentSessions: number
   /** Source commit the image was built from, surfaced via /attestation. */
@@ -41,15 +45,24 @@ export interface EnclaveConfig {
 }
 
 /**
- * Parse a positive-integer env var, falling back to `fallback` for anything
- * that isn't one. The dangerous case is a negative interval: `Number(env) || x`
- * passes it straight through to `setTimeout`, which clamps to 0 and turns the
- * idle claim poll into a hot loop hammering the backend. 0/NaN/empty already
- * fall back; this additionally rejects negatives and non-integers.
+ * Resolve an optional positive-integer env var. Unset (or empty) uses
+ * `fallback`; a value that is set but not a positive integer throws rather than
+ * silently degrading to the default — a malformed override is a deployment
+ * mistake the operator should see at boot, not a quietly-ignored setting
+ * (INV-11), and `loadEnclaveConfig` already throws for missing required vars.
+ *
+ * The motivating bug: `Number(env) || fallback` is truthy for a negative value,
+ * so `ENCLAVE_CLAIM_POLL_INTERVAL_MS=-5` would pass straight to setTimeout
+ * (clamped to 0) and turn the idle claim poll into a hot loop.
  */
-function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
+function positiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw === "") return fallback
   const n = Number(raw)
-  return Number.isInteger(n) && n > 0 ? n : fallback
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`${name} must be a positive integer, got: ${raw}`)
+  }
+  return n
 }
 
 export function loadEnclaveConfig(): EnclaveConfig {
@@ -60,12 +73,12 @@ export function loadEnclaveConfig(): EnclaveConfig {
   }
 
   return {
-    port: parsePositiveIntEnv(process.env.PORT, 3011),
+    port: positiveIntEnv("PORT", 3011),
     backendBaseUrl: process.env.BACKEND_BASE_URL!.replace(/\/$/, ""),
     internalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY!,
-    heartbeatIntervalMs: parsePositiveIntEnv(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS, 30_000),
-    claimPollIntervalMs: parsePositiveIntEnv(process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS, 1_500),
-    maxConcurrentSessions: parsePositiveIntEnv(process.env.ENCLAVE_MAX_CONCURRENT_SESSIONS, 8),
+    heartbeatIntervalMs: positiveIntEnv("ENCLAVE_HEARTBEAT_INTERVAL_MS", 30_000),
+    claimPollIntervalMs: positiveIntEnv("ENCLAVE_CLAIM_POLL_INTERVAL_MS", 1_500),
+    maxConcurrentSessions: positiveIntEnv("ENCLAVE_MAX_CONCURRENT_SESSIONS", 8),
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,

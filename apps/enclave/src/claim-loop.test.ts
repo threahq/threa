@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { INTERNAL_API_KEY_HEADER } from "@threa/types"
 import type { EnclaveConfig } from "./config"
 import type { EnclaveKeyPair } from "./keystore"
-import { claimOnce } from "./claim-loop"
+import { claimOnce, startClaimLoop } from "./claim-loop"
 
 const config: EnclaveConfig = {
   port: 3011,
@@ -57,6 +57,7 @@ function stubFetch(captured: Captured, status: number, body?: unknown): void {
 afterEach(() => {
   globalThis.fetch = originalFetch
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe("claimOnce", () => {
@@ -130,23 +131,20 @@ describe("claimOnce", () => {
   })
 
   it("does not claim at the per-instance concurrency ceiling, leaving the turn for a free slot", async () => {
-    const captured: Captured = { url: null, headers: null, body: null }
     const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }))
     globalThis.fetch = fetchSpy as unknown as typeof fetch
     const runSession = vi.fn(async () => {})
-    const atCapacity = new Set(["session_a", "session_b"])
 
     const result = await claimOnce({
       config: { ...config, maxConcurrentSessions: 2 },
       keyPair,
-      inFlight: atCapacity,
+      inFlight: new Set(["session_a", "session_b"]),
       runSession,
     })
 
     expect(result.claimed).toBe(false)
     expect(fetchSpy).not.toHaveBeenCalled()
     expect(runSession).not.toHaveBeenCalled()
-    expect(captured.url).toBeNull()
   })
 
   it("treats a tombstoned registration (404) as no work, leaving re-registration to the heartbeat", async () => {
@@ -157,5 +155,33 @@ describe("claimOnce", () => {
 
     expect(result.claimed).toBe(false)
     expect(runSession).not.toHaveBeenCalled()
+  })
+})
+
+describe("startClaimLoop", () => {
+  it("at capacity, idles for the poll interval instead of busy-spinning, then resumes when a slot frees", async () => {
+    vi.useFakeTimers()
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 204 }))
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    const inFlight = new Set(["session_a", "session_b"])
+
+    const loop = startClaimLoop({
+      config: { ...config, maxConcurrentSessions: 2 },
+      keyPair,
+      inFlight,
+      runSession: vi.fn(async () => {}),
+    })
+
+    // The first tick runs on start; at capacity it must not poll, and must not
+    // hot-loop — advancing nearly a full interval still triggers no claim.
+    await vi.advanceTimersByTimeAsync(config.claimPollIntervalMs - 1)
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    // A turn settles; the next idle tick finds a free slot and claims.
+    inFlight.delete("session_a")
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+    loop.stop()
   })
 })

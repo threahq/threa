@@ -44,22 +44,38 @@ describe("loadEnclaveConfig numeric guards", () => {
     expect(loadEnclaveConfig().claimPollIntervalMs).toBe(3000)
   })
 
-  it("falls back rather than passing a negative interval to setTimeout (hot-loop guard)", () => {
+  it("uses the documented default when the var is unset", () => {
     withKey()
-    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "-5"
+    delete process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS
 
     expect(loadEnclaveConfig().claimPollIntervalMs).toBe(1_500)
   })
 
-  it("falls back on zero, non-integer, and non-numeric values", () => {
+  it("throws rather than passing a negative interval to setTimeout (hot-loop guard)", () => {
+    withKey()
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "-5"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_CLAIM_POLL_INTERVAL_MS")
+  })
+
+  it("throws on a zero override", () => {
     withKey()
     process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS = "0"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_HEARTBEAT_INTERVAL_MS")
+  })
+
+  it("throws on a non-integer override", () => {
+    withKey()
     process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "1.5"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_CLAIM_POLL_INTERVAL_MS")
+  })
+
+  it("throws on a non-numeric override", () => {
+    withKey()
     process.env.ENCLAVE_MAX_CONCURRENT_SESSIONS = "lots"
 
-    const config = loadEnclaveConfig()
-    expect(config.heartbeatIntervalMs).toBe(30_000)
-    expect(config.claimPollIntervalMs).toBe(1_500)
-    expect(config.maxConcurrentSessions).toBe(8)
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_MAX_CONCURRENT_SESSIONS")
   })
 })

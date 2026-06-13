@@ -47,9 +47,16 @@ export async function claimOnce(deps: ClaimLoopDeps): Promise<{ claimed: boolean
   // rather than pile on — each in-flight turn pins its history + inline
   // attachment ciphertext (tens of MB) and burns OpenRouter spend. Reported as
   // "no work won" so the loop settles to the idle interval; a settling turn
-  // frees the slot for the next poll. The loop serializes claimOnce, so this
-  // check-then-add never overshoots the cap.
-  if (inFlight.size >= config.maxConcurrentSessions) return { claimed: false }
+  // frees the slot, picked up on the next idle tick. The loop serializes
+  // claimOnce, so this check-then-add never overshoots the cap. The log keeps
+  // "throttling at capacity" distinguishable from "genuinely idle".
+  if (inFlight.size >= config.maxConcurrentSessions) {
+    logger.debug(
+      { inFlight: inFlight.size, max: config.maxConcurrentSessions },
+      "At concurrency ceiling; deferring claim to the next idle poll"
+    )
+    return { claimed: false }
+  }
 
   const res = await fetch(`${config.backendBaseUrl}/internal/enclave-runtimes/claims`, {
     method: "POST",
