@@ -1,6 +1,8 @@
 import {
   ENCLAVE_CALLBACK_TOKEN_HEADER,
   INTERNAL_API_KEY_HEADER,
+  type EnclaveMidTurnMessage,
+  type EnclaveMidTurnMessagesResponse,
   type EnclaveSessionHeartbeatResponse,
   type SealedReply,
   type EnclaveSealedName,
@@ -28,6 +30,15 @@ export interface BackendCallbacks {
   heartbeat(sessionId: string): Promise<EnclaveSessionHeartbeatResponse>
   /** Stream one sealed reply back the moment the loop sends it (written + broadcast now). */
   message(sessionId: string, reply: SealedReply): Promise<void>
+  /**
+   * Pull the sealed messages that landed since `afterSequence` (the interjection
+   * poll, UX-12). The loop calls this at its reconsider boundaries so a message
+   * arriving mid-turn reaches the turn in flight, not only via post-completion
+   * catch-up. The backend clamps the floor to the trigger, so a `0` cursor is
+   * safe; the rows come back sealed and the enclave opens them with the SSK it
+   * already holds.
+   */
+  pollMessages(sessionId: string, afterSequence: bigint): Promise<EnclaveMidTurnMessage[]>
   /** Open one in-flight sealed trace step the moment the loop starts it (persisted + broadcast now). */
   stepStarted(sessionId: string, step: SealedStepStart): Promise<void>
   /** Finalize one sealed trace step in place the moment it completes (persisted + broadcast now). */
@@ -81,6 +92,19 @@ export function createBackendCallbacks(config: EnclaveConfig, callbackToken?: st
         signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session message failed: ${res.status}`)
+    },
+
+    async pollMessages(sessionId, afterSequence) {
+      const url = `${base}/internal/enclave-runtimes/sessions/${sessionId}/messages?after=${afterSequence.toString()}`
+      const res = await fetch(url, {
+        method: "GET",
+        headers,
+        signal: AbortSignal.timeout(MESSAGE_TIMEOUT_MS),
+      })
+      if (!res.ok) throw new Error(`session poll-messages failed: ${res.status}`)
+      const body = (await res.json()) as EnclaveMidTurnMessagesResponse
+      if (!Array.isArray(body?.messages)) throw new Error("session poll-messages returned an invalid body")
+      return body.messages
     },
 
     async stepStarted(sessionId, step) {

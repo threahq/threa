@@ -385,6 +385,8 @@ export type {
   EnclaveSessionFailure,
   EnclaveClaimResponse,
   EnclaveSessionHeartbeatResponse,
+  EnclaveMidTurnMessage,
+  EnclaveMidTurnMessagesResponse,
   UpdateStreamInput,
   UpdateCompanionModeInput,
   StreamBootstrap,

@@ -8,7 +8,10 @@ import {
   AuthorTypes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
+  type EnclaveMidTurnMessage,
+  type EnclaveMidTurnMessagesResponse,
   type EnclaveSessionHeartbeatResponse,
+  type EnclaveStreamEnvelope,
   type JSONContent,
 } from "@threa/types"
 import { withTransaction } from "../../db"
@@ -18,11 +21,13 @@ import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
 import {
   AgentSessionRepository,
+  PersonaRepository,
   SessionStatuses,
   getBuiltInAgentConfig,
   failSessionWithLifecycle,
   type AgentSession,
 } from "../agents"
+import { UserRepository } from "../workspaces"
 import { StreamRepository, StreamEventRepository } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { serializeTraceStep } from "../public-api"
@@ -41,6 +46,7 @@ import { parseModelId } from "@threa/agent-runtime"
  *
  *   POST /internal/enclave-runtimes/sessions/:id/heartbeat  — liveness refresh
  *   POST /internal/enclave-runtimes/sessions/:id/messages   — one sealed reply, streamed
+ *   GET  /internal/enclave-runtimes/sessions/:id/messages   — sealed mid-turn messages (interjection pull)
  *   POST /internal/enclave-runtimes/sessions/:id/steps      — one sealed trace step, streamed
  *   POST /internal/enclave-runtimes/sessions/:id/complete   — ack (ids + metadata)
  *   POST /internal/enclave-runtimes/sessions/:id/fail       — terminate on loop error
@@ -88,6 +94,10 @@ const completeSchema = z.object({
       cost: z.number().optional(),
     })
     .optional(),
+  // The highest stream sequence the turn incorporated via the interjection pull
+  // (UX-12), base-10. Advances the catch-up boundary so a mid-turn message the
+  // reply already addressed isn't re-triggered. Absent → trigger boundary.
+  lastProcessedSequence: z.string().regex(/^\d+$/).optional(),
 })
 
 // The enclave's scrubbed failure classification — `errorName` is the thrown
@@ -133,6 +143,13 @@ const sealedSubstepSchema = z.object({
   stepId: z.string().min(1).optional(),
   snapshotCiphertext: z.base64().min(1).optional(),
   snapshotEnvelope: streamEnvelopeSchema.optional(),
+})
+
+// The interjection pull's only input: the base-10 sequence the enclave has seen
+// up to. Optional — absent means "from the floor" (the trigger boundary the
+// handler clamps to regardless), so a first poll with no cursor is well-defined.
+const pollAfterSchema = z.object({
+  after: z.string().regex(/^\d+$/).optional(),
 })
 
 interface Dependencies {
@@ -293,6 +310,113 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       })
 
       res.status(204).end()
+    },
+
+    /**
+     * GET /internal/enclave-runtimes/sessions/:id/messages?after=<seq>
+     * The interjection pull (UX-12): hand the enclave the user messages that
+     * landed since `after`, sealed, so its turn loop can reconsider mid-flight
+     * instead of only catching up after completion. The enclave already holds the
+     * SSK from the assignment's wraps, so the body is ciphertext + envelope it
+     * opens itself — the backend never decrypts (INV-E7). Only newly created,
+     * sealed messages are returned, and the session's own persona replies are
+     * excluded so the enclave never re-injects its own streamed output.
+     *
+     * `after` is clamped UP to the trigger's sequence: the enclave was given
+     * history up to its trigger and nothing after it, so a low/absent cursor must
+     * never replay pre-trigger rows it already holds. The enclave seeds its loop
+     * boundary at 0 and lets this floor define the real start.
+     */
+    async pollMessages(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) throw new HttpError("Missing session id", { status: 400, code: "VALIDATION_ERROR" })
+
+      const parsed = pollAfterSchema.safeParse(req.query)
+      if (!parsed.success) throw new HttpError("Invalid query", { status: 400, code: "VALIDATION_ERROR" })
+
+      const session = await AgentSessionRepository.findById(pool, id)
+      assertRunning(session)
+      assertCallbackBound(session, req)
+      const stream = await StreamRepository.findById(pool, session.streamId)
+      if (!stream) throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
+
+      const triggerSeq = session.triggerMessageId
+        ? await StreamEventRepository.getMessageSequence(pool, session.streamId, session.triggerMessageId)
+        : null
+      // No resolvable trigger sequence → no safe floor. Returning rows from 0
+      // would replay the enclave's entire pre-trigger history, so degrade to
+      // "nothing new" rather than silently widening the window (INV-11). The next
+      // turn re-reads settled history anyway; this is observable via the log.
+      if (triggerSeq === null) {
+        logger.warn(
+          { sessionId: id, streamId: session.streamId },
+          "Interjection poll: no trigger sequence; returning no messages"
+        )
+        const empty: EnclaveMidTurnMessagesResponse = { messages: [] }
+        res.status(200).json(empty)
+        return
+      }
+
+      const requested = parsed.data.after ? BigInt(parsed.data.after) : 0n
+      const effectiveAfter = requested > triggerSeq ? requested : triggerSeq
+
+      // Same seam the in-process companion's `check` walks (persona-agent.ts):
+      // list message_created events after the boundary, then hydrate the rows.
+      const events = await StreamEventRepository.list(pool, session.streamId, {
+        types: ["message_created"],
+        afterSequence: effectiveAfter,
+        limit: 50,
+      })
+      // Drop the session's own persona replies — they stream back over /messages
+      // and must not re-enter the loop as fresh user context.
+      const incoming = events.filter((event) => event.actorId !== session.personaId)
+
+      const messageIds = incoming
+        .map((event) => (event.payload as { messageId?: string }).messageId)
+        .filter((messageId): messageId is string => typeof messageId === "string")
+      const messagesById = await MessageRepository.findByIds(pool, messageIds)
+
+      // Resolve author display names (non-secret) so the enclave can render the
+      // same "new context arrived" trace the companion does — mirrors the
+      // companion's check, split by actor kind.
+      const userIds = [...new Set(incoming.filter((e) => e.actorType === "user" && e.actorId).map((e) => e.actorId!))]
+      const personaIds = [
+        ...new Set(incoming.filter((e) => e.actorType === "persona" && e.actorId).map((e) => e.actorId!)),
+      ]
+      const [members, personas] = await Promise.all([
+        userIds.length > 0 ? UserRepository.findByIds(pool, stream.workspaceId, userIds) : Promise.resolve([]),
+        personaIds.length > 0 ? PersonaRepository.findByIds(pool, personaIds, stream.workspaceId) : Promise.resolve([]),
+      ])
+      const names = new Map<string, string>()
+      for (const m of members) names.set(m.id, m.name)
+      for (const p of personas) names.set(p.id, p.name)
+
+      const messages = incoming.flatMap<EnclaveMidTurnMessage>((event) => {
+        const messageId = (event.payload as { messageId?: string }).messageId
+        if (!messageId) return []
+        const message = messagesById.get(messageId)
+        // Only sealed rows are meaningful to the enclave; a non-E2E row in an E2E
+        // stream (shouldn't happen) carries no ciphertext to open, so skip it.
+        if (!message?.ciphertext || !message.envelope) return []
+        const authorId = event.actorId ?? message.authorId ?? "system"
+        const authorType = event.actorType ?? message.authorType ?? AuthorTypes.SYSTEM
+        const authorName = names.get(authorId) ?? (authorType === AuthorTypes.SYSTEM ? "System" : "Unknown")
+        return [
+          {
+            messageId,
+            sequence: event.sequence.toString(),
+            authorId,
+            authorType,
+            authorName,
+            createdAt: event.createdAt.toISOString(),
+            ciphertext: message.ciphertext.toString("base64"),
+            envelope: message.envelope as EnclaveStreamEnvelope,
+          },
+        ]
+      })
+
+      const response: EnclaveMidTurnMessagesResponse = { messages }
+      res.status(200).json(response)
     },
 
     /**
@@ -660,7 +784,14 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
             session.triggerMessageId
           )
           if (triggerSeq !== null) {
-            const unseen = await StreamEventRepository.getLatestUnseenUserMessage(pool, session.streamId, triggerSeq)
+            // Advance the "seen" boundary past any message the turn already
+            // incorporated mid-flight via the interjection pull (UX-12): the loop
+            // reports its final sequence here, so a message the reply addressed
+            // isn't re-triggered as a redundant follow-up turn. Falls back to the
+            // trigger boundary when the turn saw nothing past its trigger.
+            const reported = parsed.data.lastProcessedSequence ? BigInt(parsed.data.lastProcessedSequence) : 0n
+            const seenBoundary = reported > triggerSeq ? reported : triggerSeq
+            const unseen = await StreamEventRepository.getLatestUnseenUserMessage(pool, session.streamId, seenBoundary)
             if (unseen) {
               await enqueueEnclaveInvocation(pool, {
                 workspaceId: stream.workspaceId,

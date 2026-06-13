@@ -211,11 +211,15 @@ step, then hands both to an `EnclaveTurnDriver` — the same `runTurnOnAgentRunt
 the plaintext driver uses, differing only by delivery and sealing. The driver is exported
 from the curated barrel (no OTEL, no `createAI`) and is constructed per turn because the
 enclave's `AgentRuntimeAI` is per turn (it accumulates that turn's token usage). The enclave
-cannot see messages that arrive mid-turn — it reads sealed history once at assignment time —
-so its sink passes `declaredUnsupported("…")` for the interjection edge rather than omitting
-it: the gap (UX-12) is a named, renderable product decision, not a silent hole. Implementing
-a sealed mid-turn pull is a later option (`docs/plans/agent-runtimes-unification-redesign.md`
-§2.7).
+sees messages that arrive mid-turn by _pulling_ them (UX-12): its sink's interjection edge is
+a real `NewMessageAwareness` that, at each reconsider boundary, calls
+`GET /internal/enclave-runtimes/sessions/:id/messages?after=<seq>` and opens the sealed rows
+with the SSK it already holds — the same reconsider seam the in-process companion uses, no new
+key machinery. The backend clamps the pull's floor to the trigger so pre-trigger history is
+never replayed, and the loop reports the boundary it advanced to at `/complete` so the
+post-completion catch-up skips a follow-up the reply already addressed. When the host doesn't
+wire the pull, the sink falls back to `declaredUnsupported("…")` — a named, renderable product
+decision, not a silent hole (`docs/plans/agent-runtimes-unification-redesign.md` §2.7).
 
 ## Boundaries
 
