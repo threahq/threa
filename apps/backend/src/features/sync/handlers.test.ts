@@ -47,6 +47,20 @@ describe("createSyncHandlers.catchUp", () => {
     })
   })
 
+  it("forwards requiresBootstrap when the cursor is below the retained floor", async () => {
+    const catchUp = mock(async (_params: Parameters<SyncService["catchUp"]>[0]) => ({
+      entries: [],
+      head: 12n,
+      requiresBootstrap: true,
+    }))
+    const handlers = createSyncHandlers({ syncService: { catchUp } as unknown as SyncService })
+
+    const { req, res, json } = makeReqRes({ after: "3" })
+    await handlers.catchUp(req, res)
+
+    expect(json.mock.calls[0][0]).toEqual({ entries: [], head: "12", requiresBootstrap: true })
+  })
+
   it("defaults after to 0 and limit to 200", async () => {
     const catchUp = mock(async (_params: Parameters<SyncService["catchUp"]>[0]) => ({ entries: [], head: 0n }))
     const handlers = createSyncHandlers({ syncService: { catchUp } as unknown as SyncService })

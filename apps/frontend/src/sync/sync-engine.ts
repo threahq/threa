@@ -1072,6 +1072,28 @@ export class SyncEngine {
         )
         if (this.isDestroyed) return
         head = response.head
+        if (response.requiresBootstrap) {
+          // The cursor is below the workspace's retained sync-log floor:
+          // retention pruned the entries this run would replay, so the log
+          // can't heal the gap. Jump the cursor to head and re-bootstrap —
+          // the workspace snapshot is the authority for everything <= head.
+          // Read-before-stamp holds: response.head was read before the
+          // bootstrap fired here, so the stamped cursor is a lower bound of
+          // the upcoming snapshot (the race falls on the duplicate side). The
+          // splice (appliedThrough = head) then drops buffered events <= head,
+          // which the snapshot already covers, and applies only those above it.
+          console.info("Sync-v2 catch-up below retention floor; re-bootstrapping", {
+            workspaceId: this.workspaceId,
+            trigger,
+            cursorBefore,
+            head: response.head,
+          })
+          cursorStore.advance(response.head)
+          this.noteSeenHead(response.head)
+          appliedThrough = BigInt(response.head)
+          void this.runBootstrap(true)
+          return
+        }
         if (response.entries.length === 0) {
           // ONLY an empty page proves nothing visible exists in (cursor, head]
           // — record the head so the next heartbeat at or below it is

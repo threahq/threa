@@ -257,6 +257,15 @@ export interface SyncCatchUpEntry {
 export interface SyncCatchUpResponse {
   entries: SyncCatchUpEntry[]
   head: string
+  /**
+   * Set when the client's `after` cursor is below the workspace's retained
+   * sync-log floor (entries it would need have been pruned by retention, see
+   * docs/plans/sync-v2-log-retention.md). The log can no longer heal the gap;
+   * `entries` is empty and the client must fall back to a full bootstrap (the
+   * authority for everything <= `head`). Absent/false on every in-window
+   * request, so older clients that ignore the field simply never see it.
+   */
+  requiresBootstrap?: boolean
 }
 
 /**

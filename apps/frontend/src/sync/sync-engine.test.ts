@@ -1120,6 +1120,25 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("re-bootstraps and jumps the cursor to head when catch-up reports the cursor is below the retention floor", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // The cursor (10) predates the pruned span, so the log can't heal the gap:
+    // catch-up returns requiresBootstrap with no entries instead of a partial
+    // page. The connect bootstrap runs first; the fallback fires a second.
+    const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    // The cursor jumps to head — the snapshot is the authority for <= head —
+    // and the below-floor catch-up triggered a fresh bootstrap on top of the
+    // connect one (so nothing from the pruned span is silently skipped).
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("500"))
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
+    engine.destroy()
+  })
+
   it("buffers live events while catch-up runs and splices those above the catch-up position afterwards", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
