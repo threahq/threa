@@ -1,30 +1,21 @@
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useMemo } from "react"
-import { db, type CachedStream } from "@/db"
+import { db, type CachedDraft, type CachedStream } from "@/db"
 import {
-  deleteDraftMessageFromCache,
   deleteDraftScratchpadFromCache,
-  useDraftMessagesFromStore,
+  useComposerLoadedFromStore,
+  useDraftsFromStore,
   useDraftScratchpadsFromStore,
 } from "@/stores/draft-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { isDraftId } from "./use-draft-scratchpads"
+import { clearLoadedDraft, purgeScopeDrafts } from "./use-draft-message"
 import { deleteStashedDraftById } from "./use-stashed-drafts"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import type { CompanionMode, JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { getStreamName, streamFallbackLabel, streamLabel } from "@/lib/streams"
-
-/**
- * Defensive ceiling on the workspace-wide stash scan that powers the /drafts
- * explorer. `useLiveQuery` re-fires on every Dexie change in the table, so we
- * want to avoid re-materialising an unbounded number of rows into React state
- * on each write. 500 is well above any realistic user's stash pile; if the
- * explorer ever needs more, switch to cursor-based pagination instead of
- * raising this number.
- */
-const WORKSPACE_STASH_SCAN_LIMIT = 500
 
 export type DraftType = "scratchpad" | "channel" | "dm" | "thread"
 
@@ -34,12 +25,8 @@ function isValidDraftType(type: string): type is DraftType {
   return VALID_DRAFT_TYPES.includes(type as DraftType)
 }
 
-function isStashId(id: string): boolean {
-  return id.startsWith("stash_")
-}
-
 export interface UnifiedDraft {
-  /** Original draft ID (e.g., "draft_xxx" / "stream:xxx" / "thread:xxx" / "stash_xxx") */
+  /** Row id: a scratchpad id (`draft_xxx`) for scratchpad rows, otherwise the unified draft's own `draft_xxx` id. */
   id: string
   /** Type of stream/draft */
   type: DraftType
@@ -123,8 +110,8 @@ interface ResolvedDraftLocation {
 }
 
 /**
- * Shared location resolution used by both DraftMessage and StashedDraft rows
- * so their rendering stays in sync (same display name, same href, same
+ * Shared location resolution used by both loaded (ambient) and stashed draft
+ * rows so their rendering stays in sync (same display name, same href, same
  * group clustering). For thread-scope rows we resolve the parent stream via
  * cached events; if the parent isn't in cache yet we degrade to a generic
  * label with a null href.
@@ -186,56 +173,36 @@ function resolveDraftLocation(
  */
 export function useAllDrafts(workspaceId: string) {
   const draftScratchpads = useDraftScratchpadsFromStore(workspaceId)
-  const draftMessages = useDraftMessagesFromStore(workspaceId)
+  const allDrafts = useDraftsFromStore(workspaceId)
+  const composerLoaded = useComposerLoadedFromStore(workspaceId)
   const cachedStreams = useWorkspaceStreams(workspaceId)
 
-  // Stashed drafts live in a sibling pile (see `useStashedDrafts`). The
-  // workspace-wide query powers the /drafts explorer — the per-scope picker
-  // in the composer uses its own scoped query. `.reverse().limit(…)` takes
-  // the newest rows in the (ULID-based) primary-key order: ULIDs sort
-  // chronologically, so reversing the index iteration and taking N
-  // truncates from the old end, not the new one. Without `.reverse()` a
-  // power user past the cap would silently lose recently-stashed drafts
-  // from /drafts.
-  const stashedDrafts =
-    useLiveQuery(
-      () => {
-        if (!workspaceId) return []
-        return db.stashedDrafts
-          .where("workspaceId")
-          .equals(workspaceId)
-          .reverse()
-          .limit(WORKSPACE_STASH_SCAN_LIMIT)
-          .toArray()
-      },
-      [workspaceId],
-      []
-    ) ?? []
+  // scope -> loaded draft id, the device-local "checked out into the composer"
+  // pointer. A draft is "stashed" (vs. ambient/loaded) when it is not the one
+  // its scope points at.
+  const loadedByScope = useMemo(() => {
+    const map = new Map<string, string | null>()
+    for (const row of composerLoaded) map.set(row.scope, row.draftId)
+    return map
+  }, [composerLoaded])
 
-  // `useLiveQuery` returns a fresh array reference on every Dexie re-fire,
-  // even when the row set is unchanged. Deriving a stable signature from the
-  // set of scopes present turns identity-based churn into value-based
-  // invalidation for downstream memos (`hasThreadDrafts` →
-  // `cachedEvents` subscription → rebuild), so an unrelated stash write
-  // doesn't force event re-fetch.
-  const stashedScopesSignature = useMemo(() => {
+  // Stable signature over the set of draft scopes so the events query below
+  // (which is gated on whether any thread-scoped drafts exist) doesn't re-fire
+  // on every unrelated draft write — `useDraftsFromStore` hands back a fresh
+  // array reference each time.
+  const scopesSignature = useMemo(() => {
     const scopes = new Set<string>()
-    for (const row of stashedDrafts) scopes.add(row.scope)
+    for (const draft of allDrafts) scopes.add(draft.scope)
     return [...scopes].sort().join("|")
-  }, [stashedDrafts])
+  }, [allDrafts])
 
-  // Check if we have any thread drafts that need parent message resolution.
-  // Includes stashed drafts because a thread's parent-message resolution path
-  // is identical regardless of whether the row is auto-saved or stashed.
-  // Splitting on `|` and prefix-checking each segment avoids false positives
-  // on any scope that contained the literal substring `thread:` in a
-  // non-prefix position — cheap since the signature is capped by the scan
-  // limit above.
+  // Check if we have any thread drafts that need parent message resolution, so
+  // we only run the (expensive) events query when there are thread-scoped
+  // drafts. Prefix-checking each `|`-split segment avoids false positives on a
+  // scope that merely contains the substring `thread:` in a non-prefix spot.
   const hasThreadDrafts = useMemo(
-    () =>
-      (draftMessages ?? []).some((m) => m.id.startsWith("thread:")) ||
-      stashedScopesSignature.split("|").some((scope) => scope.startsWith("thread:")),
-    [draftMessages, stashedScopesSignature]
+    () => scopesSignature.split("|").some((scope) => scope.startsWith("thread:")),
+    [scopesSignature]
   )
 
   // Stable stream ID key — only changes when the set of IDs changes, not on
@@ -288,93 +255,73 @@ export function useAllDrafts(workspaceId: string) {
   // Combine and transform drafts
   const drafts = useMemo((): UnifiedDraft[] => {
     const result: UnifiedDraft[] = []
+    const draftsById = new Map<string, CachedDraft>()
+    for (const draft of allDrafts) draftsById.set(draft.id, draft)
 
-    // Add draft scratchpads (these are scratchpads that haven't been created on server yet)
-    for (const draft of draftScratchpads ?? []) {
-      // Check if there's a corresponding draft message with content
-      const draftMessageKey = `stream:${draft.id}`
-      const draftMessage = (draftMessages ?? []).find((m) => m.id === draftMessageKey)
+    // Scratchpads (streams not yet created on the server). Their content is the
+    // loaded draft for the `stream:{scratchpadId}` scope.
+    for (const scratchpad of draftScratchpads ?? []) {
+      const scope = `stream:${scratchpad.id}`
+      const loadedId = loadedByScope.get(scope) ?? null
+      const loadedDraft = loadedId ? draftsById.get(loadedId) : undefined
 
-      // Only include if there's content or attachments
-      const hasContent = !isEmptyContent(draftMessage?.contentJson)
-      const hasAttachments = (draftMessage?.attachments?.length ?? 0) > 0
+      const hasContent = !isEmptyContent(loadedDraft?.contentJson)
+      const hasAttachments = (loadedDraft?.attachments?.length ?? 0) > 0
 
       if (hasContent || hasAttachments) {
-        const displayName = draft.displayName ?? streamFallbackLabel("scratchpad", "sidebar")
+        const displayName = scratchpad.displayName ?? streamFallbackLabel("scratchpad", "sidebar")
         result.push({
-          id: draft.id,
+          id: scratchpad.id,
           type: "scratchpad",
-          streamId: draft.id,
+          streamId: scratchpad.id,
           displayName,
-          preview: truncatePreview(getContentPreview(draftMessage?.contentJson)),
-          attachmentCount: draftMessage?.attachments?.length ?? 0,
-          updatedAt: draftMessage?.updatedAt ?? draft.createdAt,
-          href: `/w/${workspaceId}/s/${draft.id}`,
+          preview: truncatePreview(getContentPreview(loadedDraft?.contentJson)),
+          attachmentCount: loadedDraft?.attachments?.length ?? 0,
+          updatedAt: loadedDraft?.clientUpdatedAt ?? scratchpad.createdAt,
+          href: `/w/${workspaceId}/s/${scratchpad.id}`,
           groupLabel: displayName,
           isStashed: false,
-          companionMode: draft.companionMode,
+          companionMode: scratchpad.companionMode,
         })
       }
     }
 
-    // Add draft messages for existing streams (channels, DMs, threads)
-    for (const draftMessage of draftMessages ?? []) {
-      const parsed = parseDraftMessageKey(draftMessage.id)
+    // Every other draft — channels, DMs, threads — loaded (ambient) or stashed.
+    for (const draft of allDrafts) {
+      const parsed = parseDraftMessageKey(draft.scope)
       if (!parsed) continue
 
-      // Skip if this is for a draft scratchpad (already handled above)
+      // Scratchpad-scoped drafts: the loaded one is handled above; any stash
+      // siblings are skipped in the explorer until the scratchpad flow itself
+      // supports them.
       if (parsed.type === "stream" && isDraftId(parsed.id)) continue
 
-      // Only include if there's content or attachments
-      const hasContent = !isEmptyContent(draftMessage.contentJson)
-      const hasAttachments = (draftMessage.attachments?.length ?? 0) > 0
+      const hasContent = !isEmptyContent(draft.contentJson)
+      const hasAttachments = (draft.attachments?.length ?? 0) > 0
       if (!hasContent && !hasAttachments) continue
 
       const resolved = resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
+      const isStashed = (loadedByScope.get(draft.scope) ?? null) !== draft.id
+
+      // A stashed row deep-links via `?stash=<draftId>` so the composer host
+      // pops + restores it on mount; the loaded (ambient) row navigates plainly
+      // since its content is already checked out.
+      const href =
+        isStashed && resolved.href
+          ? resolved.href + (resolved.href.includes("?") ? "&" : "?") + `stash=${encodeURIComponent(draft.id)}`
+          : resolved.href
 
       result.push({
-        id: draftMessage.id,
+        id: draft.id,
         type: resolved.draftType,
         streamId: resolved.streamId,
         displayName: resolved.displayName,
-        preview: truncatePreview(getContentPreview(draftMessage.contentJson)),
-        attachmentCount: draftMessage.attachments?.length ?? 0,
-        updatedAt: draftMessage.updatedAt,
-        href: resolved.href,
-        groupLabel: resolved.groupLabel,
-        isStashed: false,
-      })
-    }
-
-    // Stashed drafts: one row per saved snapshot. Clicking the row navigates
-    // to the stream with `?stash=<id>`; `MessageInput` / `StreamPanel` picks
-    // up that param on mount and restores into the composer (stashing any
-    // current content first, mirroring the picker's swap behavior).
-    for (const stashed of stashedDrafts) {
-      const parsed = parseDraftMessageKey(stashed.scope)
-      if (!parsed) continue
-      if (parsed.type === "stream" && isDraftId(parsed.id)) {
-        // Scratchpad-scoped stashes are rare but conceptually valid; skip in
-        // the /drafts explorer until the scratchpad flow itself supports them.
-        continue
-      }
-
-      const resolved = resolveDraftLocation(parsed, workspaceId, streamMap, messageToStreamMap)
-      const href = resolved.href
-        ? resolved.href + (resolved.href.includes("?") ? "&" : "?") + `stash=${encodeURIComponent(stashed.id)}`
-        : null
-
-      result.push({
-        id: stashed.id,
-        type: resolved.draftType,
-        streamId: resolved.streamId,
-        displayName: resolved.displayName,
-        preview: truncatePreview(getContentPreview(stashed.contentJson)),
-        attachmentCount: stashed.attachments?.length ?? 0,
-        updatedAt: stashed.createdAt,
+        preview: truncatePreview(getContentPreview(draft.contentJson)),
+        attachmentCount: draft.attachments?.length ?? 0,
+        updatedAt: draft.clientUpdatedAt,
         href,
         groupLabel: resolved.groupLabel,
-        isStashed: true,
+        isStashed,
       })
     }
 
@@ -384,29 +331,29 @@ export function useAllDrafts(workspaceId: string) {
     result.sort((a, b) => b.updatedAt - a.updatedAt)
 
     return result
-  }, [draftScratchpads, draftMessages, stashedDrafts, streamMap, messageToStreamMap, workspaceId])
+  }, [draftScratchpads, allDrafts, loadedByScope, streamMap, messageToStreamMap, workspaceId])
 
-  // Delete a draft by id — dispatches to the correct table by id prefix.
-  // Handles three shapes: "stash_xxx" (stashed pile), "draft_xxx" (scratchpad
-  // + its ambient draft message), and "stream:..." / "thread:..." (ambient
-  // draft message).
+  // Delete a draft by its `UnifiedDraft.id`. Scratchpad rows carry a scratchpad
+  // id; every other row carries a unified draft id — both `draft_`-prefixed, so
+  // we disambiguate by table lookup rather than prefix.
   const deleteDraft = useCallback(
     async (draftId: string) => {
-      if (isStashId(draftId)) {
-        await deleteStashedDraftById(draftId)
-        return
-      }
-
-      if (isDraftId(draftId)) {
+      const scratchpad = await db.draftScratchpads.get(draftId)
+      if (scratchpad) {
         await db.draftScratchpads.delete(draftId)
-        await db.draftMessages.delete(`stream:${draftId}`)
         deleteDraftScratchpadFromCache(workspaceId, draftId)
-        deleteDraftMessageFromCache(workspaceId, `stream:${draftId}`)
+        await purgeScopeDrafts(workspaceId, `stream:${draftId}`)
         return
       }
 
-      await db.draftMessages.delete(draftId)
-      deleteDraftMessageFromCache(workspaceId, draftId)
+      const draft = await db.drafts.get(draftId)
+      if (!draft) return
+      const loadedId = (await db.composerLoaded.get(draft.scope))?.draftId ?? null
+      if (loadedId === draftId) {
+        await clearLoadedDraft(workspaceId, draft.scope)
+      } else {
+        await deleteStashedDraftById(draftId)
+      }
     },
     [workspaceId]
   )

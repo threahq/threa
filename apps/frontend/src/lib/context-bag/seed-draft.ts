@@ -1,8 +1,6 @@
 import type { JSONContent } from "@threa/types"
-import { db, type DraftMessage } from "@/db"
 import type { DraftContextRef } from "./types"
-import { upsertDraftMessageInCache } from "@/stores/draft-store"
-import { getDraftMessageKey } from "@/hooks/use-draft-message"
+import { getDraftMessageKey, upsertLoadedDraft } from "@/hooks/use-draft-message"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 
@@ -31,17 +29,15 @@ export async function seedDraftWithContextRef(params: {
   ref: DraftContextRef
 }): Promise<void> {
   const { workspaceId, streamId, ref } = params
-  const draftKey = getDraftMessageKey({ type: "stream", streamId })
+  const scope = getDraftMessageKey({ type: "stream", streamId })
 
-  const draft: DraftMessage = {
-    id: draftKey,
-    workspaceId,
+  // Seeds an (otherwise empty) loaded draft carrying just the context-ref
+  // sidecar, so the composer renders the attached chip when the user lands on
+  // the freshly-created scratchpad. `upsertLoadedDraft` mints the draft and the
+  // loaded pointer together and writes IDB + cache.
+  await upsertLoadedDraft(workspaceId, scope, {
     contentJson: EMPTY_DOC,
     attachments: [],
     contextRefs: [ref],
-    updatedAt: Date.now(),
-  }
-
-  await db.draftMessages.put(draft)
-  upsertDraftMessageInCache(workspaceId, draft)
+  })
 }

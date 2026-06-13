@@ -1,4 +1,11 @@
-export { db, ThreaDatabase, clearAllCachedData, clearPendingMessages, sequenceToNum } from "./database"
+export {
+  db,
+  ThreaDatabase,
+  clearAllCachedData,
+  clearPendingMessages,
+  sequenceToNum,
+  generateLocalDraftId,
+} from "./database"
 export type {
   CachedWorkspace,
   CachedWorkspaceUser,
@@ -17,9 +24,9 @@ export type {
   PendingStreamCreation,
   SyncCursor,
   DraftScratchpad,
-  DraftMessage,
+  CachedDraft,
+  ComposerLoaded,
   DraftAttachment,
-  StashedDraft,
   CachedSavedMessage,
   CachedScheduledMessage,
   CachedE2eKey,

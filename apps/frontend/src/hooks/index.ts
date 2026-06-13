@@ -55,10 +55,9 @@ export { useDraftMessage, getDraftMessageKey } from "./use-draft-message"
 
 export {
   useStashedDrafts,
-  generateStashId,
   type UseStashedDraftsResult,
   type StashDraftInput,
-  type StashedDraft,
+  type CachedDraft,
 } from "./use-stashed-drafts"
 
 export { useStashComposer, type UseStashComposerResult } from "./use-stash-composer"

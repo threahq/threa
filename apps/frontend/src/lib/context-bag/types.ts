@@ -1,6 +1,6 @@
 /**
  * Sidecar entry on a draft for an attached context ref. Lives next to
- * `attachments` on the `DraftMessage` row so the composer surface (uploads
+ * `attachments` on the `CachedDraft` row so the composer surface (uploads
  * + context refs) is atomic with the user's typed content.
  *
  * Status reflects the precompute lifecycle:

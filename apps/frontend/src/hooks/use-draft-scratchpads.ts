@@ -1,11 +1,11 @@
 import { useCallback } from "react"
 import { db, type DraftScratchpad } from "@/db"
 import {
-  deleteDraftMessageFromCache,
   deleteDraftScratchpadFromCache,
   upsertDraftScratchpadInCache,
   useDraftScratchpadsFromStore,
 } from "@/stores/draft-store"
+import { purgeScopeDrafts } from "./use-draft-message"
 import type { CompanionMode } from "@threa/types"
 
 export function generateDraftId(): string {
@@ -51,12 +51,10 @@ export function useDraftScratchpads(workspaceId: string) {
 
   const deleteDraft = useCallback(
     async (id: string) => {
-      await db.transaction("rw", db.draftScratchpads, db.draftMessages, async () => {
-        await db.draftScratchpads.delete(id)
-        await db.draftMessages.delete(`stream:${id}`)
-      })
+      await db.draftScratchpads.delete(id)
       deleteDraftScratchpadFromCache(workspaceId, id)
-      deleteDraftMessageFromCache(workspaceId, `stream:${id}`)
+      // Drop the scratchpad scope's drafts (loaded + any stashes) and pointer.
+      await purgeScopeDrafts(workspaceId, `stream:${id}`)
     },
     [workspaceId]
   )

@@ -8,13 +8,13 @@ import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
-import type { StashedDraft } from "@/hooks"
+import type { CachedDraft } from "@/hooks"
 
 /** Keystroke hint for the "Save current" action. Rendered only on non-mobile (no hardware keyboard). */
 const MOD_SYMBOL = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? "⌘" : "Ctrl+"
 
 interface StashedDraftsPickerProps {
-  drafts: StashedDraft[]
+  drafts: CachedDraft[]
   /** True when the composer has something worth stashing (controls "Save current" enablement). */
   canStashCurrent: boolean
   /** Called when the user clicks "Save current draft" or presses Enter on the save affordance. */
@@ -32,7 +32,7 @@ interface StashedDraftsPickerProps {
   size?: "compact" | "fab"
 }
 
-function getPreview(draft: StashedDraft): string {
+function getPreview(draft: CachedDraft): string {
   try {
     const md = serializeToMarkdown(draft.contentJson)
     const stripped = stripMarkdownToInline(md).trim()
@@ -164,7 +164,7 @@ export function StashedDraftsPicker({
                     >
                       <p className="text-sm line-clamp-2 break-words">{preview}</p>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {formatRelativeTime(new Date(draft.createdAt), now, undefined, { terse: true })}
+                        {formatRelativeTime(new Date(draft.clientUpdatedAt), now, undefined, { terse: true })}
                         {attachmentCount > 0 && <span className="ml-1.5">· {attachmentCount} 📎</span>}
                       </p>
                     </button>

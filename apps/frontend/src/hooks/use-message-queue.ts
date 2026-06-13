@@ -6,7 +6,8 @@ import { db, sequenceToNum } from "@/db"
 import { parseMarkdown } from "@threa/prosemirror"
 import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { setParentThreadId } from "@/sync/stream-sync"
-import { deleteDraftScratchpadFromCache, deleteDraftMessageFromCache } from "@/stores/draft-store"
+import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
+import { purgeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
 import { StreamTypes, ShareErrorCodes } from "@threa/types"
 import type { PendingMessage } from "@/db"
@@ -123,15 +124,16 @@ async function promoteDraft(
   // Also delete the optimistic scratchpad stream entry that was created at
   // queue time — the real stream now replaces it in the sidebar.
   if (next.draftId) {
-    await db.transaction("rw", db.draftScratchpads, db.draftMessages, db.streams, async () => {
+    await db.transaction("rw", db.draftScratchpads, db.streams, async () => {
       await db.draftScratchpads.delete(next.draftId!)
-      await db.draftMessages.delete(`stream:${next.draftId!}`)
       if (draftStreamId !== realStreamId) {
         await db.streams.delete(draftStreamId)
       }
     })
     deleteDraftScratchpadFromCache(next.workspaceId, next.draftId)
-    deleteDraftMessageFromCache(next.workspaceId, `stream:${next.draftId}`)
+    // Drop the scratchpad scope's drafts (the just-sent loaded draft plus any
+    // stash siblings) and its loaded pointer.
+    await purgeScopeDrafts(next.workspaceId, `stream:${next.draftId}`)
   }
 
   // Notify UI to navigate from draft to real stream

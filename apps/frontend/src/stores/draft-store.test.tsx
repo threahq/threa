@@ -3,7 +3,8 @@ import { renderHook, act } from "@testing-library/react"
 import {
   resetDraftStoreCache,
   seedDraftCache,
-  useDraftMessagesFromStore,
+  useComposerLoadedFromStore,
+  useDraftsFromStore,
   useDraftScratchpadsFromStore,
 } from "./draft-store"
 
@@ -12,30 +13,48 @@ describe("draft store cache subscriptions", () => {
     resetDraftStoreCache()
   })
 
-  it("rerenders existing message readers when the draft cache is seeded", () => {
-    const { result } = renderHook(() => useDraftMessagesFromStore("workspace_1"))
+  it("rerenders draft readers when the draft cache is seeded", () => {
+    const { result } = renderHook(() => useDraftsFromStore("workspace_1"))
 
     expect(result.current).toEqual([])
 
     act(() => {
       seedDraftCache("workspace_1", {
         scratchpads: [],
-        messages: [
+        loaded: [],
+        drafts: [
           {
-            id: "stream:stream_1",
+            id: "draft_1",
             workspaceId: "workspace_1",
+            scope: "stream:stream_1",
             contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] },
             attachments: [],
-            updatedAt: Date.now(),
+            clientUpdatedAt: Date.now(),
           },
         ],
       })
     })
 
-    expect(result.current.map((draft) => draft.id)).toEqual(["stream:stream_1"])
+    expect(result.current.map((draft) => draft.id)).toEqual(["draft_1"])
   })
 
-  it("rerenders existing scratchpad readers when the draft cache is seeded", () => {
+  it("rerenders composer-loaded readers when the draft cache is seeded", () => {
+    const { result } = renderHook(() => useComposerLoadedFromStore("workspace_1"))
+
+    expect(result.current).toEqual([])
+
+    act(() => {
+      seedDraftCache("workspace_1", {
+        scratchpads: [],
+        drafts: [],
+        loaded: [{ scope: "stream:stream_1", workspaceId: "workspace_1", draftId: "draft_1" }],
+      })
+    })
+
+    expect(result.current.map((row) => row.draftId)).toEqual(["draft_1"])
+  })
+
+  it("rerenders scratchpad readers when the draft cache is seeded", () => {
     const { result } = renderHook(() => useDraftScratchpadsFromStore("workspace_1"))
 
     expect(result.current).toEqual([])
@@ -51,7 +70,8 @@ describe("draft store cache subscriptions", () => {
             createdAt: Date.now(),
           },
         ],
-        messages: [],
+        drafts: [],
+        loaded: [],
       })
     })
 

@@ -3,8 +3,9 @@ import { db } from "@/db"
 import type { DraftAttachment } from "@/db/database"
 import type { JSONContent } from "@threa/types"
 import { generateDraftId } from "@/hooks/use-draft-scratchpads"
+import { getDraftMessageKey, upsertLoadedDraft } from "@/hooks/use-draft-message"
 import { attachmentsApi } from "@/api/attachments"
-import { upsertDraftMessageInCache, upsertDraftScratchpadInCache } from "@/stores/draft-store"
+import { upsertDraftScratchpadInCache } from "@/stores/draft-store"
 import { SHARE_TARGET_CACHE } from "@/lib/sw-messages"
 
 /** Data stashed by the service worker from a Web Share Target POST. */
@@ -170,20 +171,16 @@ export function useShareTarget() {
         companionMode: "on" as const,
         createdAt,
       }
-      const draftMessage = {
-        id: `stream:${draftId}`,
-        workspaceId,
-        contentJson: content,
-        attachments,
-        updatedAt: createdAt,
-      }
 
-      await db.transaction("rw", db.draftScratchpads, db.draftMessages, async () => {
-        await db.draftScratchpads.add(scratchpad)
-        await db.draftMessages.put(draftMessage)
-      })
+      await db.draftScratchpads.add(scratchpad)
       upsertDraftScratchpadInCache(workspaceId, scratchpad)
-      upsertDraftMessageInCache(workspaceId, draftMessage)
+
+      // The shared content becomes the scratchpad's loaded draft so the
+      // composer shows it when the user lands on the freshly-created scratchpad.
+      await upsertLoadedDraft(workspaceId, getDraftMessageKey({ type: "stream", streamId: draftId }), {
+        contentJson: content,
+        attachments: attachments ?? [],
+      })
 
       return { draftId, path: `/w/${workspaceId}/s/${draftId}` }
     },
@@ -195,20 +192,15 @@ export function useShareTarget() {
       const content = buildSharedContent(shared.title, shared.text, shared.url)
       const uploadedAttachments = shared.files.length > 0 ? await uploadSharedFiles(workspaceId, shared.files) : []
 
-      // Transaction ensures the read-then-put is atomic — a concurrent write
-      // between get and put can't silently drop attachments.
-      await db.transaction("rw", db.draftMessages, async () => {
-        const existing = await db.draftMessages.get(`stream:${streamId}`)
-        const mergedAttachments = [...(existing?.attachments ?? []), ...uploadedAttachments]
-        const nextDraft = {
-          id: `stream:${streamId}`,
-          workspaceId,
-          contentJson: content,
-          attachments: mergedAttachments.length > 0 ? mergedAttachments : undefined,
-          updatedAt: Date.now(),
-        }
-        await db.draftMessages.put(nextDraft)
-        upsertDraftMessageInCache(workspaceId, nextDraft)
+      // Merge the shared files into the scope's loaded draft (or mint one).
+      const scope = getDraftMessageKey({ type: "stream", streamId })
+      const loadedId = (await db.composerLoaded.get(scope))?.draftId ?? null
+      const existing = loadedId ? await db.drafts.get(loadedId) : undefined
+      const mergedAttachments = [...(existing?.attachments ?? []), ...uploadedAttachments]
+      await upsertLoadedDraft(workspaceId, scope, {
+        contentJson: content,
+        attachments: mergedAttachments,
+        contextRefs: existing?.contextRefs,
       })
     },
     []

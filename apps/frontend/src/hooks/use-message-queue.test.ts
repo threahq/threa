@@ -8,6 +8,7 @@ import * as prosemirrorModule from "@threa/prosemirror"
 import * as draftPromotionsModule from "@/lib/draft-promotions"
 import * as streamSyncModule from "@/sync/stream-sync"
 import * as draftStoreModule from "@/stores/draft-store"
+import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 
@@ -125,7 +126,6 @@ describe("useMessageQueue", () => {
 
     vi.spyOn(dbModule.db.streams, "put").mockResolvedValue(undefined as never)
     vi.spyOn(dbModule.db.draftScratchpads, "delete").mockResolvedValue(undefined as never)
-    vi.spyOn(dbModule.db.draftMessages, "delete").mockResolvedValue(undefined as never)
 
     vi.spyOn(dbModule.db, "transaction").mockImplementation(((
       _mode: string,
@@ -152,7 +152,8 @@ describe("useMessageQueue", () => {
 
     // Draft store
     vi.spyOn(draftStoreModule, "deleteDraftScratchpadFromCache").mockImplementation(() => {})
-    vi.spyOn(draftStoreModule, "deleteDraftMessageFromCache").mockImplementation(() => {})
+    // Post-promotion draft cleanup is exercised via its own tests; stub it here.
+    vi.spyOn(useDraftMessageModule, "purgeScopeDrafts").mockResolvedValue(undefined)
   })
 
   it("should register its notify callback on mount", () => {
