@@ -30,3 +30,52 @@ describe("loadEnclaveConfig credential resolution (Phase 2.4c, E2EE-22)", () => 
     expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_INTERNAL_API_KEY")
   })
 })
+
+describe("loadEnclaveConfig numeric guards", () => {
+  function withKey() {
+    setBaseEnv()
+    process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+  }
+
+  it("accepts a valid positive override", () => {
+    withKey()
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "3000"
+
+    expect(loadEnclaveConfig().claimPollIntervalMs).toBe(3000)
+  })
+
+  it("uses the documented default when the var is unset", () => {
+    withKey()
+    delete process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS
+
+    expect(loadEnclaveConfig().claimPollIntervalMs).toBe(1_500)
+  })
+
+  it("throws rather than passing a negative interval to setTimeout (hot-loop guard)", () => {
+    withKey()
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "-5"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_CLAIM_POLL_INTERVAL_MS")
+  })
+
+  it("throws on a zero override", () => {
+    withKey()
+    process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS = "0"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_HEARTBEAT_INTERVAL_MS")
+  })
+
+  it("throws on a non-integer override", () => {
+    withKey()
+    process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "1.5"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_CLAIM_POLL_INTERVAL_MS")
+  })
+
+  it("throws on a non-numeric override", () => {
+    withKey()
+    process.env.ENCLAVE_MAX_CONCURRENT_SESSIONS = "lots"
+
+    expect(() => loadEnclaveConfig()).toThrow("ENCLAVE_MAX_CONCURRENT_SESSIONS")
+  })
+})
