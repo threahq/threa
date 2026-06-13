@@ -36,6 +36,7 @@ import { createSyncHandlers } from "./features/sync"
 import { createSavedMessagesHandlers } from "./features/saved-messages"
 import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
+import { createDraftsHandlers } from "./features/drafts"
 import { createLabelHandlers } from "./features/labels"
 import { createPushHandlers } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
@@ -78,6 +79,7 @@ import type { SyncService } from "./features/sync"
 import type { SavedMessagesService } from "./features/saved-messages"
 import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
+import type { DraftsService } from "./features/drafts"
 import type { LabelService, LabelAssignmentService } from "./features/labels"
 import type { PushService } from "./features/push"
 import type { S3Config } from "./lib/env"
@@ -121,6 +123,7 @@ interface Dependencies {
   savedMessagesService: SavedMessagesService
   savedSuggestionsService: SavedSuggestionsService
   scheduledMessagesService: ScheduledMessagesService
+  draftsService: DraftsService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
   pushService: PushService
@@ -177,6 +180,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     savedMessagesService,
     savedSuggestionsService,
     scheduledMessagesService,
+    draftsService,
     labelService,
     labelAssignmentService,
     pushService,
@@ -274,6 +278,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const savedMessages = createSavedMessagesHandlers({ savedMessagesService })
   const savedSuggestions = createSavedSuggestionsHandlers({ savedSuggestionsService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
+  const drafts = createDraftsHandlers({ draftsService })
   const label = createLabelHandlers({ labelService, labelAssignmentService })
   const agentSession = createAgentSessionHandlers({ pool })
   const contextBag = createContextBagHandlers({ pool, ai })
@@ -587,6 +592,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/scheduled/:id/lock", ...authed, scheduledMessages.lockForEdit)
   app.post("/api/workspaces/:workspaceId/scheduled/:id/unlock", ...authed, scheduledMessages.releaseEditLock)
   app.post("/api/workspaces/:workspaceId/scheduled/:id/send-now", ...authed, scheduledMessages.sendNow)
+
+  // Drafts — centralized, local-first composer payloads that roam across the
+  // author's devices. Private to the author; never timeline-broadcast.
+  app.get("/api/workspaces/:workspaceId/drafts", ...authed, drafts.list)
+  app.put("/api/workspaces/:workspaceId/drafts/:id", ...authed, drafts.upsert)
+  app.post("/api/workspaces/:workspaceId/drafts/:id/resolve", ...authed, drafts.resolve)
+  app.delete("/api/workspaces/:workspaceId/drafts/:id", ...authed, drafts.delete)
 
   // Push notifications
   const push = createPushHandlers({ pushService })

@@ -121,6 +121,7 @@ import {
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
 import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-suggestions"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
+import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService } from "./features/labels"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
 import { AttachmentUploadedHandler, AttachmentEmbeddingHandler } from "./features/attachments"
@@ -496,6 +497,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedItemCreator: savedMessagesService,
   })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
+  const draftsService = new DraftsService({ pool })
   const labelService = new LabelService({ pool })
   const labelAssignmentService = new LabelAssignmentService({ pool })
   // PushService runs on pools.realtime so push delivery (outbox hot path) has
@@ -648,6 +650,7 @@ export async function startServer(): Promise<ServerInstance> {
     savedMessagesService,
     savedSuggestionsService,
     scheduledMessagesService,
+    draftsService,
     labelService,
     labelAssignmentService,
     pushService,

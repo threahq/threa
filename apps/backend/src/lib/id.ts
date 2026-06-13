@@ -48,6 +48,7 @@ export {
   reminderQueueId,
   scheduledMessageId,
   scheduledMessageQueueId,
+  draftId,
   sharedMessageId,
   attachmentReferenceId,
   streamContextAttachmentId,

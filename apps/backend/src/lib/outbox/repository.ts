@@ -20,6 +20,7 @@ import type {
   SavedMessageView,
   SavedSuggestionView,
   ScheduledMessageView,
+  Draft as WireDraft,
   WorkspaceInvitableRole,
   AuthorType,
 } from "@threa/types"
@@ -83,6 +84,8 @@ export type OutboxEventType =
   | "scheduled_message:upserted"
   | "scheduled_message:sent"
   | "scheduled_message:cancelled"
+  | "draft:upserted"
+  | "draft:deleted"
   | "bot:created"
   | "bot:updated"
   | "link_preview:ready"
@@ -599,6 +602,18 @@ export interface ScheduledMessageCancelledOutboxPayload extends WorkspaceScopedP
   scheduledId: string
 }
 
+// Draft event payloads. Drafts are private to their author, so both events are
+// user-scoped (delivered to `user:{targetUserId}` only) — never timeline rows.
+export interface DraftUpsertedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  draft: WireDraft
+}
+
+export interface DraftDeletedOutboxPayload extends WorkspaceScopedPayload {
+  targetUserId: string
+  draftId: string
+}
+
 // Bot event payloads
 export interface BotCreatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
@@ -777,6 +792,8 @@ export interface OutboxEventPayloadMap {
   "scheduled_message:upserted": ScheduledMessageUpsertedOutboxPayload
   "scheduled_message:sent": ScheduledMessageSentOutboxPayload
   "scheduled_message:cancelled": ScheduledMessageCancelledOutboxPayload
+  "draft:upserted": DraftUpsertedOutboxPayload
+  "draft:deleted": DraftDeletedOutboxPayload
   "bot:created": BotCreatedOutboxPayload
   "bot:updated": BotUpdatedOutboxPayload
   "link_preview:ready": LinkPreviewReadyOutboxPayload
@@ -895,6 +912,8 @@ export type UserScopedEventType =
   | "scheduled_message:upserted"
   | "scheduled_message:sent"
   | "scheduled_message:cancelled"
+  | "draft:upserted"
+  | "draft:deleted"
   | "feature_flags:updated"
 
 const USER_SCOPED_EVENTS: UserScopedEventType[] = [
@@ -906,6 +925,8 @@ const USER_SCOPED_EVENTS: UserScopedEventType[] = [
   "scheduled_message:upserted",
   "scheduled_message:sent",
   "scheduled_message:cancelled",
+  "draft:upserted",
+  "draft:deleted",
   "feature_flags:updated",
 ]
 
