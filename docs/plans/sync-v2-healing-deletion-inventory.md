@@ -18,9 +18,13 @@ the rollout sessions:
   30-day horizon (keeping a per-workspace recent floor) and catch-up returns
   `requiresBootstrap` for cursors below the pruned floor, so the big deletions
   (reconnect-bootstrap slimming, `usePageResumeRefresh`) lose their retention
-  blocker — they still each ship as their own PR with a coverage proof, and
-  `isLegacyUnreadCounterEntry` dies only once pre-field entries age out below
-  the floor.
+  blocker — they still each ship as their own PR with a coverage proof.
+  `isLegacyUnreadCounterEntry` dies in two steps: a one-time content-based sweep
+  migration (`20260613083239_prune_legacy_counter_entries.sql`) removes the
+  legacy entries the guard skips — by content, not a hardcoded boundary, because
+  pure time+count retention leaves a quiet workspace's legacy rows in place
+  indefinitely (its history never exceeds the `minKeep` floor) — and then a
+  follow-up PR deletes the guard once the sweep has deployed to prod.
 - Coverage proof method (established in #885): event type → scoping list in
   `apps/backend/src/lib/outbox/repository.ts` → delivery group
   (`delivery-groups.ts`, single source of truth for log + emit) → `sync_log`
