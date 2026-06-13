@@ -221,10 +221,15 @@ export const SyncLogRepository = {
    * the entries it gates share a consistent view of any concurrent prune.)
    */
   async getHeadAndRetainedFrom(db: Querier, workspaceId: string): Promise<{ head: bigint; retainedFrom: bigint }> {
+    // COALESCE wraps each subquery from the OUTSIDE: sync_log_retention_state
+    // has no row until a workspace is first pruned, so the inner SELECT returns
+    // zero rows (NULL), not 0 — an inner COALESCE never fires and BigInt(null)
+    // would throw. The head subquery uses an aggregate (always one row) but is
+    // wrapped the same way for symmetry.
     const result = await db.query<{ head: string; retained_from: string }>(sql`
       SELECT
-        (SELECT COALESCE(MAX(sync_id), 0) FROM sync_log WHERE workspace_id = ${workspaceId}) AS head,
-        (SELECT COALESCE(retained_from, 0) FROM sync_log_retention_state WHERE workspace_id = ${workspaceId})
+        COALESCE((SELECT MAX(sync_id) FROM sync_log WHERE workspace_id = ${workspaceId}), 0) AS head,
+        COALESCE((SELECT retained_from FROM sync_log_retention_state WHERE workspace_id = ${workspaceId}), 0)
           AS retained_from
     `)
     return { head: BigInt(result.rows[0].head), retainedFrom: BigInt(result.rows[0].retained_from) }
