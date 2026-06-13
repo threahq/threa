@@ -56,7 +56,7 @@ export function PageHeaderTabs({ backTo, icon: Icon, title, value, tabs, actions
         </div>
       </div>
 
-      <div className="flex items-center gap-2 min-w-0 sm:min-w-fit sm:shrink-0">
+      <div className="flex items-center justify-center gap-2 min-w-0 sm:justify-start sm:min-w-fit sm:shrink-0">
         <div className="min-w-0 overflow-x-auto scrollbar-none">
           <Tabs value={value}>
             <TabsList className="h-8 w-max">
