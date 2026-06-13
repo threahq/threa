@@ -226,27 +226,31 @@ treating such a flag as real healing — it may be dead code (labels was).
   queries, so live emits and catch-up replays both heal it now. In-situ
   capture rides `stream:memos_captured` through stream-sync.
 - **`invitation:*` (sent / accepted / revoked / link-created / link-claimed)** —
-  bootstrap-only on the client today; the next additive candidate the owner
-  flagged (interest expressed, not yet scheduled). The five events are real
-  outbox events (`features/invitations/service.ts`), and because they match no
-  scoping list in `lib/outbox/repository.ts`, `resolveDeliveryGroups` routes
-  them through its `WORKSPACE_GROUP` fallthrough — so they are **already**
-  appended to `sync_log` and broadcast workspace-wide. What is missing is purely
+  bootstrap-only on the client; the next additive candidate the owner flagged.
+  The five events are real outbox events (`features/invitations/service.ts`).
+  They used to fall through `resolveDeliveryGroups` to `WORKSPACE_GROUP` — logged
+  and broadcast to every member's socket even though the payloads carry invitee
+  `email`, link `tokenHash`, and accepted-user identity (inert only because no
+  client read them). **Now permission-scoped (DONE):** `resolveDeliveryGroups`
+  routes them to `permissionGroup(members:write)`, so they are logged and emitted
+  to the `permission:members:write` group only. Sockets join that room on
+  workspace join via `permissionGroupsForRole(role)` (role-derived, mirroring
+  `requireWorkspacePermission`'s fallback), and catch-up admits the group for
+  holders — the catch-up handler passes the same role-derived `permissionGroups`
+  into `listEntriesForUser`, so live and replay delivery stay congruent. This
+  mirrors the bootstrap gate (`workspaces/handlers.ts` includes `invitations`
+  only for `members:write`). Pre-change `sync_log` rows keep their old
+  `['workspace']` groups until they age out of retention, but they are inert (no
+  client handler reads invitation events yet). What remains is purely
   client-side: there is no `invitation:*` handler in `sync/workspace-sync.ts`,
   and the only frontend surface — the `["invitations", workspaceId]` query in
   `components/workspace-settings/users-tab.tsx` (settings → users) — refreshes
   only on the viewer's own send/revoke/resend mutations and on a full workspace
-  bootstrap. So an invitation another admin sends or revokes in another session
-  never updates a viewer's open list until they remount or re-bootstrap.
-  Wiring it is **not** a drop-in `memo:created` clone: those payloads carry
-  invitee `email`, link `tokenHash`, and accepted-user identity, and the
-  workspace-wide fallthrough already puts them on _every_ member's socket (inert
-  only because nothing reads them). Before adding a client handler, scope the
-  events to admins / `members:manage` (move them onto an author- or
-  permission-scoped delivery group) rather than invalidating off a broadcast
-  ordinary members also receive. Once a gate-registered handler invalidates
-  `["invitations", workspaceId]`, live emits and catch-up replays both heal the
-  list and the standard coverage-proof chain applies.
+  bootstrap, so an invitation another admin sends or revokes in another session
+  never updates a viewer's open list until they remount or re-bootstrap. Once a
+  gate-registered handler invalidates `["invitations", workspaceId]`, live emits
+  and catch-up replays both heal the list and the standard coverage-proof chain
+  applies.
 - **`refetchOnMount: true`** on saved/scheduled/labels/activity: mount-time
   freshness, not reconnect healing. Out of scope.
 - **`useBackgroundBootstrapSync`** (SW prefetch) and **`useAppUpdate`**

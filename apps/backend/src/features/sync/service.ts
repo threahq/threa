@@ -28,7 +28,13 @@ export class SyncService {
    * (never by jumping to `head`) and page until a fetch comes back empty —
    * `head` is a freshness hint, not a cursor target.
    */
-  async catchUp(params: { workspaceId: string; userId: string; after: bigint; limit: number }): Promise<CatchUpResult> {
+  async catchUp(params: {
+    workspaceId: string
+    userId: string
+    permissionGroups: string[]
+    after: bigint
+    limit: number
+  }): Promise<CatchUpResult> {
     return withClient(this.pool, async (client) => {
       // Read entries FIRST, then head + retention floor in one query. Order
       // matters for race-safety: if a prune advanced the floor past `after`,

@@ -4,9 +4,9 @@ import { createSyncHandlers } from "./handlers"
 import { HttpError } from "../../lib/errors"
 import type { SyncService } from "./service"
 
-function makeReqRes(query: Record<string, string>) {
+function makeReqRes(query: Record<string, string>, role: string = "member") {
   const req = {
-    user: { id: "usr_alice" },
+    user: { id: "usr_alice", role },
     workspaceId: "ws_1",
     query,
   } as unknown as Request
@@ -33,7 +33,13 @@ describe("createSyncHandlers.catchUp", () => {
     const { req, res, json } = makeReqRes({ after: "5", limit: "50" })
     await handlers.catchUp(req, res)
 
-    expect(catchUp.mock.calls[0][0]).toEqual({ workspaceId: "ws_1", userId: "usr_alice", after: 5n, limit: 50 })
+    expect(catchUp.mock.calls[0][0]).toEqual({
+      workspaceId: "ws_1",
+      userId: "usr_alice",
+      permissionGroups: [],
+      after: 5n,
+      limit: 50,
+    })
     expect(json.mock.calls[0][0]).toEqual({
       entries: [
         {
@@ -68,7 +74,29 @@ describe("createSyncHandlers.catchUp", () => {
     const { req, res } = makeReqRes({})
     await handlers.catchUp(req, res)
 
-    expect(catchUp.mock.calls[0][0]).toEqual({ workspaceId: "ws_1", userId: "usr_alice", after: 0n, limit: 200 })
+    expect(catchUp.mock.calls[0][0]).toEqual({
+      workspaceId: "ws_1",
+      userId: "usr_alice",
+      permissionGroups: [],
+      after: 0n,
+      limit: 200,
+    })
+  })
+
+  it("derives permission delivery groups from the member role (admin → members:write)", async () => {
+    const catchUp = mock(async (_params: Parameters<SyncService["catchUp"]>[0]) => ({ entries: [], head: 0n }))
+    const handlers = createSyncHandlers({ syncService: { catchUp } as unknown as SyncService })
+
+    const { req, res } = makeReqRes({}, "admin")
+    await handlers.catchUp(req, res)
+
+    expect(catchUp.mock.calls[0][0]).toEqual({
+      workspaceId: "ws_1",
+      userId: "usr_alice",
+      permissionGroups: ["permission:members:write"],
+      after: 0n,
+      limit: 200,
+    })
   })
 
   it("rejects a non-numeric cursor with a 400", async () => {

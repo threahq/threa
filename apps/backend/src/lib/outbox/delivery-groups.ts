@@ -1,5 +1,13 @@
 import type { Server } from "socket.io"
-import { LabelableResourceTypes, StreamTypes, Visibilities } from "@threa/types"
+import {
+  LabelableResourceTypes,
+  StreamTypes,
+  Visibilities,
+  WORKSPACE_PERMISSION_SCOPES,
+  permissionsForRole,
+  type WorkspacePermissionSlug,
+  type WorkspaceRoleSlug,
+} from "@threa/types"
 import {
   isStreamScopedEvent,
   isOutboxEventType,
@@ -44,6 +52,33 @@ export function streamGroup(streamId: string): string {
 
 export function userGroup(userId: string): string {
   return `user:${userId}`
+}
+
+/**
+ * Delivery group for everyone who holds a workspace permission slug. Events
+ * routed here (invitation lifecycle → members:write) reach only holders, not
+ * the whole workspace. Sockets join the matching room on workspace join and
+ * catch-up admits the group for holders — both derive the holder set from the
+ * member's role, so live and replay delivery stay congruent.
+ */
+export function permissionGroup(slug: WorkspacePermissionSlug): string {
+  return `permission:${slug}`
+}
+
+/**
+ * Permission scopes that get their own delivery group. Keep in sync with the
+ * permission branches in `resolveDeliveryGroups`: a scope listed here without a
+ * routing branch puts members in a room nothing emits to, and an event routed
+ * to a `permission:<slug>` group whose scope is absent here reaches no holder.
+ */
+export const DELIVERED_PERMISSION_SCOPES: readonly WorkspacePermissionSlug[] = [
+  WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
+]
+
+/** The permission delivery groups a member with `role` belongs to. */
+export function permissionGroupsForRole(role: WorkspaceRoleSlug): string[] {
+  const held = permissionsForRole(role)
+  return DELIVERED_PERMISSION_SCOPES.filter((slug) => held.includes(slug)).map(permissionGroup)
 }
 
 /**
@@ -207,6 +242,23 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
       "delivery groups: no mapping for public-label resource type"
     )
     return []
+  }
+
+  // Invitation lifecycle carries invitee identity (email, link token hash):
+  // scope it to members:write holders instead of letting it fall through to the
+  // whole workspace below. Mirrors the bootstrap gate (workspaces/handlers.ts
+  // includes `invitations` only for members:write) and the invitation routes'
+  // requireWorkspacePermission(members:write).
+  if (
+    isOneOfOutboxEventType(event, [
+      "invitation:sent",
+      "invitation:accepted",
+      "invitation:revoked",
+      "invitation:link-created",
+      "invitation:link-claimed",
+    ])
+  ) {
+    return [permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)]
   }
 
   if (isStreamScopedEvent(event)) {
