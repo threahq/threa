@@ -2,6 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { WorkspaceIntegrationProvider } from "@threa/types"
 import { WorkspaceIntegrationService } from "./service"
+import { validateRequest } from "../../lib/validation"
 
 const githubCallbackSchema = z.object({
   installation_id: z.string().min(1, "installation_id is required"),
@@ -91,18 +92,12 @@ export function createWorkspaceIntegrationHandlers({
     },
 
     async githubCallback(req: Request, res: Response) {
-      const parsed = githubCallbackSchema.safeParse(req.query)
-      if (!parsed.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(parsed.error).fieldErrors,
-        })
-      }
+      const query = validateRequest(githubCallbackSchema, req.query)
 
       const workosUserId = req.workosUserId!
       const { workspaceId } = await workspaceIntegrationService.handleGithubCallback({
-        state: parsed.data.state,
-        installationId: parsed.data.installation_id,
+        state: query.state,
+        installationId: query.installation_id,
         workosUserId,
         viewerPermissions: req.authUser?.permissions ?? null,
       })
@@ -132,18 +127,12 @@ export function createWorkspaceIntegrationHandlers({
     },
 
     async linearCallback(req: Request, res: Response) {
-      const parsed = linearCallbackSchema.safeParse(req.query)
-      if (!parsed.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(parsed.error).fieldErrors,
-        })
-      }
+      const query = validateRequest(linearCallbackSchema, req.query)
 
       const workosUserId = req.workosUserId!
       const { workspaceId } = await workspaceIntegrationService.handleLinearCallback({
-        state: parsed.data.state,
-        code: parsed.data.code,
+        state: query.state,
+        code: query.code,
         workosUserId,
       })
 

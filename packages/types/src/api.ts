@@ -10,6 +10,7 @@ import type {
   LabelableResourceType,
   CompanionMode,
   SavedStatus,
+  SavedSuggestionStatus,
   AuthorType,
   ScheduledMessageStatus,
   E2eKeyWrapRecipientKind,
@@ -256,6 +257,27 @@ export interface SyncCatchUpEntry {
 export interface SyncCatchUpResponse {
   entries: SyncCatchUpEntry[]
   head: string
+  /**
+   * Set when the client's `after` cursor is below the workspace's retained
+   * sync-log floor (entries it would need have been pruned by retention, see
+   * docs/plans/sync-v2-log-retention.md). The log can no longer heal the gap;
+   * `entries` is empty and the client must fall back to a full bootstrap (the
+   * authority for everything <= `head`). Absent/false on every in-window
+   * request, so older clients that ignore the field simply never see it.
+   */
+  requiresBootstrap?: boolean
+}
+
+/**
+ * Periodic `sync:heartbeat` socket payload: the workspace-global sync-log
+ * head, broadcast to the workspace room so clients can detect a dropped emit
+ * without waiting for a reconnect/resume trigger. Same head semantics as the
+ * catch-up response: a freshness hint to compare against, never a cursor
+ * target. See docs/plans/sync-v2-heartbeat.md.
+ */
+export interface SyncHeartbeatPayload {
+  workspaceId: string
+  head: string
 }
 
 // ============================================================================
@@ -453,25 +475,31 @@ export interface E2eKeyRollInput {
 }
 
 /**
- * Body for `POST …/e2e/actor-key-wraps`: re-wraps of the *current* SSK to
- * invited actors' live keys that are missing a wrap at that generation —
+ * Body for `POST …/e2e/actor-key-wraps`: re-wraps of already-granted SSK
+ * generations to invited actors' live keys that are missing their wrap —
  * the revive path for an actor whose key changed after the invite (an
  * enclave restart mints a fresh EIK, orphaning every stream wrapped to the
  * old one). Unlike a key roll, no fresh SSK is minted and the generation
- * does not advance: the actor was already granted this generation, so
- * re-addressing the same key to its new instance preserves exactly the
- * prior access — and keeps a pending turn (sealed under the current
- * generation) decryptable, which a roll would strand. `keyGeneration` must
- * equal the stream's current generation; recipients must be live keys of
- * currently-invited actors (never `user` wraps).
+ * does not advance: the actor was already granted these generations, so
+ * re-addressing the same keys to its new instance preserves exactly the
+ * prior access — and keeps a pending turn decryptable, which a roll would
+ * strand. The top-level `keyGeneration` must equal the stream's current
+ * generation (the client's freshness assertion); each wrap defaults to it.
+ * A wrap may name an older generation only for the enclave actor (a
+ * singleton, so any prior enclave wrap at that generation proves the actor
+ * held it) — re-wrapping every generation the owner can open is what
+ * un-strands a parked turn, sealed history, and turn digests after an
+ * enclave restart that follows a key roll (E2EE-7). Recipients must be
+ * live keys of currently-invited actors (never `user` wraps).
  */
 export interface E2eActorRewrapInput {
   keyGeneration: number
-  wraps: E2eKeyWrapInput[]
+  wraps: (E2eKeyWrapInput & { keyGeneration?: number })[]
 }
 
 // ============================================================================
-// Enclave invoke contract (backend forwarder ↔ enclave `/invoke`)
+// Enclave turn contract (enclave pulls assignments via the claim endpoint and
+// reports back over the session callbacks)
 // ============================================================================
 
 /**
@@ -620,18 +648,28 @@ export interface EnclaveSealedSubstep {
 }
 
 /**
- * The work the backend assigns to a live enclave via `POST /sessions`. The
- * backend never decrypts: it ships ciphertext + the wraps addressed to that EIK
- * plus the `sessionId` it created the `agent_sessions` row under. The enclave
- * acks the assignment (202), then runs the agent loop asynchronously — unwrapping,
- * opening, sealing each reply — and reports progress/completion back over the
- * session callbacks (heartbeat, complete). `system` is the persona's (non-secret)
- * prompt; `reply` carries the generation each reply is sealed under + Ariadne's
- * sender id the replies are bound to.
+ * The work the backend hands a live enclave as the body of a winning claim
+ * (`POST /internal/enclave-runtimes/claims`, 200). The backend never decrypts:
+ * it ships ciphertext + the wraps addressed to the claiming EIK plus the
+ * `sessionId` it created the `agent_sessions` row under. The enclave runs the
+ * agent loop asynchronously after the claim — unwrapping, opening, sealing each
+ * reply — and reports progress/completion back over the session callbacks
+ * (heartbeat, complete/fail). `system` is the persona's (non-secret) prompt;
+ * `reply` carries the generation each reply is sealed under + Ariadne's sender
+ * id the replies are bound to.
  */
 export interface EnclaveSessionAssignment {
   sessionId: string
   streamId: string
+  /**
+   * Claim-minted secret binding this session's callbacks to the runner that
+   * claimed the turn (Phase 2.4b, E2EE-21; §2.7 transfers it onto the claim).
+   * Delivered only inside this claim response and echoed on every session
+   * callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend rejects a
+   * mismatch or an absent token, so the field is required — an assignment
+   * without it could never complete a single callback.
+   */
+  callbackToken: string
   wraps: EnclaveSskWrap[]
   history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
   prompt: EnclaveSealedMessage
@@ -720,6 +758,31 @@ export interface EnclaveSessionResult {
  */
 export interface EnclaveSessionFailure {
   errorName: string
+}
+
+/**
+ * Response of `POST /internal/enclave-runtimes/claims` when a turn was won
+ * (the no-work case is a bodyless 204). The enclave presents its EIK key id;
+ * the backend claims the oldest invocation that key can actually serve (its
+ * wraps cover the prompt's and the reply's key generations), builds the
+ * assignment for it, and hands it over. Possession of the embedded
+ * `callbackToken` is what authorizes the session callbacks — the claim is
+ * the handoff.
+ */
+export interface EnclaveClaimResponse {
+  assignment: EnclaveSessionAssignment
+}
+
+/**
+ * Response of the per-session heartbeat callback. Cancellation rides the
+ * pull channel: `abort: true` means a user requested "Stop research" for
+ * this session, and the enclave should trip the turn's AbortController (the
+ * graceful research abort — partial findings, the turn still replies). The
+ * enclave has no inbound routes, so this piggybacked flag replaces the old
+ * `POST /sessions/:id/cancel` push.
+ */
+export interface EnclaveSessionHeartbeatResponse {
+  abort: boolean
 }
 
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown
@@ -1051,6 +1114,14 @@ export interface WorkspaceBootstrap {
    * per-user overrides). Kept live by the `feature_flags:updated` socket event.
    */
   featureFlags: FeatureFlags
+  /**
+   * True when the viewer holds a control-plane platform-admin grant (synced
+   * to the regional `platform_admin_access` mirror). Gates UI links into the
+   * backoffice. Optional because bootstraps cached before this field shipped
+   * lack it — absent reads as false. No live broadcast: grants are rare
+   * operator actions and take effect on the next bootstrap.
+   */
+  viewerIsPlatformAdmin?: boolean
 }
 
 // ============================================================================
@@ -1123,8 +1194,9 @@ export interface Activity {
   workspaceId: string
   userId: string
   activityType: string
-  streamId: string
-  messageId: string
+  /** Null only for saved_reminder rows fired by standalone (message-less) saved items. */
+  streamId: string | null
+  messageId: string | null
   actorId: string
   actorType: string
   context: Record<string, unknown>
@@ -1331,17 +1403,24 @@ export const DEVICE_KEY_LENGTH = 16
 // ============================================================================
 
 /**
- * Wire shape for a saved-message row. Absolute timestamps are ISO strings; the
- * live-resolved message snapshot is null when the underlying message has been
- * deleted or the owner has lost access to the stream.
+ * Wire shape for a saved-item row. Items are either anchored to a message
+ * (`messageId`/`streamId` set, the original bookmark flow) or standalone
+ * to-dos (`messageId`/`streamId` null, `title` set). Absolute timestamps are
+ * ISO strings; the live-resolved message snapshot is null when the item is
+ * standalone, the underlying message has been deleted, or the owner has lost
+ * access to the stream — `unavailableReason` distinguishes the latter two.
  */
 export interface SavedMessageView {
   id: string
   workspaceId: string
   userId: string
-  messageId: string
-  streamId: string
+  messageId: string | null
+  streamId: string | null
   status: SavedStatus
+  /** Display line for standalone items; null for message-anchored rows. */
+  title: string | null
+  /** Optional free-text context, editable on both variants. */
+  note: string | null
   remindAt: string | null
   reminderSentAt: string | null
   savedAt: string
@@ -1360,14 +1439,28 @@ export interface SavedMessageSnapshot {
   streamName: string | null
 }
 
+/**
+ * Create input: exactly one of `messageId` (save a message) or `title`
+ * (standalone to-do). `note` is accepted only with `title` — message saves
+ * start without a note; it's added later via update.
+ */
 export interface SaveMessageInput {
-  messageId: string
+  messageId?: string
+  title?: string
+  note?: string
   remindAt?: string | null
 }
 
+/**
+ * Update input: exactly one mutation group per request — `status`, `remindAt`,
+ * or content (`title` and/or `note`) — so each PATCH is one transaction and
+ * one socket event. `note: null` clears the note; titles can't be cleared.
+ */
 export interface UpdateSavedMessageInput {
   status?: SavedStatus
   remindAt?: string | null
+  title?: string
+  note?: string | null
 }
 
 export interface SavedMessageListResponse {
@@ -1387,7 +1480,8 @@ export interface SavedDeletedPayload {
   workspaceId: string
   targetUserId: string
   savedId: string
-  messageId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
 }
 
 /** Wire payload broadcast on `saved_reminder:fired` socket events. */
@@ -1395,9 +1489,57 @@ export interface SavedReminderFiredPayload {
   workspaceId: string
   targetUserId: string
   savedId: string
-  messageId: string
-  streamId: string
+  /** Null for standalone (message-less) saved items. */
+  messageId: string | null
+  streamId: string | null
   saved: SavedMessageView
+}
+
+// ============================================================================
+// Saved Suggestions API
+// ============================================================================
+
+/**
+ * Wire shape for a passively-collected to-do suggestion. Suggestions are
+ * per-user (the resolved assignee) and never enter the saved list on their
+ * own — accepting one creates a saved item anchored at the suggestion's
+ * primary source message with the extracted context as its note.
+ */
+export interface SavedSuggestionView {
+  id: string
+  workspaceId: string
+  /** The resolved assignee — the only user who sees this suggestion. */
+  userId: string
+  streamId: string
+  conversationId: string
+  title: string
+  /** Extracted context (the why/what); becomes the saved item's note on accept. */
+  context: string | null
+  sourceMessageIds: string[]
+  dueAt: string | null
+  status: SavedSuggestionStatus
+  /** Saved item created by accepting this suggestion; null until accepted. */
+  savedMessageId: string | null
+  createdAt: string
+  statusChangedAt: string
+}
+
+export interface SavedSuggestionListResponse {
+  suggestions: SavedSuggestionView[]
+  nextCursor: string | null
+}
+
+/** Response for POST /saved/suggestions/:id/accept. */
+export interface AcceptSavedSuggestionResponse {
+  suggestion: SavedSuggestionView
+  saved: SavedMessageView
+}
+
+/** Wire payload broadcast on `saved_suggestion:upserted` socket events. */
+export interface SavedSuggestionUpsertedPayload {
+  workspaceId: string
+  targetUserId: string
+  suggestion: SavedSuggestionView
 }
 
 // ============================================================================

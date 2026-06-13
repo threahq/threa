@@ -4,6 +4,7 @@ import type { Pool } from "pg"
 import type { SearchService } from "./service"
 import type { SearchResult } from "./repository"
 import { resolveUserAccessibleStreamIds } from "./access"
+import { validateRequest } from "../../lib/validation"
 import { STREAM_TYPES } from "@threa/types"
 
 const ARCHIVE_STATUSES = ["active", "archived"] as const
@@ -65,26 +66,9 @@ export function createSearchHandlers({ pool, searchService }: Dependencies) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = searchQuerySchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(searchQuerySchema, req.body)
 
-      const {
-        query,
-        from,
-        with: withParticipants,
-        in: inStreams,
-        type,
-        status,
-        before,
-        after,
-        exact,
-        limit,
-      } = result.data
+      const { query, from, with: withParticipants, in: inStreams, type, status, before, after, exact, limit } = data
 
       const filters = {
         authorId: from,

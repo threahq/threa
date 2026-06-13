@@ -870,8 +870,10 @@ describe("StreamService.reviveActorKeyWraps", () => {
 
   const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
   const mockInsertManyWraps = spyOn(StreamE2eKeyWrapsRepository, "insertMany")
+  const mockEnclaveGenerations = spyOn(StreamE2eKeyWrapsRepository, "listGenerationsForRecipientKind")
   const mockListActors = spyOn(E2eStreamActorsRepository, "listForStream")
   const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
+  const mockFindLiveBiks = spyOn(BotRuntimeInstanceRepository, "findLiveWithKeyForBot")
 
   // A transaction client that answers the advisory-lock query the revive
   // issues before any repo call (same serialization as rollStreamKey).
@@ -892,8 +894,10 @@ describe("StreamService.reviveActorKeyWraps", () => {
     spyOn(db, "withTransaction").mockImplementation((_pool, fn) => fn(lockClient))
     mockGetByStreamId.mockReset().mockResolvedValue(ownedStream)
     mockInsertManyWraps.mockReset().mockResolvedValue(undefined as never)
+    mockEnclaveGenerations.mockReset().mockResolvedValue([])
     mockListActors.mockReset().mockResolvedValue([{ kind: "enclave", actorId: "enclave", keyId: null }])
     mockListLiveEiks.mockReset().mockResolvedValue([{ keyId: "eik_fresh", publicKey: new Uint8Array([1]) }] as never)
+    mockFindLiveBiks.mockReset().mockResolvedValue([] as never)
   })
 
   afterAll(() => {
@@ -969,6 +973,101 @@ describe("StreamService.reviveActorKeyWraps", () => {
 
     expect((error as HttpError).status).toBe(400)
     expect((error as HttpError).code).toBe("E2E_RECIPIENT_NOT_LIVE_ACTOR")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  // E2EE-7: an enclave restart that follows a key roll leaves the parked turn
+  // (and old history/digests) sealed under generations the fresh EIK has no
+  // wrap for — revive must be able to re-address those generations too.
+  test("stores an older-generation wrap for the enclave when a prior enclave wrap proves it held that generation", async () => {
+    // The (dead) enclave EIK held generation 0; the owner's own gen-1 wrap is
+    // not an enclave row, so the scoped read returns only [0].
+    mockEnclaveGenerations.mockResolvedValue([0])
+
+    await service.reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+      keyGeneration: 1,
+      wraps: [enclaveWrap, { ...enclaveWrap, keyGeneration: 0 }] as never,
+    })
+
+    expect(mockInsertManyWraps).toHaveBeenCalledWith(lockClient, [
+      expect.objectContaining({ keyGeneration: 1, recipientKeyId: "eik_fresh" }),
+      expect.objectContaining({ keyGeneration: 0, recipientKeyId: "eik_fresh" }),
+    ])
+  })
+
+  test("throws 400 for an older generation no enclave wrap ever existed at", async () => {
+    // No enclave wrap exists at generation 0 (only the owner's user wrap), so
+    // the scoped read returns no held generations — the enclave never held it.
+    mockEnclaveGenerations.mockResolvedValue([])
+
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+        keyGeneration: 1,
+        wraps: [{ ...enclaveWrap, keyGeneration: 0 }] as never,
+      })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_GENERATION_NOT_HELD")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 for an older-generation wrap addressed to a bot key (no per-bot history attribution)", async () => {
+    mockListActors.mockResolvedValue([{ kind: "bot", actorId: "bot_1", keyId: null }] as never)
+    mockFindLiveBiks.mockResolvedValue([{ publicKeyId: "bik_live", publicKey: "AA==" }] as never)
+    mockListLiveEiks.mockResolvedValue([] as never)
+    // Older generations are enclave-only: the scoped read returns enclave rows,
+    // so a bot recipient can never satisfy the older-generation rule.
+    mockEnclaveGenerations.mockResolvedValue([])
+
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+        keyGeneration: 1,
+        wraps: [
+          { keyGeneration: 0, recipientKeyId: "bik_live", recipientKind: "bot", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+        ] as never,
+      })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_GENERATION_NOT_HELD")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when a wrap's kind doesn't match the live key's server-resolved kind", async () => {
+    mockListActors.mockResolvedValue([{ kind: "bot", actorId: "bot_1", keyId: null }] as never)
+    mockFindLiveBiks.mockResolvedValue([{ publicKeyId: "bik_live", publicKey: "AA==" }] as never)
+    mockListLiveEiks.mockResolvedValue([] as never)
+    // The enclave genuinely held generation 0 — but that must not help a live
+    // bot key that merely relabels itself "enclave".
+    mockEnclaveGenerations.mockResolvedValue([0])
+
+    // A live bot key relabeled "enclave" must not unlock the enclave-only
+    // older-generation rule.
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+        keyGeneration: 1,
+        wraps: [
+          { keyGeneration: 0, recipientKeyId: "bik_live", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+        ] as never,
+      })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_RECIPIENT_NOT_LIVE_ACTOR")
+    expect(mockInsertManyWraps).not.toHaveBeenCalled()
+  })
+
+  test("throws 400 when a wrap names a generation above current", async () => {
+    const error = await service
+      .reviveActorKeyWraps("ws_1", "stream_e2e", "usr_owner", {
+        keyGeneration: 1,
+        wraps: [{ ...enclaveWrap, keyGeneration: 2 }] as never,
+      })
+      .catch((e) => e)
+
+    expect((error as HttpError).status).toBe(400)
+    expect((error as HttpError).code).toBe("E2E_GENERATION_NOT_HELD")
     expect(mockInsertManyWraps).not.toHaveBeenCalled()
   })
 })

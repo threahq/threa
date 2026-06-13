@@ -8,8 +8,8 @@ interface ActivityRow {
   workspace_id: string
   user_id: string
   activity_type: string
-  stream_id: string
-  message_id: string
+  stream_id: string | null
+  message_id: string | null
   actor_id: string
   actor_type: string
   context: Record<string, unknown>
@@ -24,8 +24,9 @@ export interface Activity {
   workspaceId: string
   userId: string
   activityType: string
-  streamId: string
-  messageId: string
+  /** Null only for saved_reminder rows fired by standalone (message-less) saved items. */
+  streamId: string | null
+  messageId: string | null
   actorId: string
   actorType: string
   context: Record<string, unknown>
@@ -39,8 +40,9 @@ export interface InsertActivityParams {
   workspaceId: string
   userId: string
   activityType: string
-  streamId: string
-  messageId: string
+  /** Null only for saved_reminder rows fired by standalone (message-less) saved items. */
+  streamId: string | null
+  messageId: string | null
   /** User/persona/bot/system id of the actor whose action produced this row. */
   actorId: string
   actorType: string

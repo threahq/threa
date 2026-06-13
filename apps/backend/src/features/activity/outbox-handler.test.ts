@@ -44,12 +44,29 @@ function createHandler() {
   return { handler, activityService }
 }
 
+// Mirrors what the composer/API path emits: the markdown body plus the
+// canonical contentJson carrying the structural mention node (INV-58).
+const MENTION_CONTENT_JSON = {
+  type: "doc",
+  content: [
+    {
+      type: "paragraph",
+      content: [
+        { type: "text", text: "hello " },
+        { type: "mention", attrs: { id: "usr_alice", slug: "alice", mentionType: "user" } },
+        { type: "text", text: " check this" },
+      ],
+    },
+  ],
+}
+
 function makeMessageCreatedEvent(
   id: bigint,
   overrides?: {
     actorType?: string
     actorId?: string | null
     contentMarkdown?: string
+    contentJson?: unknown
     workspaceId?: string
     streamId?: string
     messageId?: string
@@ -69,6 +86,7 @@ function makeMessageCreatedEvent(
         payload: {
           messageId: overrides?.messageId ?? "msg_test",
           contentMarkdown: overrides?.contentMarkdown ?? "hello @alice check this",
+          contentJson: "contentJson" in (overrides ?? {}) ? overrides!.contentJson : MENTION_CONTENT_JSON,
         },
       },
     },
@@ -104,6 +122,7 @@ describe("ActivityFeedHandler", () => {
       actorId: "usr_author",
       actorType: "user",
       contentMarkdown: "hey @alice look at this",
+      contentJson: MENTION_CONTENT_JSON,
     })
   })
 

@@ -19,6 +19,7 @@ import {
   BLOCKQUOTE_COLLAPSE_THRESHOLD_MAX,
 } from "@threa/types"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
+import { validateRequest } from "../../lib/validation"
 
 const updatePreferencesSchema = z.object({
   theme: z.enum(THEME_OPTIONS).optional(),
@@ -86,15 +87,9 @@ export function createUserPreferencesHandlers({ userPreferencesService }: Depend
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = updatePreferencesSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updatePreferencesSchema, req.body)
 
-      const preferences = await userPreferencesService.updatePreferences(workspaceId, userId, result.data)
+      const preferences = await userPreferencesService.updatePreferences(workspaceId, userId, data)
       res.json({ preferences })
     },
   }

@@ -7,14 +7,23 @@ import {
   mergeReconnectWorkspaceBootstrap,
   registerWorkspaceSocketHandlers,
 } from "./workspace-sync"
+import { readMirroredSyncV2Mode } from "./sync-v2-mode"
+import { SocketEventGate } from "./socket-event-gate"
+import { savedKeys } from "@/hooks/use-saved"
+import { scheduledKeys } from "@/hooks/use-scheduled"
+import { memoKeys } from "@/hooks/use-memos"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
   defaultFeatureFlags,
+  type LabelAssignment,
+  type SavedMessageView,
+  type ScheduledMessageView,
   type StreamBootstrap,
   type WorkspaceBootstrap,
 } from "@threa/types"
+import { assignmentId } from "@/hooks/use-labels"
 import type { Socket } from "socket.io-client"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
@@ -287,6 +296,17 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap())
 
     expect(await db.streams.get("stream_keep")).toBeDefined()
+  })
+
+  it("mirrors the sync-v2 mode so the next engine construction sees the delivered value", async () => {
+    localStorage.removeItem("sync-v2-mode:ws_1")
+
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({ featureFlags: { ...defaultFeatureFlags(), "sync-v2-cursor": "active" } })
+    )
+
+    expect(readMirroredSyncV2Mode("ws_1")).toBe("active")
   })
 })
 
@@ -656,6 +676,168 @@ describe("registerWorkspaceSocketHandlers", () => {
     await Promise.all([db.streams.clear(), db.streamMemberships.clear(), db.dmPeers.clear(), db.unreadState.clear()])
   })
 
+  const handlerRefs = {
+    getCurrentStreamId: () => undefined,
+    getCurrentUser: () => ({ id: "workos_1" }),
+    subscribeStream: vi.fn(),
+  }
+
+  it("skips the INV-53 saved/scheduled reconnect invalidations in active sync-v2 mode", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket } = createTestSocket()
+
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: savedKeys.all })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
+    cleanup()
+  })
+
+  it.each(["off", "shadow"] as const)(
+    "runs the INV-53 saved/scheduled reconnect invalidations in %s mode (kill switch restores healing)",
+    (mode) => {
+      const queryClient = new QueryClient()
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+      const { socket } = createTestSocket()
+
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, mode)
+
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: savedKeys.all })
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: scheduledKeys.all })
+      cleanup()
+    }
+  )
+
+  it("applies gate-dispatched saved/scheduled catch-up replays to IDB in active mode", async () => {
+    // The coverage the mode-gated `refetchOnReconnect` is traded for: in
+    // active mode these handlers register on the engine's event gate, so a
+    // catch-up replay (gate.dispatch, never the raw socket) writes the rows
+    // through the same code path as a live emit.
+    await Promise.all([db.savedMessages.clear(), db.scheduledMessages.clear()])
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+
+    const now = new Date().toISOString()
+    const saved: SavedMessageView = {
+      id: "saved_replay",
+      workspaceId: "ws_1",
+      userId: "member_1",
+      messageId: "msg_1",
+      streamId: "stream_1",
+      status: "saved",
+      title: null,
+      note: null,
+      remindAt: null,
+      reminderSentAt: null,
+      savedAt: now,
+      statusChangedAt: now,
+      message: null,
+      unavailableReason: null,
+    }
+    const scheduled: ScheduledMessageView = {
+      id: "sched_replay",
+      workspaceId: "ws_1",
+      userId: "member_1",
+      streamId: "stream_1",
+      parentMessageId: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "hello",
+      attachmentIds: [],
+      metadata: null,
+      scheduledFor: now,
+      status: "pending",
+      sentMessageId: null,
+      lastError: null,
+      editActiveUntil: null,
+      clientMessageId: null,
+      version: 1,
+      createdAt: now,
+      updatedAt: now,
+      statusChangedAt: now,
+    }
+
+    await gate.dispatch("saved:upserted", { workspaceId: "ws_1", saved })
+    await gate.dispatch("scheduled_message:upserted", { workspaceId: "ws_1", scheduled })
+
+    // The handlers persist fire-and-forget, so poll IDB for the rows.
+    await vi.waitFor(async () => {
+      expect(await db.savedMessages.get("saved_replay")).toBeTruthy()
+      expect(await db.scheduledMessages.get("sched_replay")).toBeTruthy()
+    })
+
+    cleanup()
+    gate.dispose()
+  })
+
+  it("applies gate-dispatched label assignment catch-up replays to IDB", async () => {
+    // The coverage labels' dropped `refetchOnReconnect` is traded for in
+    // active mode: the label handlers register on the engine's event gate, so
+    // a catch-up replay (gate.dispatch, never the raw socket) lands assignment
+    // rows in IDB through the same code path as a live emit.
+    await db.labelAssignments.clear()
+    const queryClient = new QueryClient()
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+
+    const assignment: LabelAssignment = {
+      workspaceId: "ws_1",
+      labelId: "label_1",
+      resourceType: "stream",
+      resourceId: "stream_1",
+      userId: "member_1",
+      assignedAt: new Date().toISOString(),
+    }
+    const rowId = assignmentId("ws_1", "stream", "stream_1", "label_1", "member_1")
+
+    await gate.dispatch("label:assigned", { workspaceId: "ws_1", targetUserId: null, assignment })
+    // The handlers persist fire-and-forget, so poll IDB for the row.
+    await vi.waitFor(async () => {
+      expect(await db.labelAssignments.get(rowId)).toBeTruthy()
+    })
+
+    await gate.dispatch("label:unassigned", {
+      workspaceId: "ws_1",
+      targetUserId: null,
+      labelId: "label_1",
+      resourceType: "stream",
+      resourceId: "stream_1",
+      userId: "member_1",
+    })
+    await vi.waitFor(async () => {
+      expect(await db.labelAssignments.get(rowId)).toBeUndefined()
+    })
+
+    cleanup()
+    gate.dispose()
+  })
+
+  it("invalidates the memo search queries when a memo:created event lands", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    emit("memo:created", { workspaceId: "ws_1", memoId: "memo_1" })
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
+    cleanup()
+  })
+
+  it("ignores memo:created events from other workspaces", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    emit("memo:created", { workspaceId: "ws_other", memoId: "memo_1" })
+
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_other") })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
+    cleanup()
+  })
+
   it("subscribes the creator when a new stream is created at runtime", async () => {
     const queryClient = new QueryClient()
     queryClient.setQueryData(
@@ -669,11 +851,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:created", {
       workspaceId: "ws_1",
@@ -702,6 +890,37 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     expect(subscribeStream).toHaveBeenCalledWith("stream_new")
     expect(await db.streamMemberships.get("ws_1:stream_new")).toBeDefined()
+
+    cleanup()
+  })
+
+  it("applies feature_flags:updated to the bootstrap cache and the sync-v2 mode mirror", () => {
+    localStorage.removeItem("sync-v2-mode:ws_1")
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream: vi.fn(),
+      },
+      "off"
+    )
+
+    emit("feature_flags:updated", {
+      workspaceId: "ws_1",
+      targetUserId: "member_1",
+      featureFlags: { ...defaultFeatureFlags(), "sync-v2-cursor": "off" },
+    })
+
+    const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
+    expect(cached?.featureFlags["sync-v2-cursor"]).toBe("off")
+    expect(readMirroredSyncV2Mode("ws_1")).toBe("off")
 
     cleanup()
   })
@@ -746,11 +965,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:created", {
       workspaceId: "ws_1",
@@ -814,11 +1039,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => undefined,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => undefined,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:member_added", {
       workspaceId: "ws_1",
@@ -939,11 +1170,17 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     const subscribeStream = vi.fn()
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => "stream_1",
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream,
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => "stream_1",
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream,
+      },
+      "off"
+    )
 
     emit("stream:read", {
       workspaceId: "ws_1",
@@ -1027,11 +1264,17 @@ describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
 
   function register(queryClient: QueryClient, currentStreamId?: string) {
     const { socket, emit } = createTestSocket()
-    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
-      getCurrentStreamId: () => currentStreamId,
-      getCurrentUser: () => ({ id: "workos_1" }),
-      subscribeStream: vi.fn(),
-    })
+    const cleanup = registerWorkspaceSocketHandlers(
+      socket,
+      "ws_1",
+      queryClient,
+      {
+        getCurrentStreamId: () => currentStreamId,
+        getCurrentUser: () => ({ id: "workos_1" }),
+        subscribeStream: vi.fn(),
+      },
+      "off"
+    )
     return { emit, cleanup }
   }
 

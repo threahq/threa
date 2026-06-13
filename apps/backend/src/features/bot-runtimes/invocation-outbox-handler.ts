@@ -1,11 +1,12 @@
 import type { Pool } from "pg"
 import { AuthorTypes, StreamTypes, botHasCapability } from "@threa/types"
-import { TurnDeliveries } from "@threa/agent-runtime"
+import { resolveDeliveryVerdict, TrustTiers, TurnDeliveries } from "@threa/agent-runtime"
 import { collectMentionSlugs, parseMarkdown } from "@threa/prosemirror"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
 import { StreamRepository } from "../streams"
+import { resolveSealingContext } from "../e2e-streams"
 import { BotRepository } from "../public-api/bot-repository"
 import { BotRuntimeService } from "./service"
 import { ExternalTurnDriver } from "./external-turn-driver"
@@ -92,15 +93,6 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const stream = await StreamRepository.findById(this.pool, message.streamId)
     if (!stream || stream.workspaceId !== message.workspaceId || stream.archivedAt) return
 
-    // E2EE-11: E2E streams route AI through the enclave only. The outbox payload
-    // here carries the placeholder (mentions ride in the ciphertext, never the
-    // cleartext markdown), so mention extraction can't see @-bots and the
-    // active-scratchpad branch would otherwise dispatch an empty-prompt turn to
-    // an external bot whose plaintext reply would then violate INV-E1. Skip all
-    // external bot invocation for E2E streams, mirroring the companion handler.
-    // `findById` already populates `e2eEnabled` off the e2e_streams join.
-    if (stream.e2eEnabled === true) return
-
     const rootStreamId = stream.rootStreamId ?? stream.id
     const rootStream = rootStreamId === stream.id ? stream : await StreamRepository.findById(this.pool, rootStreamId)
     const invocationRootStreamId = rootStream?.id ?? stream.id
@@ -130,6 +122,7 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     const hasMentionedPersona = mentionedPersonas.some(Boolean)
 
     for (const mentionedBot of mentionableBots) {
+      if (!(await this.verdictAllowsExternalDispatch(message.workspaceId, stream.id, mentionedBot.id))) continue
       await this.turnDriver.dispatchTurn(
         {
           delivery: TurnDeliveries.EXTERNAL,
@@ -162,6 +155,11 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
     if (mentionableBots.some((mentionedBot) => mentionedBot.id === bot.id)) return
     const activeExplicitlyMentioned = bot.slug != null && mentionedSlugs.includes(bot.slug)
     if ((mentionableBots.length > 0 || hasMentionedPersona) && !activeExplicitlyMentioned) return
+
+    // Before any side effect: the missing-link notice below writes a plaintext
+    // system message, which must never reach a stream the verdict won't let a
+    // plaintext turn into (INV-E1).
+    if (!(await this.verdictAllowsExternalDispatch(message.workspaceId, stream.id, bot.id))) return
 
     let link = await BotRuntimeSessionLinkRepository.findActiveByStream(this.pool, {
       workspaceId: message.workspaceId,
@@ -224,6 +222,27 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
         metadata: {},
       }
     )
+  }
+
+  /**
+   * E2EE-11 → Phase 2.4a: the external wire carries plaintext, so a bot turn
+   * dispatches only when the delivery verdict says plaintext may be minted
+   * for this bot on this stream. E2E streams come back `denied` (or `sealed`
+   * once a grant plus the policy switch exist — still not plaintext), keeping
+   * external bots out of E2E without a bespoke guard. The skip is logged,
+   * never silent. On E2E streams mention extraction already sees nothing
+   * (mentions ride in the ciphertext, the outbox payload carries the
+   * placeholder), so in practice this gates the active-scratchpad path.
+   */
+  private async verdictAllowsExternalDispatch(workspaceId: string, streamId: string, botId: string): Promise<boolean> {
+    const sealing = await resolveSealingContext(this.pool, { workspaceId, streamId, actor: { kind: "bot", botId } })
+    const verdict = resolveDeliveryVerdict({ trust: TrustTiers.THIRD_PARTY, sealing })
+    if (verdict.delivery === "plaintext") return true
+    logger.info(
+      { workspaceId, streamId, botId, verdict },
+      "BotInvocationOutboxHandler: skipping dispatch — external wire cannot carry the delivery verdict"
+    )
+    return false
   }
 
   private async createMissingLinkNotice(params: {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test"
-import { isValidSlug, extractMentionSlugs, hasMention, isBroadcastSlug, SLUG_MAX_LENGTH } from "./slug"
+import { isValidSlug, isBroadcastSlug, SLUG_MAX_LENGTH } from "./slug"
 
 describe("slug validation", () => {
   describe("isValidSlug", () => {
@@ -51,83 +51,6 @@ describe("slug validation", () => {
     test("accepts maximum length slug", () => {
       const maxSlug = "a".repeat(SLUG_MAX_LENGTH)
       expect(isValidSlug(maxSlug)).toBe(true)
-    })
-  })
-
-  describe("extractMentionSlugs", () => {
-    test("extracts single mention", () => {
-      expect(extractMentionSlugs("Hello @ariadne")).toEqual(["ariadne"])
-    })
-
-    test("extracts multiple mentions", () => {
-      expect(extractMentionSlugs("@alice and @bob")).toEqual(["alice", "bob"])
-    })
-
-    test("deduplicates repeated mentions", () => {
-      expect(extractMentionSlugs("@ariadne please help @ariadne")).toEqual(["ariadne"])
-    })
-
-    test("extracts mentions with hyphens", () => {
-      expect(extractMentionSlugs("Ask @customer-support for help")).toEqual(["customer-support"])
-    })
-
-    test("does NOT match email addresses", () => {
-      // test@example.com should not extract "example" as a mention
-      // because the @ is preceded by "test" (no word boundary)
-      expect(extractMentionSlugs("Contact test@example.com")).toEqual([])
-    })
-
-    test("extracts mentions with underscores", () => {
-      expect(extractMentionSlugs("Ask @tech_lead for help")).toEqual(["tech_lead"])
-    })
-
-    test("does NOT match uppercase mentions", () => {
-      expect(extractMentionSlugs("Hello @ARIADNE")).toEqual([])
-    })
-
-    test("handles mentions at boundaries", () => {
-      expect(extractMentionSlugs("@ariadne")).toEqual(["ariadne"])
-      expect(extractMentionSlugs("hi @ariadne")).toEqual(["ariadne"])
-      expect(extractMentionSlugs("@ariadne!")).toEqual(["ariadne"])
-      expect(extractMentionSlugs("(@ariadne)")).toEqual(["ariadne"])
-    })
-
-    test("handles mentions in markdown", () => {
-      expect(extractMentionSlugs("**@ariadne** can help")).toEqual(["ariadne"])
-    })
-
-    test("returns empty for no mentions", () => {
-      expect(extractMentionSlugs("No mentions here")).toEqual([])
-    })
-
-    test("returns empty for empty string", () => {
-      expect(extractMentionSlugs("")).toEqual([])
-    })
-
-    test("handles single letter slugs", () => {
-      expect(extractMentionSlugs("Hey @a")).toEqual(["a"])
-    })
-  })
-
-  describe("hasMention", () => {
-    test("returns true for exact match", () => {
-      expect(hasMention("Hello @ariadne", "ariadne")).toBe(true)
-    })
-
-    test("returns false when not present", () => {
-      expect(hasMention("Hello @alice", "ariadne")).toBe(false)
-    })
-
-    test("does not match partial slugs", () => {
-      expect(hasMention("Hello @ariadne-helper", "ariadne")).toBe(false)
-    })
-
-    test("matches with trailing punctuation", () => {
-      expect(hasMention("@ariadne, help!", "ariadne")).toBe(true)
-    })
-
-    test("returns false for invalid slug parameter", () => {
-      expect(hasMention("Hello @test", "test.user")).toBe(false)
     })
   })
 

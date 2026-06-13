@@ -2,16 +2,19 @@ interface HttpErrorOptions {
   status: number
   code?: string
   cause?: Error
+  details?: unknown
 }
 
 export class HttpError extends Error {
   readonly status: number
   readonly code?: string
+  readonly details?: unknown
 
-  constructor(message: string, { status, code, cause }: HttpErrorOptions) {
+  constructor(message: string, { status, code, cause, details }: HttpErrorOptions) {
     super(message, { cause })
     this.status = status
     this.code = code
+    this.details = details
     this.name = "HttpError"
   }
 }

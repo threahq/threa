@@ -47,10 +47,15 @@ export function ActivityItem({
   const isBot = actorType === "bot"
   const isSystem = actorType === "system"
   const isReminder = activity.activityType === "saved_reminder"
+  // Standalone saved-item reminders have no source message to open — land on
+  // the Saved page where the item lives.
+  const href = activity.streamId
+    ? `/w/${workspaceId}/s/${activity.streamId}?m=${activity.messageId}`
+    : `/w/${workspaceId}/saved`
 
   return (
     <Link
-      to={`/w/${workspaceId}/s/${activity.streamId}?m=${activity.messageId}`}
+      to={href}
       onClick={() => {
         if (isUnread) onMarkAsRead(activity.id)
       }}

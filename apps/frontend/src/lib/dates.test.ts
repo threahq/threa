@@ -9,6 +9,7 @@ import {
   formatFutureTime,
   getPastDatePresets,
   getFutureDatePresets,
+  localStartOfDayISO,
 } from "./dates"
 
 describe("dates", () => {
@@ -176,6 +177,26 @@ describe("dates", () => {
       const tomorrow = presets.find((p) => p.id === "tomorrow")
 
       expect(formatISODate(tomorrow!.date)).toBe("2025-06-16")
+    })
+  })
+
+  describe("localStartOfDayISO", () => {
+    it("converts a date-only string to the ISO instant of local midnight", () => {
+      // Independent expectation: the Date(y, m, d) constructor is local-time
+      expect(localStartOfDayISO("2026-06-19")).toBe(new Date(2026, 5, 19).toISOString())
+    })
+
+    it("round-trips through the date-only formatter", () => {
+      const iso = localStartOfDayISO("2026-01-01")
+      expect(iso).not.toBeNull()
+      expect(formatISODate(new Date(iso!))).toBe("2026-01-01")
+    })
+
+    it("returns null for non-date values", () => {
+      expect(localStartOfDayISO("yesterday")).toBeNull()
+      expect(localStartOfDayISO("2026-06")).toBeNull()
+      expect(localStartOfDayISO("2026-06-19T10:00:00Z")).toBeNull()
+      expect(localStartOfDayISO("")).toBeNull()
     })
   })
 

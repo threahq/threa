@@ -7,6 +7,7 @@ import {
   Columns3,
   FileText,
   Hash,
+  ListTodo,
   Paperclip,
   Search,
   FileEdit,
@@ -48,7 +49,9 @@ export interface CommandContext {
    */
   createEncryptedScratchpad: (withAriadne: boolean) => Promise<string>
   openCreateChannel: () => void
-  setMode?: (mode: "stream" | "command" | "search") => void
+  setMode?: (mode: "stream" | "command") => void
+  /** Open the workspace search surface (sidebar panel on desktop, /search page on mobile). */
+  openSearch: () => void
   requestInput: (request: InputRequest) => void
   openSettings: (tab?: SettingsTab) => void
   /** Open the workspace settings dialog at a tab (URL-param driven, like openSettings). */
@@ -68,6 +71,12 @@ export interface CommandContext {
   requestArchiveStream: (streamId: string) => void
   /** Open the label picker for a stream. */
   openLabelPicker: (streamId: string) => void
+  /**
+   * Create a standalone saved item (to-do) titled `title`. Backed by the same
+   * mutation as the Saved page's quick-add, so the new item lands in the
+   * Saved tab and the offline cache immediately.
+   */
+  createSavedTodo: (title: string) => Promise<void>
 }
 
 export interface Command {
@@ -158,6 +167,34 @@ export const commands: Command[] = [
     },
   },
   {
+    id: "add-todo",
+    label: "Add To-do",
+    icon: ListTodo,
+    keywords: ["todo", "task", "saved", "remember", "capture", "quick add", "later"],
+    // Switches the palette into its inline input mode: type the title, Enter
+    // saves it as a standalone saved item. Deliberately not called a "note" —
+    // Quick Notes are scratchpads; this lands in Saved.
+    action: ({ requestInput, createSavedTodo, closeDialog }) => {
+      requestInput({
+        icon: ListTodo,
+        placeholder: "What needs doing?",
+        hint: "Press Enter to add this to-do to Saved",
+        onSubmit: async (value) => {
+          const title = value.trim()
+          if (!title) return
+          try {
+            await createSavedTodo(title)
+            closeDialog()
+            toast.success("To-do added to Saved")
+          } catch (error) {
+            console.error("Failed to add to-do:", error)
+            toast.error("Could not add to-do")
+          }
+        },
+      })
+    },
+  },
+  {
     id: "new-channel",
     label: "New Channel",
     icon: Hash,
@@ -172,8 +209,9 @@ export const commands: Command[] = [
     label: "Search messages",
     icon: Search,
     keywords: ["find", "query"],
-    action: ({ setMode }) => {
-      setMode?.("search")
+    action: ({ closeDialog, openSearch }) => {
+      closeDialog()
+      openSearch()
     },
   },
   // Destination commands mirror the sidebar's Quick Links block (drafts, saved,

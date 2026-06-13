@@ -14,7 +14,6 @@ interface ModeTabsProps {
 const MODES: { mode: QuickSwitcherMode; label: string; shortcut: string | null }[] = [
   { mode: "stream", label: "Stream search", shortcut: null },
   { mode: "command", label: "Command palette", shortcut: ">" },
-  { mode: "search", label: "Message search", shortcut: "?" },
 ]
 
 const TAB_VALUES = MODES.map((m) => m.mode) as readonly QuickSwitcherMode[]

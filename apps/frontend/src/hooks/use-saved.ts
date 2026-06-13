@@ -2,6 +2,7 @@ import { useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useSavedService } from "@/contexts"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { db, type CachedSavedMessage } from "@/db"
 import type {
   SavedMessageView,
@@ -25,6 +26,8 @@ function toCached(view: SavedMessageView): CachedSavedMessage {
     messageId: view.messageId,
     streamId: view.streamId,
     status: view.status,
+    title: view.title,
+    note: view.note,
     remindAt: view.remindAt,
     reminderSentAt: view.reminderSentAt,
     savedAt: view.savedAt,
@@ -48,6 +51,10 @@ function fromCached(row: CachedSavedMessage): SavedMessageView {
     messageId: row.messageId,
     streamId: row.streamId,
     status: row.status as SavedStatus,
+    // Rows cached before the saved-items upgrade predate these fields; treat
+    // missing as null instead of bumping the Dexie schema version.
+    title: row.title ?? null,
+    note: row.note ?? null,
     remindAt: row.remindAt,
     reminderSentAt: row.reminderSentAt,
     savedAt: row.savedAt,
@@ -125,6 +132,9 @@ export async function replaceSavedPage(
  */
 export function useSavedList(workspaceId: string, status: SavedStatus) {
   const savedService = useSavedService()
+  // Optional: the Saved view normally mounts inside the workspace SyncEngine
+  // provider, but the hook must stay safe (and keep its healing) without one.
+  const syncEngine = useOptionalSyncEngine()
 
   const serverQuery = useQuery({
     queryKey: savedKeys.list(workspaceId, status),
@@ -139,14 +149,22 @@ export function useSavedList(workspaceId: string, status: SavedStatus) {
       return res
     },
     // INV-53: socket reconnects close their own event gap by invalidating
-    // `savedKeys.all` at the top of `registerWorkspaceSocketHandlers`;
-    // `refetchOnReconnect: true` then catches the pure browser online/offline
-    // case. `refetchOnMount: true` plus `staleTime: Infinity` makes the
-    // invalidation land on the next render.
+    // `savedKeys.all` at the top of `registerWorkspaceSocketHandlers` (in
+    // active sync-v2 mode the catch-up cursor replays the missed events
+    // instead); `refetchOnReconnect` then catches the pure browser
+    // online/offline case. In active mode that same online flip already runs
+    // `refreshAfterConnectivityResume()` → catch-up (workspace-layout's
+    // isOnline effect), replaying the user-scoped saved entries through the
+    // gate-registered workspace-sync handlers, so active skips the blanket
+    // refetch — "off" (kill switch), "shadow", and mounts without an engine
+    // keep it. The mode is fixed per engine lifetime; a flag flip recreates
+    // the engine and re-renders with the new option. `refetchOnMount: true`
+    // plus `staleTime: Infinity` makes the invalidation land on the next
+    // render.
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: syncEngine?.syncCursorMode !== "active",
     enabled: !!workspaceId,
   })
 

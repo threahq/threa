@@ -80,6 +80,16 @@ describe("filterCommands placement gating", () => {
     expect(names(filterCommands(ALL, "mem", editor))).toEqual(["memo"])
   })
 
+  it("ranks name matches above description-only matches", () => {
+    const editor = makeEditor()
+    typeText(editor, "/invite")
+    // SHOUT matches "invite" only in its description and is defined first;
+    // INVITE matches on its visible name and must rank above it.
+    const SHOUT: CommandItem = { name: "shout", description: "Invite everyone loudly" }
+    const items = filterCommands([SHOUT, INVITE], "invite", editor)
+    expect(items.map((i) => i.name)).toEqual(["invite", "shout"])
+  })
+
   it("returns whole-message commands when no editor context is available", () => {
     // Defensive fallback: without an editor we can't tell where the slash is, so
     // we don't hide message-level commands (the prior behavior).

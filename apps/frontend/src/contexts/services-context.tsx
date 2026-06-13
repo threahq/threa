@@ -6,6 +6,7 @@ import {
   conversationsApi,
   activityApi,
   savedApi,
+  savedSuggestionsApi,
   scheduledApi,
   labelsApi,
 } from "@/api"
@@ -78,6 +79,12 @@ export interface SavedService {
   delete: typeof savedApi.delete
 }
 
+export interface SavedSuggestionsService {
+  list: typeof savedSuggestionsApi.list
+  accept: typeof savedSuggestionsApi.accept
+  dismiss: typeof savedSuggestionsApi.dismiss
+}
+
 export interface ScheduledService {
   list: typeof scheduledApi.list
   getById: typeof scheduledApi.getById
@@ -108,6 +115,7 @@ export interface Services {
   conversations: ConversationService
   activity: ActivityService
   saved: SavedService
+  savedSuggestions: SavedSuggestionsService
   scheduled: ScheduledService
   labels: LabelService
 }
@@ -129,6 +137,7 @@ export function ServicesProvider({ children, services: overrides }: ServicesProv
       conversations: overrides?.conversations ?? conversationsApi,
       activity: overrides?.activity ?? activityApi,
       saved: overrides?.saved ?? savedApi,
+      savedSuggestions: overrides?.savedSuggestions ?? savedSuggestionsApi,
       scheduled: overrides?.scheduled ?? scheduledApi,
       labels: overrides?.labels ?? labelsApi,
     }),
@@ -169,6 +178,10 @@ export function useActivityService(): ActivityService {
 
 export function useSavedService(): SavedService {
   return useServices().saved
+}
+
+export function useSavedSuggestionsService(): SavedSuggestionsService {
+  return useServices().savedSuggestions
 }
 
 export function useScheduledService(): ScheduledService {

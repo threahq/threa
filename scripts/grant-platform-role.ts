@@ -17,8 +17,9 @@
  */
 
 import { readFileSync, existsSync } from "fs"
-import { createDatabasePool } from "../packages/backend-common/src"
+import { createDatabasePool, withTransaction, OutboxRepository } from "../packages/backend-common/src"
 import { PlatformRoleRepository, isValidPlatformRole } from "../apps/control-plane/src/features/backoffice"
+import { OUTBOX_PLATFORM_ADMIN_SYNC } from "../apps/control-plane/src/features/platform-admin"
 
 function loadEnvFile(filePath: string): Record<string, string> {
   const env: Record<string, string> = {}
@@ -67,7 +68,13 @@ async function main() {
   const databaseUrl = resolveDatabaseUrl()
   const pool = createDatabasePool(databaseUrl, { max: 1 })
   try {
-    const row = await PlatformRoleRepository.upsert(pool, userIdArg, role)
+    // Grant and regional fan-out commit atomically (INV-7) so a running
+    // control-plane pushes the new admin's mirror rows without a restart.
+    const row = await withTransaction(pool, async (client) => {
+      const granted = await PlatformRoleRepository.upsert(client, userIdArg, role)
+      await OutboxRepository.insert(client, OUTBOX_PLATFORM_ADMIN_SYNC, { workosUserId: userIdArg })
+      return granted
+    })
     console.log(`granted platform role "${row.role}" to ${row.workos_user_id}`)
   } finally {
     await pool.end()

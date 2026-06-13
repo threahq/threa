@@ -19,13 +19,14 @@ import {
 } from "./stream-sync"
 import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
-import { SyncLogCursor, SYNC_V2_CURSOR_MODE, type SyncV2CursorMode } from "./sync-log-cursor"
+import { SyncLogCursor } from "./sync-log-cursor"
+import type { SyncV2CursorMode } from "./sync-v2-mode"
 import { isLegacyUnreadCounterEntry } from "./unread-counters"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
-import type { WorkspaceBootstrap } from "@threa/types"
+import { defaultFeatureFlagValue, type WorkspaceBootstrap } from "@threa/types"
 
 interface SyncEngineDeps {
   workspaceId: string
@@ -62,13 +63,25 @@ interface SyncEngineDeps {
       signal?: AbortSignal
     ) => Promise<import("@threa/types").SyncCatchUpResponse>
   }
-  /** Test override for the VITE_SYNC_V2_CURSOR flag. */
+  /** Resolved `sync-v2-cursor` flag value, fixed for this engine's lifetime —
+   *  the workspace layout recreates the engine when the flag changes (see
+   *  shouldRecreateSyncEngine). Defaults to the registry default. */
   syncCursorMode?: SyncV2CursorMode
 }
 
 /** Safety valve for catch-up paging (20 pages × 500 entries). */
 const MAX_CATCHUP_PAGES = 20
 const CATCHUP_PAGE_LIMIT = 500
+
+/**
+ * How long a heartbeat-detected lag must persist before it triggers catch-up.
+ * The server reads the head from the log and sequence-before-emit means the
+ * matching emits can still be in flight when the heartbeat lands — during
+ * live traffic nearly every tick would otherwise pause the gate for a gap
+ * that closes itself. The re-check after this window only fetches if the
+ * client is still behind.
+ */
+const HEARTBEAT_GRACE_MS = 2_000
 
 // Unread counter events replay from the log like any other event since their
 // payloads went absolute (phase 2c) — EXCEPT legacy entries persisted before
@@ -109,7 +122,8 @@ export class SyncEngine {
   // advanced by live events and exercised against the catch-up endpoint
   // without owning any healing; in active mode catch-up entries are applied
   // through the live handlers via the event gate. See sync-log-cursor.ts.
-  private readonly syncCursorMode: SyncV2CursorMode
+  // Public so the React layer can detect a flag change (shouldRecreateSyncEngine).
+  readonly syncCursorMode: SyncV2CursorMode
   private readonly eventGate: SocketEventGate | null
   private syncLogCursor: SyncLogCursor | null = null
   private syncCursorCleanup: (() => void) | null = null
@@ -122,6 +136,17 @@ export class SyncEngine {
   private activeCatchUpCycle = 0
   private queuedCatchUp: Promise<void> | null = null
 
+  // Heartbeat (active mode): the highest workspace head observed in catch-up
+  // responses. The cursor is per-user filtered and can sit permanently below
+  // the workspace-global head, so heartbeat comparisons run against
+  // max(cursor, lastSeenHead) — an empty catch-up page proves nothing visible
+  // exists in (cursor, head], without ever moving the cursor toward head.
+  private lastSeenHead: bigint | null = null
+  private heartbeatGraceTimer: ReturnType<typeof setTimeout> | null = null
+  /** Max behind-head among heartbeats received while the grace timer is armed. */
+  private pendingHeartbeatHead: bigint | null = null
+  private heartbeatCleanup: (() => void) | null = null
+
   // Ref-like state updated by the React layer
   private currentStreamId: string | undefined = undefined
   private visibleStreamIds: string[] = []
@@ -133,7 +158,7 @@ export class SyncEngine {
 
   constructor(private deps: SyncEngineDeps) {
     this.workspaceId = deps.workspaceId
-    this.syncCursorMode = deps.syncService ? (deps.syncCursorMode ?? SYNC_V2_CURSOR_MODE) : "off"
+    this.syncCursorMode = deps.syncService ? (deps.syncCursorMode ?? defaultFeatureFlagValue("sync-v2-cursor")) : "off"
     this.eventGate =
       this.syncCursorMode === "active"
         ? new SocketEventGate(this.workspaceId, {
@@ -189,6 +214,7 @@ export class SyncEngine {
     if (this.syncCursorMode === "shadow") {
       this.trackSyncCursor(socket)
     } else if (this.syncCursorMode === "active") {
+      this.trackHeartbeat(socket)
       // Read-before-stamp: the cursor position (head, on a first run) must be
       // read BEFORE the bootstrap data fetch so any race falls on the
       // duplicate side (entry also present in the snapshot — idempotent),
@@ -207,7 +233,8 @@ export class SyncEngine {
         getCurrentStreamId: () => this.currentStreamId,
         getCurrentUser: () => this.currentUser,
         subscribeStream: (streamId: string) => void this.subscribeStream(streamId),
-      }
+      },
+      this.syncCursorMode
     )
 
     await this.runBootstrap(isReconnect)
@@ -810,6 +837,84 @@ export class SyncEngine {
     return this.eventGate ?? socket
   }
 
+  /**
+   * Active-mode heartbeat listener, on the RAW socket — the payload carries
+   * no syncId, is not an applied event, and must keep flowing while the gate
+   * is paused. The server broadcasts each workspace's sync-log head every
+   * SYNC_HEARTBEAT_INTERVAL_MS (see SyncHeartbeatWorker); a head beyond
+   * max(cursor, lastSeenHead) means events exist that this client neither
+   * applied live nor saw in a catch-up — a dropped emit, caught without
+   * waiting for a reconnect/resume trigger.
+   */
+  private trackHeartbeat(socket: Socket): void {
+    this.cleanupHeartbeatTracking()
+    const listener = (payload: { workspaceId?: unknown; head?: unknown } | undefined) => {
+      this.handleHeartbeat(payload)
+    }
+    socket.on("sync:heartbeat", listener)
+    this.heartbeatCleanup = () => socket.off("sync:heartbeat", listener)
+  }
+
+  private handleHeartbeat(payload: { workspaceId?: unknown; head?: unknown } | undefined): void {
+    if (this.isDestroyed) return
+    if (!payload || payload.workspaceId !== this.workspaceId || typeof payload.head !== "string") return
+    const head = parseHeartbeatHead(payload.head)
+    if (head === null) return
+    // No cursor yet: the connect-time seed/catch-up owns this window.
+    const position = this.heartbeatPosition()
+    if (position === null || head <= position) return
+
+    if (this.pendingHeartbeatHead === null || head > this.pendingHeartbeatHead) {
+      this.pendingHeartbeatHead = head
+    }
+    // One grace window at a time; repeat heartbeats coalesce onto it via the
+    // pending max above.
+    this.heartbeatGraceTimer ??= setTimeout(() => {
+      this.heartbeatGraceTimer = null
+      const pending = this.pendingHeartbeatHead
+      this.pendingHeartbeatHead = null
+      if (pending === null || this.isDestroyed) return
+      const current = this.heartbeatPosition()
+      // The gap closed during the grace window — in-flight delivery, not a
+      // dropped emit.
+      if (current !== null && pending <= current) return
+      // Same pause-before-catch-up rule as connect/resume: catch-up applies
+      // through the gate, and live events must buffer (then splice) so an
+      // older log entry can never regress a newer live LWW payload.
+      this.beginCatchUpCycle()
+      void this.runCatchUp("heartbeat")
+    }, HEARTBEAT_GRACE_MS)
+  }
+
+  /** Comparison baseline for heartbeats; null until the cursor is seeded. */
+  private heartbeatPosition(): bigint | null {
+    const cursor = this.syncLogCursor?.get()
+    if (cursor == null) return null
+    const cursorValue = BigInt(cursor)
+    return this.lastSeenHead !== null && this.lastSeenHead > cursorValue ? this.lastSeenHead : cursorValue
+  }
+
+  /** Max-merge a catch-up response's head into the heartbeat baseline. */
+  private noteSeenHead(head: string): void {
+    const value = parseHeartbeatHead(head)
+    if (value === null) return
+    if (this.lastSeenHead === null || value > this.lastSeenHead) {
+      this.lastSeenHead = value
+    }
+  }
+
+  private cleanupHeartbeatTracking(): void {
+    if (this.heartbeatCleanup) {
+      this.heartbeatCleanup()
+      this.heartbeatCleanup = null
+    }
+    if (this.heartbeatGraceTimer) {
+      clearTimeout(this.heartbeatGraceTimer)
+      this.heartbeatGraceTimer = null
+    }
+    this.pendingHeartbeatHead = null
+  }
+
   /** Active mode: pause the gate and open a new catch-up cycle. Each
    *  connect/resume trigger gets its own cycle so a catch-up run that was
    *  already in flight cannot reopen live delivery inside the new trigger's
@@ -836,6 +941,7 @@ export class SyncEngine {
       const { head } = await this.deps.syncService!.catchUp(this.workspaceId, { after: "0", limit: 1 }, abort.signal)
       if (this.isDestroyed) return
       cursorStore.advance(head)
+      this.noteSeenHead(head)
       console.info("Sync-v2 cursor seeded from head", { workspaceId: this.workspaceId, head })
     } catch (error) {
       if (this.isDestroyed) return
@@ -966,7 +1072,38 @@ export class SyncEngine {
         )
         if (this.isDestroyed) return
         head = response.head
-        if (response.entries.length === 0) break
+        if (response.requiresBootstrap) {
+          // The cursor is below the workspace's retained sync-log floor:
+          // retention pruned the entries this run would replay, so the log
+          // can't heal the gap. Jump the cursor to head and re-bootstrap —
+          // the workspace snapshot is the authority for everything <= head.
+          // Read-before-stamp holds: response.head was read before the
+          // bootstrap fired here, so the stamped cursor is a lower bound of
+          // the upcoming snapshot (the race falls on the duplicate side). The
+          // splice (appliedThrough = head) then drops buffered events <= head,
+          // which the snapshot already covers, and applies only those above it.
+          console.info("Sync-v2 catch-up below retention floor; re-bootstrapping", {
+            workspaceId: this.workspaceId,
+            trigger,
+            cursorBefore,
+            head: response.head,
+          })
+          cursorStore.advance(response.head)
+          this.noteSeenHead(response.head)
+          appliedThrough = BigInt(response.head)
+          void this.runBootstrap(true)
+          return
+        }
+        if (response.entries.length === 0) {
+          // ONLY an empty page proves nothing visible exists in (cursor, head]
+          // — record the head so the next heartbeat at or below it is
+          // known-clean. Recording on a non-empty page would be premature: if
+          // a later page's fetch fails mid-drain, an inflated lastSeenHead
+          // suppresses the very heartbeat re-trigger that would finish the
+          // drain (truncation by MAX_CATCHUP_PAGES is healed the same way).
+          this.noteSeenHead(response.head)
+          break
+        }
 
         pages += 1
         fetched += response.entries.length
@@ -1108,7 +1245,38 @@ export class SyncEngine {
     this.cleanupWorkspaceHandlers()
     this.cleanupStreamHandlers()
     this.cleanupSyncCursorTracking()
+    this.cleanupHeartbeatTracking()
   }
+}
+
+/** Wire heads are server-stamped, but tolerate malformed input like the
+ *  cursor does (see SyncLogCursor) — a rogue payload must not throw in a
+ *  socket listener. */
+function parseHeartbeatHead(value: string): bigint | null {
+  try {
+    return BigInt(value)
+  } catch {
+    console.warn("Sync-v2: ignoring malformed heartbeat head", { value })
+    return null
+  }
+}
+
+/**
+ * Whether `engine` can keep serving this workspace at this sync-v2 cursor
+ * mode; when false, the React layer destroys it and constructs a fresh one.
+ * The mode is fixed per engine lifetime — mutating it mid-cycle would break
+ * the gate/cursor ordering invariants — so a flag change is handled like a
+ * workspace switch: destroy → construct. The fresh engine runs a full cycle
+ * (pause → cursor read → bootstrap → catch-up), so every ordering invariant
+ * holds per instance. This is what makes "off" a runtime kill switch and
+ * "active" flippable without a reload.
+ */
+export function isSyncEngineCurrent(
+  engine: SyncEngine,
+  workspaceId: string,
+  syncCursorMode: SyncV2CursorMode
+): boolean {
+  return engine.workspaceId === workspaceId && !engine.isDestroyed && engine.syncCursorMode === syncCursorMode
 }
 
 // React context for accessing the SyncEngine from any component

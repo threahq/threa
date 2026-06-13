@@ -1,9 +1,9 @@
-import { sql, type Querier } from "../../db"
+import { sql, composeSql, type Querier } from "../../db"
+import { streamAccessPredicateSql } from "../streams"
 import {
   AttachmentSafetyStatuses,
   SHAREABLE_SAFETY_STATUSES,
   ProcessingStatuses,
-  Visibilities,
   mimePrefixesForCategory,
   type StorageProvider,
   type ProcessingStatus,
@@ -464,8 +464,9 @@ export const AttachmentRepository = {
 
   /**
    * Explorer search. One round trip combining:
-   *   - readable-stream gating for `userId` (mirrors `listAccessibleStreamIds`
-   *     so the predicate stays consistent with `checkStreamAccess`)
+   *   - readable-stream gating for `userId` via the canonical
+   *     `streamAccessPredicateSql` (the single thread → root access
+   *     definition shared with `listAccessibleStreamIds` / `checkStreamAccess`)
    *   - thread-descendant expansion when `streamIds` is supplied (callers
    *     pass channel/DM ids and the repo finds files in those streams *and*
    *     their threads via `root_stream_id`)
@@ -512,29 +513,12 @@ export const AttachmentRepository = {
     const cursorCreatedAt = cursor?.createdAt ?? null
     const cursorId = cursor?.id ?? ""
 
-    const result = await client.query<AttachmentSearchRowDb>(sql`
+    const result = await client.query<AttachmentSearchRowDb>(composeSql`
       WITH accessible_streams AS (
         SELECT s.id
         FROM streams s
-        LEFT JOIN streams root ON root.id = s.root_stream_id
         WHERE s.workspace_id = ${workspaceId}
-          AND (
-            (s.root_stream_id IS NULL AND (
-              s.visibility = ${Visibilities.PUBLIC}
-              OR EXISTS (
-                SELECT 1 FROM stream_members
-                WHERE stream_id = s.id AND member_id = ${userId}
-              )
-            ))
-            OR
-            (s.root_stream_id IS NOT NULL AND root.id IS NOT NULL AND (
-              root.visibility = ${Visibilities.PUBLIC}
-              OR EXISTS (
-                SELECT 1 FROM stream_members
-                WHERE stream_id = s.root_stream_id AND member_id = ${userId}
-              )
-            ))
-          )
+          AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
       ),
       scoped_streams AS (
         SELECT acc.id

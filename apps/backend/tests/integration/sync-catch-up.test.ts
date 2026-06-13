@@ -53,6 +53,15 @@ describe("SyncLogRepository catch-up reads", () => {
     return SyncLogRepository.listEntriesForUser(pool, { workspaceId, userId, after, limit })
   }
 
+  /**
+   * Rewrites one workspace's entries to a past timestamp so the time-window
+   * prune treats them as expired — scoping the otherwise-global prune to this
+   * test's workspace (every other workspace's entries stay at NOW()).
+   */
+  async function backdateEntries(workspaceId: string, createdAt: Date): Promise<void> {
+    await pool.query(`UPDATE sync_log SET created_at = $2 WHERE workspace_id = $1`, [workspaceId, createdAt])
+  }
+
   test("filters entries to the requester's groups: workspace, own user, member streams", async () => {
     const workspaceId = uniqueId("ws")
     const alice = uniqueId("usr")
@@ -266,16 +275,16 @@ describe("SyncLogRepository catch-up reads", () => {
     expect(secondPage.map((e) => e.syncId)).toEqual(ids.slice(2, 4))
   })
 
-  test("head is the workspace's max sync id, 0 for an empty log", async () => {
+  test("head is the workspace's max sync id, 0 for an empty log; floor 0 before any prune", async () => {
     const workspaceId = uniqueId("ws")
-    expect(await SyncLogRepository.getHead(pool, workspaceId)).toBe(0n)
+    expect(await SyncLogRepository.getHeadAndRetainedFrom(pool, workspaceId)).toEqual({ head: 0n, retainedFrom: 0n })
 
     const last = await appendEntry(workspaceId, {
       eventType: "stream:created",
       groups: ["workspace"],
       payload: { workspaceId },
     })
-    expect(await SyncLogRepository.getHead(pool, workspaceId)).toBe(last)
+    expect(await SyncLogRepository.getHeadAndRetainedFrom(pool, workspaceId)).toEqual({ head: last, retainedFrom: 0n })
   })
 
   test("entries are isolated per workspace", async () => {
@@ -290,5 +299,88 @@ describe("SyncLogRepository catch-up reads", () => {
     })
 
     expect(await listFor(workspaceB, userId)).toEqual([])
+  })
+
+  const HOUR = 60 * 60 * 1000
+  const DAY = 24 * HOUR
+
+  test("prune deletes expired entries beyond the count floor and advances retained_from atomically", async () => {
+    const workspaceId = uniqueId("ws")
+    const userId = uniqueId("usr")
+    const ids: bigint[] = []
+    for (let i = 0; i < 5; i += 1) {
+      ids.push(
+        await appendEntry(workspaceId, {
+          eventType: "stream:created",
+          groups: ["workspace"],
+          payload: { workspaceId, i },
+        })
+      )
+    }
+    // All five are old enough to expire; the count floor (keep last 2) is what
+    // decides which survive.
+    await backdateEntries(workspaceId, new Date(Date.now() - 60 * DAY))
+
+    const { prunedThrough } = await SyncLogRepository.pruneExpiredEntries(pool, {
+      cutoff: new Date(Date.now() - 30 * DAY),
+      minKeep: 2,
+      limit: 100,
+    })
+
+    // head = 5, head - minKeep = 3 ⇒ sync ids 1..3 pruned, 4..5 kept.
+    expect(prunedThrough.get(workspaceId)).toBe(ids[2])
+    expect(await SyncLogRepository.getHeadAndRetainedFrom(pool, workspaceId)).toEqual({
+      head: ids[4],
+      retainedFrom: ids[2],
+    })
+    // Catch-up from 0 now only sees the survivors above the floor.
+    expect((await listFor(workspaceId, userId)).map((e) => e.syncId)).toEqual(ids.slice(3))
+  })
+
+  test("the count floor keeps every entry when history is at or below minKeep", async () => {
+    const workspaceId = uniqueId("ws")
+    await appendEntry(workspaceId, { eventType: "stream:created", groups: ["workspace"], payload: { workspaceId } })
+    await appendEntry(workspaceId, { eventType: "stream:created", groups: ["workspace"], payload: { workspaceId } })
+    await backdateEntries(workspaceId, new Date(Date.now() - 60 * DAY))
+
+    const { prunedThrough } = await SyncLogRepository.pruneExpiredEntries(pool, {
+      cutoff: new Date(Date.now() - 30 * DAY),
+      minKeep: 2,
+      limit: 100,
+    })
+
+    expect(prunedThrough.has(workspaceId)).toBe(false)
+    expect((await SyncLogRepository.getHeadAndRetainedFrom(pool, workspaceId)).retainedFrom).toBe(0n)
+  })
+
+  test("the time horizon spares entries newer than the cutoff", async () => {
+    const workspaceId = uniqueId("ws")
+    const userId = uniqueId("usr")
+    const ids: bigint[] = []
+    for (let i = 0; i < 4; i += 1) {
+      ids.push(
+        await appendEntry(workspaceId, {
+          eventType: "stream:created",
+          groups: ["workspace"],
+          payload: { workspaceId, i },
+        })
+      )
+    }
+    // Only the first two are aged past the cutoff; minKeep 0 takes the count
+    // floor out of the picture, so the cutoff alone decides.
+    await pool.query(`UPDATE sync_log SET created_at = $2 WHERE workspace_id = $1 AND sync_id <= $3`, [
+      workspaceId,
+      new Date(Date.now() - 60 * DAY),
+      ids[1].toString(),
+    ])
+
+    const { prunedThrough } = await SyncLogRepository.pruneExpiredEntries(pool, {
+      cutoff: new Date(Date.now() - 30 * DAY),
+      minKeep: 0,
+      limit: 100,
+    })
+
+    expect(prunedThrough.get(workspaceId)).toBe(ids[1])
+    expect((await listFor(workspaceId, userId)).map((e) => e.syncId)).toEqual(ids.slice(2))
   })
 })

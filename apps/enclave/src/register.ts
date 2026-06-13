@@ -21,7 +21,6 @@ export async function registerWithBackend(config: EnclaveConfig, keyPair: Enclav
       instanceId: keyPair.instanceId,
       keyId: keyPair.keyId,
       publicKey: keyPair.publicKeyBase64,
-      instanceUrl: config.selfUrl,
     }),
   })
 

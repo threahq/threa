@@ -83,32 +83,33 @@ describe("createContextBagHandlers.precompute", () => {
     )
   })
 
-  it("returns 400 when the body is missing required fields", async () => {
+  it("throws a 400 VALIDATION_ERROR when the body is missing required fields", async () => {
     const precomputeSpy = spyOn(precomputeService, "precomputeRefSummaries")
 
     const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
     const req = mockReq({ intent: ContextIntents.DISCUSS_THREAD })
     const res = mockRes() as any
-    await handlers.precompute(req, res)
 
-    expect(res.statusCode).toBe(400)
-    expect(res.body).toMatchObject({ error: "Validation failed" })
+    await expect(handlers.precompute(req, res)).rejects.toMatchObject({
+      status: 400,
+      code: "VALIDATION_ERROR",
+      message: "Validation failed",
+    })
     expect(precomputeSpy).not.toHaveBeenCalled()
   })
 
-  it("returns 400 when refs is empty", async () => {
+  it("throws a 400 VALIDATION_ERROR when refs is empty", async () => {
     const precomputeSpy = spyOn(precomputeService, "precomputeRefSummaries")
 
     const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
     const req = mockReq({ intent: ContextIntents.DISCUSS_THREAD, refs: [] })
     const res = mockRes() as any
-    await handlers.precompute(req, res)
 
-    expect(res.statusCode).toBe(400)
+    await expect(handlers.precompute(req, res)).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
     expect(precomputeSpy).not.toHaveBeenCalled()
   })
 
-  it("returns 400 when a ref has an unknown kind", async () => {
+  it("throws a 400 VALIDATION_ERROR when a ref has an unknown kind", async () => {
     const precomputeSpy = spyOn(precomputeService, "precomputeRefSummaries")
 
     const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
@@ -117,9 +118,8 @@ describe("createContextBagHandlers.precompute", () => {
       refs: [{ kind: "memo", memoId: "memo_1" }],
     })
     const res = mockRes() as any
-    await handlers.precompute(req, res)
 
-    expect(res.statusCode).toBe(400)
+    await expect(handlers.precompute(req, res)).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
     expect(precomputeSpy).not.toHaveBeenCalled()
   })
 })

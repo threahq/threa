@@ -128,6 +128,22 @@ reconnect arrives, it can't retroactively upgrade the in-flight request (which a
 its stream set), so it **chains** a follow-up reconnect bootstrap to run after the current
 one. Repeated reconnects collapse onto that single queued promise.
 
+### The sync heartbeat catches dropped emits between triggers
+
+Every catch-up trigger above is connectivity-shaped (connect, reconnect, online
+flip, resume) — a client whose transport stays healthy for hours would never
+notice a dropped emit. The backend's `SyncHeartbeatWorker` therefore broadcasts
+each workspace's sync-log head to its room (`sync:heartbeat`, every 15s,
+node-local emits under the Postgres adapter). In active sync-v2 mode the engine
+compares the head against `max(cursor, lastSeenHead)` — the cursor is per-user
+filtered and can sit permanently below the workspace-global head, so a catch-up
+that drains to an empty page records that page's `head` as the known-clean
+high-water mark (`lastSeenHead`; non-empty pages don't move it, so a failed or
+truncated drain is retried by the next heartbeat). A head still ahead after a
+short grace window (in-flight emits close themselves) pauses the gate and runs
+a normal catch-up. Design and decision record:
+`docs/plans/sync-v2-heartbeat.md`.
+
 ### Page resume and zombie sockets
 
 `handlePageResume` (e.g. phone unlocked after an app switch) pings the socket. If the ping

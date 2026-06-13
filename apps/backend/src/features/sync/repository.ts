@@ -187,12 +187,129 @@ export const SyncLogRepository = {
     return result.rows.map(mapRowToEntry)
   },
 
-  /** Max visible sync id for a workspace (0 when the log is empty). */
-  async getHead(db: Querier, workspaceId: string): Promise<bigint> {
-    const result = await db.query<{ head: string }>(sql`
-      SELECT COALESCE(MAX(sync_id), 0) AS head FROM sync_log WHERE workspace_id = ${workspaceId}
+  /**
+   * Heads for a batch of workspaces in one statement (INV-56), for the
+   * heartbeat tick. Workspaces with no log entries are absent from the map;
+   * callers default them to 0.
+   */
+  async getHeads(db: Querier, workspaceIds: string[]): Promise<Map<string, bigint>> {
+    if (workspaceIds.length === 0) {
+      return new Map()
+    }
+    const result = await db.query<{ workspace_id: string; head: string }>(sql`
+      SELECT workspace_id, MAX(sync_id) AS head
+      FROM sync_log
+      WHERE workspace_id = ANY(${workspaceIds})
+      GROUP BY workspace_id
     `)
-    return BigInt(result.rows[0].head)
+    return new Map(result.rows.map((row) => [row.workspace_id, BigInt(row.head)]))
+  },
+
+  /**
+   * The workspace head (max sync id, 0 when empty) and the retention floor
+   * (highest sync id pruned, 0 when nothing pruned) in one round trip — the
+   * two values catch-up needs alongside the entries page. A cursor strictly
+   * below the floor cannot be healed from the log (its entries were pruned),
+   * so the caller signals a full bootstrap. See docs/plans/sync-v2-log-retention.md.
+   *
+   * Read this AFTER the entries query, never before: the floor is monotonic
+   * and the pruner advances it in the same statement as the delete
+   * (pruneExpiredEntries), so a prune that races a catch-up either is invisible
+   * to both reads or has already advanced the floor past the cursor by the time
+   * this read runs — the caller then bootstraps instead of returning a page
+   * that silently omits the just-pruned span. (INV-20: the floor decision and
+   * the entries it gates share a consistent view of any concurrent prune.)
+   */
+  async getHeadAndRetainedFrom(db: Querier, workspaceId: string): Promise<{ head: bigint; retainedFrom: bigint }> {
+    // COALESCE wraps each subquery from the OUTSIDE: sync_log_retention_state
+    // has no row until a workspace is first pruned, so the inner SELECT returns
+    // zero rows (NULL), not 0 — an inner COALESCE never fires and BigInt(null)
+    // would throw. The head subquery uses an aggregate (always one row) but is
+    // wrapped the same way for symmetry.
+    const result = await db.query<{ head: string; retained_from: string }>(sql`
+      SELECT
+        COALESCE((SELECT MAX(sync_id) FROM sync_log WHERE workspace_id = ${workspaceId}), 0) AS head,
+        COALESCE((SELECT retained_from FROM sync_log_retention_state WHERE workspace_id = ${workspaceId}), 0)
+          AS retained_from
+    `)
+    return { head: BigInt(result.rows[0].head), retainedFrom: BigInt(result.rows[0].retained_from) }
+  },
+
+  /**
+   * Prunes one bounded batch of expired sync_log entries across every
+   * workspace AND advances each touched workspace's retention floor — both in
+   * one statement, so the delete and the floor advance commit atomically.
+   * Victims are rows older than `cutoff` whose sync_id is at or below
+   * `head - minKeep` for their workspace; the count floor keeps the most recent
+   * `minKeep` entries even past the horizon, so a quiet workspace's returning
+   * client still catches up from the log instead of bootstrapping.
+   *
+   * Heads come from `workspace_sync_sequences` (next_sequence - 1), not a
+   * MAX over the log: the allocator keeps sync ids dense and gapless
+   * (appendForWorkspace's lock-first protocol), so head = next_sequence - 1
+   * exactly, and this avoids a full-table aggregate every batch.
+   *
+   * The floor is advanced with GREATEST (idempotent across repeated runs and
+   * multiple backend instances). Doing it in the same statement as the delete
+   * is load-bearing for catch-up safety: a reader that observes pruned entries
+   * is guaranteed to observe the advanced floor too, so it never returns a page
+   * missing a pruned span (see getHeadAndRetainedFrom, INV-20).
+   *
+   * Bounded by `limit` (INV-56 set-based, but a first run over months of
+   * backlog must not hold one long transaction). The prunable set is a
+   * contiguous sync_id prefix per workspace, so re-running converges and
+   * advancing the floor to any pruned id is always safe — a stale-high floor
+   * can only force an unnecessary bootstrap, never hide a gap.
+   *
+   * Returns the highest pruned sync_id per workspace and the total rows
+   * deleted this batch — the caller drives exhaustion off `deletedCount`
+   * (`< limit` ⇒ window drained), since the per-workspace map size counts
+   * workspaces, not rows.
+   */
+  async pruneExpiredEntries(
+    db: Querier,
+    params: { cutoff: Date; minKeep: number; limit: number }
+  ): Promise<{ prunedThrough: Map<string, bigint>; deletedCount: number }> {
+    const result = await db.query<{ workspace_id: string; pruned_through: string; pruned_count: string }>(sql`
+      WITH heads AS (
+        SELECT workspace_id, next_sequence - 1 AS head
+        FROM workspace_sync_sequences
+      ),
+      victims AS (
+        SELECT l.ctid
+        FROM sync_log l
+        JOIN heads h ON h.workspace_id = l.workspace_id
+        WHERE l.created_at < ${params.cutoff}
+          AND l.sync_id <= h.head - ${params.minKeep}
+        LIMIT ${params.limit}
+      ),
+      deleted AS (
+        DELETE FROM sync_log l
+        USING victims v
+        WHERE l.ctid = v.ctid
+        RETURNING l.workspace_id, l.sync_id
+      ),
+      agg AS (
+        SELECT workspace_id, MAX(sync_id) AS pruned_through, COUNT(*) AS pruned_count
+        FROM deleted
+        GROUP BY workspace_id
+      ),
+      advanced AS (
+        INSERT INTO sync_log_retention_state (workspace_id, retained_from)
+        SELECT workspace_id, pruned_through FROM agg
+        ON CONFLICT (workspace_id) DO UPDATE
+          SET retained_from = GREATEST(sync_log_retention_state.retained_from, EXCLUDED.retained_from),
+              updated_at = NOW()
+      )
+      SELECT workspace_id, pruned_through, pruned_count FROM agg
+    `)
+    const prunedThrough = new Map<string, bigint>()
+    let deletedCount = 0
+    for (const row of result.rows) {
+      prunedThrough.set(row.workspace_id, BigInt(row.pruned_through))
+      deletedCount += Number(row.pruned_count)
+    }
+    return { prunedThrough, deletedCount }
   },
 
   /**

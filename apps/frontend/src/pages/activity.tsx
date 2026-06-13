@@ -122,6 +122,10 @@ export function ActivityList({ workspaceId, filter }: InnerProps) {
   }, [idbStreams])
 
   function resolveActivityStreamName(activity: Activity): string {
+    // Standalone saved-item reminders carry no stream; the row renders a
+    // stream-less variant ("Reminder" + the item's title preview).
+    if (activity.streamId === null) return ""
+
     const stream = streamById.get(activity.streamId)
 
     if (stream) {

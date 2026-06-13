@@ -19,7 +19,7 @@ import {
   addFilterToQuery,
   getFilterLabel,
   type FilterType,
-} from "./search-query-parser"
+} from "@/lib/search-query-parser"
 import type { ModeContext, ModeResult, QuickSwitcherItem, WorkspaceStream } from "./types"
 
 const FILTER_TYPES: { type: FilterType; label: string; icon: React.ReactNode }[] = [

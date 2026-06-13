@@ -34,6 +34,7 @@ import { useCoordinatedLoading, useSidebar, usePreferencesOptional } from "@/con
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
+import { SidebarSearchPanel, useSearchPanel } from "@/components/search"
 import { SidebarHeader } from "./sidebar-header"
 import { SidebarQuickLinks } from "./quick-links"
 import { SidebarStreamList } from "./sidebar-stream-list"
@@ -64,7 +65,9 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     setScrollContainerOffset,
     bumpScrollVersion,
     collapseOnMobile,
+    isMobile,
   } = useSidebar()
+  const { isOpen: isSearchOpen } = useSearchPanel()
   const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
@@ -332,6 +335,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
         }
       />
     )
+  }
+
+  // Search mode (desktop): the sidebar body swaps for the search panel —
+  // VS Code-style secondary mode. Mobile uses the full-page /search route.
+  if (isSearchOpen && !isMobile) {
+    return <SidebarSearchPanel workspaceId={workspaceId} />
   }
 
   // Show error state with retry button

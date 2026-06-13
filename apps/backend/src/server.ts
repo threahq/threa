@@ -19,12 +19,7 @@ import {
   createPolishTranscript,
 } from "./features/voice-transcription"
 import { BotApiKeyService } from "./features/public-api"
-import {
-  EnclaveRuntimesService,
-  EnclaveForwarder,
-  EnclaveDispatchHandler,
-  createEnclaveInvokeWorker,
-} from "./features/enclave-runtimes"
+import { EnclaveRuntimesService, EnclaveClaimService, EnclaveDispatchHandler } from "./features/enclave-runtimes"
 import { LinkPreviewService, LinkPreviewOutboxHandler, createLinkPreviewWorker } from "./features/link-previews"
 import { GiphyService } from "./features/giphy"
 import { WorkspaceIntegrationService } from "./features/workspace-integrations"
@@ -77,6 +72,7 @@ import {
 import { UserPreferencesService } from "./features/user-preferences"
 import { WorkspaceSettingsService } from "./features/workspace-settings"
 import { FeatureFlagService } from "./features/feature-flags"
+import { PlatformAdminService } from "./features/platform-admin"
 import { SidebarConfigService } from "./features/sidebar-config"
 import { UserE2eKeysService } from "./features/user-e2e-keys"
 import { createS3Storage } from "./lib/storage/s3-client"
@@ -109,7 +105,7 @@ import {
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
-import { SyncService, SyncLogReconciliationWorker } from "./features/sync"
+import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker, SyncLogRetentionWorker } from "./features/sync"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import {
   BotRuntimeInstanceRepository,
@@ -118,6 +114,7 @@ import {
   attachBotNamespace,
 } from "./features/bot-runtimes"
 import { SavedMessagesService, createSavedReminderWorker } from "./features/saved-messages"
+import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-suggestions"
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { LabelService, LabelAssignmentService } from "./features/labels"
 import { PushService, PushNotificationHandler, createPushSessionCleanup } from "./features/push"
@@ -270,6 +267,7 @@ export async function startServer(): Promise<ServerInstance> {
   const userPreferencesService = new UserPreferencesService(pool)
   const workspaceSettingsService = new WorkspaceSettingsService(pool)
   const featureFlagService = new FeatureFlagService(pool)
+  const platformAdminService = new PlatformAdminService(pool)
   const sidebarConfigService = new SidebarConfigService(pool)
   const userE2eKeysService = new UserE2eKeysService(pool)
 
@@ -484,6 +482,14 @@ export async function startServer(): Promise<ServerInstance> {
   const activityService = new ActivityService({ pool })
   const syncService = new SyncService({ pool })
   const savedMessagesService = new SavedMessagesService({ pool })
+  // Quiet to-do collector. Always constructed (its accept/dismiss/list
+  // endpoints are AI-free); the extractor only fires via the collector hook
+  // the memo pipeline calls, which the stub memo service never invokes.
+  const savedSuggestionsService = new SavedSuggestionsService({
+    pool,
+    extractor: new SuggestionExtractor(ai, configResolver),
+    savedItemCreator: savedMessagesService,
+  })
   const scheduledMessagesService = new ScheduledMessagesService({ pool, eventService })
   const labelService = new LabelService({ pool })
   const labelAssignmentService = new LabelAssignmentService({ pool })
@@ -569,6 +575,12 @@ export async function startServer(): Promise<ServerInstance> {
   // workspace_id) per INV-8's infra exception.
   const enclaveRuntimesService = new EnclaveRuntimesService(pool)
 
+  // Serves the enclave's claim polls (§2.7 pull transport): hands a live EIK
+  // the oldest claimable E2E turn it can decrypt, building the sealed
+  // assignment at claim time. Routes mount only when the enclave credential
+  // is configured.
+  const enclaveClaimService = new EnclaveClaimService({ pool, storage, userPreferencesService })
+
   // Bot runtime service — owns the outbox-emitting writes that drive the `/bot`
   // namespace. One instance shared between HTTP routes (claim/complete/fail)
   // and the WebSocket namespace handler (presence + bootstrap).
@@ -603,7 +615,6 @@ export async function startServer(): Promise<ServerInstance> {
   registerRoutes(app, {
     pool,
     io,
-    jobQueue,
     poolMonitor,
     authService,
     workspaceService,
@@ -616,12 +627,14 @@ export async function startServer(): Promise<ServerInstance> {
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
+    platformAdminService,
     sidebarConfigService,
     userE2eKeysService,
     invitationService,
     activityService,
     syncService,
     savedMessagesService,
+    savedSuggestionsService,
     scheduledMessagesService,
     labelService,
     labelAssignmentService,
@@ -633,6 +646,7 @@ export async function startServer(): Promise<ServerInstance> {
     corsAllowedOrigins: config.corsAllowedOrigins,
     allowDevAuthRoutes: config.useStubAuth && !isProduction,
     internalApiKey: config.internalApiKey,
+    enclaveInternalApiKey: config.enclaveInternalApiKey,
     apiKeyService,
     botChannelService,
     linkPreviewService,
@@ -643,7 +657,7 @@ export async function startServer(): Promise<ServerInstance> {
     userApiKeyService,
     voiceTranscriptionService,
     enclaveRuntimesService,
-    enclaveInstanceUrlAllowedPrefixes: config.enclaveInstanceUrlAllowedPrefixes,
+    enclaveClaimService,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -676,13 +690,6 @@ export async function startServer(): Promise<ServerInstance> {
   // claim endpoint every second.
   attachBotNamespace({ io, botRuntimeService, botApiKeyService, botSocketRegistry })
 
-  // Built once here so both the socket layer (forwarding a user "Stop research"
-  // to the enclave that owns an E2E session) and the enclave-invoke worker below
-  // share it. Null when no internal key — enclave dispatch/cancel are then off.
-  const enclaveForwarder = config.internalApiKey
-    ? new EnclaveForwarder({ internalApiKey: config.internalApiKey })
-    : undefined
-
   registerSocketHandlers(io, {
     pool,
     authService,
@@ -690,7 +697,6 @@ export async function startServer(): Promise<ServerInstance> {
     pushService,
     userSocketRegistry,
     sessionAbortRegistry,
-    enclaveForwarder,
   })
 
   // Dedicated voice relay on its own namespace so audio frames don't share the
@@ -762,23 +768,6 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  // Enclave (Ariadne E2E) forwarder + worker. Only wired when an internal key
-  // is configured — the forwarder authenticates to the enclave with it, and the
-  // enclave rejects callers that don't present it.
-  if (enclaveForwarder) {
-    const enclaveInvokeWorker = createEnclaveInvokeWorker({ pool, io, enclaveForwarder, storage })
-    jobQueue.registerHandler(JobQueues.ENCLAVE_INVOKE, enclaveInvokeWorker, {
-      tier: QueueTiers.INTERACTIVE,
-      fairness: QueueFairness.NONE,
-      // A turn with no servable enclave key *parks* (the worker throws) until
-      // the owner's client revives the stream's wrap for a freshly-registered
-      // EIK, or an enclave finishes (re)deploying. The default budget DLQs in
-      // ~8s of backoff — far too short for either healer — so give parked
-      // turns a few minutes (exponential backoff, ~4 min across 10 attempts).
-      maxRetries: 10,
-    })
-  }
-
   // Context-bag pre-compute worker — warms the shared summary cache and
   // persists the initial render snapshot for newly-created bag-attached
   // scratchpads so the first real user turn hits the cache. Posts no
@@ -829,6 +818,9 @@ export async function startServer(): Promise<ServerInstance> {
         memorizer: new Memorizer(ai, configResolver, messageFormatter),
         embeddingService,
         messageFormatter,
+        // Passive to-do collection rides the classifier flag on each settled
+        // conversation (INV-52 — the capability, not the concrete service).
+        suggestionCollector: savedSuggestionsService,
       })
   const memoBatchCheckWorker = createMemoBatchCheckWorker({ pool, memoService, jobQueue })
   const memoBatchProcessWorker = createMemoBatchProcessWorker({ pool, memoService, jobQueue })
@@ -1065,9 +1057,11 @@ export async function startServer(): Promise<ServerInstance> {
   const botNamespace = io.of("/bot")
   const broadcastHandler = new BroadcastHandler(pools.realtime, io, botNamespace)
   const companionHandler = new CompanionHandler(pool, jobQueue)
-  // Mirrors CompanionHandler for E2E streams: enqueue an enclave-invoke job per
-  // user turn when the enclave actor is invited. Gated on the forwarder.
-  const enclaveDispatchHandler = enclaveForwarder ? new EnclaveDispatchHandler(pool, jobQueue) : null
+  // Mirrors CompanionHandler for E2E streams: enqueue a claimable enclave
+  // invocation per user turn when the enclave actor is invited (§2.7 pull
+  // transport — the enclave polls for these). Gated on the enclave credential,
+  // matching the claim/callback routes.
+  const enclaveDispatchHandler = config.enclaveInternalApiKey ? new EnclaveDispatchHandler(pool) : null
   const contextBagPrecomputeHandler = new ContextBagPrecomputeHandler(pool, jobQueue)
   const namingHandler = new NamingHandler(pool, jobQueue)
   const emojiUsageHandler = new EmojiUsageHandler(pool)
@@ -1143,6 +1137,27 @@ export async function startServer(): Promise<ServerInstance> {
   )
   await syncLogReconciliationWorker.start()
 
+  // Broadcasts each workspace's sync-log head to its room so active-mode
+  // clients detect dropped emits between reconnect/resume triggers
+  const syncHeartbeatWorker = new SyncHeartbeatWorker(
+    { pool, io },
+    { intervalMs: Number(process.env.SYNC_HEARTBEAT_INTERVAL_MS) || undefined }
+  )
+  syncHeartbeatWorker.start()
+
+  // Bounds sync_log growth: prunes entries past the retention horizon (keeping
+  // a per-workspace recent floor) and advances the retention watermark that
+  // catch-up reads to signal a full bootstrap for cursors below it
+  const syncLogRetentionWorker = new SyncLogRetentionWorker(
+    { pool },
+    {
+      intervalMs: Number(process.env.SYNC_LOG_RETENTION_INTERVAL_MS) || undefined,
+      retentionMs: Number(process.env.SYNC_LOG_RETENTION_MS) || undefined,
+      minKeep: Number(process.env.SYNC_LOG_RETENTION_MIN_KEEP) || undefined,
+    }
+  )
+  syncLogRetentionWorker.start()
+
   const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
@@ -1183,6 +1198,8 @@ export async function startServer(): Promise<ServerInstance> {
     await cleanupWorker.stop()
     await outboxRetentionWorker.stop()
     await syncLogReconciliationWorker.stop()
+    await syncHeartbeatWorker.stop()
+    await syncLogRetentionWorker.stop()
     await outboxDispatcher.stop()
     await jobQueue.stop()
     logger.info("Closing socket.io...")

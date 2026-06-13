@@ -421,6 +421,23 @@ new abstractions and is worth doing regardless of appetite for the rest.
 | 0.6 | Mention extraction from `contentJson` mention entities                                                                                                                                 | INV-54 Pi-ism      |
 | 0.7 | Turn digests: persist an end-of-session "tools called / findings / sources" digest step; inject recent digests into the next context build (sealed via the auto-title pattern for E2E) | C-1                |
 
+**Phase 0 status (verified on `main`, 2026-06-12):** every row except 0.6 has
+shipped. 0.1/0.2 — `TurnCommit.sources` is required, the enclave seals reply
+and step sources inside the SSK payload (`run-turn.ts`'s commit,
+`trace-observer.ts` via the shared `TraceProjector`), and the browser renders
+them (`MessageSourceList` on the bubble, `SourceList` in the trace dialog) —
+this also makes the UX-27 "Show trace and sources" label honest, and
+supersedes §1.3's "still true" rows for E2EE-9/14. 0.3 — the enclave `/fail`
+callback is wired to `failSessionWithLifecycle`. 0.4 — `/complete` records
+usage through `costService.recordUsage`, gated on winning the
+RUNNING→COMPLETED transition. 0.5 — bot claims carry bounded `attempts` +
+park. 0.7 — turn digests are sealed as trailing `turn_digest` steps and ship
+back as `recentDigests`. 0.6 — all three mention consumers (bot-invocation
+dispatch, persona mention dispatch, activity mentions including broadcast
+slugs) read the canonical `contentJson` mention nodes via
+`collectMentionSlugs`; the markdown-regex extractor is deleted. **Phase 0 is
+complete.**
+
 **Phase 1 — One projector, one gate**
 
 | #   | Change                                                                                                                                                                     | Closes               |
@@ -430,6 +447,19 @@ new abstractions and is worth doing regardless of appetite for the rest.
 | 1.3 | Per-tool `promptBlock` + `categories` on `AgentToolConfig`; both assemblers become data-driven                                                                             | toolset/prompt drift |
 | 1.4 | Generalize `allowed_tool_categories` to all streams; `negotiateCapabilities` enforces it via `isToolAllowedByPolicy` for companion + enclave                               | #8, N-1              |
 
+**Phase 1 status (verified on `main`, 2026-06-12):** complete. 1.1 — shared
+`TraceProjector` with injected sinks for all three surfaces (#838). 1.2 —
+`AgentRuntime` emits `context:received` at run start from `initialContext`;
+`EnclaveTraceObserver.emitContext` deleted; reply-only bot invocations get a
+reconstructed `context_received` + `message_sent` trace written through the
+projector in the `/complete` transaction (#841). 1.3 — per-tool `promptBlock`
+
+- `categories` on `AgentToolConfig`, both hosts assemble tool prose via
+  `buildToolPromptSections` over the real toolset (#845). 1.4 — `stream_policies`
+  table generalizes `allowed_tool_categories` to all streams (resolving §2.8 Q3
+  as the tracking-table option); `negotiateCapabilities` folds the policy over
+  companion and enclave toolsets identically (#847).
+
 **Phase 2 — The contract**
 
 | #   | Change                                                                                                                                           | Closes                               |
@@ -438,6 +468,23 @@ new abstractions and is worth doing regardless of appetite for the rest.
 | 2.2 | `EnclaveTurnDriver` over the existing HTTP callbacks; interjection implemented-or-declared                                                       | UX-12                                |
 | 2.3 | `ExternalTurnDriver` wraps claim/complete; `bot:hello` manifest; `/complete` sources; context handle; reject-undeclared at boundary              | N-4, N-5, external parallel universe |
 | 2.4 | Trust-tier rule in `negotiateCapabilities` replaces scattered E2E guards; per-runner identity + real attestation before the tier is load-bearing | E2EE-21/22 precondition              |
+
+**Phase 2 status (verified on `main`, 2026-06-12):** complete. 2.1 —
+`TurnDriver`/`TurnSink`/`TurnRequest` spine, companion on
+`InProcessTurnDriver` (#848). 2.2 — `EnclaveTurnDriver` runs the sealed loop
+through the turn contract; interjection resolved as `declaredUnsupported`
+(renderable, not silent — §2.8 Q1's "declare" half; implementation remains
+the §2.7 observation-1 option) (#853). 2.3 — `/complete` accepts `sources`
+(#861), `bot:hello` output manifest + reject-undeclared at the verb boundary
+(#865), `ExternalTurnDriver` + synchronous/dispatched interface split (#870),
+inline context handle on the claim response (#871). 2.4 — trust tiers +
+delivery-verdict gate and session-bound enclave callbacks (#882, token
+requirement flipped on in #899), dedicated enclave credential +
+wrap-eligibility boundary (#889); real TEE attestation remains the documented
+upgrade path. **The §2.4 migration plan is fully shipped.** Remaining from
+this doc: the §2.7 transport inversion (and/or its standalone interjection
+poll), the deliberately-deferred items below, and the unresolved §2.8
+questions.
 
 **Deferred deliberately (INV-36):** a published versioned wire contract
 (`taipVersion`) until the first non-Threa harness we don't control ships;
@@ -688,6 +735,23 @@ Sequencing: this is Phase 2.2 work (it _is_ the `EnclaveTurnDriver`
 transport), but the interjection poll (observation 1) stands alone and could
 ship earlier as the UX-12 fix without inverting turn start.
 
+**§2.7 status (2026-06-12): observation 2 — the turn-start inversion — has
+shipped.** Sealed turns are claimable `enclave_invocations` rows (FOR UPDATE
+SKIP LOCKED, TTL + renew + bounded attempts + park — the bot lifecycle), the
+claim predicate is keyed on the claimer's EIK `key_id` against the stream's
+wraps for both the reply's and the trigger's generations, and the assignment
+is built at claim time (`claim-service.ts`) with the 2.4b callback token
+minted per-claim. The enclave's inbound listener is metadata-only
+(`/healthz`, `/pubkey`, `/attestation`); `instanceUrl` registration, SSRF
+validation, the forwarder, and the `ENCLAVE_INVOKE` queue are deleted.
+Cancellation collapsed into the session heartbeat (`abort_requested_at` on
+`agent_sessions`, returned as `{ abort }`), closing the N-3 divergence on
+the abort side. Still open from this section: the **interjection poll**
+(observation 1, UX-12) — mid-turn messages still reach the enclave only via
+the post-completion catch-up, which now reopens the suppressed message's own
+invocation; and the wake-up nudge (the idle poll interval, default 1.5s, is
+the turn-start latency floor).
+
 ## 2.8 Open questions
 
 1. **Enclave interjection: implement or declare?** Implementing sealed
@@ -704,7 +768,9 @@ ship earlier as the UX-12 fix without inverting turn start.
    the former; read-path simplicity suggests the latter.
 4. **`sources: []` willful defeat** (prior doc's spike #3): add the test that
    a turn whose tool results carried sources commits non-empty sources, so the
-   required-field guarantee isn't quietly defeated.
+   required-field guarantee isn't quietly defeated. _Resolved: the test
+   shipped with #818 (`agent-runtime.test.ts`, "AgentRuntime source
+   commitment")._
 5. **Digest authorship and trust (C-1):** the turn digest is model-generated
    text that future turns treat as ground truth. Does it need the same
    trust-boundary wrap as tool output, and should the trace UI render it so
@@ -713,7 +779,13 @@ ship earlier as the UX-12 fix without inverting turn start.
    sealed under generation N must be re-wrapped or rebuilt when the stream
    key rolls, or it becomes the same stranded-data class as parked turns.
    Decide: re-wrap on revive (preferred) or rebuild from scratch on
-   generation mismatch.
+   generation mismatch. _Resolved as re-wrap on revive: the actor-wrap revive
+   path re-wraps every owner-openable generation the enclave already held
+   (proven by a prior enclave wrap row at that generation; bots stay
+   current-only — no per-bot generation attribution), so a parked turn, old
+   sealed history, and turn digests survive an enclave restart that follows a
+   key roll (E2EE-7). Sealed rolling summaries don't exist yet; when they do,
+   the same generation wraps cover them._
 7. **Where does the budgeted window live for mentions/channels?** Scratchpads
    want deep continuity; a channel mention probably still wants the shallow
    window. The `ContextWindowPolicy` should be per-trigger-kind (deep for

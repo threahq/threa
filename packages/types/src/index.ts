@@ -131,6 +131,10 @@ export {
   SAVED_STATUSES,
   type SavedStatus,
   SavedStatuses,
+  // Saved suggestions
+  SAVED_SUGGESTION_STATUSES,
+  type SavedSuggestionStatus,
+  SavedSuggestionStatuses,
   // Scheduled messages
   SCHEDULED_MESSAGE_STATUSES,
   type ScheduledMessageStatus,
@@ -171,6 +175,7 @@ export {
   ShareErrorCodes,
   // Inter-service authentication
   INTERNAL_API_KEY_HEADER,
+  ENCLAVE_CALLBACK_TOKEN_HEADER,
   // Original client host forwarded through the CF routers (survives Railway)
   ORIGINAL_HOST_HEADER,
   // Socket heartbeat
@@ -335,8 +340,6 @@ export {
   BROADCAST_SLUGS,
   isValidSlug,
   isBroadcastSlug,
-  extractMentionSlugs,
-  hasMention,
 } from "./slug"
 export type { BroadcastSlug } from "./slug"
 
@@ -380,6 +383,8 @@ export type {
   EnclaveSessionAssignment,
   EnclaveSessionResult,
   EnclaveSessionFailure,
+  EnclaveClaimResponse,
+  EnclaveSessionHeartbeatResponse,
   UpdateStreamInput,
   UpdateCompanionModeInput,
   StreamBootstrap,
@@ -392,6 +397,7 @@ export type {
   // Sync log catch-up
   SyncCatchUpEntry,
   SyncCatchUpResponse,
+  SyncHeartbeatPayload,
   // Messages
   CreateMessageInput,
   CreateMessageInputJson,
@@ -437,6 +443,11 @@ export type {
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
+  // Saved suggestions
+  SavedSuggestionView,
+  SavedSuggestionListResponse,
+  AcceptSavedSuggestionResponse,
+  SavedSuggestionUpsertedPayload,
   // Scheduled messages
   ScheduledMessageView,
   ScheduleMessageInput,

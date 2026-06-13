@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useConversationService, useSocket, useSocketReconnectCount } from "@/contexts"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { ConversationWithStaleness, ConversationStatus } from "@threa/types"
 
 export const conversationKeys = {
@@ -61,6 +62,8 @@ export function useConversations(workspaceId: string, streamId: string, options?
   const queryClient = useQueryClient()
   const socket = useSocket()
   const reconnectCount = useSocketReconnectCount()
+  // Optional: conversation overlays can mount outside the workspace SyncEngine provider.
+  const syncEngine = useOptionalSyncEngine()
 
   const {
     data: conversations = [],
@@ -81,10 +84,19 @@ export function useConversations(workspaceId: string, streamId: string, options?
 
   // INV-53: invalidate bootstrap on resubscribe (reconnect) so any events
   // missed during the disconnect are reconciled from the server.
+  //
+  // In active sync-v2 mode the workspace catch-up cursor replays the missed
+  // conversation events (stream-scoped sync-log entries) through the
+  // gate-registered handlers below, so the blanket invalidation is redundant
+  // there — but "off" is the runtime kill switch and "shadow" applies
+  // nothing, so both keep this healing, as do mounts outside the SyncEngine
+  // provider. The mode is fixed per engine lifetime; a flag flip recreates
+  // the engine and re-runs this effect with the new mode.
   useEffect(() => {
     if (reconnectCount === 0 || !workspaceId || !streamId || !enabled) return
+    if (syncEngine?.syncCursorMode === "active") return
     queryClient.invalidateQueries({ queryKey: conversationKeys.list(workspaceId, streamId, { status, limit }) })
-  }, [reconnectCount, workspaceId, streamId, status, limit, enabled, queryClient])
+  }, [reconnectCount, workspaceId, streamId, status, limit, enabled, queryClient, syncEngine])
 
   // Handle real-time conversation events
   useEffect(() => {
@@ -140,18 +152,24 @@ export function useConversations(workspaceId: string, streamId: string, options?
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.toConversationId) })
     }
 
-    socket.on("conversation:created", handleCreated)
-    socket.on("conversation:updated", handleUpdated)
-    socket.on("conversation:message_assigned", handleMessageAssigned)
-    socket.on("conversation:message_reassigned", handleMessageReassigned)
+    // In active sync-v2 mode, register through the engine's event gate so
+    // these handlers receive catch-up replays and respect buffer-and-splice
+    // ordering exactly like engine-owned handlers — conversation events are
+    // stream-scoped sync-log entries, and a raw-socket registration would
+    // never see them replayed after a gap.
+    const eventSource = syncEngine?.getLiveEventSource() ?? socket
+    eventSource.on("conversation:created", handleCreated)
+    eventSource.on("conversation:updated", handleUpdated)
+    eventSource.on("conversation:message_assigned", handleMessageAssigned)
+    eventSource.on("conversation:message_reassigned", handleMessageReassigned)
 
     return () => {
-      socket.off("conversation:created", handleCreated)
-      socket.off("conversation:updated", handleUpdated)
-      socket.off("conversation:message_assigned", handleMessageAssigned)
-      socket.off("conversation:message_reassigned", handleMessageReassigned)
+      eventSource.off("conversation:created", handleCreated)
+      eventSource.off("conversation:updated", handleUpdated)
+      eventSource.off("conversation:message_assigned", handleMessageAssigned)
+      eventSource.off("conversation:message_reassigned", handleMessageReassigned)
     }
-  }, [socket, workspaceId, streamId, status, limit, enabled, queryClient])
+  }, [socket, syncEngine, workspaceId, streamId, status, limit, enabled, queryClient])
 
   return {
     conversations,

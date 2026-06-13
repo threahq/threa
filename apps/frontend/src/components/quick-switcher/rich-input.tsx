@@ -69,6 +69,11 @@ export interface RichInputProps {
   /** Accessible label for the input (used by screen readers and testing) */
   ariaLabel?: string
   className?: string
+  /**
+   * Extra classes merged onto the editable element itself — use to override
+   * the default `h-11 py-3` sizing (e.g. `h-8 py-1.5` for compact inputs).
+   */
+  editorClassName?: string
   autoFocus?: boolean
   disabled?: boolean
 }
@@ -107,6 +112,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     placeholder = "Type here...",
     ariaLabel = "Text input",
     className,
+    editorClassName,
     autoFocus = false,
     disabled = false,
   },
@@ -246,6 +252,11 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
   const editor = useEditor({
     extensions,
     content: value ? `<p>${escapeHtml(value)}</p>` : "",
+    // Trailing whitespace is significant: a query ending in a space (e.g. set
+    // by the add-filter menu's "status:active ") keeps the cursor OUT of the
+    // filter token. The default HTML parser collapses it, which re-arms the
+    // filter suggestion popover the moment the input regains focus.
+    parseOptions: { preserveWhitespace: "full" },
     editable: !disabled,
     onUpdate: ({ editor }) => {
       if (isInternalUpdate.current) return
@@ -257,7 +268,8 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
         class: cn(
           "flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none",
           "placeholder:text-muted-foreground",
-          "disabled:cursor-not-allowed disabled:opacity-50"
+          "disabled:cursor-not-allowed disabled:opacity-50",
+          editorClassName
         ),
         "aria-label": ariaLabel,
       },
@@ -286,7 +298,10 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
     const currentText = editor.getText()
     if (value !== currentText) {
       isInternalUpdate.current = true
-      editor.commands.setContent(value ? `<p>${escapeHtml(value)}</p>` : "")
+      // preserveWhitespace keeps trailing spaces (see parseOptions on useEditor)
+      editor.commands.setContent(value ? `<p>${escapeHtml(value)}</p>` : "", {
+        parseOptions: { preserveWhitespace: "full" },
+      })
       isInternalUpdate.current = false
     }
   }, [value, editor])

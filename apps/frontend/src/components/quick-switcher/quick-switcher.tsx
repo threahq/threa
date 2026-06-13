@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useLocation, useSearchParams } from "react-router-dom"
-import { Search, Terminal, FileText } from "lucide-react"
+import { Terminal, FileText } from "lucide-react"
 import { toast } from "sonner"
 import { LabelableResourceTypes } from "@threa/types"
 import { ResponsiveDialog, ResponsiveDialogContent } from "@/components/ui/responsive-dialog"
@@ -14,7 +14,7 @@ import {
   ResponsiveAlertDialogHeader,
   ResponsiveAlertDialogTitle,
 } from "@/components/ui/responsive-alert-dialog"
-import { useDraftScratchpads, useArchiveStream, useStreamName, isDraftId } from "@/hooks"
+import { useDraftScratchpads, useArchiveStream, useSaveMessage, useStreamName, isDraftId } from "@/hooks"
 import { usePanelPreservingNavigate } from "@/components/panels/use-panel-aware-nav"
 import {
   useWorkspaceUsers,
@@ -34,17 +34,17 @@ import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { WS_SETTINGS_PARAM, type WorkspaceSettingsTab } from "@/components/workspace-settings/tab-config"
 import { LabelPicker } from "@/components/labels/label-picker"
+import { useSearchPanel } from "@/components/search/search-panel-context"
 import { useStreamItems } from "./use-stream-items"
 import { useCommandItems } from "./use-command-items"
-import { useSearchItems } from "./use-search-items"
 import { ItemList } from "./item-list"
 import { ModeTabs } from "./mode-tabs"
-import { COMMAND_TRIGGERS, RichInput, type RichInputRef, SEARCH_TRIGGERS, STREAM_TRIGGERS } from "./rich-input"
+import { COMMAND_TRIGGERS, RichInput, type RichInputRef, STREAM_TRIGGERS } from "./rich-input"
 import type { CommandContext, InputRequest } from "./commands"
 import type { QuickSwitcherItem } from "./types"
 import { clamp } from "@/lib/math-utils"
 
-export type QuickSwitcherMode = "stream" | "command" | "search"
+export type QuickSwitcherMode = "stream" | "command"
 
 interface QuickSwitcherProps {
   workspaceId: string
@@ -58,32 +58,25 @@ interface QuickSwitcherProps {
 const MODE_PREFIXES: Record<QuickSwitcherMode, string> = {
   stream: "",
   command: "> ",
-  search: "? ",
 }
 
 const MODE_ICONS: Record<QuickSwitcherMode, React.ComponentType<{ className?: string }>> = {
   stream: FileText,
   command: Terminal,
-  search: Search,
 }
 
 const MODE_PLACEHOLDERS: Record<QuickSwitcherMode, string> = {
   stream: "Search streams...",
   command: "Run a command...",
-  search: "Search messages...",
 }
 
 export function deriveMode(query: string): QuickSwitcherMode {
   if (query.startsWith(">")) return "command"
-  if (query.startsWith("?")) return "search"
   return "stream"
 }
 
 export function getDisplayQuery(query: string, mode: QuickSwitcherMode): string {
   if (mode === "command" && query.startsWith(">")) {
-    return query.slice(1).trimStart()
-  }
-  if (mode === "search" && query.startsWith("?")) {
     return query.slice(1).trimStart()
   }
   return query
@@ -137,7 +130,6 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       {
         stream: STREAM_TRIGGERS,
         command: COMMAND_TRIGGERS,
-        search: SEARCH_TRIGGERS,
       }[mode] ?? undefined
     )
   }, [mode])
@@ -205,6 +197,17 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     setInputValue("")
   }, [])
 
+  // "Add To-do" creates a standalone saved item via the same mutation as the
+  // Saved page's quick-add, so IDB and the list caches update identically.
+  const saveMutation = useSaveMessage(workspaceId)
+  const { mutateAsync: saveTodoAsync } = saveMutation
+  const createSavedTodo = useCallback(
+    async (title: string): Promise<void> => {
+      await saveTodoAsync({ title })
+    },
+    [saveTodoAsync]
+  )
+
   // Contextual stream actions close the palette first, then open their own
   // surface (settings dialog, confirm modal, label picker), which render as
   // siblings so they survive the palette unmounting its content.
@@ -255,6 +258,12 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     [handleClose, setSearchParams]
   )
 
+  // Message search was split out of the palette into its own surface (sidebar
+  // panel on desktop, full page on mobile). The "Search messages" command is
+  // the palette's entry point to it.
+  const { openSearch } = useSearchPanel()
+  const handleOpenSearch = useCallback(() => openSearch(), [openSearch])
+
   const commandContext: CommandContext = useMemo(
     () => ({
       workspaceId,
@@ -264,6 +273,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       createEncryptedScratchpad,
       openCreateChannel,
       setMode,
+      openSearch: handleOpenSearch,
       requestInput,
       openSettings,
       openWorkspaceSettings,
@@ -273,6 +283,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       openStreamSettings: handleOpenStreamSettings,
       requestArchiveStream,
       openLabelPicker,
+      createSavedTodo,
     }),
     [
       workspaceId,
@@ -282,6 +293,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       createEncryptedScratchpad,
       openCreateChannel,
       setMode,
+      handleOpenSearch,
       requestInput,
       openSettings,
       openWorkspaceSettings,
@@ -291,6 +303,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
       handleOpenStreamSettings,
       requestArchiveStream,
       openLabelPicker,
+      createSavedTodo,
     ]
   )
 
@@ -313,24 +326,8 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
     commandContext,
   })
 
-  // Handler for search mode query changes (from filter badge removal/addition)
-  const handleSearchQueryChange = useCallback((newDisplayQuery: string) => {
-    setQuery(`? ${newDisplayQuery}`)
-    setSelectedIndex(0)
-  }, [])
-
-  const searchResult = useSearchItems({
-    workspaceId,
-    query: displayQuery,
-    onQueryChange: handleSearchQueryChange,
-    closeDialog: handleClose,
-    navigate,
-    streams,
-    streamMemberships,
-  })
-
   // Select the current mode's result
-  const resultByMode = { stream: streamResult, command: commandResult, search: searchResult }
+  const resultByMode = { stream: streamResult, command: commandResult }
   const currentResult = resultByMode[mode]
   const items = currentResult.items
 
@@ -567,16 +564,16 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
                   aria-label="Command input"
                 />
               ) : (
-                // RichInput for all modes - triggers only enabled for search mode
+                // RichInput for both modes
                 <RichInput
                   ref={richInputRef}
                   value={query}
                   onChange={(value) => {
                     // Normalize the query in two steps:
-                    // 1. Remove redundant prefixes: "? ? foo" → "? foo", "> > bar" → "> bar"
-                    // 2. Ensure space after prefix: "?foo" → "? foo" (TipTap strips trailing whitespace)
-                    const withoutRedundant = value.replace(/^([?>])\s*\1/, "$1")
-                    const normalized = withoutRedundant.replace(/^([?>])(?=\S)/, "$1 ")
+                    // 1. Remove redundant prefixes: "> > bar" → "> bar"
+                    // 2. Ensure space after prefix: ">bar" → "> bar" (TipTap strips trailing whitespace)
+                    const withoutRedundant = value.replace(/^(>)\s*\1/, "$1")
+                    const normalized = withoutRedundant.replace(/^(>)(?=\S)/, "$1 ")
                     setQuery(normalized)
                     setSelectedIndex(0)
                   }}
@@ -590,7 +587,7 @@ export function QuickSwitcher({ workspaceId, open, onOpenChange, initialMode, cu
                   onPopoverActiveChange={handlePopoverActiveChange}
                   triggers={triggers}
                   placeholder={MODE_PLACEHOLDERS[mode]}
-                  ariaLabel={mode === "search" ? "Search query input" : "Quick switcher input"}
+                  ariaLabel="Quick switcher input"
                   autoFocus={!isMobile}
                 />
               )}

@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import type { Socket } from "socket.io-client"
 import { QueryClient } from "@tanstack/react-query"
-import { SyncEngine } from "./sync-engine"
+import { SyncEngine, isSyncEngineCurrent } from "./sync-engine"
 import { SyncStatusStore } from "./sync-status"
 import { markInitialRevealComplete, resetRevealGate } from "./reveal-gate"
 import { workspaceKeys } from "@/hooks/use-workspaces"
@@ -10,6 +10,7 @@ import {
   DEFAULT_USER_PREFERENCES,
   DEFAULT_WORKSPACE_SETTINGS,
   defaultFeatureFlags,
+  defaultFeatureFlagValue,
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
@@ -1119,6 +1120,25 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     engine.destroy()
   })
 
+  it("re-bootstraps and jumps the cursor to head when catch-up reports the cursor is below the retention floor", async () => {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    // The cursor (10) predates the pruned span, so the log can't heal the gap:
+    // catch-up returns requiresBootstrap with no entries instead of a partial
+    // page. The connect bootstrap runs first; the fallback fires a second.
+    const catchUp = vi.fn().mockResolvedValue({ entries: [], head: "500", requiresBootstrap: true })
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
+
+    await engine.onConnect(asSocket(new MockSocket()))
+
+    // The cursor jumps to head — the snapshot is the authority for <= head —
+    // and the below-floor catch-up triggered a fresh bootstrap on top of the
+    // connect one (so nothing from the pruned span is silently skipped).
+    await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("500"))
+    await vi.waitFor(() => expect(deps.workspaceService.bootstrap.mock.calls.length).toBeGreaterThanOrEqual(2))
+    engine.destroy()
+  })
+
   it("buffers live events while catch-up runs and splices those above the catch-up position afterwards", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
@@ -1433,5 +1453,272 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     await new Promise((resolve) => setTimeout(resolve, 10))
 
     expect(await db.workspaceUsers.get("user_live")).toBeUndefined()
+  })
+})
+
+describe("SyncEngine sync-v2 cursor mode wiring", () => {
+  function makeSyncDeps(syncCursorMode?: "shadow" | "off" | "active") {
+    const catchUp = vi.fn(async (): Promise<SyncCatchUpResponse> => ({ entries: [], head: "0" }))
+    return { ...makeDeps(), syncService: { catchUp }, syncCursorMode }
+  }
+
+  it("resolves the mode from deps, falling back to the registry default, and forces off without a sync service", () => {
+    const fromRegistry = new SyncEngine(makeSyncDeps())
+    expect(fromRegistry.syncCursorMode).toBe(defaultFeatureFlagValue("sync-v2-cursor"))
+    fromRegistry.destroy()
+
+    const explicit = new SyncEngine(makeSyncDeps("active"))
+    expect(explicit.syncCursorMode).toBe("active")
+    // Active mode is the only one that owns an event gate.
+    expect(explicit.getLiveEventSource()).not.toBeNull()
+    explicit.destroy()
+
+    const withoutSyncService = new SyncEngine(makeDeps())
+    expect(withoutSyncService.syncCursorMode).toBe("off")
+    expect(withoutSyncService.getLiveEventSource()).toBeNull()
+    withoutSyncService.destroy()
+  })
+
+  it("isSyncEngineCurrent forces recreation on workspace change, destroy, and a mode change only", () => {
+    const engine = new SyncEngine(makeSyncDeps("shadow"))
+
+    expect(isSyncEngineCurrent(engine, "ws_other", "shadow")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1", "active")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1", "off")).toBe(false)
+    expect(isSyncEngineCurrent(engine, "ws_1", "shadow")).toBe(true)
+
+    engine.destroy()
+    expect(isSyncEngineCurrent(engine, "ws_1", "shadow")).toBe(false)
+  })
+})
+
+describe("SyncEngine sync:heartbeat (active mode)", () => {
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([
+      db.workspaces.clear(),
+      db.syncCursors.clear(),
+      db.workspaceUsers.clear(),
+      db.unreadState.clear(),
+    ])
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function makeActiveDeps(catchUp: ReturnType<typeof vi.fn>) {
+    return {
+      ...makeDeps(),
+      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
+      syncCursorMode: "active" as const,
+    }
+  }
+
+  function emptyPage(head: string): SyncCatchUpResponse {
+    return { entries: [], head }
+  }
+
+  function userAddedEntry(syncId: string, userId: string): SyncCatchUpResponse["entries"][number] {
+    return {
+      syncId,
+      eventType: "workspace_user:added",
+      payload: { workspaceId: "ws_1", user: { id: userId, workspaceId: "ws_1", name: `User ${userId}` } },
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  function heartbeat(head: string) {
+    return { workspaceId: "ws_1", head }
+  }
+
+  /** Connect with a persisted cursor at 10 and let the connect catch-up
+   *  settle (one page), so heartbeat-triggered calls are distinguishable. */
+  async function connectSettledEngine(catchUp: ReturnType<typeof vi.fn>) {
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+    // Drain the connect catch-up's remaining microtasks (gate resume).
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    return { engine, socket }
+  }
+
+  it("ignores a head already covered by max(cursor, lastSeenHead) — including invisible-entry inflation", async () => {
+    // Connect catch-up reports head 12 with nothing visible: the cursor stays
+    // at 10 but lastSeenHead records 12 as known-clean.
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("12"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+    const baseline = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("12"))
+    socket.trigger("sync:heartbeat", heartbeat("11"))
+    vi.advanceTimersByTime(10_000)
+    vi.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp.mock.calls.length).toBe(baseline)
+    engine.destroy()
+  })
+
+  it("triggers catch-up after the grace window when the head stays ahead, applying entries through the gate", async () => {
+    const catchUp = vi
+      .fn()
+      .mockResolvedValueOnce(emptyPage("10"))
+      .mockResolvedValueOnce({
+        entries: [userAddedEntry("11", "user_a"), userAddedEntry("12", "user_b")],
+        head: "12",
+      })
+      .mockResolvedValue(emptyPage("12"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("12"))
+    // Within grace: nothing fetched yet.
+    expect(catchUp.mock.calls.length).toBe(1)
+    vi.advanceTimersByTime(3_500)
+    vi.useRealTimers()
+
+    await vi.waitFor(async () => {
+      expect(await db.workspaceUsers.get("user_a")).toBeDefined()
+      expect(await db.workspaceUsers.get("user_b")).toBeDefined()
+    })
+    expect(engine.getSyncCursor()).toBe("12")
+    engine.destroy()
+  })
+
+  it("does not fetch when live events close the gap during the grace window", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+    const baseline = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("11"))
+    // The "missing" event arrives mid-grace; the gate applies it live and the
+    // cursor advances past the heartbeat head before the re-check fires.
+    socket.trigger("workspace_user:added", {
+      workspaceId: "ws_1",
+      syncId: "11",
+      user: { id: "user_live", workspaceId: "ws_1", name: "User live" },
+    })
+    vi.advanceTimersByTime(10_000)
+    vi.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp.mock.calls.length).toBe(baseline)
+    expect(engine.getSyncCursor()).toBe("11")
+    engine.destroy()
+  })
+
+  it("coalesces heartbeats during grace into one run and self-quiets once the head is seen", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+    // The heartbeat-triggered run finds only entries invisible to this user.
+    catchUp.mockResolvedValue(emptyPage("15"))
+    const baseline = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("12"))
+    socket.trigger("sync:heartbeat", heartbeat("15"))
+    vi.advanceTimersByTime(3_500)
+    vi.useRealTimers()
+    await vi.waitFor(() => expect(catchUp.mock.calls.length).toBeGreaterThan(baseline))
+    const afterRun = catchUp.mock.calls.length
+
+    // Same head again: lastSeenHead now covers it, so no second run.
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("15"))
+    vi.advanceTimersByTime(10_000)
+    vi.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp.mock.calls.length).toBe(afterRun)
+    engine.destroy()
+  })
+
+  it("does not mark a head clean when the drain fails mid-way — the next heartbeat finishes it", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+    // First heartbeat-triggered run: page 1 applies entry 11 (head reports
+    // 15), then the next page's fetch fails — lastSeenHead must NOT record 15.
+    catchUp
+      .mockResolvedValueOnce({ entries: [userAddedEntry("11", "user_a")], head: "15" })
+      .mockRejectedValueOnce(new Error("network blip"))
+      .mockResolvedValueOnce({ entries: [userAddedEntry("12", "user_b")], head: "15" })
+      .mockResolvedValue(emptyPage("15"))
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("15"))
+    vi.advanceTimersByTime(2_500)
+    vi.useRealTimers()
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_a")).toBeDefined())
+    // Let the failed run settle fully before the retry heartbeat.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("15"))
+    vi.advanceTimersByTime(2_500)
+    vi.useRealTimers()
+
+    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_b")).toBeDefined())
+    expect(engine.getSyncCursor()).toBe("12")
+    engine.destroy()
+  })
+
+  it("ignores other workspaces' heartbeats and malformed heads", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+    const baseline = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", { workspaceId: "ws_other", head: "99" })
+    socket.trigger("sync:heartbeat", { workspaceId: "ws_1", head: "not-a-number" })
+    socket.trigger("sync:heartbeat", undefined)
+    vi.advanceTimersByTime(10_000)
+    vi.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp.mock.calls.length).toBe(baseline)
+    engine.destroy()
+  })
+
+  it("does not react to heartbeats in shadow mode", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
+    const engine = new SyncEngine({
+      ...makeDeps(),
+      syncService: { catchUp: catchUp as (...args: unknown[]) => Promise<SyncCatchUpResponse> },
+      syncCursorMode: "shadow" as const,
+    })
+    const socket = new MockSocket()
+    await engine.onConnect(asSocket(socket))
+    await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
+    const baseline = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("99"))
+    vi.advanceTimersByTime(10_000)
+    vi.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp.mock.calls.length).toBe(baseline)
+    engine.destroy()
+  })
+
+  it("destroy during the grace window cancels the pending catch-up", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket } = await connectSettledEngine(catchUp)
+    const baseline = catchUp.mock.calls.length
+
+    vi.useFakeTimers()
+    socket.trigger("sync:heartbeat", heartbeat("12"))
+    engine.destroy()
+    vi.advanceTimersByTime(10_000)
+    vi.useRealTimers()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(catchUp.mock.calls.length).toBe(baseline)
   })
 })

@@ -79,6 +79,8 @@ function fakeSaved(overrides: Partial<SavedMessage> = {}): SavedMessage {
     messageId: MESSAGE_ID,
     streamId: STREAM_ID,
     status: SavedStatuses.SAVED,
+    title: null,
+    note: null,
     remindAt: null,
     reminderSentAt: null,
     reminderQueueMessageId: null,
@@ -102,6 +104,8 @@ function setupService() {
       messageId: r.messageId,
       streamId: r.streamId,
       status: r.status,
+      title: r.title,
+      note: r.note,
       remindAt: r.remindAt?.toISOString() ?? null,
       reminderSentAt: r.reminderSentAt?.toISOString() ?? null,
       savedAt: r.savedAt.toISOString(),
@@ -191,6 +195,95 @@ describe("SavedMessagesService.save", () => {
       targetUserId: USER_ID,
       saved: expect.objectContaining({ id: SAVED_ID, status: SavedStatuses.SAVED }),
     })
+  })
+})
+
+describe("SavedMessagesService.createStandalone", () => {
+  afterEach(() => mock.restore())
+
+  it("inserts a message-less row without any message/stream access checks", async () => {
+    const service = setupService()
+    const findMessageSpy = spyOn(MessageRepository, "findById")
+    const insertSpy = spyOn(SavedMessagesRepository, "insertStandalone").mockResolvedValue(
+      fakeSaved({ messageId: null, streamId: null, title: "Call the landlord", note: "About the lease" })
+    )
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const view = await service.createStandalone({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      title: "Call the landlord",
+      note: "About the lease",
+      remindAt: null,
+    })
+
+    expect(findMessageSpy).not.toHaveBeenCalled()
+    expect(insertSpy.mock.calls[0]![1]).toMatchObject({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      title: "Call the landlord",
+      note: "About the lease",
+    })
+    expect(view).toMatchObject({ messageId: null, streamId: null, title: "Call the landlord" })
+    const [, eventType, payload] = outboxSpy.mock.calls[0]!
+    expect(eventType).toBe("saved:upserted")
+    expect(payload).toMatchObject({ workspaceId: WORKSPACE_ID, targetUserId: USER_ID })
+  })
+
+  it("enqueues a reminder when remindAt is provided", async () => {
+    const service = setupService()
+    spyOn(SavedMessagesRepository, "insertStandalone").mockResolvedValue(
+      fakeSaved({ messageId: null, streamId: null, title: "Standup prep", remindAt: FUTURE })
+    )
+    const updateReminderSpy = spyOn(SavedMessagesRepository, "updateReminder").mockResolvedValue(
+      fakeSaved({ messageId: null, streamId: null, title: "Standup prep", remindAt: FUTURE })
+    )
+    spyOn(QueueRepository, "insert").mockResolvedValue({} as any)
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    await service.createStandalone({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      title: "Standup prep",
+      note: null,
+      remindAt: FUTURE,
+    })
+
+    // The queue row id is pinned back onto the saved row inside the same tx
+    expect(updateReminderSpy).toHaveBeenCalled()
+    expect(updateReminderSpy.mock.calls[0]![4]).toMatchObject({ remindAt: FUTURE })
+  })
+})
+
+describe("SavedMessagesService.updateContent", () => {
+  afterEach(() => mock.restore())
+
+  it("throws 404 when the row does not exist", async () => {
+    const service = setupService()
+    spyOn(SavedMessagesRepository, "updateContent").mockResolvedValue(null)
+
+    await expect(
+      service.updateContent({ workspaceId: WORKSPACE_ID, userId: USER_ID, savedId: SAVED_ID, note: "x" })
+    ).rejects.toMatchObject({ status: 404 })
+  })
+
+  it("updates note on a message-anchored row and emits saved:upserted", async () => {
+    const service = setupService()
+    const updateSpy = spyOn(SavedMessagesRepository, "updateContent").mockResolvedValue(
+      fakeSaved({ note: "deadline moved to Friday" })
+    )
+    const outboxSpy = spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+
+    const view = await service.updateContent({
+      workspaceId: WORKSPACE_ID,
+      userId: USER_ID,
+      savedId: SAVED_ID,
+      note: "deadline moved to Friday",
+    })
+
+    expect(updateSpy.mock.calls[0]![4]).toEqual({ title: undefined, note: "deadline moved to Friday" })
+    expect(view.note).toBe("deadline moved to Friday")
+    expect(outboxSpy.mock.calls[0]![1]).toBe("saved:upserted")
   })
 })
 

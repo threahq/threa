@@ -2,9 +2,42 @@
 interface Props {
   title: string
   description: string
+  /** Open Graph object type; docs pages pass "article". */
+  ogType?: "website" | "article"
+  /** Page-specific JSON-LD blocks, appended after the site-wide Organization/WebSite. */
+  schema?: Record<string, unknown>[]
 }
 
-const { title, description } = Astro.props
+const { title, description, ogType = "website", schema = [] } = Astro.props
+
+const site = Astro.site!
+const canonical = new URL(Astro.url.pathname, site)
+const ogImage = new URL("/og.png", site)
+
+/* Site-wide entities, referenced by @id from page-level schema blocks. */
+const ORG_ID = new URL("/#organization", site).href
+const jsonLd = [
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "@id": ORG_ID,
+    name: "Threa",
+    url: site.href,
+    logo: new URL("/favicon.svg", site).href,
+    sameAs: ["https://github.com/threahq/threa"],
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "@id": new URL("/#website", site).href,
+    name: "Threa",
+    url: site.href,
+    description:
+      "Threa is workplace chat built with memory at its core: decisions and their reasoning stay with the conversation. Open source, self-hostable, with a public API for agents.",
+    publisher: { "@id": ORG_ID },
+  },
+  ...schema,
+]
 ---
 
 <meta charset="utf-8" />
@@ -34,11 +67,33 @@ const { title, description } = Astro.props
   })()
 </script>
 <meta name="description" content={description} />
+<link rel="canonical" href={canonical.href} />
 <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<link rel="sitemap" type="application/xml" href="/sitemap-index.xml" />
+
+<!-- Social cards: Open Graph + Twitter. The image is the shared 1200x630 card
+     in public/og.png; pages contribute title/description via Layout props. -->
+<meta property="og:type" content={ogType} />
+<meta property="og:site_name" content="Threa" />
+<meta property="og:locale" content="en_US" />
+<meta property="og:url" content={canonical.href} />
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:image" content={ogImage.href} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Threa — team chat that holds the why" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={ogImage.href} />
+
 <!-- Agent entry points: a markdown index of the developer docs and the full
      API contract, discoverable from every page (robots.txt names them too). -->
 <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt — markdown index of the developer docs" />
-<link rel="alternate" type="application/json" href="/openapi.json" title="OpenAPI 3.1 contract for the Threa API" />
+<link rel="alternate" type="application/json" href="/openapi.json" title="OpenAPI 3.0 contract for the Threa API" />
+
+<script is:inline type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link

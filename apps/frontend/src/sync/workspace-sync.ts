@@ -22,6 +22,7 @@ import type {
   SavedUpsertedPayload,
   SavedDeletedPayload,
   SavedReminderFiredPayload,
+  SavedSuggestionUpsertedPayload,
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
@@ -33,6 +34,8 @@ import type {
   LabelUnassignedPayload,
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
+import { memoKeys } from "@/hooks/use-memos"
+import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
 import {
@@ -43,6 +46,7 @@ import {
   normalizeSidebarConfig,
 } from "@threa/types"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
+import { mirrorSyncV2Mode, type SyncV2CursorMode } from "./sync-v2-mode"
 import {
   applyActivityCounts,
   applyStreamActivityOrdinal,
@@ -458,7 +462,8 @@ export function registerWorkspaceSocketHandlers(
     getCurrentStreamId: () => string | undefined
     getCurrentUser: () => { id: string } | null
     subscribeStream: (streamId: string) => void
-  }
+  },
+  syncCursorMode: SyncV2CursorMode
 ): () => void {
   const abortController = new AbortController()
 
@@ -467,8 +472,17 @@ export function registerWorkspaceSocketHandlers(
   // and rehydrates IDB with any rows whose upsert/delete events we missed
   // during the disconnect. `refetchOnReconnect: true` alone only covers
   // browser network online/offline, not socket.io reconnects.
-  queryClient.invalidateQueries({ queryKey: savedKeys.all })
-  queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
+  //
+  // In active sync-v2 mode the workspace catch-up cursor replays the missed
+  // saved/scheduled events (user-scoped sync-log entries) through these same
+  // handlers, so the blanket refetch is redundant there — but "off" is the
+  // runtime kill switch and "shadow" applies nothing, so both must keep this
+  // healing. The mode is fixed per SyncEngine lifetime; a flag flip recreates
+  // the engine and re-registers these handlers with the new mode.
+  if (syncCursorMode !== "active") {
+    queryClient.invalidateQueries({ queryKey: savedKeys.all })
+    queryClient.invalidateQueries({ queryKey: scheduledKeys.all })
+  }
 
   // Handle stream created
   const handleStreamCreated = (payload: StreamPayload) => {
@@ -1325,6 +1339,10 @@ export function registerWorkspaceSocketHandlers(
   const handleFeatureFlagsUpdated = (payload: FeatureFlagsUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
 
+    // Keep the sync-v2 mode mirror current so the next SyncEngine
+    // construction (which runs before any bootstrap is cached) starts from
+    // this delivered value. See sync-v2-mode.ts.
+    mirrorSyncV2Mode(workspaceId, payload.featureFlags)
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => ({ ...old, featureFlags: payload.featureFlags }))
   }
 
@@ -1420,6 +1438,17 @@ export function registerWorkspaceSocketHandlers(
 
     // Invalidate activity feed so it refetches when the page is mounted
     queryClient.invalidateQueries({ queryKey: ["activity", workspaceId] })
+  }
+
+  // GAM memo extraction: surface new memos in the memory explorer without a
+  // manual refresh. memo:created is workspace-group routed (sync log + emit),
+  // so registering here puts memos on the sync-v2 catch-up path like every
+  // other workspace-level event — a reconnect replay invalidates the same
+  // queries a live emit does. The in-situ timeline row rides the separate
+  // stream:memos_captured event (stream-sync).
+  const handleMemoCreated = (payload: { workspaceId: string; memoId: string }) => {
+    if (payload.workspaceId !== workspaceId) return
+    queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })
   }
 
   // Handle attachment transcoded (video processing completed or failed)
@@ -1561,6 +1590,15 @@ export function registerWorkspaceSocketHandlers(
     // there's one canonical notification path.
     void persistSavedRows(workspaceId, [payload.saved])
     queryClient.invalidateQueries({ queryKey: savedKeys.list(workspaceId, "saved") })
+  }
+
+  // Saved suggestions — pull-only pile. Any upsert (new suggestion, accept, or
+  // dismiss elsewhere) just invalidates the suggested list; the query refetches
+  // the authoritative page. No IDB: suggestions are low-volume and never the
+  // offline-critical surface.
+  const handleSavedSuggestionUpserted = (payload: SavedSuggestionUpsertedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    queryClient.invalidateQueries({ queryKey: savedSuggestionKeys.list(workspaceId, "suggested") })
   }
 
   // Scheduled messages — write-through to IDB and invalidate TanStack lists
@@ -1754,9 +1792,11 @@ export function registerWorkspaceSocketHandlers(
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
+  socket.on("memo:created", handleMemoCreated)
   socket.on("saved:upserted", handleSavedUpserted)
   socket.on("saved:deleted", handleSavedDeleted)
   socket.on("saved_reminder:fired", handleSavedReminderFired)
+  socket.on("saved_suggestion:upserted", handleSavedSuggestionUpserted)
   socket.on("scheduled_message:upserted", handleScheduledUpserted)
   socket.on("scheduled_message:sent", handleScheduledSent)
   socket.on("scheduled_message:cancelled", handleScheduledCancelled)
@@ -1794,9 +1834,11 @@ export function registerWorkspaceSocketHandlers(
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)
+    socket.off("memo:created", handleMemoCreated)
     socket.off("saved:upserted", handleSavedUpserted)
     socket.off("saved:deleted", handleSavedDeleted)
     socket.off("saved_reminder:fired", handleSavedReminderFired)
+    socket.off("saved_suggestion:upserted", handleSavedSuggestionUpserted)
     socket.off("scheduled_message:upserted", handleScheduledUpserted)
     socket.off("scheduled_message:sent", handleScheduledSent)
     socket.off("scheduled_message:cancelled", handleScheduledCancelled)
@@ -1832,6 +1874,10 @@ export async function applyWorkspaceBootstrap(
   fetchStartedAt?: number
 ): Promise<void> {
   const now = Date.now()
+
+  // Mirror the sync-v2 mode so the next SyncEngine construction (which runs
+  // before any bootstrap exists) starts from this delivered flag value.
+  mirrorSyncV2Mode(workspaceId, bootstrap.featureFlags)
 
   // Build membership lookup for O(1) access when merging onto streams
   const membershipByStream = new Map(bootstrap.streamMemberships.map((sm) => [sm.streamId, sm]))
@@ -2048,6 +2094,10 @@ export async function applyReconnectBootstrapBatch(
   streamBootstraps: Map<string, StreamBootstrap>
 }> {
   const now = Date.now()
+
+  // Same as applyWorkspaceBootstrap: the flag map comes straight from the
+  // fresh server snapshot (the reconnect merge only adjusts streams/counters).
+  mirrorSyncV2Mode(workspaceId, workspaceBootstrap.featureFlags)
 
   const [localStreams, localMemberships, localUnreadState] = await Promise.all([
     db.streams.where("workspaceId").equals(workspaceId).toArray(),

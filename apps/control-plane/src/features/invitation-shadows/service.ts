@@ -12,6 +12,8 @@ import { InvitationShadowRepository } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import { RegionalClaimError, type RegionalClient } from "../../lib/regional-client"
 import type { InvitationLinkLookupResponse, PendingInvitation, WorkspaceInvitableRole } from "@threa/types"
+// Type-only to avoid a runtime module cycle; injected by the composition root.
+import type { PlatformAdminSyncService } from "../platform-admin"
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex")
@@ -32,17 +34,20 @@ interface Dependencies {
   pool: Pool
   regionalClient: RegionalClient
   workosOrgService: WorkosOrgService
+  platformAdminSync: PlatformAdminSyncService
 }
 
 export class InvitationShadowService {
   private pool: Pool
   private regionalClient: RegionalClient
   private workosOrgService: WorkosOrgService
+  private platformAdminSync: PlatformAdminSyncService
 
-  constructor({ pool, regionalClient, workosOrgService }: Dependencies) {
+  constructor({ pool, regionalClient, workosOrgService, platformAdminSync }: Dependencies) {
     this.pool = pool
     this.regionalClient = regionalClient
     this.workosOrgService = workosOrgService
+    this.platformAdminSync = platformAdminSync
   }
 
   private resolveDisplayName(user: ShadowUser): string {
@@ -108,6 +113,9 @@ export class InvitationShadowService {
 
       // Regional call succeeded — commit membership alongside the claim
       await WorkspaceRegistryRepository.insertMembership(client, shadow.workspace_id, user.id)
+      // An invited platform admin should see backoffice links in the joined
+      // workspace without waiting for the next control-plane restart.
+      await this.platformAdminSync.enqueueIfAdmin(client, user.id)
       return { workspaceId: shadow.workspace_id }
     })
 

@@ -8,6 +8,7 @@ export {
   useConversationService,
   useActivityService,
   useSavedService,
+  useSavedSuggestionsService,
   useScheduledService,
   useLabelService,
   type Services,
@@ -17,6 +18,7 @@ export {
   type ConversationService,
   type ActivityService,
   type SavedService,
+  type SavedSuggestionsService,
   type ScheduledService,
   type LabelService,
 } from "./services-context"

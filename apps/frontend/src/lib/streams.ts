@@ -95,7 +95,7 @@ export function streamLabel(
   return getStreamName(stream) ?? streamFallbackLabel(stream.type as StreamType, context)
 }
 
-interface StreamNameCaches {
+export interface StreamNameCaches {
   streams: Array<{ id: string; type: StreamType; slug?: string | null; displayName?: string | null }>
   users: Array<{ id: string; name: string }>
   dmPeers: Array<{ streamId: string; userId: string }>

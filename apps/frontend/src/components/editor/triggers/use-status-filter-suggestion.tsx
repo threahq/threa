@@ -1,21 +1,19 @@
 import { useCallback } from "react"
+import { rankMatches } from "@/lib/match-score"
 import { useSuggestion } from "./use-suggestion"
 import { StatusFilterList } from "./status-filter-list"
 import { STATUS_FILTER_OPTIONS, type StatusFilterItem } from "./status-filter-extension"
 
 /**
- * Filters status options by query string.
+ * Filters and ranks status options by query string. Label and inserted value
+ * are both visible match targets; the description is a hidden alias scored a
+ * tier below.
  */
 export function filterStatusOptions(items: StatusFilterItem[], query: string): StatusFilterItem[] {
-  if (!query) return items
-
-  const lowerQuery = query.toLowerCase()
-  return items.filter(
-    (item) =>
-      item.value.toLowerCase().startsWith(lowerQuery) ||
-      item.label.toLowerCase().includes(lowerQuery) ||
-      item.description.toLowerCase().includes(lowerQuery)
-  )
+  return rankMatches(items, query, (item) => ({
+    labels: [item.label, item.value],
+    keywords: [item.description],
+  }))
 }
 
 /**

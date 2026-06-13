@@ -7,26 +7,37 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { useSavedList, useUpdateSaved, useDeleteSaved } from "@/hooks"
+import { useSuggestedCount } from "@/hooks/use-saved-suggestions"
 import { SavedItem } from "@/components/saved/saved-item"
 import { SavedEmpty } from "@/components/saved/saved-empty"
 import { SavedSkeleton } from "@/components/saved/saved-skeleton"
+import { SavedQuickAdd } from "@/components/saved/saved-quick-add"
+import { SuggestedTab } from "@/components/saved/suggested-tab"
 import { SidebarToggle } from "@/components/layout"
 import type { SavedStatus } from "@threa/types"
 
-const TABS: { value: SavedStatus; label: string }[] = [
+// "suggested" is a view, not a saved status — it reads from a separate data
+// source (the quiet collector) but lives as a fourth tab on this page.
+export type SavedTab = SavedStatus | "suggested"
+
+export const SAVED_TABS: { value: SavedTab; label: string }[] = [
   { value: "saved", label: "Saved" },
+  { value: "suggested", label: "Suggested" },
   { value: "done", label: "Done" },
   { value: "archived", label: "Archived" },
 ]
 
-const VALID_TABS = new Set<string>(SAVED_STATUSES)
+/** The status tabs only (no "suggested") — the side-panel surface uses these. */
+export const SAVED_STATUS_TABS = SAVED_TABS.filter((t) => t.value !== "suggested")
+
+const VALID_TABS = new Set<string>([...SAVED_STATUSES, "suggested"])
 
 /**
  * Route is `/w/:workspaceId/saved/:tab?` — bare `/saved` renders the default
- * Saved tab, `/saved/done` and `/saved/archived` render the other two.
- * Refreshes, back/forward, and shared links all land on the same view
- * (INV-59). Unknown tab segments redirect to the default so typos don't
- * render a blank page.
+ * Saved tab; `/saved/suggested`, `/saved/done`, `/saved/archived` render the
+ * others. Refreshes, back/forward, and shared links all land on the same view
+ * (INV-59). Unknown tab segments redirect to the default so typos don't render
+ * a blank page.
  */
 export function SavedPage() {
   const { workspaceId, tab: tabParam } = useParams<{ workspaceId: string; tab?: string }>()
@@ -42,30 +53,45 @@ export function SavedPage() {
     return <Navigate to={`/w/${workspaceId}/saved`} replace />
   }
 
-  const tab: SavedStatus = (tabParam as SavedStatus | undefined) ?? "saved"
+  const tab: SavedTab = (tabParam as SavedTab | undefined) ?? "saved"
 
   return <SavedPageInner workspaceId={workspaceId} tab={tab} />
 }
 
 interface InnerProps {
   workspaceId: string
-  tab: SavedStatus
+  tab: SavedTab
 }
 
 /**
  * Tab strip shared by the routed page and the side-panel rendering. Tabs are
  * navigation — rendered as <a> so cmd-click / context menu work (INV-40); the
- * caller supplies hrefs (route segments on the page, panel URLs in a panel)
- * so the view stays URL-driven in both surfaces (INV-59).
+ * caller supplies the tab set and hrefs (route segments on the page, panel URLs
+ * in a panel) so the view stays URL-driven in both surfaces (INV-59).
  */
-export function SavedTabs({ value, tabHref }: { value: SavedStatus; tabHref: (next: SavedStatus) => string }) {
+export function SavedTabs({
+  tabs,
+  value,
+  tabHref,
+  suggestedCount = 0,
+}: {
+  tabs: { value: SavedTab; label: string }[]
+  value: SavedTab
+  tabHref: (next: SavedTab) => string
+  suggestedCount?: number
+}) {
   return (
     <Tabs value={value}>
       <TabsList className="h-8">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <TabsTrigger key={t.value} value={t.value} asChild>
             <Link to={tabHref(t.value)} className="text-xs px-2.5 py-1">
               {t.label}
+              {t.value === "suggested" && suggestedCount > 0 && (
+                <span className="ml-1.5 rounded-full bg-amber-500/15 px-1.5 text-[10px] font-medium text-amber-600 tabular-nums">
+                  {suggestedCount}
+                </span>
+              )}
             </Link>
           </TabsTrigger>
         ))}
@@ -74,8 +100,8 @@ export function SavedTabs({ value, tabHref }: { value: SavedStatus; tabHref: (ne
   )
 }
 
-/** The saved-items list for one tab — shared by the page and the side panel. */
-export function SavedList({ workspaceId, tab }: InnerProps) {
+/** The saved/done/archived list for one tab — shared by the page and the side panel. */
+export function SavedList({ workspaceId, tab }: { workspaceId: string; tab: SavedStatus }) {
   const { items, isLoading } = useSavedList(workspaceId, tab)
   const updateMutation = useUpdateSaved(workspaceId)
   const deleteMutation = useDeleteSaved(workspaceId)
@@ -117,8 +143,11 @@ export function SavedList({ workspaceId, tab }: InnerProps) {
 }
 
 function SavedPageInner({ workspaceId, tab }: InnerProps) {
-  const tabHref = (next: SavedStatus) =>
-    next === "saved" ? `/w/${workspaceId}/saved` : `/w/${workspaceId}/saved/${next}`
+  const suggestedCount = useSuggestedCount(workspaceId)
+
+  // Tabs are navigation — rendered as <a> so cmd-click / context menu work
+  // (INV-40). The Tabs primitive keeps the active-state styling via `value`.
+  const tabHref = (next: SavedTab) => (next === "saved" ? `/w/${workspaceId}/saved` : `/w/${workspaceId}/saved/${next}`)
 
   return (
     <div className="flex h-full flex-col">
@@ -138,12 +167,19 @@ function SavedPageInner({ workspaceId, tab }: InnerProps) {
           </div>
         </div>
 
-        <SavedTabs value={tab} tabHref={tabHref} />
+        <SavedTabs tabs={SAVED_TABS} value={tab} tabHref={tabHref} suggestedCount={suggestedCount} />
       </header>
 
       <ScrollArea className="flex-1 [&>div>div]:!block [&>div>div]:!w-full">
         <main className="py-1">
-          <SavedList workspaceId={workspaceId} tab={tab} />
+          {tab === "suggested" ? (
+            <SuggestedTab workspaceId={workspaceId} />
+          ) : (
+            <>
+              {tab === "saved" && <SavedQuickAdd workspaceId={workspaceId} />}
+              <SavedList workspaceId={workspaceId} tab={tab} />
+            </>
+          )}
         </main>
       </ScrollArea>
     </div>

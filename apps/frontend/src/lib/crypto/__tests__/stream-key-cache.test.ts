@@ -10,6 +10,7 @@ import {
 import { generateUIK, type UserIdentityKey } from "../keys"
 import {
   clearStreamKeyCache,
+  computeMissingActorWraps,
   putStreamKey,
   rekeyStream,
   resolveCurrentStreamKey,
@@ -242,6 +243,76 @@ describe("putStreamKey + resolveCurrentStreamKey", () => {
   })
 })
 
+describe("computeMissingActorWraps", () => {
+  const eik = { recipientKeyId: "eik_fresh", recipientKind: "enclave" as const, publicKey: "AA==" }
+  const bik = { recipientKeyId: "bik_fresh", recipientKind: "bot" as const, publicKey: "AA==" }
+  const wrap = (keyGeneration: number, recipientKeyId: string, recipientKind: "user" | "enclave" | "bot") => ({
+    keyGeneration,
+    recipientKeyId,
+    recipientKind,
+    wrapEnc: "ZW5j",
+    wrapCt: "Y3Q=",
+  })
+
+  it("returns nothing when every live actor key has its current wrap and no older enclave generations exist", () => {
+    const missing = computeMissingActorWraps({
+      currentKeyGeneration: 0,
+      wraps: [wrap(0, "eik_fresh", "enclave")],
+      liveActorRecipients: [eik],
+    })
+    expect(missing).toEqual([])
+  })
+
+  it("flags the current generation for any live actor key without a wrap", () => {
+    const missing = computeMissingActorWraps({
+      currentKeyGeneration: 0,
+      wraps: [wrap(0, "eik_dead", "enclave")],
+      liveActorRecipients: [eik, bik],
+    })
+    expect(missing).toEqual([
+      { recipient: eik, keyGeneration: 0 },
+      { recipient: bik, keyGeneration: 0 },
+    ])
+  })
+
+  // E2EE-7: a restart after a key roll orphans the enclave's OLDER generations
+  // too — a parked turn or digest sealed under them is unreadable until the
+  // fresh EIK gets those wraps back.
+  it("flags the enclave's already-held older generations, but never a bot's", () => {
+    const missing = computeMissingActorWraps({
+      currentKeyGeneration: 2,
+      wraps: [
+        // The dead keys' wraps prove which generations each actor held.
+        wrap(0, "eik_dead", "enclave"),
+        wrap(1, "eik_dead", "enclave"),
+        wrap(1, "bik_dead", "bot"),
+        wrap(2, "eik_fresh", "enclave"),
+        wrap(2, "bik_fresh", "bot"),
+        // The owner's user wraps must not count as actor-held generations.
+        wrap(0, "e2ek_owner", "user"),
+      ],
+      liveActorRecipients: [eik, bik],
+    })
+    expect(missing).toEqual([
+      { recipient: eik, keyGeneration: 0 },
+      { recipient: eik, keyGeneration: 1 },
+    ])
+  })
+
+  it("does not re-flag an older generation the live EIK already holds", () => {
+    const missing = computeMissingActorWraps({
+      currentKeyGeneration: 1,
+      wraps: [wrap(0, "eik_fresh", "enclave"), wrap(1, "eik_fresh", "enclave")],
+      liveActorRecipients: [eik],
+    })
+    expect(missing).toEqual([])
+  })
+
+  it("tolerates a backend that omits liveActorRecipients", () => {
+    expect(computeMissingActorWraps({ currentKeyGeneration: 0, wraps: [], liveActorRecipients: undefined })).toEqual([])
+  })
+})
+
 describe("reviveStaleActorWraps", () => {
   it("re-wraps the current SSK to a live actor key that is missing its wrap (enclave restart)", async () => {
     const owner = await generateUIK()
@@ -301,7 +372,9 @@ describe("reviveStaleActorWraps", () => {
     const owner = await generateUIK()
     vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
       currentKeyGeneration: 0,
-      wraps: [{ keyGeneration: 0, recipientKeyId: "eik_live", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],
+      wraps: [
+        { keyGeneration: 0, recipientKeyId: "eik_live", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+      ],
       ownerUserId: "user_owner",
       liveActorRecipients: [{ recipientKeyId: "eik_live", recipientKind: "enclave", publicKey: "AA==" }],
     })
@@ -317,6 +390,80 @@ describe("reviveStaleActorWraps", () => {
 
     expect(result).toBe("none-missing")
     expect(revive).not.toHaveBeenCalled()
+  })
+
+  // E2EE-7: enclave restart after a key roll — the fresh EIK needs BOTH
+  // generations back (a turn parked under generation 0 plus current sends),
+  // and a generation the owner can't open is skipped, not fatal.
+  it("re-wraps every owner-openable generation the enclave held, skipping unopenable ones", async () => {
+    const owner = await generateUIK()
+    const enclave = await generateUIK()
+    const sskGen0 = generateStreamKey()
+    const sskGen2 = generateStreamKey()
+    const ownerWrapGen0 = await wrapStreamKey({
+      key: sskGen0,
+      recipientPublicKey: owner.publicKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 0, recipientKeyId: KEY_ID }),
+    })
+    const ownerWrapGen2 = await wrapStreamKey({
+      key: sskGen2,
+      recipientPublicKey: owner.publicKey,
+      aad: buildWrapAad({ streamId: STREAM, keyGeneration: 2, recipientKeyId: KEY_ID }),
+    })
+    const asWire = (w: { enc: Uint8Array; ct: Uint8Array }) => ({
+      wrapEnc: bytesToBase64(w.enc),
+      wrapCt: bytesToBase64(w.ct),
+    })
+    vi.spyOn(e2eKeyWrapsApi, "get").mockResolvedValue({
+      currentKeyGeneration: 2,
+      wraps: [
+        { keyGeneration: 0, recipientKeyId: KEY_ID, recipientKind: "user", ...asWire(ownerWrapGen0) },
+        { keyGeneration: 2, recipientKeyId: KEY_ID, recipientKind: "user", ...asWire(ownerWrapGen2) },
+        // The dead EIK held generations 0, 1, and 2 — but the owner has no
+        // generation-1 wrap of its own, so that one is unopenable and skipped.
+        { keyGeneration: 0, recipientKeyId: "eik_dead", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+        { keyGeneration: 1, recipientKeyId: "eik_dead", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+        { keyGeneration: 2, recipientKeyId: "eik_dead", recipientKind: "enclave", wrapEnc: "ZW5j", wrapCt: "Y3Q=" },
+      ],
+      ownerUserId: "user_owner",
+      liveActorRecipients: [
+        { recipientKeyId: "eik_fresh", recipientKind: "enclave", publicKey: bytesToBase64(enclave.publicKey) },
+      ],
+    })
+    const revive = vi.spyOn(e2eKeyWrapsApi, "reviveActorWraps").mockResolvedValue(undefined)
+
+    const result = await reviveStaleActorWraps({
+      workspaceId: WS,
+      streamId: STREAM,
+      userId: "user_owner",
+      ownerKeyId: KEY_ID,
+      ownerPrivateKey: owner.privateKey,
+    })
+
+    expect(result).toBe("revived")
+    const [, , input] = revive.mock.calls[0]!
+    expect(input.keyGeneration).toBe(2)
+    expect(input.wraps.map((w) => `${w.keyGeneration}:${w.recipientKeyId}`).sort()).toEqual([
+      "0:eik_fresh",
+      "2:eik_fresh",
+    ])
+
+    // Each posted wrap must open to ITS generation's SSK under the fresh
+    // EIK's key, with the AAD bound to that generation's slot.
+    const opened = new Map<number, Uint8Array>()
+    for (const w of input.wraps) {
+      opened.set(
+        w.keyGeneration!,
+        await unwrapStreamKey({
+          enc: base64ToBytes(w.wrapEnc),
+          ct: base64ToBytes(w.wrapCt),
+          recipientPrivateKey: enclave.privateKey,
+          aad: buildWrapAad({ streamId: STREAM, keyGeneration: w.keyGeneration!, recipientKeyId: "eik_fresh" }),
+        })
+      )
+    }
+    expect(opened.get(0)).toEqual(sskGen0)
+    expect(opened.get(2)).toEqual(sskGen2)
   })
 
   it("short-circuits for a non-owner without touching the SSK", async () => {

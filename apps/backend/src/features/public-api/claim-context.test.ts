@@ -5,6 +5,7 @@ import { BotRepository } from "./bot-repository"
 import { BotChannelAccessRepository } from "../api-keys"
 import { MessageRepository, type EventService, type Message } from "../messaging"
 import { StreamMemberRepository, StreamRepository, type Stream } from "../streams"
+import { E2eStreamActorsRepository, E2eStreamsRepository } from "../e2e-streams"
 import { UserRepository } from "../workspaces"
 import { PersonaRepository, AgentSessionRepository } from "../agents"
 import * as dbModule from "../../db"
@@ -51,7 +52,7 @@ function historyMessage(overrides: Partial<Message>): Message {
   } as Message
 }
 
-function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[] }) {
+function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[]; streamIsE2e?: boolean }) {
   // The invocation lands in a thread; access resolves through the root channel.
   const invocation = {
     id: "binv_1",
@@ -94,6 +95,8 @@ function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[] }
   spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue(null as never)
 
   const findStream = spyOn(StreamRepository, "findById").mockResolvedValue(params.stream as never)
+  spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(params.streamIsE2e ?? false)
+  spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([])
   const findSurrounding = spyOn(MessageRepository, "findSurrounding").mockResolvedValue(
     (params.surrounding ?? []) as never
   )
@@ -262,8 +265,11 @@ describe("claimBotInvocation context handle", () => {
   })
 
   it("withholds context entirely for an E2E stream — no plaintext history leaves the enclave path", async () => {
+    // The delivery verdict (Phase 2.4a) is the withhold predicate: an E2E
+    // stream is never `plaintext` for a third-party bot, grant or no grant.
     const { handlers, req, findSurrounding } = arrangeClaim({
-      stream: { ...threadStream, e2eEnabled: true } as unknown as Stream,
+      stream: threadStream,
+      streamIsE2e: true,
     })
     const { res, payloads } = createResponse()
 

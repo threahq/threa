@@ -10,6 +10,7 @@ import { createRequireBotManagement } from "./middleware/bot-management"
 import { createRequireWorkspacePermission } from "./middleware/workspace-permission"
 import { createWorkspaceAuthzHandlers, WorkspaceAuthzService } from "./features/workspace-authz"
 import { createFeatureFlagHandlers, type FeatureFlagService } from "./features/feature-flags"
+import { createPlatformAdminHandlers, type PlatformAdminService } from "./features/platform-admin"
 import { createAuthHandlers } from "./auth/handlers"
 import { createWorkspaceHandlers, WorkspaceRepository } from "./features/workspaces"
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
@@ -33,6 +34,7 @@ import { createInvitationHandlers } from "./features/invitations"
 import { createActivityHandlers } from "./features/activity"
 import { createSyncHandlers } from "./features/sync"
 import { createSavedMessagesHandlers } from "./features/saved-messages"
+import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createLabelHandlers } from "./features/labels"
 import { createPushHandlers } from "./features/push"
@@ -50,6 +52,7 @@ import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from
 import {
   createEnclaveRuntimesHandlers,
   createEnclaveSessionHandlers,
+  type EnclaveClaimService,
   type EnclaveRuntimesService,
 } from "./features/enclave-runtimes"
 import {
@@ -72,6 +75,7 @@ import type { InvitationService } from "./features/invitations"
 import type { ActivityService } from "./features/activity"
 import type { SyncService } from "./features/sync"
 import type { SavedMessagesService } from "./features/saved-messages"
+import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
 import type { LabelService, LabelAssignmentService } from "./features/labels"
 import type { PushService } from "./features/push"
@@ -91,7 +95,6 @@ import type { WorkosOrgService } from "@threa/backend-common"
 import type { BotApiKeyService } from "./features/public-api"
 import type { Pool } from "pg"
 import type { PoolMonitor } from "./lib/observability"
-import type { QueueManager } from "./lib/queue"
 
 interface Dependencies {
   pool: Pool
@@ -108,12 +111,14 @@ interface Dependencies {
   userPreferencesService: UserPreferencesService
   workspaceSettingsService: WorkspaceSettingsService
   featureFlagService: FeatureFlagService
+  platformAdminService: PlatformAdminService
   sidebarConfigService: SidebarConfigService
   userE2eKeysService: UserE2eKeysService
   invitationService: InvitationService
   activityService: ActivityService
   syncService: SyncService
   savedMessagesService: SavedMessagesService
+  savedSuggestionsService: SavedSuggestionsService
   scheduledMessagesService: ScheduledMessagesService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
@@ -125,6 +130,8 @@ interface Dependencies {
   corsAllowedOrigins: string[]
   allowDevAuthRoutes: boolean
   internalApiKey: string | null
+  /** Dedicated enclave-channel secret, distinct from internalApiKey (Phase 2.4c, E2EE-22). */
+  enclaveInternalApiKey: string | null
   apiKeyService: ApiKeyService
   botChannelService: BotChannelService
   linkPreviewService: LinkPreviewService
@@ -135,13 +142,12 @@ interface Dependencies {
   userApiKeyService: UserApiKeyService
   voiceTranscriptionService: VoiceTranscriptionService
   enclaveRuntimesService: EnclaveRuntimesService
-  enclaveInstanceUrlAllowedPrefixes: string[]
+  enclaveClaimService: EnclaveClaimService
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
-  jobQueue: QueueManager
   costService: AICostServiceLike
 }
 
@@ -160,12 +166,14 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
+    platformAdminService,
     sidebarConfigService,
     userE2eKeysService,
     invitationService,
     activityService,
     syncService,
     savedMessagesService,
+    savedSuggestionsService,
     scheduledMessagesService,
     labelService,
     labelAssignmentService,
@@ -177,6 +185,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     corsAllowedOrigins,
     allowDevAuthRoutes,
     internalApiKey,
+    enclaveInternalApiKey,
     apiKeyService,
     botChannelService,
     linkPreviewService,
@@ -187,7 +196,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userApiKeyService,
     voiceTranscriptionService,
     enclaveRuntimesService,
-    enclaveInstanceUrlAllowedPrefixes,
+    enclaveClaimService,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -204,6 +213,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const requireWorkspacePermission = createRequireWorkspacePermission()
   const workspaceAuthz = createWorkspaceAuthzHandlers({ workspaceAuthzService })
   const featureFlags = createFeatureFlagHandlers({ featureFlagService })
+  const platformAdmin = createPlatformAdminHandlers({ platformAdminService })
 
   const rateLimits = createRateLimiters(rateLimiterConfig)
   const opsAccess = createOpsAccessMiddleware()
@@ -217,6 +227,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userPreferencesService,
     workspaceSettingsService,
     featureFlagService,
+    platformAdminService,
     sidebarConfigService,
     invitationService,
     activityService,
@@ -258,6 +269,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const activity = createActivityHandlers({ activityService })
   const sync = createSyncHandlers({ syncService })
   const savedMessages = createSavedMessagesHandlers({ savedMessagesService })
+  const savedSuggestions = createSavedSuggestionsHandlers({ savedSuggestionsService })
   const scheduledMessages = createScheduledMessagesHandlers({ scheduledMessagesService })
   const label = createLabelHandlers({ labelService, labelAssignmentService })
   const agentSession = createAgentSessionHandlers({ pool })
@@ -276,7 +288,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   const enclave = createEnclaveRuntimesHandlers({
     enclaveRuntimesService,
-    instanceUrlAllowedPrefixes: enclaveInstanceUrlAllowedPrefixes,
+    enclaveClaimService,
   })
 
   // Internal API — control-plane → regional backend, protected by shared secret
@@ -289,30 +301,40 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
+    app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
+  }
 
-    // Enclave runtime registry — each enclave instance authenticates with the
-    // same shared internal secret to register/refresh/retire its EIK.
-    app.post("/internal/enclave-runtimes/register-key", internalAuth, enclave.registerKey)
-    app.post("/internal/enclave-runtimes/heartbeat", internalAuth, enclave.heartbeat)
-    app.post("/internal/enclave-runtimes/revoke", internalAuth, enclave.revoke)
+  // Enclave runtime registry — gated by the dedicated enclave credential
+  // (ENCLAVE_INTERNAL_API_KEY), mounted independently of the control-plane
+  // block above so the enclave channel doesn't require INTERNAL_API_KEY. A
+  // separate middleware instance means a shared INTERNAL_API_KEY holder
+  // (e.g. the bot-runtime) cannot register an EIK and become an SSK wrap
+  // recipient (Phase 2.4c, E2EE-22).
+  if (enclaveInternalApiKey) {
+    const enclaveAuth = createInternalAuthMiddleware(enclaveInternalApiKey)
+    app.post("/internal/enclave-runtimes/register-key", enclaveAuth, enclave.registerKey)
+    app.post("/internal/enclave-runtimes/heartbeat", enclaveAuth, enclave.heartbeat)
+    app.post("/internal/enclave-runtimes/revoke", enclaveAuth, enclave.revoke)
+    // The pull transport's turn start (§2.7): instances poll here and claim
+    // the oldest turn their EIK can serve. Same enclave-credential gate.
+    app.post("/internal/enclave-runtimes/claims", enclaveAuth, enclave.claim)
 
-    // Session callbacks: a live enclave drives an assigned turn over these
-    // (liveness refresh + sealed replies on completion). Same shared-secret gate.
+    // Session callbacks: a live enclave drives a claimed turn over these
+    // (liveness refresh + sealed replies on completion). Same enclave-credential gate.
     const enclaveSession = createEnclaveSessionHandlers({
       pool,
       eventService,
       io: deps.io,
-      jobQueue: deps.jobQueue,
       costService: deps.costService,
     })
-    app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", internalAuth, enclaveSession.heartbeat)
-    app.post("/internal/enclave-runtimes/sessions/:id/messages", internalAuth, enclaveSession.message)
-    app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", internalAuth, enclaveSession.sealedName)
-    app.post("/internal/enclave-runtimes/sessions/:id/steps/started", internalAuth, enclaveSession.stepStarted)
-    app.post("/internal/enclave-runtimes/sessions/:id/steps", internalAuth, enclaveSession.steps)
-    app.post("/internal/enclave-runtimes/sessions/:id/substeps", internalAuth, enclaveSession.substep)
-    app.post("/internal/enclave-runtimes/sessions/:id/complete", internalAuth, enclaveSession.complete)
-    app.post("/internal/enclave-runtimes/sessions/:id/fail", internalAuth, enclaveSession.fail)
+    app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", enclaveAuth, enclaveSession.heartbeat)
+    app.post("/internal/enclave-runtimes/sessions/:id/messages", enclaveAuth, enclaveSession.message)
+    app.post("/internal/enclave-runtimes/sessions/:id/sealed-name", enclaveAuth, enclaveSession.sealedName)
+    app.post("/internal/enclave-runtimes/sessions/:id/steps/started", enclaveAuth, enclaveSession.stepStarted)
+    app.post("/internal/enclave-runtimes/sessions/:id/steps", enclaveAuth, enclaveSession.steps)
+    app.post("/internal/enclave-runtimes/sessions/:id/substeps", enclaveAuth, enclaveSession.substep)
+    app.post("/internal/enclave-runtimes/sessions/:id/complete", enclaveAuth, enclaveSession.complete)
+    app.post("/internal/enclave-runtimes/sessions/:id/fail", enclaveAuth, enclaveSession.fail)
   }
 
   // Global baseline rate limit
@@ -534,6 +556,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/api/workspaces/:workspaceId/saved", ...authed, savedMessages.create)
   app.patch("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.update)
   app.delete("/api/workspaces/:workspaceId/saved/:savedId", ...authed, savedMessages.delete)
+
+  // Saved suggestions (passively collected to-do candidates)
+  app.get("/api/workspaces/:workspaceId/saved/suggestions", ...authed, savedSuggestions.list)
+  app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/accept", ...authed, savedSuggestions.accept)
+  app.post("/api/workspaces/:workspaceId/saved/suggestions/:suggestionId/dismiss", ...authed, savedSuggestions.dismiss)
 
   // Labels
   app.get("/api/workspaces/:workspaceId/labels", ...authed, label.list)

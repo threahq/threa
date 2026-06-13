@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
 import type { Server } from "socket.io"
-import { AuthorTypes } from "@threa/types"
+import { AuthorTypes, ENCLAVE_CALLBACK_TOKEN_HEADER } from "@threa/types"
 import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 import { AgentSessionRepository, SessionStatuses } from "../agents"
@@ -11,8 +11,9 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
-import type { QueueManager } from "../../lib/queue"
 import { createEnclaveSessionHandlers } from "./session-handlers"
+import { hashCallbackToken } from "./callback-token"
+import { EnclaveInvocationsRepository } from "./invocations-repository"
 
 const pool = {} as Pool
 
@@ -35,8 +36,21 @@ function fakeRes(): Response & { statusCode: number; jsonBody?: unknown } {
   return res as unknown as Response & { statusCode: number; jsonBody?: unknown }
 }
 
-function req(id: string | undefined, body: unknown): Request {
-  return { params: { id }, body } as unknown as Request
+// Callbacks are token-bound (Phase 2.4b, reject-if-absent): the default
+// request carries the session's token so handler tests exercise the
+// authenticated path. Binding tests override `headers` ({} = absent token).
+const CB_TOKEN = "cbtok_good"
+
+function req(
+  id: string | undefined,
+  body: unknown,
+  headers: Record<string, string> = { [ENCLAVE_CALLBACK_TOKEN_HEADER]: CB_TOKEN }
+): Request {
+  return {
+    params: { id },
+    body,
+    header: (name: string) => headers[name],
+  } as unknown as Request
 }
 
 const SESSION = {
@@ -46,6 +60,7 @@ const SESSION = {
   status: SessionStatuses.RUNNING,
   lastSeenSequence: null,
   triggerMessageId: "msg_trigger",
+  callbackTokenHash: hashCallbackToken(CB_TOKEN),
   createdAt: new Date("2026-05-30T00:00:00.000Z"),
 } as unknown as Awaited<ReturnType<typeof AgentSessionRepository.findById>>
 
@@ -85,11 +100,6 @@ function fakeIo() {
   return { io, emit }
 }
 
-function fakeJobQueue() {
-  const send = mock(async (_queue: string, _data: unknown) => "job_test")
-  return { jobQueue: { send } as unknown as QueueManager, send }
-}
-
 function fakeCostService() {
   const recordUsage = mock(async (_params: Record<string, unknown>) => {})
   return { costService: { recordUsage } as unknown as AICostServiceLike, recordUsage }
@@ -98,15 +108,23 @@ function fakeCostService() {
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
   const eventService = { createMessage } as unknown as EventService
   const { io, emit } = fakeIo()
-  const { jobQueue, send } = fakeJobQueue()
   const { costService, recordUsage } = fakeCostService()
+  // The claim-lifecycle writes ride the session callbacks now (§2.7); stub the
+  // repository seam so handler tests stay DB-free and can assert the flips.
+  const renewClaim = spyOn(EnclaveInvocationsRepository, "renewBySession").mockResolvedValue(undefined)
+  const completeClaim = spyOn(EnclaveInvocationsRepository, "completeBySession").mockResolvedValue(undefined)
+  const failClaim = spyOn(EnclaveInvocationsRepository, "failBySession").mockResolvedValue(undefined)
+  const enqueueCatchUp = spyOn(EnclaveInvocationsRepository, "insertOrReopen").mockResolvedValue(undefined)
   return {
-    handlers: createEnclaveSessionHandlers({ pool, eventService, io, jobQueue, costService }),
+    handlers: createEnclaveSessionHandlers({ pool, eventService, io, costService }),
     createMessage,
     io,
     emit,
-    send,
     recordUsage,
+    renewClaim,
+    completeClaim,
+    failClaim,
+    enqueueCatchUp,
   }
 }
 
@@ -227,16 +245,18 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // No user message arrived during the turn → no follow-up dispatch.
     spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
     spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
-    const { handlers, createMessage, io, emit, send, recordUsage } = makeHandlers()
+    const { handlers, createMessage, io, emit, enqueueCatchUp, completeClaim, recordUsage } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(send).not.toHaveBeenCalled() // nothing unseen → no catch-up turn
+    expect(enqueueCatchUp).not.toHaveBeenCalled() // nothing unseen → no catch-up turn
     expect(recordUsage).not.toHaveBeenCalled() // no usage in the ack → nothing to record
     expect(createMessage).not.toHaveBeenCalled() // replies were already streamed via /messages
     expect(complete).toHaveBeenCalledTimes(1)
+    // The turn's claim flips with the session, in the same transaction (INV-7).
+    expect(completeClaim).toHaveBeenCalledWith(tx, "session_1")
     // Completion + event are one atomic transaction (INV-7): completeSession runs
     // on the tx client, not the bare pool.
     expect(complete.mock.calls[0]![0]).toBe(tx)
@@ -330,17 +350,20 @@ describe("createEnclaveSessionHandlers.complete", () => {
       authorId: "usr_1",
       sequence: 9n,
     })
-    const { handlers, send } = makeHandlers()
+    const { handlers, enqueueCatchUp } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(send).toHaveBeenCalledTimes(1)
-    expect(send.mock.calls[0]![0]).toBe("enclave.invoke")
-    expect(send.mock.calls[0]![1]).toMatchObject({
+    // The suppressed message's invocation is reopened (it was completed as a
+    // no-op by the one-running guard at claim time), so the enclave's next
+    // poll picks the catch-up turn straight off the claim queue.
+    expect(enqueueCatchUp).toHaveBeenCalledTimes(1)
+    expect(enqueueCatchUp.mock.calls[0]![1]).toMatchObject({
       workspaceId: "ws_1",
       streamId: "stream_1",
+      rootStreamId: "stream_1",
       messageId: "msg_new",
       triggeredBy: "usr_1",
     })
@@ -416,12 +439,20 @@ describe("createEnclaveSessionHandlers.fail", () => {
     const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(SESSION)
     const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers, io, emit } = makeHandlers()
+    const { handlers, io, emit, failClaim } = makeHandlers()
     const res = fakeRes()
 
     await handlers.fail(req("session_1", FAIL_BODY), res)
 
     expect(res.statusCode).toBe(204)
+    // The turn's claim is terminal-failed with the session, in the SAME
+    // transaction as the RUNNING→FAILED flip (INV-7) — a loop error is not
+    // retried (same semantics the push transport had).
+    expect(failClaim.mock.calls[0]![0]).toBe(tx)
+    expect(failClaim.mock.calls[0]![1]).toMatchObject({
+      sessionId: "session_1",
+      errorMessage: "Enclave session failed: AbortError",
+    })
     // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
     // classification — the error's class name, never plaintext content (INV-E7).
     expect(updateStatus.mock.calls[0]![2]).toBe(SessionStatuses.FAILED)
@@ -668,28 +699,157 @@ describe("createEnclaveSessionHandlers.substep", () => {
 
 describe("createEnclaveSessionHandlers.heartbeat", () => {
   it("400s without a session id", async () => {
-    const handlers = createEnclaveSessionHandlers({
-      pool,
-      eventService: {} as EventService,
-      io: fakeIo().io,
-      jobQueue: fakeJobQueue().jobQueue,
-      costService: fakeCostService().costService,
-    })
+    const { handlers } = makeHandlers()
     await expect(handlers.heartbeat(req(undefined, {}), fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
 
-  it("refreshes the heartbeat and 204s", async () => {
+  it("refreshes the heartbeat, renews the claim, and answers abort: false", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
-    const handlers = createEnclaveSessionHandlers({
-      pool,
-      eventService: {} as EventService,
-      io: fakeIo().io,
-      jobQueue: fakeJobQueue().jobQueue,
-      costService: fakeCostService().costService,
-    })
+    const { handlers, renewClaim } = makeHandlers()
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)
     expect(beat).toHaveBeenCalledWith(pool, "session_1")
-    expect(res.statusCode).toBe(204)
+    // A healthy long turn keeps its claim out of the claimable set.
+    expect(renewClaim).toHaveBeenCalledWith(pool, expect.objectContaining({ sessionId: "session_1" }))
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({ abort: false })
   })
+
+  it("carries a requested abort back on the heartbeat (§2.7: cancel rides the pull channel)", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...SESSION!,
+      abortRequestedAt: new Date(),
+    } as typeof SESSION)
+    spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+    await handlers.heartbeat(req("session_1", {}), res)
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({ abort: true })
+  })
+})
+
+// Phase 2.4b (E2EE-21): callbacks bind to the session's assigned runner via the
+// dispatch-minted token, and a seal under the wrong generation is rejected
+// loudly instead of persisting a permanently undecryptable row.
+describe("createEnclaveSessionHandlers callback binding (Phase 2.4b)", () => {
+  // The row stores only the digest; the runner echoes the cleartext.
+  const BOUND_SESSION = {
+    ...SESSION!,
+    replyKeyGeneration: 0,
+  } as typeof SESSION
+
+  const tokenHeader = (token: string) => ({ [ENCLAVE_CALLBACK_TOKEN_HEADER]: token })
+
+  it("403s a mismatched token without writing anything", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    const { handlers, createMessage } = makeHandlers()
+    await expect(
+      handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_evil")), fakeRes())
+    ).rejects.toMatchObject({ status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("403s a presented token when the session row carries none", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...SESSION!,
+      callbackTokenHash: null,
+    } as typeof SESSION)
+    const { handlers } = makeHandlers()
+    await expect(
+      handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_any")), fakeRes())
+    ).rejects.toMatchObject({ status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+  })
+
+  it("accepts the matching token and writes the reply", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ workspaceId: "ws_1" } as never)
+    const { handlers, createMessage } = makeHandlers()
+    const res = fakeRes()
+    await handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_good")), res)
+    expect(res.statusCode).toBe(204)
+    expect(createMessage).toHaveBeenCalled()
+  })
+
+  it("403s an absent token without writing anything — rollout tolerance is over", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    const { handlers, createMessage } = makeHandlers()
+    await expect(handlers.message(req("session_1", MESSAGE_BODY, {}), fakeRes())).rejects.toMatchObject({
+      status: 403,
+      code: "CALLBACK_TOKEN_MISSING",
+    })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("rejects a wrong-generation seal loudly instead of persisting an undecryptable reply", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...BOUND_SESSION!,
+      replyKeyGeneration: 2,
+    } as typeof SESSION)
+    const { handlers, createMessage } = makeHandlers()
+    await expect(
+      // MESSAGE_BODY seals under keyGeneration 0; the session expects 2.
+      handlers.message(req("session_1", MESSAGE_BODY, tokenHeader("cbtok_good")), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "E2E_WRONG_KEY_GENERATION" })
+    expect(createMessage).not.toHaveBeenCalled()
+  })
+
+  it("403s pre-2.4b sessions (NULL hash) called without a token — no caller can satisfy them", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...SESSION!,
+      callbackTokenHash: null,
+      replyKeyGeneration: null,
+    } as typeof SESSION)
+    const { handlers } = makeHandlers()
+    await expect(handlers.message(req("session_1", MESSAGE_BODY, {}), fakeRes())).rejects.toMatchObject({
+      status: 403,
+      code: "CALLBACK_TOKEN_MISSING",
+    })
+  })
+
+  it("binds the heartbeat too — wrong token never refreshes", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+    const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
+    const { handlers } = makeHandlers()
+    await expect(handlers.heartbeat(req("session_1", {}, tokenHeader("cbtok_evil")), fakeRes())).rejects.toMatchObject({
+      status: 403,
+    })
+    expect(beat).not.toHaveBeenCalled()
+  })
+
+  it("rejects a wrong-generation sealed step", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...BOUND_SESSION!,
+      replyKeyGeneration: 1,
+    } as typeof SESSION)
+    const { handlers } = makeHandlers()
+    await expect(
+      handlers.steps(req("session_1", STEP_BODY, tokenHeader("cbtok_good")), fakeRes())
+    ).rejects.toMatchObject({ status: 400, code: "E2E_WRONG_KEY_GENERATION" })
+  })
+
+  // Every guarded callback route consults the same chokepoint; these pin the
+  // per-handler wiring so a regression on any one route fails this file.
+  const ENVELOPE = { v: 2, keyGeneration: 0, iv: "aXY=", aad: "YWFk" }
+  const mismatchCases: [keyof ReturnType<typeof makeHandlers>["handlers"], unknown][] = [
+    ["sealedName", { ciphertext: "Y3Q=", envelope: ENVELOPE }],
+    ["stepStarted", STEP_START_BODY],
+    ["substep", { stepType: "web_search", ciphertext: "Y3Q=", envelope: ENVELOPE }],
+    ["complete", COMPLETE_BODY],
+    ["fail", { errorName: "Error" }],
+  ]
+  for (const [handlerName, body] of mismatchCases) {
+    it(`binds ${String(handlerName)} — a wrong token is 403 with nothing written or broadcast`, async () => {
+      spyOn(AgentSessionRepository, "findById").mockResolvedValue(BOUND_SESSION)
+      const tx = spyOn(db, "withTransaction")
+      const { handlers, emit, createMessage } = makeHandlers()
+      await expect(
+        handlers[handlerName](req("session_1", body, tokenHeader("cbtok_evil")), fakeRes())
+      ).rejects.toMatchObject({ status: 403, code: "CALLBACK_TOKEN_MISMATCH" })
+      expect(tx).not.toHaveBeenCalled()
+      expect(emit).not.toHaveBeenCalled()
+      expect(createMessage).not.toHaveBeenCalled()
+    })
+  }
 })

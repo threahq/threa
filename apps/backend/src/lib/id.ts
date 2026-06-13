@@ -44,6 +44,7 @@ export {
   botChannelAccessId,
   videoTranscodeJobId,
   savedMessageId,
+  savedSuggestionId,
   reminderQueueId,
   scheduledMessageId,
   scheduledMessageQueueId,
@@ -61,6 +62,7 @@ export {
   voiceSessionId,
   userEncryptionKeyId,
   enclaveRuntimeId,
+  enclaveInvocationId,
   streamE2eKeyWrapId,
   conversationFeedbackId,
 } from "@threa/backend-common"

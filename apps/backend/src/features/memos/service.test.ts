@@ -77,6 +77,7 @@ const classification: ConversationClassification = {
   shouldReviseExisting: false,
   revisionReason: null,
   confidence: 0.95,
+  containsActionItems: false,
 }
 
 function setupService(options: { memoContents: MemoContent[] }) {

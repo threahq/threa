@@ -2,11 +2,26 @@
 import Layout from "../layouts/Layout.astro"
 import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
+
+const schema = [
+  {
+    "@context": "https://schema.org",
+    "@type": "AboutPage",
+    name: "About Threa",
+    url: new URL("/about", Astro.site).href,
+    mainEntity: {
+      "@type": "Person",
+      name: "Kristoffer Remback",
+      sameAs: ["https://github.com/kristofferremback", "https://www.linkedin.com/in/kristofferremback/"],
+    },
+  },
+]
 ---
 
 <Layout
   title="About · Threa"
   description="Threa began as a side project, out of curiosity and frustration with workplace chat: how much more you can do with what a conversation already holds, and whether a tool like this has to lock you in. Built by Kristoffer Remback, in the open."
+  schema={schema}
 >
   <SvgDefs />
 

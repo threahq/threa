@@ -9,7 +9,9 @@ import { StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
 import { type CommandDispatchedPayload, E2E_PLACEHOLDER_CONTENT_MARKDOWN } from "@threa/types"
-import { serializeBigInt } from "@threa/backend-common"
+import { serializeBigInt, HttpError } from "@threa/backend-common"
+import { MessageNotFoundError } from "../../lib/errors"
+import { validateRequest } from "../../lib/validation"
 import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threa/prosemirror"
@@ -264,15 +266,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = createMessageSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
-
-      const data = result.data
+      const data = validateRequest(createMessageSchema, req.body)
 
       const stream = await streamService.resolveWritableMessageStream({
         workspaceId,
@@ -290,12 +284,12 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const isE2eStream = stream.e2eEnabled === true
       const isE2eRequest = "ciphertext" in data
       if (isE2eStream !== isE2eRequest) {
-        return res.status(400).json({
-          error: isE2eStream
+        throw new HttpError(
+          isE2eStream
             ? "Stream is end-to-end encrypted; send ciphertext, envelope, and e2eVersion"
             : "Stream is not end-to-end encrypted; send plaintext content",
-          code: isE2eStream ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM",
-        })
+          { status: 400, code: isE2eStream ? "E2E_STREAM_REQUIRES_CIPHERTEXT" : "E2E_PAYLOAD_REQUIRES_E2E_STREAM" }
+        )
       }
 
       if ("ciphertext" in data) {
@@ -405,17 +399,11 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const workspaceId = req.workspaceId!
       const { messageId } = req.params
 
-      const result = updateMessageSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(updateMessageSchema, req.body)
 
       const existing = await eventService.getMessageById(messageId)
       if (!existing) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       // Read-access gate (visibility + workspace + thread inheritance), not
@@ -424,15 +412,15 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       // restriction below still enforces "edit your own".
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       if (existing.authorId !== userId) {
-        return res.status(403).json({ error: "Can only edit your own messages" })
+        throw new HttpError("Can only edit your own messages", { status: 403, code: "FORBIDDEN" })
       }
 
       // Normalize to both JSON and markdown formats
-      const { contentJson, contentMarkdown } = normalizeContent(result.data)
+      const { contentJson, contentMarkdown } = normalizeContent(data)
 
       // Derive inline attachment ids from the new contentJson so event-service
       // can refresh the `attachment_references` projection in sync (INV-7).
@@ -448,11 +436,11 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
         contentMarkdown,
         actorId: userId,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-        confirmedPrivacyWarning: result.data.confirmedPrivacyWarning,
+        confirmedPrivacyWarning: data.confirmedPrivacyWarning,
       })
 
       if (!message) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       res.json({ message: serializeMessage(message) })
@@ -462,27 +450,21 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = moveMessagesToThreadSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(moveMessagesToThreadSchema, req.body)
 
       await streamService.resolveWritableMessageStream({
         workspaceId,
         userId,
-        target: { streamId: result.data.sourceStreamId },
+        target: { streamId: data.sourceStreamId },
       })
 
       const moveResult = await eventService.moveMessagesToThread({
         workspaceId,
-        sourceStreamId: result.data.sourceStreamId,
-        targetMessageId: result.data.targetMessageId,
-        messageIds: result.data.messageIds,
+        sourceStreamId: data.sourceStreamId,
+        targetMessageId: data.targetMessageId,
+        messageIds: data.messageIds,
         actorId: userId,
-        leaseKey: result.data.leaseKey,
+        leaseKey: data.leaseKey,
       })
 
       res.json({
@@ -501,25 +483,19 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const result = validateMoveMessagesToThreadSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(validateMoveMessagesToThreadSchema, req.body)
 
       await streamService.resolveWritableMessageStream({
         workspaceId,
         userId,
-        target: { streamId: result.data.sourceStreamId },
+        target: { streamId: data.sourceStreamId },
       })
 
       const validation = await eventService.validateMoveMessagesToThread({
         workspaceId,
-        sourceStreamId: result.data.sourceStreamId,
-        targetMessageId: result.data.targetMessageId,
-        messageIds: result.data.messageIds,
+        sourceStreamId: data.sourceStreamId,
+        targetMessageId: data.targetMessageId,
+        messageIds: data.messageIds,
         actorId: userId,
       })
 
@@ -533,18 +509,18 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
 
       const existing = await eventService.getMessageById(messageId)
       if (!existing) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       // Same read-access reasoning as `update`: gate on tryAccess (visibility
       // + workspace + thread inheritance), then enforce author-only below.
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       if (existing.authorId !== userId) {
-        return res.status(403).json({ error: "Can only delete your own messages" })
+        throw new HttpError("Can only delete your own messages", { status: 403, code: "FORBIDDEN" })
       }
 
       await eventService.deleteMessage({
@@ -562,22 +538,16 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       const workspaceId = req.workspaceId!
       const { messageId } = req.params
 
-      const result = addReactionSchema.safeParse(req.body)
-      if (!result.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(result.error).fieldErrors,
-        })
-      }
+      const data = validateRequest(addReactionSchema, req.body)
 
-      const shortcode = toShortcode(result.data.emoji)
+      const shortcode = toShortcode(data.emoji)
       if (!shortcode) {
-        return res.status(400).json({ error: "Invalid emoji" })
+        throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
       }
 
       const existing = await eventService.getMessageById(messageId)
       if (!existing) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       // Reactions are participation by anyone who can read the message.
@@ -586,7 +556,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       // inheritance — neither is the intent.
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       const message = await eventService.addReaction({
@@ -598,7 +568,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       })
 
       if (!message) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       res.json({ message: serializeMessage(message) })
@@ -611,12 +581,12 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
 
       const shortcode = toShortcode(emoji)
       if (!shortcode) {
-        return res.status(400).json({ error: "Invalid emoji" })
+        throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
       }
 
       const existing = await eventService.getMessageById(messageId)
       if (!existing) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       // Mirror addReaction: read-access gate so users can un-react in any
@@ -624,7 +594,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       // thread access.
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       const message = await eventService.removeReaction({
@@ -636,7 +606,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       })
 
       if (!message) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       res.json({ message: serializeMessage(message) })
@@ -649,7 +619,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
 
       const existing = await eventService.getMessageById(messageId)
       if (!existing || existing.deletedAt) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       // Edit-history is a pure read of a message the viewer can see.
@@ -657,7 +627,7 @@ export function createMessageHandlers({ pool, eventService, streamService, comma
       // tryAccess, not bare membership.
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
-        return res.status(404).json({ error: "Message not found" })
+        throw new MessageNotFoundError()
       }
 
       const versions = await eventService.getMessageVersions(messageId)

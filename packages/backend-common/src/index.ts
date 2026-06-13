@@ -31,6 +31,7 @@ export type { WorkosConfig } from "./auth/types"
 // Database
 export { sql, createDatabasePool, createDatabasePools, withTransaction, withClient, warmPool } from "./db/index"
 export type { Querier, DatabasePools } from "./db/index"
+export { composeSql } from "./db/compose"
 export { createMigrator, runMigrations } from "./db/migrations"
 
 // Errors
@@ -92,6 +93,7 @@ export {
   botChannelAccessId,
   videoTranscodeJobId,
   savedMessageId,
+  savedSuggestionId,
   reminderQueueId,
   scheduledMessageId,
   scheduledMessageQueueId,
@@ -109,6 +111,7 @@ export {
   voiceSessionId,
   userEncryptionKeyId,
   enclaveRuntimeId,
+  enclaveInvocationId,
   streamE2eKeyWrapId,
   waitlistId,
   conversationFeedbackId,

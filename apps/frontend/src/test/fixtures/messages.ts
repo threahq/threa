@@ -5,6 +5,8 @@ export interface MockSearchResult {
   id: string
   streamId: string
   content: string
+  authorId: string
+  authorType: "user" | "persona"
   createdAt: string
 }
 
@@ -15,6 +17,8 @@ export function createMockSearchResult(overrides: Partial<MockSearchResult> & { 
   return {
     streamId: "stream_channel1",
     content: "Test message content",
+    authorId: "member_1",
+    authorType: "user",
     createdAt: "2025-01-15T10:00:00Z",
     ...overrides,
   }

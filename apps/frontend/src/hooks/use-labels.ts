@@ -191,7 +191,15 @@ export function useLabelsSync(workspaceId: string) {
     staleTime: Infinity,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
+    // Explicit false (the v5 default is true): with staleTime Infinity a
+    // reconnect refetch only ever fires for a query invalidated while
+    // offline, and the only invalidators of this key are the label mutations
+    // below — which can't run offline. Reconnect healing lives elsewhere: the
+    // engine's reconnect workspace bootstrap reconciles labels/memberships/
+    // assignments into IDB (the render source), and active-mode catch-up
+    // replays `label:*` events through the gate-registered workspace-sync
+    // handlers.
+    refetchOnReconnect: false,
     enabled: !!workspaceId,
   })
 }

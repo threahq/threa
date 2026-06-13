@@ -1,33 +1,21 @@
 import type { Pool } from "pg"
-import type { OutboxHandler } from "../../lib/outbox"
-import { OutboxRepository, isOneOfOutboxEventType } from "../../lib/outbox"
+import { isOneOfOutboxEventType } from "../../lib/outbox"
+import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import type { QueueManager, ContextBagPrecomputeJobData } from "../../lib/queue"
 import { JobQueues, type JobHandler } from "../../lib/queue"
 import type { AI } from "@threa/agent-runtime"
 import { CompanionModes, StreamTypes } from "@threa/types"
 import { logger } from "../../lib/logger"
 import { StreamRepository } from "../streams"
-import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threa/backend-common"
 import { ContextBagRepository, persistSnapshot, resolveBagForStream } from "./context-bag"
 
-export interface ContextBagPrecomputeHandlerConfig {
-  batchSize?: number
-  debounceMs?: number
-  maxWaitMs?: number
-  lockDurationMs?: number
-  refreshIntervalMs?: number
-  maxRetries?: number
-  baseBackoffMs?: number
-}
+export type ContextBagPrecomputeHandlerConfig = DebouncedOutboxHandlerConfig
 
-const DEFAULT_CONFIG = {
+// Smaller batch + slightly longer max-wait than the canonical defaults:
+// stream:created bursts are bursty and each event does a stream lookup.
+const HANDLER_CONFIG: DebouncedOutboxHandlerConfig = {
   batchSize: 50,
-  debounceMs: 50,
   maxWaitMs: 250,
-  lockDurationMs: 10_000,
-  refreshIntervalMs: 5_000,
-  maxRetries: 5,
-  baseBackoffMs: 1_000,
 }
 
 export const CONTEXT_BAG_PRECOMPUTE_QUEUE = JobQueues.CONTEXT_BAG_PRECOMPUTE
@@ -40,92 +28,38 @@ export const CONTEXT_BAG_PRECOMPUTE_QUEUE = JobQueues.CONTEXT_BAG_PRECOMPUTE
  * diff is correctly anchored. No kickoff message is posted — Ariadne stays
  * silent until the user sends their first message.
  */
-export class ContextBagPrecomputeHandler implements OutboxHandler {
-  readonly listenerId = "context-bag-precompute"
-
-  private readonly db: Pool
+export class ContextBagPrecomputeHandler extends DebouncedOutboxHandler {
   private readonly jobQueue: QueueManager
-  private readonly cursorLock: CursorLock
-  private readonly debouncer: DebounceWithMaxWait
-  private readonly batchSize: number
 
   constructor(db: Pool, jobQueue: QueueManager, config?: ContextBagPrecomputeHandlerConfig) {
-    this.db = db
+    super(db, { listenerId: "context-bag-precompute", ...HANDLER_CONFIG, ...config })
     this.jobQueue = jobQueue
-    this.batchSize = config?.batchSize ?? DEFAULT_CONFIG.batchSize
+  }
 
-    this.cursorLock = new CursorLock({
-      pool: db,
-      listenerId: this.listenerId,
-      lockDurationMs: config?.lockDurationMs ?? DEFAULT_CONFIG.lockDurationMs,
-      refreshIntervalMs: config?.refreshIntervalMs ?? DEFAULT_CONFIG.refreshIntervalMs,
-      maxRetries: config?.maxRetries ?? DEFAULT_CONFIG.maxRetries,
-      baseBackoffMs: config?.baseBackoffMs ?? DEFAULT_CONFIG.baseBackoffMs,
-      batchSize: this.batchSize,
+  protected async processEvent(event: OutboxEvent): Promise<void> {
+    if (!isOneOfOutboxEventType(event, ["stream:created"])) {
+      return
+    }
+
+    const { workspaceId, streamId, stream } = event.payload
+    if (stream.type !== StreamTypes.SCRATCHPAD) {
+      return
+    }
+    if (stream.companionMode !== CompanionModes.ON) {
+      return
+    }
+
+    const bag = await ContextBagRepository.findByStream(this.db, workspaceId, streamId)
+    if (!bag) {
+      return
+    }
+
+    await this.jobQueue.send(CONTEXT_BAG_PRECOMPUTE_QUEUE, {
+      workspaceId,
+      streamId,
+      bagId: bag.id,
     })
-
-    this.debouncer = new DebounceWithMaxWait(
-      () => this.processEvents(),
-      config?.debounceMs ?? DEFAULT_CONFIG.debounceMs,
-      config?.maxWaitMs ?? DEFAULT_CONFIG.maxWaitMs,
-      (err) => logger.error({ err, listenerId: this.listenerId }, "ContextBagPrecomputeHandler debouncer error")
-    )
-  }
-
-  async ensureListener(): Promise<void> {
-    await ensureListenerFromLatest(this.db, this.listenerId)
-  }
-
-  handle(): void {
-    this.debouncer.trigger()
-  }
-
-  private async processEvents(): Promise<void> {
-    await this.cursorLock.run(async (cursor, processedIds): Promise<ProcessResult> => {
-      const events = await OutboxRepository.fetchAfterId(this.db, cursor, this.batchSize, processedIds)
-      if (events.length === 0) return { status: "no_events" }
-
-      const seen: bigint[] = []
-      try {
-        for (const event of events) {
-          if (!isOneOfOutboxEventType(event, ["stream:created"])) {
-            seen.push(event.id)
-            continue
-          }
-
-          const { workspaceId, streamId, stream } = event.payload
-          if (stream.type !== StreamTypes.SCRATCHPAD) {
-            seen.push(event.id)
-            continue
-          }
-          if (stream.companionMode !== CompanionModes.ON) {
-            seen.push(event.id)
-            continue
-          }
-
-          const bag = await ContextBagRepository.findByStream(this.db, workspaceId, streamId)
-          if (!bag) {
-            seen.push(event.id)
-            continue
-          }
-
-          await this.jobQueue.send(CONTEXT_BAG_PRECOMPUTE_QUEUE, {
-            workspaceId,
-            streamId,
-            bagId: bag.id,
-          })
-          logger.info({ streamId, bagId: bag.id }, "context-bag precompute job dispatched")
-          seen.push(event.id)
-        }
-        return { status: "processed", processedIds: seen }
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error(String(err))
-        if (seen.length > 0) {
-          return { status: "error", error, processedIds: seen }
-        }
-        return { status: "error", error }
-      }
-    })
+    logger.info({ streamId, bagId: bag.id }, "context-bag precompute job dispatched")
   }
 }
 

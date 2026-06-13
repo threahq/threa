@@ -1,17 +1,18 @@
 import type { EnclaveSessionAssignment, EnclaveStreamEnvelope, ToolPrivacyPolicy } from "@threa/types"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
 import type { Message } from "../../messaging"
-import type { EnclaveRuntime } from "../repository"
 
 /**
- * Builds the session assignment the backend hands to the enclave — pure, so the
- * recipient-selection and history-mapping logic is unit-testable without a DB.
- * The worker fetches the inputs, creates the session row, and POSTs the result.
+ * Builds the session assignment the claim endpoint hands to the enclave —
+ * pure, so the wrap-coverage and history-mapping logic is unit-testable
+ * without a DB. The claim service fetches the inputs, creates the session
+ * row, and returns the result as the claim response.
  *
- * The backend never decrypts: it ships ciphertext + the SSK wraps addressed to
- * the chosen live EIK, and the enclave unwraps with its private key. Returns
- * `null` when there's nothing to dispatch (no enclave actor, or no live enclave
- * that can decrypt the current generation) — the caller then no-ops.
+ * The backend never decrypts: it ships ciphertext + the SSK wraps addressed
+ * to the claiming EIK, and the enclave unwraps with its private key. Returns
+ * `null` when the turn can't be served (no enclave actor, or the claiming key
+ * can't cover the needed generations — a revoke/rotation race after the claim
+ * predicate passed) — the caller then fails the claim loudly.
  */
 
 export interface PersonaInvokeConfig {
@@ -25,7 +26,8 @@ export interface PersonaInvokeConfig {
 export interface BuildInvokeInputs {
   e2e: E2eStream
   actors: E2eStreamActor[]
-  liveEiks: EnclaveRuntime[]
+  /** The claiming instance's EIK key id — the assignment seals to this key. */
+  eikKeyId: string
   /** All SSK wraps for the stream (any recipient kind); enclave wraps are filtered out here. */
   wraps: StreamE2eKeyWrap[]
   /** The triggering user message (its ciphertext becomes the prompt). */
@@ -43,6 +45,8 @@ export interface BuildInvokeInputs {
   replySenderId: string
   /** The server-created agent_sessions id the enclave drives this turn under. */
   sessionId: string
+  /** Claim-minted secret the enclave echoes on every session callback (Phase 2.4b, E2EE-21). */
+  callbackToken: string
   /**
    * The stream's tool-privacy policy (from `stream_policies`, resolved at the
    * root scratchpad — threads inherit). `null` = no restriction. Shipped on the
@@ -52,9 +56,10 @@ export interface BuildInvokeInputs {
   allowedToolCategories: ToolPrivacyPolicy
   /**
    * Opaque ciphertext for each E2E attachment bound to the trigger message,
-   * base64-encoded. The worker reads these from S3 (the backend can't decrypt
-   * them); the enclave matches them to the decrypted `attachmentRefs` by id and
-   * opens them with the sealed per-file key. Empty/omitted → no attachments.
+   * base64-encoded. The claim service reads these from S3 (the backend can't
+   * decrypt them); the enclave matches them to the decrypted `attachmentRefs`
+   * by id and opens them with the sealed per-file key. Empty/omitted → no
+   * attachments.
    */
   attachmentCiphertexts?: { attachmentId: string; ciphertext: string }[]
   /** Ask the enclave to generate + seal a title for this (untitled) scratchpad. */
@@ -68,15 +73,8 @@ export interface BuildInvokeInputs {
   recentDigests?: { ciphertext: string; envelope: EnclaveStreamEnvelope; completedAt: string }[]
 }
 
-export interface BuiltEnclaveInvoke {
-  instanceUrl: string
-  /** The chosen EIK's keyId — stored as the session's owning server (`server_id`). */
-  keyId: string
-  assignment: EnclaveSessionAssignment
-}
-
-export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltEnclaveInvoke | null {
-  const { e2e, actors, liveEiks, wraps, trigger, priorMessages, persona } = inputs
+export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): EnclaveSessionAssignment | null {
+  const { e2e, actors, eikKeyId, wraps, trigger, priorMessages, persona } = inputs
 
   if (!actors.some((a) => a.kind === "enclave")) return null
   if (!trigger.ciphertext || !trigger.envelope) return null
@@ -84,20 +82,20 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
   const enclaveWraps = wraps.filter((w) => w.recipientKind === "enclave")
   const currentGen = e2e.currentKeyGeneration
   const triggerGen = (trigger.envelope as EnclaveStreamEnvelope).keyGeneration
-  const hasWrap = (keyId: string, generation: number) =>
-    enclaveWraps.some((w) => w.recipientKeyId === keyId && w.keyGeneration === generation)
+  const hasWrap = (generation: number) =>
+    enclaveWraps.some((w) => w.recipientKeyId === eikKeyId && w.keyGeneration === generation)
 
-  // The chosen EIK must both *open the prompt* (its generation can lag `current`
-  // if the stream rotated after the turn was stored) and *seal the reply* (under
-  // `current`). Requiring both avoids picking a key that can do one but not the
-  // other, which would surface as a late enclave failure.
-  const chosen = liveEiks.find((eik) => hasWrap(eik.keyId, currentGen) && hasWrap(eik.keyId, triggerGen))
-  if (!chosen) return null
+  // The claiming EIK must both *open the prompt* (its generation can lag
+  // `current` if the stream rotated after the turn was stored) and *seal the
+  // reply* (under `current`). The claim predicate already proved both against
+  // the same wraps table; this re-check guards the revoke/rotation race
+  // between claim and build.
+  if (!hasWrap(currentGen) || !hasWrap(triggerGen)) return null
 
-  // Send every wrap addressed to the chosen EIK (all generations) so it can also
-  // open older history; the enclave skips any generation it has no wrap for.
+  // Send every wrap addressed to the claiming EIK (all generations) so it can
+  // also open older history; the enclave skips any generation it has no wrap for.
   const chosenWraps = enclaveWraps
-    .filter((w) => w.recipientKeyId === chosen.keyId)
+    .filter((w) => w.recipientKeyId === eikKeyId)
     .map((w) => ({ keyGeneration: w.keyGeneration, wrapEnc: w.wrapEnc, wrapCt: w.wrapCt }))
 
   const history = priorMessages
@@ -108,8 +106,9 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
       role: m.authorType === "persona" ? ("assistant" as const) : ("user" as const),
     }))
 
-  const assignment: EnclaveSessionAssignment = {
+  return {
     sessionId: inputs.sessionId,
+    callbackToken: inputs.callbackToken,
     streamId: e2e.streamId,
     wraps: chosenWraps,
     history,
@@ -117,7 +116,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
       ciphertext: trigger.ciphertext.toString("base64"),
       envelope: trigger.envelope as EnclaveStreamEnvelope,
     },
-    // The worker assembles the full system prompt via the shared
+    // The claim service assembles the full system prompt via the shared
     // `buildEnclaveSystemPrompt` and passes it through here as `systemPrompt`.
     system: persona.systemPrompt,
     model: persona.model.replace(/^openrouter:/, ""),
@@ -152,6 +151,4 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): BuiltE
         }
       : {}),
   }
-
-  return { instanceUrl: chosen.instanceUrl, keyId: chosen.keyId, assignment }
 }

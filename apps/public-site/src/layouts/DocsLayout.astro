@@ -63,12 +63,33 @@ for (const s of sections) {
   if (last && last.group === key) last.items.push(s)
   else subnavGroups.push({ group: key, items: [s] })
 }
+
+// Breadcrumb structured data: Home → Developers → current page (the overview
+// IS /developers, so it contributes no third crumb).
+const currentItem = nav.flatMap((g) => g.items).find((it) => it.slug === current)
+const crumbs = [
+  { name: "Threa", href: "/" },
+  { name: "Developers", href: "/developers" },
+  ...(currentItem && currentItem.href !== "/developers" ? [{ name: currentItem.label, href: currentItem.href }] : []),
+]
+const schema: Record<string, unknown>[] = [
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: crumbs.map((c, i) => ({
+      "@type": "ListItem",
+      position: i + 1,
+      name: c.name,
+      item: new URL(c.href, Astro.site).href,
+    })),
+  },
+]
 ---
 
 <!doctype html>
 <html lang="en">
   <head>
-    <BaseHead title={title} description={description} />
+    <BaseHead title={title} description={description} ogType="article" schema={schema} />
     {markdownHref && <link rel="alternate" type="text/markdown" href={markdownHref} title="Markdown version of this page" />}
   </head>
   <body class="docs">

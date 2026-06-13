@@ -272,6 +272,14 @@ export function usePushNotifications(workspaceId: string | undefined): UsePushNo
             throw new Error("Service workers are not available in this browser")
           }
           const registration = await navigator.serviceWorker.ready
+          // A browser-held subscription means this device already receives
+          // push — reflect it immediately instead of leaving the UI "off"
+          // (unchecked getting-started task, "Disabled" settings badge) for
+          // the seconds the backend handshake's network round-trips take on
+          // app start. The handshake's terminal state still wins: a failure
+          // flips this back to false in the catch below.
+          const existing = await registration.pushManager.getSubscription()
+          if (existing && isLatest()) setIsSubscribed(true)
           return runSubscribeFlow(workspaceId, registration, vapidCacheRef, controller.signal)
         })(),
         timeoutPromise,

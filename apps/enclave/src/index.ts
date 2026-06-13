@@ -7,7 +7,8 @@ import { startHeartbeat } from "./heartbeat"
 import { accessLog } from "./access-log"
 import { createOpenRouterChat } from "./llm"
 import { createBackendCallbacks } from "./agent/backend-callbacks"
-import { createCancelHandler, createSessionsHandler, requireInternalKey } from "./sessions"
+import { runEnclaveSession } from "./agent/session-runner"
+import { startClaimLoop } from "./claim-loop"
 
 const logger = baseLogger.child({ name: "enclave" })
 
@@ -16,12 +17,13 @@ async function main() {
   const keyPair = await createEnclaveKeyPair()
   logger.info({ instanceId: keyPair.instanceId, keyId: keyPair.keyId }, "Enclave EIK generated")
 
+  // The enclave runs no inbound content routes (§2.7 pull transport): turns
+  // are claimed from the backend, mid-turn cancel rides the session-heartbeat
+  // response, and replies flow out over the session callbacks. What remains
+  // inbound is read-only liveness/identity metadata — no body parser at all.
   const app = express()
   app.disable("x-powered-by")
   app.use(accessLog)
-  // No app-wide body parser: only /invoke takes a body, and it mounts its own
-  // parser *after* the auth gate so an unauthorized caller never costs us a
-  // (multi-MB) JSON parse. The GET routes below need no body.
 
   app.get("/healthz", (_req, res) => {
     res.json({ status: "ok" })
@@ -42,41 +44,13 @@ async function main() {
     })
   })
 
-  // The only content-bearing route: the backend assigns a turn, we ack 202 and
-  // run the agent loop asynchronously, reporting replies back over the session
-  // callbacks. OpenRouter is the enclave's sole outbound LLM dependency.
-  const rawChat = createOpenRouterChat(config)
-  const callbacks = createBackendCallbacks(config)
-  const inFlight = new Set<string>()
-  const aborts = new Map<string, AbortController>()
-  app.post(
-    "/sessions",
-    requireInternalKey(config.internalApiKey),
-    // Sized for inline attachment ciphertext: the dispatch worker caps what it
-    // ships at ~32MB of base64 (per-file + total caps in
-    // `loadAttachmentCiphertexts`), plus history + system prompt.
-    express.json({ limit: "48mb" }),
-    createSessionsHandler({
-      keyPair,
-      rawChat,
-      callbacks,
-      inFlight,
-      aborts,
-      toolConfig: { tavilyApiKey: config.tavilyApiKey },
-    })
-  )
-
-  // Graceful "Stop research": the backend forwards a user abort here. No body —
-  // the session id is in the path; the key gate is enough (same secret as /sessions).
-  app.post("/sessions/:id/cancel", requireInternalKey(config.internalApiKey), createCancelHandler({ aborts }))
-
   app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     logger.error({ err }, "Enclave request failed")
     res.status(500).json({ error: "Internal Server Error" })
   })
 
   const server = app.listen(config.port, () => {
-    logger.info({ port: config.port, selfUrl: config.selfUrl }, "Enclave listening")
+    logger.info({ port: config.port }, "Enclave listening")
   })
 
   // Initial registration is best-effort: in local/dev every service boots at
@@ -101,6 +75,29 @@ async function main() {
     await registerWithBackend(config, keyPair)
   })
 
+  // Work intake: poll the backend and claim turns this EIK can serve.
+  // OpenRouter is the enclave's sole outbound LLM dependency.
+  const rawChat = createOpenRouterChat(config)
+  const inFlight = new Set<string>()
+  const claimLoop = startClaimLoop({
+    config,
+    keyPair,
+    inFlight,
+    runSession: (assignment) =>
+      runEnclaveSession(
+        {
+          keyPair,
+          rawChat,
+          // Per-session callbacks: the claim's callbackToken rides a header on
+          // every callback, binding the turn to the runner that won it
+          // (Phase 2.4b, E2EE-21).
+          callbacks: createBackendCallbacks(config, assignment.callbackToken),
+          toolConfig: { tavilyApiKey: config.tavilyApiKey },
+        },
+        assignment
+      ),
+  })
+
   // On a graceful signal, how long to let in-flight sessions finish before exit.
   const SHUTDOWN_DRAIN_MS = 10_000
 
@@ -109,12 +106,14 @@ async function main() {
     if (shuttingDown) return
     shuttingDown = true
     logger.info("Enclave shutting down")
+    claimLoop.stop() // stop taking new turns; in-flight sessions run detached
     heartbeat.stop()
-    server.close() // stop accepting new assignments; in-flight sessions run detached
+    server.close()
 
-    // Session work outlives the HTTP request now, so on a graceful stop (e.g. a
-    // deploy) give running turns a bounded window to finish and ack rather than
-    // cutting them mid-flight. Orphan-cleanup reclaims any that don't drain in time.
+    // Session work runs detached from the claim loop, so on a graceful stop
+    // (e.g. a deploy) give running turns a bounded window to finish and ack
+    // rather than cutting them mid-flight. The claim TTL + attempt budget
+    // recycle any that don't drain in time.
     if (code === 0 && inFlight.size > 0) {
       const deadline = Date.now() + SHUTDOWN_DRAIN_MS
       while (inFlight.size > 0 && Date.now() < deadline) {

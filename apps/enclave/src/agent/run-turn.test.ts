@@ -122,6 +122,7 @@ function toolCallReply(name: string, args: Record<string, unknown>): RawChatResu
 function baseRequest(over: Partial<EnclaveSessionAssignment>): EnclaveSessionAssignment {
   return {
     sessionId: "session_test",
+    callbackToken: "cbtok_test",
     streamId: STREAM_ID,
     wraps: [],
     history: [],

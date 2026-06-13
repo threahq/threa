@@ -2,7 +2,8 @@ import type { Pool, PoolClient } from "pg"
 import { ActivityRepository, type Activity } from "./repository"
 import { UserRepository } from "../workspaces"
 import { StreamRepository, StreamMemberRepository, resolveNotificationLevelsForStream, type Stream } from "../streams"
-import { extractMentionSlugs, PersonaRepository } from "../agents"
+import { PersonaRepository } from "../agents"
+import { collectMentionSlugs } from "@threa/prosemirror"
 import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import {
@@ -12,6 +13,7 @@ import {
   AuthorTypes,
   ActivityTypes,
   isBroadcastSlug,
+  type JSONContent,
 } from "@threa/types"
 import { withClient } from "../../db"
 import { logger } from "../../lib/logger"
@@ -33,11 +35,18 @@ export class ActivityService {
     messageId: string
     actorId: string
     actorType: string
+    /** For the activity row's content preview; mention detection reads contentJson. */
     contentMarkdown: string
+    contentJson: JSONContent | null
   }): Promise<Activity[]> {
-    const { workspaceId, streamId, messageId, actorId, actorType, contentMarkdown } = params
+    const { workspaceId, streamId, messageId, actorId, actorType, contentMarkdown, contentJson } = params
 
-    const mentionSlugs = extractMentionSlugs(contentMarkdown)
+    // Mentions come from the canonical contentJson mention nodes (INV-58) —
+    // produced by the editor's mention picker and by parseMarkdown on the API
+    // path — not from a pattern over serialized markdown, so non-Latin slugs
+    // notify the same as ASCII ones (INV-54). Null contentJson (events
+    // predating it) means "no structural mentions".
+    const mentionSlugs = contentJson ? Array.from(new Set(collectMentionSlugs(contentJson))) : []
     if (mentionSlugs.length === 0) return []
 
     // Partition into broadcast (@channel, @here) and user slugs
@@ -385,8 +394,9 @@ export class ActivityService {
     workspaceId: string
     userId: string
     savedId: string
-    streamId: string
-    messageId: string
+    /** Null for standalone (message-less) saved items. */
+    streamId: string | null
+    messageId: string | null
     contentPreview: string | null
     streamName: string | null
   }): Promise<Activity[]> {

@@ -1,9 +1,9 @@
 import type { Request, Response } from "express"
 import type { Pool } from "pg"
-import { z } from "zod"
 import type { AI } from "@threa/agent-runtime"
 import type { ContextIntent } from "@threa/types"
 import { withClient } from "../../../db"
+import { validateRequest } from "../../../lib/validation"
 import {
   fetchStreamBag,
   type ContextRefSource,
@@ -45,15 +45,7 @@ export function createContextBagHandlers({ pool, ai }: Dependencies) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
-      const parsed = precomputeSchema.safeParse(req.body)
-      if (!parsed.success) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: z.flattenError(parsed.error).fieldErrors,
-        })
-      }
-
-      const { intent, refs } = parsed.data
+      const { intent, refs } = validateRequest(precomputeSchema, req.body)
       const results = await precomputeService.precomputeRefSummaries(
         { pool, ai },
         { workspaceId, userId, intent: intent as ContextIntent, refs }

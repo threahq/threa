@@ -14,6 +14,10 @@ import { WORKSPACE_ROLE_SLUGS } from "@threa/types"
 import { WorkspaceRegistryRepository } from "./repository"
 import type { RegionalClient } from "../../lib/regional-client"
 import type { KvClient } from "../../lib/cloudflare-kv-client"
+// Type-only: the platform-admin feature imports this feature's repository, so
+// a value import here would create a runtime module cycle. The instance is
+// injected by the composition root instead.
+import type { PlatformAdminSyncService } from "../platform-admin"
 
 export const OUTBOX_KV_SYNC = "kv_sync"
 export const OUTBOX_REGIONAL_CREATE = "regional_create"
@@ -23,6 +27,7 @@ interface Dependencies {
   regionalClient: RegionalClient
   workosOrgService: WorkosOrgService
   kvClient: KvClient
+  platformAdminSync: PlatformAdminSyncService
   availableRegions: string[]
   requireWorkspaceCreationInvite: boolean
 }
@@ -32,6 +37,7 @@ export class ControlPlaneWorkspaceService {
   private regionalClient: RegionalClient
   private workosOrgService: WorkosOrgService
   private kvClient: KvClient
+  private platformAdminSync: PlatformAdminSyncService
   private availableRegions: Set<string>
   private requireInvite: boolean
 
@@ -40,6 +46,7 @@ export class ControlPlaneWorkspaceService {
     this.regionalClient = deps.regionalClient
     this.workosOrgService = deps.workosOrgService
     this.kvClient = deps.kvClient
+    this.platformAdminSync = deps.platformAdminSync
     this.availableRegions = new Set(deps.availableRegions)
     this.requireInvite = deps.requireWorkspaceCreationInvite
   }
@@ -140,6 +147,10 @@ export class ControlPlaneWorkspaceService {
             ownerName: displayName,
           })
           await OutboxRepository.insert(client, OUTBOX_KV_SYNC, { workspaceId: id, region })
+
+          // A platform admin's new workspace should show backoffice links
+          // without waiting for the next control-plane restart to re-seed.
+          await this.platformAdminSync.enqueueIfAdmin(client, workosUserId)
 
           return ws
         })

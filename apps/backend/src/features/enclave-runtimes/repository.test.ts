@@ -10,7 +10,6 @@ const ROW = {
   instance_id: "enci_01",
   key_id: "eik_01",
   public_key: Buffer.from([1, 2, 3]),
-  instance_url: "https://enclave-1.internal:8443",
   registered_at: NOW,
   last_seen_at: NOW,
   revoked_at: null,
@@ -44,7 +43,6 @@ describe("EnclaveRuntimesRepository.registerKey", () => {
       instanceId: "enci_01",
       keyId: "eik_01",
       publicKey: new Uint8Array([1, 2, 3]),
-      instanceUrl: "https://enclave-1.internal:8443",
     })
 
     expect(captured.text).toContain("INSERT INTO enclave_runtimes")
@@ -53,13 +51,11 @@ describe("EnclaveRuntimesRepository.registerKey", () => {
     expect(captured.values).toContain("elr_01")
     expect(captured.values).toContain("enci_01")
     expect(captured.values).toContain("eik_01")
-    expect(captured.values).toContain("https://enclave-1.internal:8443")
     expect(result).toEqual({
       id: "elr_01",
       instanceId: "enci_01",
       keyId: "eik_01",
       publicKey: new Uint8Array([1, 2, 3]),
-      instanceUrl: "https://enclave-1.internal:8443",
       registeredAt: NOW,
       lastSeenAt: NOW,
       revokedAt: null,
@@ -75,7 +71,6 @@ describe("EnclaveRuntimesRepository.registerKey", () => {
       instanceId: "enci_01",
       keyId: "eik_01",
       publicKey: new Uint8Array([1, 2, 3]),
-      instanceUrl: "https://enclave-1.internal:8443",
     })
 
     const publicKeyValue = captured.values?.find((v) => Buffer.isBuffer(v)) as Buffer | undefined
@@ -128,7 +123,6 @@ describe("EnclaveRuntimesRepository.listLive", () => {
       instanceId: "enci_01",
       keyId: "eik_01",
       publicKey: new Uint8Array([1, 2, 3]),
-      instanceUrl: "https://enclave-1.internal:8443",
       registeredAt: NOW,
       lastSeenAt: NOW,
       revokedAt: null,
