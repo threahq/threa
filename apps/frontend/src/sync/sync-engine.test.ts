@@ -1087,39 +1087,6 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
     engine.destroy()
   })
 
-  it("skips LEGACY unread-counter entries (no absolute fields) but still advances the cursor past them", async () => {
-    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    const catchUp = vi
-      .fn()
-      .mockResolvedValueOnce({
-        entries: [
-          {
-            syncId: "11",
-            eventType: "activity:created",
-            payload: {
-              workspaceId: "ws_1",
-              activity: { id: "act_1", streamId: "stream_x", activityType: "message", isSelf: false },
-            },
-            createdAt: new Date().toISOString(),
-          },
-          userAddedEntry("12", "user_a"),
-        ],
-        head: "12",
-      })
-      .mockResolvedValue(emptyPage("12"))
-    const engine = new SyncEngine(makeActiveDeps(catchUp))
-
-    await engine.onConnect(asSocket(new MockSocket()))
-
-    await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_a")).toBeDefined())
-    expect(engine.getSyncCursor()).toBe("12")
-    // The bootstrap wrote zeroed unread state; the skipped log entry must not
-    // have incremented it (bootstrap stays the counter authority in 2b).
-    const unread = await db.unreadState.get("ws_1")
-    expect(unread?.unreadActivityCount).toBe(0)
-    engine.destroy()
-  })
-
   it("re-bootstraps and jumps the cursor to head when catch-up reports the cursor is below the retention floor", async () => {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
     // The cursor (10) predates the pruned span, so the log can't heal the gap:
@@ -1163,51 +1130,6 @@ describe("SyncEngine sync-v2 cursor (active mode)", () => {
       expect(await db.workspaceUsers.get("user_live")).toBeDefined()
     })
     expect(engine.getSyncCursor()).toBe("12")
-    engine.destroy()
-  })
-
-  it("applies buffered LEGACY counter events at the splice even when at or below the catch-up position", async () => {
-    await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    let resolveFirstPage: ((value: SyncCatchUpResponse) => void) | undefined
-    const catchUp = vi
-      .fn()
-      .mockImplementationOnce(() => new Promise<SyncCatchUpResponse>((resolve) => (resolveFirstPage = resolve)))
-      .mockResolvedValue(emptyPage("12"))
-    const engine = new SyncEngine(makeActiveDeps(catchUp))
-    const socket = new MockSocket()
-
-    await engine.onConnect(asSocket(socket))
-    await vi.waitFor(() => expect(resolveFirstPage).toBeDefined())
-    // Bootstrap has applied by now (onConnect awaited it) with zeroed counts.
-    expect((await db.unreadState.get("ws_1"))?.unreadActivityCount).toBe(0)
-
-    const activityPayload = {
-      workspaceId: "ws_1",
-      syncId: "11",
-      activity: { id: "act_1", streamId: "stream_x", activityType: "message", isSelf: false },
-    }
-    socket.trigger("activity:created", activityPayload)
-
-    // The same legacy event is also in the log (duplicate by design) —
-    // catch-up skips it there; the buffered live copy applies exactly once
-    // at splice.
-    resolveFirstPage!({
-      entries: [
-        {
-          syncId: "11",
-          eventType: "activity:created",
-          payload: activityPayload,
-          createdAt: new Date().toISOString(),
-        },
-        userAddedEntry("12", "user_a"),
-      ],
-      head: "12",
-    })
-
-    await vi.waitFor(async () => {
-      expect((await db.unreadState.get("ws_1"))?.unreadActivityCount).toBe(1)
-    })
-    expect((await db.unreadState.get("ws_1"))?.activityCounts["stream_x"]).toBe(1)
     engine.destroy()
   })
 

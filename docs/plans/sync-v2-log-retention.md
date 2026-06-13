@@ -141,11 +141,15 @@ authority the inventory keeps for the below-floor case.
   rows as pruned and force needless bootstraps. Safe because the guard is
   client-side and the workspace cursor advances to head with no per-sync_id
   contiguity check (INV-61 contiguity is per-stream `broadcastSequence`), so
-  deleting a skipped-anyway row opens no gap. Deleting the guard itself is a
-  separate follow-up PR, sequenced AFTER the sweep deploys to prod (the sweep
+  deleting a skipped-anyway row opens no gap. Deleting the guard itself was a
+  separate follow-up PR, sequenced AFTER the sweep deployed to prod (the sweep
   runs at backend startup before serving, so once deployed every backend is
   legacy-free; removing the guard before then would let a pre-sweep backend feed
-  field-less payloads to the appliers).
+  field-less payloads to the appliers). **DONE** — the sweep deployed, a prod
+  read-only check confirmed zero legacy counter entries remained, and
+  `isLegacyUnreadCounterEntry` + its sync-engine call sites were deleted; catch-up
+  now applies every counter entry (all absolute) idempotently, covered by the
+  existing absolute-counter catch-up tests in `sync-engine.test.ts`.
 - **Engine reconnect-bootstrap slimming** and the **`usePageResumeRefresh`
   redesign** lose their "retention is still missing" blocker; they remain their
   own follow-ups.

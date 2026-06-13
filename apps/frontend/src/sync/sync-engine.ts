@@ -21,7 +21,6 @@ import { processOperationQueue } from "./operation-queue"
 import { waitForInitialReveal } from "./reveal-gate"
 import { SyncLogCursor } from "./sync-log-cursor"
 import type { SyncV2CursorMode } from "./sync-v2-mode"
-import { isLegacyUnreadCounterEntry } from "./unread-counters"
 import { SocketEventGate, type SyncEventSource } from "./socket-event-gate"
 import { SyncStatusStore } from "./sync-status"
 import { streamKeys } from "@/hooks/use-streams"
@@ -82,14 +81,6 @@ const CATCHUP_PAGE_LIMIT = 500
  * client is still behind.
  */
 const HEARTBEAT_GRACE_MS = 2_000
-
-// Unread counter events replay from the log like any other event since their
-// payloads went absolute (phase 2c) — EXCEPT legacy entries persisted before
-// the backend shipped the absolute fields, which still carry increments and
-// must be skipped (the cursor advances past them; the bootstrap remains their
-// authority, INV-53). `isLegacyUnreadCounterEntry` is that per-entry check;
-// it replaces the phase-2b CATCHUP_SKIPPED_UNREAD_EVENT_TYPES set and dies
-// when sync-log retention ships and pre-field entries age out.
 
 /**
  * Owns the full sync lifecycle for a workspace:
@@ -1017,18 +1008,15 @@ export class SyncEngine {
    * by design (sweep + dispatcher can both emit; snapshot/log overlap is the
    * safe side of read-before-stamp) and are absorbed by the handlers'
    * idempotency — including the unread counter family, whose absolute
-   * payloads max-merge/LWW-set (phase 2c). Only LEGACY counter entries
-   * (pre-field payloads, still increments) are skipped; see
-   * isLegacyUnreadCounterEntry.
+   * payloads max-merge/LWW-set (phase 2c).
    *
    * While catch-up pages, the gate buffers live syncId-bearing events; the
-   * finally-splice applies buffered events above the catch-up position (plus
-   * legacy counter events at any position, since catch-up never applies
-   * those) and reopens live flow. A buffered ABSOLUTE counter event at or
-   * below the position must NOT re-apply: its log copy already applied, and
-   * activity counts are LWW — re-applying it after a newer log entry would
-   * regress them. The cursor advances only past entries that were handed to
-   * handlers (or policy-skipped), never by jumping to head.
+   * finally-splice applies buffered events above the catch-up position and
+   * reopens live flow. A buffered ABSOLUTE counter event at or below the
+   * position must NOT re-apply: its log copy already applied, and activity
+   * counts are LWW — re-applying it after a newer log entry would regress
+   * them. The cursor advances only past entries that were handed to handlers,
+   * never by jumping to head.
    */
   private async performActiveCatchUp(trigger: string, signal: AbortSignal, cycle: number): Promise<void> {
     const syncService = this.deps.syncService!
@@ -1061,7 +1049,6 @@ export class SyncEngine {
       let head = cursorBefore
       let pages = 0
       let fetched = 0
-      let skipped = 0
       const byEventType: Record<string, number> = {}
 
       while (pages < MAX_CATCHUP_PAGES) {
@@ -1110,17 +1097,13 @@ export class SyncEngine {
         for (const entry of response.entries) {
           if (this.isDestroyed) return
           byEventType[entry.eventType] = (byEventType[entry.eventType] ?? 0) + 1
-          if (isLegacyUnreadCounterEntry(entry.eventType, entry.payload)) {
-            skipped += 1
-          } else {
-            // Mirror the live wire shape exactly: emits carry the syncId
-            // spread onto the outbox payload (see emitToGroups).
-            const payload =
-              typeof entry.payload === "object" && entry.payload !== null
-                ? { ...entry.payload, syncId: entry.syncId }
-                : entry.payload
-            await gate.dispatch(entry.eventType, payload)
-          }
+          // Mirror the live wire shape exactly: emits carry the syncId
+          // spread onto the outbox payload (see emitToGroups).
+          const payload =
+            typeof entry.payload === "object" && entry.payload !== null
+              ? { ...entry.payload, syncId: entry.syncId }
+              : entry.payload
+          await gate.dispatch(entry.eventType, payload)
           cursorStore.advance(entry.syncId)
           appliedThrough = BigInt(entry.syncId)
           cursor = entry.syncId
@@ -1135,7 +1118,6 @@ export class SyncEngine {
           cursorAfter: cursor,
           head,
           fetched,
-          skipped,
           pages,
           byEventType,
           truncated: pages >= MAX_CATCHUP_PAGES,
@@ -1148,15 +1130,10 @@ export class SyncEngine {
       // this run was in flight, its bootstrap window is still open; leave the
       // gate paused and let that cycle's own run (chained by runCatchUp) do
       // the splice. Buffered events at or below the applied position were
-      // already applied from the log — except legacy counter events, which
-      // only ever apply via live delivery and so splice regardless of
-      // position.
+      // already applied from the log.
       if (!this.isDestroyed && this.catchUpCycle === cycle) {
         const through = appliedThrough
-        await gate.resume(
-          (eventType, syncId, payload) =>
-            through === null || syncId > through || isLegacyUnreadCounterEntry(eventType, payload)
-        )
+        await gate.resume((_eventType, syncId) => through === null || syncId > through)
       }
     }
   }
