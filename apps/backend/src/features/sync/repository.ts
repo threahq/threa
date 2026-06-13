@@ -214,6 +214,102 @@ export const SyncLogRepository = {
   },
 
   /**
+   * The retention floor: the highest sync id pruned for a workspace (0 when
+   * nothing has been pruned). A catch-up cursor at or below this floor cannot
+   * be healed from the log — the entries it would replay are gone — so the
+   * caller signals a full bootstrap. See docs/plans/sync-v2-log-retention.md.
+   */
+  async getRetainedFrom(db: Querier, workspaceId: string): Promise<bigint> {
+    const result = await db.query<{ retained_from: string }>(sql`
+      SELECT retained_from FROM sync_log_retention_state WHERE workspace_id = ${workspaceId}
+    `)
+    return BigInt(result.rows[0]?.retained_from ?? 0)
+  },
+
+  /**
+   * Prunes one bounded batch of expired sync_log entries across every
+   * workspace: rows older than `cutoff` whose sync_id is at or below
+   * `head - minKeep` for their workspace. The count floor keeps the most
+   * recent `minKeep` entries even past the horizon, so a quiet workspace's
+   * returning client still catches up from the log instead of bootstrapping.
+   *
+   * Heads come from `workspace_sync_sequences` (next_sequence - 1), not a
+   * MAX over the log: the allocator keeps sync ids dense and gapless
+   * (appendForWorkspace's lock-first protocol), so head = next_sequence - 1
+   * exactly, and this avoids a full-table aggregate every batch.
+   *
+   * Bounded by `limit` (INV-56 set-based, but a first run over months of
+   * backlog must not hold one long transaction). The prunable set is a
+   * contiguous sync_id prefix per workspace, so re-running converges and
+   * advancing `retained_from` to any pruned id is always safe — a stale-high
+   * floor can only force an unnecessary bootstrap, never hide a gap.
+   *
+   * Returns the highest pruned sync_id per workspace and the total rows
+   * deleted this batch — the caller drives exhaustion off `deletedCount`
+   * (`< limit` ⇒ window drained), since the per-workspace map size counts
+   * workspaces, not rows.
+   */
+  async pruneExpiredEntries(
+    db: Querier,
+    params: { cutoff: Date; minKeep: number; limit: number }
+  ): Promise<{ prunedThrough: Map<string, bigint>; deletedCount: number }> {
+    const result = await db.query<{ workspace_id: string; pruned_through: string; pruned_count: string }>(sql`
+      WITH heads AS (
+        SELECT workspace_id, next_sequence - 1 AS head
+        FROM workspace_sync_sequences
+      ),
+      victims AS (
+        SELECT l.ctid
+        FROM sync_log l
+        JOIN heads h ON h.workspace_id = l.workspace_id
+        WHERE l.created_at < ${params.cutoff}
+          AND l.sync_id <= h.head - ${params.minKeep}
+        LIMIT ${params.limit}
+      ),
+      deleted AS (
+        DELETE FROM sync_log l
+        USING victims v
+        WHERE l.ctid = v.ctid
+        RETURNING l.workspace_id, l.sync_id
+      )
+      SELECT workspace_id, MAX(sync_id) AS pruned_through, COUNT(*) AS pruned_count
+      FROM deleted
+      GROUP BY workspace_id
+    `)
+    const prunedThrough = new Map<string, bigint>()
+    let deletedCount = 0
+    for (const row of result.rows) {
+      prunedThrough.set(row.workspace_id, BigInt(row.pruned_through))
+      deletedCount += Number(row.pruned_count)
+    }
+    return { prunedThrough, deletedCount }
+  },
+
+  /**
+   * Monotonically advances each workspace's retention floor to the highest
+   * sync id pruned for it. GREATEST makes concurrent or repeated runs (and
+   * multiple backend instances) idempotent.
+   */
+  async advanceRetainedFrom(db: Querier, prunedThrough: Map<string, bigint>): Promise<void> {
+    if (prunedThrough.size === 0) {
+      return
+    }
+    const rows = Array.from(prunedThrough, ([workspaceId, retainedFrom]) => ({
+      workspace_id: workspaceId,
+      retained_from: retainedFrom.toString(),
+    }))
+    await db.query(sql`
+      INSERT INTO sync_log_retention_state (workspace_id, retained_from)
+      SELECT r.workspace_id, r.retained_from::bigint
+      FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb)
+        AS r(workspace_id text, retained_from text)
+      ON CONFLICT (workspace_id) DO UPDATE
+        SET retained_from = GREATEST(sync_log_retention_state.retained_from, EXCLUDED.retained_from),
+            updated_at = NOW()
+    `)
+  },
+
+  /**
    * Initializes the sweep floor at "now" — the log starts at deploy, so
    * pre-log outbox history is never treated as missing.
    */

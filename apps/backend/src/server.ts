@@ -110,7 +110,7 @@ import {
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
-import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker } from "./features/sync"
+import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker, SyncLogRetentionWorker } from "./features/sync"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import {
   BotRuntimeInstanceRepository,
@@ -1168,6 +1168,19 @@ export async function startServer(): Promise<ServerInstance> {
   )
   syncHeartbeatWorker.start()
 
+  // Bounds sync_log growth: prunes entries past the retention horizon (keeping
+  // a per-workspace recent floor) and advances the retention watermark that
+  // catch-up reads to signal a full bootstrap for cursors below it
+  const syncLogRetentionWorker = new SyncLogRetentionWorker(
+    { pool },
+    {
+      intervalMs: Number(process.env.SYNC_LOG_RETENTION_INTERVAL_MS) || undefined,
+      retentionMs: Number(process.env.SYNC_LOG_RETENTION_MS) || undefined,
+      minKeep: Number(process.env.SYNC_LOG_RETENTION_MIN_KEEP) || undefined,
+    }
+  )
+  syncLogRetentionWorker.start()
+
   const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
@@ -1209,6 +1222,7 @@ export async function startServer(): Promise<ServerInstance> {
     await outboxRetentionWorker.stop()
     await syncLogReconciliationWorker.stop()
     await syncHeartbeatWorker.stop()
+    await syncLogRetentionWorker.stop()
     await outboxDispatcher.stop()
     await jobQueue.stop()
     logger.info("Closing socket.io...")

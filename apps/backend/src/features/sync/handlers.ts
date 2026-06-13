@@ -24,7 +24,7 @@ export function createSyncHandlers({ syncService }: Dependencies) {
         throw new HttpError("Invalid sync catch-up query", { status: 400, code: "VALIDATION_ERROR" })
       }
 
-      const { entries, head } = await syncService.catchUp({
+      const { entries, head, requiresBootstrap } = await syncService.catchUp({
         workspaceId,
         userId,
         after: BigInt(parsed.data.after),
@@ -39,6 +39,7 @@ export function createSyncHandlers({ syncService }: Dependencies) {
           createdAt: entry.createdAt.toISOString(),
         })),
         head: head.toString(),
+        ...(requiresBootstrap ? { requiresBootstrap: true } : {}),
       } satisfies SyncCatchUpResponse)
     },
   }

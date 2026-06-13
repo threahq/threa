@@ -13,8 +13,14 @@ the rollout sessions:
   (`docs/plans/sync-v2-heartbeat.md`): the server broadcasts each workspace's
   sync-log head every 15s and active-mode clients trigger catch-up when
   behind, bounding dropped-emit detection to ~interval+grace. Deletions it
-  gates are unblocked on this axis — but the big ones (reconnect-bootstrap
-  slimming, `usePageResumeRefresh`) ALSO require sync_log retention.
+  gates are unblocked on this axis. _sync_log retention now exists too_
+  (`docs/plans/sync-v2-log-retention.md`): the worker prunes entries past a
+  30-day horizon (keeping a per-workspace recent floor) and catch-up returns
+  `requiresBootstrap` for cursors below the pruned floor, so the big deletions
+  (reconnect-bootstrap slimming, `usePageResumeRefresh`) lose their retention
+  blocker — they still each ship as their own PR with a coverage proof, and
+  `isLegacyUnreadCounterEntry` dies only once pre-field entries age out below
+  the floor.
 - Coverage proof method (established in #885): event type → scoping list in
   `apps/backend/src/lib/outbox/repository.ts` → delivery group
   (`delivery-groups.ts`, single source of truth for log + emit) → `sync_log`
@@ -47,9 +53,9 @@ author-scoped; migrate if dismissal staleness is ever reported).
 ## Decision (2026-06-12): additive first
 
 The rollout wasn't complete at decision time (no heartbeat, no sync_log
-retention — the heartbeat has since shipped, see the ground rules above;
-retention is still missing), so the owner chose to finish wiring consumers
-into the sync system before deleting any more healing. PR E therefore ships the **additive** halves only:
+retention — both have since shipped, see the ground rules above), so the owner
+chose to finish wiring consumers into the sync system before deleting any more
+healing. PR E therefore ships the **additive** halves only:
 
 - `use-conversations` registers through the engine's event gate (catch-up
   replay now reaches it); its reconnect invalidation **stays**.
@@ -159,11 +165,14 @@ treating such a flag as real healing — it may be dead code (labels was).
   "socket-healthy but tab-throttled" gaps below the probe threshold. Any
   change here is a redesign (threshold alignment / engine-owned resume
   catch-up), not a one-line deletion. Owner decision; not next.
-- **Engine reconnect workspace bootstrap** (`runBootstrap(true)`): blocked.
-  Bootstrap is still the authority for legacy unread-counter entries (until
-  `sync_log` retention ships and `isLegacyUnreadCounterEntry` dies), heals the
-  accepted #874 drift, and active-mode seeding is read-before-stamp against
-  this very fetch.
+- **Engine reconnect workspace bootstrap** (`runBootstrap(true)`): still the
+  authority, but its blocker has lifted. `sync_log` retention has shipped
+  (`docs/plans/sync-v2-log-retention.md`) and the below-floor fallback now
+  routes through this very `runBootstrap(true)`, so it is also the explicit
+  recovery for a pruned cursor. It stays authoritative until
+  `isLegacyUnreadCounterEntry` dies (once pre-field entries age out below the
+  floor), and it still heals the accepted #874 drift and seeds active-mode
+  read-before-stamp against this fetch. Slimming it is a follow-up PR.
 - **Per-stream reconnect delta** (`joinStreamForCatchUp` + `bootstrap?after=`):
   this _is_ the per-stream cursor mechanism, already delta-shaped. Keep.
 - **`backfillStreamGap` / `detectSequenceGap` / `computeTimelineHoles`**

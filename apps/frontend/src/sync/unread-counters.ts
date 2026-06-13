@@ -24,10 +24,12 @@ import type { WorkspaceBootstrap } from "@threa/types"
  *   Σ activityCounts whenever an absolute apply touches activity counts.
  *
  * Events missing the absolute fields are legacy: sync-log entries persisted
- * before the backend shipped the fields replay without them forever (no log
- * retention exists). `isLegacyUnreadCounterEntry` detects them so catch-up
- * can skip them (bootstrap stays their authority) while live handlers fall
- * back to the old increment/zero behavior.
+ * before the backend shipped the fields. `isLegacyUnreadCounterEntry` detects
+ * them so catch-up can skip them (bootstrap stays their authority) while live
+ * handlers fall back to the old increment/zero behavior. sync_log retention
+ * now exists (docs/plans/sync-v2-log-retention.md), so these age out below the
+ * 30-day floor; this fallback dies in a follow-up once they can no longer
+ * appear in catch-up.
  */
 
 export interface UnreadCounterState {
@@ -174,8 +176,10 @@ export function withCounterState(bootstrap: WorkspaceBootstrap, state: UnreadCou
  * skips these (the cursor still advances past them; the bootstrap remains
  * their authority, INV-53) and the gate splice applies their buffered live
  * copies regardless of position, exactly as the phase-2b skip set did.
- * Non-counter event types are never legacy. This fallback dies when sync-log
- * retention ships and pre-field entries age out.
+ * Non-counter event types are never legacy. This fallback dies in a follow-up
+ * once pre-field entries age out below the sync-log retention floor (now
+ * shipped, docs/plans/sync-v2-log-retention.md) and can no longer reach
+ * catch-up.
  */
 export function isLegacyUnreadCounterEntry(eventType: string, payload: unknown): boolean {
   const p = payload as Record<string, unknown> | null | undefined
