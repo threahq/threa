@@ -6,7 +6,7 @@ import {
   unwrapStreamKey,
   wrapStreamKey,
 } from "@threa/crypto"
-import type { E2eKeyRollRecipient } from "@threa/types"
+import type { E2eKeyRollRecipient, E2eKeyWrapsResponse } from "@threa/types"
 import { e2eKeyWrapsApi } from "@/api/e2e-key-wraps"
 
 /**
@@ -178,22 +178,79 @@ export interface ReviveActorWrapsInput {
 
 export type ReviveActorWrapsResult = "revived" | "none-missing" | "not-owner" | "no-key"
 
+/** One (live actor key, generation) slot whose SSK wrap is missing. */
+export interface MissingActorWrap {
+  recipient: E2eKeyRollRecipient
+  keyGeneration: number
+}
+
+/**
+ * Which wrap slots a revive must fill, from one key-wraps fetch. Every live
+ * actor key needs the current generation (the classic enclave-restart heal).
+ * Enclave recipients additionally need every older generation some enclave
+ * wrap already exists at: the enclave is a singleton actor, so a prior
+ * enclave wrap at a generation proves the actor held it — and a restart
+ * orphans ALL of its generations, not just the current one. Healing only the
+ * current generation leaves a turn parked under a pre-roll generation
+ * stranded until DLQ (E2EE-7), and old sealed history and turn digests
+ * unreadable. Bots stay current-only: their wraps carry no per-bot identity,
+ * so older generations can't be attributed to the specific bot that held
+ * them (the server rejects the attempt).
+ *
+ * Shared by the revive itself and the affordance probe that decides whether
+ * to fire it, so "is anything missing" can't drift from "what gets healed".
+ */
+export function computeMissingActorWraps(
+  data: Pick<E2eKeyWrapsResponse, "currentKeyGeneration" | "wraps"> & {
+    /** `undefined` tolerates a not-yet-redeployed backend that omits the field. */
+    liveActorRecipients: E2eKeyRollRecipient[] | undefined
+  }
+): MissingActorWrap[] {
+  const { currentKeyGeneration, wraps } = data
+  const hasWrap = (recipientKeyId: string, keyGeneration: number) =>
+    wraps.some((w) => w.keyGeneration === keyGeneration && w.recipientKeyId === recipientKeyId)
+  const enclaveHeldGenerations = [
+    ...new Set(
+      wraps
+        .filter((w) => w.recipientKind === "enclave" && w.keyGeneration < currentKeyGeneration)
+        .map((w) => w.keyGeneration)
+    ),
+  ]
+
+  const missing: MissingActorWrap[] = []
+  for (const recipient of data.liveActorRecipients ?? []) {
+    if (!hasWrap(recipient.recipientKeyId, currentKeyGeneration)) {
+      missing.push({ recipient, keyGeneration: currentKeyGeneration })
+    }
+    if (recipient.recipientKind !== "enclave") continue
+    for (const keyGeneration of enclaveHeldGenerations) {
+      if (!hasWrap(recipient.recipientKeyId, keyGeneration)) {
+        missing.push({ recipient, keyGeneration })
+      }
+    }
+  }
+  return missing
+}
+
 /** De-dupes concurrent revives per stream (header probe + send firing together). */
 const reviveInflight = new Map<string, Promise<ReviveActorWrapsResult>>()
 
 /**
- * Re-wrap the *current* SSK to invited actors' live keys that are missing a
- * wrap at the current generation — the heal for an enclave restart, whose
- * fresh EIK orphans every stream wrapped to its predecessor (parking enclave
- * turns server-side until this runs). Unlike `rekeyStream`, no fresh SSK and
- * no generation bump: the actor already held this generation, so the new
- * instance gets exactly the prior access — and a parked turn (sealed under
- * the current generation) stays decryptable, which a roll would strand.
+ * Re-wrap already-granted SSK generations to invited actors' live keys that
+ * are missing their wrap — the heal for an enclave restart, whose fresh EIK
+ * orphans every stream wrapped to its predecessor (parking enclave turns
+ * server-side until this runs). Unlike `rekeyStream`, no fresh SSK and no
+ * generation bump: the actor already held these generations, so the new
+ * instance gets exactly the prior access — and a parked turn stays
+ * decryptable, which a roll would strand. `computeMissingActorWraps` decides
+ * the slots; every generation the owner can open is re-wrapped, and one it
+ * can't is skipped rather than failing the rest.
  *
  * Owner-only (the server enforces it; `"not-owner"` short-circuits everyone
  * else). Returns `"none-missing"` when every live actor key already has its
- * wrap, `"no-key"` when the owner's own wrap can't be recovered (nothing to
- * re-wrap), `"revived"` after storing the missing wraps.
+ * wraps, `"no-key"` when no missing generation's SSK can be recovered from
+ * the owner's own wraps (nothing to re-wrap), `"revived"` after storing the
+ * missing wraps.
  */
 export async function reviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<ReviveActorWrapsResult> {
   const slot = streamSlot(input.workspaceId, input.streamId)
@@ -210,45 +267,42 @@ export async function reviveStaleActorWraps(input: ReviveActorWrapsInput): Promi
 async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<ReviveActorWrapsResult> {
   // Always a fresh fetch: the point is to see an EIK that registered after
   // whatever the UI has cached.
-  const { currentKeyGeneration, wraps, liveActorRecipients, ownerUserId } = await e2eKeyWrapsApi.get(
-    input.workspaceId,
-    input.streamId
-  )
+  const data = await e2eKeyWrapsApi.get(input.workspaceId, input.streamId)
+  const { currentKeyGeneration, ownerUserId } = data
   currentGenerations.set(streamSlot(input.workspaceId, input.streamId), currentKeyGeneration)
 
   if (ownerUserId !== input.userId) return "not-owner"
 
-  // `?? []` tolerates a not-yet-redeployed backend that omits the field.
-  const missing = (liveActorRecipients ?? []).filter(
-    (r) => !wraps.some((w) => w.keyGeneration === currentKeyGeneration && w.recipientKeyId === r.recipientKeyId)
-  )
+  const missing = computeMissingActorWraps(data)
   if (missing.length === 0) return "none-missing"
 
-  // At send time the seal path has already cached this generation's SSK, so
-  // this is normally a cache hit; on a cold open it unwraps the owner's slot.
-  const ssk = await resolveStreamKey({
-    workspaceId: input.workspaceId,
-    streamId: input.streamId,
-    keyGeneration: currentKeyGeneration,
-    recipientKeyId: input.ownerKeyId,
-    privateKey: input.ownerPrivateKey,
-  })
-  if (!ssk) return "no-key"
+  // Recover each missing generation's SSK from the owner's own wrap in the
+  // response we already hold (at send time the current generation is normally
+  // already cached). A generation the owner can't open — no owner wrap, or an
+  // unwrap failure — is skipped so it can't block healing the rest.
+  const sskByGeneration = new Map<number, Uint8Array>()
+  for (const keyGeneration of new Set(missing.map((m) => m.keyGeneration))) {
+    const ssk = await unwrapOwnerGeneration(input, data, keyGeneration)
+    if (ssk) sskByGeneration.set(keyGeneration, ssk)
+  }
+  const wrappable = missing.filter((m) => sskByGeneration.has(m.keyGeneration))
+  if (wrappable.length === 0) return "no-key"
 
   const rewraps = await Promise.all(
-    missing.map(async (r) => {
+    wrappable.map(async ({ recipient, keyGeneration }) => {
       const wrap = await wrapStreamKey({
-        key: ssk,
-        recipientPublicKey: base64ToBytes(r.publicKey),
+        key: sskByGeneration.get(keyGeneration)!,
+        recipientPublicKey: base64ToBytes(recipient.publicKey),
         aad: buildWrapAad({
           streamId: input.streamId,
-          keyGeneration: currentKeyGeneration,
-          recipientKeyId: r.recipientKeyId,
+          keyGeneration,
+          recipientKeyId: recipient.recipientKeyId,
         }),
       })
       return {
-        recipientKeyId: r.recipientKeyId,
-        recipientKind: r.recipientKind,
+        keyGeneration,
+        recipientKeyId: recipient.recipientKeyId,
+        recipientKind: recipient.recipientKind,
         wrapEnc: bytesToBase64(wrap.enc),
         wrapCt: bytesToBase64(wrap.ct),
       }
@@ -260,6 +314,36 @@ async function doReviveStaleActorWraps(input: ReviveActorWrapsInput): Promise<Re
     wraps: rewraps,
   })
   return "revived"
+}
+
+/**
+ * Unwrap the owner's SSK for one generation from an already-fetched wrap set,
+ * serving the in-memory cache first and seeding it on success. Returns `null`
+ * (never throws) when the owner holds no wrap at the generation or the unwrap
+ * fails — revive callers treat that generation as unopenable and move on.
+ */
+async function unwrapOwnerGeneration(
+  input: ReviveActorWrapsInput,
+  data: Pick<E2eKeyWrapsResponse, "wraps">,
+  keyGeneration: number
+): Promise<Uint8Array | null> {
+  const cached = keys.get(keySlot(input.workspaceId, input.streamId, keyGeneration))
+  if (cached) return cached
+
+  const ownerWrap = data.wraps.find((w) => w.keyGeneration === keyGeneration && w.recipientKeyId === input.ownerKeyId)
+  if (!ownerWrap) return null
+  try {
+    const key = await unwrapStreamKey({
+      enc: base64ToBytes(ownerWrap.wrapEnc),
+      ct: base64ToBytes(ownerWrap.wrapCt),
+      recipientPrivateKey: input.ownerPrivateKey,
+      aad: buildWrapAad({ streamId: input.streamId, keyGeneration, recipientKeyId: input.ownerKeyId }),
+    })
+    keys.set(keySlot(input.workspaceId, input.streamId, keyGeneration), key)
+    return key
+  } catch {
+    return null
+  }
 }
 
 /**

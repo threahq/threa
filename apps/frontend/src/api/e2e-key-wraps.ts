@@ -33,10 +33,11 @@ export const e2eKeyWrapsApi = {
   },
 
   /**
-   * Re-wrap the *current* SSK to invited actors' live keys that lost their
-   * wrap (an enclave restart mints a fresh EIK). No generation bump — the
-   * actor already held this generation, so the new instance gets exactly the
-   * prior access, and a turn parked on the missing wrap revives.
+   * Re-wrap already-granted SSK generations to invited actors' live keys
+   * that lost their wrap (an enclave restart mints a fresh EIK). No
+   * generation bump — the actor already held these generations, so the new
+   * instance gets exactly the prior access, and a turn parked on a missing
+   * wrap revives (including one sealed under a pre-roll generation, E2EE-7).
    */
   async reviveActorWraps(workspaceId: string, streamId: string, input: E2eActorRewrapInput): Promise<void> {
     await api.post<void>(`/api/workspaces/${workspaceId}/streams/${streamId}/e2e/actor-key-wraps`, input)

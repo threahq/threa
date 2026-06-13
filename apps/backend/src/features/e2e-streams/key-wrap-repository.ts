@@ -101,4 +101,28 @@ export const StreamE2eKeyWrapsRepository = {
     `)
     return result.rows.map(mapRow)
   },
+
+  /**
+   * Distinct key generations that already have a wrap for the given recipient
+   * kind. Scopes the read to exactly the rows the caller consumes — the revive
+   * path needs only the generations the (singleton) enclave actor provably
+   * held to gate an older-generation re-wrap, never the full wrap set — so the
+   * `recipient_kind` filter is pushed into SQL rather than scanning every row
+   * for the stream and filtering in JS.
+   */
+  async listGenerationsForRecipientKind(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    recipientKind: E2eKeyWrapRecipientKind
+  ): Promise<number[]> {
+    const result = await db.query<{ key_generation: number }>(sql`
+      SELECT DISTINCT key_generation
+      FROM stream_e2e_key_wraps
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
+        AND recipient_kind = ${recipientKind}
+      ORDER BY key_generation
+    `)
+    return result.rows.map((r) => r.key_generation)
+  },
 }

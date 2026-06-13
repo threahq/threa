@@ -202,16 +202,21 @@ const rollKeySchema = z.object({
 })
 
 /**
- * Actor-wrap revive body: re-wraps of the *current* SSK (generation 0 is
- * valid — an owner-only stream that never rolled) to invited actors' live
- * keys. Same per-wrap caps as `rollKeySchema`; the service rejects `user`
- * recipients and keys that aren't live actor keys.
+ * Actor-wrap revive body: re-wraps of already-granted SSK generations
+ * (generation 0 is valid — an owner-only stream that never rolled) to
+ * invited actors' live keys. The top-level generation is the client's view
+ * of current; a wrap's own `keyGeneration` (defaulting to it) may name an
+ * older one — the service allows that only for the enclave actor, and only
+ * for a generation it already held (E2EE-7). Same per-wrap caps as
+ * `rollKeySchema`; the service rejects `user` recipients and keys that
+ * aren't live actor keys.
  */
 const actorRewrapSchema = z.object({
   keyGeneration: z.number().int().min(0),
   wraps: z
     .array(
       z.object({
+        keyGeneration: z.number().int().min(0).optional(),
         recipientKeyId: z.string().min(1).max(128),
         recipientKind: z.enum(E2E_KEY_WRAP_RECIPIENT_KINDS),
         wrapEnc: z.string().min(1).max(1024),
