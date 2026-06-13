@@ -187,6 +187,24 @@ export const SyncLogRepository = {
     return result.rows.map(mapRowToEntry)
   },
 
+  /**
+   * Heads for a batch of workspaces in one statement (INV-56), for the
+   * heartbeat tick. Workspaces with no log entries are absent from the map;
+   * callers default them to 0.
+   */
+  async getHeads(db: Querier, workspaceIds: string[]): Promise<Map<string, bigint>> {
+    if (workspaceIds.length === 0) {
+      return new Map()
+    }
+    const result = await db.query<{ workspace_id: string; head: string }>(sql`
+      SELECT workspace_id, MAX(sync_id) AS head
+      FROM sync_log
+      WHERE workspace_id = ANY(${workspaceIds})
+      GROUP BY workspace_id
+    `)
+    return new Map(result.rows.map((row) => [row.workspace_id, BigInt(row.head)]))
+  },
+
   /** Max visible sync id for a workspace (0 when the log is empty). */
   async getHead(db: Querier, workspaceId: string): Promise<bigint> {
     const result = await db.query<{ head: string }>(sql`

@@ -395,6 +395,7 @@ export type {
   // Sync log catch-up
   SyncCatchUpEntry,
   SyncCatchUpResponse,
+  SyncHeartbeatPayload,
   // Messages
   CreateMessageInput,
   CreateMessageInputJson,

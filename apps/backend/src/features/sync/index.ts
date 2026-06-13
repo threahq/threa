@@ -2,3 +2,4 @@ export { SyncLogRepository, type SyncLogEntryInput, type SyncLogEntry } from "./
 export { SyncService, type CatchUpResult } from "./service"
 export { createSyncHandlers } from "./handlers"
 export { SyncLogReconciliationWorker, type SyncLogReconciliationWorkerConfig } from "./reconciliation-worker"
+export { SyncHeartbeatWorker, type SyncHeartbeatWorkerConfig } from "./heartbeat-worker"

@@ -110,7 +110,7 @@ import {
 import { EmojiUsageHandler } from "./features/emoji"
 import { SystemMessageService, SystemMessageOutboxHandler } from "./features/system-messages"
 import { ActivityService, ActivityFeedHandler } from "./features/activity"
-import { SyncService, SyncLogReconciliationWorker } from "./features/sync"
+import { SyncService, SyncLogReconciliationWorker, SyncHeartbeatWorker } from "./features/sync"
 import { BotInvocationOutboxHandler } from "./features/bot-runtimes/invocation-outbox-handler"
 import {
   BotRuntimeInstanceRepository,
@@ -1160,6 +1160,14 @@ export async function startServer(): Promise<ServerInstance> {
   )
   await syncLogReconciliationWorker.start()
 
+  // Broadcasts each workspace's sync-log head to its room so active-mode
+  // clients detect dropped emits between reconnect/resume triggers
+  const syncHeartbeatWorker = new SyncHeartbeatWorker(
+    { pool, io },
+    { intervalMs: Number(process.env.SYNC_HEARTBEAT_INTERVAL_MS) || undefined }
+  )
+  syncHeartbeatWorker.start()
+
   const orphanSessionCleanup = createOrphanSessionCleanup(pools.main, io)
   orphanSessionCleanup.start()
 
@@ -1200,6 +1208,7 @@ export async function startServer(): Promise<ServerInstance> {
     await cleanupWorker.stop()
     await outboxRetentionWorker.stop()
     await syncLogReconciliationWorker.stop()
+    await syncHeartbeatWorker.stop()
     await outboxDispatcher.stop()
     await jobQueue.stop()
     logger.info("Closing socket.io...")
