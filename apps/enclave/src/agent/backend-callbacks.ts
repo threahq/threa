@@ -1,6 +1,7 @@
 import {
   ENCLAVE_CALLBACK_TOKEN_HEADER,
   INTERNAL_API_KEY_HEADER,
+  type EnclaveSessionHeartbeatResponse,
   type SealedReply,
   type EnclaveSealedName,
   type SealedStep,
@@ -19,8 +20,12 @@ import type { EnclaveConfig } from "../config"
  */
 
 export interface BackendCallbacks {
-  /** Refresh the session's heartbeat so orphan-cleanup doesn't reclaim it mid-turn. */
-  heartbeat(sessionId: string): Promise<void>
+  /**
+   * Refresh the session's heartbeat so orphan-cleanup doesn't reclaim it
+   * mid-turn. The response carries the abort flag (§2.7: a user's "Stop
+   * research" rides the pull channel — there is no inbound cancel route).
+   */
+  heartbeat(sessionId: string): Promise<EnclaveSessionHeartbeatResponse>
   /** Stream one sealed reply back the moment the loop sends it (written + broadcast now). */
   message(sessionId: string, reply: SealedReply): Promise<void>
   /** Open one in-flight sealed trace step the moment the loop starts it (persisted + broadcast now). */
@@ -60,6 +65,12 @@ export function createBackendCallbacks(config: EnclaveConfig, callbackToken?: st
         signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session heartbeat failed: ${res.status}`)
+      // A malformed/empty body is a heartbeat protocol failure, not "no abort":
+      // throwing surfaces it (logged by the runner) and the next beat re-reads
+      // the (sticky) abort flag, rather than silently masking a pending abort.
+      const body = (await res.json()) as EnclaveSessionHeartbeatResponse
+      if (typeof body?.abort !== "boolean") throw new Error("session heartbeat returned an invalid body")
+      return { abort: body.abort }
     },
 
     async message(sessionId, reply) {

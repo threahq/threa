@@ -14,7 +14,6 @@ export interface RegisterEnclaveKeyInput {
   instanceId: string
   keyId: string
   publicKey: Uint8Array
-  instanceUrl: string
 }
 
 export class EnclaveRuntimesService {
@@ -26,7 +25,6 @@ export class EnclaveRuntimesService {
       instanceId: input.instanceId,
       keyId: input.keyId,
       publicKey: input.publicKey,
-      instanceUrl: input.instanceUrl,
     }
     return EnclaveRuntimesRepository.registerKey(this.pool, params)
   }
@@ -36,8 +34,8 @@ export class EnclaveRuntimesService {
   }
 
   /**
-   * Live EIK list. Used by the dispatcher to pick an instance to invoke and by
-   * the frontend (via `/enclave/active-keys`) to wrap the SSK to each live EIK.
+   * Live EIK list. Used by the frontend (via `/enclave/active-keys`) to wrap
+   * the SSK to each live EIK, so whichever instance claims a turn can decrypt.
    */
   async listLive(): Promise<EnclaveRuntime[]> {
     return EnclaveRuntimesRepository.listLive(this.pool, ENCLAVE_RUNTIME_STALENESS_MS)
@@ -45,5 +43,15 @@ export class EnclaveRuntimesService {
 
   async revoke(keyId: string): Promise<void> {
     return EnclaveRuntimesRepository.revoke(this.pool, keyId)
+  }
+
+  /**
+   * Whether this EIK is registered and not revoked — the claim endpoint's auth
+   * gate (only a live instance may pull work). Distinct from the claim
+   * predicate's wrap check: a revoked key could still have wraps on file, so
+   * registration liveness is checked separately.
+   */
+  async isRegisteredLive(keyId: string): Promise<boolean> {
+    return (await EnclaveRuntimesRepository.findByKeyId(this.pool, keyId)) !== null
   }
 }

@@ -52,6 +52,7 @@ import { createVoiceTranscriptionHandlers, type VoiceTranscriptionService } from
 import {
   createEnclaveRuntimesHandlers,
   createEnclaveSessionHandlers,
+  type EnclaveClaimService,
   type EnclaveRuntimesService,
 } from "./features/enclave-runtimes"
 import {
@@ -94,7 +95,6 @@ import type { WorkosOrgService } from "@threa/backend-common"
 import type { BotApiKeyService } from "./features/public-api"
 import type { Pool } from "pg"
 import type { PoolMonitor } from "./lib/observability"
-import type { QueueManager } from "./lib/queue"
 
 interface Dependencies {
   pool: Pool
@@ -142,13 +142,12 @@ interface Dependencies {
   userApiKeyService: UserApiKeyService
   voiceTranscriptionService: VoiceTranscriptionService
   enclaveRuntimesService: EnclaveRuntimesService
-  enclaveInstanceUrlAllowedPrefixes: string[]
+  enclaveClaimService: EnclaveClaimService
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
   storage: StorageProvider
   ai: AI
   controlPlaneClient: ControlPlaneClient | null
-  jobQueue: QueueManager
   costService: AICostServiceLike
 }
 
@@ -197,7 +196,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     userApiKeyService,
     voiceTranscriptionService,
     enclaveRuntimesService,
-    enclaveInstanceUrlAllowedPrefixes,
+    enclaveClaimService,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -289,7 +288,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
   const enclave = createEnclaveRuntimesHandlers({
     enclaveRuntimesService,
-    instanceUrlAllowedPrefixes: enclaveInstanceUrlAllowedPrefixes,
+    enclaveClaimService,
   })
 
   // Internal API — control-plane → regional backend, protected by shared secret
@@ -316,14 +315,16 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/enclave-runtimes/register-key", enclaveAuth, enclave.registerKey)
     app.post("/internal/enclave-runtimes/heartbeat", enclaveAuth, enclave.heartbeat)
     app.post("/internal/enclave-runtimes/revoke", enclaveAuth, enclave.revoke)
+    // The pull transport's turn start (§2.7): instances poll here and claim
+    // the oldest turn their EIK can serve. Same enclave-credential gate.
+    app.post("/internal/enclave-runtimes/claims", enclaveAuth, enclave.claim)
 
-    // Session callbacks: a live enclave drives an assigned turn over these
+    // Session callbacks: a live enclave drives a claimed turn over these
     // (liveness refresh + sealed replies on completion). Same enclave-credential gate.
     const enclaveSession = createEnclaveSessionHandlers({
       pool,
       eventService,
       io: deps.io,
-      jobQueue: deps.jobQueue,
       costService: deps.costService,
     })
     app.post("/internal/enclave-runtimes/sessions/:id/heartbeat", enclaveAuth, enclaveSession.heartbeat)

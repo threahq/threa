@@ -5,7 +5,6 @@ const ORIGINAL_ENV = { ...process.env }
 
 function setBaseEnv() {
   process.env.BACKEND_BASE_URL = "https://backend.internal"
-  process.env.ENCLAVE_SELF_URL = "https://enclave.internal"
   process.env.OPENROUTER_API_KEY = "sk-test"
   delete process.env.INTERNAL_API_KEY
   delete process.env.ENCLAVE_INTERNAL_API_KEY

@@ -1,8 +1,6 @@
 export interface EnclaveConfig {
   port: number
-  /** URL the backend stores as this instance's reachable address (registration `instanceUrl`). */
-  selfUrl: string
-  /** Backend base URL — target for register/heartbeat/revoke. */
+  /** Backend base URL — target for register/heartbeat/revoke/claims and the session callbacks. */
   backendBaseUrl: string
   /**
    * Dedicated secret for the enclave↔backend channel — the enclave's calls to
@@ -13,6 +11,11 @@ export interface EnclaveConfig {
   internalApiKey: string
   /** Heartbeat interval. Backend's staleness window is 2min, so 30s keeps us with 3 retries of grace. */
   heartbeatIntervalMs: number
+  /**
+   * Idle claim-poll interval (§2.7 pull transport) — the turn-start latency
+   * floor when no work is flowing. A winning claim re-polls immediately.
+   */
+  claimPollIntervalMs: number
   /** Source commit the image was built from, surfaced via /attestation. */
   sourceCommitSha: string
   /** Build hash of the running image, surfaced via /attestation. */
@@ -30,7 +33,7 @@ export interface EnclaveConfig {
 }
 
 export function loadEnclaveConfig(): EnclaveConfig {
-  const required = ["ENCLAVE_INTERNAL_API_KEY", "BACKEND_BASE_URL", "ENCLAVE_SELF_URL", "OPENROUTER_API_KEY"]
+  const required = ["ENCLAVE_INTERNAL_API_KEY", "BACKEND_BASE_URL", "OPENROUTER_API_KEY"]
   const missing = required.filter((k) => !process.env[k])
   if (missing.length > 0) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`)
@@ -38,10 +41,10 @@ export function loadEnclaveConfig(): EnclaveConfig {
 
   return {
     port: Number(process.env.PORT) || 3011,
-    selfUrl: process.env.ENCLAVE_SELF_URL!,
     backendBaseUrl: process.env.BACKEND_BASE_URL!.replace(/\/$/, ""),
     internalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY!,
     heartbeatIntervalMs: Number(process.env.ENCLAVE_HEARTBEAT_INTERVAL_MS) || 30_000,
+    claimPollIntervalMs: Number(process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS) || 1_500,
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",
     openRouterApiKey: process.env.OPENROUTER_API_KEY!,

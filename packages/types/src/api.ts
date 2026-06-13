@@ -489,7 +489,8 @@ export interface E2eActorRewrapInput {
 }
 
 // ============================================================================
-// Enclave invoke contract (backend forwarder ↔ enclave `/invoke`)
+// Enclave turn contract (enclave pulls assignments via the claim endpoint and
+// reports back over the session callbacks)
 // ============================================================================
 
 /**
@@ -638,26 +639,28 @@ export interface EnclaveSealedSubstep {
 }
 
 /**
- * The work the backend assigns to a live enclave via `POST /sessions`. The
- * backend never decrypts: it ships ciphertext + the wraps addressed to that EIK
- * plus the `sessionId` it created the `agent_sessions` row under. The enclave
- * acks the assignment (202), then runs the agent loop asynchronously — unwrapping,
- * opening, sealing each reply — and reports progress/completion back over the
- * session callbacks (heartbeat, complete). `system` is the persona's (non-secret)
- * prompt; `reply` carries the generation each reply is sealed under + Ariadne's
- * sender id the replies are bound to.
+ * The work the backend hands a live enclave as the body of a winning claim
+ * (`POST /internal/enclave-runtimes/claims`, 200). The backend never decrypts:
+ * it ships ciphertext + the wraps addressed to the claiming EIK plus the
+ * `sessionId` it created the `agent_sessions` row under. The enclave runs the
+ * agent loop asynchronously after the claim — unwrapping, opening, sealing each
+ * reply — and reports progress/completion back over the session callbacks
+ * (heartbeat, complete/fail). `system` is the persona's (non-secret) prompt;
+ * `reply` carries the generation each reply is sealed under + Ariadne's sender
+ * id the replies are bound to.
  */
 export interface EnclaveSessionAssignment {
   sessionId: string
   streamId: string
   /**
-   * Dispatch-minted secret binding this session's callbacks to the runner the
-   * assignment was delivered to (Phase 2.4b, E2EE-21). The enclave echoes it
-   * on every session callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend
-   * rejects a mismatch. Optional for one release while pre-binding sessions
-   * drain.
+   * Claim-minted secret binding this session's callbacks to the runner that
+   * claimed the turn (Phase 2.4b, E2EE-21; §2.7 transfers it onto the claim).
+   * Delivered only inside this claim response and echoed on every session
+   * callback (`ENCLAVE_CALLBACK_TOKEN_HEADER`); the backend rejects a
+   * mismatch or an absent token, so the field is required — an assignment
+   * without it could never complete a single callback.
    */
-  callbackToken?: string
+  callbackToken: string
   wraps: EnclaveSskWrap[]
   history: (EnclaveSealedMessage & { role: "user" | "assistant" })[]
   prompt: EnclaveSealedMessage
@@ -746,6 +749,31 @@ export interface EnclaveSessionResult {
  */
 export interface EnclaveSessionFailure {
   errorName: string
+}
+
+/**
+ * Response of `POST /internal/enclave-runtimes/claims` when a turn was won
+ * (the no-work case is a bodyless 204). The enclave presents its EIK key id;
+ * the backend claims the oldest invocation that key can actually serve (its
+ * wraps cover the prompt's and the reply's key generations), builds the
+ * assignment for it, and hands it over. Possession of the embedded
+ * `callbackToken` is what authorizes the session callbacks — the claim is
+ * the handoff.
+ */
+export interface EnclaveClaimResponse {
+  assignment: EnclaveSessionAssignment
+}
+
+/**
+ * Response of the per-session heartbeat callback. Cancellation rides the
+ * pull channel: `abort: true` means a user requested "Stop research" for
+ * this session, and the enclave should trip the turn's AbortController (the
+ * graceful research abort — partial findings, the turn still replies). The
+ * enclave has no inbound routes, so this piggybacked flag replaces the old
+ * `POST /sessions/:id/cancel` push.
+ */
+export interface EnclaveSessionHeartbeatResponse {
+  abort: boolean
 }
 
 export type CreateDmMessageInput = CreateDmMessageInputJson | CreateDmMessageInputMarkdown

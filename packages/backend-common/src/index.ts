@@ -111,6 +111,7 @@ export {
   voiceSessionId,
   userEncryptionKeyId,
   enclaveRuntimeId,
+  enclaveInvocationId,
   streamE2eKeyWrapId,
   waitlistId,
   conversationFeedbackId,

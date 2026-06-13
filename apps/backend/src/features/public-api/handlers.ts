@@ -358,7 +358,7 @@ async function resolveAuthorDisplayNames(
   return nameMap
 }
 
-/** Mirrors the enclave assignment's history cap (`MAX_HISTORY_MESSAGES`, enclave-invoke-worker). */
+/** Mirrors the enclave assignment's history cap (`MAX_HISTORY_MESSAGES`, enclave claim-service). */
 const CLAIM_CONTEXT_MAX_MESSAGES = 30
 
 /**

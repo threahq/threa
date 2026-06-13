@@ -9,9 +9,12 @@ const logger = baseLogger.child({ name: "enclave-session" })
 
 /**
  * Refresh interval for the session heartbeat. The backend reclaims a session
- * whose heartbeat is older than ~60s, so 15s leaves several missed beats of grace.
+ * whose heartbeat is older than ~60s, so this leaves many missed beats of
+ * grace — and since the heartbeat response is also how a user's "Stop
+ * research" reaches the turn (§2.7: no inbound cancel route), the interval is
+ * the abort latency ceiling, which wants to stay a few seconds, not fifteen.
  */
-const HEARTBEAT_INTERVAL_MS = 15_000
+const HEARTBEAT_INTERVAL_MS = 5_000
 
 export interface SessionRunnerDeps {
   keyPair: EnclaveKeyPair
@@ -19,34 +22,38 @@ export interface SessionRunnerDeps {
   callbacks: BackendCallbacks
   /** Web-tool config for the turn loop (Tavily key). Absent → research/read_url only. */
   toolConfig?: { tavilyApiKey?: string }
-  /**
-   * Per-session cancel controllers, keyed by sessionId. The runner registers one
-   * for the turn so the `/sessions/:id/cancel` endpoint can abort it (graceful
-   * "Stop research"); it's removed when the turn ends.
-   */
-  aborts?: Map<string, AbortController>
 }
 
 /**
- * Owns one assigned turn end to end: keeps the session's heartbeat fresh while
- * the agent loop runs, then hands the sealed replies back via `complete`. On
- * failure it acks the backend via `fail` so the session terminates promptly
- * (orphan-cleanup stays the backstop if that ack can't land). Plaintext lives
- * only in `runEnclaveTurn`, for the duration of the loop.
+ * Owns one claimed turn end to end: keeps the session's heartbeat fresh while
+ * the agent loop runs (consuming the heartbeat's abort flag — a graceful
+ * "Stop research" trips the turn's AbortController), then hands the sealed
+ * replies back via `complete`. On failure it acks the backend via `fail` so
+ * the session terminates promptly (orphan-cleanup stays the backstop if that
+ * ack can't land). Plaintext lives only in `runEnclaveTurn`, for the duration
+ * of the loop.
  */
 export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: EnclaveSessionAssignment): Promise<void> {
   const { sessionId } = assignment
 
-  const heartbeat = setInterval(() => {
-    void deps.callbacks.heartbeat(sessionId).catch((err) => {
-      logger.warn({ err, sessionId }, "Session heartbeat failed")
-    })
-  }, HEARTBEAT_INTERVAL_MS)
-
-  // Register a cancel controller so `/sessions/:id/cancel` can gracefully abort
-  // this turn's long-running tools (research). Removed in `finally`.
+  // The cancel channel: the heartbeat response says whether a user requested
+  // an abort, and the controller feeds the loop's existing abort gate (the
+  // web-research sub-loop returns partial findings; the turn still replies).
   const abortController = new AbortController()
-  deps.aborts?.set(sessionId, abortController)
+
+  const heartbeat = setInterval(() => {
+    void deps.callbacks
+      .heartbeat(sessionId)
+      .then(({ abort }) => {
+        if (abort && !abortController.signal.aborted) {
+          logger.info({ sessionId }, "Session abort requested via heartbeat")
+          abortController.abort()
+        }
+      })
+      .catch((err) => {
+        logger.warn({ err, sessionId }, "Session heartbeat failed")
+      })
+  }, HEARTBEAT_INTERVAL_MS)
 
   try {
     const result = await runEnclaveTurn(
@@ -89,6 +96,5 @@ export async function runEnclaveSession(deps: SessionRunnerDeps, assignment: Enc
     })
   } finally {
     clearInterval(heartbeat)
-    deps.aborts?.delete(sessionId)
   }
 }

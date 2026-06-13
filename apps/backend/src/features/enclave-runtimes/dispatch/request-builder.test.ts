@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import type { Message } from "../../messaging"
 import type { E2eStream, E2eStreamActor, StreamE2eKeyWrap } from "../../e2e-streams"
-import type { EnclaveRuntime } from "../repository"
 import { buildEnclaveSessionAssignment, type BuildInvokeInputs } from "./request-builder"
 
 const E2E: E2eStream = {
@@ -15,19 +14,6 @@ const E2E: E2eStream = {
 }
 
 const ENCLAVE_ACTOR: E2eStreamActor = { kind: "enclave", actorId: "enclave", keyId: null }
-
-function eik(keyId: string, instanceUrl: string): EnclaveRuntime {
-  return {
-    id: `elr_${keyId}`,
-    instanceId: `enci_${keyId}`,
-    keyId,
-    publicKey: new Uint8Array([1, 2, 3]),
-    instanceUrl,
-    registeredAt: new Date(),
-    lastSeenAt: new Date(),
-    revokedAt: null,
-  }
-}
 
 function wrap(keyId: string, gen: number): StreamE2eKeyWrap {
   return {
@@ -61,7 +47,7 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
   return {
     e2e: E2E,
     actors: [ENCLAVE_ACTOR],
-    liveEiks: [eik("eik_live", "https://enclave-1.internal")],
+    eikKeyId: "eik_live",
     wraps: [wrap("eik_live", 1)],
     trigger: msg("msg_trigger", "user", "hello"),
     triggerAuthorName: "Kris",
@@ -76,55 +62,52 @@ function inputs(over: Partial<BuildInvokeInputs> = {}): BuildInvokeInputs {
 }
 
 describe("buildEnclaveSessionAssignment", () => {
-  it("builds a request to the EIK that can decrypt the current generation, stripping the model prefix", () => {
-    const built = buildEnclaveSessionAssignment(inputs())
-    expect(built).toMatchObject({
-      instanceUrl: "https://enclave-1.internal",
-      keyId: "eik_live",
-      assignment: {
-        sessionId: "session_test",
-        model: "anthropic/claude-sonnet-4.6", // openrouter: prefix stripped
-        // The full system prompt is assembled upstream (buildEnclaveSystemPrompt)
-        // and passed through here verbatim as persona.systemPrompt.
-        system: "You are Ariadne.",
-        temperature: 0.7,
-        reply: { keyGeneration: 1, senderId: "persona_ariadne" },
-        prompt: { ciphertext: Buffer.from("cipher:hello").toString("base64") },
-        wraps: [{ keyGeneration: 1, wrapEnc: "enc_eik_live_1", wrapCt: "ct_eik_live_1" }],
-        // Clear trigger metadata for the enclave's "Triggered by" CONTEXT step.
-        trigger: { messageId: "msg_trigger", authorName: "Kris", authorType: "user" },
-      },
+  it("builds the assignment for the claiming EIK, stripping the model prefix", () => {
+    const assignment = buildEnclaveSessionAssignment(inputs())
+    expect(assignment).toMatchObject({
+      sessionId: "session_test",
+      callbackToken: "cbtok_test",
+      model: "anthropic/claude-sonnet-4.6", // openrouter: prefix stripped
+      // The full system prompt is assembled upstream (buildEnclaveSystemPrompt)
+      // and passed through here verbatim as persona.systemPrompt.
+      system: "You are Ariadne.",
+      temperature: 0.7,
+      reply: { keyGeneration: 1, senderId: "persona_ariadne" },
+      prompt: { ciphertext: Buffer.from("cipher:hello").toString("base64") },
+      wraps: [{ keyGeneration: 1, wrapEnc: "enc_eik_live_1", wrapCt: "ct_eik_live_1" }],
+      // Clear trigger metadata for the enclave's "Triggered by" CONTEXT step.
+      trigger: { messageId: "msg_trigger", authorName: "Kris", authorType: "user" },
     })
-    expect(built!.assignment).not.toHaveProperty("maxTokens") // null → omitted
+    expect(assignment).not.toHaveProperty("maxTokens") // null → omitted
   })
 
   it("omits the trigger metadata when the author name can't be resolved", () => {
-    const built = buildEnclaveSessionAssignment(inputs({ triggerAuthorName: undefined }))
+    const assignment = buildEnclaveSessionAssignment(inputs({ triggerAuthorName: undefined }))
     // No misleading "Unknown" placeholder row — the enclave suppresses the
     // CONTEXT "Triggered by" step entirely when there's no name.
-    expect(built!.assignment).not.toHaveProperty("trigger")
+    expect(assignment).not.toHaveProperty("trigger")
   })
 
   it("ships prior turns' sealed digests verbatim, and omits the field when there are none", () => {
-    expect(buildEnclaveSessionAssignment(inputs())!.assignment).not.toHaveProperty("recentDigests")
-    expect(buildEnclaveSessionAssignment(inputs({ recentDigests: [] }))!.assignment).not.toHaveProperty("recentDigests")
+    expect(buildEnclaveSessionAssignment(inputs())).not.toHaveProperty("recentDigests")
+    expect(buildEnclaveSessionAssignment(inputs({ recentDigests: [] }))).not.toHaveProperty("recentDigests")
 
     const digest = {
       ciphertext: "ZGlnZXN0",
       envelope: { v: 2, keyGeneration: 1, iv: "aXY=", aad: "YWFk" },
       completedAt: "2026-06-10T10:00:00.000Z",
     }
-    const built = buildEnclaveSessionAssignment(inputs({ recentDigests: [digest] }))
-    expect(built!.assignment.recentDigests).toEqual([digest])
+    const assignment = buildEnclaveSessionAssignment(inputs({ recentDigests: [digest] }))
+    expect(assignment!.recentDigests).toEqual([digest])
   })
 
   it("ships the trigger's attachment ciphertext inline, and omits it when there's none", () => {
-    expect(buildEnclaveSessionAssignment(inputs())!.assignment).not.toHaveProperty("attachmentCiphertexts")
+    expect(buildEnclaveSessionAssignment(inputs())).not.toHaveProperty("attachmentCiphertexts")
 
     const withFiles = buildEnclaveSessionAssignment(
       inputs({ attachmentCiphertexts: [{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }] })
     )
-    expect(withFiles!.assignment.attachmentCiphertexts).toEqual([{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }])
+    expect(withFiles!.attachmentCiphertexts).toEqual([{ attachmentId: "attach_1", ciphertext: "Y2lwaGVy" }])
   })
 
   it("returns null when no enclave actor is invited", () => {
@@ -133,60 +116,55 @@ describe("buildEnclaveSessionAssignment", () => {
     ).toBeNull()
   })
 
-  it("returns null when no live EIK has a wrap for the current generation", () => {
-    // Live EIK exists, but its only wrap is for an older generation.
-    const built = buildEnclaveSessionAssignment(inputs({ wraps: [wrap("eik_live", 0)] }))
-    expect(built).toBeNull()
+  it("returns null when the claiming EIK has no wrap for the current generation", () => {
+    // The claim predicate normally filters this out; the build re-checks the
+    // revoke/rotation race. Only an older-generation wrap exists.
+    expect(buildEnclaveSessionAssignment(inputs({ wraps: [wrap("eik_live", 0)] }))).toBeNull()
   })
 
-  it("picks a live EIK that has the current-generation wrap over one that doesn't", () => {
-    const built = buildEnclaveSessionAssignment(
-      inputs({
-        liveEiks: [eik("eik_stale", "https://stale.internal"), eik("eik_fresh", "https://fresh.internal")],
-        wraps: [wrap("eik_stale", 0), wrap("eik_fresh", 1)],
-      })
-    )
-    expect(built!.instanceUrl).toBe("https://fresh.internal")
-    expect(built!.assignment.wraps.every((w) => w.wrapEnc.includes("eik_fresh"))).toBe(true)
+  it("ships only the claiming EIK's wraps, never another instance's", () => {
+    const assignment = buildEnclaveSessionAssignment(inputs({ wraps: [wrap("eik_other", 1), wrap("eik_live", 1)] }))
+    expect(assignment!.wraps.every((w) => w.wrapEnc.includes("eik_live"))).toBe(true)
   })
 
-  it("requires the chosen EIK to open the trigger generation too (rotated-key case)", () => {
+  it("requires the claiming EIK to open the trigger generation too (rotated-key case)", () => {
     // Stream rotated to gen 1 after the user turn (sealed under gen 0) was stored.
     const trigger = msg("msg_trigger", "user", "hello", 0)
 
     // EIK wrapped only at the current gen (1) can seal the reply but can't open
-    // the gen-0 prompt → no dispatch.
+    // the gen-0 prompt → unservable.
     expect(buildEnclaveSessionAssignment(inputs({ trigger, wraps: [wrap("eik_live", 1)] }))).toBeNull()
 
-    // EIK wrapped at both generations → dispatch succeeds and ships both wraps.
-    const built = buildEnclaveSessionAssignment(inputs({ trigger, wraps: [wrap("eik_live", 0), wrap("eik_live", 1)] }))
-    expect(built).not.toBeNull()
-    expect(built!.assignment.wraps.map((w) => w.keyGeneration).sort()).toEqual([0, 1])
-    expect(built!.assignment.reply.keyGeneration).toBe(1) // reply still seals under current
+    // EIK wrapped at both generations → the assignment ships both wraps.
+    const assignment = buildEnclaveSessionAssignment(
+      inputs({ trigger, wraps: [wrap("eik_live", 0), wrap("eik_live", 1)] })
+    )
+    expect(assignment).not.toBeNull()
+    expect(assignment!.wraps.map((w) => w.keyGeneration).sort()).toEqual([0, 1])
+    expect(assignment!.reply.keyGeneration).toBe(1) // reply still seals under current
   })
 
   it("maps prior messages to roles and drops non-E2E rows", () => {
     const plaintext = { id: "msg_plain", authorType: "user", ciphertext: null, envelope: null } as unknown as Message
-    const built = buildEnclaveSessionAssignment(
+    const assignment = buildEnclaveSessionAssignment(
       inputs({
         priorMessages: [msg("msg_a", "user", "q"), msg("msg_b", "persona", "a"), plaintext],
       })
     )
-    expect(built!.assignment.history.map((h) => h.role)).toEqual(["user", "assistant"]) // plaintext dropped
+    expect(assignment!.history.map((h) => h.role)).toEqual(["user", "assistant"]) // plaintext dropped
   })
 
   it("omits allowedToolCategories when the stream has no policy (unrestricted)", () => {
-    const built = buildEnclaveSessionAssignment(inputs())
-    expect(built!.assignment).not.toHaveProperty("allowedToolCategories")
+    expect(buildEnclaveSessionAssignment(inputs())).not.toHaveProperty("allowedToolCategories")
   })
 
   it("carries the stream's tool-privacy policy onto the assignment", () => {
-    const built = buildEnclaveSessionAssignment(inputs({ allowedToolCategories: ["web"] }))
-    expect(built!.assignment.allowedToolCategories).toEqual(["web"])
+    const assignment = buildEnclaveSessionAssignment(inputs({ allowedToolCategories: ["web"] }))
+    expect(assignment!.allowedToolCategories).toEqual(["web"])
   })
 
   it("ships an empty policy verbatim (no tools at all)", () => {
-    const built = buildEnclaveSessionAssignment(inputs({ allowedToolCategories: [] }))
-    expect(built!.assignment.allowedToolCategories).toEqual([])
+    const assignment = buildEnclaveSessionAssignment(inputs({ allowedToolCategories: [] }))
+    expect(assignment!.allowedToolCategories).toEqual([])
   })
 })

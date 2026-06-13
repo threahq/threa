@@ -2,11 +2,11 @@ import type { Pool } from "pg"
 import { AuthorTypes, CompanionModes, StreamTypes } from "@threa/types"
 import { CursorLock, DebounceWithMaxWait, ensureListenerFromLatest, type ProcessResult } from "@threa/backend-common"
 import { OutboxRepository, parseMessagePayload, type OutboxHandler } from "../../../lib/outbox"
-import { JobQueues, type QueueManager } from "../../../lib/queue"
 import { resolveDeliveryVerdict, TrustTiers } from "@threa/agent-runtime"
 import { resolveSealingContext } from "../../e2e-streams"
 import { StreamRepository } from "../../streams"
 import { logger } from "../../../lib/logger"
+import { enqueueEnclaveInvocation } from "../claim-service"
 
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -19,24 +19,24 @@ const DEFAULT_CONFIG = {
 }
 
 /**
- * Dispatches an enclave-invoke job for each user message in an E2E scratchpad
- * that has the enclave actor invited. The mirror image of `CompanionHandler`:
- * companion mode is forced off on E2E streams (Ariadne can't see ciphertext via
- * the normal path), so the enclave path triggers on the invited actor instead.
- * Only user messages enqueue — the persona-authored reply never re-triggers.
+ * Enqueues a claimable enclave invocation for each user message in an E2E
+ * scratchpad that has the enclave actor invited (§2.7 pull transport: the
+ * enclave polls and claims these — nothing is pushed to it). The mirror image
+ * of `CompanionHandler`: companion mode is forced off on E2E streams (Ariadne
+ * can't see ciphertext via the normal path), so the enclave path triggers on
+ * the invited actor instead. Only user messages enqueue — the persona-authored
+ * reply never re-triggers.
  */
 export class EnclaveDispatchHandler implements OutboxHandler {
   readonly listenerId = "enclave_dispatch"
 
   private readonly db: Pool
-  private readonly jobQueue: QueueManager
   private readonly cursorLock: CursorLock
   private readonly debouncer: DebounceWithMaxWait
   private readonly batchSize: number
 
-  constructor(db: Pool, jobQueue: QueueManager) {
+  constructor(db: Pool) {
     this.db = db
-    this.jobQueue = jobQueue
     this.batchSize = DEFAULT_CONFIG.batchSize
     this.cursorLock = new CursorLock({
       pool: db,
@@ -130,15 +130,19 @@ export class EnclaveDispatchHandler implements OutboxHandler {
             continue
           }
 
-          await this.jobQueue.send(JobQueues.ENCLAVE_INVOKE, {
+          // A thread inherits its root scratchpad's E2E identity; the root is
+          // fixed for the row's lifetime, so it's resolved once here and the
+          // claim predicate joins wraps against it.
+          await enqueueEnclaveInvocation(this.db, {
             workspaceId,
             streamId,
+            rootStreamId: stream.rootStreamId ?? streamId,
             messageId: messageEvent.payload.messageId,
             triggeredBy: messageEvent.actorId,
           })
           logger.info(
             { workspaceId, streamId, messageId: messageEvent.payload.messageId },
-            "Enclave invoke job dispatched"
+            "Enclave invocation enqueued"
           )
           seen.push(event.id)
         }

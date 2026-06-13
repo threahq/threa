@@ -735,6 +735,23 @@ Sequencing: this is Phase 2.2 work (it _is_ the `EnclaveTurnDriver`
 transport), but the interjection poll (observation 1) stands alone and could
 ship earlier as the UX-12 fix without inverting turn start.
 
+**§2.7 status (2026-06-12): observation 2 — the turn-start inversion — has
+shipped.** Sealed turns are claimable `enclave_invocations` rows (FOR UPDATE
+SKIP LOCKED, TTL + renew + bounded attempts + park — the bot lifecycle), the
+claim predicate is keyed on the claimer's EIK `key_id` against the stream's
+wraps for both the reply's and the trigger's generations, and the assignment
+is built at claim time (`claim-service.ts`) with the 2.4b callback token
+minted per-claim. The enclave's inbound listener is metadata-only
+(`/healthz`, `/pubkey`, `/attestation`); `instanceUrl` registration, SSRF
+validation, the forwarder, and the `ENCLAVE_INVOKE` queue are deleted.
+Cancellation collapsed into the session heartbeat (`abort_requested_at` on
+`agent_sessions`, returned as `{ abort }`), closing the N-3 divergence on
+the abort side. Still open from this section: the **interjection poll**
+(observation 1, UX-12) — mid-turn messages still reach the enclave only via
+the post-completion catch-up, which now reopens the suppressed message's own
+invocation; and the wake-up nudge (the idle poll interval, default 1.5s, is
+the turn-start latency floor).
+
 ## 2.8 Open questions
 
 1. **Enclave interjection: implement or declare?** Implementing sealed

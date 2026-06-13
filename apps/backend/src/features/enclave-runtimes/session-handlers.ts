@@ -8,13 +8,13 @@ import {
   AuthorTypes,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   ENCLAVE_CALLBACK_TOKEN_HEADER,
+  type EnclaveSessionHeartbeatResponse,
   type JSONContent,
 } from "@threa/types"
 import { withTransaction } from "../../db"
 import { eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
-import { JobQueues, type QueueManager } from "../../lib/queue"
 import { HttpError } from "../../lib/errors"
 import {
   AgentSessionRepository,
@@ -29,6 +29,8 @@ import { serializeTraceStep } from "../public-api"
 import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
 import { hashCallbackToken } from "./callback-token"
+import { enqueueEnclaveInvocation } from "./claim-service"
+import { EnclaveInvocationsRepository, ENCLAVE_CLAIM_TTL_SECONDS } from "./invocations-repository"
 import { parseModelId } from "@threa/agent-runtime"
 
 /**
@@ -138,8 +140,6 @@ interface Dependencies {
   eventService: EventService
   /** Sealed steps broadcast to the session room for live trace rendering. Always present in the API process. */
   io: Server
-  /** Enqueues the catch-up follow-up turn on completion (enclave interjection parity). */
-  jobQueue: QueueManager
   /** Records the turn's token/cost usage at completion, same path companion turns use (#9). */
   costService: AICostServiceLike
 }
@@ -224,12 +224,15 @@ function emitInlineProgress(
   })
 }
 
-export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue, costService }: Dependencies) {
+export function createEnclaveSessionHandlers({ pool, eventService, io, costService }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/sessions/:id/heartbeat
      * Keeps the session's `heartbeat_at` fresh so orphan-cleanup doesn't reclaim
-     * it while the enclave is still working.
+     * it while the enclave is still working, renews the turn's claim so a
+     * healthy long turn never lapses back into the claimable set, and carries
+     * the abort flag back (§2.7): a user's "Stop research" is recorded on the
+     * session row and consumed here — the enclave has no inbound cancel route.
      */
     async heartbeat(req: Request, res: Response) {
       const id = req.params.id
@@ -239,7 +242,12 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
       const session = await AgentSessionRepository.findById(pool, id)
       if (session) assertCallbackBound(session, req)
       await AgentSessionRepository.updateHeartbeat(pool, id)
-      res.status(204).end()
+      await EnclaveInvocationsRepository.renewBySession(pool, {
+        sessionId: id,
+        claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
+      })
+      const response: EnclaveSessionHeartbeatResponse = { abort: session?.abortRequestedAt != null }
+      res.status(200).json(response)
     },
 
     /**
@@ -556,6 +564,9 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
           sentMessageIds: messageIds,
         })
         if (!completed) return false // raced to a terminal state under us
+        // Flip the turn's claim with the session (same tx, INV-7) so the
+        // claimable set and the session lifecycle can't diverge.
+        await EnclaveInvocationsRepository.completeBySession(tx, id)
         // Broadcast needs the workspace (room addressing). A missing stream is an
         // edge (deleted mid-turn): the session is still marked COMPLETED durably,
         // but the lifecycle event/outbox are skipped — same tradeoff the orphan
@@ -632,13 +643,15 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
       }
 
       // Interjection catch-up (parity with the main app's `checkForUnseenMessages`,
-      // persona-agent-worker.ts): a user message that landed while this turn ran was
-      // suppressed by the one-running guard in the enclave-invoke worker, so dispatch
-      // a follow-up turn for the latest such message. The enclave saw history up to
-      // its trigger and nothing after, so the trigger's sequence is the "seen"
-      // boundary. Only after we actually won the completion, so a raced redelivery
-      // doesn't double-dispatch. Best-effort: a failed enqueue is logged, not fatal —
-      // the next user message would re-trigger anyway.
+      // persona-agent-worker.ts): a user message that landed while this turn ran
+      // was suppressed by the one-running-per-stream guard at claim time, so
+      // enqueue a follow-up turn for the latest such message. The enclave saw
+      // history up to its trigger and nothing after, so the trigger's sequence is
+      // the "seen" boundary. `reopen` resurrects the suppressed message's own
+      // (completed-as-no-op) invocation back to pending. Only after we actually
+      // won the completion, so a raced redelivery doesn't double-dispatch.
+      // Best-effort: a failed enqueue is logged, not fatal — the next user
+      // message would re-trigger anyway.
       if (committed && stream && session.triggerMessageId) {
         try {
           const triggerSeq = await StreamEventRepository.getMessageSequence(
@@ -649,11 +662,13 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
           if (triggerSeq !== null) {
             const unseen = await StreamEventRepository.getLatestUnseenUserMessage(pool, session.streamId, triggerSeq)
             if (unseen) {
-              await jobQueue.send(JobQueues.ENCLAVE_INVOKE, {
+              await enqueueEnclaveInvocation(pool, {
                 workspaceId: stream.workspaceId,
                 streamId: session.streamId,
+                rootStreamId: stream.rootStreamId ?? session.streamId,
                 messageId: unseen.messageId,
                 triggeredBy: unseen.authorId,
+                reopen: true,
               })
             }
           }
@@ -691,7 +706,15 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, jobQueue,
       assertRunning(session)
       assertCallbackBound(session, req)
 
-      await failSessionWithLifecycle(pool, io, session, `Enclave session failed: ${parsed.data.errorName}`)
+      // Terminal-fail the turn's claim in the same transaction as the session
+      // flip (INV-7, mirroring the complete path): a loop error is not retried
+      // (same semantics the push transport had). The callback only runs when
+      // the RUNNING→FAILED transition is won, so a raced completion keeps its
+      // own claim flip.
+      const error = `Enclave session failed: ${parsed.data.errorName}`
+      await failSessionWithLifecycle(pool, io, session, error, (tx) =>
+        EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
+      )
 
       res.status(204).end()
     },

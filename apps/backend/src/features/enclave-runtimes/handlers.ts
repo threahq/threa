@@ -3,50 +3,23 @@ import type { Request, Response } from "express"
 import { HttpError } from "../../lib/errors"
 import type { EnclaveRuntime } from "./repository"
 import type { EnclaveRuntimesService } from "./service"
+import type { EnclaveClaimService } from "./claim-service"
 
-/**
- * Block schemes other than http/https and cloud instance-metadata hostnames,
- * and (if `allowedPrefixes` is configured) require a prefix match. The
- * dispatcher fetches this URL with the shared bearer attached, so an
- * unconstrained string here is a credential-leak SSRF.
- */
-function isPermittedInstanceUrl(value: string, allowedPrefixes: string[]): boolean {
-  let parsed: URL
-  try {
-    parsed = new URL(value)
-  } catch {
-    return false
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false
-  const host = parsed.hostname.toLowerCase()
-  if (host === "169.254.169.254" || host === "metadata.google.internal" || host === "169.254.170.2") {
-    return false
-  }
-  if (allowedPrefixes.length > 0 && !allowedPrefixes.some((p) => value.startsWith(p))) {
-    return false
-  }
-  return true
-}
-
-function buildRegisterKeySchema(instanceUrlAllowedPrefixes: string[]) {
-  return z.object({
-    instanceId: z.string().min(1),
-    keyId: z.string().min(1),
-    publicKey: z.string().min(1),
-    instanceUrl: z
-      .string()
-      .url()
-      .refine((value) => isPermittedInstanceUrl(value, instanceUrlAllowedPrefixes), {
-        message: "instanceUrl scheme/host not permitted",
-      }),
-  })
-}
+const registerKeySchema = z.object({
+  instanceId: z.string().min(1),
+  keyId: z.string().min(1),
+  publicKey: z.string().min(1),
+})
 
 const heartbeatSchema = z.object({
   keyId: z.string().min(1),
 })
 
 const revokeSchema = z.object({
+  keyId: z.string().min(1),
+})
+
+const claimSchema = z.object({
   keyId: z.string().min(1),
 })
 
@@ -73,16 +46,16 @@ function serializeRuntime(runtime: EnclaveRuntime) {
 
 interface Dependencies {
   enclaveRuntimesService: EnclaveRuntimesService
-  instanceUrlAllowedPrefixes: string[]
+  enclaveClaimService: EnclaveClaimService
 }
 
-export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, instanceUrlAllowedPrefixes }: Dependencies) {
-  const registerKeySchema = buildRegisterKeySchema(instanceUrlAllowedPrefixes)
+export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, enclaveClaimService }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/register-key
      * Called by an enclave instance on boot (or after key rotation) to
-     * register its EIK. Race-safe via ON CONFLICT (key_id).
+     * register its EIK. Race-safe via ON CONFLICT (key_id). No address is
+     * registered — the instance pulls its work over the claim endpoint.
      */
     async registerKey(req: Request, res: Response) {
       const result = registerKeySchema.safeParse(req.body)
@@ -93,7 +66,6 @@ export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, instance
         instanceId: result.data.instanceId,
         keyId: result.data.keyId,
         publicKey: decodePublicKey(result.data.publicKey),
-        instanceUrl: result.data.instanceUrl,
       })
       res.status(201).json({ id: runtime.id })
     },
@@ -129,6 +101,35 @@ export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, instance
       }
       await enclaveRuntimesService.revoke(result.data.keyId)
       res.status(204).end()
+    },
+
+    /**
+     * POST /internal/enclave-runtimes/claims
+     * The pull transport's turn start (§2.7): a live enclave instance
+     * presents its EIK key id and receives the oldest claimable turn that
+     * key can serve — 200 `{ assignment }` — or a bodyless 204 when there is
+     * no work (the common poll outcome). Only a registered, non-revoked EIK
+     * may claim: the internal-key gate proves the caller is *an* enclave,
+     * this check proves it's a live one whose key the claim is keyed to.
+     */
+    async claim(req: Request, res: Response) {
+      const result = claimSchema.safeParse(req.body)
+      if (!result.success) {
+        throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+      }
+      const isLive = await enclaveRuntimesService.isRegisteredLive(result.data.keyId)
+      if (!isLive) {
+        throw new HttpError("Enclave runtime not found or revoked", {
+          status: 404,
+          code: "ENCLAVE_RUNTIME_NOT_FOUND",
+        })
+      }
+      const assignment = await enclaveClaimService.claimTurn(result.data.keyId)
+      if (!assignment) {
+        res.status(204).end()
+        return
+      }
+      res.status(200).json({ assignment })
     },
 
     /**

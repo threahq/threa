@@ -11,9 +11,9 @@ import { E2eStreamsRepository } from "../e2e-streams"
 import { OutboxRepository } from "../../lib/outbox"
 import { MessageRepository, type EventService } from "../messaging"
 import type { AICostServiceLike } from "../ai-usage"
-import type { QueueManager } from "../../lib/queue"
 import { createEnclaveSessionHandlers } from "./session-handlers"
 import { hashCallbackToken } from "./callback-token"
+import { EnclaveInvocationsRepository } from "./invocations-repository"
 
 const pool = {} as Pool
 
@@ -100,11 +100,6 @@ function fakeIo() {
   return { io, emit }
 }
 
-function fakeJobQueue() {
-  const send = mock(async (_queue: string, _data: unknown) => "job_test")
-  return { jobQueue: { send } as unknown as QueueManager, send }
-}
-
 function fakeCostService() {
   const recordUsage = mock(async (_params: Record<string, unknown>) => {})
   return { costService: { recordUsage } as unknown as AICostServiceLike, recordUsage }
@@ -113,15 +108,23 @@ function fakeCostService() {
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
   const eventService = { createMessage } as unknown as EventService
   const { io, emit } = fakeIo()
-  const { jobQueue, send } = fakeJobQueue()
   const { costService, recordUsage } = fakeCostService()
+  // The claim-lifecycle writes ride the session callbacks now (§2.7); stub the
+  // repository seam so handler tests stay DB-free and can assert the flips.
+  const renewClaim = spyOn(EnclaveInvocationsRepository, "renewBySession").mockResolvedValue(undefined)
+  const completeClaim = spyOn(EnclaveInvocationsRepository, "completeBySession").mockResolvedValue(undefined)
+  const failClaim = spyOn(EnclaveInvocationsRepository, "failBySession").mockResolvedValue(undefined)
+  const enqueueCatchUp = spyOn(EnclaveInvocationsRepository, "insertOrReopen").mockResolvedValue(undefined)
   return {
-    handlers: createEnclaveSessionHandlers({ pool, eventService, io, jobQueue, costService }),
+    handlers: createEnclaveSessionHandlers({ pool, eventService, io, costService }),
     createMessage,
     io,
     emit,
-    send,
     recordUsage,
+    renewClaim,
+    completeClaim,
+    failClaim,
+    enqueueCatchUp,
   }
 }
 
@@ -242,16 +245,18 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // No user message arrived during the turn → no follow-up dispatch.
     spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
     spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
-    const { handlers, createMessage, io, emit, send, recordUsage } = makeHandlers()
+    const { handlers, createMessage, io, emit, enqueueCatchUp, completeClaim, recordUsage } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(send).not.toHaveBeenCalled() // nothing unseen → no catch-up turn
+    expect(enqueueCatchUp).not.toHaveBeenCalled() // nothing unseen → no catch-up turn
     expect(recordUsage).not.toHaveBeenCalled() // no usage in the ack → nothing to record
     expect(createMessage).not.toHaveBeenCalled() // replies were already streamed via /messages
     expect(complete).toHaveBeenCalledTimes(1)
+    // The turn's claim flips with the session, in the same transaction (INV-7).
+    expect(completeClaim).toHaveBeenCalledWith(tx, "session_1")
     // Completion + event are one atomic transaction (INV-7): completeSession runs
     // on the tx client, not the bare pool.
     expect(complete.mock.calls[0]![0]).toBe(tx)
@@ -345,17 +350,20 @@ describe("createEnclaveSessionHandlers.complete", () => {
       authorId: "usr_1",
       sequence: 9n,
     })
-    const { handlers, send } = makeHandlers()
+    const { handlers, enqueueCatchUp } = makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(send).toHaveBeenCalledTimes(1)
-    expect(send.mock.calls[0]![0]).toBe("enclave.invoke")
-    expect(send.mock.calls[0]![1]).toMatchObject({
+    // The suppressed message's invocation is reopened (it was completed as a
+    // no-op by the one-running guard at claim time), so the enclave's next
+    // poll picks the catch-up turn straight off the claim queue.
+    expect(enqueueCatchUp).toHaveBeenCalledTimes(1)
+    expect(enqueueCatchUp.mock.calls[0]![1]).toMatchObject({
       workspaceId: "ws_1",
       streamId: "stream_1",
+      rootStreamId: "stream_1",
       messageId: "msg_new",
       triggeredBy: "usr_1",
     })
@@ -431,12 +439,20 @@ describe("createEnclaveSessionHandlers.fail", () => {
     const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(SESSION)
     const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers, io, emit } = makeHandlers()
+    const { handlers, io, emit, failClaim } = makeHandlers()
     const res = fakeRes()
 
     await handlers.fail(req("session_1", FAIL_BODY), res)
 
     expect(res.statusCode).toBe(204)
+    // The turn's claim is terminal-failed with the session, in the SAME
+    // transaction as the RUNNING→FAILED flip (INV-7) — a loop error is not
+    // retried (same semantics the push transport had).
+    expect(failClaim.mock.calls[0]![0]).toBe(tx)
+    expect(failClaim.mock.calls[0]![1]).toMatchObject({
+      sessionId: "session_1",
+      errorMessage: "Enclave session failed: AbortError",
+    })
     // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
     // classification — the error's class name, never plaintext content (INV-E7).
     expect(updateStatus.mock.calls[0]![2]).toBe(SessionStatuses.FAILED)
@@ -683,30 +699,34 @@ describe("createEnclaveSessionHandlers.substep", () => {
 
 describe("createEnclaveSessionHandlers.heartbeat", () => {
   it("400s without a session id", async () => {
-    const handlers = createEnclaveSessionHandlers({
-      pool,
-      eventService: {} as EventService,
-      io: fakeIo().io,
-      jobQueue: fakeJobQueue().jobQueue,
-      costService: fakeCostService().costService,
-    })
+    const { handlers } = makeHandlers()
     await expect(handlers.heartbeat(req(undefined, {}), fakeRes())).rejects.toBeInstanceOf(HttpError)
   })
 
-  it("refreshes the heartbeat and 204s", async () => {
+  it("refreshes the heartbeat, renews the claim, and answers abort: false", async () => {
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(SESSION)
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
-    const handlers = createEnclaveSessionHandlers({
-      pool,
-      eventService: {} as EventService,
-      io: fakeIo().io,
-      jobQueue: fakeJobQueue().jobQueue,
-      costService: fakeCostService().costService,
-    })
+    const { handlers, renewClaim } = makeHandlers()
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)
     expect(beat).toHaveBeenCalledWith(pool, "session_1")
-    expect(res.statusCode).toBe(204)
+    // A healthy long turn keeps its claim out of the claimable set.
+    expect(renewClaim).toHaveBeenCalledWith(pool, expect.objectContaining({ sessionId: "session_1" }))
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({ abort: false })
+  })
+
+  it("carries a requested abort back on the heartbeat (§2.7: cancel rides the pull channel)", async () => {
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue({
+      ...SESSION!,
+      abortRequestedAt: new Date(),
+    } as typeof SESSION)
+    spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
+    const { handlers } = makeHandlers()
+    const res = fakeRes()
+    await handlers.heartbeat(req("session_1", {}), res)
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toEqual({ abort: true })
   })
 })
 
