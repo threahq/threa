@@ -459,6 +459,17 @@ export type {
   ScheduledMessageUpsertedPayload,
   ScheduledMessageSentPayload,
   ScheduledMessageCancelledPayload,
+  // Drafts
+  DraftScope,
+  DraftCommand,
+  Draft,
+  UpsertDraftInput,
+  UpsertDraftResponse,
+  ResolveDraftInput,
+  ResolveDraftResponse,
+  DraftListResponse,
+  DraftUpsertedPayload,
+  DraftDeletedPayload,
   // Labels
   CreateLabelInput,
   UpdateLabelInput,

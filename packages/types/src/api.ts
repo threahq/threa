@@ -1706,6 +1706,137 @@ export interface ScheduledMessageCancelledPayload {
 }
 
 // ============================================================================
+// Drafts API
+// ============================================================================
+
+/**
+ * Where a draft belongs. Either a stream (`stream:{streamId}`) or a not-yet-
+ * threaded parent message (`thread:{parentMessageId}`) — the latter only while
+ * the reply target has no thread stream of its own yet. A scope may hold many
+ * drafts (the loaded one plus stash entries plus split-offs); identity is the
+ * `draft_` id, not the scope. Stored as a plain string so re-scoping (thread
+ * conversion) is a single column UPDATE.
+ */
+export type DraftScope = string
+
+/** Slash-command draft payload (mirrors the composer's `ExtractedCommand`). */
+export interface DraftCommand {
+  name: string
+  clientActionId: string | null
+}
+
+/**
+ * A draft: one composer payload that syncs across the author's devices. There
+ * is only one kind of draft — what the frontend calls a "stash entry" and what
+ * is "loaded into the composer" are the same row; "loaded" is device-local
+ * state that never reaches the wire.
+ *
+ * Content is one of two shapes. Plaintext streams carry `contentJson` /
+ * `contentMarkdown`; E2E streams carry `ciphertext` / `envelope` / `e2eVersion`
+ * with the plaintext fields null (the draft is sealed to the stream key before
+ * it ever leaves the device, honoring E2EE-4).
+ */
+export interface Draft {
+  id: string
+  workspaceId: string
+  userId: string
+  scope: DraftScope
+  rootStreamId: string | null
+  contentJson: JSONContent | null
+  contentMarkdown: string | null
+  attachmentIds: string[]
+  command: DraftCommand | null
+  /** Opaque to the backend — the composer owns the shape, round-tripped as-is. */
+  contextRefs: Record<string, unknown>[] | null
+  // E2E variant
+  ciphertext: string | null
+  envelope: unknown | null
+  e2eVersion: number | null
+  /**
+   * Optimistic-concurrency version. Starts at 1; every accepted server-side
+   * write increments it. The client sends the version its edit was based on as
+   * `expectedVersion`; on mismatch the server SPLITS (keeps the existing row,
+   * inserts a new draft for the incoming content) rather than rejecting.
+   */
+  version: number
+  /** Authoring device's wall clock for the last edit; drives recency ordering. */
+  clientUpdatedAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Wire body for `PUT /drafts/:id`. `expectedVersion` is the version the edit
+ * was based on (0 when the client has never seen a server confirmation for
+ * this id). `writeId` is a per-push idempotency key reused across retries of
+ * the same op, so a lost ack never causes a spurious split.
+ *
+ * Exactly one content shape must be present: `contentJson` (plaintext) or the
+ * `ciphertext` triple (E2E). `contentMarkdown` is derived server-side from
+ * `contentJson`, so callers never send it.
+ */
+export interface UpsertDraftInput {
+  scope: DraftScope
+  rootStreamId?: string | null
+  expectedVersion: number
+  writeId: string
+  clientUpdatedAt: string
+  contentJson?: JSONContent | null
+  attachmentIds?: string[]
+  command?: DraftCommand | null
+  contextRefs?: Record<string, unknown>[] | null
+  ciphertext?: string | null
+  envelope?: unknown | null
+  e2eVersion?: number | null
+}
+
+/**
+ * Response from `PUT /drafts/:id`. When `split` is true the server detected
+ * drift: `draft.id` is a freshly minted entity carrying the incoming content,
+ * `originalId` is the id the client pushed under (whose row was left untouched
+ * for the other device), and the client migrates its local state to `draft.id`.
+ */
+export interface UpsertDraftResponse {
+  draft: Draft
+  split: boolean
+  originalId?: string
+}
+
+/**
+ * Wire body for `POST /drafts/:id/resolve` (clear-on-send). CAS-guarded by
+ * `expectedVersion`: the draft is removed only if it still matches, so a copy
+ * that drifted since the send started survives as a stash entry instead of
+ * being collaterally deleted.
+ */
+export interface ResolveDraftInput {
+  expectedVersion: number
+  writeId: string
+}
+
+export interface ResolveDraftResponse {
+  /** False when the version no longer matched — the draft drifted and was kept. */
+  resolved: boolean
+}
+
+export interface DraftListResponse {
+  drafts: Draft[]
+}
+
+/** Wire payload broadcast on `draft:upserted` socket events. */
+export interface DraftUpsertedPayload {
+  workspaceId: string
+  targetUserId: string
+  draft: Draft
+}
+
+/** Wire payload broadcast on `draft:deleted` socket events. */
+export interface DraftDeletedPayload {
+  workspaceId: string
+  targetUserId: string
+  draftId: string
+}
+
+// ============================================================================
 // Labels API
 // ============================================================================
 
