@@ -1,5 +1,6 @@
 export { AppShell } from "./app-shell"
 export { Sidebar } from "./sidebar"
 export { SidebarToggle } from "./sidebar-toggle"
+export { PageHeaderTabs, type PageHeaderTab } from "./page-header-tabs"
 export { ThreadPanelSlot } from "./thread-panel-slot"
 export { PanelResizeHandle } from "./panel-resize-handle"
