@@ -44,4 +44,14 @@ export class EnclaveRuntimesService {
   async revoke(keyId: string): Promise<void> {
     return EnclaveRuntimesRepository.revoke(this.pool, keyId)
   }
+
+  /**
+   * Whether this EIK is registered and not revoked — the claim endpoint's auth
+   * gate (only a live instance may pull work). Distinct from the claim
+   * predicate's wrap check: a revoked key could still have wraps on file, so
+   * registration liveness is checked separately.
+   */
+  async isRegisteredLive(keyId: string): Promise<boolean> {
+    return (await EnclaveRuntimesRepository.findByKeyId(this.pool, keyId)) !== null
+  }
 }

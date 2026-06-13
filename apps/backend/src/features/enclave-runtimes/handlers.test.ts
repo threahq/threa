@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, describe, expect, it, mock } from "bun:test"
 import type { Request, Response } from "express"
-import type { Pool } from "pg"
 import { createEnclaveRuntimesHandlers } from "./handlers"
-import { EnclaveRuntimesRepository } from "./repository"
 import type { EnclaveRuntimesService } from "./service"
 import type { EnclaveClaimService } from "./claim-service"
 
@@ -29,11 +27,17 @@ const validBody = {
   keyId: "eik_01",
 }
 
-function buildHandlers(overrides: { registerKey?: ReturnType<typeof mock>; claimTurn?: ReturnType<typeof mock> } = {}) {
+function buildHandlers(
+  overrides: {
+    registerKey?: ReturnType<typeof mock>
+    isRegisteredLive?: ReturnType<typeof mock>
+    claimTurn?: ReturnType<typeof mock>
+  } = {}
+) {
   return createEnclaveRuntimesHandlers({
-    pool: {} as Pool,
     enclaveRuntimesService: {
       registerKey: overrides.registerKey ?? mock(async () => ({ id: "elr_01" })),
+      isRegisteredLive: overrides.isRegisteredLive ?? mock(async () => true),
     } as unknown as EnclaveRuntimesService,
     enclaveClaimService: {
       claimTurn: overrides.claimTurn ?? mock(async () => null),
@@ -74,20 +78,10 @@ describe("createEnclaveRuntimesHandlers.registerKey", () => {
 describe("createEnclaveRuntimesHandlers.claim", () => {
   afterEach(() => mock.restore())
 
-  const RUNTIME = {
-    id: "elr_01",
-    instanceId: "enci_01",
-    keyId: "eik_01",
-    publicKey: new Uint8Array(32),
-    registeredAt: new Date(),
-    lastSeenAt: new Date(),
-    revokedAt: null,
-  }
-
   it("rejects an unregistered or revoked EIK before touching the queue", async () => {
-    spyOn(EnclaveRuntimesRepository, "findByKeyId").mockResolvedValue(null)
+    const isRegisteredLive = mock(async () => false)
     const claimTurn = mock(async () => null)
-    const handlers = buildHandlers({ claimTurn })
+    const handlers = buildHandlers({ isRegisteredLive, claimTurn })
     const res = makeRes()
 
     await expect(
@@ -97,7 +91,6 @@ describe("createEnclaveRuntimesHandlers.claim", () => {
   })
 
   it("answers 204 with no body when there is no claimable work", async () => {
-    spyOn(EnclaveRuntimesRepository, "findByKeyId").mockResolvedValue(RUNTIME)
     const handlers = buildHandlers({ claimTurn: mock(async () => null) })
     const res = makeRes()
 
@@ -108,7 +101,6 @@ describe("createEnclaveRuntimesHandlers.claim", () => {
   })
 
   it("hands the claimed assignment back as 200 { assignment }", async () => {
-    spyOn(EnclaveRuntimesRepository, "findByKeyId").mockResolvedValue(RUNTIME)
     const assignment = { sessionId: "session_1", streamId: "stream_1" }
     const claimTurn = mock(async () => assignment)
     const handlers = buildHandlers({ claimTurn })

@@ -1,8 +1,7 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
-import type { Pool } from "pg"
 import { HttpError } from "../../lib/errors"
-import { EnclaveRuntimesRepository, type EnclaveRuntime } from "./repository"
+import type { EnclaveRuntime } from "./repository"
 import type { EnclaveRuntimesService } from "./service"
 import type { EnclaveClaimService } from "./claim-service"
 
@@ -46,12 +45,11 @@ function serializeRuntime(runtime: EnclaveRuntime) {
 }
 
 interface Dependencies {
-  pool: Pool
   enclaveRuntimesService: EnclaveRuntimesService
   enclaveClaimService: EnclaveClaimService
 }
 
-export function createEnclaveRuntimesHandlers({ pool, enclaveRuntimesService, enclaveClaimService }: Dependencies) {
+export function createEnclaveRuntimesHandlers({ enclaveRuntimesService, enclaveClaimService }: Dependencies) {
   return {
     /**
      * POST /internal/enclave-runtimes/register-key
@@ -119,8 +117,8 @@ export function createEnclaveRuntimesHandlers({ pool, enclaveRuntimesService, en
       if (!result.success) {
         throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
       }
-      const runtime = await EnclaveRuntimesRepository.findByKeyId(pool, result.data.keyId)
-      if (!runtime) {
+      const isLive = await enclaveRuntimesService.isRegisteredLive(result.data.keyId)
+      if (!isLive) {
         throw new HttpError("Enclave runtime not found or revoked", {
           status: 404,
           code: "ENCLAVE_RUNTIME_NOT_FOUND",

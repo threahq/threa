@@ -287,7 +287,6 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/metrics", opsAccess, debug.metrics)
 
   const enclave = createEnclaveRuntimesHandlers({
-    pool,
     enclaveRuntimesService,
     enclaveClaimService,
   })
