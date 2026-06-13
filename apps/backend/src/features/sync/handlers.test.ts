@@ -1,7 +1,9 @@
 import { describe, expect, it, mock } from "bun:test"
 import type { Request, Response } from "express"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { createSyncHandlers } from "./handlers"
 import { HttpError } from "../../lib/errors"
+import { permissionGroup } from "../../lib/outbox"
 import type { SyncService } from "./service"
 
 function makeReqRes(query: Record<string, string>, role: string = "member") {
@@ -93,7 +95,7 @@ describe("createSyncHandlers.catchUp", () => {
     expect(catchUp.mock.calls[0][0]).toEqual({
       workspaceId: "ws_1",
       userId: "usr_alice",
-      permissionGroups: ["permission:members:write"],
+      permissionGroups: [permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)],
       after: 0n,
       limit: 200,
     })

@@ -1,7 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { setupTestDatabase } from "./setup"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../src/features/sync"
+import { permissionGroup } from "../../src/lib/outbox"
+
+const MEMBERS_WRITE_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
 
 describe("SyncLogRepository catch-up reads", () => {
   let pool: Pool
@@ -106,13 +110,13 @@ describe("SyncLogRepository catch-up reads", () => {
 
     const invite = await appendEntry(workspaceId, {
       eventType: "invitation:sent",
-      groups: ["permission:members:write"],
+      groups: [MEMBERS_WRITE_GROUP],
       payload: { workspaceId, invitationId: uniqueId("inv"), email: "invitee@example.com" },
     })
 
     // The admin holds members:write (passes its permission group); the member
     // does not, so the invitation entry never reaches them.
-    const adminEntries = await listFor(workspaceId, admin, 0n, 100, ["permission:members:write"])
+    const adminEntries = await listFor(workspaceId, admin, 0n, 100, [MEMBERS_WRITE_GROUP])
     expect(adminEntries.map((e) => e.syncId)).toEqual([invite])
 
     const memberEntries = await listFor(workspaceId, member, 0n, 100, [])

@@ -16,6 +16,7 @@ import {
   isUserScopedEvent,
   isBotScopedEvent,
   type OutboxEvent,
+  type OutboxEventType,
   type StreamCreatedOutboxPayload,
   type StreamMemberAddedOutboxPayload,
   type ActivityCreatedOutboxPayload,
@@ -66,14 +67,38 @@ export function permissionGroup(slug: WorkspacePermissionSlug): string {
 }
 
 /**
- * Permission scopes that get their own delivery group. Keep in sync with the
- * permission branches in `resolveDeliveryGroups`: a scope listed here without a
- * routing branch puts members in a room nothing emits to, and an event routed
- * to a `permission:<slug>` group whose scope is absent here reaches no holder.
+ * Single source of truth for permission-scoped event routing: each permission
+ * scope maps to the outbox event types delivered only to holders of that scope.
+ * `resolveDeliveryGroups` routes an event by reverse-lookup here, and sockets +
+ * catch-up derive room membership from the same keys (via
+ * `DELIVERED_PERMISSION_SCOPES` → `permissionGroupsForRole`), so routing and
+ * membership cannot drift. `satisfies` pins the keys to real permission slugs
+ * and the values to real outbox event types.
+ *
+ * Invitation lifecycle carries invitee identity (email, link token hash), so it
+ * is scoped to members:write — mirroring the bootstrap gate (workspaces/handlers
+ * includes `invitations` only for members:write) and the invitation routes'
+ * requireWorkspacePermission(members:write).
  */
-export const DELIVERED_PERMISSION_SCOPES: readonly WorkspacePermissionSlug[] = [
-  WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE,
-]
+const PERMISSION_SCOPED_EVENTS = {
+  [WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE]: [
+    "invitation:sent",
+    "invitation:accepted",
+    "invitation:revoked",
+    "invitation:link-created",
+    "invitation:link-claimed",
+  ],
+} as const satisfies Partial<Record<WorkspacePermissionSlug, readonly OutboxEventType[]>>
+
+/** Permission scopes that get their own delivery group (keys of the routing map). */
+const DELIVERED_PERMISSION_SCOPES = Object.keys(PERMISSION_SCOPED_EVENTS) as WorkspacePermissionSlug[]
+
+/** Reverse index built once at load: outbox event type → its permission group. */
+const PERMISSION_GROUP_BY_EVENT = new Map<string, string>(
+  Object.entries(PERMISSION_SCOPED_EVENTS).flatMap(([scope, eventTypes]) =>
+    eventTypes.map((eventType) => [eventType, permissionGroup(scope as WorkspacePermissionSlug)] as const)
+  )
+)
 
 /** The permission delivery groups a member with `role` belongs to. */
 export function permissionGroupsForRole(role: WorkspaceRoleSlug): string[] {
@@ -244,21 +269,11 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return []
   }
 
-  // Invitation lifecycle carries invitee identity (email, link token hash):
-  // scope it to members:write holders instead of letting it fall through to the
-  // whole workspace below. Mirrors the bootstrap gate (workspaces/handlers.ts
-  // includes `invitations` only for members:write) and the invitation routes'
-  // requireWorkspacePermission(members:write).
-  if (
-    isOneOfOutboxEventType(event, [
-      "invitation:sent",
-      "invitation:accepted",
-      "invitation:revoked",
-      "invitation:link-created",
-      "invitation:link-claimed",
-    ])
-  ) {
-    return [permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)]
+  // Permission-scoped events (e.g. invitation lifecycle → members:write) go to
+  // their scope's delivery group instead of the whole-workspace fallthrough.
+  const permissionScopedGroup = PERMISSION_GROUP_BY_EVENT.get(event.eventType)
+  if (permissionScopedGroup) {
+    return [permissionScopedGroup]
   }
 
   if (isStreamScopedEvent(event)) {

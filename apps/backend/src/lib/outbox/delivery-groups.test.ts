@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test"
+import { WORKSPACE_PERMISSION_SCOPES } from "@threa/types"
 import { resolveDeliveryGroups, permissionGroupsForRole, permissionGroup } from "./delivery-groups"
 import type { OutboxEvent, OutboxEventType } from "./repository"
 
@@ -6,7 +7,14 @@ function event<T extends OutboxEventType>(eventType: T, payload: Record<string, 
   return { id: 1n, eventType, payload, createdAt: new Date() } as unknown as OutboxEvent<T>
 }
 
-const MEMBERS_WRITE_GROUP = permissionGroup("members:write")
+const MEMBERS_WRITE_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
+
+describe("permissionGroup", () => {
+  it("names the members:write delivery group on the wire", () => {
+    // Pins the group string format once; other suites derive via the helper.
+    expect(MEMBERS_WRITE_GROUP).toBe("permission:members:write")
+  })
+})
 
 describe("resolveDeliveryGroups — invitation events", () => {
   const invitationEvents = [
