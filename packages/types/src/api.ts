@@ -639,14 +639,15 @@ export interface EnclaveSealedSubstep {
 }
 
 /**
- * The work the backend assigns to a live enclave via `POST /sessions`. The
- * backend never decrypts: it ships ciphertext + the wraps addressed to that EIK
- * plus the `sessionId` it created the `agent_sessions` row under. The enclave
- * acks the assignment (202), then runs the agent loop asynchronously — unwrapping,
- * opening, sealing each reply — and reports progress/completion back over the
- * session callbacks (heartbeat, complete). `system` is the persona's (non-secret)
- * prompt; `reply` carries the generation each reply is sealed under + Ariadne's
- * sender id the replies are bound to.
+ * The work the backend hands a live enclave as the body of a winning claim
+ * (`POST /internal/enclave-runtimes/claims`, 200). The backend never decrypts:
+ * it ships ciphertext + the wraps addressed to the claiming EIK plus the
+ * `sessionId` it created the `agent_sessions` row under. The enclave runs the
+ * agent loop asynchronously after the claim — unwrapping, opening, sealing each
+ * reply — and reports progress/completion back over the session callbacks
+ * (heartbeat, complete/fail). `system` is the persona's (non-secret) prompt;
+ * `reply` carries the generation each reply is sealed under + Ariadne's sender
+ * id the replies are bound to.
  */
 export interface EnclaveSessionAssignment {
   sessionId: string

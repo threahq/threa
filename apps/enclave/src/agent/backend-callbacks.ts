@@ -65,8 +65,12 @@ export function createBackendCallbacks(config: EnclaveConfig, callbackToken?: st
         signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error(`session heartbeat failed: ${res.status}`)
-      const body = (await res.json().catch(() => null)) as EnclaveSessionHeartbeatResponse | null
-      return { abort: body?.abort === true }
+      // A malformed/empty body is a heartbeat protocol failure, not "no abort":
+      // throwing surfaces it (logged by the runner) and the next beat re-reads
+      // the (sticky) abort flag, rather than silently masking a pending abort.
+      const body = (await res.json()) as EnclaveSessionHeartbeatResponse
+      if (typeof body?.abort !== "boolean") throw new Error("session heartbeat returned an invalid body")
+      return { abort: body.abort }
     },
 
     async message(sessionId, reply) {

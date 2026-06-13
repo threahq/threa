@@ -66,10 +66,7 @@ export const sessionAssignmentSchema = z.object({
     .min(1)
     .max(MAX_WRAP_RECIPIENTS),
   /** Prior turns, oldest→newest. Each item's role tells the model who spoke. */
-  history: z
-    .array(sealedMessageSchema.extend({ role: z.enum(["user", "assistant"]) }))
-    .max(MAX_HISTORY_MESSAGES)
-    .default([]),
+  history: z.array(sealedMessageSchema.extend({ role: z.enum(["user", "assistant"]) })).max(MAX_HISTORY_MESSAGES),
   /** The user message that triggered this invocation (always the latest `user` turn). */
   prompt: sealedMessageSchema,
   /** Ariadne's system prompt — non-secret persona text the backend supplies in the clear. */

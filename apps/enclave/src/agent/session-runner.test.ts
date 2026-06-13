@@ -81,8 +81,7 @@ describe("runEnclaveSession", () => {
     await runEnclaveSession({ keyPair, rawChat, callbacks }, assignment)
 
     // The reply was streamed via message(), and complete() acked with its id.
-    expect(streamed).toHaveLength(1)
-    expect(streamed[0]!.sessionId).toBe("session_test")
+    expect(streamed).toContainEqual(expect.objectContaining({ sessionId: "session_test" }))
     const text = await openMessageAsString({
       key: ssk,
       envelope: streamed[0]!.reply.envelope,

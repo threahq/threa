@@ -8,7 +8,6 @@ import type { PushService } from "./features/push"
 import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
-import { EnclaveRuntimesRepository } from "./features/enclave-runtimes"
 import { UserRepository } from "./features/workspaces"
 import { HttpError } from "./lib/errors"
 import { logger } from "./lib/logger"
@@ -325,16 +324,15 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
             callback?.({ ok: false, error: "Not authorized" })
             return
           }
-          // Route the abort by ownership: an E2E turn runs in the enclave (its
-          // server_id is that EIK), so record the request on the session row —
-          // the enclave consumes it on its next session heartbeat (§2.7: no
-          // inbound cancel route). An in-process turn lives in this server's
-          // abort registry. Both are graceful — research returns partial
-          // findings and the turn still replies.
-          const owningEnclave = session.serverId
-            ? await EnclaveRuntimesRepository.findByKeyId(pool, session.serverId)
-            : null
-          const aborted = owningEnclave
+          // Route the abort by ownership recorded on the session itself, not by
+          // a runtime-registry lookup (which would misroute once the owning EIK
+          // is revoked while its turn still runs): an enclave-owned session
+          // carries a callback token hash, set only on the claim path. Record
+          // the request on the session row — the enclave consumes it on its next
+          // session heartbeat (§2.7: no inbound cancel route). An in-process turn
+          // lives in this server's abort registry. Both are graceful — research
+          // returns partial findings and the turn still replies.
+          const aborted = session.callbackTokenHash
             ? await AgentSessionRepository.requestAbort(pool, sessionId)
             : sessionAbortRegistry.abort(sessionId, "user_abort")
           wsMessagesTotal.inc({
