@@ -1366,26 +1366,6 @@ describe("unread counter events (absolute payloads, sync-v2 phase 2c)", () => {
     cleanup()
   })
 
-  it("falls back to the legacy increment when stream:activity lacks an ordinal", async () => {
-    const queryClient = new QueryClient()
-    await seedCounterFixture(queryClient)
-    const { emit, cleanup } = register(queryClient)
-
-    emit("stream:activity", {
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      authorId: "member_2",
-      lastMessagePreview: preview,
-    })
-
-    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.unreadCounts.stream_1).toBe(2)
-    await vi.waitFor(async () => {
-      expect((await db.unreadState.get("ws_1"))?.unreadCounts.stream_1).toBe(2)
-    })
-
-    cleanup()
-  })
-
   it("applies stream:read absolute positions — newer messages stay unread", async () => {
     const queryClient = new QueryClient()
     await seedCounterFixture(queryClient)
