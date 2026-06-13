@@ -127,9 +127,25 @@ authority the inventory keeps for the below-floor case.
 
 ## What this unblocks (NOT in this PR)
 
-- **`isLegacyUnreadCounterEntry`** can die once pre-field entries age out below
-  the 30-day floor — a follow-up PR (and its own coverage proof) per the
-  inventory's one-deletion-per-PR rule.
+- **`isLegacyUnreadCounterEntry`** can die once no legacy entry can reach
+  catch-up. Waiting for the 30-day floor does NOT get us there reliably: a quiet
+  workspace with fewer than `minKeep` (2,000) lifetime sync events never trips
+  the count floor (`head - minKeep` is negative), so its legacy rows would
+  persist indefinitely and the guard could never be deleted by waiting. Instead,
+  a one-time **content-based sweep migration**
+  (`20260613083239_prune_legacy_counter_entries.sql`) deletes exactly the rows
+  the guard skips — the same per-type absent-field predicate, mirrored in SQL —
+  by content, not a hardcoded deploy timestamp. It deliberately does NOT advance
+  `retained_from`: the legacy set is sparse (counter rows interleaved among
+  non-counter rows), so a floor advance would falsely mark surviving lower-id
+  rows as pruned and force needless bootstraps. Safe because the guard is
+  client-side and the workspace cursor advances to head with no per-sync_id
+  contiguity check (INV-61 contiguity is per-stream `broadcastSequence`), so
+  deleting a skipped-anyway row opens no gap. Deleting the guard itself is a
+  separate follow-up PR, sequenced AFTER the sweep deploys to prod (the sweep
+  runs at backend startup before serving, so once deployed every backend is
+  legacy-free; removing the guard before then would let a pre-sweep backend feed
+  field-less payloads to the appliers).
 - **Engine reconnect-bootstrap slimming** and the **`usePageResumeRefresh`
   redesign** lose their "retention is still missing" blocker; they remain their
   own follow-ups.
