@@ -827,7 +827,30 @@ no schema change.
 3. **Where does the generalized stream tool policy live** — widen
    `e2e_streams.allowed_tool_categories`'s pattern to a `stream_policies`
    table vs. a column on `streams`? Tracking-table instinct (INV-57) suggests
-   the former; read-path simplicity suggests the latter.
+   the former; read-path simplicity suggests the latter. _Resolved as the
+   tracking table, and it has already shipped (Phase 1.4, #847; see the Phase 1
+   status note above). Migration `20260611193158_stream_policies.sql` creates
+   `stream_policies (stream_id PK, workspace_id, allowed_tool_categories TEXT[],
+timestamps)`, carries the non-null `e2e_streams` rows over, and **drops**
+   `e2e_streams.allowed_tool_categories` — one source of truth for plaintext and
+   E2E alike, not two. `StreamPoliciesRepository.getToolPolicy`
+   (`streams/policy-repository.ts`) reads it; companion (`persona-agent.ts`) and
+   enclave (`enclave-runtimes/claim-service.ts` → the assignment) both fold it
+   over their toolsets through the same `negotiateCapabilities` /
+   `isToolAllowedByPolicy` predicate, so the gate is identical across hosts
+   (external bots bring their own tools and aren't gated here). The tracking
+   table won for the reasons INV-57 predicts: the policy is sparse and optional
+   (**a row exists only to RESTRICT — absence means "no restriction"**, so most
+   streams store nothing), and it is transient agent-policy state that doesn't
+   belong on the core `streams` identity row. Read-path simplicity, the column's
+   only edge, is a single keyed `SELECT` either way. Policy rows are keyed by
+   **non-thread root** streams; threads inherit via `rootStreamId` (INV-62), so
+   callers resolve thread → root before the lookup. Categories are validated in
+   code, not a DB enum (INV-3): `TOOL_PRIVACY_CATEGORIES` (`messaging` | `web` |
+   `workspace` | `github` | `linear` in `packages/types/src/tool-privacy.ts`),
+   with `messaging` always allowed. The "per-workspace policy" the category
+   comment gestures at is a future widening the same table absorbs (add a
+   workspace-scoped row or a sibling table) without revisiting this choice._
 4. **`sources: []` willful defeat** (prior doc's spike #3): add the test that
    a turn whose tool results carried sources commits non-empty sources, so the
    required-field guarantee isn't quietly defeated. _Resolved: the test
