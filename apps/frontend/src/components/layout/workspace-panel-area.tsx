@@ -6,6 +6,7 @@ import { useKeyboardShortcuts } from "@/hooks"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { PanelContentRenderer } from "@/components/panels/panel-renderer"
 import { panelIdToMainPath, MIN_PANEL_WIDTH } from "@/lib/panel-locations"
+import { loadPanelWidths, savePanelWidth } from "@/lib/panel-widths"
 import { PanelResizeHandle } from "./panel-resize-handle"
 
 const DEFAULT_PANEL_WIDTH = 480
@@ -167,9 +168,42 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
   const slotsRef = useRef(slots)
   slotsRef.current = slots
 
-  const setSlotWidth = useCallback((slotKey: string, width: number) => {
-    setSlotWidths((prev) => ({ ...prev, [slotKey]: width }))
-  }, [])
+  // Persisted widths (by panel id, per workspace) restore the strip's exact
+  // sizing across refreshes. Loaded once; the ref also caches in-session saves
+  // so a close→reopen of the same panel restores its width too.
+  const persistedWidthsRef = useRef<Record<string, number> | null>(null)
+  if (persistedWidthsRef.current === null) persistedWidthsRef.current = loadPanelWidths(workspaceId)
+
+  const persistWidth = useCallback(
+    (panelId: string, width: number) => {
+      if (persistedWidthsRef.current) persistedWidthsRef.current[panelId] = Math.round(width)
+      savePanelWidth(workspaceId, panelId, width)
+    },
+    [workspaceId]
+  )
+
+  /** Resolve a slot's render width: live session value, else the persisted
+   *  width (clamped to the current viewport), else the default. */
+  const resolveSlotWidth = useCallback(
+    (slot: SlotItem): number => {
+      const live = slotWidths[slot.key]
+      if (live != null) return live
+      const stored = persistedWidthsRef.current?.[slot.id]
+      if (stored == null) return DEFAULT_PANEL_WIDTH
+      const max = typeof window !== "undefined" ? Math.round(window.innerWidth * MAX_PANEL_RATIO) : 0
+      return max > 0 ? Math.max(MIN_PANEL_WIDTH, Math.min(stored, max)) : Math.max(MIN_PANEL_WIDTH, stored)
+    },
+    [slotWidths]
+  )
+
+  const setSlotWidth = useCallback(
+    (slotKey: string, width: number) => {
+      setSlotWidths((prev) => ({ ...prev, [slotKey]: width }))
+      const id = slotsRef.current.find((s) => s.key === slotKey)?.id
+      if (id) persistWidth(id, width)
+    },
+    [persistWidth]
+  )
 
   /** Distribute the container evenly across all panes (pane 0 included). */
   const equalizeAllPanes = useCallback(() => {
@@ -183,28 +217,34 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
       for (const it of openSlots) next[it.key] = per
       return next
     })
-  }, [])
+    for (const it of openSlots) persistWidth(it.id, per)
+  }, [persistWidth])
 
   /**
    * Equalize the two panes a divider borders on: the slot owning the handle
    * and its left neighbor (another slot, or pane 0 — which sizes itself, so
    * halving the slot's share is enough there).
    */
-  const equalizePairAt = useCallback((slotKey: string) => {
-    const openSlots = slotsRef.current.filter((it) => !it.closing)
-    const idx = openSlots.findIndex((it) => it.key === slotKey)
-    if (idx === -1) return
-    const ownEl = slotElsRef.current.get(openSlots[idx].id)
-    const ownWidth = ownEl?.getBoundingClientRect().width ?? DEFAULT_PANEL_WIDTH
-    const leftEl = idx === 0 ? mainRef.current : slotElsRef.current.get(openSlots[idx - 1].id)
-    const leftWidth = leftEl?.getBoundingClientRect().width ?? DEFAULT_PANEL_WIDTH
-    const per = Math.max(MIN_PANEL_WIDTH, Math.round((ownWidth + leftWidth) / 2))
-    setSlotWidths((prev) => {
-      const next = { ...prev, [slotKey]: per }
-      if (idx > 0) next[openSlots[idx - 1].key] = per
-      return next
-    })
-  }, [])
+  const equalizePairAt = useCallback(
+    (slotKey: string) => {
+      const openSlots = slotsRef.current.filter((it) => !it.closing)
+      const idx = openSlots.findIndex((it) => it.key === slotKey)
+      if (idx === -1) return
+      const ownEl = slotElsRef.current.get(openSlots[idx].id)
+      const ownWidth = ownEl?.getBoundingClientRect().width ?? DEFAULT_PANEL_WIDTH
+      const leftEl = idx === 0 ? mainRef.current : slotElsRef.current.get(openSlots[idx - 1].id)
+      const leftWidth = leftEl?.getBoundingClientRect().width ?? DEFAULT_PANEL_WIDTH
+      const per = Math.max(MIN_PANEL_WIDTH, Math.round((ownWidth + leftWidth) / 2))
+      setSlotWidths((prev) => {
+        const next = { ...prev, [slotKey]: per }
+        if (idx > 0) next[openSlots[idx - 1].key] = per
+        return next
+      })
+      persistWidth(openSlots[idx].id, per)
+      if (idx > 0) persistWidth(openSlots[idx - 1].id, per)
+    },
+    [persistWidth]
+  )
 
   // The quick switcher's "Equalize panes" command reaches the area via a DOM
   // event — same pattern as "threa:open-stream-search".
@@ -519,7 +559,7 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
           onCloseFinished={finishClose}
           isDragSource={drag?.panelId === slot.id}
           getDragHandleProps={getDragHandleProps}
-          width={slotWidths[slot.key] ?? DEFAULT_PANEL_WIDTH}
+          width={resolveSlotWidth(slot)}
           onWidthChange={setSlotWidth}
           onEqualizePair={equalizePairAt}
           onRegisterEl={registerSlotEl}
