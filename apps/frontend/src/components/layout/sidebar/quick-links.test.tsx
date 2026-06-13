@@ -8,12 +8,18 @@ import { SidebarQuickLinks } from "./quick-links"
 
 type SidebarValue = ReturnType<typeof Contexts.useSidebar>
 
-function stubSidebar(quickLinksState: CollapseState = "open"): { toggleSectionState: ReturnType<typeof vi.fn> } {
+function stubSidebar(
+  quickLinksState: CollapseState = "open",
+  moreState: CollapseState = "collapsed"
+): { toggleSectionState: ReturnType<typeof vi.fn> } {
   const toggleSectionState = vi.fn()
   const value = {
     collapseOnMobile: vi.fn(),
-    getSectionState: (section: string, defaultState: CollapseState = "open") =>
-      section === "quick-links" ? quickLinksState : defaultState,
+    getSectionState: (section: string, defaultState: CollapseState = "open") => {
+      if (section === "quick-links") return quickLinksState
+      if (section === "quick-links:more") return moreState
+      return defaultState
+    },
     toggleSectionState,
   } as unknown as SidebarValue
   vi.spyOn(Contexts, "useSidebar").mockReturnValue(value)
@@ -81,9 +87,10 @@ describe("SidebarQuickLinks", () => {
     expect(rendered).toEqual(["Activity", "Drafts"])
   })
 
-  it("renders a 'show when active' link only when it carries a signal", () => {
+  it("renders a 'show when active' link in the main list only when it carries a signal", () => {
     stubSidebar("open")
-    // Drafts is "active" — hidden with no count, shown once a draft exists.
+    // Drafts is "active" — tucked under the collapsed fold with no count, then
+    // promoted into the main list once a draft exists.
     const { rerender } = renderQuickLinks({ quickLinks: [{ key: "drafts", visibility: "active" }], draftCount: 0 })
     expect(screen.queryByText("Drafts")).not.toBeInTheDocument()
 
@@ -114,6 +121,68 @@ describe("SidebarQuickLinks", () => {
     const { container } = renderQuickLinks({ quickLinks: [{ key: "drafts", visibility: "hidden" }] })
 
     expect(container).toBeEmptyDOMElement()
+  })
+
+  it("tucks quiet 'show when active' links under a collapsed 'more' fold", () => {
+    stubSidebar("open", "collapsed")
+    renderQuickLinks({
+      quickLinks: [
+        { key: "files", visibility: "show" },
+        { key: "drafts", visibility: "active" },
+        { key: "saved", visibility: "active" },
+      ],
+      draftCount: 0,
+      savedCount: 0,
+    })
+
+    // The always-on link shows; the two quiet ones hide behind the fold.
+    expect(screen.getByText("Files")).toBeInTheDocument()
+    expect(screen.queryByText("Drafts")).not.toBeInTheDocument()
+    expect(screen.queryByText("Saved")).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /2 more/i })).toBeInTheDocument()
+  })
+
+  it("reveals folded links in configured order when the 'more' fold is open", () => {
+    stubSidebar("open", "open")
+    renderQuickLinks({
+      quickLinks: [
+        { key: "files", visibility: "show" },
+        { key: "saved", visibility: "active" },
+        { key: "drafts", visibility: "active" },
+      ],
+      draftCount: 0,
+      savedCount: 0,
+    })
+
+    const rendered = screen.getAllByRole("link").map((l) => l.textContent)
+    expect(rendered).toEqual(["Files", "Saved", "Drafts"])
+    expect(screen.getByRole("button", { name: /less/i })).toBeInTheDocument()
+  })
+
+  it("toggles the 'more' fold when its divider is clicked", async () => {
+    const user = userEvent.setup()
+    const { toggleSectionState } = stubSidebar("open", "collapsed")
+    renderQuickLinks({ quickLinks: [{ key: "drafts", visibility: "active" }], draftCount: 0 })
+
+    await user.click(screen.getByRole("button", { name: /1 more/i }))
+    expect(toggleSectionState).toHaveBeenCalledWith("quick-links:more", "collapsed")
+  })
+
+  it("still renders the section when every link is quiet so links stay reachable", () => {
+    stubSidebar("open", "collapsed")
+    renderQuickLinks({
+      quickLinks: [
+        { key: "drafts", visibility: "active" },
+        { key: "saved", visibility: "active" },
+      ],
+      draftCount: 0,
+      savedCount: 0,
+    })
+
+    // Nothing carries a signal, but the section persists with its fold so the
+    // links are one click away instead of disappearing entirely.
+    expect(screen.getByText("Quick Links")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /2 more/i })).toBeInTheDocument()
   })
 
   it("renders only the header when collapsed", () => {
