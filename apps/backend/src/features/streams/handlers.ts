@@ -714,10 +714,16 @@ export function createStreamHandlers({
       // guardrail on a solo surface, not a shared channel admin setting.
       const stream = await streamService.validateStreamAccess(streamId, workspaceId, userId)
       if (stream.type !== StreamTypes.SCRATCHPAD) {
-        return res.status(400).json({ error: "Tool policy can only be set on a scratchpad" })
+        throw new HttpError("Tool policy can only be set on a scratchpad", {
+          status: 400,
+          code: "INVALID_STREAM_TYPE",
+        })
       }
       if (stream.createdBy !== userId) {
-        return res.status(403).json({ error: "Only the scratchpad owner can change its tool policy" })
+        throw new HttpError("Only the scratchpad owner can change its tool policy", {
+          status: 403,
+          code: "FORBIDDEN",
+        })
       }
 
       const allowedToolCategories = await streamService.setStreamToolPolicy(workspaceId, streamId, allowedCategories)

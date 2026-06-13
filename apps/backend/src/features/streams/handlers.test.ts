@@ -148,11 +148,11 @@ describe("createStreamHandlers.updateToolPolicy", () => {
       })) as unknown as StreamService["validateStreamAccess"],
       setStreamToolPolicy: setStreamToolPolicy as unknown as StreamService["setStreamToolPolicy"],
     })
-    const { res, captured } = makeRes()
+    const { res } = makeRes()
 
-    await handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)
-
-    expect(captured.status).toBe(403)
+    await expect(handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)).rejects.toMatchObject({
+      status: 403,
+    })
     expect(setStreamToolPolicy).not.toHaveBeenCalled()
   })
 
@@ -165,11 +165,11 @@ describe("createStreamHandlers.updateToolPolicy", () => {
       })) as unknown as StreamService["validateStreamAccess"],
       setStreamToolPolicy: setStreamToolPolicy as unknown as StreamService["setStreamToolPolicy"],
     })
-    const { res, captured } = makeRes()
+    const { res } = makeRes()
 
-    await handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)
-
-    expect(captured.status).toBe(400)
+    await expect(handlers.updateToolPolicy(makeReq({ allowedCategories: ["web"] }), res)).rejects.toMatchObject({
+      status: 400,
+    })
     expect(setStreamToolPolicy).not.toHaveBeenCalled()
   })
 })
