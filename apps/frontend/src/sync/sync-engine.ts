@@ -266,11 +266,14 @@ export class SyncEngine {
     // Same pause-before-bootstrap rule as onConnect: the catch-up position
     // must not move between this trigger and the catch-up fetch.
     this.beginCatchUpCycle()
-    // forceFull: only the socket-reconnect path (onConnect) is slimmed. The
-    // resume / online-flip window is the `usePageResumeRefresh` redesign's
-    // territory (a separate follow-up); until that lands it keeps the full
-    // snapshot, the only blanket cover for the socket-healthy-but-throttled gap.
-    await this.runBootstrap(true, { forceFull: true })
+    // Resume is a reconnect-shaped trigger: in active mode the slim path
+    // (per-stream deltas for visible streams + a viewer-label reconcile) plus
+    // the catch-up replay below re-seeds every workspace-scoped projection, so
+    // a full snapshot refetch would only duplicate what catch-up already heals.
+    // off/shadow modes and the first connect fall through to the full snapshot
+    // inside runBootstrap; the below-floor catch-up fallback re-forces full when
+    // the cursor has dropped beneath the retained sync-log floor.
+    await this.runBootstrap(true)
     void this.runCatchUp("resume")
   }
 

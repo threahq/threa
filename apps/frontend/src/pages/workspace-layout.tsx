@@ -51,7 +51,6 @@ import {
   useAppUpdate,
   useMessageQueue,
   useUnreadTabIndicator,
-  usePageResumeRefresh,
   useBackgroundBootstrapSync,
 } from "@/hooks"
 import { usePageResume } from "@/hooks/use-page-resume"
@@ -77,6 +76,15 @@ import { SyncStatusStore, SyncStatusContext } from "@/sync/sync-status"
 import { copyStreamLink } from "@/lib/stream-links"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
+
+/**
+ * How long the tab must be backgrounded before a resume triggers the engine's
+ * socket probe + catch-up. Tighter than `useAppUpdate`'s 10s version-check
+ * window: a few seconds away is enough for socket events to be missed (a
+ * notification-shade peek that delivered a push, a quick app switch), and the
+ * resume path is cheap in active mode (cursor catch-up + per-stream deltas).
+ */
+const PAGE_RESUME_THRESHOLD_MS = 5_000
 
 interface WorkspaceKeyboardHandlerProps {
   onOpenSwitcher: (mode: QuickSwitcherMode) => void
@@ -280,13 +288,17 @@ function WorkspaceSyncHandler({
     }
   }, [isOnline, socket, syncEngine])
 
-  // Visibility-resume trigger: on phone/tab resume after long background,
+  // Visibility-resume trigger: on phone/tab resume after a background gap,
   // probe the socket and refresh state. navigator.onLine doesn't flap in that
   // scenario and socket.io's native pingTimeout can take 20–25s to notice a
-  // zombie transport. The hook stores the callback in a ref, so no memoization needed.
+  // zombie transport. The 5s threshold is tight enough that a few seconds away
+  // (a notification-shade peek that delivered a push, a brief tab switch) still
+  // triggers a catch-up — the engine owns the whole resume window now, so there
+  // is no separate lighter freshness hook below the probe threshold. The hook
+  // stores the callback in a ref, so no memoization needed.
   usePageResume(() => {
     void syncEngine.handlePageResume()
-  })
+  }, PAGE_RESUME_THRESHOLD_MS)
 
   // No destroy effect — StrictMode's effect cleanup cycle would destroy the
   // engine before the socket connect effect re-runs. The engine is destroyed
@@ -319,7 +331,6 @@ function AppUpdateChecker() {
 }
 
 function FreshnessWatchers() {
-  usePageResumeRefresh()
   useBackgroundBootstrapSync()
   return null
 }
