@@ -7,8 +7,19 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
+import { cancelPendingDraftUpsert, enqueueDraftDelete, enqueueDraftUpsert } from "@/sync/draft-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+
+/** Stage 3 mirror for a stash row removed locally — see use-draft-message. */
+async function syncDraftRemoval(row: CachedDraft): Promise<void> {
+  if ((row.baseVersion ?? 0) > 0) {
+    await enqueueDraftDelete(row.workspaceId, row.id)
+  } else {
+    await cancelPendingDraftUpsert(row.id)
+  }
+}
 
 // Re-exported so components (which cannot import from `@/db` per INV-15) can
 // still get the row type they render without reaching into the data layer.
@@ -65,6 +76,8 @@ export async function createStashedDraft(
   }
   await db.drafts.add(row)
   upsertDraftInCache(workspaceId, row)
+  // Mirror the new stash to the backend so it roams across devices (Stage 3).
+  await enqueueDraftUpsert(workspaceId, row.id)
   return row
 }
 
@@ -84,7 +97,12 @@ export async function popStashedDraft(id: string): Promise<CachedDraft | null> {
     await db.drafts.delete(id)
     return found
   })
-  if (row) deleteDraftFromCache(row.workspaceId, id)
+  if (row) {
+    deleteDraftFromCache(row.workspaceId, id)
+    // Restore is copy-then-pop (the content is reloaded into the composer as a
+    // fresh draft), so the popped stash row is removed server-side too (Stage 3).
+    await syncDraftRemoval(row)
+  }
   return row
 }
 
@@ -92,7 +110,10 @@ export async function popStashedDraft(id: string): Promise<CachedDraft | null> {
 export async function deleteStashedDraftById(id: string): Promise<void> {
   const row = await db.drafts.get(id)
   await db.drafts.delete(id)
-  if (row) deleteDraftFromCache(row.workspaceId, id)
+  if (row) {
+    deleteDraftFromCache(row.workspaceId, id)
+    await syncDraftRemoval(row)
+  }
 }
 
 /**
@@ -119,13 +140,31 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
   }, [allDrafts, workspaceId, scope, loadedId])
 
   const isLoaded = hasSeededDraftCache(workspaceId)
+  const syncEngine = useOptionalSyncEngine()
 
   const stashDraft = useCallback(
-    (input: StashDraftInput) => createStashedDraft(workspaceId, scope, input),
-    [workspaceId, scope]
+    async (input: StashDraftInput) => {
+      const row = await createStashedDraft(workspaceId, scope, input)
+      if (row) syncEngine?.kickOperationQueue()
+      return row
+    },
+    [workspaceId, scope, syncEngine]
   )
-  const restoreStashedDraft = useCallback((id: string) => popStashedDraft(id), [])
-  const deleteStashedDraft = useCallback((id: string) => deleteStashedDraftById(id), [])
+  const restoreStashedDraft = useCallback(
+    async (id: string) => {
+      const row = await popStashedDraft(id)
+      if (row) syncEngine?.kickOperationQueue()
+      return row
+    },
+    [syncEngine]
+  )
+  const deleteStashedDraft = useCallback(
+    async (id: string) => {
+      await deleteStashedDraftById(id)
+      syncEngine?.kickOperationQueue()
+    },
+    [syncEngine]
+  )
 
   return { drafts, isLoaded, stashDraft, restoreStashedDraft, deleteStashedDraft }
 }

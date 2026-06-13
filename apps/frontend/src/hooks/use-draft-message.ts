@@ -9,8 +9,24 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
+import { cancelPendingDraftUpsert, enqueueDraftDelete, enqueueDraftUpsert } from "@/sync/draft-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import type { JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+
+/**
+ * Queue a server delete (or just cancel a queued push) for a draft being
+ * removed locally — Stage 3 mirror. Only confirmed drafts (`baseVersion > 0`)
+ * have a server row to delete; a never-synced draft just needs its pending push
+ * dropped. The row must be read before deletion to know which.
+ */
+async function syncDraftRemoval(workspaceId: string, row: CachedDraft | undefined, id: string): Promise<void> {
+  if ((row?.baseVersion ?? 0) > 0) {
+    await enqueueDraftDelete(workspaceId, id)
+  } else {
+    await cancelPendingDraftUpsert(id)
+  }
+}
 
 // Key formats (a draft's `scope`):
 // - "stream:{streamId}" for messages in existing streams
@@ -67,18 +83,25 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
     await db.composerLoaded.put({ scope, workspaceId, draftId: id })
     setComposerLoadedInCache(workspaceId, scope, id)
   }
+  // Mirror to the backend (Stage 3): a coalesced, debounced push that retries
+  // silently. The caller kicks the queue so it drains promptly.
+  await enqueueDraftUpsert(workspaceId, id)
   return row
 }
 
 /** Delete the loaded draft for `scope` and clear its pointer (stashes survive). */
 export async function clearLoadedDraft(workspaceId: string, scope: string): Promise<void> {
   const loadedId = await getLoadedDraftId(scope)
+  const removed = loadedId ? await db.drafts.get(loadedId) : undefined
   if (loadedId) {
     await db.drafts.delete(loadedId)
     deleteDraftFromCache(workspaceId, loadedId)
   }
   await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
+  // Sync side-effect after the local state is fully cleared (keeps the local
+  // clear tight so observers never see drafts-gone-but-pointer-still-set).
+  if (loadedId) await syncDraftRemoval(workspaceId, removed, loadedId)
 }
 
 /**
@@ -94,6 +117,8 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
   }
   await db.composerLoaded.delete(scope)
   setComposerLoadedInCache(workspaceId, scope, null)
+  // Sync side-effects after the local state is fully cleared.
+  for (const row of rows) await syncDraftRemoval(workspaceId, row, row.id)
 }
 
 /**
@@ -112,6 +137,11 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
   const loaded = useComposerLoadedFromStore(workspaceId)
   const loadedId = e2eEnabled ? null : (loaded.find((row) => row.scope === draftKey)?.draftId ?? null)
   const resolvedDraft = loadedId ? drafts.find((draft) => draft.id === loadedId) : undefined
+  // Drains the offline queue so a debounced draft push (enqueued by the write
+  // helpers) mirrors to the backend promptly instead of waiting for the next
+  // reconnect. Optional — outside a workspace (login/loading) there is no engine
+  // and the local write still stands (Stage 3).
+  const syncEngine = useOptionalSyncEngine()
 
   // When a stream becomes encrypted, cancel any debounced plaintext save still
   // in flight — otherwise it fires after the purge below and re-persists the
@@ -153,6 +183,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
       // Delete draft only when content + attachments + contextRefs are all empty.
       if (isEmptyContent(contentJson) && finalAttachments.length === 0 && finalContextRefs.length === 0) {
         await clearLoadedDraft(workspaceId, draftKey)
+        syncEngine?.kickOperationQueue()
         return
       }
 
@@ -161,8 +192,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
         attachments: finalAttachments,
         contextRefs: finalContextRefs,
       })
+      syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled]
+    [draftKey, workspaceId, e2eEnabled, syncEngine]
   )
 
   const saveDraftDebounced = useCallback(
@@ -207,8 +239,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
         // Preserve sidecar so a paste/upload doesn't wipe an attached chip.
         contextRefs: currentDraft?.contextRefs,
       })
+      syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled]
+    [draftKey, workspaceId, e2eEnabled, syncEngine]
   )
 
   /**
@@ -227,6 +260,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
       // Delete draft if both content and attachments are empty
       if (isEmptyContent(currentDraft.contentJson) && remainingAttachments.length === 0) {
         await clearLoadedDraft(workspaceId, draftKey)
+        syncEngine?.kickOperationQueue()
         return
       }
 
@@ -235,8 +269,9 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
         attachments: remainingAttachments,
         contextRefs: currentDraft.contextRefs,
       })
+      syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled]
+    [draftKey, workspaceId, e2eEnabled, syncEngine]
   )
 
   const clearDraft = useCallback(async () => {
@@ -247,7 +282,8 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
     }
 
     await clearLoadedDraft(workspaceId, draftKey)
-  }, [draftKey, workspaceId])
+    syncEngine?.kickOperationQueue()
+  }, [draftKey, workspaceId, syncEngine])
 
   // Cleanup timeout on unmount
   useEffect(() => {
