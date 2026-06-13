@@ -3,6 +3,7 @@ import type { Request, Response } from "express"
 import { createEnclaveRuntimesHandlers } from "./handlers"
 import type { EnclaveRuntimesService } from "./service"
 import type { EnclaveClaimService } from "./claim-service"
+import type { EnclaveClaimWaiter } from "./claim-nudge"
 
 function makeRes() {
   return {
@@ -32,6 +33,7 @@ function buildHandlers(
     registerKey?: ReturnType<typeof mock>
     isRegisteredLive?: ReturnType<typeof mock>
     claimTurn?: ReturnType<typeof mock>
+    enclaveClaimNudge?: EnclaveClaimWaiter | null
   } = {}
 ) {
   return createEnclaveRuntimesHandlers({
@@ -42,7 +44,13 @@ function buildHandlers(
     enclaveClaimService: {
       claimTurn: overrides.claimTurn ?? mock(async () => null),
     } as unknown as EnclaveClaimService,
+    enclaveClaimNudge: overrides.enclaveClaimNudge ?? null,
   })
+}
+
+// Express requests are event emitters; the long-poll subscribes to "close".
+function makeReq(body: unknown, on?: (event: string, cb: () => void) => void): Request {
+  return { body, on: on ?? (() => {}), off: () => {} } as unknown as Request
 }
 
 describe("createEnclaveRuntimesHandlers.registerKey", () => {
@@ -111,5 +119,87 @@ describe("createEnclaveRuntimesHandlers.claim", () => {
     expect(claimTurn).toHaveBeenCalledWith("eik_01")
     expect(res.statusCode).toBe(200)
     expect(res.body).toEqual({ assignment })
+  })
+
+  it("long-polls: parks on the nudge and answers 200 once work appears", async () => {
+    const assignment = { sessionId: "session_1", streamId: "stream_1" }
+    let calls = 0
+    // Empty on the immediate claim; the work shows up after the first nudge.
+    const claimTurn = mock(async () => (++calls >= 2 ? assignment : null))
+    const waitForInvocation = mock(async () => true)
+    const handlers = buildHandlers({ claimTurn, enclaveClaimNudge: { waitForInvocation } })
+    const res = makeRes()
+
+    await handlers.claim(makeReq({ keyId: "eik_01", waitMs: 5_000 }), res as unknown as Response)
+
+    expect(waitForInvocation).toHaveBeenCalledTimes(1)
+    expect(claimTurn).toHaveBeenCalledTimes(2)
+    expect(res.statusCode).toBe(200)
+    expect(res.body).toEqual({ assignment })
+  })
+
+  it("long-polls: answers 204 when the budget lapses with no work", async () => {
+    const claimTurn = mock(async () => null)
+    // Faithful stand-in: resolve `true` (a timeout, not a shutdown) after the
+    // requested budget so the loop's deadline elapses and it gives up — no real
+    // wake-up arrives.
+    const waitForInvocation = mock(
+      ({ timeoutMs }: { timeoutMs: number }) => new Promise<boolean>((r) => setTimeout(() => r(true), timeoutMs))
+    )
+    const handlers = buildHandlers({ claimTurn, enclaveClaimNudge: { waitForInvocation } })
+    const res = makeRes()
+
+    await handlers.claim(makeReq({ keyId: "eik_01", waitMs: 20 }), res as unknown as Response)
+
+    expect(res.statusCode).toBe(204)
+    expect(res.body).toBeUndefined()
+  })
+
+  it("long-polls: stops without writing when the instance hangs up mid-wait", async () => {
+    let closeHandler: (() => void) | undefined
+    const claimTurn = mock(async () => null)
+    // The wait ends because the client disconnected — fire the close handler,
+    // then resolve as the real nudge would when the request aborts.
+    const waitForInvocation = mock(async () => {
+      closeHandler?.()
+      return true
+    })
+    const handlers = buildHandlers({ claimTurn, enclaveClaimNudge: { waitForInvocation } })
+    const res = makeRes()
+    const req = makeReq({ keyId: "eik_01", waitMs: 5_000 }, (event, cb) => {
+      if (event === "close") closeHandler = cb
+    })
+
+    await handlers.claim(req, res as unknown as Response)
+
+    // Claimed only the pre-wait attempt; never wrote to the dead socket.
+    expect(claimTurn).toHaveBeenCalledTimes(1)
+    expect(res.statusCode).toBe(200) // untouched default — no .status() call
+    expect(res.body).toBeUndefined()
+  })
+
+  it("long-polls: gives up with 204 when the nudge stops (shutdown), without re-parking", async () => {
+    const claimTurn = mock(async () => null)
+    // A stopped nudge resolves the wait with false; the loop must break rather
+    // than re-park (which would hang graceful shutdown for the whole budget).
+    const waitForInvocation = mock(async () => false)
+    const handlers = buildHandlers({ claimTurn, enclaveClaimNudge: { waitForInvocation } })
+    const res = makeRes()
+
+    await handlers.claim(makeReq({ keyId: "eik_01", waitMs: 5_000 }), res as unknown as Response)
+
+    expect(waitForInvocation).toHaveBeenCalledTimes(1) // one wait, then break — no re-park
+    expect(res.statusCode).toBe(204)
+  })
+
+  it("skips the long-poll when no nudge is wired, answering 204 immediately", async () => {
+    const claimTurn = mock(async () => null)
+    const handlers = buildHandlers({ claimTurn, enclaveClaimNudge: null })
+    const res = makeRes()
+
+    await handlers.claim(makeReq({ keyId: "eik_01", waitMs: 5_000 }), res as unknown as Response)
+
+    expect(claimTurn).toHaveBeenCalledTimes(1)
+    expect(res.statusCode).toBe(204)
   })
 })

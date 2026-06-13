@@ -51,6 +51,15 @@ describe("loadEnclaveConfig numeric guards", () => {
     expect(loadEnclaveConfig().claimPollIntervalMs).toBe(1_500)
   })
 
+  it("reads the long-poll budget, defaulting when unset", () => {
+    withKey()
+    delete process.env.ENCLAVE_CLAIM_LONG_POLL_MS
+    expect(loadEnclaveConfig().claimLongPollMs).toBe(25_000)
+
+    process.env.ENCLAVE_CLAIM_LONG_POLL_MS = "10000"
+    expect(loadEnclaveConfig().claimLongPollMs).toBe(10_000)
+  })
+
   it("throws rather than passing a negative interval to setTimeout (hot-loop guard)", () => {
     withKey()
     process.env.ENCLAVE_CLAIM_POLL_INTERVAL_MS = "-5"

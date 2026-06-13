@@ -53,6 +53,7 @@ import {
   createEnclaveRuntimesHandlers,
   createEnclaveSessionHandlers,
   type EnclaveClaimService,
+  type EnclaveClaimWaiter,
   type EnclaveRuntimesService,
 } from "./features/enclave-runtimes"
 import {
@@ -143,6 +144,7 @@ interface Dependencies {
   voiceTranscriptionService: VoiceTranscriptionService
   enclaveRuntimesService: EnclaveRuntimesService
   enclaveClaimService: EnclaveClaimService
+  enclaveClaimNudge: EnclaveClaimWaiter | null
   botApiKeyService: BotApiKeyService
   botRuntimeService: BotRuntimeService
   storage: StorageProvider
@@ -197,6 +199,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     voiceTranscriptionService,
     enclaveRuntimesService,
     enclaveClaimService,
+    enclaveClaimNudge,
     botApiKeyService,
     botRuntimeService,
     storage,
@@ -289,6 +292,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const enclave = createEnclaveRuntimesHandlers({
     enclaveRuntimesService,
     enclaveClaimService,
+    enclaveClaimNudge,
   })
 
   // Internal API — control-plane → regional backend, protected by shared secret

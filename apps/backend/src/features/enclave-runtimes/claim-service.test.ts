@@ -15,7 +15,8 @@ import type { Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
 import { EnclaveInvocationsRepository, type EnclaveInvocation } from "./invocations-repository"
-import { EnclaveClaimService } from "./claim-service"
+import { EnclaveClaimService, enqueueEnclaveInvocation } from "./claim-service"
+import { ENCLAVE_INVOCATION_CHANNEL } from "./claim-nudge"
 
 const pool = {} as Pool
 
@@ -371,5 +372,57 @@ describe("EnclaveClaimService.claimTurn", () => {
     const assignment = await service().claimTurn("eik_live")
     expect(assignment).not.toBeNull()
     expect(insertSession).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("enqueueEnclaveInvocation wake-up nudge", () => {
+  const enqueueParams = {
+    workspaceId: "ws_1",
+    streamId: "stream_1",
+    rootStreamId: "stream_1",
+    messageId: "msg_trigger",
+    triggeredBy: "usr_kris",
+  }
+
+  it("rings the doorbell after a fresh insert so a parked long-poll reacts now", async () => {
+    spyOn(EnclaveInvocationsRepository, "insertPending").mockResolvedValue(true)
+    const query = mock(async (_sql: string) => ({}) as never)
+    const db = { query } as unknown as Pool
+
+    await enqueueEnclaveInvocation(db, enqueueParams)
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(query.mock.calls[0]?.[0]).toContain(`NOTIFY ${ENCLAVE_INVOCATION_CHANNEL}`)
+  })
+
+  it("stays silent when the trigger was a redelivery (no new row, no needless wake)", async () => {
+    spyOn(EnclaveInvocationsRepository, "insertPending").mockResolvedValue(false)
+    const query = mock(async (_sql: string) => ({}) as never)
+    const db = { query } as unknown as Pool
+
+    await enqueueEnclaveInvocation(db, enqueueParams)
+
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it("rings the doorbell when the catch-up reopen produced fresh work", async () => {
+    spyOn(EnclaveInvocationsRepository, "insertOrReopen").mockResolvedValue(true)
+    const query = mock(async (_sql: string) => ({}) as never)
+    const db = { query } as unknown as Pool
+
+    await enqueueEnclaveInvocation(db, { ...enqueueParams, reopen: true })
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(query.mock.calls[0]?.[0]).toContain(`NOTIFY ${ENCLAVE_INVOCATION_CHANNEL}`)
+  })
+
+  it("stays silent when the reopen left a live row untouched (turn already on its way)", async () => {
+    spyOn(EnclaveInvocationsRepository, "insertOrReopen").mockResolvedValue(false)
+    const query = mock(async (_sql: string) => ({}) as never)
+    const db = { query } as unknown as Pool
+
+    await enqueueEnclaveInvocation(db, { ...enqueueParams, reopen: true })
+
+    expect(query).not.toHaveBeenCalled()
   })
 })

@@ -151,10 +151,12 @@ export const EnclaveInvocationsRepository = {
    * it. Reopens a terminal row back to pending (fresh attempt budget) or
    * inserts; a live pending/claimed row is left untouched (its turn is
    * already on the way). Session-level idempotency (`findByTriggerMessage`
-   * at claim time) backstops any reopen this lets through.
+   * at claim time) backstops any reopen this lets through. Returns whether a
+   * row was inserted or reopened — false means an untouched live row, i.e. no
+   * fresh claimable work (so callers can skip a needless wake-up nudge).
    */
-  async insertOrReopen(db: Querier, params: InsertEnclaveInvocationParams): Promise<void> {
-    await db.query(sql`
+  async insertOrReopen(db: Querier, params: InsertEnclaveInvocationParams): Promise<boolean> {
+    const result = await db.query(sql`
       INSERT INTO enclave_invocations (id, workspace_id, stream_id, root_stream_id, message_id, triggered_by)
       VALUES (${params.id}, ${params.workspaceId}, ${params.streamId}, ${params.rootStreamId}, ${params.messageId}, ${params.triggeredBy})
       ON CONFLICT (workspace_id, message_id) DO UPDATE
@@ -169,6 +171,7 @@ export const EnclaveInvocationsRepository = {
             updated_at = NOW()
         WHERE enclave_invocations.status IN ('completed', 'failed', 'parked')
     `)
+    return (result.rowCount ?? 0) > 0
   },
 
   /**

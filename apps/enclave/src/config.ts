@@ -12,10 +12,21 @@ export interface EnclaveConfig {
   /** Heartbeat interval. Backend's staleness window is 2min, so 30s keeps us with 3 retries of grace. */
   heartbeatIntervalMs: number
   /**
-   * Idle claim-poll interval (§2.7 pull transport) — the turn-start latency
-   * floor when no work is flowing. A winning claim re-polls immediately.
+   * Minimum spacing between claim-poll *starts* when no work is flowing. With
+   * long-poll on (the common case) the backend holds each poll open longer than
+   * this, so polls run back-to-back and this never gates; it only takes effect
+   * as the idle interval when the backend answers fast (no long-poll support) or
+   * a poll errors, keeping the loop off a hot path.
    */
   claimPollIntervalMs: number
+  /**
+   * Long-poll budget (§2.7 wake-up nudge): how long the backend may hold a claim
+   * poll open waiting for new work before answering 204. Kept under the claim
+   * request timeout so the server always responds first; the backend also clamps
+   * it to its own ceiling. (A backend that predates long-poll treats it as an
+   * unknown field and answers immediately, which the loop's spacing absorbs.)
+   */
+  claimLongPollMs: number
   /**
    * Per-instance ceiling on concurrently-running turns. Turns run detached, so
    * without a cap a backlog would let one box claim unboundedly — each in-flight
@@ -78,6 +89,7 @@ export function loadEnclaveConfig(): EnclaveConfig {
     internalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY!,
     heartbeatIntervalMs: positiveIntEnv("ENCLAVE_HEARTBEAT_INTERVAL_MS", 30_000),
     claimPollIntervalMs: positiveIntEnv("ENCLAVE_CLAIM_POLL_INTERVAL_MS", 1_500),
+    claimLongPollMs: positiveIntEnv("ENCLAVE_CLAIM_LONG_POLL_MS", 25_000),
     maxConcurrentSessions: positiveIntEnv("ENCLAVE_MAX_CONCURRENT_SESSIONS", 8),
     sourceCommitSha: process.env.GIT_SHA || "unknown",
     buildHash: process.env.BUILD_HASH || "unknown",
