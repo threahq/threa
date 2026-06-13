@@ -114,18 +114,16 @@ export function SidebarQuickLinks({
   }
 
   // A link renders above the fold when it's set to "show", or "show when active"
-  // and it currently carries a signal. A "show when active" link with no signal
-  // is tucked under the fold instead of vanishing, so it stays one click away.
-  // "hidden" links are an explicit editor choice and render nowhere.
+  // and it currently carries a signal. Everything else — a quiet "show when
+  // active" link, or one the viewer set to "hidden" — is tucked under the fold
+  // rather than vanishing, so every configured link stays one click away.
   const isVisible = (link: SidebarQuickLink): boolean => {
     if (link.visibility === "show") return true
     if (link.visibility === "active") return itemByKey[link.key].unreadCount > 0
     return false
   }
-  const isFolded = (link: SidebarQuickLink): boolean =>
-    link.visibility === "active" && itemByKey[link.key].unreadCount === 0
   const visible = quickLinks.filter(isVisible)
-  const folded = quickLinks.filter(isFolded)
+  const folded = quickLinks.filter((link) => !isVisible(link))
 
   // Aggregate only "real" attention-worthy signals — drafts and saved counts
   // are persistent artifacts, not unread activity. The activity feed is the
@@ -137,7 +135,7 @@ export function SidebarQuickLinks({
   const isOpen = state === "open"
   const isMoreOpen = moreState === "open"
 
-  // Nothing to show and nothing tucked away (every link hidden / empty list).
+  // Render nothing only when there are no links at all to show or fold.
   if (visible.length === 0 && folded.length === 0) return null
 
   const renderLink = ({ key }: SidebarQuickLink) => {
