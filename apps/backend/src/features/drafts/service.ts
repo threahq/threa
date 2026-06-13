@@ -143,8 +143,12 @@ export class DraftsService {
 
       // (d) Drift (or a tombstoned original) → split into a fresh draft.
       const newRow = await DraftsRepository.insertIfAbsent(client, { id: draftId(), ...insertParams })
-      // The split id is freshly minted, so the insert always lands.
-      const result = await this.finishUpsert(client, newRow!, true)
+      if (!newRow) {
+        // The split id is a freshly minted ULID, so the insert lands unless the
+        // id space collided — fail loud (INV-11) rather than feed null forward.
+        throw new Error("draft split insert returned no row (id collision)")
+      }
+      const result = await this.finishUpsert(client, newRow, true)
       return { ...result, originalId: params.id }
     })
   }

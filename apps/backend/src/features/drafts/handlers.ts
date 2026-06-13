@@ -39,7 +39,6 @@ const upsertSchema = z
 
 const resolveSchema = z.object({
   expectedVersion: z.number().int().min(1),
-  writeId: z.string().min(1),
 })
 
 interface Dependencies {

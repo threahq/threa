@@ -98,6 +98,13 @@ export interface CasUpdateDraftParams {
 const COLUMNS =
   "id, workspace_id, user_id, scope, root_stream_id, content_json, content_markdown, attachment_ids, command, context_refs, ciphertext, envelope, e2e_version, version, last_client_write_id, client_updated_at, created_at, updated_at, deleted_at"
 
+/**
+ * Defensive cap on the per-user bootstrap read. Real stashes are far smaller;
+ * this only bounds a pathological account so the list query can never scan an
+ * unbounded set.
+ */
+const MAX_DRAFTS_PER_USER = 500
+
 function mapRow(row: DraftRow): Draft {
   return {
     id: row.id,
@@ -264,6 +271,11 @@ export const DraftsRepository = {
    * Bootstrap list for a user — every live draft, newest edit first. Powers the
    * stash and the cross-device seed (INV-53). Tombstones are excluded; cleanup
    * of old tombstones is out of scope for v1.
+   *
+   * The personal stash is a naturally bounded set, so this is a full read rather
+   * than a paginated one — but it carries a defensive `MAX_DRAFTS_PER_USER` cap
+   * so a pathological account can never return an unbounded result set on every
+   * bootstrap. Newest-first means the cap, if ever hit, keeps the freshest drafts.
    */
   async listByUser(db: Querier, workspaceId: string, userId: string): Promise<Draft[]> {
     const result = await db.query<DraftRow>(sql`
@@ -273,6 +285,7 @@ export const DraftsRepository = {
         AND user_id = ${userId}
         AND deleted_at IS NULL
       ORDER BY client_updated_at DESC, id DESC
+      LIMIT ${MAX_DRAFTS_PER_USER}
     `)
     return result.rows.map(mapRow)
   },
