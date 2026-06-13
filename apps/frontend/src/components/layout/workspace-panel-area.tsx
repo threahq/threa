@@ -169,32 +169,73 @@ export function WorkspacePanelArea({ workspaceId, children }: WorkspacePanelArea
   slotsRef.current = slots
 
   // Persisted widths (by panel id, per workspace) restore the strip's exact
-  // sizing across refreshes. Loaded once; the ref also caches in-session saves
-  // so a close→reopen of the same panel restores its width too.
-  const persistedWidthsRef = useRef<Record<string, number> | null>(null)
-  if (persistedWidthsRef.current === null) persistedWidthsRef.current = loadPanelWidths(workspaceId)
+  // sizing across refreshes. The ref also caches in-session saves so a
+  // close→reopen restores width too. Reloaded when workspaceId changes —
+  // WorkspaceLayout is NOT remounted on an in-place workspace switch (same
+  // /w/:workspaceId route), so a stale ref would serve the prior workspace's
+  // widths.
+  const persistedWidthsRef = useRef<Record<string, number>>({})
+  const widthsLoadedForRef = useRef<string | null>(null)
+  if (widthsLoadedForRef.current !== workspaceId) {
+    persistedWidthsRef.current = loadPanelWidths(workspaceId)
+    widthsLoadedForRef.current = workspaceId
+  }
 
   const persistWidth = useCallback(
     (panelId: string, width: number) => {
-      if (persistedWidthsRef.current) persistedWidthsRef.current[panelId] = Math.round(width)
+      persistedWidthsRef.current[panelId] = Math.round(width)
       savePanelWidth(workspaceId, panelId, width)
     },
     [workspaceId]
   )
 
+  /** The max a panel may occupy — same reference the live resize uses
+   *  (container minus sidebar), falling back to the viewport before the
+   *  container is measured on first paint. */
+  const maxPanelWidth = useCallback(() => {
+    const ref = containerRef.current?.offsetWidth ?? (typeof window !== "undefined" ? window.innerWidth : 0)
+    return Math.round(ref * MAX_PANEL_RATIO)
+  }, [])
+
   /** Resolve a slot's render width: live session value, else the persisted
-   *  width (clamped to the current viewport), else the default. */
+   *  width (clamped to the same max the resize drag enforces), else default. */
   const resolveSlotWidth = useCallback(
     (slot: SlotItem): number => {
       const live = slotWidths[slot.key]
       if (live != null) return live
-      const stored = persistedWidthsRef.current?.[slot.id]
+      const stored = persistedWidthsRef.current[slot.id]
       if (stored == null) return DEFAULT_PANEL_WIDTH
-      const max = typeof window !== "undefined" ? Math.round(window.innerWidth * MAX_PANEL_RATIO) : 0
+      const max = maxPanelWidth()
       return max > 0 ? Math.max(MIN_PANEL_WIDTH, Math.min(stored, max)) : Math.max(MIN_PANEL_WIDTH, stored)
     },
-    [slotWidths]
+    [slotWidths, maxPanelWidth]
   )
+
+  // Deep-link loads paint before the container is measured, so a restored
+  // width can momentarily exceed the real (sidebar-excluded) max. Once mounted,
+  // clamp any over-wide restored width into the live map so it matches what the
+  // resize drag allows — keeping the stored value intact for a future wider
+  // viewport. Runs before paint (layout effect), so there is no visible jump.
+  const initialClampDoneRef = useRef(false)
+  useLayoutEffect(() => {
+    if (initialClampDoneRef.current || !containerRef.current) return
+    initialClampDoneRef.current = true
+    const max = maxPanelWidth()
+    if (max <= 0) return
+    setSlotWidths((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const slot of slotsRef.current) {
+        if (slot.closing) continue
+        const current = next[slot.key] ?? persistedWidthsRef.current[slot.id]
+        if (current != null && current > max) {
+          next[slot.key] = Math.max(MIN_PANEL_WIDTH, max)
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+  }, [maxPanelWidth])
 
   const setSlotWidth = useCallback(
     (slotKey: string, width: number) => {
