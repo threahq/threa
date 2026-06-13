@@ -116,7 +116,7 @@ a page comes back with `requiresBootstrap`:
    duplicate side, never the gap side — same rule as `initializeActiveCursor`).
 2. `noteSeenHead(response.head)`, `appliedThrough = head`, then
    `void this.runBootstrap(true)` and return. The `finally` splice
-   (`syncId > head || legacy`) drops buffered events `<= head` — the snapshot
+   (`syncId > head`) drops buffered events `<= head` — the snapshot
    covers them, and re-applying an older LWW counter would regress it — and
    applies only those above.
 

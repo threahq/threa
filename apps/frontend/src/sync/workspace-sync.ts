@@ -108,10 +108,10 @@ interface WorkspaceUserUpdatedPayload {
   user: WorkspaceUserPayload
 }
 
-// The unread counter payloads carry absolute fields (sync-v2 phase 2c).
-// They are optional on the wire: sync-log entries persisted before the
-// backend shipped them replay without them forever, and handlers fall back
-// to the legacy increment/zero behavior (see sync/unread-counters.ts).
+// The unread counter payloads carry absolute fields (sync-v2 phase 2c); every
+// current payload has them. The fields stay optional on the wire and the
+// handlers below tolerate their absence (increment/zero fallback) as a
+// defensive guard.
 interface StreamReadPayload {
   workspaceId: string
   authorId: string
