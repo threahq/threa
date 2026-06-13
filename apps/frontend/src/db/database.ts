@@ -9,6 +9,8 @@ import type {
   SidebarConfig,
   StreamContextBagPayload,
   StreamType,
+  ToolPrivacyCategory,
+  ToolPrivacyPolicy,
   WorkspaceRoleSlug,
 } from "@threa/types"
 import type { KdfParams } from "@/lib/crypto/passphrase"
@@ -215,6 +217,8 @@ export interface PendingStreamCreation {
   companionMode?: CompanionMode
   parentStreamId?: string
   parentMessageId?: string
+  /** At-creation tool policy carried from the draft; threaded into the create request. */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 export interface PendingMessage {
@@ -306,6 +310,13 @@ export interface DraftScratchpad {
   workspaceId: string
   displayName: string | null
   companionMode: "off" | "on"
+  /**
+   * Tool-privacy policy chosen before the scratchpad is server-created.
+   * `undefined` = unrestricted; threaded into the create request when the
+   * first message promotes the draft. Drafts are always plaintext, so the
+   * enclave "not yet" gating never applies here.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
   createdAt: number
 }
 
@@ -663,6 +674,13 @@ export interface CachedWorkspaceMetadata {
   workspaceId: string
   emojis: Array<{ shortcode: string; emoji: string; type: string; group: string; order: number; aliases: string[] }>
   emojiWeights: Record<string, number>
+  /**
+   * Agent tool categories the workspace has tooling configured for (`web` +
+   * `workspace` always, `github`/`linear` when connected). Drives the
+   * at-creation scratchpad tool-policy picker. Optional for rows cached before
+   * the field shipped — absent reads as "all gateable".
+   */
+  configuredToolCategories?: ToolPrivacyCategory[]
   /**
    * Commands surfaced in the slash-command menu. `kind` defaults to "server"
    * for backwards compatibility with older cached rows; "client-action" items

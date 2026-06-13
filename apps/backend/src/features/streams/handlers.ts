@@ -65,6 +65,13 @@ const createStreamSchema = z
      */
     e2eEnabled: z.literal(true).optional(),
     e2eOwnerKeyId: z.string().min(1).optional(),
+    /**
+     * Optional tool-privacy policy set at creation time (scratchpads only).
+     * `null`/absent = unrestricted; an array (incl. `[]`) restricts the agent
+     * to those categories. Persisted to `stream_policies` in the create
+     * transaction, like the E2E flag and context bag.
+     */
+    allowedToolCategories: z.array(z.enum(TOOL_PRIVACY_CATEGORIES)).nullable().optional(),
   })
   .refine((data) => data.type !== "channel" || data.slug, {
     message: "Slug is required for channels",
@@ -89,6 +96,10 @@ const createStreamSchema = z
   .refine((data) => !data.e2eEnabled || !data.contextBag, {
     message: "contextBag and E2E are mutually exclusive in Phase 1",
     path: ["e2eEnabled"],
+  })
+  .refine((data) => data.allowedToolCategories === undefined || data.type === "scratchpad", {
+    message: "allowedToolCategories is only supported on scratchpad creation",
+    path: ["allowedToolCategories"],
   })
 
 // Canonical base64 (correct alphabet + padding/length). Rejects e.g. "!!!!" or
@@ -496,6 +507,7 @@ export function createStreamHandlers({
         contextBag,
         e2eEnabled,
         e2eOwnerKeyId,
+        allowedToolCategories,
       } = data
 
       // Verify the caller owns the referenced E2E key BEFORE we hand off to
@@ -578,6 +590,7 @@ export function createStreamHandlers({
         createdBy: userId,
         contextBag,
         e2e: resolvedE2eOwnerKeyId ? { ownerKeyId: resolvedE2eOwnerKeyId } : undefined,
+        allowedToolCategories,
       })
 
       res.status(201).json({ stream })

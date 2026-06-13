@@ -20,6 +20,8 @@ import {
   ChevronDown,
 } from "lucide-react"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -31,7 +33,7 @@ import {
 } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
 import { useStreamOrDraft, useStreamError, usePanelLayout, isDmDraftId, useTypeToFocus } from "@/hooks"
-import { useWorkspaceDmPeers } from "@/stores/workspace-store"
+import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { usePanel, useSidebar } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
@@ -134,6 +136,7 @@ export function StreamPage() {
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const dmPeers = useWorkspaceDmPeers(workspaceId ?? "")
+  const workspaceMetadata = useWorkspaceMetadata(workspaceId ?? "")
   // For an unlocked encrypted stream, the tamper-evident decrypted name; null
   // otherwise (plaintext stream, locked, or not yet decrypted) → plaintext label.
   const decryptedStreamName = useDecryptedStreamName(workspaceId ?? "", stream)
@@ -308,7 +311,6 @@ export function StreamPage() {
     let hoverVariant: string
     let iconTint: string
     let interactiveAria: string
-    let inertAria: string
     let tooltipBody: string
 
     if (isEncrypted) {
@@ -318,7 +320,6 @@ export function StreamPage() {
       hoverVariant = "hover:bg-accent"
       iconTint = "text-muted-foreground"
       interactiveAria = "End-to-end encrypted. Open companion settings."
-      inertAria = "End-to-end encrypted"
       tooltipBody = "End-to-end encrypted — Companion is disabled. Click for details."
     } else if (isOn) {
       Icon = Sparkles
@@ -327,7 +328,6 @@ export function StreamPage() {
       hoverVariant = "hover:bg-primary/10"
       iconTint = "text-primary"
       interactiveAria = "Companion is on. Click to change."
-      inertAria = "Companion on"
       tooltipBody = "Ariadne replies to new messages. Click to change."
     } else {
       Icon = Moon
@@ -336,18 +336,44 @@ export function StreamPage() {
       hoverVariant = "hover:bg-accent hover:text-foreground"
       iconTint = ""
       interactiveAria = "Quiet mode. Click to change."
-      inertAria = "Quiet mode"
       tooltipBody = "Silent capture — no AI replies. Click to change."
     }
 
     const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
 
     if (isDraft) {
+      // The draft pill is live: it opens an in-flow popover to set companion
+      // mode and tool access before the scratchpad is server-created. The
+      // settings dialog can't be used yet (it reads caches with no draft row),
+      // so the choices are written to the local draft and threaded into the
+      // create request on the first message.
       companionModeIndicator = (
-        <span className={cn(pillBase, pillVariant)} aria-label={inertAria}>
-          <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
-          <span>{modeLabel}</span>
-        </span>
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label="Companion mode and tool access. Click to change."
+              className={cn(
+                pillBase,
+                pillVariant,
+                "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+                hoverVariant
+              )}
+            >
+              <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
+              <span>{modeLabel}</span>
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-80">
+            <DraftAgentSettings
+              workspaceId={workspaceId!}
+              draftId={streamId!}
+              companionMode={stream.companionMode}
+              allowedToolCategories={stream.allowedToolCategories ?? null}
+              configuredCategories={workspaceMetadata?.configuredToolCategories}
+            />
+          </PopoverContent>
+        </Popover>
       )
     } else {
       companionModeIndicator = (

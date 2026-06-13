@@ -233,6 +233,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     platformAdminService,
     sidebarConfigService,
     invitationService,
+    workspaceIntegrationService,
     activityService,
     commandAvailabilityService,
     avatarService,

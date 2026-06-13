@@ -60,6 +60,12 @@ interface CreateStreamInputBase {
   memberIds?: string[]
   /** Context bag attached to a new scratchpad (triggers summary pre-compute). */
   contextBag?: ContextBag
+  /**
+   * Tool-privacy policy to apply at creation (scratchpads only). Omitted =
+   * unrestricted; an array (incl. `[]`) restricts the agent to those
+   * categories. Persisted to `stream_policies` in the create transaction.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 /**
@@ -1183,6 +1189,14 @@ export interface WorkspaceBootstrap {
    * operator actions and take effect on the next bootstrap.
    */
   viewerIsPlatformAdmin?: boolean
+  /**
+   * Agent tool categories the workspace has tooling configured for: `web` and
+   * `workspace` always, `github`/`linear` only when connected. Drives the
+   * scratchpad tool-policy picker — chiefly the at-creation control, which has
+   * no per-stream bootstrap to read from yet. Optional for older cached
+   * payloads (absent reads as "all gateable").
+   */
+  configuredToolCategories?: ToolPrivacyCategory[]
 }
 
 // ============================================================================

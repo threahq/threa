@@ -24,50 +24,45 @@ const ENCLAVE_TOOL_CATEGORIES = new Set<ToolPrivacyCategory>(["web"])
 const NOT_IN_ENCLAVE_REASON =
   "Not yet available in encrypted scratchpads — inside the enclave Ariadne only has web tools today."
 
-interface ToolPolicyPickerProps {
-  workspaceId: string
-  streamId: string
+interface ToolPolicyControlProps {
   /** Current policy: `null` = unrestricted; an array (incl. `[]`) = restricted to those categories. */
   value: ToolPrivacyPolicy
+  /** Apply a new policy — live mutation in settings, a local draft write at creation. */
+  onChange: (next: ToolPrivacyPolicy) => void
   /**
    * Categories the workspace actually has configured (so unconnected GitHub /
-   * Linear never show). Undefined (older cached bootstrap) falls back to all.
+   * Linear never show). Undefined falls back to all gateable categories.
    */
   configuredCategories?: ToolPrivacyCategory[]
   /** Encrypted scratchpad: non-web categories render disabled, with a reason. */
   e2e: boolean
+  /** Disables all inputs while a change is in flight. */
+  disabled?: boolean
 }
 
-export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCategories, e2e }: ToolPolicyPickerProps) {
-  const { mutateAsync, isPending } = useUpdateToolPolicy(workspaceId, streamId)
-
-  // The cache (via `value`) is the source of truth — no local state, so a
-  // success re-renders from the patched bootstrap and an error leaves the prior
-  // value untouched.
+/**
+ * Presentational, controlled tool-policy editor. Owns no persistence — the
+ * caller maps `onChange` to a live mutation (settings) or a draft write
+ * (at-creation). `value` is the single source of truth, so there is no local
+ * state to drift.
+ */
+export function ToolPolicyControl({ value, onChange, configuredCategories, e2e, disabled }: ToolPolicyControlProps) {
   const restricted = value !== null
   const allowed = new Set(value ?? [])
   const shown = configuredCategories ?? ALL_GATEABLE
   const options = CATEGORY_OPTIONS.filter((option) => shown.includes(option.value))
 
-  const apply = async (next: ToolPrivacyPolicy) => {
-    try {
-      await mutateAsync(next)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update tool access")
-    }
-  }
-
-  const handleRestrictToggle = (on: boolean) => apply(on ? [] : null)
+  const handleRestrictToggle = (on: boolean) => onChange(on ? [] : null)
 
   const handleCategoryToggle = (category: ToolPrivacyCategory) => {
     const next = new Set(allowed)
     if (next.has(category)) next.delete(category)
     else next.add(category)
-    apply([...next])
+    onChange([...next])
   }
 
   return (
-    <div className="space-y-3 border-t pt-6">
+    <div className="space-y-3">
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <Label className="text-sm font-medium">Restrict tool access</Label>
@@ -79,7 +74,7 @@ export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCateg
         <Switch
           checked={restricted}
           onCheckedChange={handleRestrictToggle}
-          disabled={isPending}
+          disabled={disabled}
           aria-label="Restrict tool access"
         />
       </div>
@@ -93,7 +88,7 @@ export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCateg
               description={option.description}
               checked={allowed.has(option.value)}
               notImplementedReason={e2e && !ENCLAVE_TOOL_CATEGORIES.has(option.value) ? NOT_IN_ENCLAVE_REASON : null}
-              disabled={isPending}
+              disabled={disabled ?? false}
               onToggle={() => handleCategoryToggle(option.value)}
             />
           ))}
@@ -105,6 +100,43 @@ export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCateg
           No tool groups selected — Ariadne can only read this scratchpad and reply.
         </p>
       )}
+    </div>
+  )
+}
+
+interface ToolPolicyPickerProps {
+  workspaceId: string
+  streamId: string
+  /** Current policy: `null` = unrestricted; an array (incl. `[]`) = restricted to those categories. */
+  value: ToolPrivacyPolicy
+  configuredCategories?: ToolPrivacyCategory[]
+  e2e: boolean
+}
+
+/**
+ * Settings wrapper: binds the controlled `ToolPolicyControl` to the live
+ * `useUpdateToolPolicy` mutation for an existing stream.
+ */
+export function ToolPolicyPicker({ workspaceId, streamId, value, configuredCategories, e2e }: ToolPolicyPickerProps) {
+  const { mutateAsync, isPending } = useUpdateToolPolicy(workspaceId, streamId)
+
+  const handleChange = async (next: ToolPrivacyPolicy) => {
+    try {
+      await mutateAsync(next)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update tool access")
+    }
+  }
+
+  return (
+    <div className="border-t pt-6">
+      <ToolPolicyControl
+        value={value}
+        onChange={handleChange}
+        configuredCategories={configuredCategories}
+        e2e={e2e}
+        disabled={isPending}
+      />
     </div>
   )
 }

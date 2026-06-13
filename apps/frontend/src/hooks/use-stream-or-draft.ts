@@ -29,6 +29,7 @@ import type {
   WorkspaceBootstrap,
   StreamWithPreview,
   E2eActor,
+  ToolPrivacyPolicy,
 } from "@threa/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threa/types"
 
@@ -112,6 +113,13 @@ export interface VirtualStream {
    * streams (treated as an empty set).
    */
   e2eActors?: E2eActor[]
+  /**
+   * Tool-privacy policy chosen at creation. On drafts this is the local,
+   * not-yet-persisted choice (threaded into the create request on the first
+   * message); on server streams it is the current policy. `undefined` =
+   * unrestricted.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 export interface SendMessageInput {
@@ -154,6 +162,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
         parentMessageId: null,
         rootStreamId: null,
         archivedAt: null,
+        allowedToolCategories: draft.allowedToolCategories,
       }
     : undefined
 
@@ -194,6 +203,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
           type: StreamTypes.SCRATCHPAD,
           displayName: draftData?.displayName ?? undefined,
           companionMode,
+          allowedToolCategories: draftData?.allowedToolCategories,
         },
         draftId: streamId,
       })

@@ -8,6 +8,7 @@ import type { FeatureFlagService } from "../feature-flags"
 import type { PlatformAdminService } from "../platform-admin"
 import type { SidebarConfigService } from "../sidebar-config"
 import type { InvitationService } from "../invitations"
+import type { WorkspaceIntegrationService } from "../workspace-integrations"
 import type { ActivityService } from "../activity"
 import type { CommandAvailabilityService } from "../commands"
 import type { AvatarService } from "./avatar-service"
@@ -60,6 +61,7 @@ interface Dependencies {
   platformAdminService: PlatformAdminService
   sidebarConfigService: SidebarConfigService
   invitationService: InvitationService
+  workspaceIntegrationService: WorkspaceIntegrationService
   activityService?: ActivityService
   commandAvailabilityService: CommandAvailabilityService
   avatarService: AvatarService
@@ -78,6 +80,7 @@ export function createWorkspaceHandlers({
   platformAdminService,
   sidebarConfigService,
   invitationService,
+  workspaceIntegrationService,
   activityService,
   commandAvailabilityService,
   avatarService,
@@ -153,6 +156,7 @@ export function createWorkspaceHandlers({
         labels,
         labelMemberships,
         labelAssignments,
+        configuredToolCategories,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
         workspaceService.getUsers(workspaceId),
@@ -169,6 +173,10 @@ export function createWorkspaceHandlers({
         labelService.listVisibleTo(workspaceId, userId),
         labelService.listMembershipsForUser(workspaceId, userId),
         labelAssignmentService.listForViewer(workspaceId, userId),
+        // Which agent tool categories the workspace has tooling for — drives the
+        // scratchpad tool-policy picker (including the at-creation control, which
+        // has no stream bootstrap yet).
+        workspaceIntegrationService.getAvailableToolCategories(workspaceId),
       ])
 
       if (!workspace) {
@@ -263,6 +271,7 @@ export function createWorkspaceHandlers({
           invitations,
           viewerPermissions,
           viewerIsPlatformAdmin,
+          configuredToolCategories,
         },
       })
     },

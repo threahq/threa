@@ -39,7 +39,10 @@ export function useDraftScratchpads(workspaceId: string) {
   )
 
   const updateDraft = useCallback(
-    async (id: string, data: Partial<Pick<DraftScratchpad, "displayName" | "companionMode">>) => {
+    async (
+      id: string,
+      data: Partial<Pick<DraftScratchpad, "displayName" | "companionMode" | "allowedToolCategories">>
+    ) => {
       await db.draftScratchpads.update(id, data)
       const existingDraft = drafts.find((draft) => draft.id === id)
       if (existingDraft) {

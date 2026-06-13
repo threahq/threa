@@ -85,6 +85,12 @@ export type CreateScratchpadParams = z.infer<typeof createScratchpadParamsSchema
    * the owner can decrypt.
    */
   e2e?: E2eCreateParams
+  /**
+   * Optional tool-privacy policy set at creation. `undefined` leaves the
+   * scratchpad unrestricted (no row); a `ToolPrivacyPolicy` is written to
+   * `stream_policies` in the same transaction.
+   */
+  allowedToolCategories?: ToolPrivacyPolicy
 }
 
 const createChannelParamsSchema = z.object({
@@ -347,7 +353,13 @@ export class StreamService {
     })
   }
 
-  async create(params: CreateStreamParams & { contextBag?: ContextBag; e2e?: E2eCreateParams }): Promise<Stream> {
+  async create(
+    params: CreateStreamParams & {
+      contextBag?: ContextBag
+      e2e?: E2eCreateParams
+      allowedToolCategories?: ToolPrivacyPolicy
+    }
+  ): Promise<Stream> {
     switch (params.type) {
       case StreamTypes.SCRATCHPAD:
         return this.createScratchpad({
@@ -359,6 +371,7 @@ export class StreamService {
           createdBy: params.createdBy,
           contextBag: params.contextBag,
           e2e: params.e2e,
+          allowedToolCategories: params.allowedToolCategories,
         })
       case StreamTypes.CHANNEL:
         if (!params.slug) {
@@ -435,6 +448,18 @@ export class StreamService {
         stream.e2eEnabled = true
         stream.e2eOwnerKeyId = params.e2e.ownerKeyId
         stream.e2eActors = []
+      }
+
+      // Persist an at-creation tool policy in the same transaction, so the
+      // very first turn already respects it. `undefined` = unrestricted (no
+      // row); a policy (incl. `[]`) is written via the shared upsert.
+      if (params.allowedToolCategories !== undefined) {
+        await StreamPoliciesRepository.setToolPolicy(
+          client,
+          params.workspaceId,
+          stream.id,
+          params.allowedToolCategories
+        )
       }
 
       // Publish to outbox for real-time delivery
