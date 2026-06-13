@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threa/types"
 import { usePanelAwareLink } from "@/components/panels/use-panel-aware-nav"
+import { createViewPanelId } from "@/lib/panel-locations"
 import { QUICK_LINKS_SECTION_ID } from "@threa/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
@@ -50,8 +51,8 @@ interface QuickLinkItem {
 
 /** Quick links whose surface can also open as a side panel (cmd/ctrl-click). */
 const PANEL_IDS_BY_KEY: Partial<Record<SidebarQuickLinkKey, string>> = {
-  saved: "view:saved",
-  activity: "view:activity",
+  saved: createViewPanelId("saved"),
+  activity: createViewPanelId("activity"),
 }
 
 function QuickLinkRow({

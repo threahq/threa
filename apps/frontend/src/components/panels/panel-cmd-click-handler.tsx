@@ -41,15 +41,13 @@ export function PanelCmdClickHandler({ workspaceId }: { workspaceId: string }) {
       if (!panelId) return
       e.preventDefault()
       e.stopPropagation()
-      // Carry a message anchor (e.g. a search result `…/s/{id}?m={msg}`) so the
-      // panel opens AT the message rather than the bottom of the stream.
-      let messageId: string | undefined
-      try {
-        messageId = new URL(anchor.href, window.location.origin).searchParams.get("m") ?? undefined
-      } catch {
-        messageId = undefined
-      }
-      openPanelRef.current(panelId, { mode: "new", messageId })
+      // Open the target to the right. NOTE: we deliberately do NOT carry the
+      // href's `m` message anchor — `m` is a single global param read by EVERY
+      // StreamContent (pane 0 + all panels), and its handler unconditionally
+      // disables auto-scroll + fires a jumpToEvent, so a panel's anchor would
+      // disrupt the main view's auto-follow. Scrolling the opened panel to the
+      // exact message needs a per-pane anchor — tracked as a follow-up.
+      openPanelRef.current(panelId, { mode: "new" })
     }
     document.addEventListener("click", onClickCapture, true)
     return () => document.removeEventListener("click", onClickCapture, true)

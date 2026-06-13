@@ -26,15 +26,6 @@ export interface OpenPanelOptions {
    * panel instead of hijacking its neighbor.
    */
   target?: string
-  /**
-   * Message to scroll to / highlight in the opened stream panel. Sets the URL
-   * `m` param so the StreamPanel for this stream lands on the message — used
-   * when opening a search result "to the right" so it arrives at the match,
-   * not the bottom of the stream. `m` is shared, but a StreamPanel only
-   * highlights a message that belongs to its own stream, so concurrent panels
-   * don't cross-highlight.
-   */
-  messageId?: string
 }
 
 /**
@@ -169,7 +160,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const focusedPaneStore = storeRef.current
 
   const writePanels = useCallback(
-    (transform: (prev: string[]) => string[], mutate?: (params: URLSearchParams) => void) => {
+    (transform: (prev: string[]) => string[]) => {
       setSearchParams(
         (prev) => {
           const current = prev.getAll("panel")
@@ -177,7 +168,6 @@ export function PanelProvider({ children }: PanelProviderProps) {
           const next = new URLSearchParams(prev)
           next.delete("panel")
           for (const id of nextPanels) next.append("panel", id)
-          mutate?.(next)
           return next
         },
         { replace: true }
@@ -267,24 +257,21 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const openPanel = useCallback(
     (streamId: string, options?: OpenPanelOptions) => {
-      writePanels(
-        (prev) => {
-          // Appending beyond what the viewport fits degrades to replacing —
-          // mobile gets exactly one panel, wide screens get many.
-          const cap = maxSidePanels(typeof window === "undefined" ? Infinity : window.innerWidth)
-          let effective = options?.mode === "new" && prev.length >= cap ? { ...options, mode: undefined } : options
-          // Opens that don't say where they land go to the focused panel (the
-          // VS Code model: sidebar and switcher clicks target the pane the user
-          // last interacted with). Clicks inside a pane focus it on pointer
-          // down, so for in-pane opens this resolves to the pane clicked in.
-          const focused = focusedPaneStore.get()
-          if (effective?.mode !== "new" && effective?.target == null && focused !== "main" && prev.includes(focused)) {
-            effective = { ...effective, target: focused }
-          }
-          return applyOpenPanel(prev, streamId, effective)
-        },
-        options?.messageId ? (params) => params.set("m", options.messageId!) : undefined
-      )
+      writePanels((prev) => {
+        // Appending beyond what the viewport fits degrades to replacing —
+        // mobile gets exactly one panel, wide screens get many.
+        const cap = maxSidePanels(typeof window === "undefined" ? Infinity : window.innerWidth)
+        let effective = options?.mode === "new" && prev.length >= cap ? { ...options, mode: undefined } : options
+        // Opens that don't say where they land go to the focused panel (the
+        // VS Code model: sidebar and switcher clicks target the pane the user
+        // last interacted with). Clicks inside a pane focus it on pointer
+        // down, so for in-pane opens this resolves to the pane clicked in.
+        const focused = focusedPaneStore.get()
+        if (effective?.mode !== "new" && effective?.target == null && focused !== "main" && prev.includes(focused)) {
+          effective = { ...effective, target: focused }
+        }
+        return applyOpenPanel(prev, streamId, effective)
+      })
       focusedPaneStore.set(streamId)
     },
     [writePanels, focusedPaneStore]
