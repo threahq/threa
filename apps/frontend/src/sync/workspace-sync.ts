@@ -899,7 +899,8 @@ export function registerWorkspaceSocketHandlers(
   }
 
   // Handle stream activity (when a new message is created in any stream)
-  // Always updates the preview, but only increments unread for others' messages
+  // Always updates the preview; sets unread from the absolute message ordinal
+  // (own messages and viewing advance the read position instead of raising it).
   const handleStreamActivity = (payload: StreamActivityPayload) => {
     // Only update if it's for this workspace
     if (payload.workspaceId !== workspaceId) return
