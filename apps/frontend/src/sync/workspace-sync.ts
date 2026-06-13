@@ -35,6 +35,7 @@ import type {
 } from "@threa/types"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
 import { memoKeys } from "@/hooks/use-memos"
+import { invitationKeys } from "@/api/invitations"
 import { savedSuggestionKeys } from "@/hooks/use-saved-suggestions"
 import { persistScheduledRows, removeScheduledRow, scheduledKeys } from "@/hooks/use-scheduled"
 import { assignmentToCached, assignmentId } from "@/hooks/use-labels"
@@ -1346,6 +1347,20 @@ export function registerWorkspaceSocketHandlers(
     queryClient.invalidateQueries({ queryKey: memoKeys.searches(workspaceId) })
   }
 
+  // Invitation lifecycle (sent / accepted / revoked / link-created /
+  // link-claimed): heal the settings → users invitation list for every admin,
+  // not just the one who performed the mutation. The five events are
+  // permission-scoped to members:write holders (delivery-groups.ts) — logged and
+  // emitted to that group only — so registering here both updates an open list
+  // live and replays through the sync-v2 catch-up cursor on reconnect, the same
+  // query a viewer's own send/revoke/resend mutation already invalidates. Every
+  // payload carries workspaceId; the differing per-event fields are unused since
+  // we only invalidate.
+  const handleInvitationChanged = (payload: { workspaceId: string }) => {
+    if (payload.workspaceId !== workspaceId) return
+    queryClient.invalidateQueries({ queryKey: invitationKeys.list(workspaceId) })
+  }
+
   // Handle attachment transcoded (video processing completed or failed)
   const handleAttachmentTranscoded = async (payload: {
     workspaceId: string
@@ -1688,6 +1703,11 @@ export function registerWorkspaceSocketHandlers(
   socket.on("bot:updated", handleBotUpdated)
   socket.on("activity:created", handleActivityCreated)
   socket.on("memo:created", handleMemoCreated)
+  socket.on("invitation:sent", handleInvitationChanged)
+  socket.on("invitation:accepted", handleInvitationChanged)
+  socket.on("invitation:revoked", handleInvitationChanged)
+  socket.on("invitation:link-created", handleInvitationChanged)
+  socket.on("invitation:link-claimed", handleInvitationChanged)
   socket.on("saved:upserted", handleSavedUpserted)
   socket.on("saved:deleted", handleSavedDeleted)
   socket.on("saved_reminder:fired", handleSavedReminderFired)
@@ -1730,6 +1750,11 @@ export function registerWorkspaceSocketHandlers(
     socket.off("bot:updated", handleBotUpdated)
     socket.off("activity:created", handleActivityCreated)
     socket.off("memo:created", handleMemoCreated)
+    socket.off("invitation:sent", handleInvitationChanged)
+    socket.off("invitation:accepted", handleInvitationChanged)
+    socket.off("invitation:revoked", handleInvitationChanged)
+    socket.off("invitation:link-created", handleInvitationChanged)
+    socket.off("invitation:link-claimed", handleInvitationChanged)
     socket.off("saved:upserted", handleSavedUpserted)
     socket.off("saved:deleted", handleSavedDeleted)
     socket.off("saved_reminder:fired", handleSavedReminderFired)

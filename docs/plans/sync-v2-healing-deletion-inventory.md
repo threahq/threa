@@ -239,18 +239,22 @@ treating such a flag as real healing — it may be dead code (labels was).
   holders — the catch-up handler passes the same role-derived `permissionGroups`
   into `listEntriesForUser`, so live and replay delivery stay congruent. This
   mirrors the bootstrap gate (`workspaces/handlers.ts` includes `invitations`
-  only for `members:write`). Pre-change `sync_log` rows keep their old
-  `['workspace']` groups until they age out of retention, but they are inert (no
-  client handler reads invitation events yet). What remains is purely
-  client-side: there is no `invitation:*` handler in `sync/workspace-sync.ts`,
-  and the only frontend surface — the `["invitations", workspaceId]` query in
-  `components/workspace-settings/users-tab.tsx` (settings → users) — refreshes
-  only on the viewer's own send/revoke/resend mutations and on a full workspace
-  bootstrap, so an invitation another admin sends or revokes in another session
-  never updates a viewer's open list until they remount or re-bootstrap. Once a
-  gate-registered handler invalidates `["invitations", workspaceId]`, live emits
-  and catch-up replays both heal the list and the standard coverage-proof chain
-  applies.
+  only for `members:write`). **Client handler now landed (DONE):** a
+  gate-registered `invitation:*` handler in `sync/workspace-sync.ts` invalidates
+  `invitationKeys.list(workspaceId)` (`api/invitations.ts`; the
+  `["invitations", workspaceId]` query the only frontend surface —
+  `components/workspace-settings/users-tab.tsx`, settings → users — reads). The
+  list used to refresh only on the viewer's own send/revoke/resend mutations and
+  on a full workspace bootstrap; now an invitation another admin sends or revokes
+  in another session heals a viewer's open list live, and a catch-up replay heals
+  it after a disconnect — the standard coverage-proof chain (event type → group
+  → `sync_log` → `gate.dispatch`) applies. Pre-change `sync_log` rows that fell
+  through to `['workspace']` would have replayed their payloads to non-holders on
+  catch-up once a handler existed, so the same change ships a one-time migration
+  (`20260613192319_scope_invitation_sync_log_groups.sql`) rewriting their groups
+  to `['permission:members:write']` — idempotent (post-scoping rows already carry
+  it) and aligned with the live routing, closing the backlog window the 30-day
+  retention would otherwise leave open.
 - **`refetchOnMount: true`** on saved/scheduled/labels/activity: mount-time
   freshness, not reconnect healing. Out of scope.
 - **`useBackgroundBootstrapSync`** (SW prefetch) and **`useAppUpdate`**

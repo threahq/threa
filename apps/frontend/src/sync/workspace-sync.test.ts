@@ -12,6 +12,7 @@ import { SocketEventGate } from "./socket-event-gate"
 import { savedKeys } from "@/hooks/use-saved"
 import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
+import { invitationKeys } from "@/api/invitations"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
@@ -836,6 +837,57 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_other") })
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: memoKeys.searches("ws_1") })
     cleanup()
+  })
+
+  const invitationEventTypes = [
+    "invitation:sent",
+    "invitation:accepted",
+    "invitation:revoked",
+    "invitation:link-created",
+    "invitation:link-claimed",
+  ] as const
+
+  it.each(invitationEventTypes)("invalidates the invitations list when %s lands", (eventType) => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    emit(eventType, { workspaceId: "ws_1", invitationId: "invite_1" })
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: invitationKeys.list("ws_1") })
+    cleanup()
+  })
+
+  it("ignores invitation events from other workspaces", () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs, "active")
+
+    emit("invitation:sent", { workspaceId: "ws_other", invitationId: "invite_1" })
+
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: invitationKeys.list("ws_other") })
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: invitationKeys.list("ws_1") })
+    cleanup()
+  })
+
+  it("invalidates the invitations list on a gate-dispatched catch-up replay", async () => {
+    // The coverage proof: in active mode the invitation handler registers on
+    // the engine's event gate, so a catch-up replay (gate.dispatch, never the
+    // raw socket) heals an open list through the same path as a live emit —
+    // this is what lets another admin's invite/revoke reach a viewer who was
+    // disconnected when it happened.
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+    const gate = new SocketEventGate("ws_1")
+    const cleanup = registerWorkspaceSocketHandlers(gate, "ws_1", queryClient, handlerRefs, "active")
+
+    await gate.dispatch("invitation:revoked", { workspaceId: "ws_1", invitationId: "invite_1" })
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: invitationKeys.list("ws_1") })
+    cleanup()
+    gate.dispose()
   })
 
   it("subscribes the creator when a new stream is created at runtime", async () => {

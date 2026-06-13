@@ -10,6 +10,13 @@ import type {
   ClaimInvitationLinkResponse,
 } from "@threa/types"
 
+export const invitationKeys = {
+  all: ["invitations"] as const,
+  /** The pending-invitations list for one workspace — the invalidation target
+   *  when an `invitation:*` event lands (workspace-sync). */
+  list: (workspaceId: string) => [...invitationKeys.all, workspaceId] as const,
+}
+
 export const invitationsApi = {
   async list(workspaceId: string): Promise<WorkspaceInvitation[]> {
     const res = await api.get<{ invitations: WorkspaceInvitation[] }>(`/api/workspaces/${workspaceId}/invitations`)
