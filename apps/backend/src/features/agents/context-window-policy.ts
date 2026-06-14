@@ -59,7 +59,11 @@ export async function resolveContextWindowPolicy(
   db: Querier,
   params: ResolveContextWindowPolicyParams
 ): Promise<ContextWindowPolicy> {
-  const maxMessages = params.maxMessages ?? DEFAULT_CONTEXT_WINDOW_MESSAGES
+  // A window always holds at least the triggering message; clamp so a
+  // degenerate budget can't make `findWindowFloorSequence` return null
+  // (→ "whole stream fits in window" → continue) for what is really an empty
+  // window.
+  const maxMessages = Math.max(1, params.maxMessages ?? DEFAULT_CONTEXT_WINDOW_MESSAGES)
 
   if (params.stream.type !== StreamTypes.DM) {
     return { episode: { kind: "stream" }, maxMessages, carryDigests: true }

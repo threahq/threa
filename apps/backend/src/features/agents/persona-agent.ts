@@ -303,8 +303,11 @@ export class PersonaAgent {
         // seam — window budget + whether prior turn digests carry — and hand it
         // to the context build. For a DM this reads the PRIOR completed
         // session's cursor (the current RUNNING session, just inserted, is
-        // skipped) to decide the episode boundary (§2.8 Q7/Q8).
-        const policy = await resolveContextWindowPolicy(pool, { stream })
+        // skipped) to decide the episode boundary (§2.8 Q7/Q8). Two related
+        // reads with no AI work, so take a single connection — unlike
+        // buildAgentContext below, which holds none across its rolling-summary
+        // AI call (INV-41).
+        const policy = await withClient(pool, (client) => resolveContextWindowPolicy(client, { stream }))
 
         // Build all context the agent needs
         const agentContext = await buildAgentContext(

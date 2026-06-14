@@ -180,4 +180,21 @@ describe("resolveContextWindowPolicy", () => {
       expect(policy).toEqual({ episode: { kind: "dm-recency", continues: true }, maxMessages: 3, carryDigests: true })
     })
   })
+
+  test("clamps a degenerate window budget so it can't continue into an empty window", async () => {
+    await withTestTransaction(pool, async (client) => {
+      const { workspaceId: wsId, memberId } = await setupWorkspaceMember(client)
+      const dm = await insertStream(client, wsId, memberId, StreamTypes.DM)
+      await insertMessages(client, dm.id, memberId, 5)
+      await insertCompletedSession(client, dm.id, BigInt(4))
+
+      // 0 clamps to 1: the window is the single newest message (sequence 5), and
+      // the prior cursor (4) sits outside it → fresh. Without the clamp a 0
+      // budget made findWindowFloorSequence return null → a spurious "continue"
+      // into a zero-message window.
+      const policy = await resolveContextWindowPolicy(client, { stream: dm, maxMessages: 0 })
+
+      expect(policy).toEqual({ episode: { kind: "dm-recency", continues: false }, maxMessages: 1, carryDigests: false })
+    })
+  })
 })

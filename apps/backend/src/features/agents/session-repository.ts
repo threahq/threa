@@ -553,7 +553,7 @@ export const AgentSessionRepository = {
         FROM agent_sessions
         WHERE stream_id = ${streamId}
           AND status = ${SessionStatuses.COMPLETED}
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
         LIMIT 1
       `
     )
