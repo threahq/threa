@@ -11,6 +11,7 @@ import {
   useWorkspaceStreams,
   useWorkspaceUsers,
 } from "@/stores/workspace-store"
+import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 import { LabelableResourceTypes, Visibilities } from "@threa/types"
 import type {
   CreateLabelInput,
@@ -356,16 +357,6 @@ export function usePromoteLabel(workspaceId: string) {
       queryClient.invalidateQueries({ queryKey: labelKeys.list(workspaceId) })
     },
   })
-}
-
-/** Resolve the current viewer's workspace-scoped user id (UserId), or null. */
-function useCurrentWorkspaceUserId(workspaceId: string): string | null {
-  const { user } = useAuth()
-  const workspaceUsers = useWorkspaceUsers(workspaceId)
-  return useMemo(() => {
-    if (!user) return null
-    return workspaceUsers.find((u) => u.workosUserId === user.id)?.id ?? null
-  }, [user, workspaceUsers])
 }
 
 export interface ResourceLabelState {

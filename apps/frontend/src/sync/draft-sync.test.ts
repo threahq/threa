@@ -89,6 +89,21 @@ describe("cachedDraftFromWire", () => {
     expect(cachedDraftFromWire(wireDraft({ contextRefs: [] })).contextRefs).toBeUndefined()
     expect(cachedDraftFromWire(wireDraft({ contextRefs: [{ kind: "x" }] })).contextRefs).toEqual([{ kind: "x" }])
   })
+
+  it("maps the E2E triple and uses the placeholder body for a sealed row", () => {
+    const row = cachedDraftFromWire(
+      wireDraft({ contentJson: null, ciphertext: "ct", envelope: { v: 2 }, e2eVersion: 2 })
+    )
+    expect(row).toMatchObject({ ciphertext: "ct", e2eVersion: 2 })
+    expect(row.contentJson).toEqual({ type: "doc", content: [{ type: "paragraph" }] })
+  })
+
+  it("leaves the E2E fields unset for a plaintext row", () => {
+    const row = cachedDraftFromWire(wireDraft())
+    expect(row.ciphertext).toBeUndefined()
+    expect(row.envelope).toBeUndefined()
+    expect(row.e2eVersion).toBeUndefined()
+  })
 })
 
 describe("applyDraftUpserted", () => {
@@ -105,12 +120,20 @@ describe("applyDraftUpserted", () => {
     expect(await db.drafts.count()).toBe(0)
   })
 
-  it("ignores an E2E (contentless) row", async () => {
+  it("accepts an E2E (sealed) row, storing the ciphertext and a placeholder body", async () => {
     await applyDraftUpserted(
-      { workspaceId, targetUserId: userId, draft: wireDraft({ contentJson: null, ciphertext: "x" }) },
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ contentJson: null, ciphertext: "ct_x", envelope: { v: 2 }, e2eVersion: 2 }),
+      },
       workspaceId
     )
-    expect(await db.drafts.count()).toBe(0)
+
+    const row = await db.drafts.get("draft_server1")
+    expect(row).toMatchObject({ scope, baseVersion: 1, ciphertext: "ct_x", e2eVersion: 2 })
+    // No plaintext at rest — the body lives in `ciphertext`; `contentJson` is the placeholder.
+    expect(row?.contentJson).toEqual({ type: "doc", content: [{ type: "paragraph" }] })
   })
 
   it("ignores a stale echo at or below the confirmed version", async () => {
@@ -361,6 +384,33 @@ describe("executeDraftUpsert", () => {
     expect(row?.baseVersion).toBe(3)
     // local content is NOT overwritten with the server's derived copy
     expect(row?.contentJson).toEqual(makeDoc("typed"))
+  })
+
+  it("pushes the ciphertext triple (never plaintext) for an E2E draft", async () => {
+    await db.drafts.put(
+      localDraft({
+        id: "draft_e2e",
+        baseVersion: 1,
+        contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+        ciphertext: "ct_sealed",
+        envelope: { v: 2 },
+        e2eVersion: 2,
+      })
+    )
+    const calls: UpsertDraftInput[] = []
+    const upsert = vi.fn(async (_w: string, id: string, input: UpsertDraftInput): Promise<UpsertDraftResponse> => {
+      calls.push(input)
+      return {
+        draft: wireDraft({ id, version: 2, contentJson: null, ciphertext: "ct_sealed", e2eVersion: 2 }),
+        split: false,
+      }
+    })
+
+    await executeDraftUpsert(workspaceId, "draft_e2e", "write_a", service(upsert))
+
+    // The sealed body goes on the wire; plaintext does not (the upsert schema rejects both).
+    expect(calls[0]).toMatchObject({ ciphertext: "ct_sealed", e2eVersion: 2, contentJson: null })
+    expect((await db.drafts.get("draft_e2e"))?.baseVersion).toBe(2)
   })
 
   it("migrates the local id to the server-minted id on a split", async () => {

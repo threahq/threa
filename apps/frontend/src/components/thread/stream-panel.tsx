@@ -166,25 +166,27 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", parentMessageId: draftInfo.parentMessageId }) : ""
   // A draft thread has no stream row of its own yet — its E2E state is the
   // parent's (threads inherit the root's SSK server-side, INV-E1). Read the flag
-  // off the parent so the composer encrypts attachments before upload and skips
-  // plaintext draft persistence, exactly as it would in the sealed thread.
+  // and the encrypted root off the thread stream when it exists, else the parent,
+  // so the composer encrypts attachments before upload and seals the draft body
+  // to the root's key — exactly as it would in the sealed thread.
+  const e2eBase = stream ?? parentStream
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: draftInfo?.parentMessageId ?? "",
-    e2eEnabled: (stream ?? parentStream)?.e2eEnabled === true,
+    e2eStreamId: e2eBase?.e2eEnabled ? (e2eBase.rootStreamId ?? e2eBase.id) : undefined,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
   // a draft, so we pass `undefined` as the scope in that case — the hook
   // returns an empty list and silently no-ops.
   const stashScope = draftKey || undefined
-  const stash = useStashComposer(composer, workspaceId, stashScope)
+  const stash = useStashComposer(composer, workspaceId, stashScope, e2eBase?.e2eEnabled === true)
 
   const stashedDraftsTrigger = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
-      canStashCurrent={composer.canSend}
+      canStashCurrent={composer.canSend && !e2eBase?.e2eEnabled}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
       onDelete={stash.handleDeleteStashed}
@@ -195,7 +197,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   const stashedDraftsTriggerFab = stashScope ? (
     <StashedDraftsPicker
       drafts={stash.drafts}
-      canStashCurrent={composer.canSend}
+      canStashCurrent={composer.canSend && !e2eBase?.e2eEnabled}
       onStashCurrent={stash.handleStashDraft}
       onRestore={stash.handleRestoreStashed}
       onDelete={stash.handleDeleteStashed}

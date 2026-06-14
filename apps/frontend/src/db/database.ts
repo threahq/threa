@@ -397,6 +397,17 @@ export interface CachedDraft {
    * version is `<= baseVersion` is ignored.
    */
   baseVersion?: number
+  /**
+   * E2E variant (Stage 4c). When present, this draft belongs to an encrypted
+   * stream and `ciphertext` is the draft body sealed to the stream's SSK; the
+   * plaintext `contentJson` at rest is the empty placeholder (no plaintext on
+   * disk, E2EE-4) and the composer decrypts `ciphertext` into memory on load.
+   * Absent on plaintext drafts. `envelope` carries the framing the open path
+   * needs (key generation, IV, AAD); `e2eVersion` is the seal scheme version.
+   */
+  ciphertext?: string
+  envelope?: unknown
+  e2eVersion?: number
 }
 
 /**

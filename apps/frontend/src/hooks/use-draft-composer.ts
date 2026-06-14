@@ -12,8 +12,12 @@ export interface UseDraftComposerOptions {
   scopeId: string
   /** Initial content (optional, for pre-filled content as JSON) */
   initialContent?: JSONContent
-  /** When the destination stream is E2E, encrypt uploads client-side. */
-  e2eEnabled?: boolean
+  /**
+   * The encrypted stream the draft seals to — the root stream whose SSK wraps
+   * the body (a thread passes its root). Set only for E2E streams. Drives both
+   * client-side upload encryption and draft body sealing/decryption (Stage 4c).
+   */
+  e2eStreamId?: string | null
 }
 
 /** Check if a document is empty (no actual text content) */
@@ -84,7 +88,7 @@ export function useDraftComposer({
   draftKey,
   scopeId,
   initialContent = EMPTY_DOC,
-  e2eEnabled,
+  e2eStreamId,
 }: UseDraftComposerOptions): DraftComposerState {
   // Draft message persistence
   const {
@@ -97,7 +101,7 @@ export function useDraftComposer({
     removeAttachment: removeDraftAttachment,
     clearDraft,
     resolveDraft,
-  } = useDraftMessage(workspaceId, draftKey, e2eEnabled)
+  } = useDraftMessage(workspaceId, draftKey, e2eStreamId)
 
   // Attachment handling
   const {
@@ -113,7 +117,7 @@ export function useDraftComposer({
     clear: clearAttachments,
     restore: restoreAttachments,
     imageCount,
-  } = useAttachments(workspaceId, { e2eEnabled })
+  } = useAttachments(workspaceId, { e2eEnabled: !!e2eStreamId })
 
   // Local state
   const [content, setContent] = useState<JSONContent>(initialContent)

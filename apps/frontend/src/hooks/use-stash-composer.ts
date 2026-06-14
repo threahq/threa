@@ -37,11 +37,17 @@ export interface UseStashComposerResult {
 export function useStashComposer(
   composer: DraftComposerState,
   workspaceId: string,
-  scope: string | undefined
+  scope: string | undefined,
+  // Stashing snapshots the composer's plaintext content, so it is disabled for
+  // encrypted streams in v1 (E2EE-4): the ambient draft still roams sealed, but
+  // the manual save-for-later pile is a follow-up. Both stash + restore no-op
+  // when set, so every trigger (button, keyboard, `?stash=` URL) is covered.
+  e2eEnabled = false
 ): UseStashComposerResult {
   const stashedDrafts = useStashedDrafts(workspaceId, scope)
 
   const handleStashDraft = useCallback(async () => {
+    if (e2eEnabled) return // E2EE-4: never snapshot encrypted-stream plaintext into a stash row.
     const row = await stashedDrafts.stashDraft({
       contentJson: composer.content,
       attachments: snapshotUploadedAttachments(composer.pendingAttachments),
@@ -52,10 +58,14 @@ export function useStashComposer(
     await composer.clearDraft()
     composer.clearAttachments()
     toast.success("Saved as draft")
-  }, [composer, stashedDrafts])
+  }, [composer, stashedDrafts, e2eEnabled])
 
   const handleRestoreStashed = useCallback(
     async (id: string) => {
+      // Encrypted streams don't expose the stash in v1: a restore would both
+      // snapshot the composer's plaintext (E2EE-4) and load a sealed row's empty
+      // placeholder. No-op so the `?stash=` deep link can't trip either.
+      if (e2eEnabled) return
       // Swap semantics: stash whatever the composer holds first so switching
       // drafts never silently destroys work. A thrown error here (e.g. IDB
       // quota) is swallowed — losing a recent auto-save is a smaller harm
@@ -82,7 +92,7 @@ export function useStashComposer(
       }
       toast.success("Draft restored")
     },
-    [composer, stashedDrafts]
+    [composer, stashedDrafts, e2eEnabled]
   )
 
   const handleDeleteStashed = useCallback(

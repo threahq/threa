@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { db, generateLocalDraftId, type CachedDraft, type DraftAttachment } from "@/db"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import {
@@ -14,6 +14,9 @@ import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraft
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
+import { useE2eSession } from "@/stores/e2e-session-store"
+import { decryptDraftContent, sealDraftContent } from "@/lib/crypto/seal-draft"
+import { useCurrentWorkspaceUserId } from "./use-current-workspace-user-id"
 
 // Key formats (a draft's `scope`):
 // - "stream:{streamId}" for messages in existing streams
@@ -89,6 +92,61 @@ export async function upsertLoadedDraft(workspaceId: string, scope: string, fiel
   // silently. The caller kicks the queue so it drains promptly.
   await enqueueDraftUpsert(workspaceId, id)
   return row
+}
+
+/**
+ * Seal-and-persist the loaded draft for an E2E `scope` (Stage 4c). The body is
+ * sealed to the stream's SSK before it touches IndexedDB, so only ciphertext is
+ * at rest (E2EE-4) — `contentJson` on the row is the empty placeholder and the
+ * composer decrypts the body into memory on load. Otherwise mirrors
+ * `upsertLoadedDraft`: reuse/mint the loaded id, set the pointer when the draft
+ * is new, and enqueue the debounced push (which sends the ciphertext triple).
+ *
+ * Throws if the session is locked or the SSK can't be resolved — the caller
+ * keeps the content in the composer and never surfaces the failure.
+ */
+export async function upsertLoadedSealedDraft(
+  workspaceId: string,
+  scope: string,
+  fields: { senderId: string; streamId: string; contentJson: JSONContent }
+): Promise<void> {
+  const loadedId = await getLoadedDraftId(scope)
+  const existing = loadedId ? await db.drafts.get(loadedId) : undefined
+  const id = existing?.id ?? generateLocalDraftId()
+  // The draft id binds the seal AAD (in the message-id slot), so resolve it
+  // before sealing — a re-seal of the same draft reuses the id.
+  const sealed = await sealDraftContent({
+    workspaceId,
+    senderId: fields.senderId,
+    streamId: fields.streamId,
+    draftId: id,
+    contentJson: fields.contentJson,
+  })
+  const row: CachedDraft = {
+    id,
+    workspaceId,
+    scope,
+    // E2EE-4: the plaintext never lands on disk — the sealed body is the
+    // at-rest copy and `contentJson` is only the empty placeholder.
+    contentJson: EMPTY_DOC,
+    attachments: [],
+    clientUpdatedAt: Date.now(),
+    baseVersion: existing?.baseVersion,
+    ciphertext: sealed.ciphertext,
+    envelope: sealed.envelope,
+    e2eVersion: sealed.e2eVersion,
+  }
+  if (existing) {
+    await db.drafts.put(row)
+    upsertDraftInCache(workspaceId, row)
+  } else {
+    await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+      await db.drafts.put(row)
+      await db.composerLoaded.put({ scope, workspaceId, draftId: id })
+    })
+    upsertLoadedDraftInCache(workspaceId, row, scope)
+  }
+  await enqueueDraftUpsert(workspaceId, id)
 }
 
 /**
@@ -169,6 +227,32 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
 }
 
 /**
+ * Delete only the PLAINTEXT drafts for an E2E `scope`, keeping sealed rows. Run
+ * on mount of an encrypted-stream composer: a plaintext draft written before the
+ * stream was encrypted (or before the seal path existed) must not stay at rest
+ * (E2EE-4), but a sealed draft is the legitimate roaming copy and is preserved.
+ * The loaded pointer is cleared only when it referenced a purged plaintext row.
+ */
+export async function purgePlaintextScopeDrafts(workspaceId: string, scope: string): Promise<void> {
+  let clearedPointer = false
+  const removed = await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    const found = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, scope]).toArray()
+    const plaintext = found.filter((row) => !row.ciphertext)
+    const loaded = await db.composerLoaded.get(scope)
+    for (const row of plaintext) await db.drafts.delete(row.id)
+    if (loaded && plaintext.some((row) => row.id === loaded.draftId)) {
+      await db.composerLoaded.delete(scope)
+      clearedPointer = true
+    }
+    return plaintext
+  })
+  for (const row of removed) deleteDraftFromCache(workspaceId, row.id)
+  if (clearedPointer) setComposerLoadedInCache(workspaceId, scope, null)
+  // Mirror the removal of any plaintext copy that reached the server too.
+  for (const row of removed) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
+}
+
+/**
  * Re-scope every draft for `fromScope` to `toScope` and push each so the server
  * row follows. The client-initiated counterpart to inbound thread re-pointing:
  * used by `promoteDraft` when a not-yet-created scratchpad becomes a real stream,
@@ -188,53 +272,119 @@ export async function rescopeScopeDrafts(workspaceId: string, fromScope: string,
 }
 
 /**
- * @param e2eEnabled When the draft belongs to an end-to-end-encrypted stream,
- *   persistence and restore are disabled (E2EE-4): the composer keeps content in
- *   memory for the session only, so no plaintext draft for a sealed scratchpad
- *   ever touches IndexedDB or survives lock/reload. Any draft persisted before
- *   this gate existed is purged on mount.
+ * @param e2eStreamId The encrypted stream the draft seals to — the root stream
+ *   whose SSK wraps the body (a thread passes its root). Pass it only for E2E
+ *   streams; `undefined`/`null` means plaintext. When set and the session is
+ *   unlocked, the body is sealed before it touches disk and decrypted into the
+ *   composer on load (Stage 4c, E2EE-4); while the session is locked the composer
+ *   behaves as it did before this stage — nothing loads or persists, and the
+ *   sealed row waits on disk for unlock. Attachments / context refs / slash
+ *   commands on E2E drafts are not sealed yet and stay session-local.
  */
-export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnabled = false) {
+export function useDraftMessage(workspaceId: string, draftKey: string, e2eStreamId?: string | null) {
+  const e2eEnabled = !!e2eStreamId
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Read inside the debounced timer so a save scheduled while the stream was
-  // plaintext can't write after the stream becomes encrypted (E2EE-4).
-  const e2eEnabledRef = useRef(e2eEnabled)
+
+  // Seal/decrypt need the viewer's workspace user id and unlocked UIK. Both are
+  // read here (not threaded from the call site) so the composer reacts when the
+  // session unlocks — a locked scope becomes a sealing/decrypting one without a
+  // remount.
+  const senderId = useCurrentWorkspaceUserId(workspaceId)
+  const session = useE2eSession(workspaceId, senderId ?? "")
+  const e2eUnlocked =
+    e2eEnabled && !!senderId && session.status === "unlocked" && !!session.privateKey && !!session.keyId
+
   const drafts = useDraftsFromStore(workspaceId)
   const loaded = useComposerLoadedFromStore(workspaceId)
-  const loadedId = e2eEnabled ? null : (loaded.find((row) => row.scope === draftKey)?.draftId ?? null)
+  // A locked E2E scope behaves as it did before Stage 4c: nothing is checked out
+  // and nothing persists. Only the unlocked path resolves a loaded draft.
+  const loadedId = e2eEnabled && !e2eUnlocked ? null : (loaded.find((row) => row.scope === draftKey)?.draftId ?? null)
   const resolvedDraft = loadedId ? drafts.find((draft) => draft.id === loadedId) : undefined
+
   // Drains the offline queue so a debounced draft push (enqueued by the write
   // helpers) mirrors to the backend promptly instead of waiting for the next
   // reconnect. Optional — outside a workspace (login/loading) there is no engine
   // and the local write still stands.
   const syncEngine = useOptionalSyncEngine()
 
-  // When a stream becomes encrypted, cancel any debounced plaintext save still
-  // in flight — otherwise it fires after the purge below and re-persists the
-  // very plaintext we just deleted (write-after-purge race, E2EE-4).
+  // Latest E2E gate for the debounced save: the timer may fire after the stream's
+  // encryption/unlock state changed, so the save reads the gate at fire time
+  // rather than from a stale closure — this is what keeps a plaintext save
+  // scheduled before encryption from ever writing plaintext after it (E2EE-4).
+  const e2eGateRef = useRef({ enabled: e2eEnabled, unlocked: e2eUnlocked, senderId, streamId: e2eStreamId ?? null })
   useEffect(() => {
-    e2eEnabledRef.current = e2eEnabled
-    if (e2eEnabled && debounceRef.current) {
-      clearTimeout(debounceRef.current)
-      debounceRef.current = null
-    }
-  }, [e2eEnabled])
+    e2eGateRef.current = { enabled: e2eEnabled, unlocked: e2eUnlocked, senderId, streamId: e2eStreamId ?? null }
+  })
 
-  // Purge any pre-existing on-disk draft for an E2E stream (e.g. one written
-  // before this gate landed, or carried over when a stream is encrypted).
+  // Decrypt-on-load: an unlocked E2E draft is decrypted into memory once per
+  // loaded id. A self-edit re-seals the row under the same id without
+  // re-decrypting — the composer holds the live plaintext after it initializes,
+  // so this only needs to seed that first paint.
+  const [decrypted, setDecrypted] = useState<{ id: string; content: JSONContent } | null>(null)
+  const sealedLoaded = e2eUnlocked && resolvedDraft?.ciphertext ? resolvedDraft : undefined
+  const decryptReady = !sealedLoaded || decrypted?.id === sealedLoaded.id
+
+  useEffect(() => {
+    if (!sealedLoaded?.ciphertext || !e2eStreamId || !session.privateKey || !session.keyId) return
+    if (decrypted?.id === sealedLoaded.id) return
+    let cancelled = false
+    void decryptDraftContent({
+      ciphertext: sealedLoaded.ciphertext,
+      envelope: sealedLoaded.envelope,
+      e2eVersion: sealedLoaded.e2eVersion,
+      workspaceId,
+      streamId: e2eStreamId,
+      privateKey: session.privateKey,
+      recipientKeyId: session.keyId,
+    }).then((content) => {
+      if (!cancelled) setDecrypted({ id: sealedLoaded.id, content: content ?? EMPTY_DOC })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [sealedLoaded, e2eStreamId, session.privateKey, session.keyId, workspaceId, decrypted?.id])
+
+  // Purge only the PLAINTEXT drafts left on disk for an E2E scope (one written
+  // before the stream was encrypted, or before the seal path existed). Sealed
+  // rows are the legitimate roaming copy and are kept — only plaintext at rest
+  // violates E2EE-4.
   useEffect(() => {
     if (!e2eEnabled) return
-    void purgeScopeDrafts(workspaceId, draftKey)
+    void purgePlaintextScopeDrafts(workspaceId, draftKey)
   }, [e2eEnabled, draftKey, workspaceId])
 
   const saveDraft = useCallback(
     async (contentJson: JSONContent, attachments?: DraftAttachment[]) => {
-      // E2EE-4: encrypted-stream drafts are never written to disk.
-      if (e2eEnabled) return
       // Clear any pending debounced save
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
         debounceRef.current = null
+      }
+
+      const gate = e2eGateRef.current
+      if (gate.enabled) {
+        // E2EE-4: seal before disk, and only while unlocked. Locked → keep the
+        // content in the composer for the session; nothing persists. v1 seals the
+        // body only, so an `attachments` arg is intentionally ignored here.
+        if (!gate.unlocked || !gate.senderId || !gate.streamId) return
+        if (isEmptyContent(contentJson)) {
+          await clearLoadedDraft(workspaceId, draftKey)
+          syncEngine?.kickOperationQueue()
+          return
+        }
+        try {
+          await upsertLoadedSealedDraft(workspaceId, draftKey, {
+            senderId: gate.senderId,
+            streamId: gate.streamId,
+            contentJson,
+          })
+          syncEngine?.kickOperationQueue()
+        } catch (err) {
+          // A failed seal (e.g. the session locked between the gate check and the
+          // seal) must never interrupt the user — the content stands in the composer.
+          console.error("Failed to seal draft; kept in composer", err)
+        }
+        return
       }
 
       // Get current attachments + contextRefs if not provided. The contextRefs
@@ -260,27 +410,24 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
       })
       syncEngine?.kickOperationQueue()
     },
-    [draftKey, workspaceId, e2eEnabled, syncEngine]
+    [draftKey, workspaceId, syncEngine]
   )
 
   const saveDraftDebounced = useCallback(
     (contentJson: JSONContent) => {
-      // E2EE-4: encrypted-stream drafts are never written to disk.
-      if (e2eEnabled) return
       // Clear any pending debounced save
       if (debounceRef.current) {
         clearTimeout(debounceRef.current)
       }
-
+      // `saveDraft` reads the live E2E gate when the timer fires, so a value typed
+      // while the stream was plaintext is sealed (or dropped) — never written as
+      // plaintext — if the stream became encrypted in the meantime (E2EE-4).
       debounceRef.current = setTimeout(() => {
         debounceRef.current = null
-        // The stream may have been encrypted between scheduling and firing;
-        // never write plaintext to disk in that case (E2EE-4).
-        if (e2eEnabledRef.current) return
-        saveDraft(contentJson)
+        void saveDraft(contentJson)
       }, DEBOUNCE_MS)
     },
-    [saveDraft, e2eEnabled]
+    [saveDraft]
   )
 
   /**
@@ -377,10 +524,16 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eEnable
     }
   }, [])
 
+  // For an unlocked E2E draft the renderable content is the in-memory decrypt,
+  // not the on-disk placeholder; everything else reads straight off the row.
+  const decryptedForLoaded =
+    sealedLoaded && decrypted && decrypted.id === sealedLoaded.id ? decrypted.content : EMPTY_DOC
+  const contentJson = e2eUnlocked ? decryptedForLoaded : (resolvedDraft?.contentJson ?? EMPTY_DOC)
+
   return {
-    /** Whether Dexie has finished loading the draft (true even if no draft exists) */
-    isLoaded: hasSeededDraftCache(workspaceId),
-    contentJson: resolvedDraft?.contentJson ?? EMPTY_DOC,
+    /** True once Dexie has loaded and (for an unlocked E2E draft) decryption has resolved. */
+    isLoaded: hasSeededDraftCache(workspaceId) && decryptReady,
+    contentJson,
     attachments: resolvedDraft?.attachments ?? [],
     /** Sidecar context refs attached to the draft (see DraftContextRef). */
     contextRefs: (resolvedDraft?.contextRefs ?? []) as DraftContextRef[],

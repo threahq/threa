@@ -226,18 +226,20 @@ function MessageInputComponent({
   // through their root channel for access grants — handled inside the hook.
   const streamContext = useMentionStreamContext(workspaceId, stream)
 
+  const e2eEnabled = stream?.e2eEnabled === true
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: streamId,
-    e2eEnabled: stream?.e2eEnabled === true,
+    // Seal drafts to the encrypted root's SSK (a thread shares its root's key).
+    e2eStreamId: e2eEnabled ? (stream?.rootStreamId ?? streamId) : undefined,
   })
   const quoteReplyCtx = useQuoteReply()
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
   // many-per-scope stash and the `?stash=<id>` URL auto-restore.
-  const stash = useStashComposer(composer, workspaceId, draftKey)
+  const stash = useStashComposer(composer, workspaceId, draftKey, e2eEnabled)
 
   // Use a ref so the handler always reads fresh composer state without
   // re-registering on every render (composer object is not memoized).
@@ -663,7 +665,7 @@ function MessageInputComponent({
     stashedDraftsTrigger: (
       <StashedDraftsPicker
         drafts={stash.drafts}
-        canStashCurrent={composer.canSend}
+        canStashCurrent={composer.canSend && !e2eEnabled}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
         onDelete={stash.handleDeleteStashed}
@@ -673,7 +675,7 @@ function MessageInputComponent({
     stashedDraftsTriggerFab: (
       <StashedDraftsPicker
         drafts={stash.drafts}
-        canStashCurrent={composer.canSend}
+        canStashCurrent={composer.canSend && !e2eEnabled}
         onStashCurrent={stash.handleStashDraft}
         onRestore={stash.handleRestoreStashed}
         onDelete={stash.handleDeleteStashed}
