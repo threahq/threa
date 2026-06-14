@@ -24,6 +24,7 @@ import { UserRepository } from "../workspaces"
 import { AttachmentRepository } from "../attachments"
 import { AttachmentExtractionRepository, type PdfMetadata, type PdfSection } from "../attachments"
 import { getUtcOffset, type TemporalContext, type ParticipantTemporal } from "../../lib/temporal"
+import { DEFAULT_CONTEXT_WINDOW_MESSAGES } from "./context-window-policy"
 
 /**
  * A participant in a stream (user or persona).
@@ -132,14 +133,19 @@ export interface StreamContext {
   participantTimezones?: ParticipantTemporal[]
 }
 
-const MAX_CONTEXT_MESSAGES = 20
-
 /**
  * Options for building stream context with temporal information.
  */
 export interface BuildStreamContextOptions {
   /** User preferences (used for temporal context) */
   preferences?: UserPreferences
+  /**
+   * Newest-first message budget for the conversation window. Resolved once at
+   * the dispatch (`Hydrate`) seam by `resolveContextWindowPolicy` and handed in;
+   * defaults to `DEFAULT_CONTEXT_WINDOW_MESSAGES` for callers that build context
+   * outside a turn (evals, the enclave prompt assembly).
+   */
+  maxMessages?: number
   /** Current time at invocation (for deterministic testing) */
   currentTime?: Date
   /** Trigger message ID (for determining attachment detail levels) */
@@ -191,26 +197,28 @@ export async function buildStreamContext(
     )
   }
 
+  const maxMessages = options?.maxMessages ?? DEFAULT_CONTEXT_WINDOW_MESSAGES
+
   let context: StreamContext
   switch (stream.type) {
     case StreamTypes.SCRATCHPAD:
-      context = await buildScratchpadContext(db, stream, temporal)
+      context = await buildScratchpadContext(db, stream, temporal, maxMessages)
       break
 
     case StreamTypes.CHANNEL:
-      context = await buildChannelContext(db, stream, temporal, options?.currentTime)
+      context = await buildChannelContext(db, stream, temporal, maxMessages, options?.currentTime)
       break
 
     case StreamTypes.THREAD:
-      context = await buildThreadContext(db, stream, temporal)
+      context = await buildThreadContext(db, stream, temporal, maxMessages)
       break
 
     case StreamTypes.DM:
-      context = await buildDmContext(db, stream, temporal, options?.currentTime)
+      context = await buildDmContext(db, stream, temporal, maxMessages, options?.currentTime)
       break
 
     default:
-      context = await buildScratchpadContext(db, stream, temporal)
+      context = await buildScratchpadContext(db, stream, temporal, maxMessages)
   }
 
   // Enrich with attachment context if requested
@@ -245,8 +253,13 @@ function buildTemporalContext(preferences: TemporalPreferenceFields, currentTime
 /**
  * Scratchpad context: personal, solo-first. Conversation history is primary context.
  */
-async function buildScratchpadContext(db: Querier, stream: Stream, temporal?: TemporalContext): Promise<StreamContext> {
-  const messages = await MessageRepository.list(db, stream.id, { limit: MAX_CONTEXT_MESSAGES })
+async function buildScratchpadContext(
+  db: Querier,
+  stream: Stream,
+  temporal: TemporalContext | undefined,
+  maxMessages: number
+): Promise<StreamContext> {
+  const messages = await MessageRepository.list(db, stream.id, { limit: maxMessages })
 
   return {
     streamType: stream.type,
@@ -267,11 +280,12 @@ async function buildScratchpadContext(db: Querier, stream: Stream, temporal?: Te
 async function buildChannelContext(
   db: Querier,
   stream: Stream,
-  temporal?: TemporalContext,
+  temporal: TemporalContext | undefined,
+  maxMessages: number,
   currentTime?: Date
 ): Promise<StreamContext> {
   const [messages, members] = await Promise.all([
-    MessageRepository.list(db, stream.id, { limit: MAX_CONTEXT_MESSAGES }),
+    MessageRepository.list(db, stream.id, { limit: maxMessages }),
     StreamMemberRepository.list(db, { streamId: stream.id }),
   ])
 
@@ -305,11 +319,12 @@ async function buildChannelContext(
 async function buildDmContext(
   db: Querier,
   stream: Stream,
-  temporal?: TemporalContext,
+  temporal: TemporalContext | undefined,
+  maxMessages: number,
   currentTime?: Date
 ): Promise<StreamContext> {
   const [messages, members] = await Promise.all([
-    MessageRepository.list(db, stream.id, { limit: MAX_CONTEXT_MESSAGES }),
+    MessageRepository.list(db, stream.id, { limit: maxMessages }),
     StreamMemberRepository.list(db, { streamId: stream.id }),
   ])
 
@@ -344,8 +359,13 @@ async function buildDmContext(
  * in conversation history. This ensures the agent sees the full context
  * (including attachments like images) that led to the thread being created.
  */
-async function buildThreadContext(db: Querier, stream: Stream, temporal?: TemporalContext): Promise<StreamContext> {
-  const messages = await MessageRepository.list(db, stream.id, { limit: MAX_CONTEXT_MESSAGES })
+async function buildThreadContext(
+  db: Querier,
+  stream: Stream,
+  temporal: TemporalContext | undefined,
+  maxMessages: number
+): Promise<StreamContext> {
+  const messages = await MessageRepository.list(db, stream.id, { limit: maxMessages })
 
   // Build thread path from current thread up to root
   const threadPath = await buildThreadPath(db, stream)

@@ -34,6 +34,7 @@ import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
 import { buildAgentContext, buildToolSet, withCompanionSession, type WithSessionResult } from "./companion"
+import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
 import { createMemoizedGithubClient, createMemoizedLinearClient, type RunGeneralResearchOptions } from "./tools"
 import { createSessionTraceProjector, OtelObserver, type AgentRuntimeConfig, type NewMessageInfo } from "./runtime"
@@ -298,10 +299,17 @@ export class PersonaAgent {
         })
         trace.notifyActivityStarted()
 
+        // Resolve the per-turn hydration policy at the dispatch (`Hydrate`)
+        // seam — window budget + whether prior turn digests carry — and hand it
+        // to the context build. For a DM this reads the PRIOR completed
+        // session's cursor (the current RUNNING session, just inserted, is
+        // skipped) to decide the episode boundary (§2.8 Q7/Q8).
+        const policy = await resolveContextWindowPolicy(pool, { stream })
+
         // Build all context the agent needs
         const agentContext = await buildAgentContext(
           { db: pool, userPreferencesService, conversationSummaryService },
-          { workspaceId, streamId, stream, messageId, persona, trigger, currentTime }
+          { workspaceId, streamId, stream, messageId, persona, trigger, policy, currentTime }
         )
 
         // Resolve an attached ContextBag (if any) so `stable + delta` flow into

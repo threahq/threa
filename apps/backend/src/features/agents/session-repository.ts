@@ -540,6 +540,27 @@ export const AgentSessionRepository = {
   },
 
   /**
+   * Find the most recent COMPLETED session for a stream. Unlike
+   * `findLatestByStream` this skips the in-flight RUNNING session a turn
+   * inserts before it builds its context, so the context window policy reads
+   * the PRIOR episode's `lastSeenSequence` (DM episode recency) rather than the
+   * current session's.
+   */
+  async findLatestCompletedByStream(db: Querier, streamId: string): Promise<AgentSession | null> {
+    const result = await db.query<SessionRow>(
+      sql`
+        SELECT ${sql.raw(SESSION_SELECT_FIELDS)}
+        FROM agent_sessions
+        WHERE stream_id = ${streamId}
+          AND status = ${SessionStatuses.COMPLETED}
+        ORDER BY created_at DESC
+        LIMIT 1
+      `
+    )
+    return result.rows[0] ? mapRowToSession(result.rows[0]) : null
+  },
+
+  /**
    * Find the most recent session for a stream (regardless of status).
    * Used to check lastSeenSequence when deciding whether to dispatch a new job.
    */
