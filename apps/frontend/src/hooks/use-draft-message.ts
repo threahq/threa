@@ -350,11 +350,14 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
     }
   }, [sealedLoaded, e2eStreamId, session.privateKey, session.keyId, workspaceId, decrypted?.id])
 
-  // Drop the decrypted plaintext when the scope changes so a navigated-away
-  // draft's body never lingers in memory and the new scope re-decrypts cleanly.
+  // Drop the decrypted plaintext from memory when the scope changes OR the
+  // session locks. IDB only ever holds ciphertext for an E2E draft (E2EE-4 —
+  // treat it like the backend), so this in-memory copy is the only plaintext,
+  // and it must not outlive the unlocked session or a navigated-away scope —
+  // mirroring the message decrypt-cache's clear-on-lock.
   useEffect(() => {
     setDecrypted(null)
-  }, [draftKey])
+  }, [draftKey, e2eUnlocked])
 
   // Purge only the PLAINTEXT drafts left on disk for an E2E scope (one written
   // before the stream was encrypted, or before the seal path existed). Sealed
@@ -545,6 +548,8 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
   return {
     /** True once Dexie has loaded and (for an unlocked E2E draft) decryption has resolved. */
     isLoaded: hasSeededDraftCache(workspaceId) && decryptReady,
+    /** An unlocked E2E draft whose sealed body is still being decrypted into the composer. */
+    isDecrypting: !decryptReady,
     contentJson,
     attachments: resolvedDraft?.attachments ?? [],
     /** Sidecar context refs attached to the draft (see DraftContextRef). */

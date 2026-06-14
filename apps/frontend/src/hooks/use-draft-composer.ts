@@ -81,6 +81,8 @@ export interface DraftComposerState {
 
   // Loading
   isLoaded: boolean
+  /** An E2E draft whose sealed body is still being decrypted into the composer. */
+  isDecrypting: boolean
 }
 
 export function useDraftComposer({
@@ -93,6 +95,7 @@ export function useDraftComposer({
   // Draft message persistence
   const {
     isLoaded: isDraftLoaded,
+    isDecrypting,
     contentJson: savedDraft,
     attachments: savedAttachments,
     contextRefs: savedContextRefs = [] as DraftContextRef[],
@@ -291,5 +294,6 @@ export function useDraftComposer({
 
     // Loading
     isLoaded: isDraftLoaded,
+    isDecrypting,
   }
 }

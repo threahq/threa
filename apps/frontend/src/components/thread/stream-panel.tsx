@@ -52,6 +52,7 @@ import {
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer, StashedDraftsPicker } from "@/components/composer"
+import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentMessage } from "./thread-parent-message"
@@ -170,11 +171,12 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
   // so the composer encrypts attachments before upload and seals the draft body
   // to the root's key — exactly as it would in the sealed thread.
   const e2eBase = stream ?? parentStream
+  const e2eRoot = e2eBase?.e2eEnabled ? (e2eBase.rootStreamId ?? e2eBase.id) : undefined
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
     scopeId: draftInfo?.parentMessageId ?? "",
-    e2eStreamId: e2eBase?.e2eEnabled ? (e2eBase.rootStreamId ?? e2eBase.id) : undefined,
+    e2eStreamId: e2eRoot,
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
@@ -581,6 +583,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
               )}
             </div>
             <FloatingComposerShell ref={draftComposerRef} hidden={draftExpanded}>
+              <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!e2eRoot} streamId={e2eRoot} />
               {!draftExpanded && (
                 <MessageComposer
                   content={composer.content}
@@ -597,7 +600,7 @@ export function StreamPanel({ workspaceId, onClose }: StreamPanelProps) {
                   hasFailed={composer.hasFailed}
                   submitLabel="Reply"
                   submittingLabel="Creating..."
-                  placeholder="Write your reply..."
+                  placeholder={composer.isDecrypting ? "Decrypting your draft…" : "Write your reply..."}
                   autoFocus={!isMobile}
                   workspaceId={workspaceId}
                   scopeId={panelId}

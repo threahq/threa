@@ -614,6 +614,11 @@ function MessageInputComponent({
     )
   }
 
+  // While an unlocked E2E draft's sealed body decrypts into the composer, signal
+  // it in the placeholder so the briefly-empty editor doesn't read as "no draft".
+  const offlinePlaceholder = isOffline ? "Type a message (sent when back online)" : undefined
+  const composerPlaceholder = composer.isDecrypting ? "Decrypting your draft…" : offlinePlaceholder
+
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {
     content: composer.content,
@@ -631,7 +636,7 @@ function MessageInputComponent({
     canSubmit: composer.canSend,
     isSubmitting: composer.isSending,
     hasFailed: composer.hasFailed,
-    placeholder: isOffline ? "Type a message (sent when back online)" : undefined,
+    placeholder: composerPlaceholder,
     messageSendMode,
     scopeId: streamId,
     onEditLastMessage: triggerEditLast
