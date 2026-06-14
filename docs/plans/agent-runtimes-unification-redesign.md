@@ -984,3 +984,89 @@ type)` are how the episode is computed, not a parallel dimension._
    time-based, or both (e.g., within the window **or** within 24h), and
    whether the user can explicitly start fresh ("new conversation" affordance,
    like clearing a Claude.ai thread).
+   _Resolved as **best-effort segmentation by the existing conversations system,
+   not a raw message count and not a wall-clock horizon**: the DM episode is the
+   LLM-extracted conversation the triggering message lands in — hydrate (fill up)
+   that conversation's messages — with the structural window edge as the fallback
+   when no conversation is confidently assigned yet, and **no dedicated DM "clear"
+   affordance now** (INV-36). Like Q7 this fixes the shape of unbuilt C-2 work,
+   not shipped behavior: the conversations system already extracts boundaries on
+   every message but is consumed by GAM, not yet by agent context hydration (the
+   context-builder still uses a flat `MAX_CONTEXT_MESSAGES = 20`,
+   `context-builder.ts:135`); and today `lastSeenSequence` is only the companion
+   **dedup** cursor (`companion-outbox-handler.ts:131-144`, "message already seen,
+   skipping"), with the DM-mention path not setting it at all
+   (`persona-agent-worker.ts:66` excludes `AgentTriggers.MENTION`). The DM
+   episode-by-recency rule (§2.5, line ~554) is the C-2 surface this
+   parameterizes._
+   - _**The boundary is the conversations system, which already does model-based
+     segmentation (INV-54).** `conversations` (`20251225231931_conversations.sql`,
+     feature `conversations/`) groups a stream's messages into "a coherent unit of
+     discussion" by LLM boundary extraction on every `message:created`
+     (`boundary-extraction-service.ts`, confidence-scored), carrying `message_ids`,
+     a `topic_summary`, a `completeness_score` (1–7), and `status`
+     (active/stalled/resolved). This is exactly the semantic continuity axis INV-54
+     demands — and it already exists, so the episode rides it rather than
+     re-deriving a parallel boundary. The DM episode is the conversation the
+     triggering message belongs to (`ConversationRepository.findByMessageId`,
+     GIN-indexed on `message_ids`); "continue" hydrates that conversation's
+     messages — Kris's "if the last message ends up in a convo, fill that up too."_
+   - _**Raw message count is rejected as the unit.** "Within the last ~20
+     messages" assumes AI-chat cadence — a handful of composed, self-contained
+     turns. Workspace chat is bursty: many short one-line messages, so twenty of
+     them is a fraction of one exchange while twenty composed turns span several. A
+     count threshold is a unit mismatch with the surface. The conversations system
+     is unit-agnostic — it segments by topical coherence, not by counting rows —
+     which is why it, not a count, is the boundary._
+   - _**Best-effort, with the structural window as the fallback.** Boundary
+     extraction is async and debounced (outbox handler + worker, `staleness.ts`),
+     so a just-arrived trigger may not be assigned to a conversation yet, or be
+     extracted at low confidence. When there is no confident conversation to ride,
+     fall back to the structural window edge: continue iff the prior completed
+     session's `lastSeenSequence` falls inside the budgeted window about to be
+     built (the intervening messages then already fill the gap; otherwise start
+     fresh). The window is the floor, the conversation is the signal — never a hard
+     count knob exposed as config (INV-36). C-2's rolling summary
+     (`ConversationSummaryService`, "rolling summaries for conversation segments
+     dropped from active context windows") softens a wrong segmentation by keeping
+     older turns present compressed rather than dropping them at a hard edge._
+   - _**Wall-clock is rejected as a boundary; it survives only as the conversations
+     system's own secondary staleness nudge.** Human conversational continuity does
+     not decay on a clock — a colleague replying eight weeks on, after two stacked
+     four-week Swedish vacations, is continuing the thread, and no horizon both
+     fires usefully and survives that gap. Time enters only where the conversations
+     system already puts it: `computeTemporalStaleness` (`staleness.ts`) nudges a
+     quiet conversation's effective completeness toward "resolved" so a clearly
+     dormant topic eventually closes — a soft nudge on the segmenter, never the
+     episode boundary itself._
+   - _**The error asymmetry: bias toward continue.** A false *continue* injects a
+     stale digest chain: cheap and self-correcting — the reader block already
+     orders re-verification, the live user turn outweighs system-context, and the
+     carry ages out (the same self-heal reasoning as the Q5 digest ruling, item 5
+     above), while digests stay scope-filtered (§2.5). A false *fresh* drops
+     context the user expected the agent to still hold — the exact forgetting
+     C-1/C-2 exist to kill, and only partly mitigated because the in-window
+     messages survive even when the digest is dropped. The costlier mistake is the
+     false fresh, so where the segmentation is uncertain — low extraction
+     confidence, or no conversation assigned yet — it continues._
+   - _**No dedicated DM "clear conversation" control now (INV-36), and "clear
+     like Claude.ai" is the wrong model for a shared DM.** A DM is a two-party
+     (`DM_PARTICIPANT_COUNT = 2`, `constants.ts:13`) shared, append-only timeline
+     under contiguity (INV-61): one participant can't clear the other's view and
+     the timeline can't be vacated, so the single-user "clear thread" affordance
+     doesn't transfer. The explicit fresh-start that **does** exist in Threa is
+     bounded-surface creation — a new scratchpad or thread is a fresh episode by
+     construction (§2.5) — and that is the primary surface, so the unbounded DM is
+     the only place the affordance is even missing. The conversations boundary
+     handles the common case automatically; per INV-36 no control ships until a
+     need the auto-boundary doesn't cover is demonstrated._
+   - _**If a DM-specific fresh-start is later wanted, it forces a new conversation
+     boundary — not a history mutation.** The realizing shape: a user-declared
+     "start fresh" marks the open conversation `resolved` (the segmenter's own
+     terminal `status`), so the next message opens a new conversation and the
+     episode hydration finds nothing prior to carry. This rides the one segmenter
+     the boundary already trusts rather than adding a parallel predicate, mutates
+     no message history (no INV-61 violation, nothing deleted), and works
+     identically on plaintext and E2E because it gates digest **carry**, not
+     content. Until a concrete need appears, the automatic conversation boundary is
+     the entire contract (INV-36)._
