@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest"
-import { clearLoadedDraft, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
+import { clearLoadedDraft, purgeScopeDrafts, rescopeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
 import { hasPendingDraftUpsert } from "@/sync/draft-sync"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache } from "@/stores/draft-store"
@@ -14,6 +14,11 @@ const makeDoc = (text: string): JSONContent => ({
 
 async function pendingDeletes(draftId: string): Promise<number> {
   const ops = await db.pendingOperations.where("type").equals("delete_draft").toArray()
+  return ops.filter((o) => o.payload.draftId === draftId).length
+}
+
+async function pendingUpserts(draftId: string): Promise<number> {
+  const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
   return ops.filter((o) => o.payload.draftId === draftId).length
 }
 
@@ -89,5 +94,36 @@ describe("draft write helpers — Stage 3 sync wiring", () => {
     expect(await pendingDeletes(confirmed.id)).toBe(1)
     expect(await pendingDeletes(unsyncedRow.id)).toBe(0)
     expect(await db.drafts.count()).toBe(0)
+  })
+
+  it("rescopeScopeDrafts moves every draft (and the loaded pointer) to the new scope and pushes each", async () => {
+    const fromScope = "stream:draft_local_stream"
+    const toScope = "stream:stream_real"
+    // The loaded draft for the scratchpad, plus a stash sibling.
+    const loadedRow = await upsertLoadedDraft(workspaceId, fromScope, {
+      contentJson: makeDoc("loaded"),
+      attachments: [],
+    })
+    const stashRow: CachedDraft = {
+      id: "draft_stash",
+      workspaceId,
+      scope: fromScope,
+      contentJson: makeDoc("stash"),
+      attachments: [],
+      clientUpdatedAt: Date.now(),
+    }
+    await db.drafts.add(stashRow)
+
+    await rescopeScopeDrafts(workspaceId, fromScope, toScope)
+
+    // Both rows kept their ids but moved to the real stream scope.
+    expect((await db.drafts.get(loadedRow.id))?.scope).toBe(toScope)
+    expect((await db.drafts.get("draft_stash"))?.scope).toBe(toScope)
+    // The loaded pointer followed its draft to the new scope; the old scope is empty.
+    expect((await db.composerLoaded.get(fromScope))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get(toScope))?.draftId).toBe(loadedRow.id)
+    // Each draft is queued for a push so the server row follows.
+    expect(await pendingUpserts(loadedRow.id)).toBe(1)
+    expect(await pendingUpserts("draft_stash")).toBe(1)
   })
 })

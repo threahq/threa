@@ -173,6 +173,49 @@ describe("applyDraftUpserted", () => {
     expect(await hasPendingDraftUpsert("draft_x")).toBe(true)
   })
 
+  it("re-points the loaded draft to the new scope when the server re-scopes it (thread conversion)", async () => {
+    const oldScope = "thread:msg_1"
+    const newScope = "stream:thread_1"
+    await db.drafts.put(localDraft({ id: "draft_x", scope: oldScope, baseVersion: 1, contentJson: makeDoc("reply") }))
+    await db.composerLoaded.put({ scope: oldScope, workspaceId, draftId: "draft_x" })
+
+    await applyDraftUpserted(
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ id: "draft_x", scope: newScope, version: 2, contentJson: makeDoc("reply") }),
+      },
+      workspaceId
+    )
+
+    // The draft (same id) now lives under the thread stream scope...
+    const row = await db.drafts.get("draft_x")
+    expect(row).toMatchObject({ scope: newScope, baseVersion: 2 })
+    // ...and the device-local loaded pointer followed it: the old scope is empty,
+    // the new scope points at the draft, so the reply isn't stranded.
+    expect((await db.composerLoaded.get(oldScope))?.draftId).toBeUndefined()
+    expect((await db.composerLoaded.get(newScope))?.draftId).toBe("draft_x")
+  })
+
+  it("re-scopes a non-loaded (stash) draft without creating a pointer", async () => {
+    const oldScope = "thread:msg_1"
+    const newScope = "stream:thread_1"
+    await db.drafts.put(localDraft({ id: "draft_stash", scope: oldScope, baseVersion: 1 }))
+    // no composerLoaded row for either scope — this draft was a stash entry
+
+    await applyDraftUpserted(
+      {
+        workspaceId,
+        targetUserId: userId,
+        draft: wireDraft({ id: "draft_stash", scope: newScope, version: 2 }),
+      },
+      workspaceId
+    )
+
+    expect((await db.drafts.get("draft_stash"))?.scope).toBe(newScope)
+    expect((await db.composerLoaded.get(newScope))?.draftId).toBeUndefined()
+  })
+
   it("does not duplicate on an echo of our own in-flight write (echo-before-ack)", async () => {
     // Brand-new draft mid-first-push: baseVersion still 0, push still queued.
     await db.drafts.put(localDraft({ id: "draft_x", baseVersion: 0, contentJson: makeDoc("hello") }))

@@ -3,6 +3,7 @@ import type { DraftContextRef } from "@/lib/context-bag/types"
 import {
   deleteDraftFromCache,
   hasSeededDraftCache,
+  migrateDraftScopeInCache,
   migrateLoadedDraftInCache,
   setComposerLoadedInCache,
   upsertDraftInCache,
@@ -109,6 +110,36 @@ export async function deleteLocalDraft(workspaceId: string, id: string): Promise
   if (hasSeededDraftCache(workspaceId)) {
     deleteDraftFromCache(workspaceId, id)
     if (clearedScope) setComposerLoadedInCache(workspaceId, clearedScope, null)
+  }
+}
+
+/**
+ * Re-scope a draft in place (same id, `fromScope` → `toRow.scope`) when the
+ * server moves it — thread re-pointing (`moveMessagesToThread`) and draft-stream
+ * promotion. If the draft was the one checked out into the composer under
+ * `fromScope`, its device-local `composerLoaded` pointer moves with it so the
+ * reply being composed follows the message into its new thread instead of being
+ * stranded under a scope nothing renders. The row write and the pointer move
+ * share one transaction (and one cache signal) so a live reader never sees the
+ * draft loaded under both scopes or under neither.
+ */
+export async function migrateLocalDraftScope(
+  workspaceId: string,
+  fromScope: string,
+  toRow: CachedDraft
+): Promise<void> {
+  let movedToScope: string | null = null
+  await db.transaction("rw", db.drafts, db.composerLoaded, async () => {
+    await db.drafts.put(toRow)
+    const loaded = await db.composerLoaded.get(fromScope)
+    if (loaded?.draftId === toRow.id) {
+      await db.composerLoaded.delete(fromScope)
+      await db.composerLoaded.put({ scope: toRow.scope, workspaceId, draftId: toRow.id })
+      movedToScope = toRow.scope
+    }
+  })
+  if (hasSeededDraftCache(workspaceId)) {
+    migrateDraftScopeInCache(workspaceId, fromScope, toRow, movedToScope)
   }
 }
 
@@ -302,7 +333,9 @@ export async function syncDraftResolution(
  *    before the push's HTTP ack records `baseVersion`, and a local split would
  *    then mint a duplicate of the draft we are editing.
  *  - Newer server version, no unpushed edits → accept (preserving local
- *    attachment metadata the wire row lacks).
+ *    attachment metadata the wire row lacks). When the scope also changed
+ *    (thread re-pointing — the target message became a thread), the draft moves
+ *    to the new scope and its loaded pointer follows so the reply isn't stranded.
  */
 export async function applyDraftUpserted(
   payload: DraftUpsertedPayload,
@@ -328,8 +361,15 @@ export async function applyDraftUpserted(
   if (dirty) return
 
   // Clean locally — accept the server row, keeping any local attachment metadata
-  // (an echo of our own confirmed push matches it).
-  await putLocalDraft({ ...cachedDraftFromWire(draft), attachments: local.attachments })
+  // (an echo of our own confirmed push matches it). A changed scope (thread
+  // re-pointing) takes the scope-move path so the loaded pointer follows the
+  // draft to its new scope; same-scope edits are a plain put.
+  const accepted = { ...cachedDraftFromWire(draft), attachments: local.attachments }
+  if (local.scope !== draft.scope) {
+    await migrateLocalDraftScope(expectedWorkspaceId, local.scope, accepted)
+  } else {
+    await putLocalDraft(accepted)
+  }
 }
 
 /**
@@ -426,8 +466,9 @@ export async function executeDraftUpsert(
   const attachmentIds = row.attachments.length > 0 ? row.attachments.map((a) => a.id) : (row.attachmentIds ?? [])
   const input: UpsertDraftInput = {
     scope: row.scope,
-    // root_stream_id is populated with thread re-pointing (Stage 4); drafts are
-    // private + listed by owner regardless, so null is correct until then.
+    // The server owns root_stream_id on thread re-pointing (it sets it when a
+    // re-scoped draft follows its message into a thread); the client never needs
+    // to send it — drafts are private + listed by owner regardless of scope.
     rootStreamId: null,
     expectedVersion: row.baseVersion ?? 0,
     writeId: writeIdValue,

@@ -238,6 +238,35 @@ export function migrateLoadedDraftInCache(
 }
 
 /**
+ * Re-scope a draft in the cache (same id, `oldScope` → `newRow.scope`) in ONE
+ * cache signal — the read-side of thread re-pointing (a `draft:upserted` whose
+ * scope changed) and draft-stream promotion. When `movedToScope` is set the
+ * draft was the loaded one under `oldScope`, so its composer-loaded pointer
+ * moves with it: the old-scope pointer is dropped and a new-scope pointer added.
+ * Doing the row replace and the pointer move as a single `seedDraftCache` keeps
+ * a reader from ever observing the draft under two scopes (old pointer still
+ * present + new row) or under none.
+ */
+export function migrateDraftScopeInCache(
+  workspaceId: string,
+  oldScope: string,
+  newRow: CachedDraft,
+  movedToScope: string | null
+): void {
+  const drafts = withDraftUpserted(cache.drafts.get(workspaceId) ?? [], newRow)
+  let loaded = cache.loaded.get(workspaceId) ?? []
+  if (movedToScope) {
+    loaded = loaded.filter((row) => row.scope !== oldScope && row.scope !== movedToScope)
+    loaded.push({ scope: movedToScope, workspaceId, draftId: newRow.id })
+  }
+  seedDraftCache(workspaceId, {
+    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    drafts,
+    loaded,
+  })
+}
+
+/**
  * Set (or clear, with `draftId: null`) the composer-loaded pointer for a scope
  * in the in-memory cache. Mirrors the `composerLoaded` IDB row so the composer
  * resolves its checked-out draft synchronously on first paint.

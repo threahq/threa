@@ -10,9 +10,9 @@ import {
   useComposerLoadedFromStore,
   useDraftsFromStore,
 } from "@/stores/draft-store"
-import { enqueueDraftUpsert, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
+import { enqueueDraftUpsert, migrateLocalDraftScope, syncDraftRemoval, syncDraftResolution } from "@/sync/draft-sync"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
-import type { JSONContent } from "@threa/types"
+import { type JSONContent, draftStreamScope, draftThreadScope } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
 
 // Key formats (a draft's `scope`):
@@ -22,9 +22,9 @@ export function getDraftMessageKey(
   location: { type: "stream"; streamId: string } | { type: "thread"; parentMessageId: string }
 ): string {
   if (location.type === "stream") {
-    return `stream:${location.streamId}`
+    return draftStreamScope(location.streamId)
   }
-  return `thread:${location.parentMessageId}`
+  return draftThreadScope(location.parentMessageId)
 }
 
 const DEBOUNCE_MS = import.meta.env.VITE_DRAFT_DEBOUNCE_MS ? Number(import.meta.env.VITE_DRAFT_DEBOUNCE_MS) : 500
@@ -166,6 +166,25 @@ export async function purgeScopeDrafts(workspaceId: string, scope: string): Prom
   setComposerLoadedInCache(workspaceId, scope, null)
   // Sync side-effects after the local state is fully cleared.
   for (const row of rows) await syncDraftRemoval(workspaceId, row.id, row.baseVersion)
+}
+
+/**
+ * Re-scope every draft for `fromScope` to `toScope` and push each so the server
+ * row follows. The client-initiated counterpart to inbound thread re-pointing:
+ * used by `promoteDraft` when a not-yet-created scratchpad becomes a real stream,
+ * so the drafts composed in it (loaded plus any stash siblings) move onto the
+ * real stream and keep roaming instead of being discarded. The loaded pointer
+ * follows its draft (via `migrateLocalDraftScope`). No-op when the scope is empty.
+ *
+ * The just-sent loaded draft is already resolved by the send path before promotion
+ * runs, so in practice this carries the surviving stash entries.
+ */
+export async function rescopeScopeDrafts(workspaceId: string, fromScope: string, toScope: string): Promise<void> {
+  const rows = await db.drafts.where("[workspaceId+scope]").equals([workspaceId, fromScope]).toArray()
+  for (const row of rows) {
+    await migrateLocalDraftScope(workspaceId, fromScope, { ...row, scope: toScope })
+    await enqueueDraftUpsert(workspaceId, row.id)
+  }
 }
 
 /**

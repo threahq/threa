@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { EventService } from "../../src/features/messaging"
+import { DraftsRepository } from "../../src/features/drafts"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
 import { StreamEventRepository, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { eventId, messageId, personaId, sessionId, streamId, userId, workspaceId } from "../../src/lib/id"
@@ -25,6 +26,7 @@ describe("message move integration", () => {
     await pool.query("DELETE FROM stream_persona_participants")
     await pool.query("DELETE FROM stream_members")
     await pool.query("DELETE FROM reactions")
+    await pool.query("DELETE FROM drafts")
     await pool.query("DELETE FROM messages")
     await pool.query("DELETE FROM stream_events")
     await pool.query("DELETE FROM stream_sequences")
@@ -291,6 +293,124 @@ describe("message move integration", () => {
       // per-message context-menu drill-in can fetch it from IDB.
       expect(payload.movedFrom?.moveTombstoneId).toBe(destinationTombstone?.id)
     }
+  })
+
+  test("re-points reply drafts onto the new thread for every author when the target becomes a thread", async () => {
+    const testWorkspaceId = workspaceId()
+    const sourceStreamId = streamId()
+    const actor = await addTestMember(pool, testWorkspaceId, userId())
+    const other = await addTestMember(pool, testWorkspaceId, userId())
+
+    await StreamRepository.insert(pool, {
+      id: sourceStreamId,
+      workspaceId: testWorkspaceId,
+      type: "channel",
+      visibility: "workspace",
+      companionMode: "off",
+      createdBy: actor.id,
+    })
+    await StreamMemberRepository.insert(pool, sourceStreamId, actor.id)
+    await StreamMemberRepository.insert(pool, sourceStreamId, other.id)
+
+    const target = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: sourceStreamId,
+      authorId: actor.id,
+      authorType: "user",
+      ...testMessageContent("target"),
+    })
+    const moved = await eventService.createMessage({
+      workspaceId: testWorkspaceId,
+      streamId: sourceStreamId,
+      authorId: actor.id,
+      authorType: "user",
+      ...testMessageContent("moved"),
+    })
+
+    // Two authors are each composing a reply to `target` (no thread yet), so
+    // both hold a draft scoped to `thread:{target.id}`. A draft on an unrelated
+    // message must NOT move.
+    const insertDraftParams = {
+      workspaceId: testWorkspaceId,
+      rootStreamId: null,
+      contentJson: { type: "doc", content: [] },
+      contentMarkdown: "reply",
+      attachmentIds: [],
+      command: null,
+      contextRefs: null,
+      ciphertext: null,
+      envelope: null,
+      e2eVersion: null,
+      clientUpdatedAt: new Date(),
+    }
+    await DraftsRepository.insertIfAbsent(pool, {
+      id: "draft_actor",
+      userId: actor.id,
+      scope: `thread:${target.id}`,
+      lastClientWriteId: "w_actor",
+      ...insertDraftParams,
+    })
+    await DraftsRepository.insertIfAbsent(pool, {
+      id: "draft_other",
+      userId: other.id,
+      scope: `thread:${target.id}`,
+      lastClientWriteId: "w_other",
+      ...insertDraftParams,
+    })
+    await DraftsRepository.insertIfAbsent(pool, {
+      id: "draft_unrelated",
+      userId: actor.id,
+      scope: `thread:${moved.id}`,
+      lastClientWriteId: "w_unrelated",
+      ...insertDraftParams,
+    })
+
+    const validation = await eventService.validateMoveMessagesToThread({
+      workspaceId: testWorkspaceId,
+      sourceStreamId,
+      targetMessageId: target.id,
+      messageIds: [moved.id],
+      actorId: actor.id,
+    })
+    const result = await eventService.moveMessagesToThread({
+      workspaceId: testWorkspaceId,
+      sourceStreamId,
+      targetMessageId: target.id,
+      messageIds: [moved.id],
+      actorId: actor.id,
+      leaseKey: validation.leaseKey,
+    })
+
+    const newScope = `stream:${result.thread.id}`
+
+    const actorDrafts = await DraftsRepository.listByUser(pool, testWorkspaceId, actor.id)
+    const otherDrafts = await DraftsRepository.listByUser(pool, testWorkspaceId, other.id)
+
+    const actorReply = actorDrafts.find((draft) => draft.id === "draft_actor")
+    const otherReply = otherDrafts.find((draft) => draft.id === "draft_other")
+    const unrelated = actorDrafts.find((draft) => draft.id === "draft_unrelated")
+
+    // Both authors' reply drafts followed the message into the new thread, with
+    // root_stream_id set and version bumped so the client adopts the new scope.
+    expect(actorReply?.scope).toBe(newScope)
+    expect(actorReply?.rootStreamId).toBe(result.thread.rootStreamId)
+    expect(actorReply?.version).toBe(2)
+    expect(otherReply?.scope).toBe(newScope)
+    expect(otherReply?.rootStreamId).toBe(result.thread.rootStreamId)
+
+    // A draft on a different message is untouched.
+    expect(unrelated?.scope).toBe(`thread:${moved.id}`)
+    expect(unrelated?.version).toBe(1)
+
+    // One user-scoped draft:upserted per re-scoped draft, delivered to its owner.
+    const draftEvents = await pool.query<{ payload: { targetUserId: string; draft: { id: string; scope: string } } }>(
+      `SELECT payload FROM outbox WHERE event_type = 'draft:upserted'`
+    )
+    const byDraftId = new Map(draftEvents.rows.map((row) => [row.payload.draft.id, row.payload]))
+    expect(byDraftId.get("draft_actor")?.targetUserId).toBe(actor.id)
+    expect(byDraftId.get("draft_actor")?.draft.scope).toBe(newScope)
+    expect(byDraftId.get("draft_other")?.targetUserId).toBe(other.id)
+    expect(byDraftId.has("draft_unrelated")).toBe(false)
   })
 
   test("rejects moving a message onto a following message", async () => {

@@ -1748,6 +1748,22 @@ export interface ScheduledMessageCancelledPayload {
  */
 export type DraftScope = string
 
+/**
+ * Build the `stream:{streamId}` draft scope. Single source of truth (INV-33) for
+ * the scope string, shared by the composer (which keys drafts by scope) and the
+ * backend thread re-pointing / promotion paths that re-scope drafts onto a real
+ * stream. Keeping the format in one place is what lets a re-scope on either side
+ * line up with the other's stored rows.
+ */
+export function draftStreamScope(streamId: string): DraftScope {
+  return `stream:${streamId}`
+}
+
+/** Build the `thread:{parentMessageId}` draft scope (reply to a not-yet-threaded message). */
+export function draftThreadScope(parentMessageId: string): DraftScope {
+  return `thread:${parentMessageId}`
+}
+
 /** Slash-command draft payload (mirrors the composer's `ExtractedCommand`). */
 export interface DraftCommand {
   name: string

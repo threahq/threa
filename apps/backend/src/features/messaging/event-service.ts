@@ -15,6 +15,7 @@ import {
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
 import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
+import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { attachmentReferenceId, eventId, messageId, messageVersionId, streamId as generateStreamId } from "../../lib/id"
 import { MessageVersionRepository, type MessageVersion } from "./version-repository"
@@ -27,6 +28,8 @@ import {
   CompanionModes,
   StreamTypes,
   Visibilities,
+  draftStreamScope,
+  draftThreadScope,
   type AttachmentSummary,
   type AuthorType,
   type EventType,
@@ -1159,6 +1162,28 @@ export class EventService {
         updates: agentSessionEventUpdates,
       })
       await MessageRepository.moveToStream(client, destinationThread.id, updates)
+
+      // Thread re-pointing: the target message just became a thread, so any reply
+      // draft composed against it (scope `thread:{targetMessageId}`) follows the
+      // message into the new thread stream (`stream:{destinationThread.id}`).
+      // Drafts are private per author but a shared target can hold several
+      // authors' reply drafts, so this re-scopes every owner's draft and emits
+      // one user-scoped `draft:upserted` each — in this same transaction so the
+      // re-point and the move commit together (INV-4/7).
+      const rescopedDrafts = await DraftsRepository.rescopeByScope(client, {
+        workspaceId: params.workspaceId,
+        fromScope: draftThreadScope(params.targetMessageId),
+        toScope: draftStreamScope(destinationThread.id),
+        rootStreamId,
+      })
+      for (const draft of rescopedDrafts) {
+        await OutboxRepository.insert(client, "draft:upserted", {
+          workspaceId: params.workspaceId,
+          targetUserId: draft.userId,
+          draft: toDraftView(draft),
+        })
+      }
+
       await MessageRepository.updateStreamScopedReferences(client, {
         workspaceId: params.workspaceId,
         sourceStreamId: params.sourceStreamId,
