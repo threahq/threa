@@ -19,9 +19,9 @@ import {
   Layers,
   ChevronDown,
 } from "lucide-react"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
+import { LiveAgentSettings } from "@/components/stream-settings/live-agent-settings"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
@@ -311,7 +311,6 @@ export function StreamPage() {
     let hoverVariant: string
     let iconTint: string
     let interactiveAria: string
-    let tooltipBody: string
 
     if (isEncrypted) {
       Icon = Lock
@@ -319,52 +318,49 @@ export function StreamPage() {
       pillVariant = "border-border bg-secondary text-foreground"
       hoverVariant = "hover:bg-accent"
       iconTint = "text-muted-foreground"
-      interactiveAria = "End-to-end encrypted. Open companion settings."
-      tooltipBody = "End-to-end encrypted — Companion is disabled. Click for details."
+      interactiveAria = "End-to-end encrypted. Companion and tool settings."
     } else if (isOn) {
       Icon = Sparkles
       modeLabel = "Companion"
       pillVariant = "border-primary/30 bg-primary/5 text-foreground"
       hoverVariant = "hover:bg-primary/10"
       iconTint = "text-primary"
-      interactiveAria = "Companion is on. Click to change."
-      tooltipBody = "Ariadne replies to new messages. Click to change."
+      interactiveAria = "Companion is on. Click to change companion mode and tool access."
     } else {
       Icon = Moon
       modeLabel = "Quiet"
       pillVariant = "border-border bg-secondary text-muted-foreground"
       hoverVariant = "hover:bg-accent hover:text-foreground"
       iconTint = ""
-      interactiveAria = "Quiet mode. Click to change."
-      tooltipBody = "Silent capture — no AI replies. Click to change."
+      interactiveAria = "Quiet mode. Click to change companion mode and tool access."
     }
 
     const pillBase = "inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold"
 
-    if (isDraft) {
-      // The draft pill is live: it opens an in-flow popover to set companion
-      // mode and tool access before the scratchpad is server-created. The
-      // settings dialog can't be used yet (it reads caches with no draft row),
-      // so the choices are written to the local draft and threaded into the
-      // create request on the first message.
-      companionModeIndicator = (
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              aria-label="Companion mode and tool access. Click to change."
-              className={cn(
-                pillBase,
-                pillVariant,
-                "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                hoverVariant
-              )}
-            >
-              <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
-              <span>{modeLabel}</span>
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-80">
+    // One in-flow popover for both drafts and live scratchpads: companion mode
+    // and (owner-only) tool access. The trailing chevron + hover state make the
+    // pill read as a control. Drafts write to the local draft (the settings
+    // dialog can't be used pre-create); live scratchpads use live mutations.
+    companionModeIndicator = (
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            aria-label={interactiveAria}
+            className={cn(
+              pillBase,
+              pillVariant,
+              "cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              hoverVariant
+            )}
+          >
+            <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
+            <span>{modeLabel}</span>
+            <ChevronDown className="h-3 w-3 -mr-0.5 opacity-60" aria-hidden="true" />
+          </button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-80">
+          {isDraft ? (
             <DraftAgentSettings
               workspaceId={workspaceId!}
               draftId={streamId!}
@@ -372,32 +368,17 @@ export function StreamPage() {
               allowedToolCategories={stream.allowedToolCategories ?? null}
               configuredCategories={workspaceMetadata?.configuredToolCategories}
             />
-          </PopoverContent>
-        </Popover>
-      )
-    } else {
-      companionModeIndicator = (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => openStreamSettings(streamId, "companion")}
-              aria-label={interactiveAria}
-              className={cn(
-                pillBase,
-                pillVariant,
-                "transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-                hoverVariant
-              )}
-            >
-              <Icon className={cn("h-3 w-3", iconTint)} aria-hidden="true" />
-              <span>{modeLabel}</span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{tooltipBody}</TooltipContent>
-        </Tooltip>
-      )
-    }
+          ) : (
+            <LiveAgentSettings
+              workspaceId={workspaceId!}
+              streamId={streamId!}
+              companionMode={stream.companionMode}
+              e2e={isEncrypted}
+            />
+          )}
+        </PopoverContent>
+      </Popover>
+    )
   }
 
   let headerTitle: React.ReactNode
