@@ -131,7 +131,10 @@ export function useStashComposer(
   }, [searchParams, setSearchParams, scope, composer.isLoaded, handleRestoreStashed])
 
   return {
-    drafts: stashedDrafts.drafts,
+    // The stash is disabled for encrypted streams in v1, so surface no entries
+    // there — a sealed row that arrives via sync would otherwise render as a
+    // restore control whose handler no-ops (a dead button).
+    drafts: e2eEnabled ? [] : stashedDrafts.drafts,
     handleStashDraft,
     handleRestoreStashed,
     handleDeleteStashed,

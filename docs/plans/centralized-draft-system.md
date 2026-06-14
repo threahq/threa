@@ -262,9 +262,10 @@ frontend-only:
   no-ops + the trigger is disabled): stashing snapshots composer plaintext, which
   would violate E2EE-4. The ambient (auto-saved) draft still roams.
 - **The `/drafts` explorer doesn't list E2E drafts** (sealed rows have an empty
-  placeholder body, so the existing empty-content filter skips them). The stash
-  picker shows a neutral "Encrypted draft" placeholder for any sealed row that
-  arrives via sync rather than decrypting in the list.
+  placeholder body, so the existing empty-content filter skips them). The
+  in-composer stash list is empty for encrypted streams (`useStashComposer`
+  returns no entries when E2E), so a sealed row never renders as a dead restore
+  control.
 - **Unlock-after-open**: a draft that decrypts only after the session unlocks
   needs the stream reopened to load into an already-mounted composer (the common
   flow — unlock at workspace entry, then open — works).

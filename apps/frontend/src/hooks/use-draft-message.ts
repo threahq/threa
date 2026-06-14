@@ -132,6 +132,7 @@ export async function upsertLoadedSealedDraft(
     attachments: [],
     clientUpdatedAt: Date.now(),
     baseVersion: existing?.baseVersion,
+    attachmentIds: existing?.attachmentIds,
     ciphertext: sealed.ciphertext,
     envelope: sealed.envelope,
     e2eVersion: sealed.e2eVersion,
@@ -314,7 +315,7 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
   const e2eGateRef = useRef({ enabled: e2eEnabled, unlocked: e2eUnlocked, senderId, streamId: e2eStreamId ?? null })
   useEffect(() => {
     e2eGateRef.current = { enabled: e2eEnabled, unlocked: e2eUnlocked, senderId, streamId: e2eStreamId ?? null }
-  })
+  }, [e2eEnabled, e2eUnlocked, senderId, e2eStreamId])
 
   // Decrypt-on-load: an unlocked E2E draft is decrypted into memory once per
   // loaded id. A self-edit re-seals the row under the same id without
@@ -337,12 +338,23 @@ export function useDraftMessage(workspaceId: string, draftKey: string, e2eStream
       privateKey: session.privateKey,
       recipientKeyId: session.keyId,
     }).then((content) => {
-      if (!cancelled) setDecrypted({ id: sealedLoaded.id, content: content ?? EMPTY_DOC })
+      // A null result is a transient/blocked decrypt (session locked mid-flight,
+      // key not yet resolvable). Leave `decrypted` unset so the effect retries
+      // when a dep changes (e.g. the session unlocks) instead of baking an empty
+      // body in — which the same-id guard would then make permanent, inviting the
+      // user to type over a still-recoverable sealed draft.
+      if (!cancelled && content) setDecrypted({ id: sealedLoaded.id, content })
     })
     return () => {
       cancelled = true
     }
   }, [sealedLoaded, e2eStreamId, session.privateKey, session.keyId, workspaceId, decrypted?.id])
+
+  // Drop the decrypted plaintext when the scope changes so a navigated-away
+  // draft's body never lingers in memory and the new scope re-decrypts cleanly.
+  useEffect(() => {
+    setDecrypted(null)
+  }, [draftKey])
 
   // Purge only the PLAINTEXT drafts left on disk for an E2E scope (one written
   // before the stream was encrypted, or before the seal path existed). Sealed

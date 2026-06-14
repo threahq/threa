@@ -35,10 +35,6 @@ interface StashedDraftsPickerProps {
 }
 
 function getPreview(draft: CachedDraft): string {
-  // A sealed (E2E) draft body can't be previewed without decrypting it; v1 shows
-  // a neutral placeholder rather than decrypting every list row (keeps plaintext
-  // out of the list — E2EE-4). Decryptable previews are a follow-up.
-  if (draft.ciphertext) return "Encrypted draft"
   try {
     const md = serializeToMarkdown(draft.contentJson)
     const stripped = stripMarkdownToInline(md).trim()
