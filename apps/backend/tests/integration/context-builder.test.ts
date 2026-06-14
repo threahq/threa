@@ -256,6 +256,8 @@ describe("Context Builder", () => {
             { contentMarkdown: "This is the parent message that spawned the thread" },
             { contentMarkdown: "Reply in thread" },
           ],
+          // The prepended parent is the pinned anchor the C-2b trim must keep.
+          pinnedHistoryPrefix: 1,
           threadContext: {
             depth: 2,
             path: [

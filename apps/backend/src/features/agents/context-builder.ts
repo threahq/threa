@@ -122,6 +122,15 @@ export interface StreamContext {
   participants?: Participant[]
   /** Conversation history - messages in chronological order, may include attachment context */
   conversationHistory: MessageWithAttachments[]
+  /**
+   * Number of leading `conversationHistory` entries that are pinned context and
+   * must survive windowing (the C-2b char-budget trim). The thread builder
+   * prepends the root/parent message as the thread anchor and sets this to 1;
+   * other surfaces leave it unset (treated as 0). Declared by the builder so
+   * the shared trim in `buildStreamContext` preserves the anchor without
+   * re-deriving it from message shape.
+   */
+  pinnedHistoryPrefix?: number
   /** For threads: path from current thread up to root channel */
   threadContext?: {
     depth: number
@@ -261,16 +270,14 @@ export async function buildStreamContext(
   // runs on kept messages. Older messages that fall out fold into the rolling
   // conversation summary downstream (it keys off the oldest kept message).
   //
-  // The thread builder prepends the root/parent message as the thread anchor —
-  // the only history entry from a different stream (`streamId !== stream.id`).
-  // Pin it so a long thread can never trim away its own anchor; the trim runs
-  // over the remaining in-stream messages. A no-op for non-thread surfaces,
-  // whose history is all from `stream.id`.
+  // `pinnedHistoryPrefix` leading entries are anchors the builder declared must
+  // survive (the thread root); trim only the rest so a long thread can never
+  // trim away its own anchor.
   if (options?.maxChars !== undefined) {
-    const history = context.conversationHistory
-    const anchor = history.length > 0 && history[0].streamId !== stream.id ? history[0] : undefined
-    const trimmed = trimToCharBudget(anchor ? history.slice(1) : history, options.maxChars)
-    context.conversationHistory = anchor ? [anchor, ...trimmed] : trimmed
+    const pinned = context.pinnedHistoryPrefix ?? 0
+    const head = context.conversationHistory.slice(0, pinned)
+    const trimmed = trimToCharBudget(context.conversationHistory.slice(pinned), options.maxChars)
+    context.conversationHistory = pinned > 0 ? [...head, ...trimmed] : trimmed
   }
 
   // Enrich with attachment context if requested
@@ -440,6 +447,8 @@ async function buildThreadContext(
       slug: stream.slug,
     },
     conversationHistory,
+    // The prepended parent is a pinned anchor: keep it through the C-2b trim.
+    pinnedHistoryPrefix: parentMessage ? 1 : 0,
     threadContext: {
       depth: threadPath.length,
       path: threadPath,
