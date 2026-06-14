@@ -256,10 +256,10 @@ export class SyncEngine {
     // must not move between this trigger and the catch-up fetch.
     this.beginCatchUpCycle()
     // Resume is a reconnect-shaped trigger: when the cursor is active the slim
-    // path (per-stream deltas for visible streams + a viewer-label reconcile)
-    // plus the catch-up replay below re-seeds every workspace-scoped
-    // projection, so a full snapshot refetch would only duplicate what catch-up
-    // already heals. No-syncService deps and the first connect fall through to
+    // path (per-stream deltas for visible streams) plus the catch-up replay
+    // below re-seeds every workspace-scoped projection, so a full snapshot
+    // refetch would only duplicate what catch-up already heals. No-syncService
+    // deps and the first connect fall through to
     // the full snapshot inside runBootstrap; the below-floor catch-up fallback
     // re-forces full when the cursor has dropped beneath the retained
     // sync-log floor.
@@ -730,7 +730,7 @@ export class SyncEngine {
   /**
    * @param forceFull Run the full workspace-snapshot bootstrap even on an
    *   active-mode reconnect (where it would otherwise be slimmed to per-stream
-   *   deltas + a label reconcile). The below-floor catch-up fallback sets this:
+   *   deltas). The below-floor catch-up fallback sets this:
    *   a cursor below the retained sync-log floor has no log to replay, so only
    *   the full snapshot is authoritative for everything `<= head`.
    */
@@ -1172,7 +1172,7 @@ export class SyncEngine {
           // forceFull: the cursor is below the retained floor, so catch-up has
           // no entries to replay — only the full workspace snapshot is
           // authoritative for everything <= head. The slim reconnect path
-          // (per-stream deltas + label reconcile) would leave the rest stale.
+          // (per-stream deltas only) would leave the rest stale.
           void this.runBootstrap(true, { forceFull: true })
           return
         }

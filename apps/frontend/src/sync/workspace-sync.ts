@@ -1701,9 +1701,10 @@ export function registerWorkspaceSocketHandlers(
     void db.labelMemberships.delete(id)
   }
 
-  // Assignments — viewer-scoped, so these arrive only in the assigning user's
-  // room. Generic over resourceType: the handler never special-cases what kind
-  // of resource was labeled.
+  // Assignments — a private label's assignment reaches only the owner's user
+  // room; a public label's reaches the resource's audience (the stream room)
+  // and replays to non-members via catch-up. Generic over resourceType: the
+  // handler never special-cases what kind of resource was labeled.
   const sameAssignment = (
     a: { labelId: string; resourceType: string; resourceId: string; userId: string },
     b: { labelId: string; resourceType: string; resourceId: string; userId: string }
