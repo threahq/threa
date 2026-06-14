@@ -3,16 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom"
 import { FileText, Hash, MessageSquare, Trash2, FileEdit, ArrowLeft, Bookmark, StickyNote } from "lucide-react"
 import { CompanionModes } from "@threa/types"
 import { Button } from "@/components/ui/button"
-import {
-  ResponsiveAlertDialog,
-  ResponsiveAlertDialogAction,
-  ResponsiveAlertDialogCancel,
-  ResponsiveAlertDialogContent,
-  ResponsiveAlertDialogDescription,
-  ResponsiveAlertDialogFooter,
-  ResponsiveAlertDialogHeader,
-  ResponsiveAlertDialogTitle,
-} from "@/components/ui/responsive-alert-dialog"
+import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
 import { ItemList, type QuickSwitcherItem } from "@/components/quick-switcher"
 import { SidebarToggle } from "@/components/layout"
 import { useAllDrafts, type UnifiedDraft, type DraftType } from "@/hooks"
@@ -162,20 +153,11 @@ export function DraftsPage() {
       </div>
 
       {/* Delete confirmation dialog */}
-      <ResponsiveAlertDialog open={!!draftToDelete} onOpenChange={(open) => !open && handleCancelDelete()}>
-        <ResponsiveAlertDialogContent>
-          <ResponsiveAlertDialogHeader>
-            <ResponsiveAlertDialogTitle>Delete this draft?</ResponsiveAlertDialogTitle>
-            <ResponsiveAlertDialogDescription>
-              This action cannot be undone. The draft will be permanently deleted.
-            </ResponsiveAlertDialogDescription>
-          </ResponsiveAlertDialogHeader>
-          <ResponsiveAlertDialogFooter>
-            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-            <ResponsiveAlertDialogAction onClick={handleConfirmDelete}>Delete</ResponsiveAlertDialogAction>
-          </ResponsiveAlertDialogFooter>
-        </ResponsiveAlertDialogContent>
-      </ResponsiveAlertDialog>
+      <DeleteDraftConfirmDialog
+        open={!!draftToDelete}
+        onOpenChange={(open) => !open && handleCancelDelete()}
+        onConfirm={handleConfirmDelete}
+      />
     </>
   )
 }

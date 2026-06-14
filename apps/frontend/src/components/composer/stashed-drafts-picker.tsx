@@ -3,17 +3,8 @@ import { FileEdit, FilePlus, Trash2 } from "lucide-react"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import {
-  ResponsiveAlertDialog,
-  ResponsiveAlertDialogAction,
-  ResponsiveAlertDialogCancel,
-  ResponsiveAlertDialogContent,
-  ResponsiveAlertDialogDescription,
-  ResponsiveAlertDialogFooter,
-  ResponsiveAlertDialogHeader,
-  ResponsiveAlertDialogTitle,
-} from "@/components/ui/responsive-alert-dialog"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { DeleteDraftConfirmDialog } from "@/components/drafts/delete-draft-confirm-dialog"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { formatRelativeTime } from "@/lib/dates"
 import { cn } from "@/lib/utils"
@@ -209,20 +200,11 @@ export function StashedDraftsPicker({
         </PopoverContent>
       </Popover>
 
-      <ResponsiveAlertDialog open={draftToDelete !== null} onOpenChange={(o) => !o && setDraftToDelete(null)}>
-        <ResponsiveAlertDialogContent>
-          <ResponsiveAlertDialogHeader>
-            <ResponsiveAlertDialogTitle>Delete this draft?</ResponsiveAlertDialogTitle>
-            <ResponsiveAlertDialogDescription>
-              This action cannot be undone. The draft will be permanently deleted.
-            </ResponsiveAlertDialogDescription>
-          </ResponsiveAlertDialogHeader>
-          <ResponsiveAlertDialogFooter>
-            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-            <ResponsiveAlertDialogAction onClick={confirmDelete}>Delete</ResponsiveAlertDialogAction>
-          </ResponsiveAlertDialogFooter>
-        </ResponsiveAlertDialogContent>
-      </ResponsiveAlertDialog>
+      <DeleteDraftConfirmDialog
+        open={draftToDelete !== null}
+        onOpenChange={(o) => !o && setDraftToDelete(null)}
+        onConfirm={confirmDelete}
+      />
     </>
   )
 }
