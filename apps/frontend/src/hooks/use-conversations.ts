@@ -149,7 +149,7 @@ export function useConversations(workspaceId: string, streamId: string, options?
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.toConversationId) })
     }
 
-    // In active sync-v2 mode, register through the engine's event gate so
+    // In active sync mode, register through the engine's event gate so
     // these handlers receive catch-up replays and respect buffer-and-splice
     // ordering exactly like engine-owned handlers — conversation events are
     // stream-scoped sync-log entries, and a raw-socket registration would

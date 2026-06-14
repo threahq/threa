@@ -1041,10 +1041,10 @@ export class SyncEngine {
       if (this.isDestroyed) return
       cursorStore.advance(head)
       this.noteSeenHead(head)
-      console.info("Sync-v2 cursor seeded from head", { workspaceId: this.workspaceId, head })
+      console.info("Sync cursor seeded from head", { workspaceId: this.workspaceId, head })
     } catch (error) {
       if (this.isDestroyed) return
-      console.error("Sync-v2 cursor initialization failed", { workspaceId: this.workspaceId, error })
+      console.error("Sync cursor initialization failed", { workspaceId: this.workspaceId, error })
     }
   }
 
@@ -1084,7 +1084,7 @@ export class SyncEngine {
       .catch((error) => {
         // A destroy-triggered abort is expected teardown, not a failure.
         if (this.isDestroyed) return
-        console.error("Sync-v2 catch-up failed", {
+        console.error("Sync catch-up failed", {
           workspaceId: this.workspaceId,
           trigger,
           error,
@@ -1171,7 +1171,7 @@ export class SyncEngine {
           // the upcoming snapshot (the race falls on the duplicate side). The
           // splice (appliedThrough = head) then drops buffered events <= head,
           // which the snapshot already covers, and applies only those above it.
-          console.info("Sync-v2 catch-up below retention floor; re-bootstrapping", {
+          console.info("Sync catch-up below retention floor; re-bootstrapping", {
             workspaceId: this.workspaceId,
             trigger,
             cursorBefore,
@@ -1217,7 +1217,7 @@ export class SyncEngine {
       }
 
       if (fetched > 0 || trigger !== "connect") {
-        console.info("Sync-v2 active catch-up", {
+        console.info("Sync active catch-up", {
           workspaceId: this.workspaceId,
           trigger,
           cursorBefore,
@@ -1271,7 +1271,7 @@ function parseHeartbeatHead(value: string): bigint | null {
   try {
     return BigInt(value)
   } catch {
-    console.warn("Sync-v2: ignoring malformed heartbeat head", { value })
+    console.warn("Sync: ignoring malformed heartbeat head", { value })
     return null
   }
 }

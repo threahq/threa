@@ -108,7 +108,7 @@ interface WorkspaceUserUpdatedPayload {
   user: WorkspaceUserPayload
 }
 
-// The unread counter payloads carry absolute fields (sync-v2 phase 2c): the
+// The unread counter payloads carry absolute fields (sync phase 2c): the
 // backend always emits them, so clients set counters from
 // latestOrdinal − lastReadOrdinal instead of incrementing and replayed or
 // duplicated events converge.
@@ -313,7 +313,7 @@ export function mergeReconnectWorkspaceBootstrap({
   const unreadCounts = { ...workspaceBootstrap.unreadCounts }
   const mentionCounts = { ...workspaceBootstrap.mentionCounts }
   const activityCounts = { ...workspaceBootstrap.activityCounts }
-  // The latest message ordinals (sync-v2 phase 2c). A stream's ordinal must
+  // The latest message ordinals (sync phase 2c). A stream's ordinal must
   // stay paired with whichever unreadCounts source wins for it — the implied
   // read position is latestOrdinal − unreadCount, so mixing a local unread
   // with the server ordinal (or vice versa) would shift it. Streams whose
@@ -1257,7 +1257,7 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
 
     const { streamId, activityType, isSelf } = payload.activity
-    // Absolute per-stream counts for the target user (sync-v2 phase 2c);
+    // Absolute per-stream counts for the target user (sync phase 2c);
     // undefined on legacy payloads.
     const counts = payload.counts
 
@@ -1320,7 +1320,7 @@ export function registerWorkspaceSocketHandlers(
 
   // GAM memo extraction: surface new memos in the memory explorer without a
   // manual refresh. memo:created is workspace-group routed (sync log + emit),
-  // so registering here puts memos on the sync-v2 catch-up path like every
+  // so registering here puts memos on the sync catch-up path like every
   // other workspace-level event — a reconnect replay invalidates the same
   // queries a live emit does. The in-situ timeline row rides the separate
   // stream:memos_captured event (stream-sync).
@@ -1334,7 +1334,7 @@ export function registerWorkspaceSocketHandlers(
   // not just the one who performed the mutation. The five events are
   // permission-scoped to members:write holders (delivery-groups.ts) — logged and
   // emitted to that group only — so registering here both updates an open list
-  // live and replays through the sync-v2 catch-up cursor on reconnect, the same
+  // live and replays through the sync catch-up cursor on reconnect, the same
   // query a viewer's own send/revoke/resend mutation already invalidates. Every
   // payload carries workspaceId; the differing per-event fields are unused since
   // we only invalidate.

@@ -33,7 +33,7 @@ export function useStreamSocket(workspaceId: string, streamId: string, options?:
     // queryClient is passed for transitional workspace bootstrap preview updates
     // (will be removed in Phase 3).
     //
-    // In active sync-v2 mode, register through the engine's event gate so
+    // In active sync mode, register through the engine's event gate so
     // these handlers receive catch-up entries and respect buffer-and-splice
     // exactly like engine-owned handlers; a raw-socket registration here
     // would apply live events out of order while catch-up replays the log.

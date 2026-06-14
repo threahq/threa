@@ -9,7 +9,7 @@ import { scheduledKeys, useScheduledList } from "./use-scheduled"
 
 const WORKSPACE_ID = "ws_test"
 
-describe("useScheduledList refetchOnReconnect (sync-v2 mode gate)", () => {
+describe("useScheduledList refetchOnReconnect (sync mode gate)", () => {
   let listFn: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {

@@ -669,7 +669,7 @@ export class EventService {
 
     // 9. Publish stream activity for sidebar updates
     // Stream-scoped: only members of this stream receive the preview content.
-    // sequence/messageOrdinal are absolute stream facts (sync-v2 phase 2c):
+    // sequence/messageOrdinal are absolute stream facts (sync phase 2c):
     // clients derive unread as latestOrdinal - lastReadOrdinal instead of
     // incrementing, so replayed/duplicated events converge. Exact under
     // concurrency: the sequence allocator's row lock serializes message

@@ -389,7 +389,7 @@ export interface CachedUnreadState {
   activityCounts: Record<string, number>
   unreadActivityCount: number
   /**
-   * Latest message ordinal per stream (sync-v2 phase 2c) — seeded from
+   * Latest message ordinal per stream (sync phase 2c) — seeded from
    * bootstrap `messageCounts`, max-merged from `stream:activity`. The read
    * position is implicit: latestOrdinals[s] − unreadCounts[s]. Absent for
    * rows cached before the field shipped; see sync/unread-counters.ts.

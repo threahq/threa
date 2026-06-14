@@ -3,7 +3,7 @@ import type { Socket } from "socket.io-client"
 /**
  * Minimal registration surface shared by the raw socket and the gate. Handler
  * registration code (workspace-sync, stream-sync, useStreamSocket) is written
- * against this so the SyncEngine can interpose the gate in active sync-v2
+ * against this so the SyncEngine can interpose the gate in active sync
  * mode without the handlers knowing.
  */
 export interface SyncEventSource {
@@ -31,7 +31,7 @@ interface BufferedEvent {
 const DEFAULT_BUFFER_LIMIT = 2_000
 
 /**
- * The single delivery chokepoint for sync-v2 active mode. Live socket events
+ * The single delivery chokepoint for sync active mode. Live socket events
  * and catch-up log entries must apply through the SAME registered handlers
  * (the protocol guarantees `entry.payload` is the exact payload the socket
  * emits), so handlers register here instead of on the raw socket and the
@@ -184,7 +184,7 @@ export class SocketEventGate implements SyncEventSource {
     const results = await Promise.allSettled(snapshot.map(async (handler) => handler(payload)))
     for (const result of results) {
       if (result.status === "rejected") {
-        console.error("Sync-v2 catch-up handler failed", { eventType, error: result.reason })
+        console.error("Sync catch-up handler failed", { eventType, error: result.reason })
       }
     }
   }
@@ -213,7 +213,7 @@ export class SocketEventGate implements SyncEventSource {
         }
         if (!this.overflowWarned) {
           this.overflowWarned = true
-          console.warn("Sync-v2 gate buffer overflow — applying live events immediately", {
+          console.warn("Sync gate buffer overflow — applying live events immediately", {
             workspaceId: this.workspaceId,
           })
         }

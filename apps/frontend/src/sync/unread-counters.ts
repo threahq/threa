@@ -1,7 +1,7 @@
 import type { WorkspaceBootstrap } from "@threa/types"
 
 /**
- * Pure state math for the unread counter family (sync-v2 phase 2c).
+ * Pure state math for the unread counter family (sync phase 2c).
  *
  * The four counter events (`stream:activity`, `stream:read`,
  * `stream:read_all`, `activity:created`) carry ABSOLUTE values so clients set

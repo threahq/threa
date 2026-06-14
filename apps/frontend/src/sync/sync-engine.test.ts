@@ -892,7 +892,7 @@ describe("SyncEngine.backfillStreamGap", () => {
   })
 })
 
-describe("SyncEngine sync-v2 cursor (active mode)", () => {
+describe("SyncEngine sync cursor (active mode)", () => {
   beforeEach(async () => {
     resetRevealGate()
     await Promise.all([

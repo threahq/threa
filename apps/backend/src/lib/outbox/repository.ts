@@ -354,7 +354,7 @@ export interface StreamActivityOutboxPayload extends StreamScopedPayload {
   sequence: string
   /**
    * Count of message_created events with sequence ≤ this one — an absolute,
-   * recipient-independent stream fact (sync-v2 phase 2c). Clients derive
+   * recipient-independent stream fact (sync phase 2c). Clients derive
    * unread as latestOrdinal - lastReadOrdinal instead of incrementing.
    */
   messageOrdinal: number
@@ -450,7 +450,7 @@ export interface StreamReadOutboxPayload extends WorkspaceScopedPayload {
   /** The read event's per-stream sequence (bigint as string; "0" when the event is missing). */
   lastReadSequence: string
   /**
-   * Message ordinal of the read position (sync-v2 phase 2c): count of
+   * Message ordinal of the read position (sync phase 2c): count of
    * message_created events with sequence ≤ the read event's. Clients derive
    * unread as latestOrdinal - lastReadOrdinal.
    */
@@ -461,7 +461,7 @@ export interface StreamsReadAllOutboxPayload extends WorkspaceScopedPayload {
   authorId: string
   streamIds: string[]
   /**
-   * Absolute read position per updated stream (sync-v2 phase 2c). Read-all
+   * Absolute read position per updated stream (sync phase 2c). Read-all
    * pins each membership to its stream's latest event, so the ordinal is the
    * stream's total message count at read time.
    */
@@ -531,7 +531,7 @@ export interface ActivityCreatedOutboxPayload extends WorkspaceScopedPayload {
   targetUserId: string
   /**
    * The target user's absolute unread counts for the activity's stream,
-   * computed after the row was inserted (sync-v2 phase 2c). Clients set
+   * computed after the row was inserted (sync phase 2c). Clients set
    * counters from these — never increment — so replays converge.
    */
   counts: {
