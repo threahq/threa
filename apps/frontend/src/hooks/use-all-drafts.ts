@@ -8,9 +8,10 @@ import {
   useDraftScratchpadsFromStore,
 } from "@/stores/draft-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { deleteDraftById } from "@/sync/draft-sync"
+import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { isDraftId } from "./use-draft-scratchpads"
-import { clearLoadedDraft, purgeScopeDrafts } from "./use-draft-message"
-import { deleteStashedDraftById } from "./use-stashed-drafts"
+import { purgeScopeDrafts } from "./use-draft-message"
 import { serializeToMarkdown } from "@threa/prosemirror"
 import type { CompanionMode, JSONContent } from "@threa/types"
 import { isEmptyContent } from "@/lib/prosemirror-utils"
@@ -176,6 +177,10 @@ export function useAllDrafts(workspaceId: string) {
   const allDrafts = useDraftsFromStore(workspaceId)
   const composerLoaded = useComposerLoadedFromStore(workspaceId)
   const cachedStreams = useWorkspaceStreams(workspaceId)
+  // Drains the offline queue so a delete enqueued below mirrors to the backend
+  // promptly. Optional — outside a workspace there is no engine and the local
+  // delete still stands; the op replays on the next (re)connect.
+  const syncEngine = useOptionalSyncEngine()
 
   // scope -> loaded draft id, the device-local "checked out into the composer"
   // pointer. A draft is "stashed" (vs. ambient/loaded) when it is not the one
@@ -338,24 +343,27 @@ export function useAllDrafts(workspaceId: string) {
   // we disambiguate by table lookup rather than prefix.
   const deleteDraft = useCallback(
     async (draftId: string) => {
+      // A scratchpad row is an unpromoted draft STREAM (its own entity), so
+      // deleting it removes the stream and purges its content drafts.
       const scratchpad = await db.draftScratchpads.get(draftId)
       if (scratchpad) {
         await db.draftScratchpads.delete(draftId)
         deleteDraftScratchpadFromCache(workspaceId, draftId)
         await purgeScopeDrafts(workspaceId, `stream:${draftId}`)
+        syncEngine?.kickOperationQueue()
         return
       }
 
-      const draft = await db.drafts.get(draftId)
-      if (!draft) return
-      const loadedId = (await db.composerLoaded.get(draft.scope))?.draftId ?? null
-      if (loadedId === draftId) {
-        await clearLoadedDraft(workspaceId, draft.scope)
-      } else {
-        await deleteStashedDraftById(draftId)
-      }
+      // A draft is a draft — loaded or stashed, deletion is one path. The same
+      // `deleteDraftById` the in-composer stash list uses (so the two delete
+      // surfaces can't drift); it clears the loaded pointer when the row was the
+      // one checked into a composer. The kick drains the queued server delete
+      // now so the removal reaches the author's other devices instead of sitting
+      // until the next reconnect.
+      await deleteDraftById(workspaceId, draftId)
+      syncEngine?.kickOperationQueue()
     },
-    [workspaceId]
+    [workspaceId, syncEngine]
   )
 
   return {
